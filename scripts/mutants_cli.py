@@ -152,6 +152,11 @@ MUTANTS = [
 def copy_tree(dest):
     ignore = shutil.ignore_patterns(".git", "build", "__pycache__", "*.pyc")
     shutil.copytree(ROOT, dest, ignore=ignore, symlinks=True)
+    # the numeric modules of cancho-table sit beside the tree, where cancho.toml's LOCAL-DEV sources name them
+    table = pathlib.Path(os.environ.get("CANCHO_TABLE", str(ROOT.parent / "cancho-table-main")))
+    link = dest.parent / "cancho-table-main"
+    if not link.exists():
+        link.symlink_to(table)
     deps = ROOT / "build" / "deps"
     if deps.is_dir():
         (dest / "build").mkdir(exist_ok=True)

@@ -255,6 +255,23 @@ class ModelFile(unittest.TestCase):
             got = self.check_refused(data, label)
             self.assertEqual(got, "ml.model.malformed", label)
 
+    def test_a_float_regression_model_is_checked_field_by_field(self):
+        self.sb.write("f.csv", "y\n1.5e0\n2.5\n")
+        self.assertEqual(self.sb.run("fit", "--target", "y", "--output", "f.cml", "f.csv").status, 0)
+        flt = self.sb.read("f.cml")
+        secs = sections(flt)
+
+        def edit(tag, offset, value, size=4):
+            return fix_checksum(set_bytes(flt, secs[tag - 1][1] + offset, value.to_bytes(size, "little")))
+
+        # schema: columns, target, name length, "y", type, scale; model: kind, dtype, rank, shape, n, bits of the mean
+        self.assertEqual(self.check_refused(edit(2, 8 + 4 + 1, 0), "target typed int, model kind float"), "ml.model.malformed")
+        self.assertEqual(self.check_refused(edit(2, 8 + 4 + 1, 1), "target typed dec, model kind float"), "ml.model.malformed")
+        self.assertEqual(self.check_refused(edit(2, 8 + 4 + 1 + 4, 3), "float with a scale"), "ml.model.malformed")
+        self.assertEqual(self.check_refused(edit(4, 12, 4, 8), "shape 4 for a float model"), "ml.model.malformed")
+        self.assertEqual(self.check_refused(edit(4, 28, 0x7FF0000000000000, 8), "the mean is infinity"), "ml.model.malformed")
+        self.assertEqual(self.check_refused(edit(4, 28, 0x7FF8000000000000, 8), "the mean is NaN"), "ml.model.malformed")
+
     def test_section_tags_out_of_order_and_wrong_count(self):
         secs = sections(self.reg)
         swapped = set_bytes(self.reg, 12, (2).to_bytes(4, "little"))
