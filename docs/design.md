@@ -26,8 +26,8 @@ multiclass in M7 changes no existing byte. Needs the maintainer's yes.
 
 | tier | promise | where it can fail | status |
 |---|---|---|---|
-| D1 | same data, seed and plan give the same model and prediction bytes at **any thread count** | any parallel float sum added in thread order | **[M0]** which of exact accumulators or a fixed reduction tree |
-| D2 | the same bytes on Mac aarch64 and Linux x86-64 | a platform `libm` call; `fma` contraction; a different `exp` | **[read]** `float` is IEEE binary64, no reassociation, no `fma` contraction (`floating-point.md`, `compile-time.md`); `exp`/`log` are cancho code in `std/math.cho`, not libm (`float-math.md` §9). **[M0]** G-det checks it on both machines |
+| D1 | same data, seed and plan give the same model and prediction bytes at **any thread count** | any parallel float sum added in thread order | **settled by M0 for the decisive sums (section 3.1): the fixed reduction tree, byte-identical at 1 to 16 threads on the Mac** |
+| D2 | the same bytes on Mac aarch64 and Linux x86-64 | a platform `libm` call; `fma` contraction; a different `exp` | **[read]** `float` is IEEE binary64, no reassociation, no `fma` contraction (`floating-point.md`, `compile-time.md`); `exp`/`log` are cancho code in `std/math.cho`, not libm (`float-math.md` §9). G-det on a second machine has **not** been run (Mac only so far) |
 | D3 | a stored model predicts the same bytes forever, across versions of the tool | a format change | section 4: every format has a version; a reader refuses a version it does not know (`ml.model.version`) |
 
 If D1 cannot be kept for a feature, the feature is refused or the exception is written next to it with a test
@@ -78,10 +78,18 @@ cancho#251; not re-checked at `a4572ea`]**. Consequences:
 * **Dtype.** `float` (binary64) only in v1. `f32` exists from edition 6; whether the package is generic over it is **[open]**
   and waits for a model that wants it, since a second width is a second set of rounding rules (section 3).
 
-**Every reduction has a normative summation order, and it is part of the API.** A reduction over an axis adds in ascending index
-order inside a block of a fixed length `K`; block partials are combined in a fixed binary tree by block index. `K` and the tree
-shape are constants of the package, never functions of the thread count. This is the fixed-reduction arm C of `docs/spikes.md`,
-or its exact-accumulator alternative; which one is **[M0]**. Each kernel's document says its order, and its test compares it to
+**Every reduction has a normative summation order, and it is part of the API.** A reduction over an axis adds into `L = 4`
+lanes inside a block of `K = 256` elements (element `i` goes to lane `i mod 4`; lanes combined in a fixed tree); block partials
+are combined in a fixed binary tree by block index. `L`, `K` and the tree shape are constants of the package, never functions of
+the thread count or of the vector width. **[M0, measured, Mac only, load flagged]** This is the fixed-reduction arm C of
+`docs/spikes.md`: on a Newton step's 253 decisive sums it costs 1.00x the plain sum at one thread, against 13.6x to 13.8x for
+the exact accumulator (arm B), and the model bytes are identical at 1 to 16 threads; the decision rule of the gate therefore
+selects C (`docs/linalg.md` 6.7). `L = 4` comes from the C intrinsics ceiling run (`docs/simd-ceiling.md`): over 22 cells its
+worst cell is 1.20x the best lane count and its geometric mean 1.07x, and with 4 lanes a SIMD implementation and the scalar one
+give the same bits. The exact accumulator stays a documented alternative for a sum where exactness is the requirement; on the
+spike's problem the test AUC and log-loss were identical to the last digit for plain, exact and tree sums.
+**The thread-count byte gate compares the raw decisive sums and the loss lines, not only the coefficients:** in spike Q-det a
+thread-order mutant left the coefficients unchanged at one thread count at 1M rows. Each kernel's document says its order, and its test compares it to
 a reference written in that order (as spikes L and S do with numpy). Threading only decides which thread runs which block.
 
 **Where it lives.** A module in cancho-ml first; extracted to its own repository when a second consumer needs it. The
@@ -156,7 +164,7 @@ than the one fitted with it (section 5).
    `docs/parallel.md` §1). The partition of rows into blocks is therefore static, and **the block size is a function of the
    data and not of the thread count** **[choice]**, which is what lets a fixed reduction tree keep D1 at no extra cost to
    the structure of the code. The exact-accumulator alternative is in `facc.cho` in cancho-table. Which one the decisive
-   sums use is **[M0]**.
+   sums use is the fixed block tree (section 3.1; measured in `docs/linalg.md` 6.7).
 4. **Ties** are broken by lowest index (feature, then bin, then row), written once and used by every tree builder.
 5. **Decisive sums** are: every gradient, every split gain, every centroid update, every metric. A sum that only reports a
    count is not decisive.
@@ -215,13 +223,18 @@ cancho-table exports and cancho-ml depends on at a pinned commit; (b) a small `c
 Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. Needs a look at how cancho-table is
 packaged (`cancho.toml` shows pinned `[dependencies]` by git rev and path) before the choice is made.
 
-## 11. What M0 must settle before section 6 and 9 are final
+## 11. What M0 settled, and what it did not
+
+**Settled (Mac only, M4 Max, loaded machine; every cell carries its load in `docs/spikes.md` and `docs/linalg.md`):** the
+summation rule (section 3.1, arm C, `L = 4`, `K = 256`); `float` builds on both backends; the tuned loop reaches numpy parity on
+gradient descent; Newton uses 6 passes like scikit-learn's solver; the histogram forest is byte-identical to its oracle.
+**Not settled:** any speed claim against scikit-learn (Newton was 3.5x slower before its loop was tuned; `syrk` is 3x to 15x
+slower than numpy and a C-intrinsics SIMD ceiling matches numpy in only 4 of 23 gate cells, `docs/simd-ceiling.md`); cross-machine
+byte identity (no second machine yet); the section 9 ceilings.
+
 
 Upstream asks, each only with a measured reproducer (spikes L and S have the first three): bounds checks of a per-row subslice
 discharged; a 2-D view or slice-of-slice type (or struct reference fields, which would let a view hold its data); a faster
 `std.math.exp` (the tuned one is bit-identical on 114M points); `float_of_bits`; text-to-float in `std`.
 
-* the determinism arm (exact accumulator against fixed reduction tree) and the threshold for choosing between them;
-* the cost of `exp`/`log` per call, and of the bit-pattern load;
-* whether the LLVM backend builds `float` code at `a4572ea`, and what it gains;
-* the speed factor against scikit-learn, which sets the row ceiling.
+**Still to measure:** the cost of `exp`/`log` per call and of the bit-pattern load (spike L's loader took 7 ms for 2.0 million values, which is outside the timed fit); the speed factor against a fair histogram competitor; a second machine.
