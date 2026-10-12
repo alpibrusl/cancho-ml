@@ -1,0 +1,125 @@
+import std.test;
+import ml.rng;
+import ml.refuse;
+import linalg.tensor;
+import linalg.syrk;
+import lref;
+
+fn mat(off: int, rows: int, cols: int, rs: int, cs: int) -> [] tensor.Tensor {
+    match tensor.matrix_strided(off, rows, cols, rs, cs) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+// syrk against the reference, row-major and column-major storage; the lower triangle must stay at its sentinel
+fn one[&h](heap: &!h Heap, n: int, d: int, seed: int, mode: int) -> [heap] int {
+    var bad = 0;
+    let x = box_slice(heap, n * d + 1, 0.0);
+    let xc = box_slice(heap, n * d + 1, 0.0);
+    let want = box_slice(heap, d * d + 1, 9.0);
+    let got = box_slice(heap, d * d + 1, 9.0);
+    let gotc = box_slice(heap, d * d + 1, 9.0);
+    let parts = box_slice(heap, n / 256 + 3, 0.0);
+    borrow mut x as &!a in {
+        lref.gen(contents(a), n * d, seed, mode);
+    }
+    borrow x as &xr in {
+        borrow mut xc as &!b in {
+            var i = 0;
+            while i < n {
+                var j = 0;
+                while j < d {
+                    contents(b)[j * n + i] = contents(xr)[i * d + j];
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow xc as &xcr in {
+            borrow mut parts as &!pw in {
+                borrow mut want as &!ww in {
+                    lref.syrk(contents(xr), 0, d, 1, n, d, contents(ww), contents(pw));
+                }
+            }
+            borrow mut got as &!gw in {
+                bad = bad + syrk.syrk(heap, mat(0, n, d, d, 1), contents(xr), mat(0, d, d, d, 1), contents(gw));
+            }
+            borrow mut gotc as &!gw in {
+                bad = bad + syrk.syrk(heap, mat(0, n, d, 1, n), contents(xcr), mat(0, d, d, d, 1), contents(gw));
+            }
+        }
+    }
+    borrow want as &a in {
+        borrow got as &b in {
+            borrow gotc as &c in {
+                bad = bad + lref.same_bits(contents(a), contents(b), d * d) + lref.same_bits(contents(a), contents(c), d * d);
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, xc);
+    unbox_slice(heap, want);
+    unbox_slice(heap, got);
+    unbox_slice(heap, gotc);
+    unbox_slice(heap, parts);
+    return bad;
+}
+
+fn test_syrk_shapes[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var mode = 0;
+    while mode < 3 {
+        bad = bad + one(heap, 1, 1, 1, mode);
+        bad = bad + one(heap, 5, 3, 2, mode);
+        bad = bad + one(heap, 9, 4, 3, mode);
+        bad = bad + one(heap, 100, 5, 4, mode);
+        bad = bad + one(heap, 100, 8, 5, mode);
+        bad = bad + one(heap, 255, 21, 6, mode);
+        bad = bad + one(heap, 256, 20, 7, mode);
+        bad = bad + one(heap, 257, 20, 8, mode);
+        bad = bad + one(heap, 600, 9, 9, mode);
+        bad = bad + one(heap, 2049, 12, 10, mode);
+        bad = bad + one(heap, 4100, 7, 11, mode);
+        bad = bad + one(heap, 300, 64, 12, mode);
+        mode = mode + 1;
+    }
+    return bad;
+}
+
+fn test_syrk_refusals[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let x = box_slice(heap, 60, 1.0);
+    let c = box_slice(heap, 30, 7.0);
+    borrow x as &xr in {
+        borrow mut c as &!cw in {
+            if syrk.syrk(heap, mat(0, 10, 6, 6, 1), contents(xr), mat(0, 5, 6, 6, 1), contents(cw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+            if syrk.syrk(heap, mat(0, 10, 6, 6, 1), contents(xr), mat(0, 6, 6, 6, 1), contents(cw)) != refuse.tensor_bounds() {
+                bad = bad + 1;
+            }
+            if syrk.syrk(heap, mat(0, 11, 6, 6, 1), contents(xr), mat(0, 5, 5, 5, 1), contents(cw)) != refuse.tensor_bounds() {
+                bad = bad + 1;
+            }
+            // aliasing output (row stride smaller than the width)
+            if syrk.syrk(heap, mat(0, 10, 5, 5, 1), contents(xr), mat(0, 5, 5, 2, 1), contents(cw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+            // n = 0: zeros in the upper triangle, the lower one untouched
+            if syrk.syrk(heap, mat(0, 0, 5, 5, 1), contents(xr), mat(0, 5, 5, 5, 1), contents(cw)) != 0 {
+                bad = bad + 1;
+            }
+            if bits_of(contents(cw)[0]) != bits_of(0.0) || bits_of(contents(cw)[4]) != bits_of(0.0) || contents(cw)[5] != 7.0 {
+                bad = bad + 1;
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, c);
+    return bad;
+}
