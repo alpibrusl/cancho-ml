@@ -1,0 +1,55 @@
+module ml.rng;
+
+// SplitMix64 and derived streams (design.md section 6, docs/rng.md). Code of spike F (cancho-ml-forest
+// scripts/spikes/spike_f.cho), whose vectors are tests/core.cho's. State is one int. The shifts are arithmetic in cancho, so
+// each logical shift is a shift and a mask.
+//
+//     state' = state + 0x9E3779B97F4A7C15 (wrapping);  output = mix(state')
+//     derive(h, c) = mix((h ^ c) + 0x9E3779B97F4A7C15)       a stream per (kind, index) path: derive(derive(seed, kind), index)
+
+// 0x9E3779B97F4A7C15 as two's complement
+pub fn gold() -> [] int {
+    return 0 - 7046029254386353131;
+}
+
+// the SplitMix64 finaliser
+pub fn mix(z0: int) -> [] int {
+    var z = z0;
+    z = wrapping_mul(z ^ z >> 30 & 0x3FFFFFFFF, 0 - 4658895280553007687);
+    z = wrapping_mul(z ^ z >> 27 & 0x1FFFFFFFFF, 0 - 7723592293110705685);
+    return z ^ z >> 31 & 0x1FFFFFFFF;
+}
+
+// advance the state; the output for the new state is output(state)
+pub fn advance(s: int) -> [] int {
+    return wrapping_add(s, gold());
+}
+
+pub fn output(s: int) -> [] int {
+    return mix(s);
+}
+
+// a child stream's seed: derive(seed, kind), then derive(that, index)
+pub fn derive(h: int, c: int) -> [] int {
+    return mix(wrapping_add(h ^ c, gold()));
+}
+
+// (output >> 1) mod m, the draw of a bounded integer. m <= 0 answers 0 (no draw is made on an empty range).
+pub fn uniform(z: int, m: int) -> [] int {
+    if m <= 0 {
+        return 0;
+    }
+    return (z >> 1 & 0x7FFFFFFFFFFFFFFF) % m;
+}
+
+// a float in [-1, 1) from the top 53 bits of an output: exact (an integer below 2^53 times a power of two, minus 1)
+pub fn unit(z: int) -> [] float {
+    let m = z >> 11 & 0x1FFFFFFFFFFFFF;
+    return float_of(m) / 4503599627370496.0 - 1.0;
+}
+
+// element i of the data set of `seed` (the test and benchmark inputs): the unit float of output number i + 1 of the stream
+// that starts at `seed`, reached without stepping: the state after i + 1 advances is seed + (i + 1) * gold
+pub fn element(seed: int, i: int) -> [] float {
+    return unit(mix(wrapping_add(seed, wrapping_mul(i + 1, gold()))));
+}

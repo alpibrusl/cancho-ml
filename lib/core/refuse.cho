@@ -1,0 +1,132 @@
+module ml.refuse;
+
+// The refusals of the numeric core (design.md section 8): a code (an int, 0 is "no refusal"), a stable rule tag, an exit
+// code from the toolbox table (arguments 2, a limit or a parse failure 8) and a repair where one is safe. Every refusal in
+// lib/ answers one of these codes; tests/core.cho has a fixture for every one (and fails if a code has no tag).
+
+pub fn count() -> [] int {
+    return 11;
+}
+
+pub fn tensor_rank() -> [] int {
+    return 1;
+}
+
+pub fn tensor_shape() -> [] int {
+    return 2;
+}
+
+pub fn tensor_bounds() -> [] int {
+    return 3;
+}
+
+pub fn input_empty() -> [] int {
+    return 4;
+}
+
+pub fn too_many_rows() -> [] int {
+    return 5;
+}
+
+pub fn too_many_columns() -> [] int {
+    return 6;
+}
+
+pub fn too_many_cells() -> [] int {
+    return 7;
+}
+
+pub fn param_out_of_range() -> [] int {
+    return 8;
+}
+
+pub fn not_positive_definite() -> [] int {
+    return 9;
+}
+
+pub fn singular() -> [] int {
+    return 10;
+}
+
+pub fn threads() -> [] int {
+    return 11;
+}
+
+pub fn tag(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "ml.tensor.rank";
+    }
+    if code == 2 {
+        return "ml.tensor.shape";
+    }
+    if code == 3 {
+        return "ml.tensor.bounds";
+    }
+    if code == 4 {
+        return "ml.input.empty";
+    }
+    if code == 5 {
+        return "ml.input.too-many-rows";
+    }
+    if code == 6 {
+        return "ml.input.too-many-columns";
+    }
+    if code == 7 {
+        return "ml.input.too-many-cells";
+    }
+    if code == 8 {
+        return "ml.param.out-of-range";
+    }
+    if code == 9 {
+        return "ml.linalg.not-positive-definite";
+    }
+    if code == 10 {
+        return "ml.linalg.singular";
+    }
+    if code == 11 {
+        return "ml.param.threads";
+    }
+    return "";
+}
+
+// the toolbox exit code: arguments 2, a limit or a parse failure 8
+pub fn exit_code(code: int) -> [] int {
+    if code == 8 || code == 11 {
+        return 2;
+    }
+    if code >= 1 && code <= 10 {
+        return 8;
+    }
+    return 0;
+}
+
+pub fn repair(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "use a tensor of rank 1 to 4";
+    }
+    if code == 2 {
+        return "give every extent as an integer of at least 1, and reshape only a contiguous tensor to the same element count";
+    }
+    if code == 3 {
+        return "the offset, shape and strides must stay inside the data given beside the descriptor";
+    }
+    if code == 5 {
+        return "raise --max-rows, or fit on a row sample";
+    }
+    if code == 6 {
+        return "raise --max-columns, or drop columns";
+    }
+    if code == 7 {
+        return "raise --max-cells, or use fewer rows or columns";
+    }
+    if code == 8 {
+        return "see the allowed range of the parameter";
+    }
+    if code == 9 {
+        return "add a ridge to the diagonal, or scale the columns";
+    }
+    if code == 11 {
+        return "give a thread count of 1 to 64";
+    }
+    return "";
+}

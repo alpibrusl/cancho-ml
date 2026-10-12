@@ -1,0 +1,438 @@
+module linalg.tensor;
+
+import ml.refuse;
+
+// Tensor descriptors (docs/linalg.md section 3, design.md 3.1): offset, rank, shape and strides as plain ints, rank 1 to
+// R_MAX = 4. The elements are a separate [float] passed beside the descriptor. Every operation is a descriptor edit (no
+// copy). Unused axes hold extent 1 and stride 0, always, so that equal tensors have equal fields.
+//
+// No operation traps on any ints: products are guarded against a ceiling of 2^60 before they are made, so that every sum of
+// four of them (and the offset) stays inside int. Refusals are codes of ml.refuse (tensor_rank, tensor_shape, tensor_bounds).
+// A zero extent is allowed (an empty tensor: reductions over it answer 0.0); a negative one is refused. A negative stride
+// is allowed (a reversed axis); `check` is what ties a descriptor to the length of the data.
+
+pub struct Tensor {
+    off: int,
+    rank: int,
+    s0: int,
+    s1: int,
+    s2: int,
+    s3: int,
+    t0: int,
+    t1: int,
+    t2: int,
+    t3: int,
+}
+
+// a descriptor or the code of the refusal
+pub enum Made {
+    Ok(Tensor),
+    Err(int),
+}
+
+pub fn rmax() -> [] int {
+    return 4;
+}
+
+// the product guard: no product, offset or element count is allowed to exceed this
+pub fn ceiling() -> [] int {
+    return 1152921504606846976;
+}
+
+pub fn shape_at(t: Tensor, a: int) -> [] int {
+    if a == 0 {
+        return t.s0;
+    }
+    if a == 1 {
+        return t.s1;
+    }
+    if a == 2 {
+        return t.s2;
+    }
+    if a == 3 {
+        return t.s3;
+    }
+    return 1;
+}
+
+pub fn stride_at(t: Tensor, a: int) -> [] int {
+    if a == 0 {
+        return t.t0;
+    }
+    if a == 1 {
+        return t.t1;
+    }
+    if a == 2 {
+        return t.t2;
+    }
+    if a == 3 {
+        return t.t3;
+    }
+    return 0;
+}
+
+// |v|, or ceiling + 1 when |v| is beyond the ceiling (so that 0 - v never overflows, whatever the int)
+fn abs_c(v: int) -> [] int {
+    if v > ceiling() || v < 0 - ceiling() {
+        return ceiling() + 1;
+    }
+    if v < 0 {
+        return 0 - v;
+    }
+    return v;
+}
+
+// A descriptor that is a plain struct can hold any ints (its fields are public): is it inside the ranges `make` produces?
+// rank 1..4, extents in [0, ceiling], strides and offset in [-ceiling, ceiling]. Every operation checks this first, so no
+// arithmetic below can overflow.
+pub fn sane(t: Tensor) -> [] bool {
+    let c = ceiling();
+    if t.rank < 1 || t.rank > 4 {
+        return false;
+    }
+    if t.s0 < 0 || t.s0 > c || t.s1 < 0 || t.s1 > c || t.s2 < 0 || t.s2 > c || t.s3 < 0 || t.s3 > c {
+        return false;
+    }
+    if abs_c(t.t0) > c || abs_c(t.t1) > c || abs_c(t.t2) > c || abs_c(t.t3) > c || abs_c(t.off) > c {
+        return false;
+    }
+    return true;
+}
+
+// 0 if a * b stays within the ceiling (a >= 0, b >= 0), 1 if not
+fn too_big(a: int, b: int) -> [] int {
+    if a == 0 || b == 0 {
+        return 0;
+    }
+    if a > ceiling() / b {
+        return 1;
+    }
+    return 0;
+}
+
+// The one constructor: rank 1..4, extents 0 or more, strides any int in [-2^60, 2^60]; entries of unused axes are ignored
+// and normalised. Answers Err(tensor_rank) or Err(tensor_shape) (a negative extent, an element count over the ceiling).
+pub fn make(off: int, rank: int, s0: int, s1: int, s2: int, s3: int, t0: int, t1: int, t2: int, t3: int) -> [] Made {
+    if rank < 1 || rank > 4 {
+        return Made::Err(refuse.tensor_rank());
+    }
+    var a0 = s0;
+    var a1 = s1;
+    var a2 = s2;
+    var a3 = s3;
+    var b0 = t0;
+    var b1 = t1;
+    var b2 = t2;
+    var b3 = t3;
+    if rank < 4 {
+        a3 = 1;
+        b3 = 0;
+    }
+    if rank < 3 {
+        a2 = 1;
+        b2 = 0;
+    }
+    if rank < 2 {
+        a1 = 1;
+        b1 = 0;
+    }
+    if a0 < 0 || a1 < 0 || a2 < 0 || a3 < 0 {
+        return Made::Err(refuse.tensor_shape());
+    }
+    // the element count, guarded: every partial product below the ceiling
+    var count = a0;
+    if too_big(count, a1) == 1 {
+        return Made::Err(refuse.tensor_shape());
+    }
+    count = count * a1;
+    if too_big(count, a2) == 1 {
+        return Made::Err(refuse.tensor_shape());
+    }
+    count = count * a2;
+    if too_big(count, a3) == 1 {
+        return Made::Err(refuse.tensor_shape());
+    }
+    // a stride or an offset beyond the ceiling can never address real data
+    let lim = ceiling();
+    if b0 > lim || b0 < 0 - lim || b1 > lim || b1 < 0 - lim || b2 > lim || b2 < 0 - lim || b3 > lim || b3 < 0 - lim || off > lim || off < 0 - lim {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    return Made::Ok(Tensor { off: off, rank: rank, s0: a0, s1: a1, s2: a2, s3: a3, t0: b0, t1: b1, t2: b2, t3: b3 });
+}
+
+// a vector of n elements, `stride` apart, starting at off
+pub fn vector(off: int, n: int, stride: int) -> [] Made {
+    return make(off, 1, n, 1, 1, 1, stride, 0, 0, 0);
+}
+
+// a row-major (rows x cols) matrix from off, with row stride `cols`
+pub fn matrix(off: int, rows: int, cols: int) -> [] Made {
+    return make(off, 2, rows, cols, 1, 1, cols, 1, 0, 0);
+}
+
+// a matrix with explicit strides (a view of a bigger matrix, or a transposed one)
+pub fn matrix_strided(off: int, rows: int, cols: int, rs: int, cs: int) -> [] Made {
+    return make(off, 2, rows, cols, 1, 1, rs, cs, 0, 0);
+}
+
+// number of elements (0 if any extent is 0); -1 for a descriptor that is not sane or whose count passes the ceiling
+pub fn count(t: Tensor) -> [] int {
+    if sane(t) == false {
+        return 0 - 1;
+    }
+    if t.s0 == 0 || t.s1 == 0 || t.s2 == 0 || t.s3 == 0 {
+        return 0;
+    }
+    if too_big(t.s0, t.s1) == 1 || too_big(t.s0 * t.s1, t.s2) == 1 || too_big(t.s0 * t.s1 * t.s2, t.s3) == 1 {
+        return 0 - 1;
+    }
+    return t.s0 * t.s1 * t.s2 * t.s3;
+}
+
+// The smallest and largest element offset the descriptor addresses, as (lo, hi); (0, -1) for an empty tensor. Products are
+// guarded (extent - 1 times |stride| below the ceiling) so nothing overflows; Err(tensor_bounds) otherwise.
+fn reach_lo(t: Tensor) -> [] int {
+    var lo = t.off;
+    var a = 0;
+    while a < t.rank {
+        let st = stride_at(t, a);
+        if st < 0 {
+            lo = lo + (shape_at(t, a) - 1) * st;
+        }
+        a = a + 1;
+    }
+    return lo;
+}
+
+fn reach_hi(t: Tensor) -> [] int {
+    var hi = t.off;
+    var a = 0;
+    while a < t.rank {
+        let st = stride_at(t, a);
+        if st > 0 {
+            hi = hi + (shape_at(t, a) - 1) * st;
+        }
+        a = a + 1;
+    }
+    return hi;
+}
+
+// 0 if every element offset of t lies in [0, len), else tensor_bounds. This is the check every kernel entry makes first.
+pub fn check(t: Tensor, len: int) -> [] int {
+    if t.rank < 1 || t.rank > 4 {
+        return refuse.tensor_rank();
+    }
+    if t.s0 < 0 || t.s1 < 0 || t.s2 < 0 || t.s3 < 0 {
+        return refuse.tensor_shape();
+    }
+    if len < 0 {
+        return refuse.tensor_bounds();
+    }
+    // an empty tensor addresses nothing
+    if t.s0 == 0 || t.s1 == 0 || t.s2 == 0 || t.s3 == 0 {
+        return 0;
+    }
+    if sane(t) == false {
+        return refuse.tensor_bounds();
+    }
+    // the element count, and each (extent - 1) * |stride|, guarded; then the sums below cannot overflow
+    if too_big(t.s0, t.s1) == 1 || too_big(t.s0 * t.s1, t.s2) == 1 || too_big(t.s0 * t.s1 * t.s2, t.s3) == 1 {
+        return refuse.tensor_shape();
+    }
+    var a = 0;
+    while a < t.rank {
+        if too_big(shape_at(t, a) - 1, abs_c(stride_at(t, a))) == 1 {
+            return refuse.tensor_bounds();
+        }
+        a = a + 1;
+    }
+    if reach_lo(t) < 0 || reach_hi(t) >= len {
+        return refuse.tensor_bounds();
+    }
+    return 0;
+}
+
+// a[lo..hi) of axis `axis`: a descriptor edit. tensor_shape for a bad axis, tensor_bounds for a range outside the axis.
+pub fn slice(t: Tensor, axis: int, lo: int, hi: int) -> [] Made {
+    if sane(t) == false {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    if axis < 0 || axis >= t.rank {
+        return Made::Err(refuse.tensor_shape());
+    }
+    let ext = shape_at(t, axis);
+    if lo < 0 || hi < lo || hi > ext {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    let st = stride_at(t, axis);
+    // lo * st: lo < ext and the descriptor is guarded, but a descriptor not made by `make` may not be: guard it
+    if too_big(lo, abs_c(st)) == 1 {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    let off = t.off + lo * st;
+    var n0 = t.s0;
+    var n1 = t.s1;
+    var n2 = t.s2;
+    var n3 = t.s3;
+    if axis == 0 {
+        n0 = hi - lo;
+    }
+    if axis == 1 {
+        n1 = hi - lo;
+    }
+    if axis == 2 {
+        n2 = hi - lo;
+    }
+    if axis == 3 {
+        n3 = hi - lo;
+    }
+    return make(off, t.rank, n0, n1, n2, n3, t.t0, t.t1, t.t2, t.t3);
+}
+
+// swap the two axes of a matrix; for rank r the axes 0..r-1 are reversed
+pub fn transpose(t: Tensor) -> [] Made {
+    if sane(t) == false {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    if t.rank == 1 {
+        return Made::Ok(t);
+    }
+    if t.rank == 2 {
+        return make(t.off, 2, t.s1, t.s0, 1, 1, t.t1, t.t0, 0, 0);
+    }
+    if t.rank == 3 {
+        return make(t.off, 3, t.s2, t.s1, t.s0, 1, t.t2, t.t1, t.t0, 0);
+    }
+    return make(t.off, 4, t.s3, t.s2, t.s1, t.s0, t.t3, t.t2, t.t1, t.t0);
+}
+
+// is the tensor row-major contiguous (an axis of extent 1 may have any stride); false for an insane descriptor
+pub fn contiguous(t: Tensor) -> [] bool {
+    if sane(t) == false {
+        return false;
+    }
+    var want = 1;
+    var a = t.rank - 1;
+    while a >= 0 {
+        let ext = shape_at(t, a);
+        if ext != 1 && stride_at(t, a) != want {
+            return false;
+        }
+        if too_big(want, ext) == 1 {
+            return false;
+        }
+        want = want * ext;
+        a = a - 1;
+    }
+    return true;
+}
+
+// the same elements in a new shape; only a contiguous tensor, and only the same element count
+pub fn reshape(t: Tensor, rank: int, n0: int, n1: int, n2: int, n3: int) -> [] Made {
+    if sane(t) == false {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    if rank < 1 || rank > 4 {
+        return Made::Err(refuse.tensor_rank());
+    }
+    if n0 < 0 || n1 < 0 || n2 < 0 || n3 < 0 {
+        return Made::Err(refuse.tensor_shape());
+    }
+    if contiguous(t) == false {
+        return Made::Err(refuse.tensor_shape());
+    }
+    var m0 = n0;
+    var m1 = n1;
+    var m2 = n2;
+    var m3 = n3;
+    if rank < 4 {
+        m3 = 1;
+    }
+    if rank < 3 {
+        m2 = 1;
+    }
+    if rank < 2 {
+        m1 = 1;
+    }
+    if too_big(m0, m1) == 1 || too_big(m0 * m1, m2) == 1 || too_big(m0 * m1 * m2, m3) == 1 {
+        return Made::Err(refuse.tensor_shape());
+    }
+    if count(t) < 0 || m0 * m1 * m2 * m3 != count(t) {
+        return Made::Err(refuse.tensor_shape());
+    }
+    // row-major strides of the new shape
+    let r3 = 1;
+    let r2 = m3;
+    let r1 = m3 * m2;
+    let r0 = m3 * m2 * m1;
+    return make(t.off, rank, m0, m1, m2, m3, r0, r1, r2, r3);
+}
+
+// give an axis of extent 1 the extent n by stride 0 (broadcasting); tensor_shape if the axis is not of extent 1
+pub fn broadcast(t: Tensor, axis: int, n: int) -> [] Made {
+    if sane(t) == false {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    if axis < 0 || axis >= t.rank || n < 0 || shape_at(t, axis) != 1 {
+        return Made::Err(refuse.tensor_shape());
+    }
+    var n0 = t.s0;
+    var n1 = t.s1;
+    var n2 = t.s2;
+    var n3 = t.s3;
+    var b0 = t.t0;
+    var b1 = t.t1;
+    var b2 = t.t2;
+    var b3 = t.t3;
+    if axis == 0 {
+        n0 = n;
+        b0 = 0;
+    }
+    if axis == 1 {
+        n1 = n;
+        b1 = 0;
+    }
+    if axis == 2 {
+        n2 = n;
+        b2 = 0;
+    }
+    if axis == 3 {
+        n3 = n;
+        b3 = 0;
+    }
+    return make(t.off, t.rank, n0, n1, n2, n3, b0, b1, b2, b3);
+}
+
+// row i of a rank-2 tensor, as a vector
+pub fn row(t: Tensor, i: int) -> [] Made {
+    if sane(t) == false {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    if t.rank != 2 {
+        return Made::Err(refuse.tensor_rank());
+    }
+    if i < 0 || i >= t.s0 {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    if too_big(i, abs_c(t.t0)) == 1 {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    return make(t.off + i * t.t0, 1, t.s1, 1, 1, 1, t.t1, 0, 0, 0);
+}
+
+// column j of a rank-2 tensor, as a vector
+pub fn column(t: Tensor, j: int) -> [] Made {
+    if sane(t) == false {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    if t.rank != 2 {
+        return Made::Err(refuse.tensor_rank());
+    }
+    if j < 0 || j >= t.s1 {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    if too_big(j, abs_c(t.t1)) == 1 {
+        return Made::Err(refuse.tensor_bounds());
+    }
+    return make(t.off + j * t.t1, 1, t.s0, 1, 1, 1, t.t0, 0, 0, 0);
+}
