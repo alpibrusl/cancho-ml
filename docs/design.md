@@ -285,3 +285,11 @@ trailer (section 4.1, corrected in place), section 7's row for `ml` has the labe
 slice added and the ones nothing reaches yet. What it does not settle: the speed factor (section 9), the second machine for D2, the
 shared reader (section 10: cancho-table is not a package, so the slice has a reader of its own, `tools/ml/csv.cho`, until it is).
 
+
+## 14. Stage M7: decision trees and random forests (library only)
+
+`docs/models-tree.md` holds the algorithm, the numeric decisions (exact integer Gini, sequential float regression sums in a
+fixed row order), the limits and tags, the missing-value rule (a learned default side), the tensor records of the model
+section, the gates and the timing protocol; it was written before the code. It is a library under `lib/models/tree/`; the
+command line does not call it yet. Its rule tags (`ml.limit.depth`, `ml.limit.nodes`, `ml.label.*`, `ml.input.non-finite`,
+`ml.model.truncated`, `ml.model.malformed`) are those of section 8.
