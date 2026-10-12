@@ -15,11 +15,14 @@ from harness import fix_checksum, sections, set_bytes
 
 REG = "id,x,y\n1,2.5,10\n2,3.5,20\n3,1.0,30\n4,0.25,41\n"
 CLS = "a,b,lab\n1,2,0\n2,3,1\n3,4,1\n4,5,1\n5,6,0\n"
+FLT = "id,x,y\n1,2.5,1e5\n2,3.5e0,0.1\n3,.25,2.75\n"
 FIT_REG = ["fit", "--target", "y", "--output", "m.cml", "reg.csv"]
+FIT_FLT = ["fit", "--float", "id", "--target", "y", "--output", "f.cml", "flt.csv"]
 FIT_CLS = ["fit", "--task", "classification", "--target", "lab", "--output", "c.cml", "cls.csv"]
 BASE = [("write", "reg.csv", REG), ("write", "cls.csv", CLS)]
 WITH_MODEL = BASE + [("fit", "--target", "y", "--output", "m.cml", "reg.csv")]
 WITH_CLS = BASE + [("fit", "--task", "classification", "--target", "lab", "--output", "c.cml", "cls.csv")]
+WITH_FLT = BASE + [("write", "flt.csv", FLT), ("fit", "--float", "id", "--target", "y", "--output", "f.cml", "flt.csv")]
 
 
 def ok(data=None, exit=0, **kw):
@@ -90,6 +93,24 @@ CASES = [
     case("eval-text", ["eval", "--model-file", "m.cml", "--format", "text", "--drop", "id", "reg.csv"],
          ok(None, stdout_starts="sse 530.750000000000\nrmse 11.519006\n"),
          setup=BASE + [("fit", "--drop", "id", "--target", "y", "--output", "m.cml", "reg.csv")]),
+    case("fit-float-regression", FIT_FLT,
+         ok({"model": "constant", "task": "regression", "rows": 3, "columns": 3, "target": "y", "path": "f.cml", "written": True,
+             "summary": {"mean": "33334.28333333333"}}), setup=BASE + [("write", "flt.csv", FLT)]),
+    case("predict-float", ["predict", "--model-file", "f.cml", "--limit", "2", "flt.csv"],
+         ok({"columns": ["prediction"], "rows": [["33334.28333333333"], ["33334.28333333333"]], "row_count": 2, "total_rows": 3,
+             "truncated": True}), setup=WITH_FLT),
+    case("predict-float-model-takes-an-int-column", ["predict", "--model-file", "f.cml", "i.csv"], ok({"row_count": 2}),
+         setup=WITH_FLT + [("write", "i.csv", "id,x\n1,2\n2,3\n")]),
+    case("eval-float", ["eval", "--model-file", "f.cml", "flt.csv"],
+         ok({"rows": 3, "metrics": {"rmse": "47139.78034007536", "sse": "6666476671.531667", "prediction": "33334.28333333333"}}),
+         setup=WITH_FLT),
+    case("eval-float-text", ["eval", "--model-file", "f.cml", "--format", "text", "flt.csv"],
+         ok(None, stdout_starts="sse 6666476671.531667\nrmse 47139.78034007536\n"), setup=WITH_FLT),
+    case("eval-float-model-on-int-data", ["eval", "--model-file", "f.cml", "i.csv"],
+         ok({"metrics": {"rmse": "47139.78034007536"}}), setup=WITH_FLT + [("write", "i.csv", "id,x,y\n1,2.5,100000\n2,3.5,0.1\n3,0.25,2.75\n")]),
+    case("fit-quoted-and-crlf", ["fit", "--drop", "t", "--target", "y", "--output", "q.cml", "q.csv"],
+         ok({"rows": 2, "columns": 2, "summary": {"mean": "3.0"}}),
+         setup=BASE + [("write", "q.csv", '\ufeffid,t,y\r\n"1","a,b\nc ""d""","1.5e0"\r\n\r\n2,"x",4.5\r\n')]),
     # ------------------------------------------------------------------ arguments
     case("args-unknown-flag", ["fit", "--bogus", "1", "reg.csv"], bad("args.unknown-flag")),
     case("args-missing-value", ["fit", "reg.csv", "--target"], bad("args.missing-value")),
@@ -163,14 +184,13 @@ CASES = [
          setup=[("write", "reg.csv", "id,x,y\n1,,10\n2,3,20\n")]),
     case("ml-input-non-finite", FIT_REG, bad("ml.input.non-finite"), setup=[("write", "reg.csv", "id,x,y\n1,NaN,10\n2,3,20\n")]),
     case("ml-input-non-finite-inf", FIT_REG, bad("ml.input.non-finite"), setup=[("write", "reg.csv", "id,x,y\n1,-inf,10\n")]),
-    case("ml-input-unsupported-type-exponent", FIT_REG, bad("ml.input.unsupported-type"),
-         setup=[("write", "reg.csv", "id,x,y\n1,1e5,10\n")]),
-    case("ml-input-unsupported-type-wide", FIT_REG, bad("ml.input.unsupported-type"),
-         setup=[("write", "reg.csv", "id,x,y\n1,0.1234567890123,10\n")]),
-    case("ml-input-unsupported-type-column", FIT_REG, bad("ml.input.unsupported-type"),
-         setup=[("write", "reg.csv", "id,x,y\n1,123456789012,10\n2,0.5,20\n")]),
-    case("ml-input-unsupported-csv", FIT_REG, bad("ml.input.unsupported-csv"),
-         setup=[("write", "reg.csv", 'id,x,y\n1,"2",10\n')]),
+    case("ml-input-non-finite-range", FIT_REG, bad("ml.input.non-finite"), setup=[("write", "reg.csv", "id,x,y\n1,1e999,10\n")]),
+    case("ml-input-non-numeric-underflow", FIT_REG, bad("ml.input.non-numeric"), setup=[("write", "reg.csv", "id,x,y\n1,1e-999,10\n")]),
+    case("ml-input-non-numeric-hex", FIT_REG, bad("ml.input.non-numeric"), setup=[("write", "reg.csv", "id,x,y\n1,0x10,10\n")]),
+    case("parse-csv-bad-quote", FIT_REG, bad("parse.csv-bad-quote"), setup=[("write", "reg.csv", 'id,x,y\n1,"2"x,10\n')]),
+    case("parse-csv-unterminated-quote", FIT_REG, bad("parse.csv-unterminated-quote"), setup=[("write", "reg.csv", 'id,x,y\n1,"2,10\n')]),
+    case("ml-metric-undefined", ["eval", "--model-file", "big.cml", "big.csv"], bad("ml.metric.undefined"),
+         setup=BASE + [("write", "big.csv", "y\n1e200\n-1e200\n"), ("fit", "--target", "y", "--output", "big.cml", "big.csv")]),
     case("ml-input-duplicate-column", FIT_REG, bad("ml.input.duplicate-column"), setup=[("write", "reg.csv", "id,x,x,y\n1,2,3,4\n")]),
     case("ml-input-empty-column-name", FIT_REG, bad("ml.input.duplicate-column"), setup=[("write", "reg.csv", "id,,y\n1,2,3\n")]),
     case("ml-input-unknown-column", ["fit", "--target", "nope", "--output", "m.cml", "reg.csv"], bad("ml.input.unknown-column")),

@@ -47,7 +47,7 @@ fn place[&a](acc: &!a [int], base: int, m: int, sh: int) -> [] int {
     let r = sh % 26;
     var k = 0;
     while k < 3 {
-        let c = m >> (26 * k) & mask();
+        let c = m >> 26 * k & mask();
         let v = c << r;
         acc[base + q + k] = acc[base + q + k] + (v & mask());
         acc[base + q + k + 1] = acc[base + q + k + 1] + (v >> 26);
@@ -136,7 +136,7 @@ pub fn add_square[&a](acc: &!a [int], y: int, p: int) -> [] int {
 }
 
 fn bit_at[&a](acc: &a [int], b: int) -> [] int {
-    return acc[b / 26] >> (b % 26) & 1;
+    return acc[b / 26] >> b % 26 & 1;
 }
 
 // The sum, rounded once to the nearest double (ties to even): (value, 0), or (0.0, 1) when it is beyond the largest double.

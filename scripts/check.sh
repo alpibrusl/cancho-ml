@@ -8,9 +8,13 @@ cd "$(dirname "$0")/.."
 # absolute, because the conformance tests run from tests/conformance
 CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
 export CANCHO
+# RD1: the cancho-table modules the reader compiles are the pinned ones and are not copied here (LOCAL-DEV, docs/reader.md section 1.3)
+sh scripts/check_table_pin.sh
 $CANCHO fmt --check lib tests tools
 $CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/core.cho
 $CANCHO test --std lib/core/exact.cho tests/exact.cho
+$CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/matrix.cho
+$CANCHO test --std lib/core/fsq.cho tests/fsq.cho
 for T in t_dot t_gemv t_syrk t_chol t_gemm t_fuzz; do
   $CANCHO test --std lib/core/*.cho lib/linalg/*.cho tests/lref.cho tests/$T.cho
 done
@@ -22,6 +26,11 @@ python3 scripts/oracle_linalg.py --suite
 sh scripts/gate_par.sh
 # stage 2: the command line. Package mode: `cancho install` fetches the pinned contract modules into build/deps (not committed).
 $CANCHO build --bin ml
+# the reader's gates (docs/reader.md section 5): reader-check against Python on millions of cells, the matrix and bitmap, the limits,
+# the CSV shape and the fuzz
+sh scripts/build_reader.sh
+python3 scripts/gate_reader.py all
+python3 scripts/mutants_reader.py --check
 python3 scripts/schemas.py --check
 python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')

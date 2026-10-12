@@ -1,5 +1,5 @@
-"""H1 -- no fake models. `introspect` lists what is built; asking for another is a refusal; a float column is refused, never
-read approximately; the decimals that are accepted are read exactly."""
+"""H1 -- no fake models. `introspect` lists what is built; asking for another is a refusal; a float column is read to the nearest
+double, never approximately; the decimals that are accepted are read exactly."""
 
 import unittest
 
@@ -30,21 +30,31 @@ class Honesty(unittest.TestCase):
         self.sb.run("fit", "--target", "y", "--output", "m.cml", "reg.csv")
         self.assertIn(b"model kind=constant task=regression\n", self.sb.read("m.cml"))
 
-    def test_float_text_is_refused_not_approximated(self):
-        for cell in ("1e5", "1E-3", "2.5e0", "1e", "0.1234567890123", "123456789012.5", "1234567890123", "-0.00000000000001"):
+    def test_float_text_is_read_exactly_not_approximated(self):
+        # the nearest double, ties to even, shortest decimal back (cancho-table's reader, docs/reader.md): never a prefix, never a refusal
+        for cell, mean in (("1e5", "100000.0"), ("1E-3", "0.001"), ("2.5e0", "2.5"), ("0.1234567890123", "0.1234567890123"),
+                           ("123456789012.5", "123456789012.5"), ("1234567890123", "1234567890123.0"), ("-0.00000000000001", "-1e-14"),
+                           ("9007199254740993", "9007199254740992.0"), ("0.1", "0.1")):
+            self.sb.write("f.csv", "y\n%s\n" % cell)
+            r = self.sb.run("fit", "--overwrite", "--float", "y", "--target", "y", "--output", "m.cml", "f.csv")
+            self.assertEqual(r.status, 0, (cell, r))
+            self.assertEqual(r.data()["summary"]["mean"], mean, cell)
+        for cell in ("1e", "0x10", "1_0", " 1", "1e5.5", "e5"):
             self.sb.write("f.csv", "y\n%s\n" % cell)
             r = self.sb.run("fit", "--overwrite", "--target", "y", "--output", "m.cml", "f.csv")
-            self.assertIn(r.first_rule(), ("ml.input.unsupported-type", "ml.input.non-numeric"), (cell, r))
+            self.assertEqual(r.first_rule(), "ml.input.non-numeric", (cell, r))
             self.assertEqual(r.status, 8)
-        for cell in ("1e5", "0.1234567890123"):
-            self.sb.write("f.csv", "y\n%s\n" % cell)
-            r = self.sb.run("fit", "--overwrite", "--target", "y", "--output", "m.cml", "f.csv")
-            self.assertEqual(r.first_rule(), "ml.input.unsupported-type")
 
-    def test_the_hint_names_the_missing_dependency(self):
-        self.sb.write("f.csv", "y\n1e5\n")
-        r = self.sb.run("fit", "--target", "y", "--output", "m.cml", "f.csv")
-        self.assertIn("float reader", r.error()["hint"])
+    def test_a_model_of_ints_and_decimals_is_byte_for_byte_what_the_cli_slice_wrote(self):
+        # docs/cli.md section 2.4: this exact file, this exact command, written by the commit before the float reader
+        self.sb.write("sales.csv", "id,x,y\n1,2.5,10\n2,3.5,20\n3,1.0,30\n4,0.25,41\n")
+        r = self.sb.run("fit", "--target", "y", "--output", "sales.cml", "sales.csv")
+        self.assertEqual(r.data()["bytes"], 316)
+        self.assertEqual(r.data()["sha256"], "9b6a34144d1351f141f1ed2f1238f053afef57d815f29d047892239b63afbd05")
+
+    def test_the_unsupported_type_rule_is_gone(self):
+        self.assertNotIn("ml.input.unsupported-type", [r["rule"] for r in introspect()["rules"]])
+        self.assertNotIn("ml.input.unsupported-csv", [r["rule"] for r in introspect()["rules"]])
 
     def test_decimals_are_exact(self):
         for cell, mean in (("0.1", "0.100000"), ("0.30000000", "0.300000"), ("-0.000001", "-0.000001"), ("007", "7.000000"),

@@ -121,8 +121,31 @@ MUTANTS = [
     # ------------------------------------------------------------------ H1: honesty
     M("h1-a-model-in-the-table-that-is-not-built", "H1", "logreg is a choice of --model, with no implementation",
       [("tools/ml/spec.cho", "model||choice:constant|", "model||choice:constant/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
-    M("h1-an-exponent-is-read-as-a-prefix", "H1", "1e5 is read as 1", [("tools/ml/csv.cho", "return (4, 0, 0, 0);", "return (0, 1, 0, 1);", 1)],
+    M("h1-an-exponent-is-read-as-a-prefix", "H1", "1e5 is read as 1", [("tools/ml/csvcell.cho", "return (4, 0, 0, 0);", "return (0, 1, 0, 1);", 1)],
       ["test_honesty"]),
+    # ------------------------------------------------------------------ RD7: the constant model on floats (docs/reader.md section 5)
+    M("rd7-mean-divides-by-n-plus-1", "RD7", "the float mean is the exact sum over n + 1",
+      [("tools/ml/verbs.cho", "facc.mean_key(fw, 0, n)", "facc.mean_key(fw, 0, n + 1)", 1)], ["test_float"]),
+    M("rd7-sum-is-not-exact", "RD7", "the float sum drops the low half of every double (a float accumulator's rounding, in effect)",
+      [("tools/ml/csv.cho", "facc.add_bits(fv, 0, csvcell.bits_of_key(csvcell.key_of(kind, m, frac, key)));", "facc.add_bits(fv, 0, csvcell.bits_of_key(csvcell.key_of(kind, m, frac, key)) & (0 - 4096));", 1)], ["test_float"]),
+    M("rd7-sse-carry", "RD7", "the square of a difference is carried in 25 bits, not 26",
+      [("lib/core/fsq.cho", "        acc[352 + i] = v & mask();\n        carry = v >> 26;", "        acc[352 + i] = v & mask();\n        carry = v >> 25;", 1)], ["test_float"]),
+    M("rd7-sse-rounds-half-up", "RD7", "the exact sum of squares is rounded half up, not half to even",
+      [("lib/core/fsq.cho", "if guard == 1 && (sticky || mant & 1 == 1) {", "if guard == 1 {", 1)], ["test_float"]),
+    M("rd7-sse-ignores-the-sticky-bit", "RD7", "a guard bit set and bits below it set is read as an exact tie",
+      [("lib/core/fsq.cho", "if guard == 1 && (sticky || mant & 1 == 1) {", "if guard == 1 && mant & 1 == 1 {", 1)], ["test_float"]),
+    M("rd7-rmse-from-two-roots", "RD7", "rmse is sqrt(sse) / sqrt(n)",
+      [("tools/ml/verbs.cho", "let rmse = sqrt(sse / float_of(rows));", "let rmse = sqrt(sse) / sqrt(float_of(rows));", 1)], ["test_float"]),
+    M("rd7-sse-against-a-neighbour-of-the-mean", "RD7", "the squared errors are taken against the double above the mean",
+      [("tools/ml/csv.cho", "fsq.add_square(acc, csvcell.bits_of_key(csvcell.key_of(kind, m, frac, key)), pred);", "fsq.add_square(acc, csvcell.bits_of_key(csvcell.key_of(kind, m, frac, key)), pred + 1);", 1)], ["test_float"]),
+    M("rd7-float-column-fits-an-int-model", "RD7", "an int model column accepts float data",
+      [("tools/ml/verbs.cho", "    if mfile.type_of(mo, i) == 0 {\n        return k == 1;", "    if mfile.type_of(mo, i) == 0 {\n        return true;", 1)], ["test_float"]),
+    M("rd7-int-model-bytes-change", "RD7", "a model of ints and decimals writes a seed of 1 (its bytes are no longer the CLI slice's)",
+      [("tools/ml/mfile.cho", "    me = put64(heap, me, 0);\n    me = put32(heap, me, 0);", "    me = put64(heap, me, 1);\n    me = put32(heap, me, 0);", 1)], ["test_honesty"]),
+    M("rd7-float-target-as-class-label", "RD7", "a float target is accepted as a class label",
+      [("tools/ml/verbs.cho", "} else if o.task == 2 && csv.kind(sr, csv.tcol(sr)) != 1 {", "} else if o.task == 2 && csv.kind(sr, csv.tcol(sr)) == 0 {", 1)], ["test_float"]),
+    M("rd7-float-model-kind-checked-as-int", "RD7", "a float regression model file is accepted with an int target column",
+      [("tools/ml/mfile.cho", "if types[target] != 2 || s[1] >> 52 & 2047 == 2047 {", "if s[1] >> 52 & 2047 == 2047 {", 1)], ["test_model_file"]),
 ]
 
 
@@ -152,9 +175,14 @@ def apply_edits(tree, m, strict=True):
     return problems
 
 
+def table_sources():
+    t = pathlib.Path(os.environ.get("CANCHO_TABLE", str(ROOT.parent / "cancho-table-main"))) / "tools" / "table"
+    return [str(t / (m + ".cho")) for m in ("pow5", "dec", "flt", "query", "facc", "reader")]
+
+
 def build(tree):
-    files = (sorted(glob.glob(str(tree / "lib/core/*.cho"))) + sorted(glob.glob(str(tree / "build/deps/*.cho"))) +
-             [str(tree / "generated/ml/built.cho")] + sorted(glob.glob(str(tree / "tools/ml/*.cho"))))
+    files = (sorted(glob.glob(str(tree / "lib/core/*.cho"))) + [str(tree / "lib/linalg/tensor.cho")] + sorted(glob.glob(str(tree / "build/deps/*.cho"))) +
+             [str(tree / "generated/ml/built.cho")] + sorted(glob.glob(str(tree / "tools/ml/*.cho"))) + table_sources())
     out = tree / "build" / "ml"
     p = subprocess.run([compiler(), "build", "--std", *files, "-o", str(out)], capture_output=True, text=True, cwd=tree)
     return out if p.returncode == 0 else None, p.stdout + p.stderr

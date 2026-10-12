@@ -32,7 +32,7 @@ catch); a survivor is listed with its reason in section 7.
 | O1 | **Oracle.** The model is real and right: `fit`, `predict` and `eval` agree, value for value, with an exact-rational oracle in Python (`fractions.Fraction`) on seeded data that includes values whose sums leave 64 bits. | `test_oracle.py` | mean divided by n-1; tie broken the other way; rounding of the prediction changed; a carry dropped in the exact sum; accuracy counted wrongly; eval using the wrong scale |
 | D1 | **Determinism.** The same input and plan give the same model bytes, whatever the working directory, the spelling of the path or the number of repetitions; the same command gives the same stdout bytes. If a `--threads` flag ever appears in the table, the test runs it at 1, 2, 8 and 64 and compares bytes; today there is none and the test says so. | `test_determinism.py` | a stand-in binary whose bytes depend on a `--threads` value (the test must fail on it) |
 | A1 | **Authority.** `scripts/manifest.py` derives the authority with `cancho authority`, writes `manifests/ml.authority.json` and `generated/ml/built.cho`, and `--check` fails if the committed manifest, the embedded one or the binary's `introspect` differ from a fresh derivation, or if a derived label is outside the ceiling of `tools.toml`. | `test_authority.py`, `scripts/manifest.py --check` | a mutant that adds a capability (a file write by path, a `Clock`, `Ffi`) must fail the check |
-| H1 | **Honesty.** the `--model` choice list is exactly the built models; asking for another is `args.bad-value`; a float column is refused (`ml.input.unsupported-type`), never read approximately. | `test_honesty.py` | a model name added to the table without an implementation |
+| H1 | **Honesty.** the `--model` choice list is exactly the built models; asking for another is `args.bad-value`; a float column is read to the nearest double by cancho-table's exact reader (`docs/reader.md`), never approximately. *(Corrected in place: this row said a float column was refused with `ml.input.unsupported-type`, because the float reader was believed unmerged; it is merged, PR #32, and the rule is gone.)* | `test_honesty.py` | a model name added to the table without an implementation |
 
 Nothing in a gate is "expected to pass": each row names the mutant that proves the gate can fail, and section 7 reports the
 verdict of each, with the survivors.
@@ -54,7 +54,7 @@ table to drift (gate T1 checks the one table against its projections).
 
 | verb | needs | takes also |
 |---|---|---|
-| `fit` | `--target NAME --output MODEL` | `--model constant`, `--task regression\|classification`, `--drop`, `--overwrite`, `--dry-run`, the `--max-*` caps, `--log`, `--format` |
+| `fit` | `--target NAME --output MODEL` | `--model constant`, `--task regression\|classification`, `--drop`, `--float`, `--overwrite`, `--dry-run`, the `--max-*` caps, `--log`, `--format` |
 | `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format` |
 | `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format` |
 
@@ -101,28 +101,27 @@ Every number sized by input has a flag, a default and a ceiling, listed by `intr
 sum in the exact accumulators below 2^63 (section 3.4); they are **choices**, not measurements, and section 9 of `design.md` still
 waits for the speed factor.
 
-### 2.3 The CSV reader (`tools/ml/csv.cho`)
+### 2.3 The CSV reader (`tools/ml/csv.cho`, `csvcell.cho`, `csvload.cho`)
 
-It is this slice's own and small, on purpose: **cancho-table is not a package** (a binary with sources under `tools/table/`, no
-store to pin) and its float reader `tools/table/flt.cho` is on an unmerged branch (`cancho-table-f64`), so nothing of it can be
-pinned and nothing is copied. It reads:
+*(Rewritten by the reader stage; the first version of this section said cancho-table's float reader was unmerged and listed a 12-digit
+reader of its own. `docs/reader.md` is the full text, with its gates.)* A cell is read by `ml.csvcell.read`: an int or a decimal of at most 12
+significant digits exactly as before (an integer mantissa and a scale), and everything else (an exponent, `.5`, `5.`, more than 12 digits) by
+cancho-table's `flt.parse_float`, the nearest double, ties to even. A column is `int`, `dec(S)` or `float`, widening only; `--float NAMES`
+forces float. Records are RFC 4180 (cancho-table's `reader` module): quoted fields, doubled quotes, line breaks inside quotes, a BOM, CRLF,
+blank lines. `nan` and `inf` are `ml.input.non-finite`, and so is a number past the range of a double; a cell that is empty, is not a number,
+reads as zero though it is not zero, or is longer than 1,100 bytes is `ml.input.non-numeric` with the reason in `detail`. A quote closed and
+followed by anything but a comma is `parse.csv-bad-quote`, a quote open at the end `parse.csv-unterminated-quote`.
 
-* the first non-blank line as the header, comma separated, LF or CRLF, a leading UTF-8 byte order mark dropped, blank lines skipped;
-* no quoting: a double quote anywhere is `ml.input.unsupported-csv`; a row with another number of fields is `parse.csv-ragged-row`;
-* a cell is `[+-]digits[.digits]` with at most 12 digits (leading zeros of the integer part not counted), read as an integer
-  mantissa and a number of fractional digits; a column is `int`, or `dec(S)` with `S` the most fractional digits seen, and its integer
-  digits plus `S` may not exceed 12 (`ml.input.unsupported-type`, reason "the column needs more than 12 digits");
-* an exponent (`1e5`) is `ml.input.unsupported-type`; `nan`/`inf` any case is `ml.input.non-finite`; an empty cell or text is
-  `ml.input.non-numeric` with line, column and reason in `detail`, and, for a feature column, a `retry` repair that adds `--drop NAME`.
+The modules of cancho-table are **not copied** and, today, **not a `[dependencies.*]`** either: cancho-table commits no `.cancho-vcs` store
+(`docs/reader.md` section 1). The binaries compile the files of a read-only clone pinned by `table.pin` (LOCAL-DEV), and
+`docs/upstream/cancho-table-numeric-package.md` is the proposal that ends it.
 
-The dependency that lifts the float restriction is a merged cancho-table float reader published as a package. Until then every
-float column is refused with a tag and a hint that names this dependency (test `test_float_text_is_refused_not_approximated`).
-Nothing is read approximately: `0.1` is the integer 1 at scale 1.
-
-One function, `csv.scan`, reads the file once in bounded memory (one 64 KiB chunk, the longest line up to `--max-line-bytes`, the
-header, four ints a column). `fit` scans twice: pass 1 for the shape, pass 2 for the target folded into exact accumulators, and a
-cell that no longer fits what pass 1 saw (the file changed between the passes) is an error, not a trap. `predict` and `eval` scan once;
-`eval` folds the target while it infers the shape and discards the fold if the schema check fails.
+One function, `csv.scan`, reads the file once in bounded memory (one 64 KiB chunk, the record being read up to `--max-line-bytes`, the header,
+the offsets of one record's fields, four ints a column). `fit` scans twice: pass 1 for the shape, pass 2 for the target folded into exact
+accumulators (an int or dec target: `ml.exact`; a float target: `facc`, the exact sum of the doubles), and a cell that no longer fits what pass 1
+saw (the file changed between the passes) is an error, not a trap. `predict` and `eval` scan once; `eval` folds the target while it infers the
+shape and discards the fold if the schema check fails. The matrix loader (`csv.load`, `tools/reader-check`) is the same scan with a matrix
+as its sink; the CLI's constant model builds none.
 
 ### 2.4 A session
 
@@ -139,8 +138,10 @@ $ ml --root . fit --target y --output sales.cml sales.csv           # again
 {"ok":false,...,"error":{"code":"CONFLICT","rule":"conflict.exists","message":"the output file exists","hint":"use --overwrite to replace it, or name another file","repair":null,"detail":{"path":"sales.cml"}},...}     # exit 5
 $ ml --root . fit --dry-run --overwrite --target y --output sales.cml sales.csv
 {"ok":true,...,"data":{...,"written":false,...},"dry_run":true,"planned_actions":[{"op":"replace","path":"sales.cml","bytes":316,"sha256":"9b6a...bd05"}],...}   # exit 9
-$ ml --root . fit --target y --output f.cml flt.csv                 # flt.csv: id,x,y / 1,1e5,10
-{"ok":false,...,"error":{"code":"PRECONDITION_FAILED","rule":"ml.input.unsupported-type","message":"a cell is a number this slice cannot read exactly","hint":"scale the column to an integer or a short decimal, or drop it with --drop; floating-point text needs cancho-table's float reader, which is not merged","repair":null,"detail":{"line":2,"column":2,"name":"x","reason":"exponent"}},...}     # exit 8
+$ ml --root . fit --target y --output f.cml flt.csv                 # flt.csv: id,x,y / 1,1e5,10 / 2,0.1,2.75   (the CLI slice refused the 1e5 with ml.input.unsupported-type)
+{"ok":true,...,"data":{...,"bytes":316,"summary":{"mean":"6.37500000"}},...}                  # x is a float feature; y is a decimal target: the exact path, 8 digits as before
+$ ml --root . fit --target y --output g.cml flt2.csv                # flt2.csv: id,x,y / 1,1e5,1e1 / 2,0.1,2.75   (a float target)
+{"ok":true,...,"data":{...,"bytes":300,"summary":{"mean":"6.375"}},...}                       # the exact sum of the doubles over n, rounded once, the shortest decimal back
 ```
 
 ## 3. The constant model and its arithmetic
@@ -234,7 +235,7 @@ the same stdout bytes five times.
 Everything below was printed by a script of this repository, on one machine (this Mac, arm64, macOS, the pinned compiler `a4572ea`),
 under a 1-minute load average of 3.8 to 6.0 (other processes on the machine; not a quiet-machine run, and no figure here is a benchmark).
 
-**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`): 88 tests, all pass, 1 skipped (the
+**Conformance tests** *(as of the CLI slice; the reader stage's count and verdicts are in `docs/reader.md` section 6)* (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`): 88 tests, all pass, 1 skipped (the
 `--threads` branch of D1, because there is no such flag; the skip says so). The last run took 28.2 s. 90 fixtures
 (`tests/conformance/fixtures.py`) reach all 19 flags, all 48 rules and all 4 log records of the tables. The numeric gates of stage 1
 and the unit tests of `lib/core/exact.cho` (7) pass in `scripts/check.sh`, which exits 0.
@@ -315,12 +316,12 @@ description of its own. From the flag table:
 
 1. **`--threads` and `conc`.** When the first threaded kernel is wired in, does `fit` get `--threads` (as table does) or does the
    thread count stay internal? Section 6 of `design.md` says the block size must not depend on it; gate D1 is ready either way.
-2. **Quoted CSV and the shared reader.** The slice reads unquoted CSV only. The decision `design.md` section 10 leaves open
-   (cancho-table exports a package, or a small `cancho-numeric` both depend on) now has a cost: this reader is a third reader.
-3. **Twelve digits.** The cap keeps every exact sum in two or six `int` limbs. A 15-to-17-digit double needs the float reader (and
-   a different accumulator: `facc` in cancho-table); is 12 the right cap for the first release, or is the float reader the first
-   dependency to land?
-4. **`rmse` as a decimal.** It is three IEEE steps after an exact sum. An exact integer square root over the limbs would make it
+2. **Quoted CSV and the shared reader.** *(Answered by the reader stage: quoted CSV is read through cancho-table's `reader` module; the
+   shared code is a pinned dependency in intent and a pinned local file list in fact, until cancho-table commits its stores: `docs/reader.md`
+   section 1.)*
+3. **Twelve digits.** *(Answered by the reader stage: the 12-digit cap keeps the exact int/dec path; a column that needs more is a float,
+   read by cancho-table's reader and summed by `facc`. See `docs/reader.md`.)*
+4. **`rmse` as a decimal.** *(For an int or dec target.)* It is three IEEE steps after an exact sum. An exact integer square root over the limbs would make it
    exact too, at about 60 lines; is the exact sum enough for "decisive sums are exact" (`design.md` section 6 rule 5)?
 5. **The package's `describe` text** (section 8): upstream issues to file, not filed from here.
 6. **A second machine.** D2 (same bytes on Mac aarch64 and Linux x86-64) is claimed by construction (no libm, no `fma`) and tested only

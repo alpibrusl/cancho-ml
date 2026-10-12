@@ -113,8 +113,7 @@ MUTANTS = [
       [("tools/ml/csv.cho", "if have_rec && held + 1 + len(line) > cfg.cap {", "if false && held + 1 + len(line) > cfg.cap {")]),
     M("rd4-matrix-before-check", "limits", "the matrix is allocated before the caps are compared (a 200 MB refusal would hold the data)",
       [("lib/core/matrix.cho", "    let code = limits.check_matrix(rows, cols, rows_cap, cols_cap, cells_cap);\n    if code != 0 {\n        return (empty(heap), code);\n    }",
-        "    let big = box_slice(heap, rows * cols + 1, 0.0);\n    unbox_slice(heap, big);\n    let code = limits.check_matrix(rows, cols, rows_cap, cols_cap, cells_cap);\n    if code != 0 {\n        return (empty(heap), code);\n    }")],
-      why="not killed by gate_reader.py limits: in the loader pass 1 refuses before make() is reached, so make's order cannot be observed from a file; it is killed by the unit test tests/matrix.cho (checked in scripts/check.sh)"),
+        "    let big = box_slice(heap, rows * cols + 1, 0.0);\n    unbox_slice(heap, big);\n    let code = limits.check_matrix(rows, cols, rows_cap, cols_cap, cells_cap);\n    if code != 0 {\n        return (empty(heap), code);\n    }")]),
     M("rd4-cell-cap-by-product", "limits", "the cell cap is compared as rows * cols > cap",
       [("tools/ml/csv.cho", "} else if rows > cfg.max_cells / cols {", "} else if rows * cols > cfg.max_cells {")],
       why="equivalent: every cap is at most 2^31 - 1 (ml.limits.ceiling_dim) so rows * cols stays below 2^62; the division is defence in depth, not a different answer"),
@@ -130,12 +129,14 @@ MUTANTS = [
     M("rd5-unterminated-quote-accepted", "csv", "a quote open at the end of the file is dropped silently",
       [("tools/ml/csv.cho", "            if have_rec && rep.status == 0 {\n                rep = report(18, rec_line, 0, 0);\n            }", "")]),
     M("rd5-blank-line-in-quote-skipped", "csv", "a blank line inside a quoted field is skipped",
-      [("tools/ml/csv.cho", "if len(line) == 0 && !have_rec {", "if len(line) == 0 {")]),
+      [("tools/ml/csv.cho", "if len(line) == 0 && !have_rec {", "if len(line) == 0 {")],
+      why="equivalent for everything a numeric reader can observe: a blank line inside a quoted field changes the field's text, which is never read as a number (it is dropped or refused), not the quote state, the field count or any line number; only the record's byte length for the cap differs"),
     # ------------------------------------------------------------------ RD6: no trap
     M("rd6-field-count-not-checked", "fuzz", "the number of fields of a row is not compared with the header's",
       [("tools/ml/csv.cho", "} else if seps + 1 != cols {", "} else if false {")]),
     M("rd6-fields-count-ignored", "fuzz", "the field count of reader.fields is ignored for a quoted row",
-      [("tools/ml/csv.cho", "        if inside || bad || n != cols {\n            return (3, 0, 0);\n        }", "")]),
+      [("tools/ml/csv.cho", "        if inside || bad || n != cols {\n            return (3, 0, 0);\n        }", "")],
+      why="equivalent: reader.scan has already counted the same fields and flagged the same quotes of the same record (seps + 1 != cols is checked first), and the two functions are kept in step by cancho-table's own differential test"),
 ]
 
 

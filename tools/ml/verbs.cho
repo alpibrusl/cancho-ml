@@ -11,12 +11,16 @@ import std.bytes;
 import std.json;
 import std.vec;
 import ml.csv;
+import ml.csvcell;
 import ml.exact;
 import ml.fsio;
 import ml.logrec;
 import ml.mfile;
 import ml.paths;
+import ml.fsq;
 import ml.spec;
+import facc;
+import flt;
 import toolbox.built;
 import toolbox.fail;
 import toolbox.place;
@@ -36,6 +40,7 @@ pub struct Opts {
     // 1 regression, 2 classification
     task: int,
     drops: &static [byte],
+    floats: &static [byte],
     target: &static [byte],
 }
 
@@ -127,8 +132,15 @@ fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors, rep
         q = fail.detail_int(heap, q, "line", rep.line);
         return fail.add(heap, e, q);
     }
-    if st == 4 {
-        var q = fail.open_in(heap, spec.extra(), "ml.input.unsupported-csv", "the file has a double quote, and quoted fields are not read by this slice", "remove the quotes from the file");
+    if st == 17 {
+        var q = fail.open_in(heap, spec.extra(), "parse.csv-bad-quote", "a closing quote is followed by something other than a comma or the end of the record", "double a quote that is text, or put the comma after the closing quote");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "line", rep.line);
+        return fail.add(heap, e, q);
+    }
+    if st == 18 {
+        var q = fail.open_in(heap, spec.extra(), "parse.csv-unterminated-quote", "a quoted field is still open at the end of the file", "close the quote, or double the quotes that are text");
         q = fail.no_repair(heap, q);
         q = fail.detail_open(heap, q);
         q = fail.detail_int(heap, q, "line", rep.line);
@@ -166,31 +178,26 @@ fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors, rep
         q = fail.detail_int(heap, q, "max", o.max_cells);
         return fail.add(heap, e, q);
     }
-    if st == 8 || st == 9 || st == 10 {
+    if st == 8 || st == 9 {
         let nm = csv.name(sh, rep.col);
         var rule: &static [byte] = "ml.input.non-numeric";
-        var message: &static [byte] = "a cell is not an integer or a decimal";
+        var message: &static [byte] = "a cell is not a number";
         var hint: &static [byte] = "drop the column with --drop, or fix the cell";
         var reason: &static [byte] = "not a number";
         if st == 8 && rep.aux == 1 {
             reason = "empty";
+        } else if st == 8 && rep.aux == 3 {
+            reason = "underflows to zero";
+        } else if st == 8 && rep.aux == 4 {
+            reason = "longer than 1100 bytes";
         }
         if st == 9 {
             rule = "ml.input.non-finite";
-            message = "a cell is nan or inf";
+            message = "a cell is nan, inf, or past the range of a double";
             hint = "remove the row or the column";
             reason = "not finite";
-        }
-        if st == 10 {
-            rule = "ml.input.unsupported-type";
-            message = "a cell is a number this slice cannot read exactly";
-            hint = "scale the column to an integer or a short decimal, or drop it with --drop; floating-point text needs cancho-table's float reader, which is not merged";
             if rep.aux == 1 {
-                reason = "exponent";
-            } else if rep.aux == 2 {
-                reason = "more than 12 digits in the cell";
-            } else {
-                reason = "the column needs more than 12 digits";
+                reason = "out of range";
             }
         }
         var q = fail.open_in(heap, spec.extra(), rule, message, hint);
@@ -222,6 +229,15 @@ fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors, rep
         q = fail.detail_str(heap, q, "flags", "--drop, --target");
         return fail.add(heap, e, q);
     }
+    if st == 19 {
+        var q = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--float names a column that is not in the header", "names are compared exactly, byte for byte");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_str(heap, q, "flag", "--float");
+        q = fail.detail_int(heap, q, "position", rep.aux);
+        q = fail.detail_text(heap, q, "name", bytes.field(o.floats, ',', rep.aux));
+        return fail.add(heap, e, q);
+    }
     if st == 15 {
         return problem(heap, e, "io.read-failed", "the file changed while it was being read", "run the command again on a file that is not being written", "", "");
     }
@@ -234,34 +250,33 @@ fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors, rep
 // ---------------------------------------------------------------- reading the CSV
 
 // open `file` and scan it. The errors gain the reason if the open fails (the shape is then empty and the report 99).
-fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], acc: Box[[int]], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, Box[[int]]) {
+fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, csv.Sinks) {
     var e = errs;
     match place.open_operand(fs, root, paths.shown(file), paths.full(file)) {
         Opened::Failed(reason) => {
             e = fail.io_error(heap, e, reason, false, paths.shown(file));
-            return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: 0 }, e, acc);
+            return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: 0 }, e, sk);
         }
         Opened::Ok(opened) => {
             var handle = opened;
             var sh = csv.empty_shape(heap);
             var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
-            var accv = acc;
+            var sink = sk;
             borrow mut handle as &!fh in {
-                borrow mut accv as &!aw in {
-                    let (s2, r2) = csv.scan(heap, fh, cfg, target, contents(aw));
-                    csv.drop_shape(heap, sh);
-                    sh = s2;
-                    rep = r2;
-                }
+                let (s2, r2, k2) = csv.scan(heap, fh, cfg, target, sink);
+                csv.drop_shape(heap, sh);
+                sh = s2;
+                rep = r2;
+                sink = k2;
             }
             file_close(handle);
-            return (sh, rep, e, accv);
+            return (sh, rep, e, sink);
         }
     }
 }
 
 fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {
-    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops };
+    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops, floats: o.floats, missing: false, mrows: 0, mcols: 0, wpc: 0 };
 }
 
 // ---------------------------------------------------------------- text
@@ -286,6 +301,33 @@ fn line_dec[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: 
     var p = buffer.append(heap, plain, label);
     p = exact.put_scaled(heap, p, v, scale);
     return buffer.push(heap, p, byte_of(10));
+}
+
+// a double, given as its bits, as the shortest decimal that reads back to it (cancho-table's flt.put_float: positional from 1e-6 to 1e21,
+// scientific outside, always a point or an exponent), as a JSON string. flt's key of a double is its bits with the low 63 flipped when
+// negative, an involution, so csvcell.bits_of_key converts either way.
+fn put_double[&h](heap: &!h Heap, w: json.Writer, bits: int) -> [heap] json.Writer {
+    var b = flt.put_float(heap, buffer.empty(heap, 32), csvcell.bits_of_key(bits));
+    var o = w;
+    borrow b as &r in {
+        o = json.put_string(heap, o, buffer.bytes(r));
+    }
+    buffer.drop(heap, b);
+    return o;
+}
+
+fn line_double[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], bits: int) -> [heap] buffer.Buffer {
+    var p = buffer.append(heap, plain, label);
+    p = flt.put_float(heap, p, csvcell.bits_of_key(bits));
+    return buffer.push(heap, p, byte_of(10));
+}
+
+// the key of a double that is not zero, and 0 for zero (there is no negative zero): the bits of the double as flt reads them
+fn bits_key(x: float) -> [] int {
+    if x == 0.0 {
+        return 0;
+    }
+    return flt.key_of(x);
 }
 
 fn line_int[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: int) -> [heap] buffer.Buffer {
@@ -318,7 +360,10 @@ fn proba_of[&m](mo: &m mfile.Model) -> [] int {
 fn summary[&h, &m](heap: &!h Heap, w: json.Writer, mo: &m mfile.Model) -> [heap] json.Writer {
     var o = json.put_key(heap, w, "summary");
     o = json.begin_object(heap, o);
-    if mfile.kind(mo) == 1 {
+    if mfile.kind(mo) == 3 {
+        o = json.put_key(heap, o, "mean");
+        o = put_double(heap, o, mfile.stat(mo, 1));
+    } else if mfile.kind(mo) == 1 {
         o = json.put_key(heap, o, "mean");
         o = put_dec(heap, o, mean_of(mo), mfile.stat(mo, 1) + 6);
     } else {
@@ -341,7 +386,7 @@ fn summary[&h, &m](heap: &!h Heap, w: json.Writer, mo: &m mfile.Model) -> [heap]
 }
 
 fn task_name(kind: int) -> [] &static [byte] {
-    if kind == 1 {
+    if kind != 2 {
         return "regression";
     }
     return "classification";
@@ -350,7 +395,7 @@ fn task_name(kind: int) -> [] &static [byte] {
 // ---------------------------------------------------------------- fit
 
 // the model of a scanned file: its kept columns and the target's statistics (acc as ml.csv.fold leaves it)
-fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a [int]) -> [heap] mfile.Model {
+fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a csv.Sinks, mean_bits: int) -> [heap] mfile.Model {
     var names = buffer.empty(heap, 64);
     var ends = vec.empty(heap, 16, 0);
     let all = csv.cols(sh);
@@ -378,8 +423,10 @@ fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a 
                 ends = vec.push(heap, ends, size);
                 if csv.kind(sh, i) == 2 {
                     t[at] = 1;
+                    t[kept + at] = csv.scale(sh, i);
+                } else if csv.kind(sh, i) == 3 {
+                    t[at] = 2;
                 }
-                t[kept + at] = csv.scale(sh, i);
                 if i == csv.tcol(sh) {
                     target = at;
                 }
@@ -390,31 +437,40 @@ fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a 
     }
     var stats = box_slice(heap, 8, 0);
     var nstats = 4;
+    let float_target = task == 1 && csv.kind(sh, csv.tcol(sh)) == 3;
     borrow mut stats as &!sw in {
         let s = contents(sw);
-        if task == 1 {
-            s[0] = acc[2];
+        if task == 1 && float_target {
+            nstats = 2;
+            s[0] = csv.acc_at(acc, 2);
+            s[1] = mean_bits;
+        } else if task == 1 {
+            s[0] = csv.acc_at(acc, 2);
             s[1] = csv.scale(sh, csv.tcol(sh));
-            s[2] = acc[0];
-            s[3] = acc[1];
+            s[2] = csv.acc_at(acc, 0);
+            s[3] = csv.acc_at(acc, 1);
         } else {
             nstats = 6;
-            s[0] = acc[5];
+            s[0] = csv.acc_at(acc, 5);
             s[1] = 2;
-            if acc[0] < acc[1] {
-                s[2] = acc[0];
-                s[3] = acc[1];
-                s[4] = acc[2];
-                s[5] = acc[3];
+            if csv.acc_at(acc, 0) < csv.acc_at(acc, 1) {
+                s[2] = csv.acc_at(acc, 0);
+                s[3] = csv.acc_at(acc, 1);
+                s[4] = csv.acc_at(acc, 2);
+                s[5] = csv.acc_at(acc, 3);
             } else {
-                s[2] = acc[1];
-                s[3] = acc[0];
-                s[4] = acc[3];
-                s[5] = acc[2];
+                s[2] = csv.acc_at(acc, 1);
+                s[3] = csv.acc_at(acc, 0);
+                s[4] = csv.acc_at(acc, 3);
+                s[5] = csv.acc_at(acc, 2);
             }
         }
     }
-    return mfile.Model { kind: task, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats };
+    var mkind = task;
+    if float_target {
+        mkind = 3;
+    }
+    return mfile.Model { kind: mkind, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats };
 }
 
 fn write_failure[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
@@ -533,10 +589,11 @@ fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], o
 fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
-    var acc = box_slice(heap, 8, 0);
-    let (sh, rep, e1, acc1) = scan_file(heap, fs, root, file, config(o, 0, 0, 0), o.target, acc, e);
+    let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, 0, 0, 0), o.target, csv.plain_sinks(heap, 8, false), e);
     e = e1;
-    acc = acc1;
+    csv.drop_sinks(heap, sk1);
+    var sk = csv.plain_sinks(heap, 8, false);
+    var mean_bits = 0;
     var go = true;
     var mo = mfile.empty_model(heap);
     borrow sh as &sr in {
@@ -558,15 +615,20 @@ fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs("")
             e = problem(heap, e, "ml.label.not-integer", "a classification target must be an integer column", "label the classes with integers", "", "");
             go = false;
         }
+        var mode = 1;
         if go {
             lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
-            var mode = 1;
+            var wide = false;
             if o.task == 2 {
                 mode = 2;
+            } else if csv.kind(sr, csv.tcol(sr)) == 3 {
+                mode = 6;
+                wide = true;
             }
-            let (sh2, rep2, e2, acc2) = scan_file(heap, fs, root, file, config(o, mode, csv.scale(sr, csv.tcol(sr)), 0), o.target, acc, e);
+            csv.drop_sinks(heap, sk);
+            let (sh2, rep2, e2, sk2) = scan_file(heap, fs, root, file, config(o, mode, csv.scale(sr, csv.tcol(sr)), 0), o.target, csv.plain_sinks(heap, 8, wide), e);
             e = e2;
-            acc = acc2;
+            sk = sk2;
             if rep2.status != 0 {
                 borrow sh2 as &s2 in {
                     e = explain(heap, args, e, rep2, s2, o, paths.shown(file));
@@ -577,23 +639,36 @@ fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs("")
         }
         if go && o.task == 2 {
             var distinct = 0;
-            borrow acc as &ar in {
-                distinct = contents(ar)[4];
+            borrow sk as &kr in {
+                distinct = csv.acc_at(kr, 4);
             }
             if distinct < 2 {
                 e = problem(heap, e, "ml.label.single-class", "a classification target has one value", "a model needs both classes in the training rows", "", "");
                 go = false;
             }
         }
+        if go && mode == 6 {
+            // the exact sum of the doubles over the count, rounded once
+            var n = 0;
+            borrow sk as &kr in {
+                n = csv.acc_at(kr, 2);
+            }
+            let (a3, f3, d3, m3) = csv.sink_parts(sk);
+            var fvv = f3;
+            borrow mut fvv as &!fw in {
+                mean_bits = csvcell.bits_of_key(facc.mean_key(fw, 0, n));
+            }
+            sk = csv.sink_join(a3, fvv, d3, m3);
+        }
         if go {
-            borrow acc as &ar in {
-                mfile.drop_model(heap, mo);
-                mo = build_model(heap, sr, o.task, contents(ar));
+            mfile.drop_model(heap, mo);
+            borrow sk as &kr in {
+                mo = build_model(heap, sr, o.task, kr, mean_bits);
             }
         }
     }
     csv.drop_shape(heap, sh);
-    unbox_slice(heap, acc);
+    csv.drop_sinks(heap, sk);
     return (mo, go, e, lg);
 }
 
@@ -681,6 +756,9 @@ fn put_type[&h](heap: &!h Heap, b: buffer.Buffer, ty: int, scale: int) -> [heap]
     if ty == 0 {
         return buffer.append(heap, o, "int");
     }
+    if ty == 2 {
+        return buffer.append(heap, o, "float");
+    }
     o = buffer.append(heap, o, "dec(");
     o = buffer.push_nat(heap, o, scale);
     return buffer.push(heap, o, byte_of(')'));
@@ -692,11 +770,15 @@ fn compatible[&m, &s](mo: &m mfile.Model, i: int, sh: &s csv.Shape, j: int) -> [
     if k == 0 {
         return true;
     }
+    if mfile.type_of(mo, i) == 2 {
+        // a float column takes any number
+        return true;
+    }
     if mfile.type_of(mo, i) == 0 {
         return k == 1;
     }
     let sc = mfile.scale_of(mo, i);
-    return csv.scale(sh, j) <= sc && csv.intd(sh, j) + sc <= 12;
+    return k <= 2 && csv.scale(sh, j) <= sc && csv.intd(sh, j) + sc <= 12;
 }
 
 // the column of the input named like the model's column i, among those it keeps; -1 if none
@@ -916,7 +998,9 @@ fn predict_rows[&h, &m](heap: &!h Heap, mo: &m mfile.Model, total: int, o: Opts)
     // the constant answer, once
     var cell = buffer.empty(heap, 32);
     var cell2 = buffer.empty(heap, 16);
-    if mfile.kind(mo) == 1 {
+    if mfile.kind(mo) == 3 {
+        cell = flt.put_float(heap, cell, csvcell.bits_of_key(mfile.stat(mo, 1)));
+    } else if mfile.kind(mo) == 1 {
         cell = exact.put_scaled(heap, cell, mean_of(mo), mfile.stat(mo, 1) + 6);
     } else {
         cell = buffer.push_nat(heap, cell, 0);
@@ -930,7 +1014,7 @@ fn predict_rows[&h, &m](heap: &!h Heap, mo: &m mfile.Model, total: int, o: Opts)
     w = json.put_string(heap, w, task_name(mfile.kind(mo)));
     w = json.put_key(heap, w, "columns");
     w = json.begin_array(heap, w);
-    if mfile.kind(mo) == 1 {
+    if mfile.kind(mo) != 2 {
         w = json.put_string(heap, w, "prediction");
     } else {
         w = json.put_string(heap, w, "label");
@@ -947,7 +1031,7 @@ fn predict_rows[&h, &m](heap: &!h Heap, mo: &m mfile.Model, total: int, o: Opts)
     var k = start;
     while k < end {
         w = json.begin_array(heap, w);
-        if mfile.kind(mo) == 1 {
+        if mfile.kind(mo) != 2 {
             borrow cell as &cr in {
                 w = json.put_string(heap, w, buffer.bytes(cr));
                 plain = buffer.append(heap, plain, buffer.bytes(cr));
@@ -1000,8 +1084,7 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
     var plain = buffer.empty(heap, 1);
     if ok {
         borrow mo as &mr in {
-            let acc = box_slice(heap, 8, 0);
-            let (sh, rep, e1, acc1) = scan_file(heap, fs, root, file, config(o, 5, 0, 0), mfile.name(mr, mfile.target(mr)), acc, e);
+            let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, 5, 0, 0), mfile.name(mr, mfile.target(mr)), csv.plain_sinks(heap, 8, false), e);
             e = e1;
             borrow sh as &sr in {
                 if rep.status != 0 {
@@ -1022,7 +1105,7 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
                 }
             }
             csv.drop_shape(heap, sh);
-            unbox_slice(heap, acc1);
+            csv.drop_sinks(heap, sk1);
         }
     }
     mfile.drop_model(heap, mo);
@@ -1032,7 +1115,8 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
 // ---------------------------------------------------------------- eval
 
 // the metrics object and the text of an eval, from the accumulators `ml.csv.scan` left
-fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
+fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer, bool) {
+    var undefined = false;
     var w = json.writer(heap, 512);
     var plain = buffer.empty(heap, 64);
     w = json.begin_object(heap, w);
@@ -1044,7 +1128,23 @@ fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &
     w = json.put_int(heap, w, rows);
     w = json.put_key(heap, w, "metrics");
     w = json.begin_object(heap, w);
-    if mfile.kind(mo) == 1 {
+    if mfile.kind(mo) == 3 {
+        // a float target: sse is the exact sum of (y - P)^2 rounded once to a double (ml.fsq), rmse = sqrt(sse / n) in two IEEE operations
+        let (sse, st) = fsq.finish(acc);
+        if st != 0 {
+            undefined = true;
+        } else {
+            let rmse = sqrt(sse / float_of(rows));
+            w = json.put_key(heap, w, "rmse");
+            w = put_double(heap, w, bits_of(rmse));
+            w = json.put_key(heap, w, "sse");
+            w = put_double(heap, w, bits_of(sse));
+            w = json.put_key(heap, w, "prediction");
+            w = put_double(heap, w, mfile.stat(mo, 1));
+            plain = line_double(heap, plain, "sse ", bits_of(sse));
+            plain = line_double(heap, plain, "rmse ", bits_of(rmse));
+        }
+    } else if mfile.kind(mo) == 1 {
         let f = mfile.stat(mo, 1) + 6;
         exact.normalise(acc, 0);
         // rmse in units of 10^-f: sqrt(SSE / n), the three IEEE operations of docs/cli.md section 3.3, rounded half up
@@ -1087,7 +1187,7 @@ fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &
     }
     w = json.end_object(heap, w);
     w = json.end_object(heap, w);
-    return (json.finish(w), plain);
+    return (json.finish(w), plain, undefined);
 }
 
 pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] Out {
@@ -1101,14 +1201,19 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
             var mode = 4;
             var tscale = 0;
             var pred = majority_of(mr);
-            if mfile.kind(mr) == 1 {
+            var acc_len = 8;
+            if mfile.kind(mr) == 3 {
+                mode = 7;
+                acc_len = fsq.size();
+                pred = mfile.stat(mr, 1);
+            } else if mfile.kind(mr) == 1 {
                 mode = 3;
                 tscale = mfile.stat(mr, 1);
                 pred = mean_of(mr);
             }
-            let acc = box_slice(heap, 8, 0);
-            let (sh, rep, e1, acc1) = scan_file(heap, fs, root, file, config(o, mode, tscale, pred), mfile.name(mr, mfile.target(mr)), acc, e);
+            let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, mode, tscale, pred), mfile.name(mr, mfile.target(mr)), csv.plain_sinks(heap, acc_len, false), e);
             e = e1;
+            let (acc1, fv1, data1, miss1) = csv.sink_parts(sk1);
             var accv = acc1;
             borrow sh as &sr in {
                 if rep.status != 0 {
@@ -1121,17 +1226,24 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                     e = e2;
                     if same {
                         borrow mut accv as &!aw in {
-                            let (p2, t2) = eval_answer(heap, mr, csv.rows(sr), contents(aw));
+                            let (p2, t2, undefined) = eval_answer(heap, mr, csv.rows(sr), contents(aw));
                             buffer.drop(heap, payload);
                             buffer.drop(heap, plain);
                             payload = p2;
                             plain = t2;
+                            if undefined {
+                                buffer.drop(heap, payload);
+                                buffer.drop(heap, plain);
+                                payload = buffer.empty(heap, 1);
+                                plain = buffer.empty(heap, 1);
+                                e = problem(heap, e, "ml.metric.undefined", "the sum of squared errors is beyond the largest double", "scale the target down", "", "");
+                            }
                         }
                     }
                 }
             }
             csv.drop_shape(heap, sh);
-            unbox_slice(heap, accv);
+            csv.drop_sinks(heap, csv.sink_join(accv, fv1, data1, miss1));
         }
     }
     mfile.drop_model(heap, mo);

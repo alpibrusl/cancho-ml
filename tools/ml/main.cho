@@ -224,7 +224,7 @@ fn options[&g, &p](args: &g Args, parsed: &p cli.Parsed) -> [args] verbs.Opts {
     if bytes.equal(cli.text(args, parsed, table, "task"), "classification") {
         task = 2;
     }
-    return verbs.Opts { cap: cli.nat(args, parsed, table, "max-line-bytes"), max_rows: cli.nat(args, parsed, table, "max-rows"), max_cols: cli.nat(args, parsed, table, "max-columns"), max_cells: cli.nat(args, parsed, table, "max-cells"), max_bytes: cli.nat(args, parsed, table, "max-bytes"), limit: cli.nat(args, parsed, table, "limit"), from: cli.nat(args, parsed, table, "from"), overwrite: cli.has(parsed, table, "overwrite"), dry: cli.has(parsed, table, "dry-run"), drop_given: cli.has(parsed, table, "drop"), task: task, drops: cli.text(args, parsed, table, "drop"), target: cli.text(args, parsed, table, "target") };
+    return verbs.Opts { cap: cli.nat(args, parsed, table, "max-line-bytes"), max_rows: cli.nat(args, parsed, table, "max-rows"), max_cols: cli.nat(args, parsed, table, "max-columns"), max_cells: cli.nat(args, parsed, table, "max-cells"), max_bytes: cli.nat(args, parsed, table, "max-bytes"), limit: cli.nat(args, parsed, table, "limit"), from: cli.nat(args, parsed, table, "from"), overwrite: cli.has(parsed, table, "overwrite"), dry: cli.has(parsed, table, "dry-run"), drop_given: cli.has(parsed, table, "drop"), task: task, drops: cli.text(args, parsed, table, "drop"), floats: cli.text(args, parsed, table, "float"), target: cli.text(args, parsed, table, "target") };
 }
 
 // the errors, and whether there are none

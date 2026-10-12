@@ -7,13 +7,16 @@ module ml.mfile;
 //     "CML1" | u32 version = 1 | u32 sections = 5 | section * 5 | SHA-256 (32 bytes) of every byte before it
 //     section = u32 tag | u64 length | payload              all integers little-endian, no padding
 //     1 plan    canonical pipeline text (design.md 4.2)
-//     2 schema  u32 columns | u32 target | per column: u32 name length | name | u32 type (0 int, 1 dec) | u32 scale
+//     2 schema  u32 columns | u32 target | per column: u32 name length | name | u32 type (0 int, 1 dec, 2 float) | u32 scale (0 for int and float)
 //     3 steps   u32 0 (no transform is built in this slice)
-//     4 model   u32 kind (1 constant regression, 2 constant classification) | tensor record
+//     4 model   u32 kind (1 constant regression of an int or dec target, 2 constant classification, 3 constant regression of a float
+//               target) | tensor record
 //     5 meta    u64 rows | u64 columns | u64 seed (0) | u32 hyperparameters (0) | u32 length | compiler pin, informational
 //     tensor record = u32 dtype (1 = i64) | u32 rank | rank * u64 shape | elements row-major, i64
 //       regression stats    shape [4]: n, scale, sum of quotients, sum of remainders (the exact sum, as in ml.exact)
 //       classification      shape [6]: n, classes (2), c0, c1, n0, n1
+//       float regression    shape [2]: n, the bits of the mean (a double: the exact sum of the targets over n, rounded once)
+// A model of int and dec columns is byte for byte what the CLI slice wrote (docs/reader.md section 4).
 //
 // The reader checks, in this order: the magic (bad-magic), the version (version), the structure -- section count, tags in
 // order, every length against the bytes that are there (truncated) -- the checksum (checksum), and then every field of every
@@ -61,7 +64,7 @@ pub fn malformed() -> [] int {
     return 5;
 }
 
-// task and model kind: 1 constant regression, 2 constant classification
+// model kind: 1 constant regression (int or dec target), 2 constant classification, 3 constant regression of a float target
 pub res struct Model {
     kind: int,
     rows: int,
@@ -69,9 +72,9 @@ pub res struct Model {
     target: int,
     names: buffer.Buffer,
     ends: vec.Vec[int],
-    // per column: [i] type (0 int, 1 dec), [cols + i] scale
+    // per column: [i] type (0 int, 1 dec, 2 float), [cols + i] scale
     types: Box[[int]],
-    // regression: n, scale, sq, sr. classification: n, 2, c0, c1, n0, n1
+    // regression: n, scale, sq, sr. classification: n, 2, c0, c1, n0, n1. float regression: n, the bits of the mean
     stats: Box[[int]],
     nstats: int,
 }
@@ -110,7 +113,7 @@ pub fn name[&m](m: &m Model, i: int) -> [] &m [byte] {
     return b[from..vec.get(m.ends, i)];
 }
 
-// 0 int, 1 dec
+// 0 int, 1 dec, 2 float
 pub fn type_of[&m](m: &m Model, i: int) -> [] int {
     return contents(m.types)[i];
 }
@@ -182,8 +185,16 @@ pub fn sha256_hex[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] buffer.Buff
 
 // ---------------------------------------------------------------- the plan
 
+// the task a model kind belongs to: 1 regression (kinds 1 and 3), 2 classification
+pub fn task_of(kind: int) -> [] int {
+    if kind == 2 {
+        return 2;
+    }
+    return 1;
+}
+
 pub fn plan_text(kind: int) -> [] &static [byte] {
-    if kind == 1 {
+    if kind != 2 {
         return "model kind=constant task=regression\n";
     }
     return "model kind=constant task=classification\n";
@@ -361,11 +372,11 @@ fn bad_model[&h](heap: &!h Heap, tag: int) -> [heap] (Model, int, int) {
 fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [heap] (Model, int, int) {
     // 1 plan
     let plan = data[places[0]..places[0] + places[1]];
-    var plan_kind = 0;
+    var plan_task = 0;
     if bytes.equal(plan, plan_text(1)) {
-        plan_kind = 1;
+        plan_task = 1;
     } else if bytes.equal(plan, plan_text(2)) {
-        plan_kind = 2;
+        plan_task = 2;
     } else {
         return bad_model(heap, 1);
     }
@@ -406,7 +417,7 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
                     let ty = get32(sc, pos);
                     let scl = get32(sc, pos + 4);
                     pos = pos + 8;
-                    if ty > 1 || scl > 12 || ty == 0 && scl != 0 {
+                    if ty > 2 || scl > 12 || (ty == 0 || ty == 2) && scl != 0 {
                         bad = true;
                     } else {
                         t[i] = ty;
@@ -448,6 +459,7 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
     let md = data[places[6]..places[6] + places[7]];
     var stats = box_slice(heap, 8, 0);
     var nstats = 0;
+    var mk_kind = 0;
     var mbad = false;
     if len(md) < 20 {
         mbad = true;
@@ -456,14 +468,15 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
         let dtype = get32(md, 4);
         let rank = get32(md, 8);
         let shape = fbits.get64(md, 12);
-        if mk != plan_kind || dtype != 1 || rank != 1 {
+        if mk < 1 || mk > 3 || task_of(mk) != plan_task || dtype != 1 || rank != 1 {
             mbad = true;
-        } else if mk == 1 && shape != 4 || mk == 2 && shape != 6 {
+        } else if mk == 1 && shape != 4 || mk == 2 && shape != 6 || mk == 3 && shape != 2 {
             mbad = true;
         } else if len(md) != 20 + 8 * shape {
             mbad = true;
         } else {
             nstats = shape;
+            mk_kind = mk;
             borrow mut stats as &!sw in {
                 let s = contents(sw);
                 var k = 0;
@@ -511,7 +524,7 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
         unbox_slice(heap, stats);
         return bad_model(heap, 5);
     }
-    return (Model { kind: plan_kind, rows: rows, cols: cols, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats }, 0, 0);
+    return (Model { kind: mk_kind, rows: rows, cols: cols, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats }, 0, 0);
 }
 
 // the numbers of a model section are within the bounds the arithmetic needs (ml.exact)
@@ -520,7 +533,17 @@ fn stats_sane[&s, &t](kind: int, s: &s [int], types: &t [int], cols: int, target
     if n < 1 || n > 1000000000 {
         return false;
     }
+    if kind == 3 {
+        // the target is a float column; the mean is the bits of a finite double
+        if types[target] != 2 || s[1] >> 52 & 2047 == 2047 {
+            return false;
+        }
+        return true;
+    }
     if kind == 1 {
+        if types[target] == 2 {
+            return false;
+        }
         let scale = s[1];
         if scale < 0 || scale > 12 || scale != types[cols + target] {
             return false;

@@ -103,6 +103,11 @@ pub fn drop_sinks[&h](heap: &!h Heap, k: Sinks) -> [heap] int {
     return 0;
 }
 
+// accumulator slot i of sinks (read-only)
+pub fn acc_at[&s](k: &s Sinks, i: int) -> [] int {
+    return contents(k.acc)[i];
+}
+
 // the pieces of sinks, and back
 pub fn sink_parts(k: Sinks) -> [] (Box[[int]], vec.Vec[int], Box[[float]], Box[[int]]) {
     let Sinks { acc, fv, data, miss } = k;

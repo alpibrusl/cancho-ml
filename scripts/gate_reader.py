@@ -117,6 +117,14 @@ def accepted_cells(rnd, n):
 nan NaN NAN +nan -nan inf Inf INF +inf -inf infinity Infinity -INFINITY +Infinity""".split()
     for f in fixed:
         out.append(f.encode())
+    out.append(b"")  # an empty cell is a missing value
+    # mantissas around 2^53 (the edge of Clinger's fast path) with every exponent it could take, and a little beyond
+    for mant in range(9007199254740990, 9007199254741000):
+        for e in range(-30, 31):
+            out.append(b"%de%d" % (mant, e))
+    for mant in (4503599627370497, 9007199254740991, 18014398509481985, 36028797018963969):
+        for e in range(-30, 31):
+            out.append(b"%de%d" % (mant, e))
     out.append(b"1" + b"0" * 400 + b"e-400")
     out.append(b"1" + b"0" * 1090)
     out.append(b"1" + b"0" * 1099)
@@ -394,7 +402,41 @@ def gate_matrix(seed):
                 got2, k2, sh2 = parse_dump(out)
                 if sh2.get("hash") != "%016x" % expected_hash(vals, len(kept)):
                     differences.append(("hash", rows, cols, sh2.get("hash")))
-    print("RD3 matrix: %d files, %d cells compared (values, missing bits, kinds, hash)" % (files, cellsn))
+    # the kind and the scale of a column from its cells: single cells of every shape, and short columns in every order
+    kinds_checked = 0
+    with tempfile.TemporaryDirectory() as td:
+        path = pathlib.Path(td) / "k.csv"
+        shapes = []
+        for nd in range(1, 16):
+            digs = "123456789012345"[:nd]
+            shapes.append(digs)
+            for p_ in range(0, nd + 1):
+                shapes.append(digs[:p_] + "." + digs[p_:])
+            shapes.append("0" * 5 + digs)
+            shapes.append("-" + digs[:max(1, nd // 2)] + "." + digs[nd // 2:] if nd > 1 else "-" + digs)
+        shapes += ["1e0", "5.", ".5", "0.0", "-0", "1" + "0" * 11, "1" + "0" * 12, "0." + "0" * 11 + "1", "0." + "0" * 12 + "1"]
+        for cell in shapes:
+            with open(path, "wb") as f:
+                f.write(b"a\n" + cell.encode() + b"\n")
+            code, out, err = run(["--mode", "shape"], path)
+            got, cols_, shape = parse_dump(out)
+            sp = spec(cell.encode())
+            want_kind = sp[1]
+            want_scale = sp[4] if want_kind == 2 else 0
+            kinds_checked += 1
+            if code != 0 or cols_[0][0] != want_kind or (want_kind == 2 and cols_[0][1] != want_scale):
+                differences.append(("kind of a cell", cell, cols_, want_kind, want_scale))
+        reps = {1: "7", 2: "7.25", 3: "7.5e0"}
+        import itertools
+        for order in itertools.product((1, 2, 3), repeat=3):
+            with open(path, "wb") as f:
+                f.write(b"a\n" + b"\n".join(reps[k].encode() for k in order) + b"\n")
+            code, out, err = run(["--mode", "shape"], path)
+            got, cols_, shape = parse_dump(out)
+            kinds_checked += 1
+            if cols_[0][0] != max(order):
+                differences.append(("kind of a column", order, cols_))
+    print("RD3 matrix: %d files, %d cells compared (values, missing bits, kinds, hash), %d kind/scale checks of single cells and short columns" % (files, cellsn, kinds_checked))
     for d in differences[:20]:
         print("   DIFFERENCE", d)
     print("RD3 matrix: %d differences" % len(differences))
@@ -475,8 +517,13 @@ def gate_limits():
         checks += 1
         if rc != 8 or "refused 13" not in first or rss_cells > 16:
             differences.append(("big file, cell cap", rc, rss_cells, first))
+        # pass 1 accepts the file under a cell cap above the ceiling and matrix.make then refuses the caps: nothing may be allocated first
+        rc, rss_make, first = peak_rss_mb(["--mode", "dump", "--max-rows", "20000000", "--max-cells", "999999999999999999", str(big)])
+        checks += 1
+        if rc != 8 or "refused-matrix ml.param.out-of-range" not in first or rss_make > 16:
+            differences.append(("matrix.make refuses before allocating", rc, rss_make, first))
         rc, rss_shape, first = peak_rss_mb(["--mode", "shape", str(big)])
-        rc, rss_hash, first = peak_rss_mb(["--mode", "hash", "--max-cells", "400000000", str(big)])
+        rc, rss_hash, first = peak_rss_mb(["--mode", "hash", "--max-rows", "20000000", "--max-cells", "400000000", str(big)])
         print("          context: the same file loaded whole into the matrix (hash mode, caps raised): peak %.0f MB, so a refusal that came after the allocation would show" % rss_hash)
         print("          context: the same %d MB file read whole (shape, pass 1 only): peak %.1f MB; refused at row 11: peak %.1f MB; at the cell cap: %.1f MB" %
               (size // 1000000, rss_shape, rss_refused, rss_cells))
@@ -556,7 +603,7 @@ def gate_csv(seed):
                 code, out, err = run(args, path)
                 # the text columns are not numbers: the reader refuses at the first row's text, which is the point (no trap, a clean refusal)
                 files += 1
-                if code in TRAPS or not (out.startswith("refused 8") or out.startswith("rows")):
+                if code in TRAPS or not (out.startswith("refused 8") or out.startswith("refused 9") or out.startswith("rows")):
                     differences.append(("refusal of a text column", trial, out[:80]))
                 continue
             code, out, err = run(args, path)
