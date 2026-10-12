@@ -34,6 +34,7 @@ GROUPS["axpy"] = (["sh", "scripts/gate_linalg.sh", "t_dot.cho", "axpy"], [
     ("axpy-strided-x", A, "yd[q] = yd[q] + a * xd[xt.off + i * xt.t0];", "yd[q] = yd[q] + a * xd[xt.off + i];"),
     ("axpy-strided-y", A, "let q = yt.off + i * yt.t0;", "let q = yt.off + i;"),
     ("axpy-writable", A, "c = tensor.writable(yt);", "c = 0;"),
+    ("axpy-empty", A, "    let n = xt.s0;\n    if n == 0 {\n        return 0;\n    }\n    if xt.t0 == 1", "    let n = xt.s0;\n    if xt.t0 == 1"),
     ("axpy-shape", A, "if xt.s0 != yt.s0 {", "if xt.s0 < yt.s0 {"),
 ])
 GROUPS["gemv"] = (["sh", "scripts/gate_linalg.sh", "t_gemv.cho", "gemv_n", "gemv_t"], [
@@ -86,6 +87,10 @@ GROUPS["chol"] = (["sh", "scripts/gate_linalg.sh", "t_chol.cho", "chol", "fwd", 
     ("bwd-tail-term", C, "s = s - lv[k * ls + i] * xv[k];\n            k = k - 1;\n        }\n        xv[i] = s / lv[i * ls + i];\n        i = i - 1;\n    }\n    return 0;\n}\n\n// The solves.", "s = s - lv[i * ls + k] * xv[k];\n            k = k - 1;\n        }\n        xv[i] = s / lv[i * ls + i];\n        i = i - 1;\n    }\n    return 0;\n}\n\n// The solves."),
     ("solve-singular", C, "if !(ld[lt.off + i * lt.t0 + i * lt.t1] != 0.0) {", "if !(ld[lt.off + i * lt.t0 + i * lt.t1] != 1.0) {"),
     ("solve-generic-bwd", C, "s = s - ld[lt.off + k * lt.t0 + i * lt.t1] * xd[xt.off + k * xt.t0];", "s = s - ld[lt.off + i * lt.t0 + k * lt.t1] * xd[xt.off + k * xt.t0];"),
+])
+GROUPS["fuzz"] = (["sh", "scripts/gate_linalg.sh", "t_fuzz.cho"], [  # the check-normalised mutant is judged by tests/core.cho (mutants_core.py)
+    ("fuzz-sane-in-check", "lib/linalg/tensor.cho", "    if sane(t) == false {\n        return refuse.tensor_bounds();\n    }\n    // each (extent - 1)", "    // each (extent - 1)"),
+    ("fuzz-reach-guard", "lib/linalg/tensor.cho", "if too_big(shape_at(t, a) - 1, abs_c(stride_at(t, a))) == 1 {\n            return refuse.tensor_bounds();", "if false {\n            return refuse.tensor_bounds();"),
 ])
 GROUPS["gemm"] = (["sh", "scripts/gate_linalg.sh", "t_gemm.cho", "gemm"], [
     ("gemm-tile-entry", M, "c13 = c13 + a1 * b3;", "c13 = c13 + a2 * b3;"),

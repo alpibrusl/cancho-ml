@@ -532,6 +532,15 @@ fn test_tensor_check_bounds() -> [] int {
     if code_of(tensor.column(hug2, 1)) != refuse.tensor_bounds() {
         bad = bad + 1;
     }
+    // an unused axis that is not normalised must not hide a used one: rank 1, extent 5 at offset 298 of 300, with s1 = 0
+    let hide = tensor.Tensor { off: 298, rank: 1, s0: 5, s1: 0, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+    if tensor.check(hide, 300) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    let hide2 = tensor.Tensor { off: 0, rank: 2, s0: 5, s1: 5, s2: 0, s3: 1, t0: 5, t1: 1, t2: 0, t3: 0 };
+    if tensor.check(hide2, 3) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
     let evil3 = tensor.Tensor { off: 0, rank: 9, s0: 2, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
     if tensor.check(evil3, 100) != refuse.tensor_rank() {
         bad = bad + 1;

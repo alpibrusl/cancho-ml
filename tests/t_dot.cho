@@ -306,3 +306,29 @@ fn test_axpy_strided[&h](heap: &!h Heap) -> [heap] int {
     unbox_slice(heap, y);
     return bad;
 }
+
+// empty operands with absurd offsets: nothing is addressed, nothing is sliced, nothing traps
+fn test_empty_operands_with_wild_offsets[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let x = box_slice(heap, 4, 1.0);
+    let y = box_slice(heap, 4, 2.0);
+    let far = tensor.Tensor { off: 0 - 1152921504606846976, rank: 1, s0: 0, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+    let far2 = tensor.Tensor { off: 1152921504606846976, rank: 1, s0: 0, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+    borrow x as &xr in {
+        borrow mut y as &!yw in {
+            bad = bad + axpy.axpy(0.5, far, contents(xr), far2, contents(yw));
+            if contents(yw)[0] != 2.0 {
+                bad = bad + 1;
+            }
+        }
+        borrow y as &yr in {
+            let r = dot.dot(heap, far, contents(xr), far2, contents(yr));
+            if r.code != 0 || bits_of(r.v) != bits_of(0.0) {
+                bad = bad + 1;
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    return bad;
+}

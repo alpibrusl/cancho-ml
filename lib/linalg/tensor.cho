@@ -82,6 +82,21 @@ fn abs_c(v: int) -> [] int {
     return v;
 }
 
+// the unused axes (index >= rank) hold extent 1 and stride 0, as `make` leaves them; a hand-built descriptor with anything
+// else there is not a descriptor of this rank (an extent of 0 on an unused axis would hide a huge extent on a used one)
+pub fn normalised(t: Tensor) -> [] bool {
+    if t.rank < 4 && (t.s3 != 1 || t.t3 != 0) {
+        return false;
+    }
+    if t.rank < 3 && (t.s2 != 1 || t.t2 != 0) {
+        return false;
+    }
+    if t.rank < 2 && (t.s1 != 1 || t.t1 != 0) {
+        return false;
+    }
+    return true;
+}
+
 // A descriptor that is a plain struct can hold any ints (its fields are public): is it inside the ranges `make` produces?
 // rank 1..4, extents in [0, ceiling], strides and offset in [-ceiling, ceiling]. Every operation checks this first, so no
 // arithmetic below can overflow.
@@ -222,7 +237,7 @@ pub fn check(t: Tensor, len: int) -> [] int {
     if t.rank < 1 || t.rank > 4 {
         return refuse.tensor_rank();
     }
-    if t.s0 < 0 || t.s1 < 0 || t.s2 < 0 || t.s3 < 0 {
+    if t.s0 < 0 || t.s1 < 0 || t.s2 < 0 || t.s3 < 0 || normalised(t) == false {
         return refuse.tensor_shape();
     }
     if len < 0 {
@@ -235,10 +250,7 @@ pub fn check(t: Tensor, len: int) -> [] int {
     if sane(t) == false {
         return refuse.tensor_bounds();
     }
-    // the element count, and each (extent - 1) * |stride|, guarded; then the sums below cannot overflow
-    if too_big(t.s0, t.s1) == 1 || too_big(t.s0 * t.s1, t.s2) == 1 || too_big(t.s0 * t.s1 * t.s2, t.s3) == 1 {
-        return refuse.tensor_shape();
-    }
+    // each (extent - 1) * |stride|, guarded; then the sums below cannot overflow
     var a = 0;
     while a < t.rank {
         if too_big(shape_at(t, a) - 1, abs_c(stride_at(t, a))) == 1 {

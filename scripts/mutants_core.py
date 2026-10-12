@@ -53,6 +53,8 @@ M = [
  ("tensor-bcast-stride", T, "    if axis == 0 {\n        n0 = n;\n        b0 = 0;\n    }", "    if axis == 0 {\n        n0 = n;\n    }"),
  ("tensor-row-bounds", T, "    if i < 0 || i >= t.s0 {", "    if i < 0 || i > t.s0 {"),
  ("tensor-col-off", T, "return make(t.off + j * t.t1, 1, t.s0, 1, 1, 1, t.t0, 0, 0, 0);", "return make(t.off + j, 1, t.s0, 1, 1, 1, t.t0, 0, 0, 0);"),
+ ("tensor-check-normalised", T, "|| t.s3 < 0 || normalised(t) == false {", "|| t.s3 < 0 {"),
+ ("tensor-normalised-axes", T, "if t.rank < 2 && (t.s1 != 1 || t.t1 != 0) {", "if t.rank < 2 && (t.t1 != 0) {"),
  ("tensor-abs-clamp", T, "return ceiling() + 1;\n    }\n    if v < 0 {", "return 0 - ceiling();\n    }\n    if v < 0 {"),
 ]
 ALLOWED = {

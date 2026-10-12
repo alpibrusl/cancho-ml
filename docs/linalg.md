@@ -32,7 +32,7 @@ The target, from the maintainer: the linear algebra must **match or improve** cu
 | kernel | numpy / scipy call | shapes | role |
 |---|---|---|---|
 | `dot` | `np.dot(x, y)` | n = 1e6 | gate |
-| `axpy` | `scipy.linalg.blas.daxpy(x, y, a=a, overwrite_y=1)` (one pass, in place; `y += a * x` is two passes in numpy) | n = 1e6 | gate |
+| `axpy` | `scipy.linalg.blas.daxpy(x, y, a=a)` (one pass, writes y in place: checked, the returned array is y; `y += a * x` is two passes in numpy) | n = 1e6 | gate |
 | `gemv_n` y = X w | `np.dot(X, w, out=y)` | X is n x d, n in {1e5, 1e6}, d in {20, 64, 256} | gate |
 | `gemv_t` g = X^T r | `np.dot(r, X, out=g)` | same | gate |
 | `syrk` C = X^T X (one triangle) | `scipy.linalg.blas.dsyrk(1.0, X, trans=1)` (BLAS `dsyrk`: one triangle only) | same | gate |

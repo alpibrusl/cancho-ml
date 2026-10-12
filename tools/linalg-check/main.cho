@@ -18,6 +18,7 @@ edition 5;
 import std.io;
 import ml.refuse;
 import ml.testdata;
+import ml.limits;
 import ml.rng;
 import linalg.tensor;
 import linalg.dot;
@@ -27,11 +28,19 @@ import linalg.syrk;
 import linalg.chol;
 import linalg.gemm;
 
+// decimal digits only, at most 18 of them (so no overflow); anything else answers -1
 fn number_of[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 18 {
+        return 0 - 1;
+    }
     var n = 0;
     var i = 0;
     while i < len(text) {
-        n = n * 10 + (int_of(text[i]) - '0');
+        let c = int_of(text[i]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
         i = i + 1;
     }
     return n;
@@ -384,51 +393,68 @@ fn main(world: World) -> [] int {
     var threads = 1;
     var kernel = 0;
     borrow args as &g in {
-        if len(arg(g, 2)) > 0 {
+        if arg_count(g) > 2 && len(arg(g, 2)) > 0 {
             n = number_of(arg(g, 2));
         }
-        if len(arg(g, 3)) > 0 {
+        if arg_count(g) > 3 && len(arg(g, 3)) > 0 {
             d = number_of(arg(g, 3));
         }
-        if len(arg(g, 4)) > 0 {
+        if arg_count(g) > 4 && len(arg(g, 4)) > 0 {
             seed = number_of(arg(g, 4));
         }
-        if len(arg(g, 5)) > 0 {
+        if arg_count(g) > 5 && len(arg(g, 5)) > 0 {
             reps = number_of(arg(g, 5));
         }
-        if len(arg(g, 6)) > 0 {
+        if arg_count(g) > 6 && len(arg(g, 6)) > 0 {
             threads = number_of(arg(g, 6));
         }
-        if same(arg(g, 1), "dot") {
+        if arg_count(g) < 2 {
+            kernel = 0;
+        } else if same(arg(g, 1), "dot") {
             kernel = 1;
         }
-        if same(arg(g, 1), "axpy") {
+        if arg_count(g) >= 2 && same(arg(g, 1), "axpy") {
             kernel = 2;
         }
-        if same(arg(g, 1), "gemv_n") {
+        if arg_count(g) >= 2 && same(arg(g, 1), "gemv_n") {
             kernel = 3;
         }
-        if same(arg(g, 1), "gemv_t") {
+        if arg_count(g) >= 2 && same(arg(g, 1), "gemv_t") {
             kernel = 4;
         }
-        if same(arg(g, 1), "syrk") {
+        if arg_count(g) >= 2 && same(arg(g, 1), "syrk") {
             kernel = 5;
         }
-        if same(arg(g, 1), "chol") {
+        if arg_count(g) >= 2 && same(arg(g, 1), "chol") {
             kernel = 6;
         }
-        if same(arg(g, 1), "fwd") {
+        if arg_count(g) >= 2 && same(arg(g, 1), "fwd") {
             kernel = 7;
         }
-        if same(arg(g, 1), "bwd") {
+        if arg_count(g) >= 2 && same(arg(g, 1), "bwd") {
             kernel = 8;
         }
-        if same(arg(g, 1), "gemm") {
+        if arg_count(g) >= 2 && same(arg(g, 1), "gemm") {
             kernel = 9;
         }
     }
     var code = 0;
-    if threads < 1 || threads > 64 {
+    // every number is read or refused; every size is checked against the limits before anything is allocated
+    var refused = 0;
+    if n < 0 || d < 0 || seed < 0 || reps < 1 || threads < 1 {
+        refused = refuse.param_out_of_range();
+    } else if limits.check_threads(threads) != 0 {
+        refused = refuse.threads();
+    } else if kernel == 3 || kernel == 4 || kernel == 5 {
+        refused = limits.check_matrix(n, d, limits.default_rows(), limits.default_cols(), limits.default_cells());
+    } else if kernel == 6 || kernel == 7 || kernel == 8 || kernel == 9 {
+        refused = limits.check_matrix(n, n, limits.default_rows(), limits.default_cols(), limits.default_cells());
+    } else if kernel == 1 || kernel == 2 {
+        if n > limits.default_cells() {
+            refused = refuse.too_many_cells();
+        }
+    }
+    if refused != 0 {
         kernel = 0;
     }
     borrow mut heap as &!hp in {
@@ -453,8 +479,13 @@ fn main(world: World) -> [] int {
                 } else if kernel == 9 {
                     code = run_gemm(hp, ip, kc, n, seed, reps);
                 } else {
-                    io.write_all(ip, "refused ml.param.out-of-range\n");
-                    code = 2;
+                    if refused == 0 {
+                        refused = refuse.param_out_of_range();
+                    }
+                    io.write_all(ip, "refused ");
+                    io.write_all(ip, refuse.tag(refused));
+                    io.newline(ip);
+                    code = refuse.exit_code(refused);
                 }
             }
         }

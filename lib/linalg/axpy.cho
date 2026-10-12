@@ -36,6 +36,9 @@ pub fn axpy[&x, &y](a: float, xt: tensor.Tensor, xd: &x [float], yt: tensor.Tens
         return refuse.tensor_shape();
     }
     let n = xt.s0;
+    if n == 0 {
+        return 0;
+    }
     if xt.t0 == 1 && yt.t0 == 1 {
         return axpy_unit(a, xd[xt.off..xt.off + n], yd[yt.off..yt.off + n], n);
     }
