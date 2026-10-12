@@ -1,0 +1,608 @@
+// metrics-check: runs one function of lib/metrics on generated or listed data and prints the result bits (docs/metrics.md).
+// The gates (scripts/oracle_metrics.py, scripts/gate_metrics.py) call it; nothing here is the product.
+//
+//   metrics-check split train_test N NTEST SEED REP CAP [PRINT]
+//   metrics-check split kfold N K SEED REP CAP [PRINT]
+//   metrics-check split strat LABELS K SEED REP CAP [PRINT]
+//   metrics-check bounded SEED M COUNT                     COUNT draws of bounded(stream state SEED, M): value, one per line
+//   metrics-check ratio A B                                the correctly rounded A / B, bits
+//   metrics-check metric NAME YTRUE YPRED_OR_SCORE POS CAP REPS
+//   metrics-check terms YTRUE PROB POS                     the log-loss terms, bits, space separated
+//   metrics-check testcount N NUM DEN
+//
+// A vector is a spec: `L:1,0,-3` ints; `H:3ff0000000000000,..` float bits; `GL:n:seed:permille` generated labels; `GF:mode:n:seed:seed2`
+// generated floats (tools/metrics-check/gen.cho). NAME is one of accuracy precision recall f1 auc logloss rmse mae r2.
+// stdout, one `key value` per line: `value HEX`, `ms T`, or `refused TAG`; the exit code is the toolbox exit code of the tag.
+edition 5;
+
+import std.io;
+import ml.rng;
+import ml.fbits;
+import metrics.rules;
+import metrics.ratio;
+import metrics.splits;
+import metrics.classify;
+import metrics.rank;
+import metrics.regress;
+import metrics.logloss;
+import metrics.gen;
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// a signed decimal int (up to 19 digits, refused if it does not fit); (ok, value). Accumulated below zero so that INT_MIN parses.
+fn parse_int[&s](t: &s [byte]) -> [] (bool, int) {
+    var i = 0;
+    var neg = false;
+    if len(t) > 0 && int_of(t[0]) == '-' {
+        neg = true;
+        i = 1;
+    }
+    if len(t) - i < 1 || len(t) - i > 19 {
+        return (false, 0);
+    }
+    let lo = 0 - 9223372036854775807 - 1;
+    var v = 0;
+    while i < len(t) {
+        let c = int_of(t[i]);
+        if c < '0' || c > '9' {
+            return (false, 0);
+        }
+        let d = c - '0';
+        if v < (lo + d) / 10 {
+            return (false, 0);
+        }
+        v = v * 10 - d;
+        i = i + 1;
+    }
+    if neg {
+        return (true, v);
+    }
+    if v == lo {
+        return (false, 0);
+    }
+    return (true, 0 - v);
+}
+
+fn hexval(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10;
+    }
+    return 0 - 1;
+}
+
+// exactly 16 hex digits; (ok, bits)
+fn parse_hex[&s](t: &s [byte]) -> [] (bool, int) {
+    if len(t) != 16 {
+        return (false, 0);
+    }
+    var v = 0;
+    var i = 0;
+    while i < 16 {
+        let d = hexval(int_of(t[i]));
+        if d < 0 {
+            return (false, 0);
+        }
+        v = v << 4 | d;
+        i = i + 1;
+    }
+    return (true, v);
+}
+
+// the number of items of a list `a,b,c` (0 for the empty text)
+fn items[&s](t: &s [byte]) -> [] int {
+    if len(t) == 0 {
+        return 0;
+    }
+    var n = 1;
+    var i = 0;
+    while i < len(t) {
+        if int_of(t[i]) == ',' {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// start of field f of a `:`-separated spec (0-based); len(t) + 1 if there is no such field
+fn field_start[&s](t: &s [byte], f: int) -> [] int {
+    var at = 0;
+    var k = 0;
+    while k < f {
+        while at < len(t) && int_of(t[at]) != ':' {
+            at = at + 1;
+        }
+        if at >= len(t) {
+            return len(t) + 1;
+        }
+        at = at + 1;
+        k = k + 1;
+    }
+    return at;
+}
+
+fn field_end[&s](t: &s [byte], start: int) -> [] int {
+    var e = start;
+    while e < len(t) && int_of(t[e]) != ':' {
+        e = e + 1;
+    }
+    return e;
+}
+
+// field f as an int; (ok, value)
+fn field_int[&s](t: &s [byte], f: int) -> [] (bool, int) {
+    let a = field_start(t, f);
+    if a > len(t) {
+        return (false, 0);
+    }
+    return parse_int(t[a..field_end(t, a)]);
+}
+
+// ints of a spec; (box, n); n = -1 if the spec is bad
+fn make_ints[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[int]], int) {
+    if len(t) >= 2 && int_of(t[0]) == 'L' && int_of(t[1]) == ':' {
+        let body = t[2..len(t)];
+        let n = items(body);
+        let b = box_slice(heap, n + 1, 0);
+        var o = b;
+        var bad = false;
+        borrow mut o as &!w in {
+            let a = contents(w);
+            var k = 0;
+            var at = 0;
+            while k < n {
+                var e = at;
+                while e < len(body) && int_of(body[e]) != ',' {
+                    e = e + 1;
+                }
+                let (ok, v) = parse_int(body[at..e]);
+                if ok == false {
+                    bad = true;
+                } else {
+                    a[k] = v;
+                }
+                at = e + 1;
+                k = k + 1;
+            }
+        }
+        if bad {
+            return (o, 0 - 1);
+        }
+        return (o, n);
+    }
+    if len(t) >= 3 && int_of(t[0]) == 'G' && int_of(t[1]) == 'L' && int_of(t[2]) == ':' {
+        let (ok1, n) = field_int(t, 1);
+        let (ok2, seed) = field_int(t, 2);
+        let (ok3, pm) = field_int(t, 3);
+        if ok1 == false || ok2 == false || ok3 == false || n < 0 || n > 100000000 {
+            return (box_slice(heap, 1, 0), 0 - 1);
+        }
+        let b = box_slice(heap, n + 1, 0);
+        var o = b;
+        borrow mut o as &!w in {
+            let a = contents(w);
+            var i = 0;
+            while i < n {
+                a[i] = gen.label(seed, i, pm);
+                i = i + 1;
+            }
+        }
+        return (o, n);
+    }
+    return (box_slice(heap, 1, 0), 0 - 1);
+}
+
+fn make_floats[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[float]], int) {
+    if len(t) >= 2 && int_of(t[0]) == 'H' && int_of(t[1]) == ':' {
+        let body = t[2..len(t)];
+        let n = items(body);
+        let b = box_slice(heap, n + 1, 0.0);
+        var o = b;
+        var bad = false;
+        borrow mut o as &!w in {
+            let a = contents(w);
+            var k = 0;
+            var at = 0;
+            while k < n {
+                var e = at;
+                while e < len(body) && int_of(body[e]) != ',' {
+                    e = e + 1;
+                }
+                let (ok, v) = parse_hex(body[at..e]);
+                if ok == false {
+                    bad = true;
+                } else {
+                    // fbits.decode answers NaN for both infinities and NaNs; the library must see the infinities too
+                    if v >> 52 & 2047 == 2047 && v & 4503599627370495 == 0 {
+                        if v < 0 {
+                            a[k] = 0.0 - 1.0 / 0.0;
+                        } else {
+                            a[k] = 1.0 / 0.0;
+                        }
+                    } else {
+                        a[k] = fbits.decode(v);
+                    }
+                }
+                at = e + 1;
+                k = k + 1;
+            }
+        }
+        if bad {
+            return (o, 0 - 1);
+        }
+        return (o, n);
+    }
+    if len(t) >= 3 && int_of(t[0]) == 'G' && int_of(t[1]) == 'F' && int_of(t[2]) == ':' {
+        let (ok0, mode) = field_int(t, 1);
+        let (ok1, n) = field_int(t, 2);
+        let (ok2, seed) = field_int(t, 3);
+        var seed2 = 0;
+        var ok3 = true;
+        if field_start(t, 4) <= len(t) {
+            let (o3, s2) = field_int(t, 4);
+            ok3 = o3;
+            seed2 = s2;
+        }
+        if ok0 == false || ok1 == false || ok2 == false || ok3 == false || n < 0 || n > 100000000 {
+            return (box_slice(heap, 1, 0.0), 0 - 1);
+        }
+        let b = box_slice(heap, n + 1, 0.0);
+        var o = b;
+        borrow mut o as &!w in {
+            let a = contents(w);
+            var i = 0;
+            while i < n {
+                a[i] = gen.value(mode, i, seed, seed2);
+                i = i + 1;
+            }
+        }
+        return (o, n);
+    }
+    return (box_slice(heap, 1, 0.0), 0 - 1);
+}
+
+fn hex16[&i](io: &!i Io, bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            putchar(io, '0' + nib);
+        } else {
+            putchar(io, 'a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn refuse_line[&i](io: &!i Io, code: int) -> [io_write] int {
+    io.write_all(io, "refused ");
+    io.write_all(io, rules.tag(code));
+    io.newline(io);
+    return rules.exit_code(code);
+}
+
+fn print_value[&i](io: &!i Io, r: rules.Scored, ms: int) -> [io_write] int {
+    if r.code != 0 {
+        return refuse_line(io, r.code);
+    }
+    io.write_all(io, "value ");
+    hex16(io, bits_of(r.v));
+    io.newline(io);
+    io.write_all(io, "ms ");
+    io.print_int(io, ms);
+    io.newline(io);
+    return 0;
+}
+
+// the assignment vector: `hash H`, `count N`, and with PRINT the list
+fn print_assign[&i, &a](io: &!i Io, v: &a [int], n: int, show: bool) -> [io_write] int {
+    var h = 0;
+    var i = 0;
+    while i < n {
+        h = wrapping_add(h, rng.mix(v[i] ^ rng.mix(i)));
+        i = i + 1;
+    }
+    io.write_all(io, "hash ");
+    hex16(io, h);
+    io.newline(io);
+    io.write_all(io, "count ");
+    io.print_int(io, n);
+    io.newline(io);
+    if show {
+        io.write_all(io, "assign");
+        i = 0;
+        while i < n {
+            io.write_all(io, " ");
+            io.print_int(io, v[i]);
+            i = i + 1;
+        }
+        io.newline(io);
+    }
+    return 0;
+}
+
+fn num[&g](g: &g Args, i: int) -> [args] int {
+    if arg_count(g) <= i {
+        return 0 - 1;
+    }
+    let (ok, v) = parse_int(arg(g, i));
+    if ok == false {
+        return 0 - 1;
+    }
+    return v;
+}
+
+fn run_split[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let kind = arg(g, 2);
+    var code = 0;
+    var n = num(g, 3);
+    var k = num(g, 4);
+    var seed = num(g, 5);
+    var rep = num(g, 6);
+    var cap = num(g, 7);
+    var show = arg_count(g) > 8;
+    if same(kind, "strat") {
+        // metrics-check split strat LABELS K SEED REP CAP [PRINT]
+        k = num(g, 4);
+        seed = num(g, 5);
+        rep = num(g, 6);
+        cap = num(g, 7);
+        show = arg_count(g) > 8;
+        let (lb, ln) = make_ints(heap, arg(g, 3));
+        var out = box_slice(heap, ln + 1, 0);
+        var lbo = lb;
+        if ln < 0 {
+            io.write_all(io, "bad spec");
+            io.newline(io);
+            unbox_slice(heap, lbo);
+            unbox_slice(heap, out);
+            return 2;
+        }
+        borrow lbo as &lr in {
+            borrow mut out as &!ow in {
+                code = splits.stratified(heap, contents(lr)[0..ln], k, seed, rep, cap, contents(ow)[0..ln]);
+            }
+        }
+        if code == 0 {
+            borrow out as &ow in {
+                print_assign(io, contents(ow), ln, show);
+            }
+        } else {
+            code = refuse_line(io, code);
+        }
+        unbox_slice(heap, lbo);
+        unbox_slice(heap, out);
+        return code;
+    }
+    // metrics-check split train_test|kfold N PARAM SEED REP CAP: the number of rows asked for may be larger than what is
+    // allocated: the output has exactly n entries only when n is sane (a bad n is the refusal under test)
+    var m = n;
+    if m < 0 || m > 20000000 {
+        m = 0;
+    }
+    var out = box_slice(heap, m + 1, 0);
+    var oo = out;
+    var is_tt = same(kind, "train_test");
+    var outlen = m;
+    if n > 20000000 {
+        // an n beyond what the driver allocates: the library must refuse it from the number alone
+        outlen = m;
+    }
+    borrow mut oo as &!ow in {
+        if is_tt {
+            code = splits.train_test(heap, n, k, seed, rep, cap, contents(ow)[0..outlen]);
+        } else {
+            code = splits.kfold(heap, n, k, seed, rep, cap, contents(ow)[0..outlen]);
+        }
+    }
+    if code == 0 {
+        borrow oo as &ow in {
+            print_assign(io, contents(ow), n, show);
+        }
+    } else {
+        code = refuse_line(io, code);
+    }
+    unbox_slice(heap, oo);
+    return code;
+}
+
+fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k Clock) -> [heap, io_write, clock, args] int {
+    let name = arg(g, 2);
+    let pos = num(g, 5);
+    let cap = num(g, 6);
+    var reps = num(g, 7);
+    if reps < 1 {
+        reps = 1;
+    }
+    var float_pair = false;
+    if same(name, "rmse") || same(name, "mae") || same(name, "r2") {
+        float_pair = true;
+    }
+    var float_second = false;
+    if same(name, "auc") || same(name, "logloss") {
+        float_second = true;
+    }
+    var got = rules.fail(rules.out_of_range());
+    var t0 = 0;
+    var t1 = 0;
+    if float_pair {
+        let (ya, yn) = make_floats(heap, arg(g, 3));
+        let (pa, pn) = make_floats(heap, arg(g, 4));
+        var yb = ya;
+        var pb = pa;
+        if yn >= 0 && pn >= 0 {
+            borrow yb as &yr in {
+                borrow pb as &pr in {
+                    let y = contents(yr)[0..yn];
+                    let p = contents(pr)[0..pn];
+                    t0 = clock_ms(clock);
+                    var r = 0;
+                    while r < reps {
+                        if same(name, "rmse") {
+                            got = regress.rmse(heap, y, p, cap);
+                        } else if same(name, "mae") {
+                            got = regress.mae(heap, y, p, cap);
+                        } else {
+                            got = regress.r2(heap, y, p, cap);
+                        }
+                        r = r + 1;
+                    }
+                    t1 = clock_ms(clock);
+                }
+            }
+        }
+        unbox_slice(heap, yb);
+        unbox_slice(heap, pb);
+    } else if float_second {
+        let (ya, yn) = make_ints(heap, arg(g, 3));
+        let (pa, pn) = make_floats(heap, arg(g, 4));
+        var yb = ya;
+        var pb = pa;
+        if yn >= 0 && pn >= 0 {
+            borrow yb as &yr in {
+                borrow pb as &pr in {
+                    let y = contents(yr)[0..yn];
+                    let p = contents(pr)[0..pn];
+                    t0 = clock_ms(clock);
+                    var r = 0;
+                    while r < reps {
+                        if same(name, "auc") {
+                            got = rank.auc(heap, y, p, pos, cap);
+                        } else {
+                            got = logloss.logloss(heap, y, p, pos, cap);
+                        }
+                        r = r + 1;
+                    }
+                    t1 = clock_ms(clock);
+                }
+            }
+        }
+        unbox_slice(heap, yb);
+        unbox_slice(heap, pb);
+    } else {
+        let (ya, yn) = make_ints(heap, arg(g, 3));
+        let (pa, pn) = make_ints(heap, arg(g, 4));
+        var yb = ya;
+        var pb = pa;
+        if yn >= 0 && pn >= 0 {
+            borrow yb as &yr in {
+                borrow pb as &pr in {
+                    let y = contents(yr)[0..yn];
+                    let p = contents(pr)[0..pn];
+                    t0 = clock_ms(clock);
+                    var r = 0;
+                    while r < reps {
+                        if same(name, "accuracy") {
+                            got = classify.accuracy(y, p, cap);
+                        } else if same(name, "precision") {
+                            got = classify.precision(y, p, pos, cap);
+                        } else if same(name, "recall") {
+                            got = classify.recall(y, p, pos, cap);
+                        } else {
+                            got = classify.f1(y, p, pos, cap);
+                        }
+                        r = r + 1;
+                    }
+                    t1 = clock_ms(clock);
+                }
+            }
+        }
+        unbox_slice(heap, yb);
+        unbox_slice(heap, pb);
+    }
+    return print_value(io, got, t1 - t0);
+}
+
+fn run_terms[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let pos = num(g, 4);
+    let (ya, yn) = make_ints(heap, arg(g, 2));
+    let (pa, pn) = make_floats(heap, arg(g, 3));
+    var yb = ya;
+    var pb = pa;
+    if yn >= 0 && yn == pn {
+        borrow yb as &yr in {
+            borrow pb as &pr in {
+                io.write_all(io, "terms");
+                var k = 0;
+                while k < yn {
+                    io.write_all(io, " ");
+                    hex16(io, bits_of(logloss.term(contents(yr)[k] == pos, contents(pr)[k])));
+                    k = k + 1;
+                }
+                io.newline(io);
+            }
+        }
+    }
+    unbox_slice(heap, yb);
+    unbox_slice(heap, pb);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    var code = 0;
+    borrow mut heap as &!hp in {
+        borrow mut io as &!ip in {
+            borrow clock as &kc in {
+                borrow args as &g in {
+                    if arg_count(g) < 2 {
+                        code = 2;
+                    } else if same(arg(g, 1), "split") {
+                        code = run_split(hp, ip, g);
+                    } else if same(arg(g, 1), "metric") {
+                        code = run_metric(hp, ip, g, kc);
+                    } else if same(arg(g, 1), "terms") {
+                        code = run_terms(hp, ip, g);
+                    } else if same(arg(g, 1), "ratio") {
+                        let (oa, a) = parse_int(arg(g, 2));
+                        let (ob, b) = parse_int(arg(g, 3));
+                        io.write_all(ip, "value ");
+                        hex16(ip, bits_of(ratio.ratio(a, b)));
+                        io.newline(ip);
+                    } else if same(arg(g, 1), "testcount") {
+                        io.write_all(ip, "value ");
+                        io.print_int(ip, splits.n_test_for(num(g, 2), num(g, 3), num(g, 4)));
+                        io.newline(ip);
+                    } else if same(arg(g, 1), "bounded") {
+                        var s = num(g, 2);
+                        let m = num(g, 3);
+                        var c = num(g, 4);
+                        while c > 0 {
+                            let (v, s2) = splits.bounded(s, m);
+                            s = s2;
+                            io.print_int(ip, v);
+                            io.newline(ip);
+                            c = c - 1;
+                        }
+                    } else {
+                        code = 2;
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(clock);
+    release(heap);
+    release(io);
+    return code;
+}
