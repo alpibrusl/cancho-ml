@@ -107,9 +107,19 @@ sections     u32 LE    count, then per section: tag u32 LE, length u64 LE, paylo
   field, so tensors add no format version (section 3.1);
 * sections in a fixed order: `plan` (the canonical pipeline text, section 5), `schema` (column names, types, order),
   `steps` (each transform's fitted parameters), `model` (the estimator), `meta` (seed, row and column counts, hyperparameters,
-  compiler commit, a SHA-256 of all sections before it);
+  compiler commit), then a **32-byte SHA-256 trailer over every byte before it** *(corrected in place: the first draft put the
+  digest in `meta`, "a SHA-256 of all sections before it", which cannot cover `meta` itself or the section headers; a trailer
+  covers the whole file)*;
 * a reader checks magic, version, section tags, every length against the file size and against the section limits, and the
-  SHA-256, and refuses with a tag from section 8 before it allocates anything sized by the file.
+  SHA-256, and refuses with a tag from section 8 before it allocates anything sized by the file. The order is bad-magic, version,
+  truncated (the structure), checksum, then malformed (every field against its bound).
+
+**Built in M9's slice (`tools/ml/mfile.cho`, byte layout in the header of that file and in `docs/cli.md` section 4):** five sections,
+tags 1 to 5, `schema` = `u32` columns, `u32` target, per column `u32` name length, name, `u32` type (0 int, 1 dec), `u32` scale; `steps` =
+`u32` 0; `model` = `u32` kind (1 constant regression, 2 constant classification) and a tensor record (`u32` dtype 1 = i64, `u32`
+rank 1, `u64` shape, `i64` elements); `meta` = `u64` rows, `u64` columns, `u64` seed 0, `u32` hyperparameters 0, `u32` length and the
+compiler pin. The layout is parsed by an independent reader in `tests/conformance/test_model_file.py`, and a corrupted-file fuzz
+(every truncation, every byte flipped three ways, seeded damage with and without a repaired checksum) never traps.
 
 Alternative considered: a text format (shortest round-trip decimals, as `std.fmt.float_into` prints). It is readable and avoids
 the `float_of_bits` workaround, but a decimal parse is a correctly-rounded parse, which is the hard part cancho-table's float
@@ -170,11 +180,12 @@ CI (`tools.toml`, `manifests/`). The expected rows **[choice]**:
 
 | binary | rows | not allowed |
 |---|---|---|
-| `ml` (fit, predict, eval, introspect, skill) | read files named on the command line; write the model and output paths named on it; heap; `conc` (`spawn`) | network, exec, ffi, clock, environment beyond arguments |
+| `ml` (fit, predict, eval, introspect, skill) | read files named on the command line (`file_read`, `fs_read("")`, `dir_read`); write the model and the log it is told to, beneath a directory it opened (`dir_write`, `file_write`: no `fs_write`, no path write); heap; `conc` (`spawn`) **once a threaded kernel is in the binary** | network, exec, ffi, clock, environment beyond arguments, standard input |
 | `ml-predict` (M10) | read a model file, read an input; heap | everything else, including writes other than standard output and `conc` if single-threaded |
 
-A change to a binary's authority fails CI until the manifest changes in the same diff (M9's gate). Model files and data files
-are inputs and are never executed or `include`d.
+A change to a binary's authority fails CI until the manifest changes in the same diff (M9's gate, built: `scripts/manifest.py
+--check`, `tools.toml`, `manifests/ml.authority.json`; the derived row of the slice is the first, without `conc`, in `docs/cli.md`
+section 6). Model files and data files are inputs and are never executed or `include`d.
 
 ## 8. Refusals
 
@@ -200,6 +211,33 @@ a parse failure 8, an I/O failure 1. The first set, to be completed in M2 to M9:
 | `ml.model.schema-mismatch` | 8 | see `ml.schema.mismatch` | — |
 
 No refusal depends on running out of memory: every allocation sized by input is first compared to a limit (M2's gate).
+
+*Added by the CLI slice (`tools/ml/spec.cho` is the table; `docs/cli.md`; one fixture per tag in `tests/conformance/fixtures.py`):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `args.unknown-command` | 2 | the first operand is not `fit`, `predict` or `eval` | none |
+| `ml.param.out-of-range` | 2 | a numeric flag outside its range (the range is in `detail`) | none |
+| `ml.input.too-many-cells` | 8 | rows times columns over `--max-cells` (checked without an overflowing product) | the flag |
+| `ml.input.unsupported-type` | 8 | a cell with an exponent, or a column that needs more than 12 digits; floating-point text needs cancho-table's float reader | none |
+| `ml.input.unsupported-csv` | 8 | a double quote (quoted CSV is not read) | none |
+| `ml.input.duplicate-column` | 8 | two columns, or an empty column, with the same header name | none |
+| `ml.input.unknown-column` | 3 | `--target` or `--drop` names a column that is not in the header | none |
+| `ml.label.not-integer` | 8 | a classification target that is not an integer column | none |
+| `ml.model.malformed` | 8 | the checksum is right and a field is not (a repaired file) | none |
+| `parse.csv-ragged-row` | 8 | a data row with another number of fields than the header (cancho-table's tag) | none |
+| `limit.log-full` | 8 | `--log` names a file already `--log-max-bytes` long | none |
+
+Reused from the toolbox catalogue: `args.*`, `path.*`, `io.*`, `conflict.exists`, `limit.line-too-long`, `limit.input-too-large`
+(the model file over `--max-bytes`). `ml.input.non-numeric` gained a `retry` repair (`--drop NAME`, for a feature column) and
+`ml.schema.mismatch` one when only extra columns differ (`--drop` them); otherwise a repair is `none` with a reason naming the
+columns. **Not reachable from the CLI today, so without a fixture and not in `introspect`:** `ml.tensor.*`, `ml.linalg.*`,
+`ml.param.threads` (no kernel uses linear algebra yet, no `--threads`), `ml.limit.depth/nodes/fits`, `ml.fit.non-finite`,
+`ml.metric.undefined` (no tree, no iterative fit, no metric with an undefined value). `ml.model.schema-mismatch` of the first list is
+dropped: it said "see `ml.schema.mismatch`", and a second tag for one rule is the repurposing D5 forbids. `ml.input.empty`,
+`ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.non-numeric`, `ml.input.non-finite`, `ml.label.single-class`,
+`ml.label.not-binary`, `ml.schema.mismatch` and the four model tags of the first list are built as listed there, at the exits listed.
+
 
 *Added by stage 1 (`lib/core/refuse.cho`, one fixture per tag in `tests/core.cho`):* `ml.tensor.rank`, `ml.tensor.shape`,
 `ml.tensor.bounds` (exit 8); `ml.input.too-many-cells` (exit 8: rows x columns over the cell cap, checked without a multiplication
@@ -238,3 +276,12 @@ discharged; a 2-D view or slice-of-slice type (or struct reference fields, which
 before the kernels. v1 scope decisions (maintainer): binary classification and regression only (the format reserves a class
 count); cancho-table is shared by a pinned package dependency (not yet pinned: see `cancho.toml`); descriptors are plain ints with
 data beside them; every reduction has the fixed-block, fixed-tree order of `docs/linalg.md` section 2, behind one function.
+
+## 13. Stage 2 of v1, early: the command line (M9 as a vertical slice)
+
+`docs/cli.md` holds the gates (written before the code), the reference, the arithmetic of the one model that is built
+(`--model constant`), the log, the authority and the verdicts. What it changes in this document: the model file's digest is a
+trailer (section 4.1, corrected in place), section 7's row for `ml` has the labels the derivation printed, section 8 has the tags the
+slice added and the ones nothing reaches yet. What it does not settle: the speed factor (section 9), the second machine for D2, the
+shared reader (section 10: cancho-table is not a package, so the slice has a reader of its own, `tools/ml/csv.cho`, until it is).
+

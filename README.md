@@ -1,6 +1,10 @@
 # cancho-ml
 
-**Status: planned. No code yet.** This repository holds the plan: one epic and the issues under it.
+**Status: early.** The repository holds the plan (one epic and the issues under it, `docs/design.md`), the linear algebra of stage 1
+(`lib/linalg`, `docs/linalg.md`) and a vertical slice of the command line (`tools/ml`, `docs/cli.md`): `ml fit | predict | eval |
+introspect | skill` with one real model, `--model constant` (the training mean, or the majority class), a versioned model file, refusals
+as data with rule tags, a bounded log and a checked authority manifest. Nothing else is built: see `docs/cli.md` section 1 for the gates
+and section 7 for their verdicts.
 
 A machine-learning library and command line written in [cancho](https://github.com/alpibrusl/cancho), for classical ML on
 tabular data: transformations, pipelines, training, prediction and evaluation. It follows the shape of

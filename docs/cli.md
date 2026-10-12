@@ -24,7 +24,7 @@ catch); a survivor is listed with its reason in section 7.
 
 | id | gate | test | mutants that must be killed |
 |---|---|---|---|
-| T1 | **Tables.** Every flag of `flag_table()` is in `introspect`, in the text of `skill`, in the `flag` enum of `schemas/ml.v1.json`, and used by at least one fixture of `tests/fixtures/cli.json`. Every rule tag of `rules` is in `introspect`, in `skill`, in the `rule` enum of the schema, and reached by a fixture whose first error is that tag with the exit code of the table. Every record of `log_table()` is in `schemas/log.v1.json` and appears in the log of some fixture. The schemas are generated from the tables by `scripts/schemas.py` and a stale file fails. | `test_tables.py` | flag added to the table with no fixture; flag removed from the schema; rule added with no fixture; fixture removed; log record added with no fixture; skill text missing a flag |
+| T1 | **Tables.** Every flag of `flag_table()` is in `introspect`, in the text of `skill`, in the `flag` enum of `schemas/ml.v1.json`, and used by at least one fixture of `tests/conformance/fixtures.py`. Every rule tag of `rules` is in `introspect`, in `skill`, in the `rule` enum of the schema, and reached by a fixture whose first error is that tag with the exit code of the table. Every record of `log_table()` is in `schemas/log.v1.json` and appears in the log of some fixture. The schemas are generated from the tables by `scripts/schemas.py` and a stale file fails. | `test_tables.py` | flag added to the table with no fixture; flag removed from the schema; rule added with no fixture; fixture removed; log record added with no fixture; skill text missing a flag |
 | R1 | **Refusals.** Every refusal is exit code of D4 (agent-toolbox.md), one JSON line on stdout valid against the schema, stderr empty in JSON mode, `error` equal to `errors[0]`, `ok:false` exactly when the exit is not 0 or 9. | `test_rules.py` | exit code of a tag changed; an error written to stderr |
 | N1 | **No trap.** A seeded fuzz of argument vectors (missing values and operands, empty strings, `..`, absolute paths, over-long paths, duplicated and unknown flags, every flag with every verb) never produces a trap status (132, 134, 136, 139, a negative status) and always one valid JSON line. Spike F found `SIGILL` on a missing argument and on `..`: both are fixtures. | `test_fuzz_args.py` | the missing-operand check removed; the `..` check removed |
 | L1 | **No payload is logged.** Fit and predict inputs carry canary strings (cell values, column names, a path component); the log file, stdout of a failing run and stderr never contain a canary where only a count or a tag may be; every log line is valid against `schemas/log.v1.json` (a closed object, a fixed key set); the log is bounded (records per run, bytes per record, and a refusal `limit.log-full` at the file cap). | `test_log.py` | a column name written into a log record; the cap check removed |
@@ -38,4 +38,248 @@ catch); a survivor is listed with its reason in section 7.
 Nothing in a gate is "expected to pass": each row names the mutant that proves the gate can fail, and section 7 reports the
 verdict of each, with the survivors.
 
-## 2. to 6. (filled in below as the code lands)
+## 2. The command line
+
+```
+ml [FLAGS] fit FILE       fit a model on a CSV and write it
+ml [FLAGS] predict FILE   apply a stored model to a CSV
+ml [FLAGS] eval FILE      score a stored model on a CSV
+ml introspect             the tool as data (flags, rules, limits, authority, schema)
+ml skill                  the same as a SKILL.md for an agent
+```
+
+The first operand is the verb, the second the CSV file. Flags may stand anywhere. A flag a verb does not take is
+`args.conflict` (the lists are `allowed()` in `tools/ml/spec.cho`); an unknown flag is `args.unknown-flag`, never ignored. The
+flag table, with kinds, defaults and help, is `ml introspect | jq .flags` and is not copied here, because a copy is a second
+table to drift (gate T1 checks the one table against its projections).
+
+| verb | needs | takes also |
+|---|---|---|
+| `fit` | `--target NAME --output MODEL` | `--model constant`, `--task regression\|classification`, `--drop`, `--overwrite`, `--dry-run`, the `--max-*` caps, `--log`, `--format` |
+| `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format` |
+| `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format` |
+
+**Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,
+error, errors, meta}`, errors `{code, rule, message, hint, repair, detail}`, no timestamp, no duration, no float (every decimal is a
+string whose digits are exact). In `--format text` a success is a few lines and an error is a sentence on standard error.
+
+**Exit codes** (cancho `docs/agent-toolbox.md` D4, written out independently in `test_exit_codes_are_the_d4_classes`): 0 done, 1 the
+operating system failed (`io.read-failed`, `io.write-failed`), 2 the invocation is malformed, 3 a named input does not exist,
+4 refused (permission, outside the root, a symbolic link), 5 conflict (`conflict.exists`), 8 the answer is no or a limit was
+reached (`ml.*`, `limit.*`, `parse.*`), 9 a `--dry-run` completed. With several errors the first, in input order, decides the code and
+`errors` lists them all.
+
+**Dry run.** `fit --dry-run` reads, checks and fits, runs every check the real write would (the directory, an existing output,
+`--overwrite`), and answers `dry_run: true` and `planned_actions: [{op: create|replace, path, bytes, sha256}]` with exit 9. It opens the
+directory and the output name to look, and creates, renames and removes nothing (`fsio.write_atomic` with `dry`). A test shows the
+file is absent afterwards and unchanged when it exists. *Not checked under `strace`:* that is the claim of the contract package's
+`dry_run` guarantee and it is not re-measured here.
+
+### 2.1 Paths and confinement
+
+* `--root DIR` is the directory FILE, `--model-file`, `--output` and `--log` are resolved beneath. Each is checked lexically by the
+  pinned `toolbox.path` (`path.empty`, `path.too-long`, `path.dotdot`, `path.absolute`, `path.outside-root`) and then opened one
+  component at a time with no link followed (`toolbox.place`): a link anywhere below the root is `path.symlink`.
+* Without `--root` a path is the working directory's, and links are followed (`confinement: none` for readers). Writers still work
+  beneath the directory that holds the file.
+* **A path-valued flag takes its value as an argument of its own** (`--output FILE`, not `--output=FILE`; the second is
+  `args.bad-value`). The lexical checks of `toolbox.path` take an argument by index. `--root=DIR` is accepted.
+* **Two dots in a row are refused wherever a whole path reaches a builtin.** Found by the fuzz (gate N1): `open_read` and `open_dir`
+  trap on any path that contains `..`, not only on a `..` component, while `toolbox.path.has_dotdot` looks for the component alone, so
+  `a..b` and `.../x` passed the check and ended the process with `SIGILL`. Under `--root` only the root string and, without a root, the
+  whole path reach those builtins; `ml` refuses them with `path.dotdot` (`paths.has_double_dot`). Under `--root` a name such as
+  `a..b.csv` is an ordinary name (a fixture). The same hole is in the pinned package: see section 8.
+* The output is written to `<name>.ml-tmp` beside the final name, synced, renamed over it and the directory synced, so a reader never
+  sees half a model (`fsio.write_atomic`). A leftover temporary from a crash makes the next write `io.write-failed`
+  (`O_EXCL`); it is not removed by the tool.
+
+### 2.2 Limits
+
+Every number sized by input has a flag, a default and a ceiling, listed by `introspect.limits` (the table is `limits()` in
+`spec.cho`, and gate T1 checks it against the flags): `--max-rows` (default 10,000,000, ceiling 1,000,000,000), `--max-columns`
+(4,096 / 8,192), `--max-cells`, `--max-line-bytes` (1 MiB / 16 MiB), `--max-bytes` for a model file (16 MiB / 256 MiB), `--limit`,
+`--from`, `--log-max-bytes`. A value outside its range is `ml.param.out-of-range` with the range in `detail`. The ceilings keep every
+sum in the exact accumulators below 2^63 (section 3.4); they are **choices**, not measurements, and section 9 of `design.md` still
+waits for the speed factor.
+
+### 2.3 The CSV reader (`tools/ml/csv.cho`)
+
+It is this slice's own and small, on purpose: **cancho-table is not a package** (a binary with sources under `tools/table/`, no
+store to pin) and its float reader `tools/table/flt.cho` is on an unmerged branch (`cancho-table-f64`), so nothing of it can be
+pinned and nothing is copied. It reads:
+
+* the first non-blank line as the header, comma separated, LF or CRLF, a leading UTF-8 byte order mark dropped, blank lines skipped;
+* no quoting: a double quote anywhere is `ml.input.unsupported-csv`; a row with another number of fields is `parse.csv-ragged-row`;
+* a cell is `[+-]digits[.digits]` with at most 12 digits (leading zeros of the integer part not counted), read as an integer
+  mantissa and a number of fractional digits; a column is `int`, or `dec(S)` with `S` the most fractional digits seen, and its integer
+  digits plus `S` may not exceed 12 (`ml.input.unsupported-type`, reason "the column needs more than 12 digits");
+* an exponent (`1e5`) is `ml.input.unsupported-type`; `nan`/`inf` any case is `ml.input.non-finite`; an empty cell or text is
+  `ml.input.non-numeric` with line, column and reason in `detail`, and, for a feature column, a `retry` repair that adds `--drop NAME`.
+
+The dependency that lifts the float restriction is a merged cancho-table float reader published as a package. Until then every
+float column is refused with a tag and a hint that names this dependency (test `test_float_text_is_refused_not_approximated`).
+Nothing is read approximately: `0.1` is the integer 1 at scale 1.
+
+One function, `csv.scan`, reads the file once in bounded memory (one 64 KiB chunk, the longest line up to `--max-line-bytes`, the
+header, four ints a column). `fit` scans twice: pass 1 for the shape, pass 2 for the target folded into exact accumulators, and a
+cell that no longer fits what pass 1 saw (the file changed between the passes) is an error, not a trap. `predict` and `eval` scan once;
+`eval` folds the target while it infers the shape and discards the fold if the schema check fails.
+
+### 2.4 A session
+
+(Run on this machine with the binary of this commit; the hash is the file's SHA-256.)
+
+```
+$ ml --root . fit --target y --output sales.cml sales.csv           # sales.csv: id,x,y / 1,2.5,10 / 2,3.5,20 / 3,1.0,30 / 4,0.25,41
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":4,"columns":3,"target":"y","path":"sales.cml","bytes":316,"sha256":"9b6a34144d1351f141f1ed2f1238f053afef57d815f29d047892239b63afbd05","written":true,"summary":{"mean":"25.250000"}},"meta":{"version":"0.1.0"}}
+$ ml --root . predict --model-file sales.cml new.csv                # new.csv: id,x / 5,2.0 / 6,4.5   (no target column needed)
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["25.250000"],["25.250000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
+$ ml --root . eval --model-file sales.cml check.csv                 # check.csv = sales.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":4,"metrics":{"rmse":"11.519006","sse":"530.750000000000","prediction":"25.250000"}},"meta":{"version":"0.1.0"}}
+$ ml --root . fit --target y --output sales.cml sales.csv           # again
+{"ok":false,...,"error":{"code":"CONFLICT","rule":"conflict.exists","message":"the output file exists","hint":"use --overwrite to replace it, or name another file","repair":null,"detail":{"path":"sales.cml"}},...}     # exit 5
+$ ml --root . fit --dry-run --overwrite --target y --output sales.cml sales.csv
+{"ok":true,...,"data":{...,"written":false,...},"dry_run":true,"planned_actions":[{"op":"replace","path":"sales.cml","bytes":316,"sha256":"9b6a...bd05"}],...}   # exit 9
+$ ml --root . fit --target y --output f.cml flt.csv                 # flt.csv: id,x,y / 1,1e5,10
+{"ok":false,...,"error":{"code":"PRECONDITION_FAILED","rule":"ml.input.unsupported-type","message":"a cell is a number this slice cannot read exactly","hint":"scale the column to an integer or a short decimal, or drop it with --drop; floating-point text needs cancho-table's float reader, which is not merged","repair":null,"detail":{"line":2,"column":2,"name":"x","reason":"exponent"}},...}     # exit 8
+```
+
+## 3. The constant model and its arithmetic
+
+`--model constant` is the only model built, and it is a real one: it is the baseline every other model is compared with, and the
+slice is judged on whether the whole path (CSV, schema, file, prediction, score) is right, not on how clever the estimator is.
+
+### 3.1 Regression
+
+The prediction is the training mean of the target. The target is a column `int` or `dec(S)`; every value is an integer mantissa
+`m_i` (below 10^12 in size) at scale `S`. The sum `T = sum m_i` is exact: it is kept in two limbs (`sum_q = sum trunc(m_i / 10^9)`,
+`sum_r = sum (m_i mod 10^9)`, `ml.exact.sum_add`) because 10^7 values of 12 digits already leave 64 bits. The prediction is
+
+    P = round_half_away_from_zero( T * 10^6 / n )        a scaled integer at scale S + 6, printed as a decimal
+
+computed by long division in base-10^9 limbs (`ml.exact.mean_scaled`), no float. So the answer has six more fractional digits than
+the target, rounded, and **that rounded value is the prediction**: `predict` prints it, `eval` scores against it, and the test oracle
+(`fractions.Fraction`) agrees with every digit.
+
+### 3.2 Classification
+
+The target is an `int` column with exactly two values `c0 < c1` (more is `ml.label.not-binary`, fewer `ml.label.single-class`, a
+decimal column `ml.label.not-integer`). The model stores the counts `n0`, `n1`. The predicted label is the class with more rows, the
+smaller label on a tie (rule 4 of `design.md` section 6: lowest index wins), and `probability` is `n1 / n` = P(label = `c1`) rounded
+half up to six digits (`ml.exact.fraction_scaled`). The format reserves the class count (the tensor has `K = 2`), so more classes
+change no existing byte.
+
+### 3.3 Eval
+
+* Classification: `correct` rows whose target equals the predicted label, `total` rows, `accuracy = correct / total` to six digits.
+  A label the model has not seen is a wrong row, not an error.
+* Regression: each target cell is shifted to the model's scale (an input with fewer fractional digits is fine, more is a schema
+  mismatch), then `e_i = y_i * 10^6 - P` is an exact integer below 2 * 10^18, and `SSE = sum e_i^2` is an exact integer kept in six
+  limbs (`ml.exact.square_add`), printed **exactly** as `sse` with `2 (S + 6)` fractional digits. `rmse` is **not** exact: it is
+  `trunc(sqrt(float(SSE) / float(n)) + 0.5)` in units of `10^-(S+6)`, where `float(SSE)` is the limbs folded left to right in binary64
+  (`x = x * 1e9 + limb`). That is a fixed sequence of IEEE operations with no `fma` and no library call (`sqrt` is an instruction), so
+  the same bits come out on every machine (`design.md` D2, **not yet measured on a second machine**); the oracle repeats the steps in
+  Python and also bounds the result within 1 unit and 1e-12 relative of the true square root.
+
+### 3.4 Bounds
+
+A cell has at most 12 digits, a file at most 10^9 rows (`--max-rows` ceiling), so: `|sum_q| <= 1000 n`, `|sum_r| <= (10^9 - 1) n`,
+each squared-error limb gains less than 5 * 10^9 a row (below 2^63 for 10^9 rows), and the long division keeps every partial
+dividend below `n * 10^9 < 2^63`. The model reader checks the same bounds on the numbers in a file before they reach the
+arithmetic (a repaired checksum does not make a file trustworthy: `test_every_field_check_has_a_file_that_reaches_it`).
+
+## 4. The model file
+
+`design.md` section 4.1 is the format and is updated to match this slice: magic `CML1`, `u32` version 1, `u32` section count 5, five
+sections (`plan`, `schema`, `steps`, `model`, `meta`), then a **32-byte SHA-256 trailer over every byte before it**. (Section 4.1 first
+put the digest inside `meta`; a digest inside the bytes it covers is circular for the whole file, so it is a trailer.) Every numeric
+block is a tensor record `dtype u32 | rank u32 | shape (rank * u64) | elements`; the constant model's are `i64`, rank 1. The file holds
+no timestamp, no host, no path; it holds the compiler pin it was built with (informational, as section 3 chose), so **two builds with
+different compilers write different bytes for the same data**. A test pins the layout with an independent reader written from the
+document. **The plan** (section 4.2) is the one canonical line `model kind=constant task=regression\n` (or `classification`): fixed key
+order, one spelling, built from `--model` and `--task` alone, since no transform step is built yet (impute, scale and encode are M3
+and M4); the reader accepts those two byte strings and nothing else.
+
+The reader refuses in this order: `ml.model.bad-magic`, `ml.model.version`, `ml.model.truncated` (the structure: five sections in order
+whose lengths fit the bytes that are there, checked before anything is allocated from them; a length that runs past the end, even
+2^62, is this), `ml.model.checksum`, `ml.model.malformed` (a field outside what the format allows). Because the structure is walked
+before the checksum, a flipped bit in a length field reports `truncated` or `malformed` rather than `checksum`; no damaged file is
+ever accepted (gate M1 flips every byte three ways).
+
+## 5. The log
+
+`--log FILE` appends one NDJSON record at the start of the run (`start`), after the read (`read`: rows, columns, bytes of the CSV), after
+a real write (`write`: bytes and SHA-256 of the model) and at the end (`end`: ok, exit, the first rule), in `spec.log_table()`. The
+fields are counts, flags, rule tags and a hash: the writers in `ml.logrec` take no cell, no column name and no path, so none can be
+logged; gate L1 plants canaries in all three and in every kind of run. Bounded: at most four records a run, each under 256 bytes
+(`per_run` is asserted at 2048), and a log already `--log-max-bytes` long is refused **before any work** with `limit.log-full`
+(so the file can pass the cap by one run at most). No timestamp, because there is no clock (a record with the time would need the
+`clock` label the ceiling forbids): order is `seq`, the position in the run.
+
+## 6. Authority and determinism
+
+`tools.toml` is the ceiling and `manifests/ml.authority.json` the derivation (`scripts/manifest.py`): `args`, `dir_read`, `dir_write`,
+`err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, `io_write` and nothing else. In words: it reads the files named on its
+command line; it creates, appends to, renames and removes only beneath a directory it opened itself, and holds no `fs_write`, so no
+path write; it has no standard input, no clock, no environment, no network, no foreign code. `design.md` section 7 expected `conc`; there
+is none, because the slice has no `--threads`. **The label arrives with the first threaded kernel, in the same diff as the test that
+no thread count changes a byte** (gate D1 already contains that test and skips today, with the reason). `fs_read("")` is the only
+extent the compiler can state: the directory is a run-time value (agent-toolbox.md L5), so the row names the verb, not the place.
+
+Determinism is tested from the outside (gate D1): the same data and plan give the same model bytes whatever the working directory, the
+spelling of the path (`./`, `//`), the line ending, a BOM, blank lines, the caps given, or the repetition; the same command gives
+the same stdout bytes five times.
+
+## 7. Gate verdicts
+
+(Filled from `docs/bench/mutants_cli.log` and `scripts/check.sh`.)
+
+## 8. What the pinned contract package says that is wrong or too narrow for `ml`
+
+`ml` uses `toolbox.describe` as pinned (rev `8dab9176`), so `introspect` and `skill` repeat some generic sentences. They are the
+package's, not this repository's claims, and are listed here so that nobody reads them as measured for `ml`. Each is an upstream
+issue for cancho-tools, not worked around by copying the module.
+
+| where | the package prints | for `ml` |
+|---|---|---|
+| `introspect.guarantees.concurrency`, `skill` | "read-only: it never writes, so any number may run at once", or, with `atomic`, "locked: of writers racing ... exactly one wins" | `fit` writes. Its write is built to be atomic for a reader (temporary, sync, rename) but there is no lock and the temporary has a fixed name, so two writers racing on one output can fail one of them; **neither the atomicity nor the race was tested**, so `atomic` is not claimed |
+| `introspect.evidence.offline` and `offline_note` | gates M1 to M9 "in cancho-tools/tests/conformance, run by CI on the commit this binary was built from" | the gates of `ml` are in this repository (`tests/conformance`), section 1 |
+| `skill`, the authority paragraph | "Symlinks are followed." | not under `--root` (`path.symlink`); followed without a root |
+| the shared summary of `conflict.exists` | "--create was given and the path exists" | the flag is `--overwrite`'s absence; the tag's meaning (the output exists) is the same |
+| `toolbox.path.has_dotdot` | refuses a `..` *component* | the builtins that take a whole path (`open_read`, `open_dir`) trap on `..` anywhere in the string (`a..b`, `.../x`): found by gate N1, worked around in `tools/ml/paths.cho`, and a reproducer for cancho-tools is `ml --target y --output o.cml a..b` with the workaround removed (mutant `n1-double-dot-check-removed` is exactly that) |
+| `describe` | no field for a tool-specific `confinement_note` or `concurrency` | one sentence each would let a tool state its own |
+
+## 9. The MCP server: not started; how it will be derived (stub for the M9 issue)
+
+cancho-table's `server/mcp.cho` derives its one tool from `table introspect`; the server for `ml` should do the same and hold no
+description of its own. From the flag table:
+
+* **Three tools**, `ml_fit`, `ml_predict`, `ml_eval`, one per verb, each with the properties of `spec.allowed(verb)` and `FILE` as
+  `file`. The input schema comes from each flag's `kind` (`nat` is an integer with the minimum of the check and the `introspect.limits`
+  ceiling, `choice:a/b` an enum, `path` a string, `bool` a boolean, `text` a non-empty string) and its `default`.
+* **Roles decide what is exposed.** `root` is the server's (`ml_* --root DIR`, first and once; a `root` property is refused as in
+  table). `guard` flags (`--overwrite`, `--dry-run`) are the only way to widen or to narrow what a call does, so the server
+  does not offer `overwrite` unless its own command line allowed it. `path-write` flags (`--output`, `--log`) stay confined by the tool
+  itself; the server adds no path check of its own.
+* **The argv is fixed in form.** Every flag value is its own argument. Table's server uses `--name=value`; `ml` refuses that form for
+  path flags (section 2.1), so the generator must emit two arguments for flags of role `path-*`. The alternative, teaching `ml` to take
+  `--output=FILE`, needs a text form of `toolbox.path.operand` that the pinned package does not have.
+* **Result.** `structuredContent` is the one JSON document, `isError` is `ok == false`, and `meta.version` is the tool's. The
+  generator refuses a tool whose derived authority holds `io_read` (the server gives the child an empty standard input).
+* **Gate (when built):** the same shape as table's `test_mcp.py`: the argv a stand-in binary receives, no shell metacharacter, the
+  schema of every tool equal to a projection of the flag table (T1 extended with the MCP schema), and a mutant per rule.
+
+## 10. Open questions
+
+1. **`--threads` and `conc`.** When the first threaded kernel is wired in, does `fit` get `--threads` (as table does) or does the
+   thread count stay internal? Section 6 of `design.md` says the block size must not depend on it; gate D1 is ready either way.
+2. **Quoted CSV and the shared reader.** The slice reads unquoted CSV only. The decision `design.md` section 10 leaves open
+   (cancho-table exports a package, or a small `cancho-numeric` both depend on) now has a cost: this reader is a third reader.
+3. **Twelve digits.** The cap keeps every exact sum in two or six `int` limbs. A 15-to-17-digit double needs the float reader (and
+   a different accumulator: `facc` in cancho-table); is 12 the right cap for the first release, or is the float reader the first
+   dependency to land?
+4. **`rmse` as a decimal.** It is three IEEE steps after an exact sum. An exact integer square root over the limbs would make it
+   exact too, at about 60 lines; is the exact sum enough for "decisive sums are exact" (`design.md` section 6 rule 5)?
+5. **The package's `describe` text** (section 8): upstream issues to file, not filed from here.
+6. **A second machine.** D2 (same bytes on Mac aarch64 and Linux x86-64) is claimed by construction (no libm, no `fma`) and tested only
+   on this Mac. The Linux run is the gram box's job and was not done here.

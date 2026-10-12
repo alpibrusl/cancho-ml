@@ -86,6 +86,14 @@ class Fuzz(unittest.TestCase):
         problems = judge(argv, r)
         self.assertEqual(problems, [], "argv %r (rooted %s) -> %r" % (argv, rooted, r))
 
+    def test_no_arguments_at_all(self):
+        # `ml` alone, and with only an empty argument: argv[1] does not exist (spike F: a program that reads an argument before
+        # counting them is ended by SIGILL)
+        self.check([], rooted=False)
+        self.check([""], rooted=False)
+        self.check([""], rooted=True)
+        self.check([])
+
     def test_every_flag_every_verb_every_one_mistake(self):
         for verb in ("fit", "predict", "eval"):
             base = {"fit": ["--target", "y", "--output", "o.cml", "reg.csv"], "predict": ["--model-file", "m.cml", "reg.csv"],
