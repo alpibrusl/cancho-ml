@@ -296,8 +296,9 @@ mutant: partials added in thread order
 
 * Tuning that the C comparison found: the gemv row count and the syrk/gemm index multiplications (5.3 items 4 and 5).
 * `cancho build` in package mode was **not run** (it needs `cancho install`, a network fetch); `scripts/build.sh` passes the same
-  file list. The `cancho.toml` pins are copied from cancho-table; `cancho-table` is **not** a dependency yet (its float reader is
-  unmerged).
+  file list. The `cancho.toml` pins are copied from cancho-table; `cancho-table` is **not** a dependency yet. *(Corrected in place: this said
+  "its float reader is unmerged". It is merged, PR #32; the real blocker is that cancho-table commits no `.cancho-vcs` store, `docs/reader.md`
+  section 1.)*
 * `cancho fmt --check lib tests tools` is clean; no file is over 900 lines.
 
 ### 5.6 Upstream gaps, with reproducers (`docs/upstream/`)
