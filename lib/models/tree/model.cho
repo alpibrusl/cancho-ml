@@ -51,6 +51,11 @@ fn record_at(r: int, trees: int, total: int) -> [] int {
     return 84 + 16 + 8 * (trees + 1) + (r - 3) * (16 + 8 * total);
 }
 
+// the byte offset of element g of record r (3 .. 10): the fuzz uses it to damage one field whole
+pub fn elem_at(r: int, trees: int, total: int, g: int) -> [] int {
+    return record_at(r, trees, total) + 16 + 8 * g;
+}
+
 // ---------------------------------------------------------------- write
 
 fn put_record[&d](dst: &!d [byte], at: int, dtype: int, extent: int) -> [] int {

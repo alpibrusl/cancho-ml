@@ -567,6 +567,8 @@ fn try_read[&h, &s](heap: &!h Heap, data: &s [byte]) -> [heap, conc] int {
 
 fn fuzz_one[&h, &i, &fr](heap: &!h Heap, io: &!i Io, label: &static [byte], f: &fr forest.Forest) -> [heap, io_write, conc] int {
     let payload = model.write(heap, f);
+    let ftotal = f.total;
+    let ftrees = f.trees;
     var unexpected = 0;
     var accepted = 0;
     var refused_n = 0;
@@ -630,7 +632,7 @@ fn fuzz_one[&h, &i, &fr](heap: &!h Heap, io: &!i Io, label: &static [byte], f: &
                     } else {
                         nv = orig ^ 1 << v - 3;
                     }
-                    if pos >= 512 && v >= 3 {
+                    if pos >= 2048 && v >= 3 {
                         nv = orig;
                     }
                     if nv != orig {
@@ -645,6 +647,45 @@ fn fuzz_one[&h, &i, &fr](heap: &!h Heap, io: &!i Io, label: &static [byte], f: &
                     v = v + 1;
                 }
                 pos = pos + 1;
+            }
+            // one whole field at a time (a node's feature, bin, default side, children, counts) set to values that break the invariants
+            var rec = 3;
+            while rec <= 9 {
+                var g = 0;
+                while g < ftotal {
+                    var vv = 0;
+                    while vv < 8 {
+                        var fv = 0;
+                        if vv == 0 {
+                            fv = 0;
+                        } else if vv == 1 {
+                            fv = 1;
+                        } else if vv == 2 {
+                            fv = 2;
+                        } else if vv == 3 {
+                            fv = ftotal;
+                        } else if vv == 4 {
+                            fv = 1 << 40;
+                        } else if vv == 5 {
+                            fv = 0 - 2;
+                        } else if vv == 6 {
+                            fv = 0 - 1;
+                        } else {
+                            fv = 1 << 62;
+                        }
+                        let at = model.elem_at(rec, ftrees, ftotal, g);
+                        fbits.put64(w, at, fv);
+                        if try_read(heap, w[0..size]) == 0 {
+                            accepted = accepted + 1;
+                        } else {
+                            refused_n = refused_n + 1;
+                        }
+                        copy_into(w[at..at + 8], src[at..at + 8]);
+                        vv = vv + 1;
+                    }
+                    g = g + 1;
+                }
+                rec = rec + 1;
             }
             // seeded multi-byte damage
             var s = rng.derive(777, size);
@@ -687,12 +728,29 @@ fn fuzz_one[&h, &i, &fr](heap: &!h Heap, io: &!i Io, label: &static [byte], f: &
     return unexpected;
 }
 
-fn run_fuzz[&h, &i, &x, &y, &b](heap: &!h Heap, io: &!i Io, xs: &x [float], ys: &y [float], bmfull: &b [byte], n: int, d: int) -> [heap, io_write, conc] int {
+fn run_fuzz[&h, &i, &x, &y, &b](heap: &!h Heap, io: &!i Io, xs: &x [float], ys: &y [float], bmfull: &b [byte], total: int, n: int, d: int) -> [heap, io_write, conc] int {
     var bad = 0;
+    var trbytes = 1;
+    var trlen = 0;
+    if len(bmfull) != 0 {
+        trbytes = d * bins.stride(n);
+        trlen = trbytes;
+    }
+    let trbm = box_slice(heap, trbytes, byte_of(0));
+    borrow mut trbm as &!tw in {
+        repack(bmfull, total, d, 0, n, contents(tw));
+    }
     var task = 0;
     while task < 2 {
-        let p = params.Params { task: task, trees: 3, max_depth: 4, min_leaf: 2, max_nodes: 100, bins: 16, mtry: 0, bootstrap: 1, seed: 5, threads: 1 };
-        let (f, code) = forest.fit(heap, p, n, d, xs[0..n * d], bmfull, ys[0..n], 10000000, 4096, 400000000);
+        let p = params.Params { task: task, trees: 4 - task, max_depth: 6, min_leaf: 20 - 5 * task, max_nodes: 400, bins: 16, mtry: 0, bootstrap: 1, seed: 5, threads: 1 };
+        var code = 0;
+        var f = forest.empty(heap);
+        borrow trbm as &tr in {
+            let (g, c) = forest.fit(heap, p, n, d, xs[0..n * d], contents(tr)[0..trlen], ys[0..n], 10000000, 4096, 400000000);
+            forest.drop(heap, f);
+            f = g;
+            code = c;
+        }
         if code != 0 {
             refused(io, code);
             bad = bad + 1;
@@ -708,6 +766,7 @@ fn run_fuzz[&h, &i, &x, &y, &b](heap: &!h Heap, io: &!i Io, xs: &x [float], ys: 
         forest.drop(heap, f);
         task = task + 1;
     }
+    unbox_slice(heap, trbm);
     if bad == 0 {
         io.write_all(io, "fuzz ok\n");
     }
@@ -826,7 +885,7 @@ fn main(world: World) -> [conc] int {
                                         run_fit(hp, i, kc, contents(xr)[0..n * d], contents(yr)[0..n], buffer.bytes(mr), n, d, ntr, p, full, reps, phase);
                                     }
                                 } else {
-                                    run_fuzz(hp, i, contents(xr), contents(yr), buffer.bytes(mr), ntr, d);
+                                    run_fuzz(hp, i, contents(xr), contents(yr), buffer.bytes(mr), n, ntr, d);
                                 }
                             }
                         }
