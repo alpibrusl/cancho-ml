@@ -217,3 +217,100 @@ fn test_gemv_zero_and_refusals[&h](heap: &!h Heap) -> [heap] int {
     unbox_slice(heap, y);
     return bad;
 }
+
+// strided vector operands (w and r at stride 2, y and g at stride 3, offsets) give the bits of the unit-stride call
+fn test_gemv_strided_vectors[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let n = 700;
+    let d = 30;
+    let x = box_slice(heap, n * d + 1, 0.0);
+    let w = box_slice(heap, d + 1, 0.0);
+    let r = box_slice(heap, n + 1, 0.0);
+    let w2 = box_slice(heap, 2 * d + 5, 0.0);
+    let r2 = box_slice(heap, 2 * n + 5, 0.0);
+    let y = box_slice(heap, n + 1, 0.0);
+    let g = box_slice(heap, d + 1, 0.0);
+    let y3 = box_slice(heap, 3 * n + 5, 0.0);
+    let g3 = box_slice(heap, 3 * d + 5, 0.0);
+    borrow mut x as &!a in {
+        lref.gen(contents(a), n * d, 31, 1);
+    }
+    borrow mut w as &!a in {
+        lref.gen(contents(a), d, 32, 1);
+    }
+    borrow mut r as &!a in {
+        lref.gen(contents(a), n, 33, 1);
+    }
+    borrow w as &wr in {
+        borrow mut w2 as &!a in {
+            var j = 0;
+            while j < d {
+                contents(a)[1 + 2 * j] = contents(wr)[j];
+                j = j + 1;
+            }
+        }
+    }
+    borrow r as &rr in {
+        borrow mut r2 as &!a in {
+            var i = 0;
+            while i < n {
+                contents(a)[2 + 2 * i] = contents(rr)[i];
+                i = i + 1;
+            }
+        }
+    }
+    borrow x as &xr in {
+        borrow w as &wr in {
+            borrow r as &rr in {
+                borrow w2 as &w2r in {
+                    borrow r2 as &r2r in {
+                        borrow mut y as &!a in {
+                            bad = bad + gemv.gemv_n(heap, mat(0, n, d, d, 1), contents(xr), vec1(0, d, 1), contents(wr), vec1(0, n, 1), contents(a));
+                        }
+                        borrow mut y3 as &!a in {
+                            bad = bad + gemv.gemv_n(heap, mat(0, n, d, d, 1), contents(xr), vec1(1, d, 2), contents(w2r), vec1(2, n, 3), contents(a));
+                        }
+                        borrow mut g as &!a in {
+                            bad = bad + gemv.gemv_t(heap, mat(0, n, d, d, 1), contents(xr), vec1(0, n, 1), contents(rr), vec1(0, d, 1), contents(a));
+                        }
+                        borrow mut g3 as &!a in {
+                            bad = bad + gemv.gemv_t(heap, mat(0, n, d, d, 1), contents(xr), vec1(2, n, 2), contents(r2r), vec1(1, d, 3), contents(a));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    borrow y as &yr in {
+        borrow y3 as &y3r in {
+            var i = 0;
+            while i < n {
+                if bits_of(contents(yr)[i]) != bits_of(contents(y3r)[2 + 3 * i]) {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    borrow g as &gr in {
+        borrow g3 as &g3r in {
+            var j = 0;
+            while j < d {
+                if bits_of(contents(gr)[j]) != bits_of(contents(g3r)[1 + 3 * j]) {
+                    bad = bad + 1;
+                }
+                j = j + 1;
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, w);
+    unbox_slice(heap, r);
+    unbox_slice(heap, w2);
+    unbox_slice(heap, r2);
+    unbox_slice(heap, y);
+    unbox_slice(heap, g);
+    unbox_slice(heap, y3);
+    unbox_slice(heap, g3);
+    return bad;
+}

@@ -69,15 +69,15 @@ pub fn gen[&o](out: &!o [float], n: int, seed: int, mode: int) -> [] int {
         var v = rng.unit(z);
         if mode == 1 {
             v = v * 1.0e18;
-            if (z >> 3 & 3) == 0 {
+            if z >> 3 & 3 == 0 {
                 v = v * 0.0000000000000001;
             }
-            if (z >> 5 & 7) == 0 {
+            if z >> 5 & 7 == 0 {
                 v = 0.0 - v * 1.0e-9;
             }
         }
         if mode == 2 {
-            let q = (z >> 2) & 7;
+            let q = z >> 2 & 7;
             if q == 0 {
                 v = 0.0;
             }

@@ -153,7 +153,7 @@ pub fn cholesky[&a, &l](at: tensor.Tensor, ad: &a [float], lt: tensor.Tensor, ld
     if d == 0 {
         return 0;
     }
-    if at.t1 == 1 && lt.t1 == 1 && at.t0 >= d && lt.t0 >= d {
+    if at.t1 == 1 && lt.t1 == 1 && at.t0 >= 0 && lt.t0 >= 0 {
         return chol_fast(ld[lt.off..len(ld)], lt.t0, ad[at.off..len(ad)], at.t0, d);
     }
     return chol_generic(ld, lt, ad, at, d);

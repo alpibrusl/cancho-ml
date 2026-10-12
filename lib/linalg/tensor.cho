@@ -472,7 +472,7 @@ pub fn writable(t: Tensor) -> [] int {
     }
     if t.rank == 2 {
         if t.s0 <= 1 || t.s1 <= 1 {
-            if (t.s0 > 1 && t.t0 == 0) || (t.s1 > 1 && t.t1 == 0) {
+            if t.s0 > 1 && t.t0 == 0 || t.s1 > 1 && t.t1 == 0 {
                 return refuse.tensor_shape();
             }
             return 0;

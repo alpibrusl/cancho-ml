@@ -1,0 +1,467 @@
+// linalg-check: runs one kernel of lib/linalg on generated data, prints a hash of the result bits and the time of `reps`
+// runs of the kernel alone (docs/linalg.md sections 1.1 and 4). Data are the SplitMix64 streams of docs/rng.md, so numpy
+// (scripts/oracle_linalg.py) rebuilds the same inputs bit for bit.
+//
+//     linalg-check KERNEL N D SEED REPS THREADS
+//
+// KERNEL  dot axpy gemv_n gemv_t syrk chol fwd bwd gemm      N rows (or n; gemm: the size)   D columns (or d; chol/fwd/bwd:
+// the order of the matrix, in N)   THREADS  1..64 (the threaded variants of dot, gemv_t, syrk, gemm)
+//
+// stdout, one `key value` per line:
+//     hash H     16 hex digits, over `count` result floats (ml.testdata.hash)
+//     count C    number of result elements hashed
+//     first B..  bits of the first (up to 4) result elements, hex
+//     ms T       milliseconds for REPS runs of the kernel (clock_ms: 1 ms resolution)
+//     refused TAG   (instead of the above) the rule tag of a refusal
+edition 5;
+
+import std.io;
+import ml.refuse;
+import ml.testdata;
+import ml.rng;
+import linalg.tensor;
+import linalg.dot;
+import linalg.axpy;
+import linalg.gemv;
+import linalg.syrk;
+import linalg.chol;
+import linalg.gemm;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn gen_box[&h](heap: &!h Heap, n: int, seed: int) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!w in {
+        testdata.fill(contents(w), n, seed);
+    }
+    return o;
+}
+
+fn zero_box[&h](heap: &!h Heap, n: int, v: float) -> [heap] Box[[float]] {
+    return box_slice(heap, n + 1, v);
+}
+
+fn vec1(n: int) -> [] tensor.Tensor {
+    match tensor.vector(0, n, 1) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn mat(rows: int, cols: int) -> [] tensor.Tensor {
+    match tensor.matrix(0, rows, cols) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn hex16[&i](io: &!i Io, bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            putchar(io, '0' + nib);
+        } else {
+            putchar(io, 'a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// print the result block (or the refusal)
+fn report[&i, &v](io: &!i Io, vals: &v [float], count: int, code: int, ms: int) -> [io_write] int {
+    if code != 0 {
+        io.write_all(io, "refused ");
+        io.write_all(io, refuse.tag(code));
+        io.newline(io);
+        return 0;
+    }
+    io.write_all(io, "hash ");
+    hex16(io, testdata.hash(vals, count));
+    io.newline(io);
+    io.write_all(io, "count ");
+    io.print_int(io, count);
+    io.newline(io);
+    io.write_all(io, "first");
+    var k = 0;
+    while k < 4 && k < count {
+        io.write_all(io, " ");
+        hex16(io, bits_of(vals[k]));
+        k = k + 1;
+    }
+    io.newline(io);
+    io.write_all(io, "ms ");
+    io.print_int(io, ms);
+    io.newline(io);
+    return 0;
+}
+
+// ---------------------------------------------------------------- the kernels
+// each: build the inputs (seed streams derive(seed, 1..)), run once to warm up, time `reps` runs, report
+
+fn run_dot[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, seed: int, reps: int, threads: int) -> [heap, io_write, clock] int {
+    let x = gen_box(heap, n, rng.derive(seed, 1));
+    let y = gen_box(heap, n, rng.derive(seed, 2));
+    let outv = zero_box(heap, 1, 0.0);
+    var t0 = 0;
+    var t1 = 0;
+    var code = 0;
+    borrow x as &xr in {
+        borrow y as &yr in {
+            borrow mut outv as &!ow in {
+                var r = 0;
+                t0 = clock_ms(clock);
+                while r < reps {
+                    let got = dot.dot(heap, vec1(n), contents(xr), vec1(n), contents(yr));
+                    code = got.code;
+                    contents(ow)[0] = got.v;
+                    r = r + 1;
+                }
+                t1 = clock_ms(clock);
+            }
+        }
+    }
+    borrow outv as &ow in {
+        report(io, contents(ow), 1, code, t1 - t0);
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    unbox_slice(heap, outv);
+    return 0;
+}
+
+// y after `reps` applications of y = y + a * x (a = element 0 of derive(seed, 3))
+fn run_axpy[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+    let x = gen_box(heap, n, rng.derive(seed, 1));
+    let y = gen_box(heap, n, rng.derive(seed, 2));
+    let a = rng.element(rng.derive(seed, 3), 0);
+    var t0 = 0;
+    var t1 = 0;
+    var code = 0;
+    borrow x as &xr in {
+        borrow mut y as &!yw in {
+            var r = 0;
+            t0 = clock_ms(clock);
+            while r < reps {
+                code = axpy.axpy(a, vec1(n), contents(xr), vec1(n), contents(yw));
+                r = r + 1;
+            }
+            t1 = clock_ms(clock);
+        }
+    }
+    borrow y as &yr in {
+        report(io, contents(yr), n, code, t1 - t0);
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    return 0;
+}
+
+fn run_gemv_n[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+    let x = gen_box(heap, n * d, rng.derive(seed, 1));
+    let w = gen_box(heap, d, rng.derive(seed, 2));
+    let y = zero_box(heap, n, 0.0);
+    var t0 = 0;
+    var t1 = 0;
+    var code = 0;
+    borrow x as &xr in {
+        borrow w as &wr in {
+            borrow mut y as &!yw in {
+                var r = 0;
+                t0 = clock_ms(clock);
+                while r < reps {
+                    code = gemv.gemv_n(heap, mat(n, d), contents(xr), vec1(d), contents(wr), vec1(n), contents(yw));
+                    r = r + 1;
+                }
+                t1 = clock_ms(clock);
+            }
+        }
+    }
+    borrow y as &yr in {
+        report(io, contents(yr), n, code, t1 - t0);
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, w);
+    unbox_slice(heap, y);
+    return 0;
+}
+
+fn run_gemv_t[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+    let x = gen_box(heap, n * d, rng.derive(seed, 1));
+    let r = gen_box(heap, n, rng.derive(seed, 2));
+    let g = zero_box(heap, d, 0.0);
+    var t0 = 0;
+    var t1 = 0;
+    var code = 0;
+    borrow x as &xr in {
+        borrow r as &rr in {
+            borrow mut g as &!gw in {
+                var q = 0;
+                t0 = clock_ms(clock);
+                while q < reps {
+                    code = gemv.gemv_t(heap, mat(n, d), contents(xr), vec1(n), contents(rr), vec1(d), contents(gw));
+                    q = q + 1;
+                }
+                t1 = clock_ms(clock);
+            }
+        }
+    }
+    borrow g as &gr in {
+        report(io, contents(gr), d, code, t1 - t0);
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, r);
+    unbox_slice(heap, g);
+    return 0;
+}
+
+fn run_syrk[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+    let x = gen_box(heap, n * d, rng.derive(seed, 1));
+    let c = zero_box(heap, d * d, 0.0);
+    var t0 = 0;
+    var t1 = 0;
+    var code = 0;
+    borrow x as &xr in {
+        borrow mut c as &!cw in {
+            var q = 0;
+            t0 = clock_ms(clock);
+            while q < reps {
+                code = syrk.syrk(heap, mat(n, d), contents(xr), mat(d, d), contents(cw));
+                q = q + 1;
+            }
+            t1 = clock_ms(clock);
+        }
+    }
+    borrow c as &cr in {
+        report(io, contents(cr), d * d, code, t1 - t0);
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, c);
+    return 0;
+}
+
+// L (lower triangle, strict upper triangle zero) of the SPD matrix of derive(seed, 1)
+fn run_chol[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, d: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+    let a = zero_box(heap, d * d, 0.0);
+    let l = zero_box(heap, d * d, 0.0);
+    var o = a;
+    borrow mut o as &!aw in {
+        testdata.spd(contents(aw), d, rng.derive(seed, 1));
+    }
+    var t0 = 0;
+    var t1 = 0;
+    var code = 0;
+    borrow o as &ar in {
+        borrow mut l as &!lw in {
+            var q = 0;
+            t0 = clock_ms(clock);
+            while q < reps {
+                code = chol.cholesky(mat(d, d), contents(ar), mat(d, d), contents(lw));
+                q = q + 1;
+            }
+            t1 = clock_ms(clock);
+        }
+    }
+    borrow l as &lr in {
+        report(io, contents(lr), d * d, code, t1 - t0);
+    }
+    unbox_slice(heap, o);
+    unbox_slice(heap, l);
+    return 0;
+}
+
+// x = L^-1 b (trans 0) or L^-T b (trans 1), L the factor of the SPD matrix of derive(seed, 1), b = derive(seed, 2)
+fn run_solve[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, d: int, seed: int, reps: int, trans: int) -> [heap, io_write, clock] int {
+    let a = zero_box(heap, d * d, 0.0);
+    let l = zero_box(heap, d * d, 0.0);
+    let b = gen_box(heap, d, rng.derive(seed, 2));
+    let x = zero_box(heap, d, 0.0);
+    var o = a;
+    borrow mut o as &!aw in {
+        testdata.spd(contents(aw), d, rng.derive(seed, 1));
+    }
+    var t0 = 0;
+    var t1 = 0;
+    var code = 0;
+    borrow o as &ar in {
+        borrow mut l as &!lw in {
+            code = chol.cholesky(mat(d, d), contents(ar), mat(d, d), contents(lw));
+        }
+    }
+    borrow l as &lr in {
+        borrow b as &br in {
+            borrow mut x as &!xw in {
+                var q = 0;
+                t0 = clock_ms(clock);
+                while q < reps {
+                    code = chol.solve(trans, mat(d, d), contents(lr), vec1(d), contents(br), vec1(d), contents(xw));
+                    q = q + 1;
+                }
+                t1 = clock_ms(clock);
+            }
+        }
+    }
+    borrow x as &xr in {
+        report(io, contents(xr), d, code, t1 - t0);
+    }
+    unbox_slice(heap, o);
+    unbox_slice(heap, l);
+    unbox_slice(heap, b);
+    unbox_slice(heap, x);
+    return 0;
+}
+
+fn run_gemm[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+    let a = gen_box(heap, n * n, rng.derive(seed, 1));
+    let b = gen_box(heap, n * n, rng.derive(seed, 2));
+    let c = zero_box(heap, n * n, 0.0);
+    var t0 = 0;
+    var t1 = 0;
+    var code = 0;
+    borrow a as &ar in {
+        borrow b as &br in {
+            borrow mut c as &!cw in {
+                var q = 0;
+                t0 = clock_ms(clock);
+                while q < reps {
+                    code = gemm.gemm(heap, mat(n, n), contents(ar), mat(n, n), contents(br), mat(n, n), contents(cw));
+                    q = q + 1;
+                }
+                t1 = clock_ms(clock);
+            }
+        }
+    }
+    borrow c as &cr in {
+        report(io, contents(cr), n * n, code, t1 - t0);
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    unbox_slice(heap, c);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    var n = 0;
+    var d = 0;
+    var seed = 0;
+    var reps = 1;
+    var threads = 1;
+    var kernel = 0;
+    borrow args as &g in {
+        if len(arg(g, 2)) > 0 {
+            n = number_of(arg(g, 2));
+        }
+        if len(arg(g, 3)) > 0 {
+            d = number_of(arg(g, 3));
+        }
+        if len(arg(g, 4)) > 0 {
+            seed = number_of(arg(g, 4));
+        }
+        if len(arg(g, 5)) > 0 {
+            reps = number_of(arg(g, 5));
+        }
+        if len(arg(g, 6)) > 0 {
+            threads = number_of(arg(g, 6));
+        }
+        if same(arg(g, 1), "dot") {
+            kernel = 1;
+        }
+        if same(arg(g, 1), "axpy") {
+            kernel = 2;
+        }
+        if same(arg(g, 1), "gemv_n") {
+            kernel = 3;
+        }
+        if same(arg(g, 1), "gemv_t") {
+            kernel = 4;
+        }
+        if same(arg(g, 1), "syrk") {
+            kernel = 5;
+        }
+        if same(arg(g, 1), "chol") {
+            kernel = 6;
+        }
+        if same(arg(g, 1), "fwd") {
+            kernel = 7;
+        }
+        if same(arg(g, 1), "bwd") {
+            kernel = 8;
+        }
+        if same(arg(g, 1), "gemm") {
+            kernel = 9;
+        }
+    }
+    var code = 0;
+    if threads < 1 || threads > 64 {
+        kernel = 0;
+    }
+    borrow mut heap as &!hp in {
+        borrow mut io as &!ip in {
+            borrow clock as &kc in {
+                if kernel == 1 {
+                    code = run_dot(hp, ip, kc, n, seed, reps, threads);
+                } else if kernel == 2 {
+                    code = run_axpy(hp, ip, kc, n, seed, reps);
+                } else if kernel == 3 {
+                    code = run_gemv_n(hp, ip, kc, n, d, seed, reps);
+                } else if kernel == 4 {
+                    code = run_gemv_t(hp, ip, kc, n, d, seed, reps);
+                } else if kernel == 5 {
+                    code = run_syrk(hp, ip, kc, n, d, seed, reps);
+                } else if kernel == 6 {
+                    code = run_chol(hp, ip, kc, n, seed, reps);
+                } else if kernel == 7 {
+                    code = run_solve(hp, ip, kc, n, seed, reps, 0);
+                } else if kernel == 8 {
+                    code = run_solve(hp, ip, kc, n, seed, reps, 1);
+                } else if kernel == 9 {
+                    code = run_gemm(hp, ip, kc, n, seed, reps);
+                } else {
+                    io.write_all(ip, "refused ml.param.out-of-range\n");
+                    code = 2;
+                }
+            }
+        }
+    }
+    release(args);
+    release(clock);
+    release(heap);
+    release(io);
+    return code;
+}

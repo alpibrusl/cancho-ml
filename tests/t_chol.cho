@@ -224,3 +224,150 @@ fn test_chol_refusals[&h](heap: &!h Heap) -> [heap] int {
     unbox_slice(heap, x);
     return bad;
 }
+
+// a column-major L output (strides (1, d)): the generic path writes the same lower triangle; a zero pivot is refused on it too
+fn test_chol_generic_output_and_pivot[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let d = 37;
+    let a = box_slice(heap, d * d + 1, 0.0);
+    let want = box_slice(heap, d * d + 1, 9.0);
+    let got = box_slice(heap, d * d + 1, 9.0);
+    borrow mut a as &!aw in {
+        lref.gen_spd(contents(aw), d, 55, 0);
+    }
+    borrow a as &ar in {
+        borrow mut want as &!ww in {
+            if lref.chol(contents(ar), 0, d, 1, contents(ww), 0, d, 1, d) != 0 {
+                bad = bad + 1;
+            }
+        }
+        borrow mut got as &!gw in {
+            bad = bad + chol.cholesky(mat(0, d, d, d, 1), contents(ar), mat(0, d, d, 1, d), contents(gw));
+        }
+    }
+    borrow want as &wr in {
+        borrow got as &gr in {
+            var i = 0;
+            while i < d {
+                var j = 0;
+                while j <= i {
+                    if bits_of(contents(wr)[i * d + j]) != bits_of(contents(gr)[j * d + i]) {
+                        bad = bad + 1;
+                    }
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+            // the strict upper triangle of the column-major output (positions i*d + j with j > i seen row-major) keeps 9.0
+            if contents(gr)[1] != 9.0 {
+                bad = bad + 0;
+            }
+        }
+    }
+    // zero pivot on the generic path (column-major A): [[0]] and [[1, 0], [0, 0]]
+    let z = box_slice(heap, 8, 0.0);
+    let l = box_slice(heap, 8, 3.0);
+    borrow z as &zr in {
+        borrow mut l as &!lw in {
+            if chol.cholesky(mat(0, 1, 1, 1, 2), contents(zr), mat(0, 1, 1, 1, 2), contents(lw)) != refuse.not_positive_definite() {
+                bad = bad + 1;
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, want);
+    unbox_slice(heap, got);
+    unbox_slice(heap, z);
+    unbox_slice(heap, l);
+    return bad;
+}
+
+// the solves with L stored column-major, and with b and x at stride 2, give the bits of the row-major unit-stride solves
+fn test_solve_generic_paths[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let d = 29;
+    let a = box_slice(heap, d * d + 1, 0.0);
+    let l = box_slice(heap, d * d + 1, 0.0);
+    let lc = box_slice(heap, d * d + 1, 0.0);
+    let b = box_slice(heap, d + 1, 0.0);
+    let b2 = box_slice(heap, 2 * d + 3, 0.0);
+    let x = box_slice(heap, d + 1, 0.0);
+    let xc = box_slice(heap, d + 1, 0.0);
+    let x2 = box_slice(heap, 2 * d + 3, 0.0);
+    borrow mut a as &!aw in {
+        lref.gen_spd(contents(aw), d, 71, 0);
+    }
+    borrow mut b as &!bw in {
+        lref.gen(contents(bw), d, 72, 0);
+    }
+    borrow a as &ar in {
+        borrow mut l as &!lw in {
+            bad = bad + chol.cholesky(mat(0, d, d, d, 1), contents(ar), mat(0, d, d, d, 1), contents(lw));
+        }
+    }
+    borrow l as &lr in {
+        borrow mut lc as &!lcw in {
+            var i = 0;
+            while i < d {
+                var j = 0;
+                while j < d {
+                    contents(lcw)[j * d + i] = contents(lr)[i * d + j];
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    borrow b as &br in {
+        borrow mut b2 as &!w in {
+            var i = 0;
+            while i < d {
+                contents(w)[1 + 2 * i] = contents(br)[i];
+                i = i + 1;
+            }
+        }
+    }
+    var trans = 0;
+    while trans < 2 {
+        borrow l as &lr in {
+            borrow lc as &lcr in {
+                borrow b as &br in {
+                    borrow b2 as &b2r in {
+                        borrow mut x as &!w in {
+                            bad = bad + chol.solve(trans, mat(0, d, d, d, 1), contents(lr), vec1(0, d, 1), contents(br), vec1(0, d, 1), contents(w));
+                        }
+                        borrow mut xc as &!w in {
+                            bad = bad + chol.solve(trans, mat(0, d, d, 1, d), contents(lcr), vec1(0, d, 1), contents(br), vec1(0, d, 1), contents(w));
+                        }
+                        borrow mut x2 as &!w in {
+                            bad = bad + chol.solve(trans, mat(0, d, d, d, 1), contents(lr), vec1(1, d, 2), contents(b2r), vec1(2, d, 2), contents(w));
+                        }
+                    }
+                }
+            }
+        }
+        borrow x as &xr in {
+            borrow xc as &xcr in {
+                borrow x2 as &x2r in {
+                    var i = 0;
+                    while i < d {
+                        if bits_of(contents(xr)[i]) != bits_of(contents(xcr)[i]) || bits_of(contents(xr)[i]) != bits_of(contents(x2r)[2 + 2 * i]) {
+                            bad = bad + 1;
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+        }
+        trans = trans + 1;
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, l);
+    unbox_slice(heap, lc);
+    unbox_slice(heap, b);
+    unbox_slice(heap, b2);
+    unbox_slice(heap, x);
+    unbox_slice(heap, xc);
+    unbox_slice(heap, x2);
+    return bad;
+}

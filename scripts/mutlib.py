@@ -37,17 +37,25 @@ def problems(mutants):
 
 def run(mutants, command, label, timeout=1800, allowed=None):
     """command: list of argv, run in the mutated copy, with {cancho} replaced. Returns exit code for the script."""
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     bad = problems(mutants)
     if bad:
         print("\n".join(bad)); return 1
     if "--check" in sys.argv:
         print("%s: %d mutants, every pattern applies once" % (label, len(mutants))); return 0
     allowed = allowed or {}
+    env = dict(os.environ, CANCHO=cancho())
+    # control: the unmutated tree must pass its own gate, or every "kill" below would be a broken harness
+    with tempfile.TemporaryDirectory() as tmp:
+        for d in ("lib", "tests", "tools", "scripts"):
+            if (ROOT / d).exists():
+                shutil.copytree(ROOT / d, pathlib.Path(tmp) / d)
+        r = subprocess.run([a.replace("{cancho}", cancho()) for a in command], cwd=tmp, capture_output=True, text=True, env=env, timeout=timeout)
+        if r.returncode != 0 or "FAILED" in r.stdout:
+            print("%s: the unmutated control FAILS the gate; refusing to run mutants\n%s%s" % (label, r.stdout[-800:], r.stderr[-800:]))
+            return 1
+        print("%s: control (unmutated) passes" % label, flush=True)
     survivors, killed, explained = [], 0, 0
     for name, file, old, new in mutants:
-        if args and not any(a in name for a in args):
-            continue
         with tempfile.TemporaryDirectory() as tmp:
             for d in ("lib", "tests", "tools", "scripts"):
                 if (ROOT / d).exists():
@@ -55,7 +63,7 @@ def run(mutants, command, label, timeout=1800, allowed=None):
             f = pathlib.Path(tmp) / file
             f.write_text(f.read_text().replace(old, new, 1))
             argv = [a.replace("{cancho}", cancho()) for a in command]
-            r = subprocess.run(argv, cwd=tmp, capture_output=True, text=True, timeout=timeout)
+            r = subprocess.run(argv, cwd=tmp, capture_output=True, text=True, env=env, timeout=timeout)
         ok = r.returncode != 0 or "FAILED" in r.stdout
         if ok:
             killed += 1; print("%-40s killed" % name, flush=True)

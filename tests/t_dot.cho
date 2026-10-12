@@ -136,6 +136,10 @@ fn test_dot_refusals[&h](heap: &!h Heap) -> [heap] int {
         if dot.dot(heap, vec1(10, 1), contents(xr), vec1(9, 1), contents(xr)).code != refuse.tensor_shape() {
             bad = bad + 1;
         }
+        // x shorter than y: also refused
+        if dot.dot(heap, vec1(9, 1), contents(xr), vec1(10, 1), contents(xr)).code != refuse.tensor_shape() {
+            bad = bad + 1;
+        }
         // x runs past its data
         if dot.dot(heap, vec1(11, 1), contents(xr), vec1(11, 1), contents(xr)).code != refuse.tensor_bounds() {
             bad = bad + 1;
@@ -275,8 +279,11 @@ fn test_axpy_strided[&h](heap: &!h Heap) -> [heap] int {
             if axpy.axpy(2.0, vec1(n, 1), contents(xr), tensor.Tensor { off: 0, rank: 1, s0: n, s1: 1, s2: 1, s3: 1, t0: 0, t1: 0, t2: 0, t3: 0 }, contents(yw)) != refuse.tensor_shape() {
                 bad = bad + 1;
             }
-            // mismatched extents
+            // mismatched extents, either way
             if axpy.axpy(2.0, vec1(n, 1), contents(xr), vec1(n + 1, 1), contents(yw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+            if axpy.axpy(2.0, vec1(n + 1, 1), contents(xr), vec1(n, 1), contents(yw)) != refuse.tensor_shape() {
                 bad = bad + 1;
             }
         }
