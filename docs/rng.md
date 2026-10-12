@@ -32,3 +32,9 @@ emulation of spike F. Seed 0, first output: `e220a8397b1dcdaf`. `derive(derive(4
 The test inputs of the kernels (scripts/oracle_linalg.py) use the same generator: element `i` of a data set of seed `s` is
 `unit(output(s + (i + 1) * 0x9E3779B97F4A7C15))` (a stream whose state is advanced `i + 1` times), so numpy can generate a whole
 array with vectorised uint64 arithmetic.
+
+## Stream kinds (`derive(seed, kind)`)
+
+Kind 3 is k-means (`docs/models-linear.md` 3.3): `derive(derive(seed, 3), j)` is the draw of center `j`. Kinds 1 and 2 are the
+test-input streams of `scripts/oracle_linalg.py`; kind 3 of those scripts is a separate use inside `linalg-check` (a scalar), not a model stream.
+Later models take new numbers; a number is never reused.
