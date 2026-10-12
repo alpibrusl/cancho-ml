@@ -201,6 +201,12 @@ a parse failure 8, an I/O failure 1. The first set, to be completed in M2 to M9:
 
 No refusal depends on running out of memory: every allocation sized by input is first compared to a limit (M2's gate).
 
+*Added by stage 1 (`lib/core/refuse.cho`, one fixture per tag in `tests/core.cho`):* `ml.tensor.rank`, `ml.tensor.shape`,
+`ml.tensor.bounds` (exit 8); `ml.input.too-many-cells` (exit 8: rows x columns over the cell cap, checked without a multiplication
+that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot that is not > 0.0, NaN included),
+`ml.linalg.singular` (exit 8: a zero diagonal entry in a triangular solve); `ml.param.threads` (exit 2: a thread count outside
+1..64). The default caps (10,000,000 rows, 4,096 columns, 400,000,000 cells) are provisional and wait for section 9.
+
 ## 9. Limits and sizes — waits for M0
 
 The ceilings for rows, columns, tree nodes, forest size and search fits are **[M0]**: the row ceiling depends on the speed

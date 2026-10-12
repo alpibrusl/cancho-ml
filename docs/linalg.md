@@ -119,16 +119,20 @@ Every reduction has an order that is part of the API and does not depend on the 
   take the fast path; any other stride takes the generic path; **both have the same bits** (a test).
 * **Threaded variants** (`*_par`) take a thread count `t >= 1`; `t = 1` is the sequential kernel.
 
-## 4. Tests and mutants (all gates in `tests/` and `scripts/`)
+## 4. Tests and mutants (all gates in `tests/` and `scripts/`; `scripts/check.sh` runs the fast ones)
 
-1. `cancho test` unit tests (`tests/*.cho`): each kernel against a naive implementation written in the section 2 order in the
-   same test, on random and adversarial inputs (cancellation, mixed magnitudes, subnormals, signed zeros).
-2. `scripts/oracle_linalg.py`: the same inputs (SplitMix64 generator, `docs/rng.md`) through the compiled `linalg-check`
-   binary and through numpy emulating the section 2 order; bit comparison.
-3. `scripts/mutants_linalg.py`: each mutant is a source edit to a copy of a kernel; the gates must fail on it. Includes the
-   thread-order mutant. Survivors are listed in section 5 with a reason.
-4. Fuzz (`scripts/fuzz_tensor.py`): random descriptors with out-of-range ints, negative strides, overflowing products; the process
-   must refuse with a tag and never trap.
+1. `cancho test` unit tests (`tests/t_*.cho`, `tests/core.cho`): each kernel against the definition of section 2 written separately
+   in `tests/lref.cho`, on random and adversarial inputs (cancellation, mixed magnitudes, subnormals, signed zeros), row- and
+   column-major storage, strided vectors; the refusals of every entry.
+2. `scripts/oracle_linalg.py`: the same inputs (SplitMix64 generator, `docs/rng.md`) through the compiled `linalg-check` binary
+   and through numpy emulating the section 2 order; bit comparison (`--suite`, `--thread-suite --threads ...`, `--tree`).
+3. `scripts/mutants_core.py`, `scripts/mutants_linalg.py`: each mutant is a source edit to a copy of the tree; the gate of its group
+   must fail on it (and the unmutated control must pass first). Includes the thread-order mutant. Survivors are listed with a
+   reason in the scripts and in section 5.1.
+4. Fuzz (`tests/t_fuzz.cho`): random descriptors with out-of-range ints, negative strides, overflowing products, un-normalised
+   axes, through every kernel entry; no call may trap. The threaded variants are a program (`tests/t_par.cho`, `scripts/gate_par.sh`)
+   because `cancho test` cannot run a test that spawns (section 5.6, U4).
+5. `scripts/c_parity/parity.c`: the same algorithms in C; its hashes must equal the driver's.
 
 ## 5. Results
 
