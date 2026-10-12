@@ -12,6 +12,7 @@ import models.score;
 import models.record;
 import models.mexp;
 import models.kpass;
+import models.kmeans;
 import models.linreg;
 import models.logreg;
 import models.npass;
@@ -370,6 +371,24 @@ fn log_fit[&h, &x, &y](heap: &!h Heap, t: int, rows: int, cols: int, xs: &x [flo
     }
     unbox_slice(heap, out);
     unbox_slice(heap, diag);
+    return code;
+}
+
+fn km_fit[&h, &x](heap: &!h Heap, t: int, rows: int, cols: int, xs: &x [float], k: int, iters: int, seed: int, init: int) -> [heap, conc] int {
+    let out = box_slice(heap, 5000, 0.0);
+    let diag = box_slice(heap, 40000, 0.0);
+    let lab = box_slice(heap, 5000, 0);
+    var code = 0;
+    borrow mut out as &!ow in {
+        borrow mut diag as &!dw in {
+            borrow mut lab as &!lw in {
+                code = kmeans.fit(heap, t, raw(rows, cols), xs, k, iters, seed, init, contents(ow), contents(dw), contents(lw));
+            }
+        }
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, lab);
     return code;
 }
 
@@ -788,6 +807,268 @@ fn test_logreg_predict_at_zero[&h](heap: &!h Heap) -> [heap] int {
     return bad;
 }
 
+// ---------------------------------------------------------------- k-means
+// the lowest index wins a tie: x = 1.0 is as far from 0.0 as from 2.0, in either order of the centroids
+fn test_kmeans_tie_goes_to_the_lowest_index[&h](heap: &!h Heap) -> [heap] int {
+    let xs = box_slice(heap, 3, 1.0);
+    let cen = box_slice(heap, 2, 0.0);
+    let lab = box_slice(heap, 3, 5);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow mut cen as &!cw in {
+            contents(cw)[0] = 0.0;
+            contents(cw)[1] = 2.0;
+        }
+        borrow cen as &cr in {
+            borrow mut lab as &!lw in {
+                bad = bad + kmeans.predict(heap, mat(3, 1), contents(xr), 2, contents(cr), contents(lw));
+            }
+        }
+        borrow lab as &lr in {
+            if contents(lr)[0] != 0 || contents(lr)[1] != 0 || contents(lr)[2] != 0 {
+                bad = bad + 1;
+            }
+        }
+        borrow mut cen as &!cw in {
+            contents(cw)[0] = 2.0;
+            contents(cw)[1] = 0.0;
+        }
+        borrow cen as &cr in {
+            borrow mut lab as &!lw in {
+                bad = bad + kmeans.predict(heap, mat(3, 1), contents(xr), 2, contents(cr), contents(lw));
+            }
+        }
+        borrow lab as &lr in {
+            if contents(lr)[0] != 0 || contents(lr)[1] != 0 {
+                bad = bad + 1;
+            }
+        }
+        // identical centroids: every point goes to the first
+        borrow mut cen as &!cw in {
+            contents(cw)[0] = 0.5;
+            contents(cw)[1] = 0.5;
+        }
+        borrow cen as &cr in {
+            borrow mut lab as &!lw in {
+                bad = bad + kmeans.predict(heap, mat(3, 1), contents(xr), 2, contents(cr), contents(lw));
+            }
+        }
+        borrow lab as &lr in {
+            if contents(lr)[2] != 0 {
+                bad = bad + 1;
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, cen);
+    unbox_slice(heap, lab);
+    return bad;
+}
+
+// the padding centroids (+inf coordinates) are never the nearest, even for rows so large that their distances to the real
+// centroids overflow to +inf: the tie at +inf goes to the lowest real index
+fn test_kmeans_padding_never_wins[&h](heap: &!h Heap) -> [heap] int {
+    let xs = box_slice(heap, 4, 0.5);
+    let cen = box_slice(heap, 2, 0.0);
+    let lab = box_slice(heap, 4, 7);
+    var bad = 0;
+    borrow mut xs as &!xw in {
+        contents(xw)[0] = 1.0e300;
+        contents(xw)[1] = 0.0 - 1.0e300;
+        contents(xw)[2] = 0.5;
+        contents(xw)[3] = 4.0;
+    }
+    borrow mut cen as &!cw in {
+        contents(cw)[1] = 5.0;
+    }
+    borrow xs as &xr in {
+        borrow cen as &cr in {
+            borrow mut lab as &!lw in {
+                bad = bad + kmeans.predict(heap, mat(4, 1), contents(xr), 2, contents(cr), contents(lw));
+            }
+        }
+    }
+    borrow lab as &lr in {
+        // 1e300 and -1e300: both distances are +inf, the lowest index (0) wins; 0.5 is nearer to 0.0; 4.0 is nearer to 5.0
+        if contents(lr)[0] != 0 || contents(lr)[1] != 0 || contents(lr)[2] != 0 || contents(lr)[3] != 1 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, cen);
+    unbox_slice(heap, lab);
+    return bad;
+}
+
+// the empty-cluster rule: 8 identical rows, k = 3. Every row goes to cluster 0 (the tie rule), clusters 1 and 2 are empty and keep
+// their centroid; the counts in the sums are 8, 0, 0 at every iteration; no centroid becomes NaN
+fn test_kmeans_empty_clusters_keep_their_centroid[&h](heap: &!h Heap) -> [heap, conc] int {
+    let xs = box_slice(heap, 16, 0.0);
+    let out = box_slice(heap, 6, 9.0);
+    let ww = 3 * 2 + 3 + 1;
+    let diag = box_slice(heap, 4 * ww, 0.0);
+    let lab = box_slice(heap, 8, 5);
+    var bad = 0;
+    borrow mut xs as &!xw in {
+        var i = 0;
+        while i < 8 {
+            contents(xw)[i * 2] = 1.25;
+            contents(xw)[i * 2 + 1] = 0.0 - 3.5;
+            i = i + 1;
+        }
+    }
+    borrow xs as &xr in {
+        borrow mut out as &!ow in {
+            borrow mut diag as &!dw in {
+                borrow mut lab as &!lw in {
+                    bad = bad + kmeans.fit(heap, 1, mat(8, 2), contents(xr), 3, 3, 1, 1, contents(ow), contents(dw), contents(lw));
+                }
+            }
+        }
+    }
+    borrow out as &ow in {
+        var c = 0;
+        while c < 3 {
+            if contents(ow)[c * 2] != 1.25 || contents(ow)[c * 2 + 1] != 0.0 - 3.5 {
+                bad = bad + 1;
+            }
+            c = c + 1;
+        }
+    }
+    borrow diag as &dr in {
+        var it = 0;
+        while it < 4 {
+            let s = it * ww;
+            if contents(dr)[s + 6] != 8.0 || contents(dr)[s + 7] != 0.0 || contents(dr)[s + 8] != 0.0 || contents(dr)[s + 9] != 0.0 {
+                bad = bad + 1;
+            }
+            it = it + 1;
+        }
+    }
+    borrow lab as &lr in {
+        var i = 0;
+        while i < 8 {
+            if contents(lr)[i] != 0 {
+                bad = bad + 1;
+            }
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, lab);
+    return bad;
+}
+
+// k = n: every point is its own center whatever the seed and the init; the final inertia is exactly 0, and the same seed gives the
+// same bits (a different seed gives another order of the centers)
+fn test_kmeans_k_equals_n_and_seeds[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 9;
+    let d = 2;
+    let k = 9;
+    let xs = fill(heap, n * d, 81);
+    let ww = k * d + k + 1;
+    let o1 = box_slice(heap, k * d, 0.0);
+    let o2 = box_slice(heap, k * d, 0.0);
+    let o3 = box_slice(heap, k * d, 0.0);
+    let diag = box_slice(heap, 3 * ww, 0.0);
+    let lab = box_slice(heap, n, 0);
+    var bad = 0;
+    var init = 0;
+    while init < 2 {
+        borrow xs as &xr in {
+            borrow mut o1 as &!ow in {
+                borrow mut diag as &!dw in {
+                    borrow mut lab as &!lw in {
+                        bad = bad + kmeans.fit(heap, 1, mat(n, d), contents(xr), k, 2, 5, init, contents(ow), contents(dw), contents(lw));
+                    }
+                }
+            }
+            borrow diag as &dr in {
+                if contents(dr)[2 * ww + ww - 1] != 0.0 {
+                    bad = bad + 1;
+                }
+            }
+            borrow mut o2 as &!ow in {
+                borrow mut diag as &!dw in {
+                    borrow mut lab as &!lw in {
+                        bad = bad + kmeans.fit(heap, 1, mat(n, d), contents(xr), k, 2, 5, init, contents(ow), contents(dw), contents(lw));
+                    }
+                }
+            }
+            borrow mut o3 as &!ow in {
+                borrow mut diag as &!dw in {
+                    borrow mut lab as &!lw in {
+                        bad = bad + kmeans.fit(heap, 1, mat(n, d), contents(xr), k, 2, 6, init, contents(ow), contents(dw), contents(lw));
+                    }
+                }
+            }
+        }
+        borrow o1 as &a in {
+            borrow o2 as &b in {
+                bad = bad + same_bits(contents(a), contents(b), k * d);
+            }
+            borrow o3 as &c in {
+                if same_bits(contents(a), contents(c), k * d) == 0 {
+                    bad = bad + 1;
+                }
+            }
+        }
+        init = init + 1;
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, o1);
+    unbox_slice(heap, o2);
+    unbox_slice(heap, o3);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, lab);
+    return bad;
+}
+
+fn test_kmeans_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 50;
+    let xs = fill(heap, n * 3, 91);
+    let big = box_slice(heap, n * 3, 1.0e200);
+    var bad = 0;
+    borrow xs as &xr in {
+        let x = contents(xr);
+        bad = bad + expect(km_fit(heap, 0, n, 3, x, 3, 4, 1, 1), refuse.threads());
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 0, 4, 1, 1), refuse.param_out_of_range());
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, n + 1, 4, 1, 1), refuse.param_out_of_range());
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 1025, 4, 1, 1), refuse.param_out_of_range());
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 3, 0, 1, 1), refuse.param_out_of_range());
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 3, 1001, 1, 1), refuse.param_out_of_range());
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 3, 4, 1, 2), refuse.param_out_of_range());
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 3, 4, 1, 0 - 1), refuse.param_out_of_range());
+        bad = bad + expect(km_fit(heap, 1, 0, 3, x, 3, 4, 1, 1), refuse.input_empty());
+        bad = bad + expect(km_fit(heap, 1, n + 1, 3, x, 3, 4, 1, 1), refuse.tensor_bounds());
+        // the sums of one block would be wider than the limit: k * d + k + 1 > 131072
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 3, 4, 1, 1), 0);
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, n, 1, 1, 0), 0);
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 3, 4, 0 - 7, 1), 0);
+        bad = bad + expect(km_fit(heap, 1, n, 3, x, 3, 4, 9223372036854775807, 0), 0);
+    }
+    // the sums of one block would be wider than the limit: k * d + k + 1 > 131072
+    let wide = box_slice(heap, 1024 * 150, 0.5);
+    borrow wide as &wr in {
+        bad = bad + expect(km_fit(heap, 1, 1024, 150, contents(wr), 1024, 2, 1, 1), refuse.param_out_of_range());
+    }
+    unbox_slice(heap, wide);
+    borrow big as &br in {
+        bad = bad + expect(km_fit(heap, 1, n, 3, contents(br), 3, 4, 1, 1), refuse.fit_non_finite());
+    }
+    borrow mut xs as &!xw in {
+        contents(xw)[9] = 1.0 / 0.0;
+    }
+    borrow xs as &xr in {
+        bad = bad + expect(km_fit(heap, 1, n, 3, contents(xr), 3, 4, 1, 1), refuse.input_non_finite());
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, big);
+    return bad;
+}
+
 fn report[&i](io: &!i Io, name: &static [byte], bad: int) -> [io_write] int {
     io.write_all(io, name);
     if bad == 0 {
@@ -824,6 +1105,11 @@ fn main(world: World) -> [conc] int {
             failed = failed + report(ip, "logreg_bias_is_not_penalised", test_logreg_bias_is_not_penalised(hp));
             failed = failed + report(ip, "logreg_objective_decreases", test_logreg_objective_decreases(hp));
             failed = failed + report(ip, "logreg_predict_at_zero", test_logreg_predict_at_zero(hp));
+            failed = failed + report(ip, "kmeans_tie_goes_to_the_lowest_index", test_kmeans_tie_goes_to_the_lowest_index(hp));
+            failed = failed + report(ip, "kmeans_padding_never_wins", test_kmeans_padding_never_wins(hp));
+            failed = failed + report(ip, "kmeans_empty_clusters_keep_their_centroid", test_kmeans_empty_clusters_keep_their_centroid(hp));
+            failed = failed + report(ip, "kmeans_k_equals_n_and_seeds", test_kmeans_k_equals_n_and_seeds(hp));
+            failed = failed + report(ip, "kmeans_refusals", test_kmeans_refusals(hp));
         }
     }
     release(heap);

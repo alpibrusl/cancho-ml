@@ -30,6 +30,7 @@ import models.score;
 import models.linreg;
 import models.logreg;
 import models.npass;
+import models.kmeans;
 
 fn number_at[&s](text: &s [byte], from: int) -> [] int {
     if from >= len(text) || len(text) - from > 18 {
@@ -127,6 +128,16 @@ fn refused_line[&i](io: &!i Io, code: int) -> [io_write] int {
 }
 
 // hash of a float result: a wrapping sum over i of mix(bits_i ^ mix(i)) (ml.testdata.hash)
+fn hash_ints[&v](vals: &v [int], n: int) -> [] int {
+    var h = 0;
+    var i = 0;
+    while i < n {
+        h = wrapping_add(h, rng.mix(vals[i] ^ rng.mix(i)));
+        i = i + 1;
+    }
+    return h;
+}
+
 fn hash_floats[&v](vals: &v [float], n: int) -> [] int {
     var h = 0;
     var i = 0;
@@ -339,11 +350,72 @@ fn run_logreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, x
     return refuse.exit_code(code);
 }
 
+// ---------------------------------------------------------------- kmeans
+fn run_kmeans[&h, &i, &c, &x](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], n: int, ntr: int, d: int, k: int, iters: int, seed: int, init: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
+    let ww = k * d + k + 1;
+    let out = box_slice(heap, k * d + 1, 0.0);
+    let diag = box_slice(heap, (iters + 1) * ww + 1, 0.0);
+    let labels = box_slice(heap, n + 1, 0);
+    let plabels = box_slice(heap, n + 1, 0);
+    let tr = box_slice(heap, n * k + 1, 0.0);
+    var code = 0;
+    var t0 = 0;
+    var t1 = 0;
+    borrow mut out as &!ow in {
+        borrow mut diag as &!dw in {
+            borrow mut labels as &!lw in {
+                var r = 0;
+                t0 = clock_ms(clock);
+                while r < reps {
+                    code = kmeans.fit(heap, threads, common.mat(ntr, d), xv, k, iters, seed, init, contents(ow), contents(dw), contents(lw));
+                    r = r + 1;
+                }
+                t1 = clock_ms(clock);
+            }
+        }
+    }
+    if code != 0 {
+        refused_line(io, code);
+    } else {
+        borrow out as &ow in {
+            print_floats(io, "params", contents(ow), k * d);
+            borrow mut plabels as &!pw in {
+                code = kmeans.predict(heap, common.mat(n, d), xv, k, contents(ow), contents(pw));
+            }
+            borrow mut tr as &!tw in {
+                code = kmeans.transform(common.mat(n, d), xv, k, contents(ow), contents(tw));
+            }
+        }
+        borrow diag as &dr in {
+            print_floats(io, "diag", contents(dr), (iters + 1) * ww);
+        }
+        borrow labels as &lr in {
+            print_hash(io, "labels", hash_ints(contents(lr), ntr));
+        }
+        borrow plabels as &pr in {
+            print_hash(io, "pred", hash_ints(contents(pr), n));
+        }
+        borrow tr as &tq in {
+            print_hash(io, "transform", hash_floats(contents(tq), n * k));
+        }
+        print_kv(io, "ms", t1 - t0);
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, labels);
+    unbox_slice(heap, plabels);
+    unbox_slice(heap, tr);
+    return refuse.exit_code(code);
+}
+
 // ---------------------------------------------------------------- the run
 fn run[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], model: int, n: int, ntr: int, d: int, l2m: int, iters: int, k: int, init: int, seed: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
     let l2 = float_of(l2m) / 1000.0;
     if model == 1 {
         return run_linreg(heap, io, clock, xv, yv, n, ntr, d, l2, threads, reps);
+    }
+    if model == 3 {
+        return run_kmeans(heap, io, clock, xv, n, ntr, d, k, iters, seed, init, threads, reps);
     }
     if model == 2 {
         return run_logreg(heap, io, clock, xv, yv, n, ntr, d, l2, iters, threads, reps);
