@@ -54,6 +54,40 @@ If D1 cannot be kept for a feature, the feature is refused or the exception is w
   informational: a different commit is not refused, because only a changed result matters, and that is tested by the
   corpus in M10).
 
+### 3.1 Linear algebra and tensors: a cancho package, rank-N from the start **[choice]**
+
+Linear algebra is a **cancho package** (working name `cancho-linalg`), not a language feature and not an external library
+(BLAS, via FFI). Reasons: a BLAS picks kernels per CPU, may use `fma` and splits by thread count, so it cannot keep D1/D2; and
+FFI is unbounded in the authority report (lexsys-gpu measured `ffi("liblexgpu")` as unbounded, cancho#251 **[read]**). Spikes
+L and S point the same way: the 4.4x of spike L came from library techniques (a row read through a subslice, 8 rows in flight,
+a faster `exp`), none of which needs array syntax; what remains is compiler-level (bounds checks, no SIMD). Language changes are
+asked for upstream only with a measured reproducer (section 11).
+
+**The type is a tensor descriptor, with matrices as the rank-2 case.** `offset`, `rank`, `shape[0..rank)`, `strides[0..rank)`,
+all plain `int`s; the elements live in a separate `[float]` that every kernel takes beside the descriptor. It is a descriptor and
+not a view that holds the data because cancho structs cannot hold reference fields, as reported by lexsys-gpu **[read,
+cancho#251; not re-checked at `a4572ea`]**. Consequences:
+
+* `transpose`, `reshape` (when contiguous), slicing, `row`/`column` and broadcasting (stride 0) are descriptor edits: no copy,
+  no kernel. A matrix is `rank = 2`, row-major strides `(cols, 1)`.
+* **Rank is bounded** at `R_MAX = 4` **[choice, estimate]**; a larger rank is a refusal (`ml.tensor.rank`). The descriptor's
+  size is fixed by `R_MAX`, so adding rank 3 or 4 later changes no existing function, descriptor layout, or stored byte.
+* v1 ships rank 1 and 2 kernels only (`dot`, `axpy`, `gemv`, blocked `gemm`, `syrk`, Cholesky, triangular solve). Rank 3 and 4
+  arrive with a contraction `contract(a, b, axes)` whose order is the same normative rule as `gemm`'s, when a model needs it
+  (small exported networks, M10 and after), not before.
+* **Dtype.** `float` (binary64) only in v1. `f32` exists from edition 6; whether the package is generic over it is **[open]**
+  and waits for a model that wants it, since a second width is a second set of rounding rules (section 3).
+
+**Every reduction has a normative summation order, and it is part of the API.** A reduction over an axis adds in ascending index
+order inside a block of a fixed length `K`; block partials are combined in a fixed binary tree by block index. `K` and the tree
+shape are constants of the package, never functions of the thread count. This is the fixed-reduction arm C of `docs/spikes.md`,
+or its exact-accumulator alternative; which one is **[M0]**. Each kernel's document says its order, and its test compares it to
+a reference written in that order (as spikes L and S do with numpy). Threading only decides which thread runs which block.
+
+**Where it lives.** A module in cancho-ml first; extracted to its own repository when a second consumer needs it. The
+descriptor has no ML types in it, so tensors for other programs (and later a cancho-gpu backend, whose tile kernels would take
+the same descriptor) do not require a redesign.
+
 ## 4. File formats
 
 Both are **bytes, versioned, with no hidden state**: no timestamp, no host name, no path, no random identifier. Two fits of
@@ -68,6 +102,9 @@ sections     u32 LE    count, then per section: tag u32 LE, length u64 LE, paylo
 ```
 
 * all integers little-endian; a double is its 8 bytes (the bits), little-endian; no padding;
+* **every numeric parameter block is a tensor record**: dtype tag, rank, shape (rank `u64`s), then the elements row-major,
+  contiguous. A coefficient vector is rank 1, a weight matrix rank 2, a future kernel rank 4: the format already has the
+  field, so tensors add no format version (section 3.1);
 * sections in a fixed order: `plan` (the canonical pipeline text, section 5), `schema` (column names, types, order),
   `steps` (each transform's fitted parameters), `model` (the estimator), `meta` (seed, row and column counts, hyperparameters,
   compiler commit, a SHA-256 of all sections before it);
@@ -179,6 +216,10 @@ Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's
 packaged (`cancho.toml` shows pinned `[dependencies]` by git rev and path) before the choice is made.
 
 ## 11. What M0 must settle before section 6 and 9 are final
+
+Upstream asks, each only with a measured reproducer (spikes L and S have the first three): bounds checks of a per-row subslice
+discharged; a 2-D view or slice-of-slice type (or struct reference fields, which would let a view hold its data); a faster
+`std.math.exp` (the tuned one is bit-identical on 114M points); `float_of_bits`; text-to-float in `std`.
 
 * the determinism arm (exact accumulator against fixed reduction tree) and the threshold for choosing between them;
 * the cost of `exp`/`log` per call, and of the bit-pattern load;
