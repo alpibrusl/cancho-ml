@@ -1,0 +1,182 @@
+edition 5;
+
+module ml.csvcell;
+
+// One CSV cell as a number (docs/reader.md section 2.1). The grammar of the CLI slice is kept for what it reads exactly: a cell
+// `[+-]digits[.digits]` with at most 12 significant digits is an int or a dec(S), kept as an integer mantissa and S. Everything else
+// goes to cancho-table's exact reader, `flt.parse_float` (pinned by table.pin, not copied: docs/reader.md section 1): a cell with an
+// exponent, a leading or trailing point, or more than 12 digits is a float, the nearest double, ties to even.
+//
+// read answers (status, kind, mantissa, fractional digits, integer digits without leading zeros, key):
+//   status 0 a number; 1 empty; 2 not a number; 3 nan or inf (any case, signed, `infinity`); 4 past the range of a double;
+//          5 a non-zero cell that would read as zero; 6 longer than 1,100 bytes
+//   kind   1 int, 2 dec (mantissa below 10^12 in size, signed), 3 float (key: flt's order-preserving key of the double)
+// There is no negative zero: -0, -0.0 and -0e5 are 0.0 (cancho-table numbers.md B2).
+
+import std.math;
+import flt;
+
+// 10^k as a double, k = 0..12 (exact: below 2^53)
+static pow10f: [float] {
+    let t = alloc_slice[static](13, 1.0);
+    var k = 1;
+    while k < 13 {
+        t[k] = t[k - 1] * 10.0;
+        k = k + 1;
+    }
+    return t;
+}
+
+fn is_digit(c: int) -> [] bool {
+    return c >= '0' && c <= '9';
+}
+
+fn lower(c: int) -> [] int {
+    if c >= 'A' && c <= 'Z' {
+        return c + 32;
+    }
+    return c;
+}
+
+fn same_ignoring_case[&c](cell: &c [byte], word: &static [byte]) -> [] bool {
+    if len(cell) != len(word) {
+        return false;
+    }
+    var i = 0;
+    while i < len(cell) {
+        if lower(int_of(cell[i])) != int_of(word[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// (status, mantissa, fractional digits, integer digits without leading zeros): the exact grammar of the CLI slice. status: 0 a
+// number; 1 empty; 2 not of this grammar; 3 nan or inf; 4 an exponent; 5 more than 12 digits. The mantissa is signed, below 10^12.
+pub fn decimal[&c](cell: &c [byte]) -> [] (int, int, int, int) {
+    let n = len(cell);
+    if n == 0 {
+        return (1, 0, 0, 0);
+    }
+    var at = 0;
+    var neg = false;
+    let first = int_of(cell[0]);
+    if first == '-' || first == '+' {
+        neg = first == '-';
+        at = 1;
+    }
+    let rest = cell[at..n];
+    if same_ignoring_case(rest, "nan") || same_ignoring_case(rest, "inf") || same_ignoring_case(rest, "infinity") {
+        return (3, 0, 0, 0);
+    }
+    var p = at;
+    var lead = true;
+    var idig = 0;
+    var ndig = 0;
+    while p < n && is_digit(int_of(cell[p])) {
+        if int_of(cell[p]) != '0' {
+            lead = false;
+        }
+        if !lead {
+            idig = idig + 1;
+        }
+        ndig = ndig + 1;
+        p = p + 1;
+    }
+    if ndig == 0 {
+        return (2, 0, 0, 0);
+    }
+    var frac = 0;
+    if p < n && int_of(cell[p]) == '.' {
+        p = p + 1;
+        while p < n && is_digit(int_of(cell[p])) {
+            frac = frac + 1;
+            p = p + 1;
+        }
+        if frac == 0 {
+            return (2, 0, 0, 0);
+        }
+    }
+    if p < n {
+        let c = int_of(cell[p]);
+        if (c == 'e' || c == 'E') && p + 1 < n {
+            return (4, 0, 0, 0);
+        }
+        return (2, 0, 0, 0);
+    }
+    if idig + frac > 12 {
+        return (5, 0, 0, 0);
+    }
+    var m = 0;
+    var q = at;
+    while q < n {
+        let c = int_of(cell[q]);
+        if is_digit(c) {
+            m = m * 10 + (c - '0');
+        }
+        q = q + 1;
+    }
+    if neg {
+        m = 0 - m;
+    }
+    return (0, m, frac, idig);
+}
+
+pub fn read[&c](cell: &c [byte]) -> [] (int, int, int, int, int, int) {
+    let (st, m, frac, idig) = decimal(cell);
+    if st == 0 {
+        var kind = 1;
+        if frac > 0 {
+            kind = 2;
+        }
+        return (0, kind, m, frac, idig, 0);
+    }
+    if st == 1 || st == 3 {
+        return (st, 0, 0, 0, 0, 0);
+    }
+    let (key, fs) = flt.parse_float(cell);
+    if fs == 0 {
+        return (0, 3, 0, 0, 0, key);
+    }
+    if fs == 10 {
+        return (3, 0, 0, 0, 0, 0);
+    }
+    if fs == 11 {
+        return (4, 0, 0, 0, 0, 0);
+    }
+    if fs == 12 {
+        return (5, 0, 0, 0, 0, 0);
+    }
+    if fs == 13 {
+        return (6, 0, 0, 0, 0, 0);
+    }
+    return (2, 0, 0, 0, 0, 0);
+}
+
+// The double a cell of kind `kind` stands for. An int or a dec is float(m) / 10^S: both are exact doubles, so the one division rounds once.
+pub fn double(kind: int, m: int, frac: int, key: int) -> [] float {
+    if kind == 3 {
+        return flt.float_of_key(key);
+    }
+    return float_of(m) / pow10f[frac];
+}
+
+// the order-preserving key of that double (0 for zero: there is no -0), as cancho-table's :float keys
+pub fn key_of(kind: int, m: int, frac: int, key: int) -> [] int {
+    if kind == 3 {
+        return key;
+    }
+    if m == 0 {
+        return 0;
+    }
+    return flt.key_of(float_of(m) / pow10f[frac]);
+}
+
+// the bits of the double of a key (the inverse of flt.key_of: the low 63 bits flipped when negative)
+pub fn bits_of_key(key: int) -> [] int {
+    if key < 0 {
+        return key ^ 0x7fffffffffffffff;
+    }
+    return key;
+}

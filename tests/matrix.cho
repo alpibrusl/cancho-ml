@@ -1,0 +1,118 @@
+import std.test;
+import ml.limits;
+import ml.matrix;
+import ml.refuse;
+import linalg.tensor;
+
+// tests of lib/core/matrix.cho: `cancho test --std lib/core/*.cho lib/linalg/tensor.cho tests/matrix.cho` (scripts/check.sh). A test
+// answers 0 to pass.
+
+fn test_matrix_values_and_bitmap[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (m0, code) = matrix.make(heap, 70, 3, 100, 10, 1000);
+    if code != 0 {
+        bad = bad + 1;
+    }
+    let (t, data, miss, rows, cols, wpc) = matrix.parts(m0);
+    if rows != 70 || cols != 3 || wpc != 3 {
+        bad = bad + 1;
+    }
+    var d = data;
+    var b = miss;
+    borrow mut d as &!dw in {
+        borrow mut b as &!bw in {
+            // the rows that sit on the edges of a word, in each column
+            matrix.mark_missing(contents(bw), wpc, 0, 0);
+            matrix.mark_missing(contents(bw), wpc, 31, 0);
+            matrix.mark_missing(contents(bw), wpc, 32, 1);
+            matrix.mark_missing(contents(bw), wpc, 63, 1);
+            matrix.mark_missing(contents(bw), wpc, 64, 2);
+            matrix.mark_missing(contents(bw), wpc, 69, 2);
+            matrix.put(contents(dw), cols, 69, 2, 2.5);
+            matrix.put(contents(dw), cols, 0, 1, 0.1);
+        }
+    }
+    let m = matrix.assemble(t, d, b, rows, cols, wpc);
+    borrow m as &mr in {
+        var r = 0;
+        while r < 70 {
+            var c = 0;
+            while c < 3 {
+                var want = false;
+                if c == 0 && (r == 0 || r == 31) {
+                    want = true;
+                }
+                if c == 1 && (r == 32 || r == 63) {
+                    want = true;
+                }
+                if c == 2 && (r == 64 || r == 69) {
+                    want = true;
+                }
+                if matrix.is_missing(mr, r, c) != want {
+                    bad = bad + 1;
+                }
+                c = c + 1;
+            }
+            r = r + 1;
+        }
+        if matrix.missing_count(mr, 0) != 2 || matrix.missing_count(mr, 1) != 2 || matrix.missing_count(mr, 2) != 2 {
+            bad = bad + 1;
+        }
+        if matrix.value(mr, 69, 2) != 2.5 || matrix.value(mr, 0, 1) != 0.1 || matrix.value(mr, 1, 1) != 0.0 {
+            bad = bad + 1;
+        }
+        // the descriptor is the rank-2 row-major one
+        let tt = matrix.shape(mr);
+        if tensor.shape_at(tt, 0) != 70 || tensor.shape_at(tt, 1) != 3 || tensor.stride_at(tt, 0) != 3 || tensor.stride_at(tt, 1) != 1 {
+            bad = bad + 1;
+        }
+    }
+    matrix.drop(heap, m);
+    return bad;
+}
+
+// every refusal is decided before anything is allocated: these shapes would ask for terabytes
+fn test_matrix_refuses_before_allocating[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (a, ca) = matrix.make(heap, 2147483647, 4096, 2147483647, 4096, 400000000);
+    if ca != refuse.too_many_cells() {
+        bad = bad + 1;
+    }
+    matrix.drop(heap, a);
+    let (b, cb) = matrix.make(heap, 11, 3, 10, 10, 1000);
+    if cb != refuse.too_many_rows() {
+        bad = bad + 1;
+    }
+    matrix.drop(heap, b);
+    let (c, cc) = matrix.make(heap, 3, 11, 10, 10, 1000);
+    if cc != refuse.too_many_columns() {
+        bad = bad + 1;
+    }
+    matrix.drop(heap, c);
+    let (d, cd) = matrix.make(heap, 0, 3, 10, 10, 1000);
+    if cd != refuse.input_empty() {
+        bad = bad + 1;
+    }
+    matrix.drop(heap, d);
+    let (e, ce) = matrix.make(heap, 3, 3, 10, 10, 8);
+    if ce != refuse.too_many_cells() {
+        bad = bad + 1;
+    }
+    matrix.drop(heap, e);
+    let (f, cf) = matrix.make(heap, 3, 3, 10, 10, 9);
+    if cf != 0 {
+        bad = bad + 1;
+    }
+    matrix.drop(heap, f);
+    let (g, cg) = matrix.make(heap, 3, 3, 0, 10, 9);
+    if cg != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    matrix.drop(heap, g);
+    let (h2, ch) = matrix.make(heap, 9223372036854775807, 9223372036854775807, 10, 10, 9);
+    if ch != refuse.param_out_of_range() && ch != refuse.too_many_rows() {
+        bad = bad + 1;
+    }
+    matrix.drop(heap, h2);
+    return bad;
+}

@@ -1,0 +1,88 @@
+edition 5;
+
+module ml.csvload;
+
+// Read a CSV file into a matrix (docs/reader.md sections 2.3 and 3): two passes of ml.csv.scan over the same file.
+//
+// Pass 1 reads no value into memory: it checks the header and every record, infers the kinds, counts the rows and refuses past the
+// caps (rows, columns, cells, line) as it goes, so a file over a cap is refused before anything sized by it exists. Pass 2 runs only
+// after `ml.matrix.make` has compared the shape pass 1 found with the caps once more and allocated exactly rows * kept columns doubles
+// and the bitmap; it reads every kept cell again and writes the double (or the bit of a missing cell). An empty cell is a missing value
+// here (ml.csv.Cfg.missing); NaN, infinity, a cell that is not a number and a cell out of the double's range are refused.
+//
+// The file is opened twice; if it changed between the passes, pass 2 answers status 15 (a cell no longer fits, or more rows than the
+// matrix has) and never writes outside the matrix.
+
+import std.vec;
+import ml.csv;
+import ml.matrix;
+import ml.refuse;
+import toolbox.place;
+
+// a pass over the file `rel`: (shape, report, sinks); report.status 99 when the open failed (aux: the errno)
+pub fn pass[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks) {
+    match place.open_operand(fs, root, rel, full) {
+        Opened::Failed(reason) => {
+            return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: reason }, sk);
+        }
+        Opened::Ok(opened) => {
+            var handle = opened;
+            var sink = sk;
+            var sh = csv.empty_shape(heap);
+            var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
+            borrow mut handle as &!fh in {
+                let (s2, r2, k2) = csv.scan(heap, fh, cfg, target, sink);
+                csv.drop_shape(heap, sh);
+                sh = s2;
+                rep = r2;
+                sink = k2;
+            }
+            file_close(handle);
+            return (sh, rep, sink);
+        }
+    }
+}
+
+// kept columns of a shape: not dropped
+pub fn kept[&s](sh: &s csv.Shape) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < csv.cols(sh) {
+        if !csv.dropped(sh, i) {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// (matrix, shape, report, code). code is 0, or the refusal of ml.refuse that stopped the matrix being made (no rows, a cap); when
+// report.status is not 0 the matrix is empty and the report says what stopped the read.
+pub fn load[&h, &f, &r, &pf, &pq](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
+    let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: 0, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+    let (sh, rep, sk) = pass(heap, fs, root, rel, full, c1, "", csv.plain_sinks(heap, 8, false));
+    csv.drop_sinks(heap, sk);
+    if rep.status != 0 {
+        return (matrix.empty(heap), sh, rep, 0);
+    }
+    var k = 0;
+    borrow sh as &sr in {
+        k = kept(sr);
+    }
+    var rows = 0;
+    borrow sh as &sr in {
+        rows = csv.rows(sr);
+    }
+    let (mx, code) = matrix.make(heap, rows, k, cfg.max_rows, cfg.max_cols, cfg.max_cells);
+    if code != 0 {
+        return (mx, sh, rep, code);
+    }
+    let (t, data, miss, mrows, mcols, wpc) = matrix.parts(mx);
+    let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: 8, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
+    let (sh2, rep2, sk2) = pass(heap, fs, root, rel, full, c2, "", csv.sinks(heap, 8, false, data, miss));
+    csv.drop_shape(heap, sh2);
+    let (a2, f2, d2, m2) = csv.sink_parts(sk2);
+    unbox_slice(heap, a2);
+    vec.drop(heap, f2);
+    return (matrix.assemble(t, d2, m2, mrows, mcols, wpc), sh, rep2, 0);
+}

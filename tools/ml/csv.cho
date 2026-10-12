@@ -2,33 +2,41 @@ edition 5;
 
 module ml.csv;
 
-// The CSV reader of this slice (docs/cli.md section 2.3). It is NOT cancho-table's reader: cancho-table is a binary, not a
-// package, and its float reader (tools/table/flt.cho) is on an unmerged branch, so nothing of it can be pinned (the contract
-// package is pinned, never copied; neither is this copied from table). It reads what the constant model needs and refuses the
-// rest with a rule tag:
+// The CSV reader (docs/reader.md section 2). Cells are read by ml.csvcell (the CLI slice's exact grammar for ints and short decimals,
+// cancho-table's `flt.parse_float` for everything else: pinned by table.pin, not copied); records are RFC 4180, split by cancho-table's
+// `reader` module:
 //
-// * the first non-blank line is the header; a line is cut at commas; no quoting (a double quote is ml.input.unsupported-csv);
-// * a cell is `[+-]digits[.digits]` with at most 12 digits in all, read exactly as an integer mantissa and a count of
-//   fractional digits (the column's type is int, or dec(S) with S the most fractional digits seen); an exponent is
-//   ml.input.unsupported-type, nan and inf are ml.input.non-finite, anything else ml.input.non-numeric;
-// * one function, `scan`, reads the file one line at a time in bounded memory (the line cap, the header, four ints per
-//   column) and, in the modes below, folds the target column into exact accumulators while it reads.
+// * the first non-blank record is the header; a UTF-8 byte order mark on the first line is dropped; a CR before the LF is dropped; a
+//   blank line outside a quote is not a record; a quoted field may hold commas, doubled quotes and line breaks, and a record that spans
+//   lines is assembled in a buffer bounded by the line cap;
+// * one function, `scan`, reads the file one record at a time in bounded memory (the line cap, the header, the field offsets of a
+//   record, four ints per column) and, in the modes of `Cfg`, folds the target column into exact accumulators or writes every kept cell
+//   into a matrix while it reads. Every limit is checked on the way, before the thing it limits is built.
 
 import std.buffer;
 import std.bytes;
 import std.vec;
+import ml.csvcell;
 import ml.exact;
+import ml.fsq;
+import ml.matrix;
+import facc;
+import reader;
 import toolbox.lines;
 
-// a column holds 12 digits at most: its mantissa is below 10^12
+// A column holds 12 digits at most as an exact int or dec: its mantissa is below 10^12. A column that needs more is a float.
 pub fn digits_max() -> [] int {
     return 12;
 }
 
-// what `scan` does besides inferring the shape: 0 nothing (fit pass 1), 1 fit a regression (sum the target at scale
-// `tscale`), 2 fit a classification (count the target's values), 3 eval a regression (sum the squared errors against `pred`,
-// a prediction at scale `tscale` + 6), 4 eval a classification (count the rows whose target is `pred`), 5 predict (the
-// target column, if present, is skipped: its cells are not read)
+// what `scan` does besides inferring the shape: 0 nothing (fit pass 1; the loader's pass 1), 1 fit a regression of an int or dec target
+// (sum it at scale `tscale`), 2 fit a classification (count the target's values), 3 eval a regression of an int or dec target (sum the
+// squared errors against `pred`, a prediction at scale `tscale` + 6), 4 eval a classification (count the rows whose target is `pred`),
+// 5 predict (the target column, if present, is skipped: its cells are not read), 6 fit a regression of a float target (the exact
+// sum of the doubles in `fv`, the count in acc[2]), 7 eval a regression of a float target (the exact sum of (y - P)^2 in `acc`, P the
+// double whose bits are `pred`), 8 load every kept cell into the matrix of the sinks (rows `mrows`, words per column `wpc`).
+// `missing`: an empty cell is a missing value (the loader), else it is ml.input.non-numeric. `floats`: columns read as float whatever
+// their cells are (--float).
 pub struct Cfg {
     cap: int,
     max_rows: int,
@@ -38,14 +46,21 @@ pub struct Cfg {
     tscale: int,
     pred: int,
     drops: &static [byte],
+    floats: &static [byte],
+    missing: bool,
+    mrows: int,
+    mcols: int,
+    wpc: int,
 }
 
-// what stopped the scan: 0 nothing, 1 no header, 2 line too long (aux: its length), 3 ragged row, 4 a quote, 5 a name twice
-// or empty (col: the second), 6 too many columns (aux: the count), 7 too many rows, 8 non-numeric cell (aux: 1 empty, 2 not a
-// number), 9 non-finite, 10 unsupported type (aux: 1 exponent, 2 more than 12 digits in a cell, 3 more than 12 digits in a
-// column), 11 read failed (aux: errno), 12 --drop names a column that is not there (aux: its place in the list, from 1),
-// 13 too many cells, 14 the target is dropped, 15 the file is not what the first pass saw (a cell does not fit the scale),
-// 16 a classification target with a third value
+// what stopped the scan: 0 nothing, 1 no header, 2 line too long (aux: its length; a record that spans lines counts as one line),
+// 3 ragged row, 5 a name twice or empty (col: the second), 6 too many columns (aux: the count), 7 too many rows, 8 a cell that is not
+// a number (aux: 1 empty, 2 not a number, 3 non-zero and would read as zero, 4 longer than 1,100 bytes), 9 non-finite (aux: 0 nan or
+// inf, 1 past the range of a double), 11 read failed (aux: errno), 12 --drop names a column that is not there (aux: its place in the
+// list, from 1), 13 too many cells, 14 the target is dropped, 15 the file is not what the first pass saw (a cell does not fit the
+// scale, or there are more rows than the matrix has), 16 a classification target with a third value, 17 a quote closed and followed
+// by something that is not a comma (line), 18 a quote still open at the end of the file (line: where the record began), 19 --float
+// names a column that is not there (aux: its place in the list)
 pub struct Report {
     status: int,
     line: int,
@@ -53,7 +68,52 @@ pub struct Report {
     aux: int,
 }
 
-// per column i of `cols`: cells[i] kind (0 no cell yet, 1 int, 2 dec), cells[cols + i] scale, cells[2 cols + i] the most
+// What a scan writes into besides the shape: `acc` (8 ints, or `fsq.size()` for mode 7), `fv` (the 73 ints of a facc sum, for mode 6),
+// and the matrix pieces of ml.matrix (`data`, `miss`, for mode 8). Boxes of one element when a mode needs none.
+pub res struct Sinks {
+    acc: Box[[int]],
+    fv: vec.Vec[int],
+    data: Box[[float]],
+    miss: Box[[int]],
+}
+
+pub fn sinks[&h](heap: &!h Heap, acc_len: int, wide: bool, data: Box[[float]], miss: Box[[int]]) -> [heap] Sinks {
+    var fv = vec.empty(heap, facc.width() + 1, 0);
+    if wide {
+        var i = 0;
+        while i < facc.width() {
+            fv = vec.push(heap, fv, 0);
+            i = i + 1;
+        }
+    }
+    return Sinks { acc: box_slice(heap, acc_len, 0), fv: fv, data: data, miss: miss };
+}
+
+// sinks that hold nothing but an `acc_len` accumulator (and the 73 ints of a float sum when `wide`)
+pub fn plain_sinks[&h](heap: &!h Heap, acc_len: int, wide: bool) -> [heap] Sinks {
+    return sinks(heap, acc_len, wide, box_slice(heap, 1, 0.0), box_slice(heap, 1, 0));
+}
+
+pub fn drop_sinks[&h](heap: &!h Heap, k: Sinks) -> [heap] int {
+    let Sinks { acc, fv, data, miss } = k;
+    unbox_slice(heap, acc);
+    vec.drop(heap, fv);
+    unbox_slice(heap, data);
+    unbox_slice(heap, miss);
+    return 0;
+}
+
+// the pieces of sinks, and back
+pub fn sink_parts(k: Sinks) -> [] (Box[[int]], vec.Vec[int], Box[[float]], Box[[int]]) {
+    let Sinks { acc, fv, data, miss } = k;
+    return (acc, fv, data, miss);
+}
+
+pub fn sink_join(acc: Box[[int]], fv: vec.Vec[int], data: Box[[float]], miss: Box[[int]]) -> [] Sinks {
+    return Sinks { acc: acc, fv: fv, data: data, miss: miss };
+}
+
+// per column i of `cols`: cells[i] kind (0 no cell yet, 1 int, 2 dec, 3 float), cells[cols + i] scale, cells[2 cols + i] the most
 // integer digits, cells[3 cols + i] 1 if dropped
 pub res struct Shape {
     names: buffer.Buffer,
@@ -131,113 +191,7 @@ pub fn find[&s, &w](sh: &s Shape, want: &w [byte]) -> [] int {
     return 0 - 1;
 }
 
-// ---------------------------------------------------------------- a cell
-
-fn is_digit(c: int) -> [] bool {
-    return c >= '0' && c <= '9';
-}
-
-fn lower(c: int) -> [] int {
-    if c >= 'A' && c <= 'Z' {
-        return c + 32;
-    }
-    return c;
-}
-
-fn same_ignoring_case[&c](cell: &c [byte], word: &static [byte]) -> [] bool {
-    if len(cell) != len(word) {
-        return false;
-    }
-    var i = 0;
-    while i < len(cell) {
-        if lower(int_of(cell[i])) != int_of(word[i]) {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
-// (status, mantissa, fractional digits, integer digits without leading zeros). status: 0 a number, 1 empty, 2 not a number,
-// 3 nan or inf, 4 an exponent, 5 more than 12 digits. The mantissa is signed and below 10^12 in size.
-pub fn parse_cell[&c](cell: &c [byte]) -> [] (int, int, int, int) {
-    let n = len(cell);
-    if n == 0 {
-        return (1, 0, 0, 0);
-    }
-    var at = 0;
-    var neg = false;
-    let first = int_of(cell[0]);
-    if first == '-' || first == '+' {
-        neg = first == '-';
-        at = 1;
-    }
-    let rest = cell[at..n];
-    if same_ignoring_case(rest, "nan") || same_ignoring_case(rest, "inf") || same_ignoring_case(rest, "infinity") {
-        return (3, 0, 0, 0);
-    }
-    // integer part
-    var p = at;
-    var lead = true;
-    var idig = 0;
-    var ndig = 0;
-    while p < n && is_digit(int_of(cell[p])) {
-        if int_of(cell[p]) != '0' {
-            lead = false;
-        }
-        if !lead {
-            idig = idig + 1;
-        }
-        ndig = ndig + 1;
-        p = p + 1;
-    }
-    if ndig == 0 {
-        return (2, 0, 0, 0);
-    }
-    var frac = 0;
-    var tail = p;
-    if p < n && int_of(cell[p]) == '.' {
-        p = p + 1;
-        tail = p;
-        while p < n && is_digit(int_of(cell[p])) {
-            frac = frac + 1;
-            p = p + 1;
-        }
-        if frac == 0 {
-            return (2, 0, 0, 0);
-        }
-    }
-    if p < n {
-        let c = int_of(cell[p]);
-        if (c == 'e' || c == 'E') && p + 1 < n {
-            return (4, 0, 0, 0);
-        }
-        return (2, 0, 0, 0);
-    }
-    if idig + frac > 12 {
-        return (5, 0, 0, 0);
-    }
-    // the mantissa: every digit, the point skipped
-    var m = 0;
-    var q = at;
-    while q < n {
-        let c = int_of(cell[q]);
-        if is_digit(c) {
-            m = m * 10 + (c - '0');
-        }
-        q = q + 1;
-    }
-    if neg {
-        m = 0 - m;
-    }
-    return (0, m, frac, idig);
-}
-
 // ---------------------------------------------------------------- the header
-
-fn count_commas[&l](line: &l [byte]) -> [] int {
-    return bytes.count_byte(line, ',');
-}
 
 // (5, i) if name i is empty or equals an earlier one, else (0, 0)
 pub fn check_names[&n, &e](names: &n [byte], ends: &e vec.Vec[int], cols: int) -> [] (int, int) {
@@ -268,48 +222,9 @@ pub fn check_names[&n, &e](names: &n [byte], ends: &e vec.Vec[int], cols: int) -
     return (0, 0);
 }
 
-// the header's names, their ends, and (status, column): 0, or 4 a quote, 5 a name twice or empty, 6 too many columns
-fn read_header[&h, &l](heap: &!h Heap, line: &l [byte], max_cols: int) -> [heap] (buffer.Buffer, vec.Vec[int], int, int, int) {
-    var names = buffer.empty(heap, len(line) + 1);
-    var ends = vec.empty(heap, 16, 0);
-    if index_of_byte(line, byte_of(34)) >= 0 {
-        return (names, ends, 0, 4, 0);
-    }
-    let cols = count_commas(line) + 1;
-    if cols > max_cols {
-        return (names, ends, cols, 6, cols);
-    }
-    var p = 0;
-    var i = 0;
-    var status = 0;
-    var bad = 0;
-    while i < cols {
-        var q = p;
-        while q < len(line) && int_of(line[q]) != ',' {
-            q = q + 1;
-        }
-        names = buffer.append(heap, names, line[p..q]);
-        var size = 0;
-        borrow names as &nr in {
-            size = buffer.size(nr);
-        }
-        ends = vec.push(heap, ends, size);
-        p = q + 1;
-        i = i + 1;
-    }
-    // a name twice, or empty
-    borrow names as &nr in {
-        borrow ends as &er in {
-            let (st, at) = check_names(buffer.bytes(nr), er, cols);
-            status = st;
-            bad = at;
-        }
-    }
-    return (names, ends, cols, status, bad);
-}
-
-// --drop: mark the columns named in the comma list. (0, 0), or (12, k) when the k-th name (from 1) is no column
-fn apply_drops[&s, &n, &e](flags: &!s [int], names: &n [byte], ends: &e vec.Vec[int], cols: int, list: &static [byte]) -> [] (int, int) {
+// --drop and --float: set flags[slot * cols + j] to `value` for the columns named in the comma list. (0, 0), or (code, k) when the k-th
+// name (from 1) is no column
+fn apply_list[&s, &n, &e](flags: &!s [int], names: &n [byte], ends: &e vec.Vec[int], cols: int, list: &static [byte], slot: int, value: int, code: int) -> [] (int, int) {
     if len(list) == 0 {
         return (0, 0);
     }
@@ -335,9 +250,9 @@ fn apply_drops[&s, &n, &e](flags: &!s [int], names: &n [byte], ends: &e vec.Vec[
             j = j + 1;
         }
         if found < 0 {
-            return (12, k);
+            return (code, k);
         }
-        flags[3 * cols + found] = 1;
+        flags[slot * cols + found] = value;
         p = q + 1;
     }
     return (0, 0);
@@ -364,11 +279,11 @@ fn column_of[&n, &e, &w](names: &n [byte], ends: &e vec.Vec[int], cols: int, wan
 
 // ---------------------------------------------------------------- the target column, folded while reading
 
-// 0, or 15 (a cell does not fit the scale the first pass chose), 16 (a third label). The layout of `acc` per mode is in the
-// comment of `Cfg` and of the callers in main.
-fn fold[&a](mode: int, tscale: int, pred: int, m: int, frac: int, idig: int, acc: &!a [int]) -> [] int {
+// 0, or 15 (a cell does not fit the kind or the scale the first pass chose), 16 (a third label). The layout of `acc` per mode is in the
+// comment of `Cfg` and of the callers in verbs.
+fn fold[&a, &v](mode: int, tscale: int, pred: int, kind: int, m: int, frac: int, idig: int, key: int, acc: &!a [int], fv: &!v vec.Vec[int]) -> [] int {
     if mode == 1 {
-        if frac > tscale || idig + tscale > 12 {
+        if kind == 3 || frac > tscale || idig + tscale > 12 {
             return 15;
         }
         exact.sum_add(acc, 0, m * exact.pow10(tscale - frac));
@@ -376,7 +291,7 @@ fn fold[&a](mode: int, tscale: int, pred: int, m: int, frac: int, idig: int, acc
         return 0;
     }
     if mode == 2 {
-        if frac != 0 {
+        if kind != 1 {
             return 15;
         }
         if acc[4] == 0 {
@@ -398,7 +313,7 @@ fn fold[&a](mode: int, tscale: int, pred: int, m: int, frac: int, idig: int, acc
         return 0;
     }
     if mode == 3 {
-        if frac > tscale || idig + tscale > 12 {
+        if kind == 3 || frac > tscale || idig + tscale > 12 {
             acc[7] = 1;
             return 0;
         }
@@ -408,7 +323,7 @@ fn fold[&a](mode: int, tscale: int, pred: int, m: int, frac: int, idig: int, acc
         return 0;
     }
     if mode == 4 {
-        if frac != 0 {
+        if kind != 1 {
             acc[7] = 1;
             return 0;
         }
@@ -418,65 +333,105 @@ fn fold[&a](mode: int, tscale: int, pred: int, m: int, frac: int, idig: int, acc
         acc[1] = acc[1] + 1;
         return 0;
     }
+    if mode == 6 {
+        facc.add_bits(fv, 0, csvcell.bits_of_key(csvcell.key_of(kind, m, frac, key)));
+        acc[2] = acc[2] + 1;
+        return 0;
+    }
+    if mode == 7 {
+        fsq.add_square(acc, csvcell.bits_of_key(csvcell.key_of(kind, m, frac, key)), pred);
+        return 0;
+    }
     return 0;
 }
 
 // ---------------------------------------------------------------- a data row
 
-// (status, column, aux) as in Report
-fn read_row[&l, &s, &a](line: &l [byte], cols: int, tcol: int, cfg: Cfg, flags: &!s [int], acc: &!a [int]) -> [] (int, int, int) {
-    if index_of_byte(line, byte_of(34)) >= 0 {
-        return (4, 0, 0);
-    }
-    if count_commas(line) + 1 != cols {
-        return (3, 0, 0);
+// (status, column, aux) as in Report. `row` is the 0-based row of the file, `quoted` whether the record holds a quote (then `fb` has
+// the offsets of its fields, from reader.fields)
+fn read_row[&l, &s, &a, &v, &d, &b, &f](line: &l [byte], cols: int, tcol: int, cfg: Cfg, row: int, quoted: bool, flags: &!s [int], acc: &!a [int], fv: &!v vec.Vec[int], data: &!d [float], miss: &!b [int], fb: &!f [int]) -> [] (int, int, int) {
+    if quoted {
+        let (n, inside, bad) = reader.fields(line, 44, fb, cols);
+        if inside || bad || n != cols {
+            return (3, 0, 0);
+        }
     }
     var p = 0;
     var i = 0;
+    var mj = 0;
     while i < cols {
-        var q = p;
-        while q < len(line) && int_of(line[q]) != ',' {
-            q = q + 1;
+        var first = p;
+        var last = p;
+        if quoted {
+            first = fb[3 * i];
+            last = fb[3 * i + 1];
+        } else {
+            var q = p;
+            while q < len(line) && int_of(line[q]) != ',' {
+                q = q + 1;
+            }
+            last = q;
+            p = q + 1;
         }
-        let skipped = flags[3 * cols + i] != 0 || cfg.mode == 5 && i == tcol;
-        if !skipped {
-            let (st, m, frac, idig) = parse_cell(line[p..q]);
-            if st == 1 || st == 2 {
-                return (8, i, st);
-            }
-            if st == 3 {
-                return (9, i, 0);
-            }
-            if st == 4 {
-                return (10, i, 1);
-            }
-            if st == 5 {
-                return (10, i, 2);
-            }
-            var k = 1;
-            if frac > 0 {
-                k = 2;
-            }
-            if flags[i] < k {
-                flags[i] = k;
-            }
-            if flags[cols + i] < frac {
-                flags[cols + i] = frac;
-            }
-            if flags[2 * cols + i] < idig {
-                flags[2 * cols + i] = idig;
-            }
-            if flags[cols + i] + flags[2 * cols + i] > 12 {
-                return (10, i, 3);
-            }
-            if i == tcol && cfg.mode >= 1 && cfg.mode <= 4 {
-                let f = fold(cfg.mode, cfg.tscale, cfg.pred, m, frac, idig, acc);
-                if f != 0 {
-                    return (f, i, 0);
+        let dropped = flags[3 * cols + i] != 0;
+        if !dropped && !(cfg.mode == 5 && i == tcol) {
+            let (st, kind, m, frac, idig, key) = csvcell.read(line[first..last]);
+            if st == 1 && cfg.missing {
+                if cfg.mode == 8 {
+                    if row >= cfg.mrows {
+                        return (15, i, 0);
+                    }
+                    matrix.mark_missing(miss, cfg.wpc, row, mj);
+                }
+            } else if st != 0 {
+                if st == 1 {
+                    return (8, i, 1);
+                }
+                if st == 2 {
+                    return (8, i, 2);
+                }
+                if st == 3 {
+                    return (9, i, 0);
+                }
+                if st == 4 {
+                    return (9, i, 1);
+                }
+                if st == 5 {
+                    return (8, i, 3);
+                }
+                return (8, i, 4);
+            } else {
+                if flags[i] < kind {
+                    flags[i] = kind;
+                }
+                if kind < 3 {
+                    if flags[cols + i] < frac {
+                        flags[cols + i] = frac;
+                    }
+                    if flags[2 * cols + i] < idig {
+                        flags[2 * cols + i] = idig;
+                    }
+                    if flags[cols + i] + flags[2 * cols + i] > 12 {
+                        flags[i] = 3;
+                    }
+                }
+                if i == tcol && cfg.mode >= 1 && cfg.mode <= 7 {
+                    let f = fold(cfg.mode, cfg.tscale, cfg.pred, kind, m, frac, idig, key, acc, fv);
+                    if f != 0 {
+                        return (f, i, 0);
+                    }
+                }
+                if cfg.mode == 8 {
+                    if row >= cfg.mrows {
+                        return (15, i, 0);
+                    }
+                    data[row * cfg.mcols + mj] = csvcell.double(kind, m, frac, key);
                 }
             }
         }
-        p = q + 1;
+        if !dropped {
+            mj = mj + 1;
+        }
         i = i + 1;
     }
     return (0, 0, 0);
@@ -488,16 +443,28 @@ fn report(status: int, line: int, col: int, aux: int) -> [] Report {
     return Report { status: status, line: line, col: col, aux: aux };
 }
 
-// Read the whole file once. Memory: one 64 KiB chunk, the longest line (at most cfg.cap), the header and four ints a column.
-// Stops at the first problem (a cell that is not a number is not followed by more cells that are not).
-pub fn scan[&h, &f, &a, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [byte], acc: &!a [int]) -> [heap, file_read] (Shape, Report) {
+// Read the whole file once. Memory: one 64 KiB chunk, the record being read (at most cfg.cap bytes), the header, the offsets of one
+// record's fields and four ints a column. Stops at the first problem (a cell that is not a number is not followed by more cells that
+// are not). The sinks come back with what the mode wrote into them.
+pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [byte], sk: Sinks) -> [heap, file_read] (Shape, Report, Sinks) {
+    let (acc0, fv0, data0, miss0) = sink_parts(sk);
+    var acc = acc0;
+    var fv = fv0;
+    var data = data0;
+    var miss = miss0;
     var names = buffer.empty(heap, 1);
     var ends = vec.empty(heap, 1, 0);
     var cells = box_slice(heap, 1, 0);
+    var fb = box_slice(heap, 1, 0);
+    var rec = buffer.empty(heap, 256);
     var cols = 0;
     var rows = 0;
     var tcol = 0 - 1;
     var have_header = false;
+    var have_rec = false;
+    var open = false;
+    var seps = 0;
+    var rec_line = 0;
     var rep = report(0, 0, 0, 0);
     var total = 0;
     var r = lines.start(heap, cfg.cap);
@@ -505,6 +472,7 @@ pub fn scan[&h, &f, &a, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t
     while going {
         let (stepped, answer) = lines.next(heap, r);
         r = stepped;
+        var complete = false;
         if answer == lines.need() {
             r = lines.fill_file(r, file);
         } else if answer == lines.done() {
@@ -514,6 +482,9 @@ pub fn scan[&h, &f, &a, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t
                 if lines.failed(rr) != 0 {
                     rep = report(11, 0, 0, lines.failed(rr));
                 }
+            }
+            if have_rec && rep.status == 0 {
+                rep = report(18, rec_line, 0, 0);
             }
         } else if answer == lines.long() {
             going = false;
@@ -531,53 +502,143 @@ pub fn scan[&h, &f, &a, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t
                 if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
                     line = line[0..len(line) - 1];
                 }
-                if len(line) == 0 {
+                if len(line) == 0 && !have_rec {
                     // a blank line is not a record
-                } else if !have_header {
-                    have_header = true;
-                    let (nm, en, c, st, bad) = read_header(heap, line, cfg.max_cols);
+                } else {
+                    var held = 0;
+                    borrow rec as &br in {
+                        held = buffer.size(br);
+                    }
+                    if have_rec && held + 1 + len(line) > cfg.cap {
+                        rep = report(2, rec_line, 0, held + 1 + len(line));
+                        going = false;
+                    } else {
+                        let quote = index_of_byte(line, byte_of(34)) >= 0;
+                        if !have_rec {
+                            rec_line = number;
+                            seps = 0;
+                            open = false;
+                            borrow mut rec as &!bw in {
+                                buffer.clear(bw);
+                            }
+                        } else {
+                            rec = buffer.push(heap, rec, byte_of(10));
+                        }
+                        have_rec = true;
+                        rec = buffer.append(heap, rec, line);
+                        if !quote && !open {
+                            seps = bytes.count_byte(line, ',');
+                        } else {
+                            let (o2, s2, bad) = reader.scan(line, 44, open, seps);
+                            open = o2;
+                            seps = s2;
+                            if bad {
+                                rep = report(17, number, 0, 0);
+                                going = false;
+                            }
+                        }
+                        if going && !open {
+                            complete = true;
+                        }
+                    }
+                }
+            }
+        }
+        if complete {
+            have_rec = false;
+            if !have_header {
+                have_header = true;
+                let c = seps + 1;
+                if c > cfg.max_cols {
+                    rep = report(6, rec_line, 0, c);
+                    going = false;
+                } else {
+                    var nm = buffer.empty(heap, 1);
+                    var en = vec.empty(heap, 1, 0);
+                    borrow rec as &rr in {
+                        let (n2, e2) = reader.split_header(heap, buffer.bytes(rr), 44);
+                        buffer.drop(heap, nm);
+                        vec.drop(heap, en);
+                        nm = n2;
+                        en = e2;
+                    }
                     buffer.drop(heap, names);
                     vec.drop(heap, ends);
                     names = nm;
                     ends = en;
+                    var st = 0;
+                    var bad = 0;
+                    borrow names as &nr in {
+                        borrow ends as &er in {
+                            let (st2, at2) = check_names(buffer.bytes(nr), er, c);
+                            st = st2;
+                            bad = at2;
+                        }
+                    }
                     if st != 0 {
-                        rep = report(st, number, bad, c);
+                        rep = report(st, rec_line, bad, c);
                         going = false;
                     } else {
                         cols = c;
                         unbox_slice(heap, cells);
                         cells = box_slice(heap, 4 * cols + 1, 0);
+                        unbox_slice(heap, fb);
+                        fb = box_slice(heap, 3 * cols + 3, 0);
                         borrow mut cells as &!cw in {
                             borrow names as &nr in {
                                 borrow ends as &er in {
-                                    let (ds, k) = apply_drops(contents(cw), buffer.bytes(nr), er, cols, cfg.drops);
+                                    let (ds, k) = apply_list(contents(cw), buffer.bytes(nr), er, cols, cfg.drops, 3, 1, 12);
                                     if ds != 0 {
-                                        rep = report(ds, number, 0, k);
+                                        rep = report(ds, rec_line, 0, k);
                                         going = false;
                                     }
+                                    if ds == 0 {
+                                        let (fs, k2) = apply_list(contents(cw), buffer.bytes(nr), er, cols, cfg.floats, 0, 3, 19);
+                                        if fs != 0 {
+                                            rep = report(fs, rec_line, 0, k2);
+                                            going = false;
+                                        }
+                                    }
                                     tcol = column_of(buffer.bytes(nr), er, cols, target);
-                                    if tcol >= 0 && cfg.mode != 5 && contents(cw)[3 * cols + tcol] != 0 && ds == 0 {
-                                        rep = report(14, number, tcol, 0);
+                                    if tcol >= 0 && cfg.mode != 5 && contents(cw)[3 * cols + tcol] != 0 && going {
+                                        rep = report(14, rec_line, tcol, 0);
                                         going = false;
                                     }
                                 }
                             }
                         }
                     }
+                }
+            } else {
+                rows = rows + 1;
+                if rows > cfg.max_rows {
+                    rep = report(7, rec_line, 0, rows);
+                    going = false;
+                } else if rows > cfg.max_cells / cols {
+                    rep = report(13, rec_line, 0, rows);
+                    going = false;
+                } else if seps + 1 != cols {
+                    rep = report(3, rec_line, 0, 0);
+                    going = false;
                 } else {
-                    rows = rows + 1;
-                    if rows > cfg.max_rows {
-                        rep = report(7, number, 0, rows);
-                        going = false;
-                    } else if rows > cfg.max_cells / cols {
-                        rep = report(13, number, 0, rows);
-                        going = false;
-                    } else {
+                    borrow rec as &rr in {
+                        let record = buffer.bytes(rr);
+                        let quoted = index_of_byte(record, byte_of(34)) >= 0;
                         borrow mut cells as &!cw in {
-                            let (st, col, aux) = read_row(line, cols, tcol, cfg, contents(cw), acc);
-                            if st != 0 {
-                                rep = report(st, number, col, aux);
-                                going = false;
+                            borrow mut fb as &!fw in {
+                                borrow mut acc as &!aw in {
+                                    borrow mut fv as &!vw in {
+                                        borrow mut data as &!dw in {
+                                            borrow mut miss as &!mw in {
+                                                let (st, col, aux) = read_row(record, cols, tcol, cfg, rows - 1, quoted, contents(cw), contents(aw), vw, contents(dw), contents(mw), contents(fw));
+                                                if st != 0 {
+                                                    rep = report(st, rec_line, col, aux);
+                                                    going = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -586,8 +647,10 @@ pub fn scan[&h, &f, &a, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t
         }
     }
     lines.drop(heap, r);
+    buffer.drop(heap, rec);
+    unbox_slice(heap, fb);
     if rep.status == 0 && !have_header {
         rep = report(1, 0, 0, 0);
     }
-    return (Shape { names: names, ends: ends, cells: cells, cols: cols, rows: rows, tcol: tcol, bytes: total }, rep);
+    return (Shape { names: names, ends: ends, cells: cells, cols: cols, rows: rows, tcol: tcol, bytes: total }, rep, sink_join(acc, fv, data, miss));
 }
