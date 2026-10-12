@@ -225,3 +225,10 @@ discharged; a 2-D view or slice-of-slice type (or struct reference fields, which
 * the cost of `exp`/`log` per call, and of the bit-pattern load;
 * whether the LLVM backend builds `float` code at `a4572ea`, and what it gains;
 * the speed factor against scikit-learn, which sets the row ceiling.
+
+## 12. Stage 1 of v1: the linear algebra and the core (added with `docs/linalg.md`)
+
+`docs/linalg.md` holds the gate, the summation-order specification and the results of section 3.1's package; it was written
+before the kernels. v1 scope decisions (maintainer): binary classification and regression only (the format reserves a class
+count); cancho-table is shared by a pinned package dependency (not yet pinned: see `cancho.toml`); descriptors are plain ints with
+data beside them; every reduction has the fixed-block, fixed-tree order of `docs/linalg.md` section 2, behind one function.
