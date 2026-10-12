@@ -106,8 +106,8 @@ thread count. Classification: `predict_proba` is `result` (the probability of cl
 `N < m^3` and `Dn <= m^2/4`, so for `m <= 2^20` the products `N1 Dn2` stay below `2^98`: they do not fit an `int` (cancho has no
 multiply-high, upstream gap U1). The comparison multiplies in base `2^30` limbs, exactly. **Row ceiling [choice]: `n <= 2^20 =
 1,048,576`** training rows (`ml.input.too-many-rows` above it; the bound is the proof above, and raising it needs a three-limb
-numerator). The ceiling applies to `n`, which is also the root size of every tree (the bootstrap draws `n` rows). A unit test
-compares the comparison to Python big integers on random pairs and on pairs at the bounds (`scripts/check_tree.sh`).
+numerator). The ceiling applies to `n`, which is also the root size of every tree (the bootstrap draws `n` rows). `tree-check mode=gt` prints the comparison of 2,006 pairs (2,000 pseudo-random from the SplitMix64 stream, 6 at the bounds) and
+`scripts/gate_tree.py --exact` checks every answer against Python integers.
 
 ### 3.2 Regression sums: float64 in a fixed row order (not the linalg block order, not exact integers) **[choice]**
 
@@ -229,13 +229,29 @@ separate code, big integers for the Gini comparison) print, byte for byte equal:
 dleft left right na nb valbits`) and every test prediction (`P i bits`). The test rows are the last `n/5`; the training rows
 are the first `n - n/5`. Sizes: 1,000 and 100,000 rows. Any difference fails the gate.
 
-| id | task | T | depth | ML | bins | mtry | boot | missing |
-|---|---|---|---|---|---|---|---|---|
-| C1 | class | 10 | 8 | 1 | 64 | 4 | 1 | no |
-| C2 | class | 7 | 10 | 5 | 32 | 5 | 1 | yes |
-| C3 | class | 1 | 6 | 1 | 64 | 20 | 0 | no |
-| R1 | regression | 8 | 9 | 3 | 48 | 7 | 1 | yes |
-| R2 | regression | 1 | 7 | 2 | 64 | 20 | 0 | no |
+| id | task | T | depth | ML | bins | mtry | boot | missing | data |
+|---|---|---|---|---|---|---|---|---|---|
+| C1 | class | 10 | 8 | 1 | 64 | 4 | 1 | no | ml-data |
+| C2 | class | 7 | 10 | 5 | 32 | 5 | 1 | yes | ml-data |
+| C3 | class | 1 | 6 | 1 | 64 | 20 | 0 | no | ml-data |
+| C4 | class | 3 | 8 | 2 | 200 | 6 | 1 | yes | ml-data |
+| C5 | class | 2 | 7 | 1 | 255 | 8 | 1 | no | ml-data |
+| C6 | class | 4 | 4 | 1 | 2 | 20 | 1 | yes | ml-data |
+| R1 | regression | 8 | 9 | 3 | 48 | 7 | 1 | yes | ml-data |
+| R2 | regression | 1 | 7 | 2 | 64 | 20 | 0 | no | ml-data |
+| E1 | class | 6 | 6 | 2 | 16 | default (2 of 8) | 1 | yes | edge set |
+| E2 | regression | 5 | 7 | 1 | 32 | 3 | 1 | yes | edge set (noisy target) |
+| E3 | class | 1 | 5 | 1 | 8 | 8 | 0 | yes | edge set |
+| E4 | regression | 4 | 6 | 1 | 16 | 4 | 1 | yes | edge set (integer target 0..5: many nodes whose targets are all equal) |
+
+*(Corrected in place: the first draft listed C1 to C3, R1, R2. C4 to C6 were added when the bin search was specialised for 64 and for
+256 edges, so that both code paths and the smallest bin count are covered; E1 to E4 when the regression-purity and the variant-tie
+mutants showed that the large inputs never reach those cases.)* The **edge-case set** (`scripts/gen_tree_data.py`, 1,000 rows x 8
+columns, only at 1,000 rows): a constant column, a column of only `-0.0` and `0.0`, a column of small integers, a column missing
+in every row, a column missing in 95% of the rows, a column of `1e300`, `-1e300` and subnormals, a normal column with 5% missing,
+and a column of heavy duplicates; so repeated edges, equal scores in large numbers, `-0.0` before `0.0` in the sort, a column with no
+valid split and extreme magnitudes are all exercised. Missing cells hold NaN in the file given to both programs (a missing cell is
+never read).
 
 C1 is the configuration of spike F; its nodes and probabilities must also equal spike F's `N` and `P` lines (same data, seed
 20261012): a regression check of this port against the spike's own gate (heap numbers are recomputed from the preorder).

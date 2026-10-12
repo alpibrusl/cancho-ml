@@ -119,7 +119,7 @@ def hashes(out):
     return {l.split()[1]: l.split()[2] for l in out.splitlines() if l.startswith("H ")}
 
 
-def thread_gate(exe, sizes_trees=(("C1", "100000", 10), ("C2", "100000", 10), ("R1", "100000", 10), ("C1", "100000", 32), ("R1", "100000", 32), ("C2", "1000", 7)),
+def thread_gate(exe, sizes_trees=(("C1", "100000", 10), ("C2", "100000", 10), ("R1", "100000", 10), ("C1", "100000", 32), ("R1", "100000", 32), ("C2", "1000", 7), ("C4", "100000", 3), ("C5", "1000", 2), ("E1", "1000", 6), ("E2", "1000", 5), ("E4", "1000", 4)),
                 counts=(1, 2, 3, 4, 5, 8, 16), verbose=True, timeout=300):
     bad = 0
     for cid, size, trees in sizes_trees:

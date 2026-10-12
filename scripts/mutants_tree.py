@@ -6,7 +6,8 @@ fails, times out or traps: unit (tests/t_tree.cho), exact, fuzz, ident at 1,000 
 The unmutated control must pass every gate first. A survivor must be explained in ALLOWED.
 
     python3 scripts/mutants_tree.py --check            every pattern applies once (no compiler)
-    python3 scripts/mutants_tree.py [-j N] [substring ...]   run (default 4 parallel workers)
+    python3 scripts/mutants_tree.py [-j N] [--gates g1,g2] [substring ...]   run (default 4 parallel workers, all gates; --gates
+                                    restricts them, e.g. --gates ident1000,ident100000 shows what the oracle alone kills)
 Exit 1 if a mutant survives unexplained, fails to apply, or does not build."""
 import concurrent.futures as cf, os, shutil, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +21,7 @@ M_ = "lib/models/tree/model.cho"
 X_ = "lib/models/tree/exact.cho"
 Q_ = "lib/models/tree/params.cho"
 D_ = "lib/models/tree/deny.cho"
+PB_ = "lib/models/tree/pbins.cho"
 
 M = [
  # --- the ties, bins, bootstrap, direction, depth, subset size, aggregation order, missing side (the list of the gate)
@@ -102,6 +104,15 @@ M = [
  ("threads: predict pieces leave a row", [(P_, "    var r1 = b1 * 8;", "    var r1 = b1 * 8 - 1;")]),
  ("threads: another static partition of the prediction rows", [(P_, "    return k * nblk / te;", "    return (k * nblk + 1) / te;")]),
  ("threads: copy of the bitmap at a wrong column offset", [(P_, "gm[c * st + b0..c * st + b1]", "gm[c * st + b0 + (1 - 1 / (1 + b0))..c * st + b1 + (1 - 1 / (1 + b0))]")]),
+ # --- binning with the columns cut among threads (tree.pbins)
+ ("pbins: gather reads the next column", [(PB_, "xc[j * n + i] = row[j];", "xc[j * n + i] = row[(j + 1) % q];")]),
+ ("pbins: bitmap bytes of the first columns", [(PB_, "bm[c0 * st..c1 * st]", "bm[0..q * st]")]),
+ ("pbins: bins copied back to the first columns", [(PB_, "copy_into(gbn[c0 * n..c1 * n]", "copy_into(gbn[0..q * n]")]),
+ ("pbins: edges copied back to the first columns", [(PB_, "copy_floats(ged[c0 * (nbins - 1)..c1 * (nbins - 1)]", "copy_floats(ged[0..q * (nbins - 1)]")]),
+ ("pbins: missing cell in bin 0", [(PB_, "        var c = nbins;\n        if len(mc) == 0", "        var c = 0;\n        if len(mc) == 0")]),
+ ("pbins: missing cells enter the sort", [(PB_, "            if int_of(mc[i >> 3]) >> (i & 7) & 1 == 0 {\n                ka[nv]", "            if true {\n                ka[nv]")]),
+ ("pbins: a column with no value has edge 1.0", [(PB_, "            ed[k - 1] = 0.0;", "            ed[k - 1] = 1.0;")]),
+ ("pbins: another static partition of the columns", [(PB_, "    return k * d / te;", "    return (k * d + 1) / te;")]),
  # --- the model reader (G-fuzz)
  ("reader: left child must be i + 1 not checked", [(M_, "if lc != i + 1 || cur >= max_depth {", "if cur >= max_depth {")]),
  ("reader: depth bound", [(M_, "if lc != i + 1 || cur >= max_depth {", "if lc != i + 1 {")]),
@@ -129,9 +140,11 @@ ALLOWED = {
  "score: swapped operands (an equivalent: + commutes)": "equivalent: IEEE addition is commutative, a + b and b + a have the same bits",
  "aggregation: sum starts from the first tree": "equivalent: acc starts at -0.0 instead of +0.0; the first addition gives the same bits unless a leaf value is -0.0, and no leaf value is -0.0 (sums start from +0.0, 0.0 / m is +0.0, class values are ratios of counts)",
  "threads: another static partition of the prediction rows": "equivalent by design: rows are independent, so any partition of them gives the same bits; this mutant IS another partition (it is the property G-thread relies on)",
+ "pbins: another static partition of the columns": "equivalent by design: a column's edges and bins depend on that column alone, so any partition of the columns gives the same arrays (G-thread relies on it)",
  "threads: refusal of the highest tree": "not observable today: the only refusal a tree returns is ml.limit.nodes, so which tree's refusal is reported cannot change the tag; the lowest-tree rule is kept for the day a second code exists",
 }
 GATES = ["unit", "exact", "fuzz", "ident1000", "ident100000", "threads"]
+ONLY = None
 
 
 def problems():
@@ -160,6 +173,7 @@ def copy_tree(dst):
 
 
 def gate_all(src, only=None):
+    only = only or ONLY
     """name of the first gate that fails, 'build' if it does not build, or None if all pass"""
     exe = os.path.join(src, "build", "tree-check")
     try:
@@ -175,6 +189,8 @@ def gate_all(src, only=None):
         ("threads", lambda: G.thread_gate(exe, verbose=False, timeout=120)),
     ]
     for name, fn in tests:
+        if only and name not in only:
+            continue
         try:
             if fn():
                 return name, ""
@@ -204,7 +220,10 @@ def main():
         print("\n".join(bad)); return 1
     if "--check" in sys.argv:
         print("mutants_tree: %d mutants, every pattern applies once" % len(M)); return 0
-    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    global ONLY
+    if "--gates" in sys.argv:
+        ONLY = sys.argv[sys.argv.index("--gates") + 1].split(",")
+    args = [a for a in sys.argv[1:] if not a.startswith("-") and a not in (",".join(ONLY or []),)]
     jobs = 4
     if "-j" in sys.argv:
         jobs = int(sys.argv[sys.argv.index("-j") + 1]); args = [a for a in args if a != str(jobs)]

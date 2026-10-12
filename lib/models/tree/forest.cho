@@ -8,6 +8,7 @@ import tree.deny;
 import tree.params;
 import tree.bins;
 import tree.grow;
+import tree.pbins;
 
 // The forest and its fit (docs/models-tree.md sections 2, 3.2 and 5). `fit` validates everything before it allocates anything
 // sized by the input, bins the columns once, grows the trees (one thread per static group of trees, each tree wholly in one
@@ -273,31 +274,40 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs:
     let slots_i = box_slice(heap, p.trees * 7 * cap + 1, 0);
     let slots_v = box_slice(heap, p.trees * cap + 1, 0.0);
     let counts = box_slice(heap, p.trees + 1, 0);
-    // edges and bins (the serial part of fit). The scratch is on the heap: a `region` is one 64 KiB arena chunk and traps beyond it
-    let ka = box_slice(heap, n + 1, 0);
-    let kb = box_slice(heap, n + 1, 0);
-    let cn = box_slice(heap, 2048, 0);
-    borrow mut ka as &!kaw in {
-        borrow mut kb as &!kbw in {
-            borrow mut cn as &!cnw in {
-                borrow mut ed as &!edw in {
-                    bins.make_edges(xs, bm, n, d, p.bins, contents(kaw), contents(kbw), contents(cnw), contents(edw));
+    // edges and bins. With one thread: the whole matrix in the parent. With more: the columns are cut among the threads
+    // (tree.pbins), which gives the same arrays. The scratch is on the heap: a `region` is one 64 KiB arena chunk and traps beyond it
+    if p.threads > 1 && d > 1 {
+        borrow mut ed as &!edw in {
+            borrow mut binm as &!bw in {
+                pbins.run(heap, xs, bm, n, d, p.bins, p.threads, contents(edw), contents(bw));
+            }
+        }
+    } else {
+        let ka = box_slice(heap, n + 1, 0);
+        let kb = box_slice(heap, n + 1, 0);
+        let cn = box_slice(heap, 2048, 0);
+        borrow mut ka as &!kaw in {
+            borrow mut kb as &!kbw in {
+                borrow mut cn as &!cnw in {
+                    borrow mut ed as &!edw in {
+                        bins.make_edges(xs, bm, n, d, p.bins, contents(kaw), contents(kbw), contents(cnw), contents(edw));
+                    }
                 }
             }
         }
-    }
-    unbox_slice(heap, ka);
-    unbox_slice(heap, kb);
-    unbox_slice(heap, cn);
-    let ep = box_slice(heap, d * 256, 0.0);
-    borrow ed as &edr in {
-        borrow mut ep as &!epw in {
-            borrow mut binm as &!bw in {
-                bins.make_bins(xs, bm, contents(edr), n, d, p.bins, contents(epw), contents(bw));
+        unbox_slice(heap, ka);
+        unbox_slice(heap, kb);
+        unbox_slice(heap, cn);
+        let ep = box_slice(heap, d * 256, 0.0);
+        borrow ed as &edr in {
+            borrow mut ep as &!epw in {
+                borrow mut binm as &!bw in {
+                    bins.make_bins(xs, bm, contents(edr), n, d, p.bins, contents(epw), contents(bw));
+                }
             }
         }
+        unbox_slice(heap, ep);
     }
-    unbox_slice(heap, ep);
     let te = p.threads;
     var used = te;
     if used > p.trees {

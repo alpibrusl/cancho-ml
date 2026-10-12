@@ -128,6 +128,30 @@ pub fn radix[&a, &b, &c](ka: &!a [int], kb: &!b [int], cnt: &!c [int], n: int) -
 
 // ---------------------------------------------------------------- edges (section 2.3)
 
+// the float whose order key is `key`
+pub fn edge_value(key: int) -> [] float {
+    return fbits.decode(bits_of_key(key));
+}
+
+// the edges of one column, ed[0 .. nbins - 1), padded with +inf to ps = 64 (nbins <= 64) or 256 entries in ep
+pub fn pad_column[&e, &o](ed: &e [float], nbins: int, ep: &!o [float]) -> [] int {
+    var ps = 64;
+    if nbins > 64 {
+        ps = 256;
+    }
+    let inf = 1.0e300 * 1.0e300;
+    var k = 0;
+    while k < ps {
+        if k < nbins - 1 {
+            ep[k] = ed[k];
+        } else {
+            ep[k] = inf;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
 // ed[f * (nbins - 1) + k - 1] = e[f][k], k = 1 .. nbins - 1, from the sorted non-missing values of column f of the first n rows
 pub fn make_edges[&x, &b, &a, &k2, &c, &e](xs: &x [float], bm: &b [byte], n: int, d: int, nbins: int, ka: &!a [int], kb: &!k2 [int], cnt: &!c [int], ed: &!e [float]) -> [] int {
     let st = stride(n);
@@ -157,7 +181,7 @@ pub fn make_edges[&x, &b, &a, &k2, &c, &e](xs: &x [float], bm: &b [byte], n: int
             if nv == 0 {
                 ed[f * ne + k - 1] = 0.0;
             } else {
-                ed[f * ne + k - 1] = fbits.decode(bits_of_key(ka[k * nv / nbins]));
+                ed[f * ne + k - 1] = edge_value(ka[k * nv / nbins]);
             }
             k = k + 1;
         }
@@ -192,7 +216,7 @@ fn pad_edges[&e, &o](ed: &e [float], d: int, nbins: int, ps: int, ep: &!o [float
 // constant trip count and every index masked into the table, so that the compare compiles to a select and not to a branch
 // (measured: 5 ms against 33 ms for 80,000 rows x 20 columns with a search that tests `t <= ne` and bounds-checks `e[t - 1]`;
 // docs/models-tree.md section 10)
-fn bin_of[&e](e: &e [float], x: float) -> [] int {
+pub fn bin_of[&e](e: &e [float], x: float) -> [] int {
     var c = 0;
     if e[127] <= x {
         c = 128;
@@ -222,7 +246,7 @@ fn bin_of[&e](e: &e [float], x: float) -> [] int {
 }
 
 // the same over 64 entries (at most 63 edges): 6 steps
-fn bin_of64[&e](e: &e [float], x: float) -> [] int {
+pub fn bin_of64[&e](e: &e [float], x: float) -> [] int {
     var c = 0;
     if e[31] <= x {
         c = 32;
