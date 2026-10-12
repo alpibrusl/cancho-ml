@@ -36,11 +36,17 @@ def derive(h, c):
 
 
 def elements(seed, n):
-    """element i of the data set of `seed` (lib/core/rng.cho `element`)"""
-    i = np.arange(1, n + 1, dtype=np.uint64)
-    with np.errstate(over="ignore"):
-        z = mix(U(seed) + i * GOLD)
-    return (z >> U(11)).astype(np.float64) / 4503599627370496.0 - 1.0
+    """element i of the data set of `seed` (lib/core/rng.cho `element`); built in chunks of 2^22 so that a 2.5e8-element matrix
+    needs 2 GB for the result and little more"""
+    out = np.empty(n, dtype=np.float64)
+    step = 1 << 22
+    for a in range(0, n, step):
+        b = min(n, a + step)
+        i = np.arange(a + 1, b + 1, dtype=np.uint64)
+        with np.errstate(over="ignore"):
+            z = mix(U(seed) + i * GOLD)
+        out[a:b] = (z >> U(11)).astype(np.float64) / 4503599627370496.0 - 1.0
+    return out
 
 
 def hash_bits(arr):

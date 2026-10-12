@@ -2,7 +2,8 @@
  * cancho, or of any compiler without the vendor library's hand-tuned code? Same data (SplitMix64, docs/rng.md), same summation
  * order (docs/linalg.md section 2), so the result hash must equal linalg-check's; the time is the mean of REPS runs.
  *     cc -O3 -ffp-contract=off -o build/parity scripts/c_parity/parity.c
- *     build/parity KERNEL N D SEED REPS        (KERNEL dot axpy gemv_n gemv_t syrk chol)
+ *     cc -O3 -ffp-contract=fast -o build/parity_fma scripts/c_parity/parity.c     (ablation: the cost of the no-fma rule; bits differ)
+ *     build/parity KERNEL N D SEED REPS        (KERNEL dot axpy gemv_n gemv_t syrk chol; ablations dot_lanes dot_chain)
  * Not part of the library; nothing here is shipped. */
 #include <stdint.h>
 #include <stdio.h>
@@ -57,6 +58,29 @@ static double dot(const double *x, const double *y, long n, double *st, int *lv)
     }
     finish(st, sp, 1); return st[0];
 }
+
+/* ABLATIONS of the order rule (outputs differ from linalg-check; time only): the best scalar dot without blocks */
+static double dot_lanes(const double *x, const double *y, long n) {  /* 8 accumulators over ADJACENT elements */
+    double s[8] = {0, 0, 0, 0, 0, 0, 0, 0}; long i = 0;
+    for (; i + 8 <= n; i += 8) for (int k = 0; k < 8; k++) s[k] = s[k] + x[i + k] * y[i + k];
+    double t = ((s[0] + s[1]) + (s[2] + s[3])) + ((s[4] + s[5]) + (s[6] + s[7]));
+    for (; i < n; i++) t = t + x[i] * y[i];
+    return t;
+}
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+static double dot_neon(const double *x, const double *y, long n) {  /* 4 vector accumulators (8 lanes), unfused; ablation of "no SIMD" */
+    float64x2_t a0 = vdupq_n_f64(0), a1 = a0, a2 = a0, a3 = a0; long i = 0;
+    for (; i + 8 <= n; i += 8) {
+        a0 = vaddq_f64(a0, vmulq_f64(vld1q_f64(x + i), vld1q_f64(y + i)));         a1 = vaddq_f64(a1, vmulq_f64(vld1q_f64(x + i + 2), vld1q_f64(y + i + 2)));
+        a2 = vaddq_f64(a2, vmulq_f64(vld1q_f64(x + i + 4), vld1q_f64(y + i + 4))); a3 = vaddq_f64(a3, vmulq_f64(vld1q_f64(x + i + 6), vld1q_f64(y + i + 6)));
+    }
+    double t = vaddvq_f64(vaddq_f64(vaddq_f64(a0, a1), vaddq_f64(a2, a3)));
+    for (; i < n; i++) t = t + x[i] * y[i];
+    return t;
+}
+#endif
+static double dot_chain(const double *x, const double *y, long n) { double s = 0; for (long i = 0; i < n; i++) s = s + x[i] * y[i]; return s; }
 
 static void axpy(double a, const double *x, double *y, long n) { for (long i = 0; i < n; i++) y[i] = y[i] + a * x[i]; }
 
@@ -134,6 +158,13 @@ int main(int argc, char **argv) {
     double *st = aligned_alloc(64, 40 * (d > 0 ? d * d : 1) * 8 + 4096); int lv[64]; double t0, t1; uint64_t h = 0; long cnt = 0;
     if (!strcmp(kn, "dot")) {
         double *x = gen(n, s1), *y = gen(n, s2); double r = 0; t0 = now(); for (long q = 0; q < reps; q++) r = dot(x, y, n, st, lv); t1 = now(); h = hash(&r, 1); cnt = 1;
+    } else if (!strcmp(kn, "dot_lanes") || !strcmp(kn, "dot_chain")) {
+        double *x = gen(n, s1), *y = gen(n, s2); double r = 0; int lanes = !strcmp(kn, "dot_lanes");
+        t0 = now(); for (long q = 0; q < reps; q++) r = lanes ? dot_lanes(x, y, n) : dot_chain(x, y, n); t1 = now(); h = hash(&r, 1); cnt = 1;
+#ifdef __ARM_NEON
+    } else if (!strcmp(kn, "dot_neon")) {
+        double *x = gen(n, s1), *y = gen(n, s2); double r = 0; t0 = now(); for (long q = 0; q < reps; q++) r = dot_neon(x, y, n); t1 = now(); h = hash(&r, 1); cnt = 1;
+#endif
     } else if (!strcmp(kn, "axpy")) {
         double *x = gen(n, s1), *y = gen(n, s2); double a = element(s3, 0); t0 = now(); for (long q = 0; q < reps; q++) axpy(a, x, y, n); t1 = now(); h = hash(y, n); cnt = n;
     } else if (!strcmp(kn, "gemv_n")) {
@@ -148,6 +179,6 @@ int main(int argc, char **argv) {
         for (long i = 0; i < n; i++) for (long j = 0; j < n; j++) A[i * n + j] = (i == j) ? ((double)n + 1.0) + E[i * n + j] : 0.5 * (E[i * n + j] + E[j * n + i]);
         t0 = now(); for (long q = 0; q < reps; q++) chol(A, L, n); t1 = now(); h = hash(L, n * n); cnt = n * n;
     } else return 2;
-    printf("hash %016llx\ncount %ld\nms %.6f\n", (unsigned long long)h, cnt, (t1 - t0) * 1000.0);
+    printf("hash %016llx\ncount %ld\nms %.9f\n", (unsigned long long)h, cnt, (t1 - t0) * 1000.0);
     return 0;
 }

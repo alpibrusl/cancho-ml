@@ -110,7 +110,11 @@ def c_ms(kernel, n, d, reps):
     raise SystemExit("parity failed: " + r.stdout + r.stderr)
 
 
+C_KERNELS = ("dot", "axpy", "gemv_n", "gemv_t", "syrk", "chol")  # the kernels scripts/c_parity/parity.c implements
+
+
 def cell(kernel, n, d, samples, threads, with_c=False):
+    with_c = with_c and kernel in C_KERNELS
     fn = numpy_case(kernel, n, d)
     fn()  # warm
     # calibrate reps
@@ -186,12 +190,22 @@ def main():
     meta = dict(machine=machine(), compiler=compiler_commit(), numpy=np.__version__,
                 env={k: os.environ.get(k) for k in ENV_VARS}, python=platform.python_version())
     for k, n, d in cells:
-        res = cell(k, n, d, samples, threads, with_c)
+        # protocol: a cell with spread > 1.25 is rerun (up to 2 more times); the attempt with the smallest worst spread is kept
+        best = None
+        for attempt in range(3):
+            res = cell(k, n, d, samples, threads, with_c)
+            res["attempt"] = attempt + 1
+            worst = max(res["spread_cancho"], res["spread_numpy"])
+            if best is None or worst < max(best["spread_cancho"], best["spread_numpy"]):
+                best = res
+            if worst <= 1.25:
+                break
+        res = best
         res["meta"] = meta
         print("%-7s n=%-8d d=%-4d t=%d  cancho %.6fs  numpy %.6fs  ratio %.2f  spread %.2f/%.2f  load %.1f/%.1f%s  R=%d/%d" % (
             k, n, d, threads, res["cancho_s"], res["numpy_s"], res["ratio"], res["spread_cancho"], res["spread_numpy"],
-            res["load_start"], res["load_end"], " LOAD>=2" if res["flag_load"] else "", res["reps_cancho"], res["reps_numpy"]) + (
-            "   C %.6fs  cancho/C %.2f  C/numpy %.2f" % (res["c_s"], res["cancho_over_c"], res["c_over_numpy"]) if with_c else ""), flush=True)
+            res["load_start"], res["load_end"], " LOAD>=2" if res["flag_load"] else "", res["reps_cancho"], res["reps_numpy"]) + ("  attempts %d" % res["attempt"] if res["attempt"] > 1 else "") + (
+            "   C %.6fs  cancho/C %.2f  C/numpy %.2f" % (res["c_s"], res["cancho_over_c"], res["c_over_numpy"]) if "c_s" in res else ""), flush=True)
         if out:
             with open(out, "a") as f:
                 f.write(json.dumps(res) + "\n")

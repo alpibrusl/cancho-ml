@@ -1,0 +1,8 @@
+// GAP 4 (usability): `res` and `val` are keywords, so they are refused as names of a variable, a parameter and a struct field;
+// a numerical library wants `res` (result) and `val` (value) constantly. Found three times in this stage.
+//     cancho check --std keywords.cho     -> error: expected an identifier, found `res`
+edition 5;
+
+fn f(res: int) -> [] int {
+    return res;
+}

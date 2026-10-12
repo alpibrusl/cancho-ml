@@ -1,0 +1,16 @@
+// GAP 3: `cancho test` generates a `main` with the row [], so a test that spawns threads is refused ("main performs conc"),
+// and the threaded kernels cannot be unit-tested with `cancho test` (tests/t_par.cho is a program instead).
+// Expected: the generated main takes the union of the tests' rows, or `cancho test` accepts a flag for it.
+//     cancho test --std test_runner_conc.cho     -> error: `main` performs `conc`, which its row [] does not declare
+edition 5;
+import std.test;
+
+fn work(n: int) -> [] int {
+    return n + 1;
+}
+
+fn test_spawn() -> [conc] int {
+    let f = work;
+    let t = spawn(1, f);
+    return join(t) - 2;
+}
