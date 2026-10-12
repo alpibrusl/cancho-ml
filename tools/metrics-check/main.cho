@@ -226,17 +226,15 @@ fn make_floats[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[float]], in
                 let (ok, v) = parse_hex(body[at..e]);
                 if ok == false {
                     bad = true;
-                } else {
                     // fbits.decode answers NaN for both infinities and NaNs; the library must see the infinities too
-                    if v >> 52 & 2047 == 2047 && v & 4503599627370495 == 0 {
-                        if v < 0 {
-                            a[k] = 0.0 - 1.0 / 0.0;
-                        } else {
-                            a[k] = 1.0 / 0.0;
-                        }
+                } else if v >> 52 & 2047 == 2047 && v & 4503599627370495 == 0 {
+                    if v < 0 {
+                        a[k] = 0.0 - 1.0 / 0.0;
                     } else {
-                        a[k] = fbits.decode(v);
+                        a[k] = 1.0 / 0.0;
                     }
+                } else {
+                    a[k] = fbits.decode(v);
                 }
                 at = e + 1;
                 k = k + 1;

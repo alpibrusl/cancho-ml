@@ -118,8 +118,8 @@ M = [
     ("ratio-range", RA, "if a < 0 || b < 1 || a > b || b >= 4611686018427387904 {", "if a < 0 || b < 1 || b >= 4611686018427387904 {"),
     # ---- sums, regression
     ("sum-lane-map", SU, "s1 = s1 + buf[j + 1];\n        s2 = s2 + buf[j + 2];", "s1 = s1 + buf[j + 2];\n        s2 = s2 + buf[j + 1];"),
-    ("sum-lane-combine", SU, "return (s0 + s1) + (s2 + s3);", "return (s0 + s2) + (s1 + s3);"),
-    ("sum-lane-fold", SU, "return (s0 + s1) + (s2 + s3);", "return ((s0 + s1) + s2) + s3;"),
+    ("sum-lane-combine", SU, "return s0 + s1 + (s2 + s3);", "return (s0 + s2) + (s1 + s3);"),
+    ("sum-lane-fold", SU, "return s0 + s1 + (s2 + s3);", "return ((s0 + s1) + s2) + s3;"),
     ("sum-lane-tail", SU, "    if j < m {\n        s2 = s2 + buf[j];\n    }", "    if j < m {\n        s3 = s3 + buf[j];\n    }"),
     ("sum-lane-tail-1", SU, "    if j < m {\n        s0 = s0 + buf[j];\n        j = j + 1;\n    }", "    if j < m {\n        s1 = s1 + buf[j];\n        j = j + 1;\n    }"),
     ("sum-lane-init", SU, "var s3 = 0.0;", "var s3 = 1.0e-30;"),

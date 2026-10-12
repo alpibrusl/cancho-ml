@@ -36,7 +36,7 @@ pub fn block_partial[&b](buf: &b [float], m: int) -> [] float {
     if j < m {
         s2 = s2 + buf[j];
     }
-    return (s0 + s1) + (s2 + s3);
+    return s0 + s1 + (s2 + s3);
 }
 
 // term kinds of `terms`
