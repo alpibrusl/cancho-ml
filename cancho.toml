@@ -3,10 +3,11 @@ name = "ml"
 cancho = "a4572ea3b506e4bcec1c4be43deda1043c11ba9f"   # the compiler these sources were written for
 
 # `contract` is cancho-tools' package, one store per module, pinned to a commit, as in cancho-table (never copied).
-# The linear algebra (lib/linalg) and the core (lib/core) import nothing from it; the pins are here for the command line
-# that comes next. NOT FETCHED in this stage: `cancho install` needs the network, so `cancho build` in package mode
-# was not run; scripts/build.sh builds each binary from an explicit file list (what package mode would pass).
-# cancho-table is NOT a dependency yet: its reader (tools/table/flt.cho) is unmerged; stage 2 pins it when it is.
+# The linear algebra (lib/linalg) and the core (lib/core) import nothing from it; `ml` (tools/ml) does. `cancho install` fetches
+# the pinned modules into build/deps (not committed), `cancho build --bin ml` is package mode, and `toolbox.built` is this
+# tool's own generated module (generated/ml, written by scripts/manifest.py), as in cancho-table.
+# cancho-table is NOT a dependency: it is a binary, not a package, and its float reader (tools/table/flt.cho) is unmerged;
+# tools/ml/csv.cho is this slice's own small reader (docs/cli.md section 2.3).
 
 [dependencies.cli]
 git = "https://github.com/alpibrusl/cancho-tools"
@@ -58,3 +59,9 @@ name = "linalg-check"
 sources = ["lib/core", "lib/linalg", "tools/linalg-check"]
 std = true
 out = "build/linalg-check"
+
+[[bin]]
+name = "ml"
+sources = ["lib/core", "tools/ml", "generated/ml"]
+std = true
+out = "build/ml"

@@ -1,0 +1,207 @@
+module ml.exact;
+
+import std.buffer;
+
+// Exact integer arithmetic for the constant model and its metrics (docs/cli.md section 3). An `int` is 64 bits and traps on
+// overflow, so a sum that can leave 64 bits is kept in limbs of base 1e9. Nothing here rounds except `mean_scaled` and
+// `fraction_scaled`, which say how. Every bound a caller must keep is written next to the function; the model reader checks
+// the bounds on a file before it calls (a file is input, so it can say anything).
+
+pub fn base() -> [] int {
+    return 1000000000;
+}
+
+// 10^k for k in 0..18
+pub fn pow10(k: int) -> [] int {
+    var v = 1;
+    var i = 0;
+    while i < k {
+        v = v * 10;
+        i = i + 1;
+    }
+    return v;
+}
+
+// ---------------------------------------------------------------- the sum of mantissas (two limbs)
+
+// add the mantissa `m` (|m| < 10^12) to the pair acc[at] (sum of quotients) and acc[at + 1] (sum of remainders), where
+// m = q * 1e9 + r with q and r of the sign of m. Exact for up to 1e9 terms: |sum q| <= 1000 * 1e9, |sum r| <= 1e9 * 1e9.
+pub fn sum_add[&a](acc: &!a [int], at: int, m: int) -> [] int {
+    let q = m / 1000000000;
+    acc[at] = acc[at] + q;
+    acc[at + 1] = acc[at + 1] + (m - q * 1000000000);
+    return 0;
+}
+
+// round(T * 10^6 / n), half away from zero, with T = sq * 1e9 + sr. Needs n >= 1, n <= 2^31, |sq| <= 1000 n and
+// |sr| <= 1e9 n (so |T| <= 1e12 n and the result is at most 1e18 in size).
+pub fn mean_scaled(sq: int, sr: int, n: int) -> [] int {
+    let b = 1000000000;
+    let carry = sr / b;
+    var hi = sq + carry;
+    var lo = sr - carry * b;
+    if hi > 0 && lo < 0 {
+        hi = hi - 1;
+        lo = lo + b;
+    } else if hi < 0 && lo > 0 {
+        hi = hi + 1;
+        lo = lo - b;
+    }
+    var neg = false;
+    if hi < 0 || hi == 0 && lo < 0 {
+        neg = true;
+        hi = 0 - hi;
+        lo = 0 - lo;
+    }
+    // |T| = hi * 1e9 + lo with 0 <= lo < 1e9; times 10^6, in four limbs
+    let t0 = lo * 1000000;
+    var c = t0 / b;
+    let a0 = t0 - c * b;
+    let t1 = hi % b * 1000000 + c;
+    c = t1 / b;
+    let a1 = t1 - c * b;
+    let t2 = hi / b * 1000000 + c;
+    c = t2 / b;
+    let a2 = t2 - c * b;
+    let a3 = c;
+    // long division by n, top limb first; every partial dividend is below n * 1e9
+    var cur = a3;
+    let q3 = cur / n;
+    var rem = cur - q3 * n;
+    cur = rem * b + a2;
+    let q2 = cur / n;
+    rem = cur - q2 * n;
+    cur = rem * b + a1;
+    let q1 = cur / n;
+    rem = cur - q1 * n;
+    cur = rem * b + a0;
+    var q0 = cur / n;
+    rem = cur - q0 * n;
+    if 2 * rem >= n {
+        q0 = q0 + 1;
+    }
+    let p = ((q3 * b + q2) * b + q1) * b + q0;
+    if neg {
+        return 0 - p;
+    }
+    return p;
+}
+
+// round(num * 10^6 / den), half up, for 0 <= num <= den, 1 <= den <= 2^31
+pub fn fraction_scaled(num: int, den: int) -> [] int {
+    return (2 * num * 1000000 + den) / (2 * den);
+}
+
+// ---------------------------------------------------------------- the sum of squares (six limbs)
+
+// acc[at + 0 .. at + 5] hold a non-negative integer in base 1e9, least significant limb first, not necessarily normalised
+// between calls. Adds e * e for |e| < 2e18. Each call adds less than 5e9 to a limb, so up to 1e9 calls stay below 2^63.
+pub fn square_add[&a](acc: &!a [int], at: int, e: int) -> [] int {
+    var m = e;
+    if m < 0 {
+        m = 0 - m;
+    }
+    let b = 1000000000;
+    let hi = m / b;
+    let lo = m - hi * b;
+    let p0 = lo * lo;
+    let p1 = 2 * hi * lo;
+    let p2 = hi * hi;
+    acc[at] = acc[at] + p0 % b;
+    acc[at + 1] = acc[at + 1] + p0 / b + p1 % b;
+    acc[at + 2] = acc[at + 2] + p1 / b + p2 % b;
+    acc[at + 3] = acc[at + 3] + p2 / b;
+    return 0;
+}
+
+// carry so that every limb is below 1e9 (the top limb takes what is left)
+pub fn normalise[&a](acc: &!a [int], at: int) -> [] int {
+    var i = 0;
+    while i < 5 {
+        let c = acc[at + i] / 1000000000;
+        acc[at + i] = acc[at + i] - c * 1000000000;
+        acc[at + i + 1] = acc[at + i + 1] + c;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// the normalised limbs as a double: ((l5 * 1e9 + l4) * 1e9 + ...) in binary64, left to right. Three roundings at most per
+// limb pair; the order is fixed here, so the same bits come out on every machine (docs/cli.md section 3.3).
+pub fn to_float[&a](acc: &a [int], at: int) -> [] float {
+    var x = 0.0;
+    var i = 5;
+    while i >= 0 {
+        x = x * 1000000000.0 + float_of(acc[at + i]);
+        i = i - 1;
+    }
+    return x;
+}
+
+// ---------------------------------------------------------------- text
+
+// the decimal digits of a normalised six-limb number, no leading zeros ("0" for zero)
+pub fn limbs_digits[&h, &a](heap: &!h Heap, out: buffer.Buffer, acc: &a [int], at: int) -> [heap] buffer.Buffer {
+    var o = out;
+    var top = 5;
+    while top > 0 && acc[at + top] == 0 {
+        top = top - 1;
+    }
+    o = buffer.push_nat(heap, o, acc[at + top]);
+    var i = top - 1;
+    while i >= 0 {
+        o = pad9(heap, o, acc[at + i]);
+        i = i - 1;
+    }
+    return o;
+}
+
+fn pad9[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = out;
+    var d = 100000000;
+    while d > 0 {
+        o = buffer.push(heap, o, byte_of('0' + v / d % 10));
+        d = d / 10;
+    }
+    return o;
+}
+
+// `digits` (ASCII digits, no sign) with a decimal point `scale` digits from the right; at least one digit before the point.
+// scale 0 writes the digits as they are.
+pub fn put_digits_scaled[&h, &d](heap: &!h Heap, out: buffer.Buffer, digits: &d [byte], scale: int) -> [heap] buffer.Buffer {
+    var o = out;
+    let n = len(digits);
+    if scale == 0 {
+        return buffer.append(heap, o, digits);
+    }
+    if n <= scale {
+        o = buffer.push(heap, o, byte_of('0'));
+        o = buffer.push(heap, o, byte_of('.'));
+        var z = scale - n;
+        while z > 0 {
+            o = buffer.push(heap, o, byte_of('0'));
+            z = z - 1;
+        }
+        return buffer.append(heap, o, digits);
+    }
+    o = buffer.append(heap, o, digits[0..n - scale]);
+    o = buffer.push(heap, o, byte_of('.'));
+    return buffer.append(heap, o, digits[n - scale..n]);
+}
+
+// a signed integer with its decimal point `scale` digits from the right (0 <= scale <= 18), e.g. (-5, 2) is -0.05
+pub fn put_scaled[&h](heap: &!h Heap, out: buffer.Buffer, v: int, scale: int) -> [heap] buffer.Buffer {
+    var o = out;
+    var m = v;
+    if m < 0 {
+        o = buffer.push(heap, o, byte_of('-'));
+        m = 0 - m;
+    }
+    var digits = buffer.empty(heap, 24);
+    digits = buffer.push_nat(heap, digits, m);
+    borrow digits as &r in {
+        o = put_digits_scaled(heap, o, buffer.bytes(r), scale);
+    }
+    buffer.drop(heap, digits);
+    return o;
+}

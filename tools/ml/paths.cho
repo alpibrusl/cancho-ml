@@ -1,0 +1,78 @@
+edition 5;
+
+module ml.paths;
+
+// The paths `ml` is given, checked before any builtin sees one (cancho docs/agent-toolbox.md D9): the CSV operand, and the
+// values of --model-file, --output and --log. toolbox.path does the lexical checks on an argument by its index, so a path-valued
+// flag must be written with its value as an argument of its own (`--output FILE`, not `--output=FILE`): with `=` the value is
+// part of the flag's argument and toolbox.path cannot be handed it. `--root` is the exception (toolbox.path.root takes text).
+// A path that fails is a rule (path.*), never a trap: spike F found `..` and a missing argument trapping in the builtins.
+
+import std.buffer;
+import std.json;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.path;
+
+// a checked path: the whole path to open, and where the part below --root starts in it
+pub res struct Rp {
+    full: buffer.Buffer,
+    shown: int,
+    present: bool,
+}
+
+pub fn absent[&h](heap: &!h Heap) -> [heap] Rp {
+    return Rp { full: buffer.empty(heap, 1), shown: 0, present: false };
+}
+
+pub fn drop[&h](heap: &!h Heap, r: Rp) -> [heap] int {
+    let Rp { full, shown, present } = r;
+    return buffer.drop(heap, full);
+}
+
+pub fn present[&r](r: &r Rp) -> [] bool {
+    return r.present;
+}
+
+pub fn full[&r](r: &r Rp) -> [] &r [byte] {
+    return buffer.bytes(r.full);
+}
+
+pub fn shown[&r](r: &r Rp) -> [] &r [byte] {
+    let b = buffer.bytes(r.full);
+    return b[r.shown..len(b)];
+}
+
+// operand `at` (an argument index) under `root`
+pub fn from_operand[&h, &g, &r](heap: &!h Heap, args: &g Args, root: &r [byte], at: int, errs: fail.Errors) -> [heap, args] (Rp, fail.Errors) {
+    let (resolved, e) = path.operand(heap, args, root, at, errs);
+    var out = absent(heap);
+    borrow resolved as &rr in {
+        if path.ok(rr) {
+            let f = path.full(rr);
+            let s = path.shown(rr);
+            drop(heap, out);
+            var copy = buffer.empty(heap, len(f) + 1);
+            copy = buffer.append(heap, copy, f);
+            out = Rp { full: copy, shown: len(f) - len(s), present: true };
+        }
+    }
+    path.drop(heap, resolved);
+    return (out, e);
+}
+
+// the value of flag `name`, if it was given, as a path under `root`
+pub fn from_flag[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], root: &r [byte], name: &static [byte], errs: fail.Errors) -> [heap, args] (Rp, fail.Errors) {
+    if !cli.has(parsed, table, name) {
+        return (absent(heap), errs);
+    }
+    if !cli.value_is_whole(parsed, table, name) {
+        var w = fail.open(heap, "args.bad-value", "a path-valued flag takes its value as a separate argument", "write the flag and its value as two arguments");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_str(heap, w, "flag", name);
+        w = fail.detail_str(heap, w, "expected", "the value as the next argument, not after an equals sign");
+        return (absent(heap), fail.add(heap, errs, w));
+    }
+    return from_operand(heap, args, root, cli.value_index(parsed, table, name), errs);
+}

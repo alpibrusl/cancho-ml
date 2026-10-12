@@ -1,0 +1,16 @@
+# The authority ceiling of each tool (cancho docs/agent-toolbox.md D12), as in cancho-table: a person writes and reviews this
+# file; the authority is whatever `cancho authority` derives from the source (manifests/<tool>.authority.json, embedded in the
+# binary and printed by `ml introspect`), and scripts/manifest.py --check fails when a derived label is not allowed here.
+# The derived set may be smaller than the ceiling, never larger. No tool may hold ffi, net_out, net_in or clock; `bounded`
+# must be true.
+#
+# `ml` reads the files named on its command line (file_read, fs_read(""): a path from the command line is checked at run time,
+# so the row cannot name a directory), writes the model and the log it is told to beneath a directory it opened (dir_write and
+# file_write: it can create, append, rename and remove there, and it holds no fs_write, so no path write at all), and keeps
+# its working data on the heap. No standard input (no io_read). No `conc`: this slice has no `--threads`; the label arrives
+# with the first threaded kernel and with the test that no thread count changes a byte (docs/cli.md section 6).
+
+max_tools = 10
+
+[ml]
+allow = ["args", "dir_read", "dir_write", "err_write", "file_read", "file_write", "fs_read(\"\")", "heap", "io_write"]

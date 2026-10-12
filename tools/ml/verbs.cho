@@ -1,0 +1,1139 @@
+edition 6;
+
+module ml.verbs;
+
+// fit, predict and eval (docs/cli.md section 3). Each reads the CSV with ml.csv, and answers a payload (the `data` of the
+// envelope), the text of `--format text`, the extra keys of a dry run, the errors, and the log records it can write (counts,
+// tags and hashes only: ml.logrec).
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.vec;
+import ml.csv;
+import ml.exact;
+import ml.fsio;
+import ml.logrec;
+import ml.mfile;
+import ml.paths;
+import ml.spec;
+import toolbox.built;
+import toolbox.fail;
+import toolbox.place;
+import toolbox.text;
+
+pub struct Opts {
+    cap: int,
+    max_rows: int,
+    max_cols: int,
+    max_cells: int,
+    max_bytes: int,
+    limit: int,
+    from: int,
+    overwrite: bool,
+    dry: bool,
+    drop_given: bool,
+    // 1 regression, 2 classification
+    task: int,
+    drops: &static [byte],
+    target: &static [byte],
+}
+
+// What a verb hands back. `payload` is the `data` object, `plain` the text of --format text, `extra` the keys of a dry run
+// (`,"dry_run":true,...`), `log` the records so far.
+pub res struct Out {
+    payload: buffer.Buffer,
+    plain: buffer.Buffer,
+    extra: buffer.Buffer,
+    errs: fail.Errors,
+    log: buffer.Buffer,
+    dry: bool,
+}
+
+pub fn parts(o: Out) -> [] (buffer.Buffer, buffer.Buffer, buffer.Buffer, fail.Errors, buffer.Buffer, bool) {
+    let Out { payload, plain, extra, errs, log, dry } = o;
+    return (payload, plain, extra, errs, log, dry);
+}
+
+pub fn drop_out[&h](heap: &!h Heap, o: Out) -> [heap] int {
+    let Out { payload, plain, extra, errs, log, dry } = o;
+    buffer.drop(heap, payload);
+    buffer.drop(heap, plain);
+    buffer.drop(heap, extra);
+    buffer.drop(heap, log);
+    return fail.drop(heap, errs);
+}
+
+pub fn nothing[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer) -> [heap] Out {
+    return Out { payload: buffer.empty(heap, 1), plain: buffer.empty(heap, 1), extra: buffer.empty(heap, 1), errs: errs, log: log, dry: false };
+}
+
+// ---------------------------------------------------------------- errors
+
+fn problem[&h, &m](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message: &m [byte], hint: &static [byte], key: &static [byte], value: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    if len(key) > 0 {
+        w = fail.detail_str(heap, w, key, value);
+    }
+    return fail.add(heap, e, w);
+}
+
+// `--drop NAME` appended to the invocation, when that is a repair that cannot hurt: the name is one plain name and no --drop
+// was given
+fn drop_retry[&h, &g, &n](heap: &!h Heap, w: json.Writer, args: &g Args, name: &n [byte]) -> [heap, args] json.Writer {
+    var o = fail.retry_open(heap, w);
+    var i = 0;
+    while i < arg_count(args) {
+        o = json.put_string(heap, o, arg(args, i));
+        i = i + 1;
+    }
+    o = json.put_string(heap, o, "--drop");
+    o = json.put_string(heap, o, name);
+    return fail.retry_close(heap, o);
+}
+
+fn can_drop[&n](o: Opts, col: int, tcol: int, name: &n [byte]) -> [] bool {
+    return !o.drop_given && col != tcol && bytes.count_byte(name, ',') == 0 && len(name) > 0 && text.is_utf8(name);
+}
+
+// the errors for what stopped a scan
+fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors, rep: csv.Report, sh: &s csv.Shape, o: Opts, shown: &p [byte]) -> [heap, args] fail.Errors {
+    var e = errs;
+    let st = rep.status;
+    if st == 99 {
+        return e;
+    }
+    if st == 1 {
+        return problem(heap, e, "ml.input.empty", "the file has no header row", "give a CSV whose first row is the header", "", "");
+    }
+    if st == 11 {
+        return fail.io_error(heap, e, rep.aux, false, shown);
+    }
+    if st == 2 {
+        var q = fail.open_in(heap, spec.extra(), "limit.line-too-long", "a line is longer than --max-line-bytes", "raise --max-line-bytes, up to the ceiling introspect names");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "line", rep.line);
+        q = fail.detail_int(heap, q, "length", rep.aux);
+        q = fail.detail_int(heap, q, "max", o.cap);
+        return fail.add(heap, e, q);
+    }
+    if st == 3 {
+        var q = fail.open_in(heap, spec.extra(), "parse.csv-ragged-row", "a data row has a different number of fields from the header", "fix the row");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "line", rep.line);
+        return fail.add(heap, e, q);
+    }
+    if st == 4 {
+        var q = fail.open_in(heap, spec.extra(), "ml.input.unsupported-csv", "the file has a double quote, and quoted fields are not read by this slice", "remove the quotes from the file");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "line", rep.line);
+        return fail.add(heap, e, q);
+    }
+    if st == 5 {
+        var q = fail.open_in(heap, spec.extra(), "ml.input.duplicate-column", "a column name is empty or is the name of an earlier column", "rename the columns in the file");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "column", rep.col + 1);
+        q = fail.detail_int(heap, q, "line", rep.line);
+        return fail.add(heap, e, q);
+    }
+    if st == 6 {
+        var q = fail.open_in(heap, spec.extra(), "ml.input.too-many-columns", "the header has more columns than --max-columns", "raise --max-columns up to its ceiling, or drop columns from the file");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "columns", rep.aux);
+        q = fail.detail_int(heap, q, "max", o.max_cols);
+        return fail.add(heap, e, q);
+    }
+    if st == 7 {
+        var q = fail.open_in(heap, spec.extra(), "ml.input.too-many-rows", "the file has more data rows than --max-rows", "raise --max-rows up to its ceiling, or fit on a sample of the rows");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "line", rep.line);
+        q = fail.detail_int(heap, q, "max", o.max_rows);
+        return fail.add(heap, e, q);
+    }
+    if st == 13 {
+        var q = fail.open_in(heap, spec.extra(), "ml.input.too-many-cells", "rows times columns is more than --max-cells", "raise --max-cells up to its ceiling, or use fewer rows or columns");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "line", rep.line);
+        q = fail.detail_int(heap, q, "max", o.max_cells);
+        return fail.add(heap, e, q);
+    }
+    if st == 8 || st == 9 || st == 10 {
+        let nm = csv.name(sh, rep.col);
+        var rule: &static [byte] = "ml.input.non-numeric";
+        var message: &static [byte] = "a cell is not an integer or a decimal";
+        var hint: &static [byte] = "drop the column with --drop, or fix the cell";
+        var reason: &static [byte] = "not a number";
+        if st == 8 && rep.aux == 1 {
+            reason = "empty";
+        }
+        if st == 9 {
+            rule = "ml.input.non-finite";
+            message = "a cell is nan or inf";
+            hint = "remove the row or the column";
+            reason = "not finite";
+        }
+        if st == 10 {
+            rule = "ml.input.unsupported-type";
+            message = "a cell is a number this slice cannot read exactly";
+            hint = "scale the column to an integer or a short decimal, or drop it with --drop; floating-point text needs cancho-table's float reader, which is not merged";
+            if rep.aux == 1 {
+                reason = "exponent";
+            } else if rep.aux == 2 {
+                reason = "more than 12 digits in the cell";
+            } else {
+                reason = "the column needs more than 12 digits";
+            }
+        }
+        var q = fail.open_in(heap, spec.extra(), rule, message, hint);
+        if st == 8 && can_drop(o, rep.col, csv.tcol(sh), nm) {
+            q = drop_retry(heap, q, args, nm);
+        } else {
+            q = fail.no_repair(heap, q);
+        }
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "line", rep.line);
+        q = fail.detail_int(heap, q, "column", rep.col + 1);
+        q = fail.detail_text(heap, q, "name", nm);
+        q = fail.detail_str(heap, q, "reason", reason);
+        return fail.add(heap, e, q);
+    }
+    if st == 12 {
+        var q = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--drop names a column that is not in the header", "names are compared exactly, byte for byte");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_str(heap, q, "flag", "--drop");
+        q = fail.detail_int(heap, q, "position", rep.aux);
+        q = fail.detail_text(heap, q, "name", bytes.field(o.drops, ',', rep.aux));
+        return fail.add(heap, e, q);
+    }
+    if st == 14 {
+        var q = fail.open_in(heap, spec.extra(), "args.conflict", "--drop names the target column", "do not drop the column to predict");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_str(heap, q, "flags", "--drop, --target");
+        return fail.add(heap, e, q);
+    }
+    if st == 15 {
+        return problem(heap, e, "io.read-failed", "the file changed while it was being read", "run the command again on a file that is not being written", "", "");
+    }
+    if st == 16 {
+        return problem(heap, e, "ml.label.not-binary", "a classification target has more than two values", "only two-class targets are built", "", "");
+    }
+    return problem(heap, e, "io.read-failed", "the scan stopped for a reason this version does not name", "report this with the command", "", "");
+}
+
+// ---------------------------------------------------------------- reading the CSV
+
+// open `file` and scan it. The errors gain the reason if the open fails (the shape is then empty and the report 99).
+fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], acc: Box[[int]], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, Box[[int]]) {
+    var e = errs;
+    match place.open_operand(fs, root, paths.shown(file), paths.full(file)) {
+        Opened::Failed(reason) => {
+            e = fail.io_error(heap, e, reason, false, paths.shown(file));
+            return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: 0 }, e, acc);
+        }
+        Opened::Ok(opened) => {
+            var handle = opened;
+            var sh = csv.empty_shape(heap);
+            var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
+            var accv = acc;
+            borrow mut handle as &!fh in {
+                borrow mut accv as &!aw in {
+                    let (s2, r2) = csv.scan(heap, fh, cfg, target, contents(aw));
+                    csv.drop_shape(heap, sh);
+                    sh = s2;
+                    rep = r2;
+                }
+            }
+            file_close(handle);
+            return (sh, rep, e, accv);
+        }
+    }
+}
+
+fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {
+    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops };
+}
+
+// ---------------------------------------------------------------- text
+
+fn put_name[&h, &n](heap: &!h Heap, w: json.Writer, key: &static [byte], name: &n [byte]) -> [heap] json.Writer {
+    let k = json.put_key(heap, w, key);
+    return text.put(heap, k, name);
+}
+
+// a scaled integer as a JSON string
+fn put_dec[&h](heap: &!h Heap, w: json.Writer, v: int, scale: int) -> [heap] json.Writer {
+    var b = exact.put_scaled(heap, buffer.empty(heap, 24), v, scale);
+    var o = w;
+    borrow b as &r in {
+        o = json.put_string(heap, o, buffer.bytes(r));
+    }
+    buffer.drop(heap, b);
+    return o;
+}
+
+fn line_dec[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: int, scale: int) -> [heap] buffer.Buffer {
+    var p = buffer.append(heap, plain, label);
+    p = exact.put_scaled(heap, p, v, scale);
+    return buffer.push(heap, p, byte_of(10));
+}
+
+fn line_int[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: int) -> [heap] buffer.Buffer {
+    var p = buffer.append(heap, plain, label);
+    p = buffer.push_nat(heap, p, v);
+    return buffer.push(heap, p, byte_of(10));
+}
+
+// ---------------------------------------------------------------- what a model predicts
+
+// the regression prediction as a scaled integer, scale = target scale + 6
+fn mean_of[&m](mo: &m mfile.Model) -> [] int {
+    return exact.mean_scaled(mfile.stat(mo, 2), mfile.stat(mo, 3), mfile.stat(mo, 0));
+}
+
+// the label a classification predicts: the class with more training rows, the smaller on a tie
+fn majority_of[&m](mo: &m mfile.Model) -> [] int {
+    if mfile.stat(mo, 5) > mfile.stat(mo, 4) {
+        return mfile.stat(mo, 3);
+    }
+    return mfile.stat(mo, 2);
+}
+
+// P(label = c1), 6 digits
+fn proba_of[&m](mo: &m mfile.Model) -> [] int {
+    return exact.fraction_scaled(mfile.stat(mo, 5), mfile.stat(mo, 0));
+}
+
+// the summary of a model, as the `summary` object of fit
+fn summary[&h, &m](heap: &!h Heap, w: json.Writer, mo: &m mfile.Model) -> [heap] json.Writer {
+    var o = json.put_key(heap, w, "summary");
+    o = json.begin_object(heap, o);
+    if mfile.kind(mo) == 1 {
+        o = json.put_key(heap, o, "mean");
+        o = put_dec(heap, o, mean_of(mo), mfile.stat(mo, 1) + 6);
+    } else {
+        o = json.put_key(heap, o, "classes");
+        o = json.begin_array(heap, o);
+        o = json.put_int(heap, o, mfile.stat(mo, 2));
+        o = json.put_int(heap, o, mfile.stat(mo, 3));
+        o = json.end_array(heap, o);
+        o = json.put_key(heap, o, "counts");
+        o = json.begin_array(heap, o);
+        o = json.put_int(heap, o, mfile.stat(mo, 4));
+        o = json.put_int(heap, o, mfile.stat(mo, 5));
+        o = json.end_array(heap, o);
+        o = json.put_key(heap, o, "majority");
+        o = json.put_int(heap, o, majority_of(mo));
+        o = json.put_key(heap, o, "probability");
+        o = put_dec(heap, o, proba_of(mo), 6);
+    }
+    return json.end_object(heap, o);
+}
+
+fn task_name(kind: int) -> [] &static [byte] {
+    if kind == 1 {
+        return "regression";
+    }
+    return "classification";
+}
+
+// ---------------------------------------------------------------- fit
+
+// the model of a scanned file: its kept columns and the target's statistics (acc as ml.csv.fold leaves it)
+fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a [int]) -> [heap] mfile.Model {
+    var names = buffer.empty(heap, 64);
+    var ends = vec.empty(heap, 16, 0);
+    let all = csv.cols(sh);
+    var kept = 0;
+    var i = 0;
+    while i < all {
+        if !csv.dropped(sh, i) {
+            kept = kept + 1;
+        }
+        i = i + 1;
+    }
+    var types = box_slice(heap, 2 * kept + 1, 0);
+    var target = 0;
+    var at = 0;
+    borrow mut types as &!tw in {
+        let t = contents(tw);
+        i = 0;
+        while i < all {
+            if !csv.dropped(sh, i) {
+                names = buffer.append(heap, names, csv.name(sh, i));
+                var size = 0;
+                borrow names as &nr in {
+                    size = buffer.size(nr);
+                }
+                ends = vec.push(heap, ends, size);
+                if csv.kind(sh, i) == 2 {
+                    t[at] = 1;
+                }
+                t[kept + at] = csv.scale(sh, i);
+                if i == csv.tcol(sh) {
+                    target = at;
+                }
+                at = at + 1;
+            }
+            i = i + 1;
+        }
+    }
+    var stats = box_slice(heap, 8, 0);
+    var nstats = 4;
+    borrow mut stats as &!sw in {
+        let s = contents(sw);
+        if task == 1 {
+            s[0] = acc[2];
+            s[1] = csv.scale(sh, csv.tcol(sh));
+            s[2] = acc[0];
+            s[3] = acc[1];
+        } else {
+            nstats = 6;
+            s[0] = acc[5];
+            s[1] = 2;
+            if acc[0] < acc[1] {
+                s[2] = acc[0];
+                s[3] = acc[1];
+                s[4] = acc[2];
+                s[5] = acc[3];
+            } else {
+                s[2] = acc[1];
+                s[3] = acc[0];
+                s[4] = acc[3];
+                s[5] = acc[2];
+            }
+        }
+    }
+    return mfile.Model { kind: task, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats };
+}
+
+fn write_failure[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
+    if status == 2 {
+        var w = fail.open(heap, "conflict.exists", "the output file exists", "use --overwrite to replace it, or name another file");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_text(heap, w, "path", shown);
+        return fail.add(heap, e, w);
+    }
+    if status == 3 {
+        var w = fail.open(heap, "path.bad-name", "the output path names no file", "name a file");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_text(heap, w, "path", shown);
+        return fail.add(heap, e, w);
+    }
+    return fail.io_error(heap, e, aux, true, shown);
+}
+
+// the file bytes of a fitted model are written (or planned) and the answer built
+fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, o: Opts, mo: mfile.Model, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] Out {
+    var e = errs;
+    var lg = log;
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    var extra = buffer.empty(heap, 1);
+    borrow mo as &mr in {
+        let file_bytes = mfile.encode(heap, mr, built.compiler());
+        borrow file_bytes as &br in {
+            let data = buffer.bytes(br);
+            let hex = mfile.sha256_hex(heap, data);
+            let (ws, wa) = fsio.write_atomic(heap, fs, root, paths.shown(out), paths.full(out), data, o.overwrite, o.dry);
+            if ws != 0 {
+                e = write_failure(heap, e, ws, wa, paths.shown(out));
+            } else {
+                borrow hex as &hr in {
+                    let digest = buffer.bytes(hr);
+                    var w = json.writer(heap, 512);
+                    w = json.begin_object(heap, w);
+                    w = json.put_key(heap, w, "model");
+                    w = json.put_string(heap, w, "constant");
+                    w = json.put_key(heap, w, "task");
+                    w = json.put_string(heap, w, task_name(mfile.kind(mr)));
+                    w = json.put_key(heap, w, "rows");
+                    w = json.put_int(heap, w, mfile.rows(mr));
+                    w = json.put_key(heap, w, "columns");
+                    w = json.put_int(heap, w, mfile.cols(mr));
+                    w = put_name(heap, w, "target", mfile.name(mr, mfile.target(mr)));
+                    w = put_name(heap, w, "path", paths.shown(out));
+                    w = json.put_key(heap, w, "bytes");
+                    w = json.put_int(heap, w, len(data));
+                    w = json.put_key(heap, w, "sha256");
+                    w = json.put_string(heap, w, digest);
+                    w = json.put_key(heap, w, "written");
+                    w = json.put_bool(heap, w, !o.dry);
+                    w = summary(heap, w, mr);
+                    w = json.end_object(heap, w);
+                    buffer.drop(heap, payload);
+                    payload = json.finish(w);
+                    if o.dry {
+                        var a = json.writer(heap, 256);
+                        a = json.begin_array(heap, a);
+                        a = json.begin_object(heap, a);
+                        a = json.put_key(heap, a, "op");
+                        if wa == 1 {
+                            a = json.put_string(heap, a, "replace");
+                        } else {
+                            a = json.put_string(heap, a, "create");
+                        }
+                        a = put_name(heap, a, "path", paths.shown(out));
+                        a = json.put_key(heap, a, "bytes");
+                        a = json.put_int(heap, a, len(data));
+                        a = json.put_key(heap, a, "sha256");
+                        a = json.put_string(heap, a, digest);
+                        a = json.end_object(heap, a);
+                        a = json.end_array(heap, a);
+                        let arr = json.finish(a);
+                        buffer.drop(heap, extra);
+                        extra = buffer.append(heap, buffer.empty(heap, 64), ",\"dry_run\":true,\"planned_actions\":");
+                        borrow arr as &ar in {
+                            extra = buffer.append(heap, extra, buffer.bytes(ar));
+                        }
+                        buffer.drop(heap, arr);
+                    }
+                    plain = buffer.append(heap, plain, "fit: constant ");
+                    plain = buffer.append(heap, plain, task_name(mfile.kind(mr)));
+                    plain = buffer.append(heap, plain, ", ");
+                    plain = buffer.push_nat(heap, plain, mfile.rows(mr));
+                    plain = buffer.append(heap, plain, " rows, ");
+                    if o.dry {
+                        plain = buffer.append(heap, plain, "would write ");
+                    } else {
+                        plain = buffer.append(heap, plain, "wrote ");
+                    }
+                    plain = buffer.append(heap, plain, paths.shown(out));
+                    plain = buffer.append(heap, plain, " (");
+                    plain = buffer.push_nat(heap, plain, len(data));
+                    plain = buffer.append(heap, plain, " bytes, sha256 ");
+                    plain = buffer.append(heap, plain, digest);
+                    plain = buffer.append(heap, plain, ")\n");
+                    if !o.dry {
+                        lg = logrec.write(heap, lg, len(data), digest);
+                    }
+                }
+            }
+            buffer.drop(heap, hex);
+        }
+        buffer.drop(heap, file_bytes);
+    }
+    mfile.drop_model(heap, mo);
+    return Out { payload: payload, plain: plain, extra: extra, errs: e, log: lg, dry: o.dry };
+}
+
+// pass 1 for the shape, pass 2 for the target: the model, and whether there is one (else the errors say why)
+fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors, buffer.Buffer) {
+    var e = errs;
+    var lg = log;
+    var acc = box_slice(heap, 8, 0);
+    let (sh, rep, e1, acc1) = scan_file(heap, fs, root, file, config(o, 0, 0, 0), o.target, acc, e);
+    e = e1;
+    acc = acc1;
+    var go = true;
+    var mo = mfile.empty_model(heap);
+    borrow sh as &sr in {
+        if rep.status != 0 {
+            e = explain(heap, args, e, rep, sr, o, paths.shown(file));
+            go = false;
+        } else if csv.rows(sr) == 0 {
+            e = problem(heap, e, "ml.input.empty", "the file has a header and no data rows", "give a file with at least one data row", "", "");
+            go = false;
+        } else if csv.tcol(sr) < 0 {
+            var w = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--target names a column that is not in the header", "names are compared exactly, byte for byte");
+            w = fail.no_repair(heap, w);
+            w = fail.detail_open(heap, w);
+            w = fail.detail_str(heap, w, "flag", "--target");
+            w = fail.detail_text(heap, w, "name", o.target);
+            e = fail.add(heap, e, w);
+            go = false;
+        } else if o.task == 2 && csv.kind(sr, csv.tcol(sr)) != 1 {
+            e = problem(heap, e, "ml.label.not-integer", "a classification target must be an integer column", "label the classes with integers", "", "");
+            go = false;
+        }
+        if go {
+            lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
+            var mode = 1;
+            if o.task == 2 {
+                mode = 2;
+            }
+            let (sh2, rep2, e2, acc2) = scan_file(heap, fs, root, file, config(o, mode, csv.scale(sr, csv.tcol(sr)), 0), o.target, acc, e);
+            e = e2;
+            acc = acc2;
+            if rep2.status != 0 {
+                borrow sh2 as &s2 in {
+                    e = explain(heap, args, e, rep2, s2, o, paths.shown(file));
+                }
+                go = false;
+            }
+            csv.drop_shape(heap, sh2);
+        }
+        if go && o.task == 2 {
+            var distinct = 0;
+            borrow acc as &ar in {
+                distinct = contents(ar)[4];
+            }
+            if distinct < 2 {
+                e = problem(heap, e, "ml.label.single-class", "a classification target has one value", "a model needs both classes in the training rows", "", "");
+                go = false;
+            }
+        }
+        if go {
+            borrow acc as &ar in {
+                mfile.drop_model(heap, mo);
+                mo = build_model(heap, sr, o.task, contents(ar));
+            }
+        }
+    }
+    csv.drop_shape(heap, sh);
+    unbox_slice(heap, acc);
+    return (mo, go, e, lg);
+}
+
+pub fn fit[&h, &g, &f, &r, &pf, &po](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write] Out {
+    let (mo, ok, e, lg) = fit_prepare(heap, args, fs, root, file, o, errs, log);
+    if ok {
+        return finish_fit(heap, fs, root, out, o, mo, e, lg);
+    }
+    mfile.drop_model(heap, mo);
+    return nothing(heap, e, lg);
+}
+
+// ---------------------------------------------------------------- the stored model
+
+fn model_error[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
+    var rule: &static [byte] = "ml.model.malformed";
+    var message: &static [byte] = "a section of the model file is not what the format allows";
+    var hint: &static [byte] = "refit the model";
+    if status == 1 {
+        rule = "ml.model.bad-magic";
+        message = "the file does not start with CML1";
+        hint = "this is not a cancho-ml model file";
+    } else if status == 2 {
+        rule = "ml.model.version";
+        message = "the file has a format version this reader does not know";
+        hint = "refit the model with this version of ml";
+    } else if status == 3 {
+        rule = "ml.model.truncated";
+        message = "the file ends before the end its header and section lengths promise";
+        hint = "copy the file again";
+    } else if status == 4 {
+        rule = "ml.model.checksum";
+        message = "the SHA-256 at the end of the file is not the hash of the bytes before it";
+        hint = "the file changed after it was written";
+    }
+    var w = fail.open_in(heap, spec.extra(), rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    if status == 2 {
+        w = fail.detail_int(heap, w, "version", aux);
+        w = fail.detail_int(heap, w, "known", mfile.version());
+    }
+    if status == 5 {
+        w = fail.detail_int(heap, w, "section", aux);
+    }
+    return fail.add(heap, e, w);
+}
+
+// read and decode the model file. (model, ok, errors, bytes of the file)
+fn load_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, o: Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors) {
+    var e = errs;
+    let (data, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(model), paths.full(model), o.max_bytes);
+    var mo = mfile.empty_model(heap);
+    var ok = false;
+    if st == 1 || st == 2 {
+        e = fail.io_error(heap, e, aux, false, paths.shown(model));
+    } else if st == 3 {
+        var w = fail.open(heap, "limit.input-too-large", "the model file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", aux);
+        w = fail.detail_int(heap, w, "max", o.max_bytes);
+        e = fail.add(heap, e, w);
+    } else {
+        borrow data as &dr in {
+            let (m2, ds, da) = mfile.decode(heap, buffer.bytes(dr));
+            mfile.drop_model(heap, mo);
+            mo = m2;
+            if ds != 0 {
+                e = model_error(heap, e, ds, da, paths.shown(model));
+            } else {
+                ok = true;
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    return (mo, ok, e);
+}
+
+// ---------------------------------------------------------------- the schema check
+
+fn put_type[&h](heap: &!h Heap, b: buffer.Buffer, ty: int, scale: int) -> [heap] buffer.Buffer {
+    var o = b;
+    if ty == 0 {
+        return buffer.append(heap, o, "int");
+    }
+    o = buffer.append(heap, o, "dec(");
+    o = buffer.push_nat(heap, o, scale);
+    return buffer.push(heap, o, byte_of(')'));
+}
+
+// whether a column the input has (kind, scale, integer digits) can be read as the model's column i
+fn compatible[&m, &s](mo: &m mfile.Model, i: int, sh: &s csv.Shape, j: int) -> [] bool {
+    let k = csv.kind(sh, j);
+    if k == 0 {
+        return true;
+    }
+    if mfile.type_of(mo, i) == 0 {
+        return k == 1;
+    }
+    let sc = mfile.scale_of(mo, i);
+    return csv.scale(sh, j) <= sc && csv.intd(sh, j) + sc <= 12;
+}
+
+// the column of the input named like the model's column i, among those it keeps; -1 if none
+fn input_column[&m, &s](mo: &m mfile.Model, i: int, sh: &s csv.Shape) -> [] int {
+    let j = csv.find(sh, mfile.name(mo, i));
+    if j >= 0 && csv.dropped(sh, j) {
+        return 0 - 1;
+    }
+    return j;
+}
+
+// whether the input's column j has a name the model has
+fn in_model[&m, &s](mo: &m mfile.Model, sh: &s csv.Shape, j: int) -> [] bool {
+    var i = 0;
+    while i < mfile.cols(mo) {
+        if bytes.equal(mfile.name(mo, i), csv.name(sh, j)) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// "; " if something was written already
+fn sep[&h](heap: &!h Heap, b: buffer.Buffer) -> [heap] buffer.Buffer {
+    var n = 0;
+    borrow b as &r in {
+        n = buffer.size(r);
+    }
+    if n == 0 {
+        return b;
+    }
+    return buffer.append(heap, b, "; ");
+}
+
+fn name_list[&h, &n](heap: &!h Heap, b: buffer.Buffer, name: &n [byte], first: bool) -> [heap] buffer.Buffer {
+    var o = b;
+    if !first {
+        o = buffer.append(heap, o, ", ");
+    }
+    if text.is_utf8(name) {
+        return buffer.append(heap, o, name);
+    }
+    return buffer.append(heap, o, "(a name that is not UTF-8)");
+}
+
+// Compare the input's columns with the model's. Errors gain ml.schema.mismatch when they differ: the missing, the extra and
+// the mistyped columns by name, and a repair. `need_target`: eval reads the target column, predict does not need it.
+fn schema_check[&h, &g, &m, &s](heap: &!h Heap, args: &g Args, errs: fail.Errors, mo: &m mfile.Model, sh: &s csv.Shape, o: Opts, need_target: bool) -> [heap, args] (fail.Errors, bool) {
+    let mc = mfile.cols(mo);
+    var missing = 0;
+    var mistyped = 0;
+    var extras = 0;
+    var i = 0;
+    while i < mc {
+        let j = input_column(mo, i, sh);
+        if i == mfile.target(mo) && !need_target {
+            // the target column is optional when predicting
+        } else if j < 0 || csv.kind(sh, j) == 0 {
+            missing = missing + 1;
+        } else if !compatible(mo, i, sh, j) {
+            mistyped = mistyped + 1;
+        }
+        i = i + 1;
+    }
+    var j = 0;
+    while j < csv.cols(sh) {
+        if !csv.dropped(sh, j) && !in_model(mo, sh, j) {
+            extras = extras + 1;
+        }
+        j = j + 1;
+    }
+    if missing + mistyped + extras == 0 {
+        return (errs, true);
+    }
+    var w = fail.open_in(heap, spec.extra(), "ml.schema.mismatch", "the input columns differ from the columns the model was fitted on", "add the missing columns, retype the mistyped ones, and ignore the extra ones with --drop");
+    // the repair: when only extras differ, ignoring them is safe and exact
+    var drop_list = buffer.empty(heap, 32);
+    var listable = missing == 0 && mistyped == 0 && !o.drop_given;
+    j = 0;
+    var firstx = true;
+    while j < csv.cols(sh) {
+        if !csv.dropped(sh, j) && !in_model(mo, sh, j) {
+            let nm = csv.name(sh, j);
+            if bytes.count_byte(nm, ',') > 0 || !text.is_utf8(nm) || len(nm) == 0 {
+                listable = false;
+            }
+            if !firstx {
+                drop_list = buffer.push(heap, drop_list, byte_of(','));
+            }
+            drop_list = buffer.append(heap, drop_list, nm);
+            firstx = false;
+        }
+        j = j + 1;
+    }
+    if listable {
+        var rw = fail.retry_open(heap, w);
+        var a = 0;
+        while a < arg_count(args) {
+            rw = json.put_string(heap, rw, arg(args, a));
+            a = a + 1;
+        }
+        rw = json.put_string(heap, rw, "--drop");
+        borrow drop_list as &dr in {
+            rw = json.put_string(heap, rw, buffer.bytes(dr));
+        }
+        w = fail.retry_close(heap, rw);
+    } else {
+        var reason = buffer.empty(heap, 128);
+        if missing > 0 {
+            reason = buffer.append(heap, sep(heap, reason), "add the missing columns: ");
+            i = 0;
+            var first = true;
+            while i < mc {
+                let jj = input_column(mo, i, sh);
+                if !(i == mfile.target(mo) && !need_target) && (jj < 0 || csv.kind(sh, jj) == 0) {
+                    reason = name_list(heap, reason, mfile.name(mo, i), first);
+                    first = false;
+                }
+                i = i + 1;
+            }
+        }
+        if mistyped > 0 {
+            reason = buffer.append(heap, sep(heap, reason), "retype the columns: ");
+            i = 0;
+            var first = true;
+            while i < mc {
+                let jj = input_column(mo, i, sh);
+                if jj >= 0 && csv.kind(sh, jj) != 0 && !(i == mfile.target(mo) && !need_target) && !compatible(mo, i, sh, jj) {
+                    reason = name_list(heap, reason, mfile.name(mo, i), first);
+                    first = false;
+                }
+                i = i + 1;
+            }
+        }
+        if extras > 0 {
+            reason = buffer.append(heap, sep(heap, reason), "ignore the extra columns with --drop: ");
+            j = 0;
+            var first = true;
+            while j < csv.cols(sh) {
+                if !csv.dropped(sh, j) && !in_model(mo, sh, j) {
+                    reason = name_list(heap, reason, csv.name(sh, j), first);
+                    first = false;
+                }
+                j = j + 1;
+            }
+        }
+        borrow reason as &rr in {
+            w = fail.repair_none(heap, w, buffer.bytes(rr));
+        }
+        buffer.drop(heap, reason);
+    }
+    buffer.drop(heap, drop_list);
+    w = fail.detail_open(heap, w);
+    w = json.put_key(heap, w, "missing");
+    w = json.begin_array(heap, w);
+    i = 0;
+    while i < mc {
+        let jj = input_column(mo, i, sh);
+        if !(i == mfile.target(mo) && !need_target) && (jj < 0 || csv.kind(sh, jj) == 0) {
+            w = text.put(heap, w, mfile.name(mo, i));
+        }
+        i = i + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "extra");
+    w = json.begin_array(heap, w);
+    j = 0;
+    while j < csv.cols(sh) {
+        if !csv.dropped(sh, j) && !in_model(mo, sh, j) {
+            w = text.put(heap, w, csv.name(sh, j));
+        }
+        j = j + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "mistyped");
+    w = json.begin_array(heap, w);
+    i = 0;
+    while i < mc {
+        let jj = input_column(mo, i, sh);
+        if jj >= 0 && csv.kind(sh, jj) != 0 && !(i == mfile.target(mo) && !need_target) && !compatible(mo, i, sh, jj) {
+            w = json.begin_object(heap, w);
+            w = put_name(heap, w, "name", mfile.name(mo, i));
+            var ex = put_type(heap, buffer.empty(heap, 16), mfile.type_of(mo, i), mfile.scale_of(mo, i));
+            w = json.put_key(heap, w, "expected");
+            borrow ex as &er in {
+                w = json.put_string(heap, w, buffer.bytes(er));
+            }
+            buffer.drop(heap, ex);
+            var fo = put_type(heap, buffer.empty(heap, 16), csv.kind(sh, jj) - 1, csv.scale(sh, jj));
+            w = json.put_key(heap, w, "found");
+            borrow fo as &fr in {
+                w = json.put_string(heap, w, buffer.bytes(fr));
+            }
+            buffer.drop(heap, fo);
+            w = json.put_key(heap, w, "integer_digits");
+            w = json.put_int(heap, w, csv.intd(sh, jj));
+            w = json.end_object(heap, w);
+        }
+        i = i + 1;
+    }
+    w = json.end_array(heap, w);
+    return (fail.add(heap, errs, w), false);
+}
+
+// ---------------------------------------------------------------- predict
+
+fn predict_rows[&h, &m](heap: &!h Heap, mo: &m mfile.Model, total: int, o: Opts) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    var start = o.from;
+    if start > total {
+        start = total;
+    }
+    var end = total;
+    if start + o.limit < end {
+        end = start + o.limit;
+    }
+    // the constant answer, once
+    var cell = buffer.empty(heap, 32);
+    var cell2 = buffer.empty(heap, 16);
+    if mfile.kind(mo) == 1 {
+        cell = exact.put_scaled(heap, cell, mean_of(mo), mfile.stat(mo, 1) + 6);
+    } else {
+        cell = buffer.push_nat(heap, cell, 0);
+        cell2 = exact.put_scaled(heap, cell2, proba_of(mo), 6);
+    }
+    var w = json.writer(heap, 512);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "model");
+    w = json.put_string(heap, w, "constant");
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, task_name(mfile.kind(mo)));
+    w = json.put_key(heap, w, "columns");
+    w = json.begin_array(heap, w);
+    if mfile.kind(mo) == 1 {
+        w = json.put_string(heap, w, "prediction");
+    } else {
+        w = json.put_string(heap, w, "label");
+        w = json.put_string(heap, w, "probability");
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "rows");
+    w = json.begin_array(heap, w);
+    var plain = buffer.empty(heap, 64);
+    var label = buffer.empty(heap, 24);
+    if mfile.kind(mo) == 2 {
+        label = buffer.push_nat(heap, label, 0);
+    }
+    var k = start;
+    while k < end {
+        w = json.begin_array(heap, w);
+        if mfile.kind(mo) == 1 {
+            borrow cell as &cr in {
+                w = json.put_string(heap, w, buffer.bytes(cr));
+                plain = buffer.append(heap, plain, buffer.bytes(cr));
+            }
+        } else {
+            var lb = exact.put_scaled(heap, buffer.empty(heap, 24), majority_of(mo), 0);
+            borrow lb as &lr in {
+                w = json.put_string(heap, w, buffer.bytes(lr));
+                plain = buffer.append(heap, plain, buffer.bytes(lr));
+            }
+            buffer.drop(heap, lb);
+            plain = buffer.push(heap, plain, byte_of(9));
+            borrow cell2 as &cr in {
+                w = json.put_string(heap, w, buffer.bytes(cr));
+                plain = buffer.append(heap, plain, buffer.bytes(cr));
+            }
+        }
+        w = json.end_array(heap, w);
+        plain = buffer.push(heap, plain, byte_of(10));
+        k = k + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "row_count");
+    w = json.put_int(heap, w, end - start);
+    w = json.put_key(heap, w, "total_rows");
+    w = json.put_int(heap, w, total);
+    w = json.put_key(heap, w, "truncated");
+    w = json.put_bool(heap, w, end < total);
+    w = json.put_key(heap, w, "next");
+    if end < total {
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "from");
+        w = json.put_int(heap, w, end);
+        w = json.end_object(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.end_object(heap, w);
+    buffer.drop(heap, cell);
+    buffer.drop(heap, cell2);
+    buffer.drop(heap, label);
+    return (json.finish(w), plain);
+}
+
+pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] Out {
+    var lg = log;
+    let (mo, ok, e0) = load_model(heap, fs, root, model, o, errs);
+    var e = e0;
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if ok {
+        borrow mo as &mr in {
+            let acc = box_slice(heap, 8, 0);
+            let (sh, rep, e1, acc1) = scan_file(heap, fs, root, file, config(o, 5, 0, 0), mfile.name(mr, mfile.target(mr)), acc, e);
+            e = e1;
+            borrow sh as &sr in {
+                if rep.status != 0 {
+                    e = explain(heap, args, e, rep, sr, o, paths.shown(file));
+                } else if csv.rows(sr) == 0 {
+                    e = problem(heap, e, "ml.input.empty", "the file has a header and no data rows", "give a file with at least one data row", "", "");
+                } else {
+                    lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
+                    let (e2, same) = schema_check(heap, args, e, mr, sr, o, false);
+                    e = e2;
+                    if same {
+                        let (p2, t2) = predict_rows(heap, mr, csv.rows(sr), o);
+                        buffer.drop(heap, payload);
+                        buffer.drop(heap, plain);
+                        payload = p2;
+                        plain = t2;
+                    }
+                }
+            }
+            csv.drop_shape(heap, sh);
+            unbox_slice(heap, acc1);
+        }
+    }
+    mfile.drop_model(heap, mo);
+    return Out { payload: payload, plain: plain, extra: buffer.empty(heap, 1), errs: e, log: lg, dry: false };
+}
+
+// ---------------------------------------------------------------- eval
+
+// the metrics object and the text of an eval, from the accumulators `ml.csv.scan` left
+fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    var w = json.writer(heap, 512);
+    var plain = buffer.empty(heap, 64);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "model");
+    w = json.put_string(heap, w, "constant");
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, task_name(mfile.kind(mo)));
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, rows);
+    w = json.put_key(heap, w, "metrics");
+    w = json.begin_object(heap, w);
+    if mfile.kind(mo) == 1 {
+        let f = mfile.stat(mo, 1) + 6;
+        exact.normalise(acc, 0);
+        // rmse in units of 10^-f: sqrt(SSE / n), the three IEEE operations of docs/cli.md section 3.3, rounded half up
+        let mse = exact.to_float(acc, 0) / float_of(rows);
+        var r = sqrt(mse) + 0.5;
+        if r > 9000000000000000000.0 {
+            r = 9000000000000000000.0;
+        }
+        let rmse = truncate(r);
+        w = json.put_key(heap, w, "rmse");
+        w = put_dec(heap, w, rmse, f);
+        var digits = exact.limbs_digits(heap, buffer.empty(heap, 48), acc, 0);
+        var sse = buffer.empty(heap, 64);
+        borrow digits as &dr in {
+            sse = exact.put_digits_scaled(heap, sse, buffer.bytes(dr), 2 * f);
+        }
+        buffer.drop(heap, digits);
+        w = json.put_key(heap, w, "sse");
+        borrow sse as &sr in {
+            w = json.put_string(heap, w, buffer.bytes(sr));
+            plain = buffer.append(heap, plain, "sse ");
+            plain = buffer.append(heap, plain, buffer.bytes(sr));
+            plain = buffer.push(heap, plain, byte_of(10));
+        }
+        buffer.drop(heap, sse);
+        w = json.put_key(heap, w, "prediction");
+        w = put_dec(heap, w, mean_of(mo), f);
+        plain = line_dec(heap, plain, "rmse ", rmse, f);
+    } else {
+        let correct = acc[0];
+        w = json.put_key(heap, w, "accuracy");
+        w = put_dec(heap, w, exact.fraction_scaled(correct, rows), 6);
+        w = json.put_key(heap, w, "correct");
+        w = json.put_int(heap, w, correct);
+        w = json.put_key(heap, w, "total");
+        w = json.put_int(heap, w, rows);
+        w = json.put_key(heap, w, "prediction");
+        w = json.put_int(heap, w, majority_of(mo));
+        plain = line_dec(heap, plain, "accuracy ", exact.fraction_scaled(correct, rows), 6);
+    }
+    w = json.end_object(heap, w);
+    w = json.end_object(heap, w);
+    return (json.finish(w), plain);
+}
+
+pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] Out {
+    var lg = log;
+    let (mo, ok, e0) = load_model(heap, fs, root, model, o, errs);
+    var e = e0;
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if ok {
+        borrow mo as &mr in {
+            var mode = 3;
+            var tscale = mfile.stat(mr, 1);
+            var pred = mean_of(mr);
+            if mfile.kind(mr) == 2 {
+                mode = 4;
+                tscale = 0;
+                pred = majority_of(mr);
+            }
+            let acc = box_slice(heap, 8, 0);
+            let (sh, rep, e1, acc1) = scan_file(heap, fs, root, file, config(o, mode, tscale, pred), mfile.name(mr, mfile.target(mr)), acc, e);
+            e = e1;
+            var accv = acc1;
+            borrow sh as &sr in {
+                if rep.status != 0 {
+                    e = explain(heap, args, e, rep, sr, o, paths.shown(file));
+                } else if csv.rows(sr) == 0 {
+                    e = problem(heap, e, "ml.input.empty", "the file has a header and no data rows", "give a file with at least one data row", "", "");
+                } else {
+                    lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
+                    let (e2, same) = schema_check(heap, args, e, mr, sr, o, true);
+                    e = e2;
+                    if same {
+                        borrow mut accv as &!aw in {
+                            let (p2, t2) = eval_answer(heap, mr, csv.rows(sr), contents(aw));
+                            buffer.drop(heap, payload);
+                            buffer.drop(heap, plain);
+                            payload = p2;
+                            plain = t2;
+                        }
+                    }
+                }
+            }
+            csv.drop_shape(heap, sh);
+            unbox_slice(heap, accv);
+        }
+    }
+    mfile.drop_model(heap, mo);
+    return Out { payload: payload, plain: plain, extra: buffer.empty(heap, 1), errs: e, log: lg, dry: false };
+}
