@@ -80,9 +80,8 @@ MUTANTS = [
     M("m1-section-length-not-checked", "M1", "a section length is checked for sign only, not against the file",
       [("tools/ml/mfile.cho", "if length < 0 || length > body - pos - 12 {", "if length < 0 {", 1)], ["test_model_file"]),
     M("m1-version-not-compared", "M1", "any version is accepted", [("tools/ml/mfile.cho", "if v != 1 {", "if false {", 1)], ["test_model_file"]),
-    M("m1-trailing-bytes-accepted", "M1", "bytes between the last section and the trailer are not an error",
-      [("tools/ml/mfile.cho", "if pos != body {", "if false {", 1)], ["test_model_file"],
-      why="equivalent: the trailer is read from the last 32 bytes, so extra bytes move it and the checksum fails first; no file reaches the check"),
+    M("m1-trailing-bytes-accepted", "M1", "bytes between the last section and the trailer are not an error (the file is rebuilt with a valid checksum)",
+      [("tools/ml/mfile.cho", "if pos != body {", "if false {", 1)], ["test_model_file"]),
     # ------------------------------------------------------------------ S1: the schema check
     M("s1-check-removed", "S1", "a different set of columns is accepted",
       [("tools/ml/verbs.cho", "if missing + mistyped + extras == 0 {", "if true {", 1)], ["test_schema"]),

@@ -264,6 +264,14 @@ class ModelFile(unittest.TestCase):
         many = set_bytes(self.reg, 8, (0xFFFFFFFF).to_bytes(4, "little"))
         self.assertEqual(self.check_refused(fix_checksum(many), "4e9 sections"), "ml.model.malformed")
 
+    def test_bytes_between_the_last_section_and_the_trailer_are_refused(self):
+        # a crafted file: the sections, junk, and the SHA-256 of all of it. Appended bytes after the trailer move the trailer and
+        # fail the checksum; these pass it, and only the structure check refuses them (mutant m1-trailing-bytes-accepted)
+        for junk in (b"x", b"junk" * 10):
+            body = self.reg[:-32] + junk
+            data = body + hashlib.sha256(body).digest()
+            self.assertEqual(self.check_refused(data, "junk %d" % len(junk)), "ml.model.malformed")
+
     def test_a_huge_declared_length_does_not_allocate(self):
         # a section length of 2^62 is refused as truncated before anything is sized by it
         big = set_bytes(self.reg, 12 + 4, (1 << 62).to_bytes(8, "little"))
