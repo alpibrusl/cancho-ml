@@ -271,6 +271,12 @@ def oracle_splits():
     # the three vectors written into docs/metrics.md section 5
     for name, want in REFERENCE_VECTORS.items():
         kind, args = name[0], name[1:]
+        if kind == "strat":
+            got = run("split", "strat", args[0], args[1], args[2], args[3], 1000, "p")
+            labs = [int(x) for x in args[0][2:].split(",")]
+            cases += 1
+            check(got.get("assign", "").split() == [str(x) for x in want] == [str(x) for x in py_strat(labs, args[1], args[2], args[3])], "reference vector %s" % (name,))
+            continue
         if kind == "kfold":
             got = run("split", "kfold", *args, 1000, "p")
             exp = py_kfold(args[0], args[1], args[2], args[3])
@@ -287,6 +293,7 @@ def oracle_splits():
 REFERENCE_VECTORS = {
     ("kfold", 10, 3, 42, 0): [2, 2, 0, 1, 2, 1, 0, 1, 0, 0],
     ("train_test", 10, 3, 42, 0): [0, 0, 0, 0, 0, 1, 1, 0, 1, 0],
+    ("strat", "L:0,0,0,0,0,0,1,1,1,1", 3, 7, 0): [2, 0, 2, 0, 1, 1, 0, 0, 2, 1],
 }
 
 
@@ -586,7 +593,8 @@ def oracle_sklearn():
         d = abs(mine - ref)
         rel = d / max(abs(ref), 1e-300)
         eq = mine == ref
-        ok = eq or d <= bound_rel * U * max(1.0, abs(ref)) if kind == "abs" else eq or rel <= bound_rel * U
+        # R-squared is 1 - SSE / SST: two relative errors of the sums, scaled by the ratio, so the bound is absolute
+        ok = eq or d <= 2 * bound_rel * U * max(1.0, 1.0 - ref) if kind == "abs" else eq or rel <= bound_rel * U
         check(ok, "sklearn %s %s: mine %r ref %r rel %.3g (bound %g u)" % (name, case, mine, ref, rel, bound_rel))
         rows.append((name, case, eq, rel / U if not eq else 0.0))
 
@@ -595,7 +603,7 @@ def oracle_sklearn():
         assert "value" in r, (a, r)
         return unbits(r["value"])
 
-    BOUND = 300
+    BOUND = 130      # docs/metrics.md section 3: (88 + 32 + 10) u
     for n in (2, 10, 257, 5000, 100000):
         for pm1, pm2, lab in ((500, 500, "balanced"), (50, 80, "rare")):
             yt = gen_labels(n, 3, pm1)
@@ -616,7 +624,7 @@ def oracle_sklearn():
                 ref = float(sm.roc_auc_score(y, s))
                 report("auc", "n=%d %s pm=%d" % (n, label, pm), val("metric", "auc", "GL:%d:3:%d" % (n, pm), "GF:%d:%d:8:0" % (mode, n), 1, 10000000, 1), ref, BOUND, "rel")
     for n in (3, 10, 257, 5000, 100000):
-        for ym, pmode, label in ((4, 4, "wide"), (0, 10, "informative"), (6, 6, "uniform")):
+        for ym, pmode, label in ((4, 4, "wide"), (0, 10, "informative"), (6, 6, "uniform"), (6, 2, "constant prediction")):
             y = gen_floats(ym, n, 21)
             p = gen_floats(pmode, n, 22, 23) if pmode != 10 else gen_floats(10, n, 21, 23)
             yspec = "GF:%d:%d:21:0" % (ym, n)
@@ -625,7 +633,7 @@ def oracle_sklearn():
             report("mae", "n=%d %s" % (n, label), val("metric", "mae", yspec, pspec, 0, 10000000, 1), float(sm.mean_absolute_error(y, p)), BOUND, "rel")
             report("r2", "n=%d %s" % (n, label), val("metric", "r2", yspec, pspec, 0, 10000000, 1), float(sm.r2_score(y, p)), BOUND, "abs")
     for n in (2, 10, 257, 5000, 100000):
-        for mode, label in ((0, "uniform"), (1, "ties"), (3, "extreme")):
+        for mode, label in ((0, "uniform"), (1, "ties"), (3, "extreme"), (2, "all equal")):
             for pm in (500, 100):
                 y = gen_labels(n, 3, pm)
                 if y.min() == y.max():
@@ -633,6 +641,27 @@ def oracle_sklearn():
                 p = gen_floats(mode, n, 8)
                 ref = float(sm.log_loss(y, p, labels=[0, 1]))
                 report("logloss", "n=%d %s pm=%d" % (n, label, pm), val("metric", "logloss", "GL:%d:3:%d" % (n, pm), "GF:%d:%d:8:0" % (mode, n), 1, 10000000, 1), ref, BOUND + 2, "rel")
+    # what sklearn does where this library refuses (printed for docs/metrics.md section 5.2; the refusals themselves are gate T1)
+    def what(f):
+        try:
+            v = f()
+            return "returns %r" % (float(v),)
+        except Exception as ex:
+            return "raises %s" % type(ex).__name__
+    print("where this library refuses, sklearn:")
+    for label, f in (
+            ("roc_auc_score, one class", lambda: sm.roc_auc_score([1, 1, 1], [0.1, 0.2, 0.3])),
+            ("precision_score, nothing predicted positive", lambda: sm.precision_score([0, 1], [0, 0])),
+            ("recall_score, nothing truly positive", lambda: sm.recall_score([0, 0], [0, 1])),
+            ("f1_score, nothing positive", lambda: sm.f1_score([0, 0, 0], [0, 0, 0])),
+            ("r2_score, constant target, wrong prediction", lambda: sm.r2_score([1.0, 1.0, 1.0], [0.5, 0.5, 0.5])),
+            ("r2_score, constant target, perfect prediction", lambda: sm.r2_score([1.0, 1.0, 1.0], [1.0, 1.0, 1.0])),
+            ("accuracy_score, empty", lambda: sm.accuracy_score([], [])),
+            ("root_mean_squared_error, empty", lambda: sm.root_mean_squared_error([], [])),
+            ("log_loss, probability 1.5", lambda: sm.log_loss([1, 0], [1.5, 0.5], labels=[0, 1])),
+            ("roc_auc_score, a NaN score", lambda: sm.roc_auc_score([1, 0], [float("nan"), 0.5])),
+            ("accuracy_score, lengths 3 and 4", lambda: sm.accuracy_score([1, 0, 1], [1, 0, 1, 0]))):
+        print("  %-48s %s" % (label, what(f)))
     # the refusals sklearn turns into numbers: 0.0 with a warning, nan, or a ValueError
     refusals = [
         ("precision", "no predicted positive", sm.precision_score([0, 1], [0, 0], zero_division=np.nan)),

@@ -23,13 +23,13 @@ def load():
 
 
 def cancho_ms(args, reps):
-    r = subprocess.run([om.BIN] + [str(a) for a in args] + [reps], capture_output=True, text=True)
+    r = subprocess.run([om.BIN] + [str(a) for a in args] + [str(reps)], capture_output=True, text=True)
     out = dict(l.split(" ", 1) for l in r.stdout.splitlines() if " " in l)
     return float(out["ms"]) / reps, out["value"]
 
 
 def thin_auc(y, s):
-    o = np.argsort(s, kind="quicksort")
+    o = np.argsort(s, kind="quicksort")[::-1]      # descending thresholds, as a ROC curve is walked
     ss = s[o]
     yy = (y[o] == 1)
     idx = np.r_[np.flatnonzero(ss[1:] != ss[:-1]), len(ss) - 1]
@@ -64,8 +64,33 @@ def cell(name, pyfun, cargs, reps, samples):
             "load0": l0, "load1": l1, "py_value": pyv, "c_value": om.unbits(cav)}
 
 
+def sum_cost():
+    """the cost and the error of the tree sum (docs/metrics.md 5.4): cancho log-loss against the same terms summed by one left fold,
+    and the error of three orders against math.fsum of the same 1,000,000 terms"""
+    n = 1000000
+    print("load at start %.2f" % load())
+    yspec, pspec = "GL:%d:3:300" % n, "GF:0:%d:8:0" % n
+    t_tree, t_fold = [], []
+    for _ in range(7):
+        t_tree.append(cancho_ms(("metric", "logloss", yspec, pspec, 1, 10000000), 5)[0])
+        t_fold.append(cancho_ms(("metric", "logloss_naive", yspec, pspec, 1, 10000000), 5)[0])
+    print("log-loss, 1,000,000 rows, one thread, min of 7 interleaved: tree sum (library) %.2f ms (spread %.2f), left fold %.2f ms (spread %.2f); "
+          "tree / fold = %.3f; load at end %.2f" % (min(t_tree), max(t_tree) / min(t_tree), min(t_fold), max(t_fold) / min(t_fold), min(t_tree) / min(t_fold), load()))
+    r = subprocess.run([om.BIN, "terms", yspec, pspec, "1"], capture_output=True, text=True)
+    terms = np.array([om.unbits(h) for h in r.stdout.split()[1:]])
+    assert len(terms) == n
+    exact = math.fsum(terms.tolist())
+    orders = {"tree (4 lanes x 256 x tree)": float(om.ordered_sum(terms)), "left fold (one chain)": float(np.add.accumulate(terms)[-1]),
+              "numpy pairwise (np.sum)": float(np.sum(terms))}
+    print("sum of the 1,000,000 terms; exact (math.fsum of the same rounded terms) = %.17g" % exact)
+    for k, v in orders.items():
+        print("  %-30s %.17g   error %.1f ulp" % (k, v, abs(v - exact) / math.ulp(exact)))
+
+
 def main():
     a = sys.argv[1:]
+    if "--sum-cost" in a:
+        return sum_cost()
     n = int(a[a.index("--n") + 1]) if "--n" in a else 1000000
     samples = int(a[a.index("--samples") + 1]) if "--samples" in a else 7
     import sklearn

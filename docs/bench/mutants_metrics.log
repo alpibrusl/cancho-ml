@@ -1,0 +1,156 @@
+mutants_metrics: control (unmutated) passes
+seed-derive-index                        killed
+strat-class1-stream                      killed
+draw-accept-strict                       killed
+shuffle-range                            killed
+fold-start-always-mod                    killed
+tt-count                                 killed
+cap-exclusive                            killed
+strat-deal-per-class                     killed
+strat-stratum                            killed
+cls-fp-fn-swap                           killed
+cls-f1-zero                              killed
+cls-third-true                           killed
+auc-below-ties                           killed
+auc-wrong-positive                       killed
+auc-nonfinite                            killed
+auc-digit-shift                          killed
+auc-prefix                               killed
+auc-run-neg                              SURVIVED (explained: equivalent: v is the smaller of the two heads, so a[ni] >= v always; `a[ni] <= v` and `a[ni] == v` select the same entries)
+ratio-tie-even                           killed
+sum-lane-map                             killed
+sum-lane-init                            killed
+sum-dev-center                           killed
+rmse-sqrt                                killed
+r2-mean-den                              killed
+r2-nonfinite-result                      killed
+ll-neg-class                             killed
+ll-sign                                  killed
+ll-finite                                killed
+rules-exit-range                         killed
+rules-code-swap                          killed
+mutants_metrics: 29 killed, 1 survived and explained, 0 unexplained
+mutants_metrics: control (unmutated) passes
+seed-derive-swap                         killed
+strat-class0-stream                      killed
+draw-r-formula                           killed
+shuffle-swap                             killed
+kfold-last-fold                          killed
+tt-empty-train                           killed
+cap-ceiling                              killed
+strat-deal-blocks                        killed
+strat-third-label                        killed
+cls-precision-den                        killed
+cls-precision-zero                       killed
+cls-third-pred                           killed
+auc-midrank-off-by-one                   killed
+auc-positives-count                      killed
+auc-signed-zero                          killed
+auc-copy-back                            killed
+auc-sort-lo                              killed
+auc-run-pos                              SURVIVED (explained: equivalent: same argument for the positive head)
+ratio-round-bit                          killed
+sum-lane-combine                         killed
+sum-block                                killed
+sum-val                                  killed
+rmse-den                                 killed
+r2-sst-den                               killed
+fin-check                                killed
+ll-no-complement                         killed
+ll-mean                                  killed
+ll-order-probs                           killed
+rules-dup-tag                            killed
+mutants_metrics: 28 killed, 1 survived and explained, 0 unexplained
+mutants_metrics: control (unmutated) passes
+seed-derive-single                       killed
+draw-plain-modulus                       killed
+draw-shift                               killed
+shuffle-offset                           killed
+kfold-hi-bound                           killed
+tt-zero-test                             killed
+cap-rep                                  killed
+strat-class-order                        killed
+strat-single                             killed
+cls-recall-den                           killed
+cls-accuracy-eq                          killed
+auc-tie-zero                             killed
+auc-below-minus                          killed
+auc-single-class                         killed
+auc-negative-keys                        killed
+auc-pass-parity                          killed
+auc-sort-neg                             killed
+ratio-bits                               killed
+ratio-first-bit                          SURVIVED (explained: equivalent: r == b at the first bit happens only when the quotient is an exact power of two, and the 52 bits that follow then round up to the same value)
+sum-lane-fold                            killed
+sum-block-up                             killed
+sum-tree-combine                         killed
+mae-den                                  killed
+r2-constant-check                        killed
+reg-nonfinite-y                          killed
+ll-clip-low                              killed
+ll-prob-high                             killed
+ll-label-pos                             killed
+rules-tag-rename                         killed
+mutants_metrics: 28 killed, 1 survived and explained, 0 unexplained
+mutants_metrics: control (unmutated) passes
+kind-kfold-collides                      killed
+draw-limit-off-by-one                    killed
+draw-no-advance                          killed
+fold-start-no-extra                      killed
+kfold-k-gt-n                             killed
+tt-uses-kfold-kind                       killed
+out-len                                  killed
+strat-shuffle-class1                     killed
+strat-members-order                      killed
+cls-f1-num                               killed
+cls-empty                                killed
+auc-tie-one                              killed
+auc-den                                  killed
+auc-single-class-neg                     killed
+auc-negative-keys-all                    killed
+auc-skip-wrong                           killed
+auc-merge-pick                           killed
+ratio-scale                              killed
+ratio-one                                SURVIVED (explained: equivalent: a == b is a shortcut; the general path also returns 1.0 (checked for a = b above))
+sum-lane-tail                            killed
+sum-sq                                   killed
+sum-tree-level                           SURVIVED (explained: equivalent: stack levels strictly decrease from the bottom, so `lv[sp-1] > lv[sp-2]` never happens (docs/linalg.md 5.1 lists the same survivor, order-level-eq))
+mae-kind                                 killed
+r2-no-constant-check                     killed
+reg-nonfinite-p                          killed
+ll-clip-high                             killed
+ll-prob-low                              killed
+ll-fill-offset                           killed
+rules-table-exit                         killed
+mutants_metrics: 27 killed, 2 survived and explained, 0 unexplained
+mutants_metrics: control (unmutated) passes
+kind-stratified                          killed
+draw-accept-above                        killed
+shuffle-stop                             killed
+fold-start-min-max                       killed
+kfold-k-lt-2                             killed
+tt-ceil                                  killed
+strat-deal-offset                        killed
+strat-no-shuffle                         killed
+cls-tp-class                             killed
+cls-f1-den                               killed
+cls-length                               killed
+auc-tie-half-pos                         killed
+auc-den-halved                           killed
+auc-not-binary                           killed
+auc-top-digit                            killed
+auc-skip-none                            SURVIVED (explained: equivalent in the result: a counting pass over a byte that is the same for every key is a stable copy; the skip only saves time (the speed table shows what it saves))
+auc-merge-tie-pick                       SURVIVED (explained: equivalent: when the two heads are equal either one gives the same v, and both runs are then consumed)
+ratio-sticky                             killed
+ratio-range                              killed
+sum-lane-tail-1                          killed
+sum-abs                                  killed
+sum-tree-finish                          killed
+r2-formula                               killed
+r2-sst-zero                              SURVIVED (explained: equivalent: a zero SST makes SSE / SST an infinity or a NaN, and the finite test on the result refuses it with the same tag)
+ll-eps                                   killed
+ll-clip-high-off                         killed
+ll-prob-high-wide                        killed
+rules-exit-param                         killed
+rules-table-drop                         killed
+mutants_metrics: 26 killed, 3 survived and explained, 0 unexplained

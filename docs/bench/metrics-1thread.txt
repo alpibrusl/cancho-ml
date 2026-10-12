@@ -1,0 +1,19 @@
+machine: arm64 Darwin 25.2.0; numpy 2.4.6, sklearn 1.8.0, python 3.14.5; load at start 4.57; n = 1000000, min of 7 interleaved samples; one thread
+cell                                                            reference     cancho   c / ref  spread  spread        load
+                                                                       ms         ms               ref  cancho   start/end
+AUC uniform scores, sklearn.roc_auc_score                          146.59      24.00     0.16x    1.04    1.12   4.6/4.6   MATCH
+    values: reference 0.50027324022227715, cancho 0.50027324022227715, relative gap 0.00e+00
+AUC uniform scores, thin numpy (argsort + cumsum)                   86.21      24.33     0.28x    1.06    1.07   4.6/4.5   MATCH
+    values: reference 0.50027324022227715, cancho 0.50027324022227715, relative gap 0.00e+00
+AUC 16 distinct values (ties), sklearn.roc_auc_score                78.54      22.67     0.29x    1.05    1.06   4.5/4.5   MATCH
+    values: reference 0.50031792128425978, cancho 0.50031792128425978, relative gap 0.00e+00
+AUC 16 distinct values (ties), thin numpy (argsort + cumsum)        32.16      23.00     0.72x    1.05    1.04   4.5/4.5   MATCH
+    values: reference 0.50031792128425978, cancho 0.50031792128425978, relative gap 0.00e+00
+log-loss uniform probabilities, sklearn.log_loss                    51.88      16.00     0.31x    1.03    1.02   4.5/4.5   MATCH
+    values: reference 1.0001745450823847, cancho 1.0001745450823847, relative gap 0.00e+00
+log-loss uniform probabilities, thin numpy (clip, log, sum)          5.15      15.67     3.04x    1.05    1.04   4.5/4.5   NOT MATCH
+    values: reference 1.0001745450823847, cancho 1.0001745450823847, relative gap 0.00e+00
+log-loss 16 distinct values, sklearn.log_loss                       56.69      16.33     0.29x    1.03    1.02   4.5/4.5   MATCH
+    values: reference 1.5386044068042515, cancho 1.5386044068042515, relative gap 0.00e+00
+log-loss 16 distinct values, thin numpy (clip, log, sum)             5.43      16.00     2.95x    1.08    1.04   4.5/4.5   NOT MATCH
+    values: reference 1.5386044068042515, cancho 1.5386044068042515, relative gap 0.00e+00

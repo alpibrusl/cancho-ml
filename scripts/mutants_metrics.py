@@ -176,7 +176,7 @@ ALLOWED = {
     "auc-run-neg": "equivalent: v is the smaller of the two heads, so a[ni] >= v always; `a[ni] <= v` and `a[ni] == v` select the same entries",
     "auc-run-pos": "equivalent: same argument for the positive head",
     "auc-merge-tie-pick": "equivalent: when the two heads are equal either one gives the same v, and both runs are then consumed",
-    "auc-skip-none": "equivalent in the result: a counting pass over a byte that is the same for every key is a stable copy; the skip only saves time (the speed table shows what it saves)",
+    "auc-skip-none": "equivalent in the result: a counting pass over a byte that is the same for every key is a stable copy; the skip only saves time (11 ms on 16-valued scores, docs/metrics.md 5.4)",
     "r2-sst-zero": "equivalent: a zero SST makes SSE / SST an infinity or a NaN, and the finite test on the result refuses it with the same tag",
     "ratio-first-bit": "equivalent: r == b at the first bit happens only when the quotient is an exact power of two, and the 52 bits that follow then round up to the same value",
     "ratio-one": "equivalent: a == b is a shortcut; the general path also returns 1.0 (checked for a = b above)",

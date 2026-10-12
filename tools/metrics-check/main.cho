@@ -420,6 +420,17 @@ fn run_split[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_wr
     return code;
 }
 
+// the cost comparison of docs/metrics.md 5.4: the same terms summed by one left fold (no checks, no blocks); not a library function
+fn naive_logloss[&y, &p](labels: &y [int], prob: &p [float], pos: int) -> [] rules.Scored {
+    var acc = 0.0;
+    var i = 0;
+    while i < len(labels) {
+        acc = acc + logloss.term(labels[i] == pos, prob[i]);
+        i = i + 1;
+    }
+    return rules.ok(acc / float_of(len(labels)));
+}
+
 fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k Clock) -> [heap, io_write, clock, args] int {
     let name = arg(g, 2);
     let pos = num(g, 5);
@@ -433,7 +444,7 @@ fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k 
         float_pair = true;
     }
     var float_second = false;
-    if same(name, "auc") || same(name, "logloss") {
+    if same(name, "auc") || same(name, "logloss") || same(name, "logloss_naive") {
         float_second = true;
     }
     var got = rules.fail(rules.out_of_range());
@@ -482,6 +493,8 @@ fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k 
                     while r < reps {
                         if same(name, "auc") {
                             got = rank.auc(heap, y, p, pos, cap);
+                        } else if same(name, "logloss_naive") {
+                            got = naive_logloss(y, p, pos);
                         } else {
                             got = logloss.logloss(heap, y, p, pos, cap);
                         }

@@ -1,0 +1,6 @@
+load at start 4.95
+log-loss, 1,000,000 rows, one thread, min of 7 interleaved: tree sum (library) 16.00 ms (spread 1.05), left fold 14.20 ms (spread 1.04); tree / fold = 1.127; load at end 4.79
+sum of the 1,000,000 terms; exact (math.fsum of the same rounded terms) = 1000174.5450823847
+  tree (4 lanes x 256 x tree)    1000174.5450823847   error 0.0 ulp
+  left fold (one chain)          1000174.5450824328   error 413.0 ulp
+  numpy pairwise (np.sum)        1000174.5450823847   error 0.0 ulp
