@@ -1,0 +1,220 @@
+module linalg.gemm;
+
+import linalg.order;
+import linalg.tensor;
+import ml.refuse;
+
+// C = A B (reference kernel; docs/linalg.md 1.3: not expected to match a vendor BLAS). Order: C[i][j] is the block rule
+// (blocks of 256 along k, ascending from +0.0) and the tree rule over k of A[i][k] * B[k][j]: per entry exactly the dot
+// of a row of A and a column of B. The speed is a 4 x 4 register tile of C, one partial per block settled on a stack of
+// width 16.
+
+// partial of the 4 x 4 tile at (i0, j0) over k in [k0, k1): av positioned at A[0][0] (row stride ars, unit k stride), bv at
+// B[0][0] (row stride brs, unit column stride); the 16 sums go to out[0..16) in row-major tile order
+fn tile44[&a, &b, &o](av: &a [float], ars: int, bv: &b [float], brs: int, i0: int, j0: int, k0: int, k1: int, out: &!o [float]) -> [] int {
+    let n = k1 - k0;
+    let p0 = av[(i0 + 0) * ars + k0..(i0 + 0) * ars + k0 + n];
+    let p1 = av[(i0 + 1) * ars + k0..(i0 + 1) * ars + k0 + n];
+    let p2 = av[(i0 + 2) * ars + k0..(i0 + 2) * ars + k0 + n];
+    let p3 = av[(i0 + 3) * ars + k0..(i0 + 3) * ars + k0 + n];
+    var c00 = 0.0;
+    var c01 = 0.0;
+    var c02 = 0.0;
+    var c03 = 0.0;
+    var c10 = 0.0;
+    var c11 = 0.0;
+    var c12 = 0.0;
+    var c13 = 0.0;
+    var c20 = 0.0;
+    var c21 = 0.0;
+    var c22 = 0.0;
+    var c23 = 0.0;
+    var c30 = 0.0;
+    var c31 = 0.0;
+    var c32 = 0.0;
+    var c33 = 0.0;
+    var k = 0;
+    while k < n {
+        let q = bv[(k0 + k) * brs + j0..(k0 + k) * brs + j0 + 4];
+        let b0 = q[0];
+        let b1 = q[1];
+        let b2 = q[2];
+        let b3 = q[3];
+        let a0 = p0[k];
+        let a1 = p1[k];
+        let a2 = p2[k];
+        let a3 = p3[k];
+        c00 = c00 + a0 * b0;
+        c01 = c01 + a0 * b1;
+        c02 = c02 + a0 * b2;
+        c03 = c03 + a0 * b3;
+        c10 = c10 + a1 * b0;
+        c11 = c11 + a1 * b1;
+        c12 = c12 + a1 * b2;
+        c13 = c13 + a1 * b3;
+        c20 = c20 + a2 * b0;
+        c21 = c21 + a2 * b1;
+        c22 = c22 + a2 * b2;
+        c23 = c23 + a2 * b3;
+        c30 = c30 + a3 * b0;
+        c31 = c31 + a3 * b1;
+        c32 = c32 + a3 * b2;
+        c33 = c33 + a3 * b3;
+        k = k + 1;
+    }
+    out[0] = c00;
+    out[1] = c01;
+    out[2] = c02;
+    out[3] = c03;
+    out[4] = c10;
+    out[5] = c11;
+    out[6] = c12;
+    out[7] = c13;
+    out[8] = c20;
+    out[9] = c21;
+    out[10] = c22;
+    out[11] = c23;
+    out[12] = c30;
+    out[13] = c31;
+    out[14] = c32;
+    out[15] = c33;
+    return 0;
+}
+
+// rows [r0, r1) of C by the fast path (positioned slices); st/lv are this call's stack workspace (40 * 16 floats, 40 ints)
+pub fn gemm_rows[&a, &b, &c, &s, &l](av: &a [float], ars: int, bv: &b [float], brs: int, cv: &!c [float], crs: int, ccs: int, r0: int, r1: int, n: int, p: int, st: &!s [float], lv: &!l [int]) -> [] int {
+    var i0 = r0;
+    while i0 < r1 {
+        var j0 = 0;
+        while j0 < n {
+            if i0 + 4 <= r1 && j0 + 4 <= n {
+                var sp = 0;
+                var b0 = 0;
+                while b0 < p {
+                    var b1 = b0 + 256;
+                    if b1 > p {
+                        b1 = p;
+                    }
+                    tile44(av, ars, bv, brs, i0, j0, b0, b1, st[sp * 16..sp * 16 + 16]);
+                    sp = order.settle(st, lv, sp, 16);
+                    b0 = b0 + 256;
+                }
+                order.finish(st, sp, 16);
+                var q = 0;
+                while q < 4 {
+                    var w = 0;
+                    while w < 4 {
+                        cv[(i0 + q) * crs + (j0 + w) * ccs] = st[q * 4 + w];
+                        w = w + 1;
+                    }
+                    q = q + 1;
+                }
+            } else {
+                // edge: the entries of this partial tile one at a time (same sums)
+                var q = i0;
+                while q < r1 && q < i0 + 4 {
+                    var w = j0;
+                    while w < n && w < j0 + 4 {
+                        var sp = 0;
+                        var b0 = 0;
+                        while b0 < p {
+                            var b1 = b0 + 256;
+                            if b1 > p {
+                                b1 = p;
+                            }
+                            var s = 0.0;
+                            var k = b0;
+                            while k < b1 {
+                                s = s + av[q * ars + k] * bv[k * brs + w];
+                                k = k + 1;
+                            }
+                            st[sp] = s;
+                            sp = order.settle(st, lv, sp, 1);
+                            b0 = b0 + 256;
+                        }
+                        order.finish(st, sp, 1);
+                        cv[q * crs + w * ccs] = st[0];
+                        w = w + 1;
+                    }
+                    q = q + 1;
+                }
+            }
+            j0 = j0 + 4;
+        }
+        i0 = i0 + 4;
+    }
+    return 0;
+}
+
+// A is m x p, B is p x n, C is m x n (writable). Answers a refusal code, 0 when done.
+pub fn gemm[&h, &a, &b, &c](heap: &!h Heap, at: tensor.Tensor, ad: &a [float], bt: tensor.Tensor, bd: &b [float], ct: tensor.Tensor, cd: &!c [float]) -> [heap] int {
+    var cc = tensor.expect(at, 2, len(ad));
+    if cc != 0 {
+        return cc;
+    }
+    cc = tensor.expect(bt, 2, len(bd));
+    if cc != 0 {
+        return cc;
+    }
+    cc = tensor.expect(ct, 2, len(cd));
+    if cc != 0 {
+        return cc;
+    }
+    cc = tensor.writable(ct);
+    if cc != 0 {
+        return cc;
+    }
+    let m = at.s0;
+    let p = at.s1;
+    let n = bt.s1;
+    if bt.s0 != p || ct.s0 != m || ct.s1 != n {
+        return refuse.tensor_shape();
+    }
+    if m == 0 || n == 0 {
+        return 0;
+    }
+    let st = box_slice(heap, 40 * 16, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    borrow mut st as &!sw in {
+        borrow mut lv as &!lw in {
+            if at.t1 == 1 && bt.t1 == 1 && at.t0 >= 0 && bt.t0 >= 0 && p > 0 {
+                gemm_rows(ad[at.off..len(ad)], at.t0, bd[bt.off..len(bd)], bt.t0, cd[ct.off..len(cd)], ct.t0, ct.t1, 0, m, n, p, contents(sw), contents(lw));
+            } else {
+                var i = 0;
+                while i < m {
+                    var j = 0;
+                    while j < n {
+                        var sp = 0;
+                        var b0 = 0;
+                        if p == 0 {
+                            contents(sw)[0] = 0.0;
+                            sp = 1;
+                        }
+                        while b0 < p {
+                            var b1 = b0 + 256;
+                            if b1 > p {
+                                b1 = p;
+                            }
+                            var s = 0.0;
+                            var k = b0;
+                            while k < b1 {
+                                s = s + ad[at.off + i * at.t0 + k * at.t1] * bd[bt.off + k * bt.t0 + j * bt.t1];
+                                k = k + 1;
+                            }
+                            contents(sw)[sp] = s;
+                            sp = order.settle(contents(sw), contents(lw), sp, 1);
+                            b0 = b0 + 256;
+                        }
+                        order.finish(contents(sw), sp, 1);
+                        cd[ct.off + i * ct.t0 + j * ct.t1] = contents(sw)[0];
+                        j = j + 1;
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    return 0;
+}
