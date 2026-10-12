@@ -1,0 +1,52 @@
+mutants_core: control (unmutated) passes
+rng-gold                                 killed
+rng-shift30                              killed
+rng-mult1                                killed
+rng-mult2                                killed
+rng-final-shift                          killed
+rng-derive-xor                           killed
+rng-uniform-shift                        killed
+rng-uniform-empty                        killed
+rng-unit-offset                          killed
+rng-unit-mask                            killed
+fbits-scale                              killed
+fbits-implicit                           killed
+fbits-sign                               killed
+fbits-subnormal                          killed
+fbits-nan                                killed
+fbits-endian                             killed
+fbits-put-shift                          killed
+fbits-load-check                         SURVIVED (explained: equivalent: the roundtrip check in load() can only fire if decode() is wrong, which test_fbits_* would catch first; it is defence in depth)
+limits-rows                              killed
+limits-cells                             killed
+limits-mul                               SURVIVED (explained: equivalent: the caps are bounded by ceiling_dim (2^31 - 1), so rows * cols is below 2^62 and cannot overflow; the division form is defence in depth)
+limits-empty                             killed
+limits-ceiling                           killed
+limits-threads                           killed
+refuse-exit                              killed
+refuse-dup-tag                           killed
+refuse-tag-rank                          killed
+tensor-rank-hi                           killed
+tensor-negshape                          killed
+tensor-count-guard                       killed
+tensor-normalise                         killed
+tensor-too-big                           killed
+tensor-reach-lo                          killed
+tensor-reach-hi                          killed
+tensor-neg-stride                        killed
+tensor-empty                             killed
+tensor-sane-off                          killed
+tensor-slice-hi                          killed
+tensor-slice-off                         killed
+tensor-transpose                         killed
+tensor-contig                            killed
+tensor-reshape-count                     killed
+tensor-reshape-strides                   killed
+tensor-bcast-extent                      killed
+tensor-bcast-stride                      killed
+tensor-row-bounds                        killed
+tensor-col-off                           killed
+tensor-check-normalised                  killed
+tensor-normalised-axes                   killed
+tensor-abs-clamp                         killed
+mutants_core: 48 killed, 2 survived and explained, 0 unexplained

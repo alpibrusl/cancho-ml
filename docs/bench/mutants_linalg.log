@@ -1,0 +1,103 @@
+mutants_linalg/dot: control (unmutated) passes
+dot-chain-init                           killed
+dot-chain-swap                           killed
+dot-ragged-block                         killed
+dot-chunk-guard                          killed
+dot-block1-init                          killed
+dot-strided-block                        killed
+dot-strided-ystride                      killed
+dot-empty                                killed
+dot-shape-check                          killed
+order-no-cascade                         killed
+order-finish-left                        killed
+order-blocks                             SURVIVED (explained: equivalent: for n a multiple of 256 it counts one extra EMPTY block, whose partial is +0.0 (a block sum starts at +0.0, so it is never -0.0); adding +0.0 to a partial changes no bit)
+order-level-eq                           SURVIVED (explained: equivalent: the levels on the stack are strictly decreasing from bottom to top, so the top is never greater than the entry below it; >= and == select the same merges)
+mutants_linalg/dot: 11 killed, 2 survived and explained, 0 unexplained
+mutants_linalg/axpy: control (unmutated) passes
+axpy-sign                                killed
+axpy-skip-last                           killed
+axpy-strided-x                           killed
+axpy-strided-y                           killed
+axpy-writable                            killed
+axpy-empty                               killed
+axpy-shape                               killed
+mutants_linalg/axpy: 7 killed, 0 survived and explained, 0 unexplained
+mutants_linalg/gemv: control (unmutated) passes
+gemvn-row-mix                            killed
+gemvn-init                               killed
+gemvn-tail-init                          killed
+gemvn-store                              killed
+gemvn-fast-guard                         killed
+gemvn-generic-block                      killed
+gemvn-generic-stride                     killed
+gemvn-d0                                 killed
+gemvt-acc-init                           killed
+gemvt-row-order                          killed
+gemvt-row-coef                           killed
+gemvt-tail-row                           killed
+gemvt-block-hi                           killed
+gemvt-generic-hi                         killed
+gemvt-generic-index                      killed
+gemvt-finish                             killed
+mutants_linalg/gemv: 16 killed, 0 survived and explained, 0 unexplained
+mutants_linalg/syrk: control (unmutated) passes
+syrk-tile-entry                          killed
+syrk-tile-row                            killed
+syrk-tile-init                           killed
+syrk-tile-store                          killed
+syrk-edge-init                           killed
+syrk-edge-index                          killed
+syrk-block-hi                            killed
+syrk-tile-start                          killed
+syrk-generic-index                       killed
+syrk-n0                                  killed
+syrk-store-upper                         killed
+syrk-finish                              killed
+mutants_linalg/syrk: 12 killed, 0 survived and explained, 0 unexplained
+mutants_linalg/chol: control (unmutated) passes
+chol-row-mix                             killed
+chol-store                               killed
+chol-init                                killed
+chol-diag-term                           killed
+chol-pivot                               killed
+chol-tail-term                           killed
+chol-rows8-guard                         killed
+chol-generic-pivot                       killed
+chol-generic-index                       killed
+fwd-group-term                           killed
+fwd-group-order                          killed
+fwd-tail                                 killed
+bwd-group-term                           killed
+bwd-ascending                            killed
+bwd-tail-term                            killed
+solve-singular                           killed
+solve-generic-bwd                        killed
+mutants_linalg/chol: 17 killed, 0 survived and explained, 0 unexplained
+mutants_linalg/fuzz: control (unmutated) passes
+fuzz-sane-in-check                       killed
+fuzz-reach-guard                         killed
+mutants_linalg/fuzz: 2 killed, 0 survived and explained, 0 unexplained
+mutants_linalg/par: control (unmutated) passes
+par-thread-order                         killed
+par-chunk-misaligned                     killed
+par-no-finish                            killed
+par-ragged-clamp                         killed
+par-gemm-rows                            killed
+par-copy-row                             killed
+par-slot-copy                            killed
+par-bound                                killed
+par-dot-second-operand                   killed
+mutants_linalg/par: 9 killed, 0 survived and explained, 0 unexplained
+mutants_linalg/gemm: control (unmutated) passes
+gemm-tile-entry                          killed
+gemm-tile-col                            killed
+gemm-tile-init                           killed
+gemm-store                               killed
+gemm-block                               killed
+gemm-edge-term                           killed
+gemm-edge-block                          killed
+gemm-generic-block                       killed
+gemm-generic-term                        killed
+gemm-tile-guard                          killed
+mutants_linalg/gemm: 10 killed, 0 survived and explained, 0 unexplained
+finished

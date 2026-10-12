@@ -24,7 +24,8 @@ def main():
     print("machine: %s; compiler %s; numpy %s; env %s; samples per cell %d (min of N, interleaved)\n" % (
         meta.get("machine"), meta.get("compiler"), meta.get("numpy"), meta.get("env"), rows[0]["samples"] if rows else 0))
     with_c = any("c_s" in r for r in rows)
-    head = "| kernel | shape | cancho | numpy / scipy | cancho / numpy | verdict |" + (" C (same algorithm) | cancho / C |" if with_c else "") + " spread c / n | load start / end | R c / n |"
+    with_raw = any("raw_s" in r for r in rows)
+    head = "| kernel | shape | cancho | numpy / scipy | cancho / numpy | verdict |" + (" C (same algorithm) | cancho / C |" if with_c else "") + (" raw LAPACK | cancho / raw | verdict vs raw |" if with_raw else "") + " spread c / n | load start / end | R c / n |"
     print(head)
     print("|" + "---|" * (head.count("|") - 1))
     for r in rows:
@@ -39,6 +40,11 @@ def main():
         line = "| %s | %s | %s | %s | %.2f | %s |" % (r["kernel"], shape(r), fmt_t(r["cancho_s"]), fmt_t(r["numpy_s"]), ratio, verdict + marks)
         if with_c:
             line += (" %s | %.2f |" % (fmt_t(r["c_s"]), r["cancho_over_c"])) if "c_s" in r else " | |"
+        if with_raw:
+            if "raw_s" in r:
+                line += " %s | %.2f | %s |" % (fmt_t(r["raw_s"]), r["raw_ratio"], "MATCH" if r["raw_ratio"] <= 1.0 else "NOT MATCH (%.2fx)" % r["raw_ratio"])
+            else:
+                line += " | | |"
         line += " %.2f / %.2f | %.1f / %.1f | %d / %d |" % (r["spread_cancho"], r["spread_numpy"], r["load_start"], r["load_end"], r["reps_cancho"], r["reps_numpy"])
         print(line)
 
