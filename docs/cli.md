@@ -13,8 +13,7 @@ parser, `introspect` and `skill`; every refusal is data with a `<area>.<name>` t
 the authority is derived by the compiler and gated against a committed manifest. The linear-algebra and tensor packages stay
 internal: nothing in this slice imports them, because the one model built here (`--model constant`) needs none.
 
-It is a **vertical slice**: one real model end to end, not a framework. There are no fake models: `introspect.models` lists
-what is built and a test pins that list.
+It is a **vertical slice**: one real model end to end, not a framework. There are no fake models: the `--model` flag's choice list (in `introspect`) is the list of what is built, and a test pins it.
 
 ## 1. The gates (written first; each one must be able to fail)
 
@@ -25,15 +24,15 @@ catch); a survivor is listed with its reason in section 7.
 | id | gate | test | mutants that must be killed |
 |---|---|---|---|
 | T1 | **Tables.** Every flag of `flag_table()` is in `introspect`, in the text of `skill`, in the `flag` enum of `schemas/ml.v1.json`, and used by at least one fixture of `tests/conformance/fixtures.py`. Every rule tag of `rules` is in `introspect`, in `skill`, in the `rule` enum of the schema, and reached by a fixture whose first error is that tag with the exit code of the table. Every record of `log_table()` is in `schemas/log.v1.json` and appears in the log of some fixture. The schemas are generated from the tables by `scripts/schemas.py` and a stale file fails. | `test_tables.py` | flag added to the table with no fixture; flag removed from the schema; rule added with no fixture; fixture removed; log record added with no fixture; skill text missing a flag |
-| R1 | **Refusals.** Every refusal is exit code of D4 (agent-toolbox.md), one JSON line on stdout valid against the schema, stderr empty in JSON mode, `error` equal to `errors[0]`, `ok:false` exactly when the exit is not 0 or 9. | `test_rules.py` | exit code of a tag changed; an error written to stderr |
-| N1 | **No trap.** A seeded fuzz of argument vectors (missing values and operands, empty strings, `..`, absolute paths, over-long paths, duplicated and unknown flags, every flag with every verb) never produces a trap status (132, 134, 136, 139, a negative status) and always one valid JSON line. Spike F found `SIGILL` on a missing argument and on `..`: both are fixtures. | `test_fuzz_args.py` | the missing-operand check removed; the `..` check removed |
-| L1 | **No payload is logged.** Fit and predict inputs carry canary strings (cell values, column names, a path component); the log file, stdout of a failing run and stderr never contain a canary where only a count or a tag may be; every log line is valid against `schemas/log.v1.json` (a closed object, a fixed key set); the log is bounded (records per run, bytes per record, and a refusal `limit.log-full` at the file cap). | `test_log.py` | a column name written into a log record; the cap check removed |
+| R1 | **Refusals.** Every refusal is exit code of D4 (agent-toolbox.md), one JSON line on stdout valid against the schema, stderr empty in JSON mode, `error` equal to `errors[0]`, `ok:false` exactly when the exit is not 0 or 9. | `test_rules.py` | exit code of a tag changed; the answer rendered as text in JSON mode; `ml fit` with no file not refused |
+| N1 | **No trap.** A seeded fuzz of argument vectors (missing values and operands, empty strings, `..`, absolute paths, over-long paths, duplicated and unknown flags, every flag with every verb) never produces a trap status (132, 134, 136, 139, a negative status) and always one valid JSON line. Spike F found `SIGILL` on a missing argument and on `..`: both are fixtures, and the fuzz found a third (two dots in a row, section 2.1). The vectors run with and without `--root` (without it the builtins see the whole path). | `test_fuzz_args.py` | argv[1] read before counting the arguments; the two-dots check removed |
+| L1 | **No payload is logged.** Fit and predict inputs carry canary strings (cell values, column names, a path component); the log file and stderr never contain a canary; every log line is valid against `schemas/log.v1.json` (a closed object, the key set and order of the table); the log is bounded (the bytes one run adds are asserted, and a log at its cap is refused before any work with `limit.log-full`). | `test_log.py` | a column name written into a log record; the cap check removed |
 | M1 | **Model file.** The writer and the reader round-trip; bad magic, a version the reader does not know, a truncated file at every length, a flipped bit anywhere and a wrong checksum are refused with `ml.model.bad-magic`, `ml.model.version`, `ml.model.truncated`, `ml.model.checksum`; a structurally corrupt file whose checksum was recomputed is `ml.model.malformed`. A corrupted-file fuzz (every truncation, every single-byte flip of a small model, seeded multi-byte damage, seeded structural damage with a repaired checksum) never traps and never reports success for a file whose checksum is wrong. | `test_model_file.py` | checksum not compared; a section length not checked against the file size; version not compared |
 | S1 | **Schema check.** A prediction input whose columns differ from the fitted schema is `ml.schema.mismatch` with the missing, extra and mistyped columns in `detail` and a repair that names them; column order may differ. | `test_schema.py` | the check removed; the repair listing the wrong side |
 | O1 | **Oracle.** The model is real and right: `fit`, `predict` and `eval` agree, value for value, with an exact-rational oracle in Python (`fractions.Fraction`) on seeded data that includes values whose sums leave 64 bits. | `test_oracle.py` | mean divided by n-1; tie broken the other way; rounding of the prediction changed; a carry dropped in the exact sum; accuracy counted wrongly; eval using the wrong scale |
 | D1 | **Determinism.** The same input and plan give the same model bytes, whatever the working directory, the spelling of the path or the number of repetitions; the same command gives the same stdout bytes. If a `--threads` flag ever appears in the table, the test runs it at 1, 2, 8 and 64 and compares bytes; today there is none and the test says so. | `test_determinism.py` | a stand-in binary whose bytes depend on a `--threads` value (the test must fail on it) |
 | A1 | **Authority.** `scripts/manifest.py` derives the authority with `cancho authority`, writes `manifests/ml.authority.json` and `generated/ml/built.cho`, and `--check` fails if the committed manifest, the embedded one or the binary's `introspect` differ from a fresh derivation, or if a derived label is outside the ceiling of `tools.toml`. | `test_authority.py`, `scripts/manifest.py --check` | a mutant that adds a capability (a file write by path, a `Clock`, `Ffi`) must fail the check |
-| H1 | **Honesty.** `introspect.models` is exactly the built models; asking for another is `args.bad-value`; a float column is refused (`ml.input.unsupported-type`), never read approximately. | `test_honesty.py` | a model name added to the table without an implementation |
+| H1 | **Honesty.** the `--model` choice list is exactly the built models; asking for another is `args.bad-value`; a float column is refused (`ml.input.unsupported-type`), never read approximately. | `test_honesty.py` | a model name added to the table without an implementation |
 
 Nothing in a gate is "expected to pass": each row names the mutant that proves the gate can fail, and section 7 reports the
 verdict of each, with the survivors.
@@ -232,7 +231,50 @@ the same stdout bytes five times.
 
 ## 7. Gate verdicts
 
-(Filled from `docs/bench/mutants_cli.log` and `scripts/check.sh`.)
+Everything below was printed by a script of this repository, on one machine (this Mac, arm64, macOS, the pinned compiler `a4572ea`),
+under a 1-minute load average of 3.8 to 6.0 (other processes on the machine; not a quiet-machine run, and no figure here is a benchmark).
+
+**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`): 88 tests, all pass, 1 skipped (the
+`--threads` branch of D1, because there is no such flag; the skip says so). The last run took 28.2 s. 90 fixtures
+(`tests/conformance/fixtures.py`) reach all 19 flags, all 48 rules and all 4 log records of the tables. The numeric gates of stage 1
+and the unit tests of `lib/core/exact.cho` (7) pass in `scripts/check.sh`, which exits 0.
+
+**Mutants** (`python3 scripts/mutants_cli.py`, log `docs/bench/mutants_cli.log`): 34 mutants, each a copy of the tree with one change and
+the binary rebuilt, run against the tests of the gate it targets; **all 34 killed, none survived**, and the unchanged tree passes.
+
+| gate | mutants | killed | survived | the mutants |
+|---|---|---|---|---|
+| T1 tables | 6 | 6 | 0 | `t1-flag-without-fixture`, `t1-flag-missing-from-the-schema`, `t1-rule-without-fixture`, `t1-fixture-reaches-another-rule`, `t1-log-record-without-fixture`, `t1-skill-lacks-a-flag` |
+| R1 refusals | 3 | 3 | 0 | `r1-exit-code-changed`, `r1-text-in-json-mode`, `r1-missing-operand-not-refused` |
+| N1 no trap | 2 | 2 | 0 | `n1-verb-read-before-counting`, `n1-double-dot-check-removed` |
+| L1 log | 2 | 2 | 0 | `l1-column-name-logged`, `l1-cap-not-checked` |
+| M1 model file | 4 | 4 | 0 | `m1-checksum-not-compared`, `m1-section-length-not-checked`, `m1-version-not-compared`, `m1-trailing-bytes-accepted` |
+| S1 schema check | 2 | 2 | 0 | `s1-check-removed`, `s1-repair-names-the-wrong-side` |
+| O1 oracle | 8 | 8 | 0 | `o1-mean-divides-by-n-minus-1`, `o1-tie-goes-to-the-larger-label`, `o1-half-rounds-down`, `o1-mean-truncates`, `o1-carry-dropped`, `o1-sum-in-one-int`, `o1-accuracy-counts-the-wrong-rows`, `o1-eval-ignores-the-cell-scale` |
+| D1 determinism | 2 | 2 | 0 | `d1-model-holds-the-byte-count`, `d1-thread-count-changes-a-byte` |
+| A1 authority | 3 | 3 | 0 | `a1-reads-standard-input`, `a1-reads-the-clock`, `a1-manifest-is-stale` |
+| H1 honesty | 2 | 2 | 0 | `h1-a-model-in-the-table-that-is-not-built`, `h1-an-exponent-is-read-as-a-prefix` |
+
+How the gates were checked to be able to fail, and what they found:
+
+* **Bugs the gates found in the code** (both fixed, both fixtures now): (1) `eval` of a classification model computed the regression
+  mean from the class labels before choosing the metric, and trapped on 12-digit labels (found by the oracle gate, O1); (2) a path
+  with two dots in a row (`a..b`, `.../x`) passed `toolbox.path` and ended the process with `SIGILL` in `open_read`/`open_dir`, with
+  no `--root` and as a `--root` value (found by the fuzz, N1, once the vectors ran without `--root`: with it they did not). The
+  seeded fuzz of 2,500 vectors plus about 3,200 systematic ones (every flag with every one-flag mistake, in every verb) found nothing else.
+* **A gate that was weaker than it looked.** The first full run had one survivor, `m1-trailing-bytes-accepted`, which was written down
+  as an equivalent mutant. It was not: a crafted file with junk before the trailer and the SHA-256 of all of it passes the checksum and
+  only the structure check refuses it, and no test built such a file. A test now does and the mutant is killed. (Appended bytes after
+  the trailer do fail the checksum; that is what made the first test pass and the mutant look equivalent.)
+* **A mutant that did not do what its name said.** `n1-missing-operand-check-removed` survived the fuzz: removing the check does not
+  trap, because the contract package's accessors answer a harmless value for an operand that is not there (`ml fit` alone becomes a
+  read of argument 0). It is now `r1-missing-operand-not-refused` (killed by the fixtures, gate R1), and the trap class that
+  spike F found is `n1-verb-read-before-counting` (argv[1] read before there is one), killed by the fuzz.
+* **What the gates do not claim.** O1 compares with an oracle written by the same author from the same text; it checks the tool against
+  the document, not the document against anything outside it (the oracle's RMSE repeats the tool's three IEEE steps in Python).
+  D2, the same bytes on another machine, is not tested here. T1 checks that the tables, the schema, the skill text and the fixtures
+  agree; it does not check that a help sentence is true. The `--threads` branch of D1 is shown able to fail only by a stand-in binary.
+  The `dry_run` guarantee ("no mutating system call") was not run under `strace`. No gate measures memory or speed.
 
 ## 8. What the pinned contract package says that is wrong or too narrow for `ml`
 
