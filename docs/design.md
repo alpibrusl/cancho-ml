@@ -41,9 +41,9 @@ If D1 cannot be kept for a feature, the feature is refused or the exception is w
   a separate per-column bitmap, not NaN **[choice]**: `fmin`/`fmax` treat NaN as missing but `==` and `<` do not, and a sort
   over NaN gives a garbage order (`floating-point.md` §5), so NaN is refused on input (`ml.input.non-finite`) and imputation
   works from the bitmap.
-* **Reading.** Cells go through cancho-table's exact reader (`:int`, `:dec(S)`, `:float`, correctly rounded). The reader that
-  handles 15 to 17 digit doubles is `tools/table/flt.cho` on a cancho-table branch, **not merged** at the time of writing
-  **[read]**; M2 depends on it or on the merged reader, and which it is is recorded in M2.
+* **Reading.** Cells go through cancho-table's exact reader (`:int`, `:dec(S)`, `:float`, correctly rounded). *(Corrected in place: this
+  bullet said the reader of 15 to 17 digit doubles, `tools/table/flt.cho`, was on a branch and **not merged**. It is merged: cancho-table PR #32,
+  `main` at `7f36608`. What `ml` does with it, how it is pinned, and why it is not yet a `[dependencies.*]`, is `docs/reader.md`.)*
 * **No `float_of_bits`.** cancho has `bits_of` and no inverse; it is "missing on purpose" (`floating-point.md` §4.1)
   **[read]**. A stored double is therefore rebuilt from integers: mantissa as `float_of`, then `ldexp` from `std/math.cho`,
   which is exact for normal numbers. The cost of that load is **[M0]** (it is outside the timed fit but inside `predict`
@@ -219,8 +219,10 @@ No refusal depends on running out of memory: every allocation sized by input is 
 | `args.unknown-command` | 2 | the first operand is not `fit`, `predict` or `eval` | none |
 | `ml.param.out-of-range` | 2 | a numeric flag outside its range (the range is in `detail`) | none |
 | `ml.input.too-many-cells` | 8 | rows times columns over `--max-cells` (checked without an overflowing product) | the flag |
-| `ml.input.unsupported-type` | 8 | a cell with an exponent, or a column that needs more than 12 digits; floating-point text needs cancho-table's float reader | none |
-| `ml.input.unsupported-csv` | 8 | a double quote (quoted CSV is not read) | none |
+| ~~`ml.input.unsupported-type`~~ | | *removed by the reader stage: an exponent or more than 12 digits is a float column* | |
+| ~~`ml.input.unsupported-csv`~~ | | *removed by the reader stage: quoted CSV is read* | |
+| `parse.csv-bad-quote`, `parse.csv-unterminated-quote` | 8 | *(added by the reader stage)* a closing quote followed by something other than a comma, a quote open at the end of the file (cancho-table's tags) | none |
+| `ml.metric.undefined` | 8 | *(reachable since the reader stage)* the sum of squared errors of a float regression is beyond the largest double | none |
 | `ml.input.duplicate-column` | 8 | two columns, or an empty column, with the same header name | none |
 | `ml.input.unknown-column` | 3 | `--target` or `--drop` names a column that is not in the header | none |
 | `ml.label.not-integer` | 8 | a classification target that is not an integer column | none |
@@ -232,8 +234,8 @@ Reused from the toolbox catalogue: `args.*`, `path.*`, `io.*`, `conflict.exists`
 (the model file over `--max-bytes`). `ml.input.non-numeric` gained a `retry` repair (`--drop NAME`, for a feature column) and
 `ml.schema.mismatch` one when only extra columns differ (`--drop` them); otherwise a repair is `none` with a reason naming the
 columns. **Not reachable from the CLI today, so without a fixture and not in `introspect`:** `ml.tensor.*`, `ml.linalg.*`,
-`ml.param.threads` (no kernel uses linear algebra yet, no `--threads`), `ml.limit.depth/nodes/fits`, `ml.fit.non-finite`,
-`ml.metric.undefined` (no tree, no iterative fit, no metric with an undefined value). `ml.model.schema-mismatch` of the first list is
+`ml.param.threads` (no kernel uses linear algebra yet, no `--threads`), `ml.limit.depth/nodes/fits`, `ml.fit.non-finite`
+(no tree, no iterative fit). *(`ml.metric.undefined` became reachable with float regression.)* `ml.model.schema-mismatch` of the first list is
 dropped: it said "see `ml.schema.mismatch`", and a second tag for one rule is the repurposing D5 forbids. `ml.input.empty`,
 `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.non-numeric`, `ml.input.non-finite`, `ml.label.single-class`,
 `ml.label.not-binary`, `ml.schema.mismatch` and the four model tags of the first list are built as listed there, at the exits listed.
@@ -256,8 +258,10 @@ matrix is 160 MB; **[estimate]**, not measured here).
 What is shared: the reader (`:int`, `:dec`, `:float`), the typed keys and the exact accumulator (`facc`). What is shared by
 **pin, not copy** (`CLAUDE.md`): the `contract/` package of `cancho-tools`. Options for the first three: (a) a package that
 cancho-table exports and cancho-ml depends on at a pinned commit; (b) a small `cancho-numeric` package both depend on.
-Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. Needs a look at how cancho-table is
-packaged (`cancho.toml` shows pinned `[dependencies]` by git rev and path) before the choice is made.
+Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. *(Looked at, `docs/reader.md` section 1: option (a) needs
+no change to any source of cancho-table, only that it publishes `pow5`, `dec`, `flt`, `query`, `facc` and `reader` as `.cancho-vcs` stores
+at a commit, with a CI check that they match; measured on a scratch repository with compilers `a4572ea` and `e47d647`. Until it does, `ml`
+compiles the files of a pinned read-only clone. The draft for cancho-table is `docs/upstream/`.)*
 
 ## 11. What M0 must settle before section 6 and 9 are final
 
@@ -274,7 +278,7 @@ discharged; a 2-D view or slice-of-slice type (or struct reference fields, which
 
 `docs/linalg.md` holds the gate, the summation-order specification and the results of section 3.1's package; it was written
 before the kernels. v1 scope decisions (maintainer): binary classification and regression only (the format reserves a class
-count); cancho-table is shared by a pinned package dependency (not yet pinned: see `cancho.toml`); descriptors are plain ints with
+count); cancho-table is shared by a pinned package dependency (*not possible yet, and what is: `docs/reader.md` section 1*); descriptors are plain ints with
 data beside them; every reduction has the fixed-block, fixed-tree order of `docs/linalg.md` section 2, behind one function.
 
 ## 13. Stage 2 of v1, early: the command line (M9 as a vertical slice)
@@ -283,5 +287,6 @@ data beside them; every reduction has the fixed-block, fixed-tree order of `docs
 (`--model constant`), the log, the authority and the verdicts. What it changes in this document: the model file's digest is a
 trailer (section 4.1, corrected in place), section 7's row for `ml` has the labels the derivation printed, section 8 has the tags the
 slice added and the ones nothing reaches yet. What it does not settle: the speed factor (section 9), the second machine for D2, the
-shared reader (section 10: cancho-table is not a package, so the slice has a reader of its own, `tools/ml/csv.cho`, until it is).
+shared reader (section 10). *(Settled by the reader stage: `tools/ml/csv*.cho` now reads cells with cancho-table's own modules, pinned by
+file list until cancho-table publishes stores; `docs/reader.md`.)*
 
