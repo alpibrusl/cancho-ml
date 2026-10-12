@@ -41,7 +41,7 @@ pub fn size_of(trees: int, total: int) -> [] int {
 }
 
 // the start of record r (1 .. 10) for `trees` trees and `total` nodes
-fn record_at(r: int, trees: int, total: int) -> [] int {
+pub fn record_at(r: int, trees: int, total: int) -> [] int {
     if r == 1 {
         return 4;
     }
@@ -142,10 +142,8 @@ fn check_tree[&n, &v](ni: &n [int], nv: &v [float], total: int, lo: int, hi: int
             if na < 0 || nb < 0 {
                 return deny.model_malformed();
             }
+            // (`val` is finite: fbits.load refused every NaN and infinity before this walk)
             let v = nv[g];
-            if !(v == v && v - v == 0.0) {
-                return deny.model_malformed();
-            }
             // where this node must be: the left child of the previous node, or the pending right child
             if i > 0 && !prev_internal {
                 if stack == 0 {
@@ -173,7 +171,7 @@ fn check_tree[&n, &v](ni: &n [int], nv: &v [float], total: int, lo: int, hi: int
                 if feat < 0 || feat >= d || bin < 0 || bin > nbins - 2 || dl != 0 && dl != 1 {
                     return deny.model_malformed();
                 }
-                if lc != i + 1 || rc <= lc || rc >= sz || cur >= max_depth {
+                if lc != i + 1 || cur >= max_depth {
                     return deny.model_malformed();
                 }
                 st[stack] = rc;
@@ -185,8 +183,10 @@ fn check_tree[&n, &v](ni: &n [int], nv: &v [float], total: int, lo: int, hi: int
             i = i + 1;
         }
     }
-    // the last node is a leaf and nothing is pending
-    if prev_internal || stack != 0 {
+    // nothing is pending. (Every right child pushed must be popped by a node of the tree that has exactly that index, so a right child
+    // outside the tree, at or before the left child, or after the last node can never be matched; and a last node that is internal
+    // has pushed one. These cases need no check of their own, and a check that nothing can reach is a check no test can kill.)
+    if stack != 0 {
         return deny.model_malformed();
     }
     return 0;

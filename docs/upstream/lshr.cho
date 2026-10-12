@@ -1,0 +1,16 @@
+// GAP 6 (stage M7): `>>` on int is arithmetic and there is no logical shift (bitwise.md: unsigned widths are deferred). SplitMix64
+// (lib/core/rng.cho) shifts a 64-bit state right three times, so every `z >> k` is written `z >> k & mask` with a hand-computed mask
+// (0x3FFFFFFFF for 30, 0x1FFFFFFFFF for 27, 0x1FFFFFFFF for 31), and the model reader's u64 fields are checked for a sign by hand.
+// A wrong mask is caught only by the reference vectors of tests/core.cho. Expected: a logical right shift (`>>>`, or lshr(x, k)).
+//     cancho test --std lshr.cho     -> test_logical_shift FAILED (the result is -1, not 1)
+edition 5;
+import std.test;
+
+fn test_logical_shift() -> [] int {
+    let top = 0 - 9223372036854775807 - 1;
+    // the most significant bit set; a logical shift by 63 would give 1
+    if top >> 63 == 1 {
+        return 0;
+    }
+    return 1;
+}

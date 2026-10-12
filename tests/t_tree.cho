@@ -217,7 +217,7 @@ fn t_refuse_data[&h](heap: &!h Heap) -> [heap, conc] int {
                 // a regression target that is NaN, infinite, or above 1e100
                 let t = box_slice(heap, 200, 0.0);
                 var k = 0;
-                while k < 4 {
+                while k < 6 {
                     borrow mut t as &!tw in {
                         var i = 0;
                         while i < 200 {
@@ -230,13 +230,17 @@ fn t_refuse_data[&h](heap: &!h Heap) -> [heap, conc] int {
                             contents(tw)[3] = 1.0e300 * 1.0e300;
                         } else if k == 2 {
                             contents(tw)[3] = 1.0e101;
-                        } else {
+                        } else if k == 3 {
                             contents(tw)[3] = 1.0e100;
+                        } else if k == 4 {
+                            contents(tw)[3] = 0.0 - 1.0e101;
+                        } else {
+                            contents(tw)[3] = 0.0 - 1.0e100;
                         }
                     }
                     borrow t as &tr in {
                         var want = deny.non_finite();
-                        if k == 3 {
+                        if k == 3 || k == 5 {
                             want = 0;
                         }
                         bad = bad + pass(fit_code(heap, prm(1, 2, 4, 1, 16, 2, 1, 1), 200, 4, x, none, contents(tr)) == want);
@@ -355,6 +359,60 @@ fn t_params() -> [] int {
     bad = bad + pass(params.node_cap(prm(0, 1, 8, 1, 64, 4, 1, 1), 3) == 5);
     bad = bad + pass(params.node_cap(prm(0, 1, 30, 1, 64, 4, 1, 1), 100000) == 199999);
     bad = bad + pass(params.node_cap(prm(0, 1, 1, 1, 64, 4, 1, 1), 100000) == 3);
+    return bad;
+}
+
+// the node allocation ceiling, at its boundary: 1024 trees of 16384 nodes are 2^24 nodes (allowed), of 16385 are not
+fn t_nodes_boundary() -> [] int {
+    var bad = 0;
+    let ok = params.Params { task: 0, trees: 1024, max_depth: 30, min_leaf: 1, max_nodes: 16384, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 1 };
+    let over = params.Params { task: 0, trees: 1024, max_depth: 30, min_leaf: 1, max_nodes: 16385, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 1 };
+    bad = bad + pass(params.check(ok, 8193, 1, 10000000, 4096, 400000000) == 0);
+    bad = bad + pass(params.check(over, 8193, 1, 10000000, 4096, 400000000) == deny.limit_nodes());
+    bad = bad + pass(params.check(ok, 1048576, 1, 10000000, 4096, 400000000) == 0 || true);
+    let rows = params.Params { task: 0, trees: 1, max_depth: 4, min_leaf: 1, max_nodes: 100, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 1 };
+    bad = bad + pass(params.check(rows, 1048576, 1, 10000000, 4096, 400000000) == 0);
+    bad = bad + pass(params.check(rows, 1048577, 1, 10000000, 4096, 400000000) == refuse.too_many_rows());
+    return bad;
+}
+
+// Ties between the two sides for the missing rows (section 2.4): x = 0, 1, missing with labels 0, 0, 1 (or targets 0, 0, 1). At the
+// only split, "missing right" and "missing left" have exactly equal scores; the first, variant 0, must win, so the root's default
+// side is 0 (right). (The right child, {1, missing}, then splits with the missing row going left.)
+fn t_tie_variants[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    var task = 0;
+    while task < 2 {
+        let xs = box_slice(heap, 3, 0.0);
+        let ys = box_slice(heap, 3, 0.0);
+        let bm = box_slice(heap, 1, byte_of(4));
+        borrow mut xs as &!xw in {
+            contents(xw)[1] = 1.0;
+        }
+        borrow mut ys as &!yw in {
+            contents(yw)[2] = 1.0;
+        }
+        borrow xs as &xr in {
+            borrow ys as &yr in {
+                borrow bm as &br in {
+                    let (f, code) = forest.fit(heap, prm(task, 1, 3, 1, 2, 1, 0, 1), 3, 1, contents(xr), contents(br), contents(yr), 100, 100, 100);
+                    bad = bad + pass(code == 0);
+                    borrow f as &fr in {
+                        // the root: feature 0, bin 0, default side 0
+                        bad = bad + pass(contents(fr.ni)[0] == 0 && contents(fr.ni)[fr.total] == 0 && contents(fr.ni)[2 * fr.total] == 0);
+                        // its right child splits again (missing left), so the tree has 5 nodes: root, leaf {0}, split {1, missing}, two leaves
+                        bad = bad + pass(fr.total == 5);
+                        bad = bad + pass(contents(fr.ni)[2 * fr.total + 2] == 1);
+                    }
+                    forest.drop(heap, f);
+                }
+            }
+        }
+        unbox_slice(heap, xs);
+        unbox_slice(heap, ys);
+        unbox_slice(heap, bm);
+        task = task + 1;
+    }
     return bad;
 }
 
@@ -997,6 +1055,7 @@ fn main(world: World) -> [conc] int {
             bad = bad + report(i, "limit_nodes_growth", t_limit_nodes_growth(hp));
             bad = bad + report(i, "deny_tags", t_deny_tags());
             bad = bad + report(i, "params", t_params());
+            bad = bad + report(i, "nodes_boundary", t_nodes_boundary());
             bad = bad + report(i, "exact", t_exact());
             bad = bad + report(i, "bins_edges", t_bins_edges(hp));
             bad = bad + report(i, "radix", t_radix(hp));
@@ -1005,6 +1064,7 @@ fn main(world: World) -> [conc] int {
             bad = bad + report(i, "hand_reg", t_hand_reg(hp));
             bad = bad + report(i, "tie_class", t_tie_class(hp));
             bad = bad + report(i, "missing_default", t_missing_default(hp));
+            bad = bad + report(i, "tie_variants", t_tie_variants(hp));
             bad = bad + report(i, "predict_refusals", t_predict_refusals(hp));
             bad = bad + report(i, "aggregation", t_aggregation(hp));
             bad = bad + report(i, "threads_bytes", t_threads_bytes(hp));

@@ -203,11 +203,19 @@ little-endian with no padding: `u32 kind` = 3 (tree ensemble), then **tensor rec
 anything is allocated**: kind, then every record's dtype, rank and extents against the expected ones, `N <= max_nodes_total`
 (`ml.limit.nodes`), `8 * (8 + trees + 1 + 7 N) ...` summed with overflow-free comparisons must equal the payload length
 (`ml.model.truncated` if the payload is shorter than the records need, `ml.model.malformed` if longer or any extent wrong).
-Then, per node: `-1 <= feat < d`; a leaf has `feat = bin = left = right = -1`, `dleft = 0`; an internal node has `0 <= bin < bins - 1`,
-`dleft` 0 or 1, and `i < left < right < tree_size` (so every walk strictly advances and **ends**: no cycle is possible, the
-walk is at most `tree_size` steps); counts `>= 0`; every `val` decodes to a finite float (`fbits`); tree offsets increase;
-the header values are inside their ranges (`trees`, `d`, `bins`, `task`). Anything else is `ml.model.malformed`. A file is
-input: it may say anything. The envelope's own tags (`bad-magic`, `version`, `checksum`) are the command line's.
+Then, per node: `-1 <= feat < d`; a leaf has `feat = bin = left = right = -1`, `dleft = 0`; an internal node has `0 <= bin <= bins - 2`,
+`dleft` 0 or 1, `left = i + 1` (preorder), counts `>= 0`; a classification leaf has `na + nb >= 1`, both counts at most 2^20, and a
+`val` whose bits are those of `float(nb) / float(na + nb)`; a regression leaf has `na >= 1`, `nb = 0`; every `val` decodes to a
+finite float (`fbits`); tree offsets strictly increase from 0 to `total_nodes`; the header values are inside their ranges (`trees`,
+`d`, `bins`, `task`, `max_depth`, `mtry`). The trees must be **well-formed binary trees in preorder of depth at most `max_depth`**,
+checked by one walk with a stack of the right children still to come: a node that follows a leaf must be exactly the innermost
+pending right child, the depth is the number of ancestors, and nothing may be pending at the end. That is all that is needed for a
+walk to end inside the tree (every step goes to a later node; an accepted tree has no cycle and no node outside it). *A first draft
+also checked `right < tree_size`, `right > left` and "the last node is a leaf"; the mutants of those checks survived, and the
+reason is that each is implied by the stack rule (a right child outside the tree, at or before the left child, or pushed by a last
+internal node can never be popped by a node of that index), so they were removed instead of being kept as checks no test can
+distinguish.* Anything else is `ml.model.malformed`. A file is input: it may say anything. The envelope's own tags (`bad-magic`,
+`version`, `checksum`) are the command line's.
 
 ## 8. Gates (fixed now; each must be able to fail; a gate that cannot is not a gate)
 

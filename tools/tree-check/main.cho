@@ -565,6 +565,486 @@ fn try_read[&h, &s](heap: &!h Heap, data: &s [byte]) -> [heap, conc] int {
     return code;
 }
 
+// ---------------------------------------------------------------- damage with a known answer
+
+fn put32d[&d](dst: &!d [byte], at: int, v: int) -> [] int {
+    var k = 0;
+    while k < 4 {
+        dst[at + k] = byte_of(v >> 8 * k & 255);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the tree that holds node g
+fn tree_of[&t](toff: &t [int], trees: int, g: int) -> [] int {
+    var t = 0;
+    while t + 1 < trees && toff[t + 1] <= g {
+        t = t + 1;
+    }
+    return t;
+}
+
+// the depth of the deepest node, the largest feature and the largest bin used by the forest
+fn forest_shape[&fr](f: &fr forest.Forest, which: int) -> [] int {
+    let toff = contents(f.toff);
+    let ni = contents(f.ni);
+    var best = 0 - 1;
+    var t = 0;
+    while t < f.trees {
+        var stack_rc = 0;
+        region a {
+            let st = alloc_slice[a](40, 0);
+            let sd = alloc_slice[a](40, 0);
+            var cur = 0;
+            var i = 0;
+            var prev_internal = false;
+            while i < toff[t + 1] - toff[t] {
+                let g = toff[t] + i;
+                if i > 0 && !prev_internal {
+                    stack_rc = stack_rc - 1;
+                    cur = sd[stack_rc];
+                }
+                if which == 0 && cur > best {
+                    best = cur;
+                }
+                if ni[g] >= 0 {
+                    if which == 1 && ni[g] > best {
+                        best = ni[g];
+                    }
+                    if which == 2 && ni[f.total + g] > best {
+                        best = ni[f.total + g];
+                    }
+                    st[stack_rc] = ni[4 * f.total + g];
+                    sd[stack_rc] = cur + 1;
+                    stack_rc = stack_rc + 1;
+                    cur = cur + 1;
+                    prev_internal = true;
+                } else {
+                    prev_internal = false;
+                }
+                i = i + 1;
+            }
+        }
+        t = t + 1;
+    }
+    return best;
+}
+
+// whether the reader must accept a payload in which element `v` replaces field `r` of node g
+fn field_ok(r: int, v: int, leaf: bool, orig: int, loc: int, task: int, d: int, nbins: int, na: int, nb: int, valbits: int) -> [] bool {
+    if r == 3 {
+        if leaf {
+            return v == 0 - 1;
+        }
+        return v >= 0 && v < d;
+    }
+    if r == 4 {
+        if leaf {
+            return v == 0 - 1;
+        }
+        return v >= 0 && v <= nbins - 2;
+    }
+    if r == 5 {
+        if leaf {
+            return v == 0;
+        }
+        return v == 0 || v == 1;
+    }
+    if r == 6 {
+        if leaf {
+            return v == 0 - 1;
+        }
+        return v == loc + 1;
+    }
+    if r == 7 {
+        if leaf {
+            return v == 0 - 1;
+        }
+        return v == orig;
+    }
+    // counts: r == 8 is na, r == 9 is nb
+    if v < 0 {
+        return false;
+    }
+    if !leaf {
+        return true;
+    }
+    var a = na;
+    var b = nb;
+    if r == 8 {
+        a = v;
+    } else {
+        b = v;
+    }
+    if task == 1 {
+        return a >= 1 && b == 0;
+    }
+    return a + b >= 1 && a <= 1048576 && b <= 1048576 && bits_of(float_of(b) / float_of(a + b)) == valbits;
+}
+
+fn fvalue(k: int, ftotal: int) -> [] int {
+    if k == 0 {
+        return 0;
+    }
+    if k == 1 {
+        return 1;
+    }
+    if k == 2 {
+        return 2;
+    }
+    if k == 3 {
+        return ftotal;
+    }
+    if k == 4 {
+        return 1 << 40;
+    }
+    if k == 5 {
+        return 0 - 2;
+    }
+    if k == 6 {
+        return 0 - 1;
+    }
+    return 1 << 62;
+}
+
+// Replace one field of the payload by each of several values and compare the reader's answer with the rules. Answers the number of
+// answers that differ. `w` is a copy of `src` and is left as it was.
+fn structured[&h, &fr, &s, &w2](heap: &!h Heap, f: &fr forest.Forest, src: &s [byte], w: &!w2 [byte]) -> [heap, conc] int {
+    var bad = 0;
+    let toff = contents(f.toff);
+    let ni = contents(f.ni);
+    let nv = contents(f.nv);
+    let size = len(src);
+    // node fields, records 3 to 9
+    var rec = 3;
+    while rec <= 9 {
+        var g = 0;
+        while g < f.total {
+            let t = tree_of(toff, f.trees, g);
+            let leaf = ni[g] == 0 - 1;
+            let orig = ni[(rec - 3) * f.total + g];
+            var k = 0;
+            while k < 9 {
+                var v = orig + 1;
+                if k < 8 {
+                    v = fvalue(k, f.total);
+                }
+                let at = model.elem_at(rec, f.trees, f.total, g);
+                fbits.put64(w, at, v);
+                let want = v == orig || field_ok(rec, v, leaf, orig, g - toff[t], f.task, f.d, f.nbins, ni[5 * f.total + g], ni[6 * f.total + g], bits_of(nv[g]));
+                let c = try_read(heap, w);
+                if c == 0 != want {
+                    bad = bad + 1;
+                }
+                copy_into(w[at..at + 8], src[at..at + 8]);
+                k = k + 1;
+            }
+            g = g + 1;
+        }
+        rec = rec + 1;
+    }
+    // the values: a finite number is accepted, except a class leaf's, which is the ratio of its counts; NaN and infinities never are
+    var g = 0;
+    while g < f.total {
+        let leaf = ni[g] == 0 - 1;
+        var k = 0;
+        while k < 5 {
+            var v = bits_of(nv[g]);
+            var want = true;
+            if k == 1 {
+                v = 0x7FF8000000000000;
+                want = false;
+            } else if k == 2 {
+                v = 0x7FF0000000000000;
+                want = false;
+            } else if k == 3 {
+                v = 0 - 4503599627370496;
+                want = false;
+            } else if k == 4 {
+                v = bits_of(1.0);
+                want = v == bits_of(nv[g]) || !(leaf && f.task == 0);
+            }
+            let at = model.elem_at(10, f.trees, f.total, g);
+            fbits.put64(w, at, v);
+            let c = try_read(heap, w);
+            if c == 0 != want {
+                bad = bad + 1;
+            }
+            copy_into(w[at..at + 8], src[at..at + 8]);
+            k = k + 1;
+        }
+        g = g + 1;
+    }
+    // the header: values that must be refused
+    let depth = forest_shape(f, 0);
+    let maxfeat = forest_shape(f, 1);
+    let maxbin = forest_shape(f, 2);
+    var field = 0;
+    while field < 8 {
+        let at = 20 + 8 * field;
+        var orig = fbits.get64(src, at);
+        var k = 0;
+        while k < 14 {
+            var v = 0;
+            if k == 0 {
+                v = 0;
+            } else if k == 1 {
+                v = 1;
+            } else if k == 2 {
+                v = 2;
+            } else if k == 3 {
+                v = 3;
+            } else if k == 4 {
+                v = orig - 1;
+            } else if k == 5 {
+                v = orig + 1;
+            } else if k == 6 {
+                v = 31;
+            } else if k == 7 {
+                v = 255;
+            } else if k == 8 {
+                v = 256;
+            } else if k == 9 {
+                v = 1025;
+            } else if k == 10 {
+                v = 4096;
+            } else if k == 11 {
+                v = 4097;
+            } else if k == 12 {
+                v = 1 << 40;
+            } else {
+                v = 0 - 1;
+            }
+            var refuse_it = false;
+            if field == 0 {
+                refuse_it = v != 0 && v != 1;
+            } else if field == 1 {
+                refuse_it = v != orig;
+            } else if field == 2 {
+                refuse_it = v < 1 || v > 4096 || v < maxfeat + 1;
+            } else if field == 3 {
+                refuse_it = v < 2 || v > 255 || v < maxbin + 2;
+            } else if field == 4 {
+                refuse_it = v != orig;
+            } else if field == 5 {
+                refuse_it = v < 1 || v > 30 || v < depth;
+            } else if field == 6 {
+                refuse_it = v < 1;
+            } else {
+                refuse_it = v < 1 || v > f.d;
+            }
+            fbits.put64(w, at, v);
+            let c = try_read(heap, w);
+            if refuse_it && c == 0 {
+                bad = bad + 1;
+            }
+            copy_into(w[at..at + 8], src[at..at + 8]);
+            k = k + 1;
+        }
+        field = field + 1;
+    }
+    // the tree offsets: out of order or not ending at the total must be refused
+    var tt = 0;
+    while tt <= f.trees {
+        let at = 100 + 8 * tt;
+        let orig = toff[tt];
+        var k = 0;
+        while k < 9 {
+            var v = 0;
+            if k == 0 {
+                v = 0;
+            } else if k == 1 {
+                v = 1;
+            } else if k == 2 {
+                v = orig - 1;
+            } else if k == 3 {
+                v = orig + 1;
+            } else if k == 4 {
+                v = f.total;
+            } else if k == 5 {
+                v = f.total + 1;
+            } else if k == 6 {
+                v = 0 - 1;
+            } else if k == 7 {
+                v = 1 << 40;
+            } else {
+                v = orig;
+            }
+            var refuse_it = false;
+            if tt == 0 {
+                refuse_it = v != 0;
+            } else if tt == f.trees {
+                refuse_it = v != f.total;
+            } else {
+                refuse_it = v <= toff[tt - 1] || v >= toff[tt + 1];
+            }
+            fbits.put64(w, at, v);
+            let c = try_read(heap, w);
+            if refuse_it && c == 0 {
+                bad = bad + 1;
+            }
+            copy_into(w[at..at + 8], src[at..at + 8]);
+            k = k + 1;
+        }
+        tt = tt + 1;
+    }
+    // the kind and every record header (dtype, rank, extent): any change is refused
+    var r = 0;
+    while r <= 10 {
+        var start = 0;
+        if r > 0 {
+            start = model.record_at(r, f.trees, f.total);
+        }
+        var fld = 0;
+        while fld < 3 {
+            if r == 0 && fld > 0 {
+                fld = 3;
+            } else {
+                var k = 0;
+                while k < 5 {
+                    var at = start + 4 * fld;
+                    if fld == 2 {
+                        at = start + 8;
+                    }
+                    var width = 4;
+                    if fld == 2 {
+                        width = 8;
+                    }
+                    var orig = fbits.get64(src, at);
+                    var v = orig;
+                    if width == 4 {
+                        orig = orig & 0xFFFFFFFF;
+                    }
+                    if k == 0 {
+                        v = orig + 1;
+                    } else if k == 1 {
+                        v = orig - 1;
+                    } else if k == 2 {
+                        v = 0;
+                    } else if k == 3 {
+                        v = 3;
+                    } else {
+                        v = 1 << 31;
+                    }
+                    if width == 8 && k == 4 {
+                        v = 1 << 40;
+                    }
+                    if v != orig {
+                        if width == 4 {
+                            put32d(w, at, v);
+                        } else {
+                            fbits.put64(w, at, v);
+                        }
+                        if try_read(heap, w) == 0 {
+                            bad = bad + 1;
+                        }
+                        copy_into(w[at..at + width], src[at..at + width]);
+                    }
+                    k = k + 1;
+                }
+                fld = fld + 1;
+            }
+        }
+        r = r + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- payloads built to break one rule that single-field damage cannot
+
+// a forest like f with `trees` trees and `total` nodes whose arrays are those of f (the nodes of f repeated if more are needed) and
+// whose tree offsets are `offs` (trees + 1 values)
+fn clone_forest[&h, &fr, &o](heap: &!h Heap, f: &fr forest.Forest, trees: int, total: int, offs: &o [int]) -> [heap] forest.Forest {
+    let toff = box_slice(heap, trees + 1, 0);
+    let ni = box_slice(heap, 7 * total + 1, 0);
+    let nv = box_slice(heap, total + 1, 0.0);
+    borrow mut toff as &!tw in {
+        var t = 0;
+        while t <= trees {
+            contents(tw)[t] = offs[t];
+            t = t + 1;
+        }
+    }
+    borrow mut ni as &!nw in {
+        borrow mut nv as &!vw in {
+            var g = 0;
+            while g < total {
+                let from = g % f.total;
+                var k = 0;
+                while k < 7 {
+                    contents(nw)[k * total + g] = contents(f.ni)[k * f.total + from];
+                    k = k + 1;
+                }
+                contents(vw)[g] = contents(f.nv)[from];
+                g = g + 1;
+            }
+        }
+    }
+    return forest.Forest { task: f.task, trees: trees, d: f.d, nbins: f.nbins, total: total, max_depth: f.max_depth, min_leaf: f.min_leaf, mtry: f.mtry, toff: toff, ni: ni, nv: nv };
+}
+
+// the payload of `g` must be refused
+fn must_refuse[&h, &gr](heap: &!h Heap, g: &gr forest.Forest) -> [heap, conc] int {
+    let payload = model.write(heap, g);
+    var bad = 0;
+    borrow payload as &pr in {
+        if try_read(heap, buffer.bytes(pr)) == 0 {
+            bad = 1;
+        }
+    }
+    buffer.drop(heap, payload);
+    return bad;
+}
+
+fn crafted[&h, &fr, &s](heap: &!h Heap, f: &fr forest.Forest, src: &s [byte]) -> [heap, conc] int {
+    var bad = 0;
+    let offs = box_slice(heap, f.trees + 3, 0);
+    borrow mut offs as &!ow in {
+        var t = 0;
+        while t <= f.trees {
+            contents(ow)[t] = contents(f.toff)[t];
+            t = t + 1;
+        }
+        // an empty tree after the last one
+        contents(ow)[f.trees + 1] = f.total;
+    }
+    borrow offs as &or in {
+        let g1 = clone_forest(heap, f, f.trees + 1, f.total, contents(or));
+        borrow g1 as &g1r in {
+            bad = bad + must_refuse(heap, g1r);
+        }
+        forest.drop(heap, g1);
+        // nodes after the last tree that belong to no tree
+        let g2 = clone_forest(heap, f, f.trees, f.total + 3, contents(or));
+        borrow g2 as &g2r in {
+            bad = bad + must_refuse(heap, g2r);
+        }
+        forest.drop(heap, g2);
+    }
+    unbox_slice(heap, offs);
+    // the last node of tree 0 made an internal node (left child = the node after the tree): every field valid, the tree is not
+    let toff = contents(f.toff);
+    let sz0 = toff[1] - toff[0];
+    let g = toff[1] - 1;
+    let w = box_slice(heap, len(src) + 1, byte_of(0));
+    borrow mut w as &!ww in {
+        copy_into(contents(ww)[0..len(src)], src);
+        fbits.put64(contents(ww), model.elem_at(3, f.trees, f.total, g), 0);
+        fbits.put64(contents(ww), model.elem_at(4, f.trees, f.total, g), 0);
+        fbits.put64(contents(ww), model.elem_at(5, f.trees, f.total, g), 0);
+        fbits.put64(contents(ww), model.elem_at(6, f.trees, f.total, g), sz0);
+        fbits.put64(contents(ww), model.elem_at(7, f.trees, f.total, g), sz0 + 1);
+    }
+    borrow w as &wr in {
+        if f.trees >= 2 && try_read(heap, contents(wr)[0..len(src)]) == 0 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, w);
+    return bad;
+}
+
 fn fuzz_one[&h, &i, &fr](heap: &!h Heap, io: &!i Io, label: &static [byte], f: &fr forest.Forest) -> [heap, io_write, conc] int {
     let payload = model.write(heap, f);
     let ftotal = f.total;
@@ -648,45 +1128,9 @@ fn fuzz_one[&h, &i, &fr](heap: &!h Heap, io: &!i Io, label: &static [byte], f: &
                 }
                 pos = pos + 1;
             }
-            // one whole field at a time (a node's feature, bin, default side, children, counts) set to values that break the invariants
-            var rec = 3;
-            while rec <= 9 {
-                var g = 0;
-                while g < ftotal {
-                    var vv = 0;
-                    while vv < 8 {
-                        var fv = 0;
-                        if vv == 0 {
-                            fv = 0;
-                        } else if vv == 1 {
-                            fv = 1;
-                        } else if vv == 2 {
-                            fv = 2;
-                        } else if vv == 3 {
-                            fv = ftotal;
-                        } else if vv == 4 {
-                            fv = 1 << 40;
-                        } else if vv == 5 {
-                            fv = 0 - 2;
-                        } else if vv == 6 {
-                            fv = 0 - 1;
-                        } else {
-                            fv = 1 << 62;
-                        }
-                        let at = model.elem_at(rec, ftrees, ftotal, g);
-                        fbits.put64(w, at, fv);
-                        if try_read(heap, w[0..size]) == 0 {
-                            accepted = accepted + 1;
-                        } else {
-                            refused_n = refused_n + 1;
-                        }
-                        copy_into(w[at..at + 8], src[at..at + 8]);
-                        vv = vv + 1;
-                    }
-                    g = g + 1;
-                }
-                rec = rec + 1;
-            }
+            // damage with a known answer (the rules of docs/models-tree.md section 7, written here independently of the reader)
+            unexpected = unexpected + structured(heap, f, src, w[0..size]);
+            unexpected = unexpected + crafted(heap, f, src);
             // seeded multi-byte damage
             var s = rng.derive(777, size);
             var q = 0;

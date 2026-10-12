@@ -1,0 +1,32 @@
+// GAP 9 (stage M7, seen first in spike F): open_read on a path that contains two dots in a row ends the process with SIGILL (exit
+// 132) instead of returning Opened::Failed (the path check of check-cost.md traps, it does not refuse). A command line tool that
+// takes a path from its arguments must pre-check every path itself (tools/ml/paths.cho does; tools/tree-check does not, it is a
+// test driver) or die without a message. Expected: Opened::Failed(reason) for a path the filesystem policy refuses.
+//     cancho build --std dotdot_path.cho -o dd && ./dd ../x.bin; echo $?     -> 132   (./dd x.bin gives 3, a missing file)
+edition 5;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(heap);
+    release(clock);
+    release(io);
+    var code = 0;
+    borrow fs as &f in {
+        borrow args as &g in {
+            match open_read(f, arg(g, 1)) {
+                Opened::Ok(file) => {
+                    file_close(file);
+                    code = 0;
+                }
+                Opened::Failed(reason) => {
+                    code = 3;
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    return code;
+}

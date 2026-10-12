@@ -1,0 +1,60 @@
+// GAP 7 (stage M7): clock_ms has a resolution of 1 ms. A benchmark of a predict of 20,000 rows (about 3 ms) or a fit of 100,000 rows
+// (about 50 ms) is read with an error of 1 ms in each of its two readings (2 % to 33 %), and a cell below ~100 ms must be repeated R
+// times inside the program and divided (docs/models-tree.md section 9). Expected: a monotonic clock in microseconds or nanoseconds
+// (clock_us / clock_ns), with the same capability.
+//     cancho run --std clock_resolution.cho     -> prints the set of distinct differences between two readings of a tiny job: only 0 and 1
+edition 5;
+import std.io;
+
+fn work(n: int) -> [] int {
+    var s = 0;
+    var i = 0;
+    while i < n {
+        s = s + i % 7;
+        i = i + 1;
+    }
+    return s;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(heap);
+    release(args);
+    var zeros = 0;
+    var ones = 0;
+    var others = 0;
+    var sink = 0;
+    borrow clock as &c in {
+        var k = 0;
+        while k < 200 {
+            let t0 = clock_ms(c);
+            sink = sink + work(200000);
+            let t1 = clock_ms(c);
+            if t1 - t0 == 0 {
+                zeros = zeros + 1;
+            } else if t1 - t0 == 1 {
+                ones = ones + 1;
+            } else {
+                others = others + 1;
+            }
+            k = k + 1;
+        }
+    }
+    borrow mut io as &!i in {
+        io.write_all(i, "differences of 200 runs of a job of about 0.2 ms: 0 ms x ");
+        io.print_int(i, zeros);
+        io.write_all(i, ", 1 ms x ");
+        io.print_int(i, ones);
+        io.write_all(i, ", more x ");
+        io.print_int(i, others);
+        io.write_all(i, " (checksum ");
+        io.print_int(i, sink % 10);
+        io.write_all(i, ")\n");
+    }
+    release(clock);
+    release(io);
+    return 0;
+}
