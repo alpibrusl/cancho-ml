@@ -136,6 +136,7 @@
     "guarantees_has",
     "has",
     "has_dotdot",
+    "has_double_dot",
     "help_of",
     "hex4",
     "hex_digit",
@@ -250,5 +251,5 @@
   ],
   "folded_operators": 34,
   "folded_calls": 0,
-  "functions": 374
+  "functions": 376
 }

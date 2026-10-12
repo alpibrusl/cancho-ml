@@ -43,22 +43,51 @@ pub fn shown[&r](r: &r Rp) -> [] &r [byte] {
     return b[r.shown..len(b)];
 }
 
+// Whether `p` holds two dots in a row anywhere, `a..b` included. The builtins that take a whole path (open_read, open_dir) trap
+// on that, not only on a `..` component, and toolbox.path.has_dotdot looks for the component alone: a path the tool lets through
+// would end the process with SIGILL (found by the fuzz, tests/conformance/test_fuzz_args.py). Under --root the tool opens each
+// name by itself (toolbox.place), which refuses exactly `..`, so only the root, and a path with no root, need this.
+pub fn has_double_dot[&p](p: &p [byte]) -> [] bool {
+    var i = 0;
+    while i + 1 < len(p) {
+        if int_of(p[i]) == '.' && int_of(p[i + 1]) == '.' {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub fn refuse_double_dot[&h, &p](heap: &!h Heap, errs: fail.Errors, shown: &p [byte], at: int) -> [heap] fail.Errors {
+    var w = fail.open(heap, "path.dotdot", "the path holds two dots in a row, which the file builtins refuse", "rename the file so that no name holds two dots in a row, or use --root: under --root only a name that is exactly two dots is refused");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_int(heap, w, "position", at);
+    return fail.add(heap, errs, w);
+}
+
 // operand `at` (an argument index) under `root`
 pub fn from_operand[&h, &g, &r](heap: &!h Heap, args: &g Args, root: &r [byte], at: int, errs: fail.Errors) -> [heap, args] (Rp, fail.Errors) {
     let (resolved, e) = path.operand(heap, args, root, at, errs);
     var out = absent(heap);
+    var e2 = e;
     borrow resolved as &rr in {
         if path.ok(rr) {
             let f = path.full(rr);
             let s = path.shown(rr);
-            drop(heap, out);
-            var copy = buffer.empty(heap, len(f) + 1);
-            copy = buffer.append(heap, copy, f);
-            out = Rp { full: copy, shown: len(f) - len(s), present: true };
+            if len(root) == 0 && has_double_dot(f) {
+                e2 = refuse_double_dot(heap, e2, s, at);
+            } else {
+                drop(heap, out);
+                var copy = buffer.empty(heap, len(f) + 1);
+                copy = buffer.append(heap, copy, f);
+                out = Rp { full: copy, shown: len(f) - len(s), present: true };
+            }
         }
     }
     path.drop(heap, resolved);
-    return (out, e);
+    return (out, e2);
 }
 
 // the value of flag `name`, if it was given, as a path under `root`

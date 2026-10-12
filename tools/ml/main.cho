@@ -357,7 +357,13 @@ fn finish[&h, &g, &p, &f, &i, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p
 fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write] int {
     let table = spec.flag_table();
     let (verb, e0) = cmdline(heap, args, parsed, errs);
-    let (root, e1) = path.root(heap, args, cli.text(args, parsed, table, "root"), cli.value_index(parsed, table, "root"), e0);
+    let (root, e1a) = path.root(heap, args, cli.text(args, parsed, table, "root"), cli.value_index(parsed, table, "root"), e0);
+    var e1 = e1a;
+    borrow root as &rb in {
+        if paths.has_double_dot(buffer.bytes(rb)) {
+            e1 = paths.refuse_double_dot(heap, e1, buffer.bytes(rb), cli.value_index(parsed, table, "root"));
+        }
+    }
     var status = 0;
     borrow root as &rr in {
         let (ps, e2) = resolve_all(heap, args, parsed, buffer.bytes(rr), e1);

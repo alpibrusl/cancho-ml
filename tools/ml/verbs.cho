@@ -1098,13 +1098,13 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
     var plain = buffer.empty(heap, 1);
     if ok {
         borrow mo as &mr in {
-            var mode = 3;
-            var tscale = mfile.stat(mr, 1);
-            var pred = mean_of(mr);
-            if mfile.kind(mr) == 2 {
-                mode = 4;
-                tscale = 0;
-                pred = majority_of(mr);
+            var mode = 4;
+            var tscale = 0;
+            var pred = majority_of(mr);
+            if mfile.kind(mr) == 1 {
+                mode = 3;
+                tscale = mfile.stat(mr, 1);
+                pred = mean_of(mr);
             }
             let acc = box_slice(heap, 8, 0);
             let (sh, rep, e1, acc1) = scan_file(heap, fs, root, file, config(o, mode, tscale, pred), mfile.name(mr, mfile.target(mr)), acc, e);
