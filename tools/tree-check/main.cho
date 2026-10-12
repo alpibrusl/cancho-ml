@@ -1,0 +1,851 @@
+// tree-check: the gates' driver for lib/models/tree (docs/models-tree.md section 8). Not the command line of `ml`.
+//
+//     tree-check mode=fit x=X.bin y=Y.bin [miss=M.bin] n=N d=D [ntr=T] task=0|1 seed=S trees=T depth=D leaf=L nodes=M bins=B
+//                mtry=K boot=0|1 threads=T [out=full|hash] [reps=R] [phase=1]
+//     tree-check mode=fuzz x=.. y=.. n=.. d=..         (damages model payloads; any trap or hang is a failure)
+//     tree-check mode=gt                               (the exact Gini comparison on fixed pairs, for scripts/check_tree.py)
+//
+// X.bin: n * d float64 little-endian, row-major; Y.bin: n float64; M.bin: the missing bitmap of the n rows (d columns of ceil(n/8)
+// bytes). The first ntr rows (default n - n/5) train, the rest are the test rows. stdout, one item per line:
+//     E f k hex                       the edges             N t i feat bin dleft left right na nb valhex    the nodes
+//     P i hex                         the forest value of each test row (out=full)
+//     H forest sha256hex   H pred hex     hashes of the model payload and of the predictions
+//     #name value                     timings (clock_ms) and sizes; never compared
+//     refused TAG                     instead of the above, the rule tag of a refusal
+edition 5;
+
+import std.buffer;
+import std.crypto;
+import std.io;
+import ml.fbits;
+import ml.refuse;
+import ml.rng;
+import ml.testdata;
+import tree.deny;
+import tree.params;
+import tree.bins;
+import tree.exact;
+import tree.forest;
+import tree.model;
+import tree.predict;
+
+// ---------------------------------------------------------------- arguments
+
+// the value of key=value at argument index i, as an int; digits only, at most 18
+fn number_of[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 18 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+// the index of the argument that starts with `key` followed by '=', or 0 - 1
+fn find_arg[&g](g: &g Args, key: &static [byte]) -> [args] int {
+    var i = 1;
+    let c = arg_count(g);
+    while i < c {
+        let a = arg(g, i);
+        if len(a) > len(key) && a[len(key)] == byte_of('=') {
+            var same = true;
+            var k = 0;
+            while k < len(key) {
+                if a[k] != key[k] {
+                    same = false;
+                }
+                k = k + 1;
+            }
+            if same {
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn int_arg[&g](g: &g Args, key: &static [byte], dflt: int) -> [args] int {
+    let i = find_arg(g, key);
+    if i < 0 {
+        return dflt;
+    }
+    let a = arg(g, i);
+    return number_of(a[len(key) + 1..len(a)]);
+}
+
+// ---------------------------------------------------------------- reading files
+
+fn read_all[&h, &f](heap: &!h Heap, file: &!f File, text: buffer.Buffer) -> [heap, file_read] buffer.Buffer {
+    var out = text;
+    var chunk = buffer.empty(heap, 4194304);
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            match file_read(file, buffer.room(cw)) {
+                Read::Got(n) => {
+                    buffer.filled(cw, n);
+                    got = n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        if got > 0 {
+            borrow chunk as &cr in {
+                out = buffer.append(heap, out, buffer.bytes(cr));
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return out;
+}
+
+// the bytes of an opened file appended to `text` (a failed open leaves it as it is)
+fn slurp[&h](heap: &!h Heap, o: Opened, text: buffer.Buffer) -> [heap, file_read] buffer.Buffer {
+    var out = text;
+    match o {
+        Opened::Ok(file) => {
+            var fl = file;
+            borrow mut fl as &!fw in {
+                out = read_all(heap, fw, out);
+            }
+            file_close(fl);
+        }
+        Opened::Failed(reason) => {
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- printing
+
+fn hex16[&i, &l](io: &!i Io, line: &!l [byte], bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            line[k] = byte_of('0' + nib);
+        } else {
+            line[k] = byte_of('a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    io.write_all(io, line[0..16]);
+    return 0;
+}
+
+fn sp[&i](io: &!i Io, v: int) -> [io_write] int {
+    io.write_all(io, " ");
+    io.print_int(io, v);
+    return 0;
+}
+
+fn lines_edges[&i, &l, &e](io: &!i Io, line: &!l [byte], ed: &e [float], d: int, nbins: int) -> [io_write] int {
+    var f = 0;
+    while f < d {
+        var k = 1;
+        while k < nbins {
+            io.write_all(io, "E ");
+            io.print_int(io, f);
+            sp(io, k);
+            io.write_all(io, " ");
+            hex16(io, line, bits_of(ed[f * (nbins - 1) + k - 1]));
+            io.newline(io);
+            k = k + 1;
+        }
+        f = f + 1;
+    }
+    return 0;
+}
+
+fn lines_nodes[&i, &l, &fr](io: &!i Io, line: &!l [byte], f: &fr forest.Forest) -> [io_write] int {
+    let toff = contents(f.toff);
+    let ni = contents(f.ni);
+    let nv = contents(f.nv);
+    var t = 0;
+    while t < f.trees {
+        var j = 0;
+        while j < toff[t + 1] - toff[t] {
+            let g = toff[t] + j;
+            io.write_all(io, "N ");
+            io.print_int(io, t);
+            sp(io, j);
+            var k = 0;
+            while k < 7 {
+                sp(io, ni[k * f.total + g]);
+                k = k + 1;
+            }
+            io.write_all(io, " ");
+            hex16(io, line, bits_of(nv[g]));
+            io.newline(io);
+            j = j + 1;
+        }
+        t = t + 1;
+    }
+    return 0;
+}
+
+fn lines_probs[&i, &l, &p](io: &!i Io, line: &!l [byte], pr: &p [float], n: int) -> [io_write] int {
+    var k = 0;
+    while k < n {
+        io.write_all(io, "P ");
+        io.print_int(io, k);
+        io.write_all(io, " ");
+        hex16(io, line, bits_of(pr[k]));
+        io.newline(io);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the SHA-256 of `data` in lowercase hex, one line
+fn sha_line[&i, &d](io: &!i Io, data: &d [byte]) -> [io_write] int {
+    region a {
+        let dg = alloc_slice[a](32, byte_of(0));
+        crypto.sha256(data, dg);
+        let hx = alloc_slice[a](64, byte_of(0));
+        var k = 0;
+        while k < 32 {
+            let hi = int_of(dg[k]) >> 4;
+            let lo = int_of(dg[k]) & 15;
+            if hi < 10 {
+                hx[2 * k] = byte_of('0' + hi);
+            } else {
+                hx[2 * k] = byte_of('a' + hi - 10);
+            }
+            if lo < 10 {
+                hx[2 * k + 1] = byte_of('0' + lo);
+            } else {
+                hx[2 * k + 1] = byte_of('a' + lo - 10);
+            }
+            k = k + 1;
+        }
+        io.write_all(io, hx);
+    }
+    return 0;
+}
+
+fn refused[&i](io: &!i Io, code: int) -> [io_write] int {
+    io.write_all(io, "refused ");
+    io.write_all(io, deny.tag(code));
+    io.newline(io);
+    return 0;
+}
+
+// ---------------------------------------------------------------- bitmaps of a row range
+
+// the bitmap of rows r0 .. r1 - 1 of the n-row bitmap `src` (d columns), re-packed with its own stride
+fn repack[&s, &o](src: &s [byte], n: int, d: int, r0: int, r1: int, dst: &!o [byte]) -> [] int {
+    if len(src) == 0 {
+        return 0;
+    }
+    let st = bins.stride(n);
+    let pst = bins.stride(r1 - r0);
+    var c = 0;
+    while c < d {
+        var i = r0;
+        while i < r1 {
+            if bins.is_missing(src, st, c, i) {
+                let j = i - r0;
+                dst[c * pst + (j >> 3)] = byte_of(int_of(dst[c * pst + (j >> 3)]) | 1 << (j & 7));
+            }
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- mode gt
+
+fn mode_gt[&i](io: &!i Io) -> [io_write] int {
+    // pseudo-random pairs from the SplitMix64 stream, and the pairs at the bounds of section 3.1
+    var s = 12345;
+    var k = 0;
+    while k < 2000 {
+        var a = 0;
+        var b = 0;
+        var c = 0;
+        var e = 0;
+        var m = 0;
+        s = rng.advance(s);
+        m = 2 + rng.uniform(rng.output(s), 1048575);
+        s = rng.advance(s);
+        let nl = 1 + rng.uniform(rng.output(s), m - 1);
+        s = rng.advance(s);
+        let pl = rng.uniform(rng.output(s), nl + 1);
+        s = rng.advance(s);
+        let n1 = pl + rng.uniform(rng.output(s), m - nl + 1);
+        let nr = m - nl;
+        let pr = n1 - pl;
+        a = (pl * pl + (nl - pl) * (nl - pl)) * nr + (pr * pr + (nr - pr) * (nr - pr)) * nl;
+        b = nl * nr;
+        s = rng.advance(s);
+        let nl2 = 1 + rng.uniform(rng.output(s), m - 1);
+        s = rng.advance(s);
+        let pl2 = rng.uniform(rng.output(s), nl2 + 1);
+        let nr2 = m - nl2;
+        s = rng.advance(s);
+        let pr2 = rng.uniform(rng.output(s), nr2 + 1);
+        c = (pl2 * pl2 + (nl2 - pl2) * (nl2 - pl2)) * nr2 + (pr2 * pr2 + (nr2 - pr2) * (nr2 - pr2)) * nl2;
+        e = nl2 * nr2;
+        io.write_all(io, "G ");
+        io.print_int(io, a);
+        sp(io, b);
+        sp(io, c);
+        sp(io, e);
+        if exact.gt(a, b, c, e) {
+            io.write_all(io, " 1");
+        } else {
+            io.write_all(io, " 0");
+        }
+        io.newline(io);
+        k = k + 1;
+    }
+    // bounds: m = 2^20; the largest numerators and denominators, equal and off by one
+    let m2 = 1048576;
+    let big = m2 * m2 * m2 / 2;
+    let dd = m2 * m2 / 4;
+    var j = 0;
+    while j < 6 {
+        io.write_all(io, "G ");
+        io.print_int(io, big - 1 + j);
+        sp(io, dd);
+        sp(io, big + 2 - j);
+        sp(io, dd - 1 + j % 3);
+        if exact.gt(big - 1 + j, dd, big + 2 - j, dd - 1 + j % 3) {
+            io.write_all(io, " 1");
+        } else {
+            io.write_all(io, " 0");
+        }
+        io.newline(io);
+        j = j + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- mode fit
+
+// The forest on the first ntr rows, its predictions on the others; prints the lines of the header. xs holds n rows, ys n values,
+// bmfull the bitmap of the n rows (or empty).
+fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, xs: &x [float], ys: &y [float], bmfull: &b [byte], n: int, d: int, ntr: int, p: params.Params, full: bool, reps: int, phase: int) -> [heap, io_write, clock, conc] int {
+    let nte = n - ntr;
+    var trbytes = 1;
+    var tebytes = 1;
+    if len(bmfull) != 0 {
+        trbytes = d * bins.stride(ntr);
+        tebytes = d * bins.stride(nte);
+    }
+    let trbm = box_slice(heap, trbytes, byte_of(0));
+    let tebm = box_slice(heap, tebytes, byte_of(0));
+    var trlen = 0;
+    var telen = 0;
+    if len(bmfull) != 0 {
+        trlen = trbytes;
+        telen = tebytes;
+    }
+    borrow mut trbm as &!tw in {
+        repack(bmfull, n, d, 0, ntr, contents(tw));
+    }
+    borrow mut tebm as &!ew in {
+        repack(bmfull, n, d, ntr, n, contents(ew));
+    }
+    let line = box_slice(heap, 16, byte_of(10));
+    var code = 0;
+    var best = forest.empty(heap);
+    var t0 = 0;
+    var t1 = 0;
+    borrow trbm as &tr in {
+        let tbm = contents(tr)[0..trlen];
+        var r = 0;
+        t0 = clock_ms(clock);
+        while r < reps {
+            let (f, c) = forest.fit(heap, p, ntr, d, xs[0..ntr * d], tbm, ys[0..ntr], 10000000, 4096, 400000000);
+            code = c;
+            if r == 0 {
+                forest.drop(heap, best);
+                best = f;
+            } else {
+                forest.drop(heap, f);
+            }
+            r = r + 1;
+        }
+        t1 = clock_ms(clock);
+    }
+    if code != 0 {
+        refused(io, code);
+        forest.drop(heap, best);
+        unbox_slice(heap, trbm);
+        unbox_slice(heap, tebm);
+        unbox_slice(heap, line);
+        return 0;
+    }
+    // predictions
+    let pr = box_slice(heap, nte + 1, 0.0);
+    var t2 = 0;
+    var t3 = 0;
+    var pcode = 0;
+    borrow tebm as &er in {
+        let ebm = contents(er)[0..telen];
+        borrow mut pr as &!pw in {
+            var r = 0;
+            t2 = clock_ms(clock);
+            while r < reps {
+                borrow best as &bf in {
+                    pcode = predict.predict(heap, bf, xs[ntr * d..n * d], ebm, nte, d, p.threads, contents(pw)[0..nte]);
+                }
+                r = r + 1;
+            }
+            t3 = clock_ms(clock);
+        }
+    }
+    if pcode != 0 {
+        refused(io, pcode);
+    }
+    // the edges (recomputed with the library's own function; fit does not return them)
+    let ne = p.bins - 1;
+    let ed = box_slice(heap, d * ne + 1, 0.0);
+    var te0 = 0;
+    var te1 = 0;
+    var te2 = 0;
+    let ka = box_slice(heap, ntr + 1, 0);
+    let kb = box_slice(heap, ntr + 1, 0);
+    let cn = box_slice(heap, 2048, 0);
+    let bn = box_slice(heap, d * ntr + 1, byte_of(0));
+    borrow trbm as &tr2 in {
+        let tbm = contents(tr2)[0..trlen];
+        borrow mut ka as &!kaw in {
+            borrow mut kb as &!kbw in {
+                borrow mut cn as &!cnw in {
+                    borrow mut ed as &!edw in {
+                        te0 = clock_ms(clock);
+                        bins.make_edges(xs[0..ntr * d], tbm, ntr, d, p.bins, contents(kaw), contents(kbw), contents(cnw), contents(edw));
+                        te1 = clock_ms(clock);
+                        if phase == 1 {
+                            borrow mut bn as &!bnw in {
+                                bins.make_bins(xs[0..ntr * d], tbm, contents(edw), ntr, d, p.bins, contents(bnw));
+                            }
+                        }
+                        te2 = clock_ms(clock);
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ka);
+    unbox_slice(heap, kb);
+    unbox_slice(heap, cn);
+    unbox_slice(heap, bn);
+    borrow mut line as &!lw in {
+        borrow ed as &edr in {
+            if full {
+                lines_edges(io, contents(lw), contents(edr), d, p.bins);
+            }
+        }
+        if full {
+            borrow best as &bf in {
+                lines_nodes(io, contents(lw), bf);
+            }
+        }
+        borrow pr as &prr in {
+            if full {
+                lines_probs(io, contents(lw), contents(prr), nte);
+            }
+            io.write_all(io, "H pred ");
+            hex16(io, contents(lw), testdata.hash(contents(prr), nte));
+            io.newline(io);
+        }
+    }
+    var payload = buffer.empty(heap, 1);
+    var total_nodes = 0;
+    borrow best as &bf in {
+        buffer.drop(heap, payload);
+        payload = model.write(heap, bf);
+        total_nodes = bf.total;
+    }
+    borrow payload as &pbr in {
+        io.write_all(io, "H forest ");
+        sha_line(io, buffer.bytes(pbr));
+        io.newline(io);
+        io.write_all(io, "#model_bytes");
+        sp(io, len(buffer.bytes(pbr)));
+        io.newline(io);
+    }
+    buffer.drop(heap, payload);
+    io.write_all(io, "#nodes");
+    sp(io, total_nodes);
+    io.newline(io);
+    io.write_all(io, "#reps");
+    sp(io, reps);
+    io.newline(io);
+    io.write_all(io, "#fit_ms_total");
+    sp(io, t1 - t0);
+    io.newline(io);
+    io.write_all(io, "#predict_ms_total");
+    sp(io, t3 - t2);
+    io.newline(io);
+    io.write_all(io, "#edges_ms");
+    sp(io, te1 - te0);
+    io.newline(io);
+    io.write_all(io, "#bins_ms");
+    sp(io, te2 - te1);
+    io.newline(io);
+    forest.drop(heap, best);
+    unbox_slice(heap, trbm);
+    unbox_slice(heap, tebm);
+    unbox_slice(heap, line);
+    unbox_slice(heap, pr);
+    unbox_slice(heap, ed);
+    return 0;
+}
+
+// ---------------------------------------------------------------- mode fuzz
+
+// predict 32 synthetic rows (every 7th cell missing) on a forest the reader accepted: it must return
+fn exercise[&h, &fr](heap: &!h Heap, f: &fr forest.Forest) -> [heap, conc] int {
+    let d = f.d;
+    let rows = 32;
+    let xs = box_slice(heap, rows * d, 0.0);
+    let bm = box_slice(heap, d * bins.stride(rows), byte_of(0));
+    let out = box_slice(heap, rows, 0.0);
+    borrow mut xs as &!xw in {
+        testdata.fill(contents(xw), rows * d, 99);
+    }
+    borrow mut bm as &!bw in {
+        var c = 0;
+        while c < d {
+            var i = 0;
+            while i < rows {
+                if (c * rows + i) % 7 == 0 {
+                    contents(bw)[c * bins.stride(rows) + (i >> 3)] = byte_of(int_of(contents(bw)[c * bins.stride(rows) + (i >> 3)]) | 1 << (i & 7));
+                }
+                i = i + 1;
+            }
+            c = c + 1;
+        }
+    }
+    var code = 0;
+    borrow xs as &xr in {
+        borrow bm as &br in {
+            borrow mut out as &!ow in {
+                code = predict.predict(heap, f, contents(xr), contents(br), rows, d, 1, contents(ow));
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, bm);
+    unbox_slice(heap, out);
+    return code;
+}
+
+// read `data`; an accepted forest is exercised and dropped. 0 accepted, else the refusal
+fn try_read[&h, &s](heap: &!h Heap, data: &s [byte]) -> [heap, conc] int {
+    let (f, code) = model.read(heap, data, 1000000);
+    if code == 0 {
+        borrow f as &fr in {
+            exercise(heap, fr);
+        }
+    }
+    forest.drop(heap, f);
+    return code;
+}
+
+fn fuzz_one[&h, &i, &fr](heap: &!h Heap, io: &!i Io, label: &static [byte], f: &fr forest.Forest) -> [heap, io_write, conc] int {
+    let payload = model.write(heap, f);
+    var unexpected = 0;
+    var accepted = 0;
+    var refused_n = 0;
+    var size = 0;
+    borrow payload as &pr in {
+        let src = buffer.bytes(pr);
+        size = len(src);
+        // the undamaged payload is accepted, and writes back the same bytes
+        let (g, c0) = model.read(heap, src, 1000000);
+        if c0 != 0 {
+            unexpected = unexpected + 1;
+        } else {
+            var again = buffer.empty(heap, 1);
+            borrow g as &gr in {
+                buffer.drop(heap, again);
+                again = model.write(heap, gr);
+            }
+            borrow again as &ar in {
+                let b2 = buffer.bytes(ar);
+                var k = 0;
+                if len(b2) != size {
+                    unexpected = unexpected + 1;
+                } else {
+                    while k < size {
+                        if b2[k] != src[k] {
+                            unexpected = unexpected + 1;
+                            k = size;
+                        }
+                        k = k + 1;
+                    }
+                }
+            }
+            buffer.drop(heap, again);
+        }
+        forest.drop(heap, g);
+        // every truncation is ml.model.truncated
+        var cut = 0;
+        while cut < size {
+            if try_read(heap, src[0..cut]) != deny.model_truncated() {
+                unexpected = unexpected + 1;
+            }
+            cut = cut + 1;
+        }
+        // damage
+        let work = box_slice(heap, size + 1, byte_of(0));
+        borrow mut work as &!ww in {
+            let w = contents(ww);
+            copy_into(w[0..size], src);
+            var pos = 0;
+            while pos < size {
+                let orig = int_of(src[pos]);
+                var v = 0;
+                while v < 11 {
+                    var nv = 0;
+                    if v == 0 {
+                        nv = 0;
+                    } else if v == 1 {
+                        nv = 255;
+                    } else if v == 2 {
+                        nv = 255 - orig;
+                    } else {
+                        nv = orig ^ 1 << v - 3;
+                    }
+                    if pos >= 512 && v >= 3 {
+                        nv = orig;
+                    }
+                    if nv != orig {
+                        w[pos] = byte_of(nv);
+                        if try_read(heap, w[0..size]) == 0 {
+                            accepted = accepted + 1;
+                        } else {
+                            refused_n = refused_n + 1;
+                        }
+                        w[pos] = byte_of(orig);
+                    }
+                    v = v + 1;
+                }
+                pos = pos + 1;
+            }
+            // seeded multi-byte damage
+            var s = rng.derive(777, size);
+            var q = 0;
+            while q < 4000 {
+                var hits = 1;
+                s = rng.advance(s);
+                hits = 1 + rng.uniform(rng.output(s), 4);
+                var u = 0;
+                while u < hits {
+                    s = rng.advance(s);
+                    let at = rng.uniform(rng.output(s), size);
+                    s = rng.advance(s);
+                    w[at] = byte_of(rng.uniform(rng.output(s), 256));
+                    u = u + 1;
+                }
+                if try_read(heap, w[0..size]) == 0 {
+                    accepted = accepted + 1;
+                } else {
+                    refused_n = refused_n + 1;
+                }
+                copy_into(w[0..size], src);
+                q = q + 1;
+            }
+        }
+        unbox_slice(heap, work);
+    }
+    buffer.drop(heap, payload);
+    io.write_all(io, "fuzz ");
+    io.write_all(io, label);
+    io.write_all(io, " size");
+    sp(io, size);
+    io.write_all(io, " accepted");
+    sp(io, accepted);
+    io.write_all(io, " refused");
+    sp(io, refused_n);
+    io.write_all(io, " unexpected");
+    sp(io, unexpected);
+    io.newline(io);
+    return unexpected;
+}
+
+fn run_fuzz[&h, &i, &x, &y, &b](heap: &!h Heap, io: &!i Io, xs: &x [float], ys: &y [float], bmfull: &b [byte], n: int, d: int) -> [heap, io_write, conc] int {
+    var bad = 0;
+    var task = 0;
+    while task < 2 {
+        let p = params.Params { task: task, trees: 3, max_depth: 4, min_leaf: 2, max_nodes: 100, bins: 16, mtry: 0, bootstrap: 1, seed: 5, threads: 1 };
+        let (f, code) = forest.fit(heap, p, n, d, xs[0..n * d], bmfull, ys[0..n], 10000000, 4096, 400000000);
+        if code != 0 {
+            refused(io, code);
+            bad = bad + 1;
+        } else {
+            var label = "class";
+            if task == 1 {
+                label = "regression";
+            }
+            borrow f as &fr in {
+                bad = bad + fuzz_one(heap, io, label, fr);
+            }
+        }
+        forest.drop(heap, f);
+        task = task + 1;
+    }
+    if bad == 0 {
+        io.write_all(io, "fuzz ok\n");
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- main
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    var mode = 0;
+    var n = 0;
+    var d = 0;
+    var ntr = 0;
+    var task = 0;
+    var seed = 20261012;
+    var trees = 10;
+    var depth = 8;
+    var leaf = 1;
+    var nodes = 4194304;
+    var nbins = 64;
+    var mtry = 0;
+    var boot = 1;
+    var threads = 1;
+    var full = true;
+    var reps = 1;
+    var phase = 0;
+    borrow args as &g in {
+        let mi = find_arg(g, "mode");
+        if mi >= 0 {
+            let m = arg(g, mi);
+            if m[5] == byte_of('f') && m[6] == byte_of('i') {
+                mode = 1;
+            } else if m[5] == byte_of('f') && m[6] == byte_of('u') {
+                mode = 2;
+            } else if m[5] == byte_of('g') {
+                mode = 3;
+            }
+        }
+        n = int_arg(g, "n", 0);
+        d = int_arg(g, "d", 0);
+        ntr = int_arg(g, "ntr", n - n / 5);
+        task = int_arg(g, "task", 0);
+        seed = int_arg(g, "seed", 20261012);
+        trees = int_arg(g, "trees", 10);
+        depth = int_arg(g, "depth", 8);
+        leaf = int_arg(g, "leaf", 1);
+        nodes = int_arg(g, "nodes", 4194304);
+        nbins = int_arg(g, "bins", 64);
+        mtry = int_arg(g, "mtry", 0);
+        boot = int_arg(g, "boot", 1);
+        threads = int_arg(g, "threads", 1);
+        reps = int_arg(g, "reps", 1);
+        phase = int_arg(g, "phase", 0);
+        let oi = find_arg(g, "out");
+        if oi >= 0 {
+            if arg(g, oi)[4] == byte_of('h') {
+                full = false;
+            }
+        }
+    }
+    let p = params.Params { task: task, trees: trees, max_depth: depth, min_leaf: leaf, max_nodes: nodes, bins: nbins, mtry: mtry, bootstrap: boot, seed: seed, threads: threads };
+    borrow mut heap as &!hp in {
+        borrow mut io as &!i in {
+            if mode == 3 {
+                mode_gt(i);
+            } else if mode == 1 || mode == 2 {
+                var xb = buffer.empty(hp, 1);
+                var yb = buffer.empty(hp, 1);
+                var mb = buffer.empty(hp, 1);
+                borrow fs as &f in {
+                    borrow args as &g in {
+                        let ix = find_arg(g, "x");
+                        if ix >= 0 {
+                            let a = arg(g, ix);
+                            xb = slurp(hp, open_read(f, a[2..len(a)]), xb);
+                        }
+                        let iy = find_arg(g, "y");
+                        if iy >= 0 {
+                            let a = arg(g, iy);
+                            yb = slurp(hp, open_read(f, a[2..len(a)]), yb);
+                        }
+                        let im = find_arg(g, "miss");
+                        if im >= 0 {
+                            let a = arg(g, im);
+                            mb = slurp(hp, open_read(f, a[5..len(a)]), mb);
+                        }
+                    }
+                }
+                var ok = false;
+                borrow xb as &xr in {
+                    borrow yb as &yr in {
+                        ok = n >= 1 && d >= 1 && len(buffer.bytes(xr)) == n * d * 8 && len(buffer.bytes(yr)) == n * 8 && ntr >= 1 && ntr < n;
+                    }
+                }
+                if ok {
+                    let xs = box_slice(hp, n * d + 1, 0.0);
+                    let ys = box_slice(hp, n + 1, 0.0);
+                    borrow xb as &xr in {
+                        borrow mut xs as &!xw in {
+                            fbits.load(buffer.bytes(xr), 0, contents(xw), n * d);
+                        }
+                    }
+                    borrow yb as &yr in {
+                        borrow mut ys as &!yw in {
+                            fbits.load(buffer.bytes(yr), 0, contents(yw), n);
+                        }
+                    }
+                    borrow xs as &xr in {
+                        borrow ys as &yr in {
+                            borrow mb as &mr in {
+                                if mode == 1 {
+                                    borrow clock as &kc in {
+                                        run_fit(hp, i, kc, contents(xr)[0..n * d], contents(yr)[0..n], buffer.bytes(mr), n, d, ntr, p, full, reps, phase);
+                                    }
+                                } else {
+                                    run_fuzz(hp, i, contents(xr), contents(yr), buffer.bytes(mr), ntr, d);
+                                }
+                            }
+                        }
+                    }
+                    unbox_slice(hp, xs);
+                    unbox_slice(hp, ys);
+                } else {
+                    io.write_all(i, "#error: bad arguments or file sizes\n");
+                }
+                buffer.drop(hp, xb);
+                buffer.drop(hp, yb);
+                buffer.drop(hp, mb);
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}

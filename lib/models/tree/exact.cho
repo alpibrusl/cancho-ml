@@ -1,0 +1,31 @@
+edition 5;
+
+module tree.exact;
+
+// Exact comparison of two Gini scores (docs/models-tree.md section 3.1). A candidate's score is N / D with integers
+// N = (pl^2 + ql^2) nr + (pr^2 + qr^2) nl and D = nl nr; for a node of m <= 2^20 rows, N < 2^60 and D < 2^38. cancho has no
+// multiply-high, so the products N1 * D2 and N2 * D1 (below 2^98) are formed in base 2^30 limbs: exact, and compared as
+// (high part, low 60 bits).
+
+// the product a * b for 0 <= a < 2^60 and 0 <= b < 2^38, as (the bits above 60, the low 60 bits)
+pub fn mul_hi_lo(a: int, b: int) -> [] (int, int) {
+    let a1 = a >> 30;
+    let a0 = a & 0x3FFFFFFF;
+    let b1 = b >> 30;
+    let b0 = b & 0x3FFFFFFF;
+    let lo = a0 * b0;
+    let t = a1 * b0 + a0 * b1 + (lo >> 30);
+    let hi = a1 * b1 + (t >> 30);
+    let low = (t & 0x3FFFFFFF) << 30 | lo & 0x3FFFFFFF;
+    return (hi, low);
+}
+
+// n1 / d1 > n2 / d2, i.e. n1 * d2 > n2 * d1, exactly (all four non-negative, n < 2^60, d < 2^38, d >= 1)
+pub fn gt(n1: int, d1: int, n2: int, d2: int) -> [] bool {
+    let (hp, lp) = mul_hi_lo(n1, d2);
+    let (hq, lq) = mul_hi_lo(n2, d1);
+    if hp != hq {
+        return hp > hq;
+    }
+    return lp > lq;
+}

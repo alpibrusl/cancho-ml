@@ -1,0 +1,400 @@
+edition 5;
+
+module tree.forest;
+
+import ml.limits;
+import ml.refuse;
+import tree.deny;
+import tree.params;
+import tree.bins;
+import tree.grow;
+
+// The forest and its fit (docs/models-tree.md sections 2, 3.2 and 5). `fit` validates everything before it allocates anything
+// sized by the input, bins the columns once, grows the trees (one thread per static group of trees, each tree wholly in one
+// thread with its own streams) and packs the trees, in tree order, into the arrays of the model.
+//
+// The packed layout is the model's (section 7): the node arrays of all trees, field-major:
+//     ni[k * total + g] with k = 0 feat, 1 bin, 2 dleft, 3 left, 4 right (tree-local indices), 5 na, 6 nb;   nv[g] = threshold or leaf value
+// and toff[t] is the first node of tree t (toff[trees] = total).
+
+pub res struct Forest {
+    task: int,
+    trees: int,
+    d: int,
+    nbins: int,
+    total: int,
+    max_depth: int,
+    min_leaf: int,
+    mtry: int,
+    toff: Box[[int]],
+    ni: Box[[int]],
+    nv: Box[[float]],
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Forest {
+    return Forest { task: 0, trees: 0, d: 0, nbins: 0, total: 0, max_depth: 0, min_leaf: 0, mtry: 0, toff: box_slice(heap, 1, 0), ni: box_slice(heap, 1, 0), nv: box_slice(heap, 1, 0.0) };
+}
+
+pub fn drop[&h](heap: &!h Heap, f: Forest) -> [heap] int {
+    let Forest { task, trees, d, nbins, total, max_depth, min_leaf, mtry, toff, ni, nv } = f;
+    unbox_slice(heap, toff);
+    unbox_slice(heap, ni);
+    unbox_slice(heap, nv);
+    return total;
+}
+
+// ---------------------------------------------------------------- growing a group of trees
+
+// Trees t0 .. t1 - 1 into the slots: tree t at oi[(t - t0) * 7 * cap ..], ov[(t - t0) * cap ..], its node count (or 0 - code)
+// in cn[t - t0]. Stops at the first refusal.
+fn run_trees[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c, &q](p: params.Params, n: int, d: int, mtry: int, cap: int, t0: int, t1: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], ed: &e [float], idx: &!i [int], tmp: &!t [int], wk: &!w [int], wf: &!wfl [float], oi: &!a [int], ov: &!c [float], cn: &!q [int]) -> [] int {
+    var t = t0;
+    while t < t1 {
+        let j = t - t0;
+        let r = grow.grow(p, n, d, mtry, cap, t, bins, yb, yv, ed, idx, tmp, wk, wf, oi[j * 7 * cap..(j + 1) * 7 * cap], ov[j * cap..(j + 1) * cap]);
+        cn[j] = r;
+        if r < 0 {
+            return r;
+        }
+        t = t + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- threads: a job owns copies of what its trees read
+
+res struct Job {
+    bins: Box[[byte]],
+    yb: Box[[byte]],
+    yv: Box[[float]],
+    ed: Box[[float]],
+    idx: Box[[int]],
+    tmp: Box[[int]],
+    wk: Box[[int]],
+    wf: Box[[float]],
+    oi: Box[[int]],
+    ov: Box[[float]],
+    cn: Box[[int]],
+    pr: Box[[int]],
+}
+
+fn put_params[&w](pr: &!w [int], p: params.Params, n: int, d: int, mtry: int, cap: int, t0: int, t1: int) -> [] int {
+    pr[0] = p.task;
+    pr[1] = p.trees;
+    pr[2] = p.max_depth;
+    pr[3] = p.min_leaf;
+    pr[4] = p.max_nodes;
+    pr[5] = p.bins;
+    pr[6] = p.mtry;
+    pr[7] = p.bootstrap;
+    pr[8] = p.seed;
+    pr[9] = n;
+    pr[10] = d;
+    pr[11] = mtry;
+    pr[12] = cap;
+    pr[13] = t0;
+    pr[14] = t1;
+    pr[15] = p.threads;
+    return 0;
+}
+
+fn work[&r](job: &!r Job) -> [] int {
+    let pr = contents(job.pr);
+    let p = params.Params { task: pr[0], trees: pr[1], max_depth: pr[2], min_leaf: pr[3], max_nodes: pr[4], bins: pr[5], mtry: pr[6], bootstrap: pr[7], seed: pr[8], threads: pr[15] };
+    run_trees(p, pr[9], pr[10], pr[11], pr[12], pr[13], pr[14], contents(job.bins), contents(job.yb), contents(job.yv), contents(job.ed), contents(job.idx), contents(job.tmp), contents(job.wk), contents(job.wf), contents(job.oi), contents(job.ov), contents(job.cn));
+    return 0;
+}
+
+fn copy_bytes[&d2, &s](dst: &!d2 [byte], src: &s [byte], n: int) -> [] int {
+    copy_into(dst[0..n], src[0..n]);
+    return 0;
+}
+
+fn copy_floats[&d2, &s](dst: &!d2 [float], src: &s [float], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn copy_ints[&d2, &s](dst: &!d2 [int], src: &s [int], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the first tree of group k of te groups over `trees` trees (a static partition of the trees)
+pub fn group_start(k: int, te: int, trees: int) -> [] int {
+    return k * trees / te;
+}
+
+fn make_job[&h, &b, &y, &yf, &e](heap: &!h Heap, p: params.Params, n: int, d: int, mtry: int, cap: int, t0: int, t1: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], ed: &e [float]) -> [heap] Job {
+    let q = t1 - t0;
+    let ne = p.bins - 1;
+    var job = Job { bins: box_slice(heap, d * n + 1, byte_of(0)), yb: box_slice(heap, len(yb) + 1, byte_of(0)), yv: box_slice(heap, len(yv) + 1, 0.0), ed: box_slice(heap, d * ne + 1, 0.0), idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), wk: box_slice(heap, grow.work_ints(p.bins, d, mtry) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), oi: box_slice(heap, q * 7 * cap + 1, 0), ov: box_slice(heap, q * cap + 1, 0.0), cn: box_slice(heap, q + 1, 0), pr: box_slice(heap, 16, 0) };
+    borrow mut job as &!jk in {
+        put_params(contents(jk.pr), p, n, d, mtry, cap, t0, t1);
+        copy_bytes(contents(jk.bins), bins, d * n);
+        copy_bytes(contents(jk.yb), yb, len(yb));
+        copy_floats(contents(jk.yv), yv, len(yv));
+        copy_floats(contents(jk.ed), ed, d * ne);
+    }
+    return job;
+}
+
+// Groups k .. te - 1: spawn group k, make and run the later ones, join, then copy group k's trees into the slots (tree t at
+// slot t). One level of the recursion per thread, as the number of threads is a call depth (cancho-table docs/parallel.md).
+fn fan[&h, &b, &y, &yf, &e, &o, &oo, &c](heap: &!h Heap, p: params.Params, n: int, d: int, mtry: int, cap: int, gb: &b [byte], gy: &y [byte], gv: &yf [float], ge: &e [float], k: int, te: int, so: &!o [int], sv: &!oo [float], sc: &!c [int]) -> [heap, conc] int {
+    if k >= te {
+        return 0;
+    }
+    let t0 = group_start(k, te, p.trees);
+    let t1 = group_start(k + 1, te, p.trees);
+    var job = make_job(heap, p, n, d, mtry, cap, t0, t1, gb, gy, gv, ge);
+    borrow mut job as &!jk in {
+        let body = work;
+        let th = spawn(jk, body);
+        fan(heap, p, n, d, mtry, cap, gb, gy, gv, ge, k + 1, te, so, sv, sc);
+        join(th);
+    }
+    let Job { bins, yb, yv, ed, idx, tmp, wk, wf, oi, ov, cn, pr } = job;
+    borrow oi as &or in {
+        copy_ints(so[t0 * 7 * cap..t1 * 7 * cap], contents(or), (t1 - t0) * 7 * cap);
+    }
+    borrow ov as &vr in {
+        copy_floats(sv[t0 * cap..t1 * cap], contents(vr), (t1 - t0) * cap);
+    }
+    borrow cn as &cr in {
+        copy_ints(sc[t0..t1], contents(cr), t1 - t0);
+    }
+    unbox_slice(heap, bins);
+    unbox_slice(heap, yb);
+    unbox_slice(heap, yv);
+    unbox_slice(heap, ed);
+    unbox_slice(heap, idx);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, wk);
+    unbox_slice(heap, wf);
+    unbox_slice(heap, oi);
+    unbox_slice(heap, ov);
+    unbox_slice(heap, cn);
+    unbox_slice(heap, pr);
+    return 0;
+}
+
+// ---------------------------------------------------------------- the input checks
+
+// 0, or the refusal for the labels / targets; ones = the number of labels equal to 1 (classification)
+fn check_target[&y, &o](task: int, ys: &y [float], n: int, yb: &!o [byte]) -> [] int {
+    var ones = 0;
+    var i = 0;
+    if task == 0 {
+        while i < n {
+            let v = ys[i];
+            if v == 1.0 {
+                yb[i] = byte_of(1);
+                ones = ones + 1;
+            } else if v != 0.0 {
+                return deny.not_binary();
+            }
+            i = i + 1;
+        }
+        if ones == 0 || ones == n {
+            return deny.single_class();
+        }
+        return 0;
+    }
+    let big = params.y_max();
+    while i < n {
+        let v = ys[i];
+        if !(v == v && v - v == 0.0 && v <= big && v >= 0.0 - big) {
+            return deny.non_finite();
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- fit
+
+// Fit a forest on the n x d row-major matrix xs (with the missing bitmap bm, or empty) and the targets ys. Answers the forest and
+// the code of the refusal (0 for none; the forest is then empty). The caps are those of ml.limits (the caller's flags).
+pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Forest, int) {
+    var code = params.check(p, n, d, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (empty(heap), code);
+    }
+    if len(xs) != n * d || len(ys) != n {
+        return (empty(heap), refuse.param_out_of_range());
+    }
+    code = bins.check_bitmap(bm, n, d);
+    if code != 0 {
+        return (empty(heap), code);
+    }
+    if bins.count_bad_cells(xs, bm, n, d) != 0 {
+        return (empty(heap), deny.non_finite());
+    }
+    var nyb = 1;
+    var nyv = 1;
+    if p.task == 0 {
+        nyb = n;
+    } else {
+        nyv = n;
+    }
+    let yb = box_slice(heap, nyb, byte_of(0));
+    var yv = box_slice(heap, nyv, 0.0);
+    borrow mut yb as &!ybw in {
+        code = check_target(p.task, ys, n, contents(ybw));
+    }
+    if code != 0 {
+        unbox_slice(heap, yb);
+        unbox_slice(heap, yv);
+        return (empty(heap), code);
+    }
+    if p.task == 1 {
+        borrow mut yv as &!yvw in {
+            copy_floats(contents(yvw), ys, n);
+        }
+    }
+    let mtry = params.mtry_of(p, d);
+    let cap = params.node_cap(p, n);
+    let ne = p.bins - 1;
+    let ed = box_slice(heap, d * ne + 1, 0.0);
+    let binm = box_slice(heap, d * n + 1, byte_of(0));
+    let slots_i = box_slice(heap, p.trees * 7 * cap + 1, 0);
+    let slots_v = box_slice(heap, p.trees * cap + 1, 0.0);
+    let counts = box_slice(heap, p.trees + 1, 0);
+    // edges and bins (the serial part of fit). The scratch is on the heap: a `region` is one 64 KiB arena chunk and traps beyond it
+    let ka = box_slice(heap, n + 1, 0);
+    let kb = box_slice(heap, n + 1, 0);
+    let cn = box_slice(heap, 2048, 0);
+    borrow mut ka as &!kaw in {
+        borrow mut kb as &!kbw in {
+            borrow mut cn as &!cnw in {
+                borrow mut ed as &!edw in {
+                    bins.make_edges(xs, bm, n, d, p.bins, contents(kaw), contents(kbw), contents(cnw), contents(edw));
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ka);
+    unbox_slice(heap, kb);
+    unbox_slice(heap, cn);
+    borrow ed as &edr in {
+        borrow mut binm as &!bw in {
+            bins.make_bins(xs, bm, contents(edr), n, d, p.bins, contents(bw));
+        }
+    }
+    let te = p.threads;
+    var used = te;
+    if used > p.trees {
+        used = p.trees;
+    }
+    borrow binm as &br in {
+        borrow yb as &ybr in {
+            borrow yv as &yvr in {
+                borrow ed as &edr in {
+                    borrow mut slots_i as &!siw in {
+                        borrow mut slots_v as &!svw in {
+                            borrow mut counts as &!cw in {
+                                if used == 1 {
+                                    let idx = box_slice(heap, n + 1, 0);
+                                    let tmp = box_slice(heap, n + 1, 0);
+                                    let wk = box_slice(heap, grow.work_ints(p.bins, d, mtry) + 1, 0);
+                                    let wf = box_slice(heap, grow.work_floats(p.bins) + 1, 0.0);
+                                    borrow mut idx as &!iw in {
+                                        borrow mut tmp as &!tw in {
+                                            borrow mut wk as &!kw in {
+                                                borrow mut wf as &!fw in {
+                                                    run_trees(p, n, d, mtry, cap, 0, p.trees, contents(br), contents(ybr), contents(yvr), contents(edr), contents(iw), contents(tw), contents(kw), contents(fw), contents(siw), contents(svw), contents(cw));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    unbox_slice(heap, idx);
+                                    unbox_slice(heap, tmp);
+                                    unbox_slice(heap, wk);
+                                    unbox_slice(heap, wf);
+                                } else {
+                                    fan(heap, p, n, d, mtry, cap, contents(br), contents(ybr), contents(yvr), contents(edr), 0, used, contents(siw), contents(svw), contents(cw));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, binm);
+    unbox_slice(heap, ed);
+    unbox_slice(heap, yb);
+    unbox_slice(heap, yv);
+    // pack, in tree order; the refusal of the lowest tree wins
+    var total = 0;
+    var refusal = 0;
+    borrow counts as &cr in {
+        let cs = contents(cr);
+        var t = 0;
+        while t < p.trees {
+            if cs[t] < 0 && refusal == 0 {
+                refusal = 0 - cs[t];
+            }
+            if cs[t] > 0 {
+                total = total + cs[t];
+            }
+            t = t + 1;
+        }
+    }
+    if refusal != 0 {
+        unbox_slice(heap, slots_i);
+        unbox_slice(heap, slots_v);
+        unbox_slice(heap, counts);
+        return (empty(heap), refusal);
+    }
+    let toff = box_slice(heap, p.trees + 1, 0);
+    let ni = box_slice(heap, 7 * total + 1, 0);
+    let nv = box_slice(heap, total + 1, 0.0);
+    borrow counts as &cr in {
+        borrow slots_i as &sir in {
+            borrow slots_v as &svr in {
+                borrow mut toff as &!tow in {
+                    borrow mut ni as &!niw in {
+                        borrow mut nv as &!nvw in {
+                            let cs = contents(cr);
+                            let si = contents(sir);
+                            let sv = contents(svr);
+                            var off = 0;
+                            var t = 0;
+                            while t < p.trees {
+                                contents(tow)[t] = off;
+                                let c = cs[t];
+                                var k = 0;
+                                while k < 7 {
+                                    copy_ints(contents(niw)[k * total + off..k * total + off + c], si[t * 7 * cap + k * cap..t * 7 * cap + k * cap + c], c);
+                                    k = k + 1;
+                                }
+                                copy_floats(contents(nvw)[off..off + c], sv[t * cap..t * cap + c], c);
+                                off = off + c;
+                                t = t + 1;
+                            }
+                            contents(tow)[p.trees] = off;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, slots_i);
+    unbox_slice(heap, slots_v);
+    unbox_slice(heap, counts);
+    return (Forest { task: p.task, trees: p.trees, d: d, nbins: p.bins, total: total, max_depth: p.max_depth, min_leaf: p.min_leaf, mtry: mtry, toff: toff, ni: ni, nv: nv }, 0);
+}

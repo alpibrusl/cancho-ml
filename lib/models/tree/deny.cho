@@ -1,0 +1,101 @@
+edition 5;
+
+module tree.deny;
+
+import ml.refuse;
+
+// The refusals of the tree library (docs/models-tree.md section 4). A code is an int, 0 is "no refusal". Codes 1 to 11 are those
+// of ml.refuse (the numeric core); the codes here start at 101 so that the two sets never meet. `tag`, `exit_code` and `repair`
+// answer for both. Every code has a fixture in tests/t_tree.cho, which fails if a code has no tag.
+
+pub fn non_finite() -> [] int {
+    return 101;
+}
+
+pub fn not_binary() -> [] int {
+    return 102;
+}
+
+pub fn single_class() -> [] int {
+    return 103;
+}
+
+pub fn limit_depth() -> [] int {
+    return 104;
+}
+
+pub fn limit_nodes() -> [] int {
+    return 105;
+}
+
+pub fn model_truncated() -> [] int {
+    return 106;
+}
+
+pub fn model_malformed() -> [] int {
+    return 107;
+}
+
+pub fn schema_mismatch() -> [] int {
+    return 108;
+}
+
+// the codes of this module, in order, for the fixtures: 101 .. last()
+pub fn last() -> [] int {
+    return 108;
+}
+
+pub fn tag(code: int) -> [] &static [byte] {
+    if code == 101 {
+        return "ml.input.non-finite";
+    }
+    if code == 102 {
+        return "ml.label.not-binary";
+    }
+    if code == 103 {
+        return "ml.label.single-class";
+    }
+    if code == 104 {
+        return "ml.limit.depth";
+    }
+    if code == 105 {
+        return "ml.limit.nodes";
+    }
+    if code == 106 {
+        return "ml.model.truncated";
+    }
+    if code == 107 {
+        return "ml.model.malformed";
+    }
+    if code == 108 {
+        return "ml.schema.mismatch";
+    }
+    return refuse.tag(code);
+}
+
+// the toolbox exit code: arguments 2 (ml.param.*), a limit or a parse failure 8
+pub fn exit_code(code: int) -> [] int {
+    if code >= 101 && code <= 108 {
+        return 8;
+    }
+    return refuse.exit_code(code);
+}
+
+pub fn repair(code: int) -> [] &static [byte] {
+    if code == 101 {
+        return "impute the cell, mark it missing in the bitmap, or drop the row";
+    }
+    if code == 102 {
+        return "encode the label as exactly 0 and 1";
+    }
+    if code == 104 {
+        return "give a max-depth of at most 30";
+    }
+    if code == 105 {
+        return "raise --max-nodes, lower the depth or the number of trees, or raise min-samples-leaf";
+    }
+    if code == 108 {
+        return "give the columns the model was fitted with";
+    }
+    return refuse.repair(code);
+}
