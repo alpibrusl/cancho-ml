@@ -289,11 +289,15 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs:
     unbox_slice(heap, ka);
     unbox_slice(heap, kb);
     unbox_slice(heap, cn);
+    let ep = box_slice(heap, d * 256, 0.0);
     borrow ed as &edr in {
-        borrow mut binm as &!bw in {
-            bins.make_bins(xs, bm, contents(edr), n, d, p.bins, contents(bw));
+        borrow mut ep as &!epw in {
+            borrow mut binm as &!bw in {
+                bins.make_bins(xs, bm, contents(edr), n, d, p.bins, contents(epw), contents(bw));
+            }
         }
     }
+    unbox_slice(heap, ep);
     let te = p.threads;
     var used = te;
     if used > p.trees {

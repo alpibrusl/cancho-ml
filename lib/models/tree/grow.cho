@@ -404,17 +404,18 @@ pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int,
             while k < hi {
                 let r = idx[k];
                 let v = int_of(col[r]);
-                var left = v <= bb;
+                var lf = 0;
+                if v <= bb {
+                    lf = 1;
+                }
                 if v == nbins {
-                    left = bdl == 1;
+                    lf = bdl;
                 }
-                if left {
-                    idx[a] = r;
-                    a = a + 1;
-                } else {
-                    tmp[z] = r;
-                    z = z + 1;
-                }
+                // branch-free: write the row to both lists, advance one of them (a <= k, so idx[a] is never a row still to be read)
+                idx[a] = r;
+                tmp[z] = r;
+                a = a + lf;
+                z = z + 1 - lf;
                 k = k + 1;
             }
             k = 0;

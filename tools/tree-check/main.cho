@@ -1,7 +1,7 @@
 // tree-check: the gates' driver for lib/models/tree (docs/models-tree.md section 8). Not the command line of `ml`.
 //
 //     tree-check mode=fit x=X.bin y=Y.bin [miss=M.bin] n=N d=D [ntr=T] task=0|1 seed=S trees=T depth=D leaf=L nodes=M bins=B
-//                mtry=K boot=0|1 threads=T [out=full|hash] [reps=R] [phase=1]
+//                mtry=K boot=0|1 threads=T [out=full|hash] [reps=R] [preps=P] [phase=1]
 //     tree-check mode=fuzz x=.. y=.. n=.. d=..         (damages model payloads; any trap or hang is a failure)
 //     tree-check mode=gt                               (the exact Gini comparison on fixed pairs, for scripts/check_tree.py)
 //
@@ -343,7 +343,7 @@ fn mode_gt[&i](io: &!i Io) -> [io_write] int {
 
 // The forest on the first ntr rows, its predictions on the others; prints the lines of the header. xs holds n rows, ys n values,
 // bmfull the bitmap of the n rows (or empty).
-fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, xs: &x [float], ys: &y [float], bmfull: &b [byte], n: int, d: int, ntr: int, p: params.Params, full: bool, reps: int, phase: int) -> [heap, io_write, clock, conc] int {
+fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, xs: &x [float], ys: &y [float], bmfull: &b [byte], n: int, d: int, ntr: int, p: params.Params, full: bool, reps: int, preps: int, phase: int) -> [heap, io_write, clock, conc] int {
     let nte = n - ntr;
     var trbytes = 1;
     var tebytes = 1;
@@ -405,7 +405,7 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
         borrow mut pr as &!pw in {
             var r = 0;
             t2 = clock_ms(clock);
-            while r < reps {
+            while r < preps {
                 borrow best as &bf in {
                     pcode = predict.predict(heap, bf, xs[ntr * d..n * d], ebm, nte, d, p.threads, contents(pw)[0..nte]);
                 }
@@ -427,6 +427,7 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
     let kb = box_slice(heap, ntr + 1, 0);
     let cn = box_slice(heap, 2048, 0);
     let bn = box_slice(heap, d * ntr + 1, byte_of(0));
+    let ep = box_slice(heap, d * 256, 0.0);
     borrow trbm as &tr2 in {
         let tbm = contents(tr2)[0..trlen];
         borrow mut ka as &!kaw in {
@@ -438,7 +439,9 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
                         te1 = clock_ms(clock);
                         if phase == 1 {
                             borrow mut bn as &!bnw in {
-                                bins.make_bins(xs[0..ntr * d], tbm, contents(edw), ntr, d, p.bins, contents(bnw));
+                                borrow mut ep as &!epw in {
+                                    bins.make_bins(xs[0..ntr * d], tbm, contents(edw), ntr, d, p.bins, contents(epw), contents(bnw));
+                                }
                             }
                         }
                         te2 = clock_ms(clock);
@@ -451,6 +454,7 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
     unbox_slice(heap, kb);
     unbox_slice(heap, cn);
     unbox_slice(heap, bn);
+    unbox_slice(heap, ep);
     borrow mut line as &!lw in {
         borrow ed as &edr in {
             if full {
@@ -495,6 +499,9 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
     io.newline(io);
     io.write_all(io, "#fit_ms_total");
     sp(io, t1 - t0);
+    io.newline(io);
+    io.write_all(io, "#preps");
+    sp(io, preps);
     io.newline(io);
     io.write_all(io, "#predict_ms_total");
     sp(io, t3 - t2);
@@ -1239,6 +1246,7 @@ fn main(world: World) -> [conc] int {
     var threads = 1;
     var full = true;
     var reps = 1;
+    var preps = 1;
     var phase = 0;
     borrow args as &g in {
         let mi = find_arg(g, "mode");
@@ -1266,6 +1274,7 @@ fn main(world: World) -> [conc] int {
         boot = int_arg(g, "boot", 1);
         threads = int_arg(g, "threads", 1);
         reps = int_arg(g, "reps", 1);
+        preps = int_arg(g, "preps", reps);
         phase = int_arg(g, "phase", 0);
         let oi = find_arg(g, "out");
         if oi >= 0 {
@@ -1326,7 +1335,7 @@ fn main(world: World) -> [conc] int {
                             borrow mb as &mr in {
                                 if mode == 1 {
                                     borrow clock as &kc in {
-                                        run_fit(hp, i, kc, contents(xr)[0..n * d], contents(yr)[0..n], buffer.bytes(mr), n, d, ntr, p, full, reps, phase);
+                                        run_fit(hp, i, kc, contents(xr)[0..n * d], contents(yr)[0..n], buffer.bytes(mr), n, d, ntr, p, full, reps, preps, phase);
                                     }
                                 } else {
                                     run_fuzz(hp, i, contents(xr), contents(yr), buffer.bytes(mr), n, ntr, d);

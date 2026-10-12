@@ -168,40 +168,112 @@ pub fn make_edges[&x, &b, &a, &k2, &c, &e](xs: &x [float], bm: &b [byte], n: int
 
 // ---------------------------------------------------------------- bins
 
-// the first power of two not above v (v >= 1)
-fn top_step(v: int) -> [] int {
-    var s = 1;
-    while s * 2 <= v {
-        s = s * 2;
+// The edges padded with +inf to ps entries per column (ps = 64 when nbins <= 64, else 256), ep[f * ps + k - 1] = e[f][k]
+fn pad_edges[&e, &o](ed: &e [float], d: int, nbins: int, ps: int, ep: &!o [float]) -> [] int {
+    let ne = nbins - 1;
+    let inf = 1.0e300 * 1.0e300;
+    var f = 0;
+    while f < d {
+        var k = 0;
+        while k < ps {
+            if k < ne {
+                ep[f * ps + k] = ed[f * ne + k];
+            } else {
+                ep[f * ps + k] = inf;
+            }
+            k = k + 1;
+        }
+        f = f + 1;
     }
-    return s;
+    return 0;
 }
 
-// bins[f * n + i] = #{k : e[f][k] <= x[i][f]} (nbins for a missing cell), by a branch-light search over the nbins - 1 edges
-pub fn make_bins[&x, &b, &e, &o](xs: &x [float], bm: &b [byte], ed: &e [float], n: int, d: int, nbins: int, bins: &!o [byte]) -> [] int {
+// #{k : e[k - 1] <= x} over a column of 256 non-decreasing entries (+inf past the real edges): 8 steps of a binary search with a
+// constant trip count and every index masked into the table, so that the compare compiles to a select and not to a branch
+// (measured: 5 ms against 33 ms for 80,000 rows x 20 columns with a search that tests `t <= ne` and bounds-checks `e[t - 1]`;
+// docs/models-tree.md section 10)
+fn bin_of[&e](e: &e [float], x: float) -> [] int {
+    var c = 0;
+    if e[127] <= x {
+        c = 128;
+    }
+    if e[c + 63 & 255] <= x {
+        c = c + 64;
+    }
+    if e[c + 31 & 255] <= x {
+        c = c + 32;
+    }
+    if e[c + 15 & 255] <= x {
+        c = c + 16;
+    }
+    if e[c + 7 & 255] <= x {
+        c = c + 8;
+    }
+    if e[c + 3 & 255] <= x {
+        c = c + 4;
+    }
+    if e[c + 1 & 255] <= x {
+        c = c + 2;
+    }
+    if e[c & 255] <= x {
+        c = c + 1;
+    }
+    return c;
+}
+
+// the same over 64 entries (at most 63 edges): 6 steps
+fn bin_of64[&e](e: &e [float], x: float) -> [] int {
+    var c = 0;
+    if e[31] <= x {
+        c = 32;
+    }
+    if e[c + 15 & 63] <= x {
+        c = c + 16;
+    }
+    if e[c + 7 & 63] <= x {
+        c = c + 8;
+    }
+    if e[c + 3 & 63] <= x {
+        c = c + 4;
+    }
+    if e[c + 1 & 63] <= x {
+        c = c + 2;
+    }
+    if e[c & 63] <= x {
+        c = c + 1;
+    }
+    return c;
+}
+
+// bins[f * n + i] = the bin of x[i][f] (nbins for a missing cell). `ep` is scratch of d * ps floats, ps = 64 for nbins <= 64, else 256.
+pub fn make_bins[&x, &b, &e, &p, &o](xs: &x [float], bm: &b [byte], ed: &e [float], n: int, d: int, nbins: int, ep: &!p [float], bins: &!o [byte]) -> [] int {
     let st = stride(n);
-    let ne = nbins - 1;
-    let top = top_step(ne);
     var i = 0;
+    if nbins <= 64 {
+        pad_edges(ed, d, nbins, 64, ep);
+        while i < n {
+            let row = xs[i * d..i * d + d];
+            var f = 0;
+            while f < d {
+                var c = nbins;
+                if len(bm) == 0 || !is_missing(bm, st, f, i) {
+                    c = bin_of64(ep[f * 64..f * 64 + 64], row[f]);
+                }
+                bins[f * n + i] = byte_of(c);
+                f = f + 1;
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+    pad_edges(ed, d, nbins, 256, ep);
     while i < n {
         let row = xs[i * d..i * d + d];
         var f = 0;
         while f < d {
-            let ee = ed[f * ne..f * ne + ne];
-            let x = row[f];
-            var c = 0;
-            var step = top;
-            while step > 0 {
-                let t = c + step;
-                if t <= ne {
-                    if ee[t - 1] <= x {
-                        c = t;
-                    }
-                }
-                step = step >> 1;
-            }
-            if len(bm) != 0 && is_missing(bm, st, f, i) {
-                c = nbins;
+            var c = nbins;
+            if len(bm) == 0 || !is_missing(bm, st, f, i) {
+                c = bin_of(ep[f * 256..f * 256 + 256], row[f]);
             }
             bins[f * n + i] = byte_of(c);
             f = f + 1;

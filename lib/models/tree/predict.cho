@@ -23,6 +23,32 @@ pub fn kernel[&t, &n, &v, &x, &b, &o](trees: int, d: int, total: int, toff: &t [
     let st = bins.stride(rows);
     let ftrees = float_of(trees);
     var i = 0;
+    if len(bm) == 0 {
+        // no missing cell: the same walk without the bitmap test
+        while i < rows {
+            let row = xs[i * d..i * d + d];
+            var acc = 0.0;
+            var t = 0;
+            while t < trees {
+                let base = toff[t];
+                var g = base;
+                var f = ft[g];
+                while f >= 0 {
+                    if row[f] < nv[g] {
+                        g = base + lc[g];
+                    } else {
+                        g = base + rc[g];
+                    }
+                    f = ft[g];
+                }
+                acc = acc + nv[g];
+                t = t + 1;
+            }
+            out[i] = acc / ftrees;
+            i = i + 1;
+        }
+        return 0;
+    }
     while i < rows {
         let row = xs[i * d..i * d + d];
         var acc = 0.0;
@@ -33,7 +59,7 @@ pub fn kernel[&t, &n, &v, &x, &b, &o](trees: int, d: int, total: int, toff: &t [
             var f = ft[g];
             while f >= 0 {
                 var left = false;
-                if len(bm) != 0 && bins.is_missing(bm, st, f, i) {
+                if bins.is_missing(bm, st, f, i) {
                     left = dl[g] == 1;
                 } else {
                     left = row[f] < nv[g];

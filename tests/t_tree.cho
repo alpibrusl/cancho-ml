@@ -456,6 +456,7 @@ fn t_bins_edges[&h](heap: &!h Heap) -> [heap] int {
     let cn = box_slice(heap, 2048, 0);
     let ed = box_slice(heap, 3, 0.0);
     let bn = box_slice(heap, 100, byte_of(0));
+    let ep = box_slice(heap, 256, 0.0);
     borrow xs as &xr in {
         let none = "";
         borrow mut ka as &!a in {
@@ -465,7 +466,9 @@ fn t_bins_edges[&h](heap: &!h Heap) -> [heap] int {
                         bins.make_edges(contents(xr), none, 100, 1, 4, contents(a), contents(b), contents(c), contents(e));
                         bad = bad + pass(contents(e)[0] == 25.0 && contents(e)[1] == 50.0 && contents(e)[2] == 75.0);
                         borrow mut bn as &!o in {
-                            bins.make_bins(contents(xr), none, contents(e), 100, 1, 4, contents(o));
+                            borrow mut ep as &!pw in {
+                                bins.make_bins(contents(xr), none, contents(e), 100, 1, 4, contents(pw), contents(o));
+                            }
                             // 99 - i: value 25.0 is at i = 74, an edge value goes to the upper bin
                             bad = bad + pass(int_of(contents(o)[74]) == 1 && int_of(contents(o)[75]) == 0);
                             bad = bad + pass(int_of(contents(o)[49]) == 2 && int_of(contents(o)[50]) == 1);
@@ -482,6 +485,7 @@ fn t_bins_edges[&h](heap: &!h Heap) -> [heap] int {
     unbox_slice(heap, cn);
     unbox_slice(heap, ed);
     unbox_slice(heap, bn);
+    unbox_slice(heap, ep);
     return bad;
 }
 
