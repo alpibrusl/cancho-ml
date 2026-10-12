@@ -1,0 +1,165 @@
+module models.record;
+
+import ml.fbits;
+
+// Tensor records of the model file (docs/design.md 4.1, docs/models-linear.md 3.4): u32 dtype | u32 rank | rank x u64 shape | the
+// elements row-major, all little-endian. dtype 1 = i64 (tools/ml/mfile.cho), dtype 2 = f64 (new here). The estimator payload of the
+// `model` section is u32 kind then records: kind 3 linear (coef: rank 1, d; intercept: rank 1, 1), kind 4 logistic (the same), kind 5
+// k-means (centroids: rank 2, k x d). Nothing here is wired into tools/ml/mfile.cho yet.
+
+pub fn dtype_f64() -> [] int {
+    return 2;
+}
+
+pub fn kind_linear() -> [] int {
+    return 3;
+}
+
+pub fn kind_logistic() -> [] int {
+    return 4;
+}
+
+pub fn kind_kmeans() -> [] int {
+    return 5;
+}
+
+// the statuses of a decode
+pub fn ok() -> [] int {
+    return 0;
+}
+
+pub fn truncated() -> [] int {
+    return 1;
+}
+
+pub fn bad_dtype() -> [] int {
+    return 2;
+}
+
+pub fn bad_shape() -> [] int {
+    return 3;
+}
+
+pub fn bad_value() -> [] int {
+    return 4;
+}
+
+pub fn put32[&d](dst: &!d [byte], at: int, v: int) -> [] int {
+    var k = 0;
+    while k < 4 {
+        dst[at + k] = byte_of(v >> 8 * k & 255);
+        k = k + 1;
+    }
+    return 0;
+}
+
+pub fn get32[&s](src: &s [byte], at: int) -> [] int {
+    var v = 0;
+    var k = 3;
+    while k >= 0 {
+        v = v << 8 | int_of(src[at + k]);
+        k = k - 1;
+    }
+    return v;
+}
+
+// bytes of a record of the given rank and element count
+pub fn size(rank: int, count: int) -> [] int {
+    return 8 + 8 * rank + 8 * count;
+}
+
+// write a rank 1 (s1 = 0) or rank 2 f64 record of vals at `at` in dst (which must hold size() bytes from `at`); answers the end offset
+pub fn encode_f64[&d, &v](dst: &!d [byte], at: int, rank: int, s0: int, s1: int, vals: &v [float]) -> [] int {
+    var pos = at;
+    put32(dst, pos, dtype_f64());
+    put32(dst, pos + 4, rank);
+    pos = pos + 8;
+    fbits.put64(dst, pos, s0);
+    pos = pos + 8;
+    var count = s0;
+    if rank == 2 {
+        fbits.put64(dst, pos, s1);
+        pos = pos + 8;
+        count = s0 * s1;
+    }
+    fbits.store(vals, dst, pos, count);
+    return pos + 8 * count;
+}
+
+// the result of a decode: a status, the rank, the extents and the offset after the record
+pub struct Rec {
+    code: int,
+    rank: int,
+    s0: int,
+    s1: int,
+    end: int,
+}
+
+fn rec(code: int, rank: int, s0: int, s1: int, end: int) -> [] Rec {
+    return Rec { code: code, rank: rank, s0: s0, s1: s1, end: end };
+}
+
+// Read a record at `at` of src: the structure is checked against the bytes that are there and against `max_count` before out is
+// written; the elements go to out (which must hold max_count values). A non-finite or not reproducible element is bad_value.
+pub fn decode_f64[&s, &o](src: &s [byte], at: int, max_count: int, out: &!o [float]) -> [] Rec {
+    if at < 0 || len(src) - at < 16 {
+        return rec(truncated(), 0, 0, 0, at);
+    }
+    if get32(src, at) != dtype_f64() {
+        return rec(bad_dtype(), 0, 0, 0, at);
+    }
+    let rank = get32(src, at + 4);
+    if rank < 1 || rank > 2 {
+        return rec(bad_shape(), rank, 0, 0, at);
+    }
+    var pos = at + 8;
+    if len(src) - pos < 8 * rank {
+        return rec(truncated(), rank, 0, 0, at);
+    }
+    let s0 = fbits.get64(src, pos);
+    pos = pos + 8;
+    var s1 = 0;
+    var count = s0;
+    if rank == 2 {
+        s1 = fbits.get64(src, pos);
+        pos = pos + 8;
+        if s0 < 1 || s1 < 1 || s0 > max_count / s1 {
+            return rec(bad_shape(), rank, s0, s1, at);
+        }
+        count = s0 * s1;
+    } else if s0 < 1 || s0 > max_count {
+        return rec(bad_shape(), rank, s0, s1, at);
+    }
+    if count > max_count {
+        return rec(bad_shape(), rank, s0, s1, at);
+    }
+    if (len(src) - pos) / 8 < count {
+        return rec(truncated(), rank, s0, s1, at);
+    }
+    if fbits.load(src, pos, out, count) != 0 {
+        return rec(bad_value(), rank, s0, s1, at);
+    }
+    return rec(ok(), rank, s0, s1, pos + 8 * count);
+}
+
+// bytes of the payload of a linear or logistic model with d features
+pub fn linear_size(d: int) -> [] int {
+    return 4 + size(1, d) + size(1, 1);
+}
+
+pub fn kmeans_size(k: int, d: int) -> [] int {
+    return 4 + size(2, k * d);
+}
+
+// kind | coef record | intercept record, from w = (coef[0..d), intercept); answers the end offset
+pub fn encode_linear[&d, &w](dst: &!d [byte], at: int, kind: int, nfeat: int, wv: &w [float]) -> [] int {
+    put32(dst, at, kind);
+    var pos = encode_f64(dst, at + 4, 1, nfeat, 0, wv[0..nfeat]);
+    pos = encode_f64(dst, pos, 1, 1, 0, wv[nfeat..nfeat + 1]);
+    return pos;
+}
+
+pub fn encode_kmeans[&d, &c](dst: &!d [byte], at: int, k: int, nfeat: int, cen: &c [float]) -> [] int {
+    put32(dst, at, kind_kmeans());
+    return encode_f64(dst, at + 4, 2, k, nfeat, cen[0..k * nfeat]);
+}

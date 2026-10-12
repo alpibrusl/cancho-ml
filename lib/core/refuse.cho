@@ -5,7 +5,7 @@ module ml.refuse;
 // lib/ answers one of these codes; tests/core.cho has a fixture for every one (and fails if a code has no tag).
 
 pub fn count() -> [] int {
-    return 11;
+    return 15;
 }
 
 pub fn tensor_rank() -> [] int {
@@ -52,6 +52,22 @@ pub fn threads() -> [] int {
     return 11;
 }
 
+pub fn input_non_finite() -> [] int {
+    return 12;
+}
+
+pub fn label_single_class() -> [] int {
+    return 13;
+}
+
+pub fn label_not_binary() -> [] int {
+    return 14;
+}
+
+pub fn fit_non_finite() -> [] int {
+    return 15;
+}
+
 pub fn tag(code: int) -> [] &static [byte] {
     if code == 1 {
         return "ml.tensor.rank";
@@ -86,6 +102,18 @@ pub fn tag(code: int) -> [] &static [byte] {
     if code == 11 {
         return "ml.param.threads";
     }
+    if code == 12 {
+        return "ml.input.non-finite";
+    }
+    if code == 13 {
+        return "ml.label.single-class";
+    }
+    if code == 14 {
+        return "ml.label.not-binary";
+    }
+    if code == 15 {
+        return "ml.fit.non-finite";
+    }
     return "";
 }
 
@@ -94,7 +122,7 @@ pub fn exit_code(code: int) -> [] int {
     if code == 8 || code == 11 {
         return 2;
     }
-    if code >= 1 && code <= 10 {
+    if code >= 1 && code <= 10 || code >= 12 && code <= 15 {
         return 8;
     }
     return 0;
@@ -127,6 +155,15 @@ pub fn repair(code: int) -> [] &static [byte] {
     }
     if code == 11 {
         return "give a thread count of 1 to 64";
+    }
+    if code == 12 {
+        return "impute or drop the rows with a missing or infinite value";
+    }
+    if code == 14 {
+        return "the target must be exactly 0 or 1";
+    }
+    if code == 15 {
+        return "scale the features, add l2, or use fewer iterations";
     }
     return "";
 }

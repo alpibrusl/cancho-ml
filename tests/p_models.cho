@@ -1,0 +1,538 @@
+edition 5;
+
+import std.io;
+import std.math;
+import ml.refuse;
+import ml.rng;
+import ml.fbits;
+import ml.limits;
+import linalg.tensor;
+import models.common;
+import models.score;
+import models.record;
+import models.linreg;
+
+// The program of the gates G-unit, G-refusal, G-fuzz and G-limits of docs/models-linear.md section 2 (a program and not
+// `cancho test` tests, because the estimators spawn threads and the test runner's main has no `conc`). It prints one line per
+// test and exits with the number of failing tests. scripts/check.sh builds and runs it.
+
+fn mat(rows: int, cols: int) -> [] tensor.Tensor {
+    return common.mat(rows, cols);
+}
+
+// a row-major descriptor made by hand, whatever the extents (tensor.matrix refuses an absurd one before the fit can)
+fn raw(rows: int, cols: int) -> [] tensor.Tensor {
+    return tensor.Tensor { off: 0, rank: 2, s0: rows, s1: cols, s2: 1, s3: 1, t0: cols, t1: 1, t2: 0, t3: 0 };
+}
+
+fn fill[&h](heap: &!h Heap, n: int, seed: int) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!w in {
+        var i = 0;
+        while i < n {
+            contents(w)[i] = rng.element(seed, i);
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// 0/1 labels from the sign of the first feature plus noise
+fn labels[&h](heap: &!h Heap, n: int, d: int, seed: int) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!w in {
+        var i = 0;
+        while i < n {
+            var lab = 0.0;
+            if rng.element(seed, i * d) + 0.7 * rng.element(seed + 1, i) > 0.0 {
+                lab = 1.0;
+            }
+            contents(w)[i] = lab;
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+fn same_bits[&a, &b](x: &a [float], y: &b [float], n: int) -> [] int {
+    var bad = 0;
+    var i = 0;
+    while i < n {
+        if bits_of(x[i]) != bits_of(y[i]) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- the score order
+fn test_score_order[&h](heap: &!h Heap) -> [heap] int {
+    // terms 1.0, 1e16, -1e16 from the intercept 0: the left fold gives ((0 + 1) + 1e16) + -1e16 = 0 (1 + 1e16 rounds to 1e16),
+    // the reverse order gives 1; the test fails if the order is reversed
+    let x = box_slice(heap, 6, 1.0);
+    let w = box_slice(heap, 4, 0.0);
+    let out = box_slice(heap, 2, 9.0);
+    var bad = 0;
+    borrow mut w as &!ww in {
+        contents(ww)[0] = 1.0;
+        contents(ww)[1] = 1.0e16;
+        contents(ww)[2] = 0.0 - 1.0e16;
+        contents(ww)[3] = 0.0;
+    }
+    let want = 0.0 + 1.0 * 1.0 + 1.0e16 * 1.0 + (0.0 - 1.0e16) * 1.0;
+    let rev = 0.0 + (0.0 - 1.0e16) + 1.0e16 + 1.0;
+    borrow x as &xr in {
+        borrow w as &wr in {
+            borrow mut out as &!ow in {
+                if score.scores(mat(2, 3), contents(xr), contents(wr), contents(ow)) != 0 {
+                    bad = bad + 1;
+                }
+                if bits_of(contents(ow)[0]) != bits_of(want) || bits_of(contents(ow)[1]) != bits_of(want) {
+                    bad = bad + 1;
+                }
+                // the test is able to fail: the reverse order is another number
+                if bits_of(want) == bits_of(rev) {
+                    bad = bad + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, w);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// four rows at a time and one row at a time have the same bits, for 17 rows (four groups and a remainder)
+fn test_score_four_rows_equal_one_row[&h](heap: &!h Heap) -> [heap] int {
+    let xs = fill(heap, 17 * 5, 77);
+    let w = fill(heap, 6, 78);
+    let all = box_slice(heap, 17, 0.0);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow w as &wr in {
+            borrow mut all as &!aw in {
+                if score.scores(mat(17, 5), contents(xr), contents(wr), contents(aw)) != 0 {
+                    bad = bad + 1;
+                }
+                var i = 0;
+                while i < 17 {
+                    var z = contents(wr)[5];
+                    var j = 0;
+                    while j < 5 {
+                        z = z + contents(xr)[i * 5 + j] * contents(wr)[j];
+                        j = j + 1;
+                    }
+                    if bits_of(z) != bits_of(contents(aw)[i]) {
+                        bad = bad + 1;
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, w);
+    unbox_slice(heap, all);
+    return bad;
+}
+
+// ---------------------------------------------------------------- records
+fn test_record_bytes_and_round_trip[&h](heap: &!h Heap) -> [heap] int {
+    let w = fill(heap, 4, 5);
+    let bytes = box_slice(heap, record.linear_size(3) + 8, byte_of(0));
+    let back = box_slice(heap, 8, 0.0);
+    var bad = 0;
+    borrow w as &wr in {
+        borrow mut bytes as &!bw in {
+            let end = record.encode_linear(contents(bw), 0, record.kind_linear(), 3, contents(wr));
+            if end != record.linear_size(3) {
+                bad = bad + 1;
+            }
+        }
+        borrow bytes as &br in {
+            let b = contents(br);
+            // kind 3, then dtype 2, rank 1, shape 3 as u64: the hand-written layout
+            if record.get32(b, 0) != 3 || record.get32(b, 4) != 2 || record.get32(b, 8) != 1 || fbits.get64(b, 12) != 3 {
+                bad = bad + 1;
+            }
+            // the first element's 8 bytes are its bits, little endian
+            if fbits.get64(b, 20) != bits_of(contents(wr)[0]) {
+                bad = bad + 1;
+            }
+            // second record: dtype 2, rank 1, shape 1, the intercept
+            let at = 4 + record.size(1, 3);
+            if record.get32(b, at) != 2 || record.get32(b, at + 4) != 1 || fbits.get64(b, at + 8) != 1 || fbits.get64(b, at + 16) != bits_of(contents(wr)[3]) {
+                bad = bad + 1;
+            }
+            borrow mut back as &!kw in {
+                let r = record.decode_f64(b, 4, 8, contents(kw));
+                if r.code != 0 || r.rank != 1 || r.s0 != 3 || r.end != at {
+                    bad = bad + 1;
+                }
+                bad = bad + same_bits(contents(kw), contents(wr), 3);
+                let r2 = record.decode_f64(b, r.end, 8, contents(kw));
+                if r2.code != 0 || r2.s0 != 1 || r2.end != record.linear_size(3) || bits_of(contents(kw)[0]) != bits_of(contents(wr)[3]) {
+                    bad = bad + 1;
+                }
+                // every truncation is refused, and so is anything over the cap, a wrong dtype, rank and shape, a NaN
+                var cut = 0;
+                while cut < at {
+                    if record.decode_f64(b[0..cut], 4, 8, contents(kw)).code == 0 {
+                        bad = bad + 1;
+                    }
+                    cut = cut + 1;
+                }
+                if record.decode_f64(b, 4, 2, contents(kw)).code != record.bad_shape() {
+                    bad = bad + 1;
+                }
+            }
+        }
+        // damaged copies
+        borrow mut bytes as &!bw in {
+            let b = contents(bw);
+            record.put32(b, 4, 1);
+            borrow mut back as &!kw in {
+                if record.decode_f64(b, 4, 8, contents(kw)).code != record.bad_dtype() {
+                    bad = bad + 1;
+                }
+                record.put32(b, 4, 2);
+                record.put32(b, 8, 3);
+                if record.decode_f64(b, 4, 8, contents(kw)).code != record.bad_shape() {
+                    bad = bad + 1;
+                }
+                record.put32(b, 8, 1);
+                fbits.put64(b, 12, 9223372036854775807);
+                if record.decode_f64(b, 4, 8, contents(kw)).code != record.bad_shape() {
+                    bad = bad + 1;
+                }
+                fbits.put64(b, 12, 0 - 1);
+                if record.decode_f64(b, 4, 8, contents(kw)).code != record.bad_shape() {
+                    bad = bad + 1;
+                }
+                fbits.put64(b, 12, 3);
+                fbits.put64(b, 20, 2047 << 52 | 1);
+                if record.decode_f64(b, 4, 8, contents(kw)).code != record.bad_value() {
+                    bad = bad + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, w);
+    unbox_slice(heap, bytes);
+    unbox_slice(heap, back);
+    return bad;
+}
+
+fn test_record_kmeans_rank2[&h](heap: &!h Heap) -> [heap] int {
+    let c = fill(heap, 12, 9);
+    let bytes = box_slice(heap, record.kmeans_size(4, 3), byte_of(0));
+    let back = box_slice(heap, 12, 0.0);
+    var bad = 0;
+    borrow c as &cr in {
+        borrow mut bytes as &!bw in {
+            if record.encode_kmeans(contents(bw), 0, 4, 3, contents(cr)) != record.kmeans_size(4, 3) {
+                bad = bad + 1;
+            }
+        }
+        borrow bytes as &br in {
+            borrow mut back as &!kw in {
+                let r = record.decode_f64(contents(br), 4, 12, contents(kw));
+                if record.get32(contents(br), 0) != 5 || r.code != 0 || r.rank != 2 || r.s0 != 4 || r.s1 != 3 || r.end != record.kmeans_size(4, 3) {
+                    bad = bad + 1;
+                }
+                bad = bad + same_bits(contents(kw), contents(cr), 12);
+            }
+        }
+    }
+    unbox_slice(heap, c);
+    unbox_slice(heap, bytes);
+    unbox_slice(heap, back);
+    return bad;
+}
+
+// ---------------------------------------------------------------- wrappers: every fit with generous output buffers
+fn lin_fit[&h, &x, &y](heap: &!h Heap, t: int, rows: int, cols: int, xs: &x [float], ys: &y [float], l2: float) -> [heap, conc] int {
+    let out = box_slice(heap, 300, 0.0);
+    let diag = box_slice(heap, 90000, 0.0);
+    var code = 0;
+    borrow mut out as &!ow in {
+        borrow mut diag as &!dw in {
+            code = linreg.fit(heap, t, raw(rows, cols), xs, ys, l2, contents(ow), contents(dw));
+        }
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    return code;
+}
+
+fn expect(code: int, want: int) -> [] int {
+    if code == want {
+        return 0;
+    }
+    return 1 + code * 100 + want;
+}
+
+// ---------------------------------------------------------------- linear regression
+fn test_linreg_recovers_a_plane[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 60;
+    let xs = fill(heap, n * 2, 31);
+    let ys = box_slice(heap, n, 0.0);
+    let out = box_slice(heap, 3, 0.0);
+    let diag = box_slice(heap, 12, 0.0);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow mut ys as &!yw in {
+            var i = 0;
+            while i < n {
+                contents(yw)[i] = 1.5 + 2.0 * contents(xr)[i * 2] - 3.0 * contents(xr)[i * 2 + 1];
+                i = i + 1;
+            }
+        }
+        borrow ys as &yr in {
+            borrow mut out as &!ow in {
+                borrow mut diag as &!dw in {
+                    bad = bad + linreg.fit(heap, 1, mat(n, 2), contents(xr), contents(yr), 0.0, contents(ow), contents(dw));
+                }
+            }
+        }
+    }
+    borrow out as &ow in {
+        if math.fabs(contents(ow)[0] - 2.0) > 1.0e-12 || math.fabs(contents(ow)[1] + 3.0) > 1.0e-12 || math.fabs(contents(ow)[2] - 1.5) > 1.0e-12 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    return bad;
+}
+
+// the intercept is not penalised: a constant target with a huge ridge keeps its constant
+fn test_linreg_ridge_leaves_the_intercept[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 80;
+    let xs = fill(heap, n * 3, 32);
+    let ys = box_slice(heap, n, 7.25);
+    let out = box_slice(heap, 4, 0.0);
+    let diag = box_slice(heap, 20, 0.0);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow mut out as &!ow in {
+                borrow mut diag as &!dw in {
+                    bad = bad + linreg.fit(heap, 1, mat(n, 3), contents(xr), contents(yr), 1.0e6, contents(ow), contents(dw));
+                }
+            }
+        }
+    }
+    borrow out as &ow in {
+        if math.fabs(contents(ow)[3] - 7.25) > 1.0e-9 || math.fabs(contents(ow)[0]) > 1.0e-6 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    return bad;
+}
+
+fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
+    let xs = fill(heap, 60 * 4, 33);
+    let ys = fill(heap, 60, 34);
+    let xd = fill(heap, 60 * 4, 33);
+    let big = box_slice(heap, 60 * 3, 1.0e200);
+    var bad = 0;
+    borrow mut xd as &!dw in {
+        // column 0 = column 1: singular with l2 = 0
+        var i = 0;
+        while i < 60 {
+            contents(dw)[i * 4] = contents(dw)[i * 4 + 1];
+            i = i + 1;
+        }
+    }
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let x = contents(xr);
+            let y = contents(yr);
+            bad = bad + expect(lin_fit(heap, 0, 60, 4, x, y, 0.0), refuse.threads());
+            bad = bad + expect(lin_fit(heap, 65, 60, 4, x, y, 0.0), refuse.threads());
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, x, y, 0.0 - 1.0), refuse.param_out_of_range());
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, x, y, 0.0 / 0.0), refuse.param_out_of_range());
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, x, y, 1.0 / 0.0), refuse.param_out_of_range());
+            bad = bad + expect(lin_fit(heap, 1, 0, 4, x, y, 0.0), refuse.input_empty());
+            bad = bad + expect(lin_fit(heap, 1, 60, 0, x, y, 0.0), refuse.input_empty());
+            bad = bad + expect(lin_fit(heap, 1, 61, 4, x, y, 0.0), refuse.tensor_bounds());
+            bad = bad + expect(lin_fit(heap, 1, 60, 5, x, y, 0.0), refuse.tensor_bounds());
+            // 257 features: over the limit of the normal equations
+            bad = bad + expect(lin_fit(heap, 1, 1, 257, x, y, 0.0), refuse.too_many_columns());
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, x, y[0..59], 0.0), refuse.tensor_bounds());
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, x, y, 0.5), 0);
+        }
+    }
+    borrow ys as &yr in {
+        borrow xd as &dr in {
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.0), refuse.not_positive_definite());
+            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(dr), contents(yr), 0.0), refuse.not_positive_definite());
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.01), 0);
+        }
+        borrow big as &gr in {
+            bad = bad + expect(lin_fit(heap, 1, 60, 3, contents(gr), contents(yr), 0.0), refuse.fit_non_finite());
+        }
+    }
+    // a non-finite cell and a non-finite target
+    borrow mut xs as &!xw in {
+        contents(xw)[7] = 0.0 / 0.0;
+    }
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(xr), contents(yr), 0.0), refuse.input_non_finite());
+        }
+    }
+    borrow mut xs as &!xw in {
+        contents(xw)[7] = 1.0 / 0.0;
+    }
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(xr), contents(yr), 0.0), refuse.input_non_finite());
+        }
+    }
+    borrow mut ys as &!yw in {
+        contents(yw)[3] = 0.0 / 0.0;
+    }
+    borrow xd as &dr in {
+        borrow ys as &yr in {
+            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.5), refuse.input_non_finite());
+        }
+    }
+    // output buffers that are too short
+    let out = box_slice(heap, 2, 0.0);
+    let diag = box_slice(heap, 10, 0.0);
+    let okx = fill(heap, 60 * 4, 33);
+    let oky = fill(heap, 60, 34);
+    borrow okx as &xr in {
+        borrow oky as &yr in {
+            borrow mut out as &!ow in {
+                borrow mut diag as &!dw in {
+                    bad = bad + expect(linreg.fit(heap, 1, mat(60, 4), contents(xr), contents(yr), 0.0, contents(ow), contents(dw)), refuse.tensor_bounds());
+                }
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, xd);
+    unbox_slice(heap, big);
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, okx);
+    unbox_slice(heap, oky);
+    return bad;
+}
+
+// a view with an offset and a row stride larger than d fits to the bits of the same rows made contiguous
+fn test_linreg_strided_view[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 300;
+    let d = 3;
+    let wide = fill(heap, 2 + n * 5, 41);
+    let flat = box_slice(heap, n * d, 0.0);
+    let ys = fill(heap, n, 42);
+    let o1 = box_slice(heap, 4, 0.0);
+    let o2 = box_slice(heap, 4, 0.0);
+    let d1 = box_slice(heap, 20, 0.0);
+    let d2 = box_slice(heap, 20, 0.0);
+    var bad = 0;
+    borrow wide as &wr in {
+        borrow mut flat as &!fw in {
+            var i = 0;
+            while i < n {
+                var j = 0;
+                while j < d {
+                    contents(fw)[i * d + j] = contents(wr)[2 + i * 5 + j];
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow flat as &fr in {
+            borrow ys as &yr in {
+                borrow mut o1 as &!ow in {
+                    borrow mut d1 as &!dw in {
+                        bad = bad + linreg.fit(heap, 1, mat(n, d), contents(fr), contents(yr), 0.25, contents(ow), contents(dw));
+                    }
+                }
+                borrow mut o2 as &!ow in {
+                    borrow mut d2 as &!dw in {
+                        match tensor.matrix_strided(2, n, d, 5, 1) {
+                            tensor.Made::Ok(view) => {
+                                bad = bad + linreg.fit(heap, 1, view, contents(wr), contents(yr), 0.25, contents(ow), contents(dw));
+                            }
+                            tensor.Made::Err(c) => {
+                                bad = bad + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    borrow o1 as &a in {
+        borrow o2 as &b in {
+            bad = bad + same_bits(contents(a), contents(b), 4);
+        }
+    }
+    borrow d1 as &a in {
+        borrow d2 as &b in {
+            bad = bad + same_bits(contents(a), contents(b), 16 + 4);
+        }
+    }
+    unbox_slice(heap, wide);
+    unbox_slice(heap, flat);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, o1);
+    unbox_slice(heap, o2);
+    unbox_slice(heap, d1);
+    unbox_slice(heap, d2);
+    return bad;
+}
+
+fn report[&i](io: &!i Io, name: &static [byte], bad: int) -> [io_write] int {
+    io.write_all(io, name);
+    if bad == 0 {
+        io.write_all(io, " ... ok\n");
+        return 0;
+    }
+    io.write_all(io, " ... FAILED (");
+    io.print_int(io, bad);
+    io.write_all(io, ")\n");
+    return 1;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    var failed = 0;
+    borrow mut heap as &!hp in {
+        borrow mut io as &!ip in {
+            failed = failed + report(ip, "score_order", test_score_order(hp));
+            failed = failed + report(ip, "score_four_rows_equal_one_row", test_score_four_rows_equal_one_row(hp));
+            failed = failed + report(ip, "record_bytes_and_round_trip", test_record_bytes_and_round_trip(hp));
+            failed = failed + report(ip, "record_kmeans_rank2", test_record_kmeans_rank2(hp));
+            failed = failed + report(ip, "linreg_recovers_a_plane", test_linreg_recovers_a_plane(hp));
+            failed = failed + report(ip, "linreg_ridge_leaves_the_intercept", test_linreg_ridge_leaves_the_intercept(hp));
+            failed = failed + report(ip, "linreg_refusals", test_linreg_refusals(hp));
+            failed = failed + report(ip, "linreg_strided_view", test_linreg_strided_view(hp));
+        }
+    }
+    release(heap);
+    release(io);
+    return failed;
+}
