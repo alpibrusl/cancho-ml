@@ -285,3 +285,13 @@ trailer (section 4.1, corrected in place), section 7's row for `ml` has the labe
 slice added and the ones nothing reaches yet. What it does not settle: the speed factor (section 9), the second machine for D2, the
 shared reader (section 10: cancho-table is not a package, so the slice has a reader of its own, `tools/ml/csv.cho`, until it is).
 
+
+## 14. Stage M6 of v1: linear regression, logistic regression, k-means (library; not wired into the command line)
+
+`docs/models-linear.md` holds the gates (written before the code), the specification of the three estimators (every sum in the order
+of `docs/linalg.md` section 2), the tensor records of the model file, the refusals, the mutants and the measurements. What it changes
+in this document: section 8 gains four tags (`ml.input.non-finite`, `ml.label.single-class`, `ml.label.not-binary` and `ml.fit.non-finite`,
+`lib/core/refuse.cho` codes 12 to 15, all exit 8, each with a fixture in `tests/p_models.cho`); section 4.1 gains `dtype 2 = f64` for a
+tensor record and the model kinds 3 (linear), 4 (logistic) and 5 (k-means), not yet in `tools/ml/mfile.cho`; `docs/rng.md` gains the
+stream kind 3 (k-means). Section 6 is kept: every decisive sum of the three estimators is the fixed block-and-tree order, so the
+thread count changes no byte (the gate compares the raw sums and the loss and inertia lines, not only the coefficients).
