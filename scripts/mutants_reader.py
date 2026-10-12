@@ -113,7 +113,7 @@ MUTANTS = [
       [("tools/ml/csv.cho", "if have_rec && held + 1 + len(line) > cfg.cap {", "if false && held + 1 + len(line) > cfg.cap {")]),
     M("rd4-matrix-before-check", "limits", "the matrix is allocated before the caps are compared (a 200 MB refusal would hold the data)",
       [("lib/core/matrix.cho", "    let code = limits.check_matrix(rows, cols, rows_cap, cols_cap, cells_cap);\n    if code != 0 {\n        return (empty(heap), code);\n    }",
-        "    let big = box_slice(heap, rows * cols + 1, 1.0);\n    unbox_slice(heap, big);\n    let code = limits.check_matrix(rows, cols, rows_cap, cols_cap, cells_cap);\n    if code != 0 {\n        return (empty(heap), code);\n    }")]),
+        "    var big = box_slice(heap, rows * cols + 1, 1.0);\n    var probe = 0.0;\n    borrow mut big as &!bw in {\n        contents(bw)[rows * cols / 2] = 3.0;\n        probe = contents(bw)[rows * cols / 3] + contents(bw)[rows * cols / 2];\n    }\n    unbox_slice(heap, big);\n    if probe > 100.0 {\n        return (empty(heap), 1);\n    }\n    let code = limits.check_matrix(rows, cols, rows_cap, cols_cap, cells_cap);\n    if code != 0 {\n        return (empty(heap), code);\n    }")]),
     M("rd4-cell-cap-by-product", "limits", "the cell cap is compared as rows * cols > cap",
       [("tools/ml/csv.cho", "} else if rows > cfg.max_cells / cols {", "} else if rows * cols > cfg.max_cells {")],
       why="equivalent: every cap is at most 2^31 - 1 (ml.limits.ceiling_dim) so rows * cols stays below 2^62; the division is defence in depth, not a different answer"),
