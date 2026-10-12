@@ -10,7 +10,11 @@ import linalg.tensor;
 import models.common;
 import models.score;
 import models.record;
+import models.mexp;
+import models.kpass;
 import models.linreg;
+import models.logreg;
+import models.npass;
 
 // The program of the gates G-unit, G-refusal, G-fuzz and G-limits of docs/models-linear.md section 2 (a program and not
 // `cancho test` tests, because the estimators spawn threads and the test runner's main has no `conc`). It prints one line per
@@ -65,6 +69,92 @@ fn same_bits[&a, &b](x: &a [float], y: &b [float], n: int) -> [] int {
         }
         i = i + 1;
     }
+    return bad;
+}
+
+// ---------------------------------------------------------------- exp: the table form is std's exp, bit for bit
+fn test_exp_table_form_is_std_exp[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var i = 0;
+    var x = 0.0 - 720.0;
+    while i < 300000 {
+        if bits_of(mexp.exp(x)) != bits_of(math.exp(x)) {
+            bad = bad + 1;
+        }
+        x = x + 0.0048;
+        i = i + 1;
+    }
+    let edges = box_slice(heap, 12, 0.0);
+    borrow mut edges as &!ew in {
+        let e = contents(ew);
+        e[1] = 1.0e-300;
+        e[2] = 0.0 - 1.0e-300;
+        e[3] = 1.0;
+        e[4] = 0.0 - 1.0;
+        e[5] = 0.5;
+        e[6] = 660.0;
+        e[7] = 0.0 - 660.0;
+        e[8] = 660.0000001;
+        e[9] = 0.0 - 700.0;
+        e[10] = 709.0;
+        e[11] = 0.0 - 745.0;
+    }
+    borrow edges as &er in {
+        i = 0;
+        while i < 12 {
+            if bits_of(mexp.exp(contents(er)[i])) != bits_of(math.exp(contents(er)[i])) {
+                bad = bad + 1;
+            }
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, edges);
+    return bad;
+}
+
+// log1p of the loss: the unit-interval form has the bits of std's log1p on a dense grid and at the edges
+fn test_log1p_unit_form_is_std_log1p[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var i = 0;
+    while i <= 400000 {
+        let x = float_of(i) / 400000.0;
+        if bits_of(mexp.log1p(x)) != bits_of(math.log1p(x)) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    // the sigmoid range: x = exp(-|z|) for |z| up to 40, and the tiny values
+    var z = 0.0;
+    while z < 40.0 {
+        let x = mexp.exp(0.0 - z);
+        if bits_of(mexp.log1p(x)) != bits_of(math.log1p(x)) {
+            bad = bad + 1;
+        }
+        z = z + 0.000137;
+    }
+    let edges = box_slice(heap, 10, 0.0);
+    borrow mut edges as &!ew in {
+        contents(ew)[0] = 1.0e-300;
+        contents(ew)[1] = 1.0e-17;
+        contents(ew)[2] = 1.1102230246251565e-16;
+        contents(ew)[3] = 2.220446049250313e-16;
+        contents(ew)[4] = 4.9e-324;
+        contents(ew)[5] = 0.0 - 0.5;
+        contents(ew)[6] = 2.0;
+        contents(ew)[7] = 0.0 / 0.0;
+        contents(ew)[8] = 1.0 / 0.0;
+        contents(ew)[9] = 0.0 - 0.0;
+    }
+    borrow edges as &er in {
+        i = 0;
+        while i < 10 {
+            if bits_of(mexp.log1p(contents(er)[i])) != bits_of(math.log1p(contents(er)[i])) {
+                bad = bad + 1;
+            }
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, edges);
     return bad;
 }
 
@@ -262,6 +352,20 @@ fn lin_fit[&h, &x, &y](heap: &!h Heap, t: int, rows: int, cols: int, xs: &x [flo
     borrow mut out as &!ow in {
         borrow mut diag as &!dw in {
             code = linreg.fit(heap, t, raw(rows, cols), xs, ys, l2, contents(ow), contents(dw));
+        }
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    return code;
+}
+
+fn log_fit[&h, &x, &y](heap: &!h Heap, t: int, rows: int, cols: int, xs: &x [float], ys: &y [float], iters: int, l2: float) -> [heap, conc] int {
+    let out = box_slice(heap, 300, 0.0);
+    let diag = box_slice(heap, 40000, 0.0);
+    var code = 0;
+    borrow mut out as &!ow in {
+        borrow mut diag as &!dw in {
+            code = logreg.fit(heap, t, raw(rows, cols), xs, ys, iters, l2, contents(ow), contents(dw));
         }
     }
     unbox_slice(heap, out);
@@ -500,6 +604,190 @@ fn test_linreg_strided_view[&h](heap: &!h Heap) -> [heap, conc] int {
     return bad;
 }
 
+// ---------------------------------------------------------------- logistic regression
+fn test_logreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 100;
+    let xs = fill(heap, n * 3, 51);
+    let ys = labels(heap, n, 3, 51);
+    let zeros = box_slice(heap, n, 0.0);
+    let half = labels(heap, n, 3, 51);
+    let big = box_slice(heap, n * 3, 1.0e200);
+    var bad = 0;
+    borrow mut half as &!hw in {
+        contents(hw)[5] = 0.5;
+    }
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let x = contents(xr);
+            let y = contents(yr);
+            bad = bad + expect(log_fit(heap, 0, n, 3, x, y, 8, 0.0), refuse.threads());
+            bad = bad + expect(log_fit(heap, 1, n, 3, x, y, 0, 0.0), refuse.param_out_of_range());
+            bad = bad + expect(log_fit(heap, 1, n, 3, x, y, 1001, 0.0), refuse.param_out_of_range());
+            bad = bad + expect(log_fit(heap, 1, n, 3, x, y, 8, 0.0 - 0.5), refuse.param_out_of_range());
+            bad = bad + expect(log_fit(heap, 1, n, 3, x, y, 8, 0.0 / 0.0), refuse.param_out_of_range());
+            bad = bad + expect(log_fit(heap, 1, 0, 3, x, y, 8, 0.0), refuse.input_empty());
+            bad = bad + expect(log_fit(heap, 1, n + 1, 3, x, y, 8, 0.0), refuse.tensor_bounds());
+            bad = bad + expect(log_fit(heap, 1, n, 3, x, y[0..n - 1], 8, 0.0), refuse.tensor_bounds());
+            bad = bad + expect(log_fit(heap, 1, 1, 257, x, y, 8, 0.0), refuse.too_many_columns());
+            bad = bad + expect(log_fit(heap, 1, n, 3, x, y, 8, 0.0), 0);
+            bad = bad + expect(log_fit(heap, 1, n, 3, x, y, 1, 0.0), 0);
+            bad = bad + expect(log_fit(heap, 1, n, 3, x, y, 8, 3.0), 0);
+        }
+        borrow zeros as &zr in {
+            bad = bad + expect(log_fit(heap, 1, n, 3, contents(xr), contents(zr), 8, 0.0), refuse.label_single_class());
+        }
+        borrow half as &hr in {
+            bad = bad + expect(log_fit(heap, 1, n, 3, contents(xr), contents(hr), 8, 0.0), refuse.label_not_binary());
+        }
+        borrow big as &br in {
+            borrow ys as &yr in {
+                bad = bad + expect(log_fit(heap, 1, n, 3, contents(br), contents(yr), 8, 0.0), refuse.fit_non_finite());
+            }
+        }
+    }
+    borrow mut ys as &!yw in {
+        contents(yw)[2] = 0.0 / 0.0;
+    }
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            bad = bad + expect(log_fit(heap, 1, n, 3, contents(xr), contents(yr), 8, 0.0), refuse.input_non_finite());
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, zeros);
+    unbox_slice(heap, half);
+    unbox_slice(heap, big);
+    return bad;
+}
+
+// the bias is not penalised: with a huge l2 the weights vanish and the bias is the log odds of the base rate
+fn test_logreg_bias_is_not_penalised[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 400;
+    let xs = fill(heap, n * 3, 61);
+    let ys = box_slice(heap, n, 0.0);
+    let out = box_slice(heap, 4, 0.0);
+    let diag = box_slice(heap, 8 * 40, 0.0);
+    var ones = 0;
+    var bad = 0;
+    borrow mut ys as &!yw in {
+        var i = 0;
+        while i < n {
+            if rng.element(62, i) > 0.0 - 0.5 {
+                contents(yw)[i] = 1.0;
+                ones = ones + 1;
+            }
+            i = i + 1;
+        }
+    }
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow mut out as &!ow in {
+                borrow mut diag as &!dw in {
+                    bad = bad + logreg.fit(heap, 1, mat(n, 3), contents(xr), contents(yr), 8, 1.0e6, contents(ow), contents(dw));
+                }
+            }
+        }
+    }
+    let rate = float_of(ones) / float_of(n);
+    let logit = math.log(rate / (1.0 - rate));
+    borrow out as &ow in {
+        if math.fabs(contents(ow)[3] - logit) > 1.0e-5 || math.fabs(contents(ow)[0]) > 1.0e-3 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    return bad;
+}
+
+// Newton on this problem decreases the objective at every iteration, and the probabilities are in (0, 1)
+fn test_logreg_objective_decreases[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 3000;
+    let d = 5;
+    let xs = fill(heap, n * d, 71);
+    let ys = labels(heap, n, d, 71);
+    let out = box_slice(heap, d + 1, 0.0);
+    let ww = npass.width(d);
+    let diag = box_slice(heap, 8 * (ww + 1), 0.0);
+    let prob = box_slice(heap, n, 0.0);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow mut out as &!ow in {
+                borrow mut diag as &!dw in {
+                    bad = bad + logreg.fit(heap, 1, mat(n, d), contents(xr), contents(yr), 8, 0.0, contents(ow), contents(dw));
+                }
+            }
+        }
+        borrow out as &ow in {
+            borrow mut prob as &!pw in {
+                bad = bad + logreg.predict_proba(mat(n, d), contents(xr), contents(ow), contents(pw));
+            }
+        }
+    }
+    borrow diag as &dr in {
+        var it = 1;
+        while it < 8 {
+            if !(contents(dr)[it * (ww + 1) + ww] <= contents(dr)[(it - 1) * (ww + 1) + ww] + 1.0e-12) {
+                bad = bad + 1;
+            }
+            it = it + 1;
+        }
+    }
+    borrow prob as &pr in {
+        var i = 0;
+        while i < n {
+            if !(contents(pr)[i] > 0.0 && contents(pr)[i] < 1.0) {
+                bad = bad + 1;
+            }
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, prob);
+    return bad;
+}
+
+// at z = 0 exactly (zero weights) the class is 0 and the probability is 1/2
+fn test_logreg_predict_at_zero[&h](heap: &!h Heap) -> [heap] int {
+    let xs = fill(heap, 12, 15);
+    let w = box_slice(heap, 4, 0.0);
+    let out = box_slice(heap, 4, 7.0);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow w as &wr in {
+            borrow mut out as &!ow in {
+                bad = bad + logreg.predict(mat(4, 3), contents(xr), contents(wr), contents(ow));
+                var i = 0;
+                while i < 4 {
+                    if contents(ow)[i] != 0.0 {
+                        bad = bad + 1;
+                    }
+                    i = i + 1;
+                }
+                bad = bad + logreg.predict_proba(mat(4, 3), contents(xr), contents(wr), contents(ow));
+                i = 0;
+                while i < 4 {
+                    if contents(ow)[i] != 0.5 {
+                        bad = bad + 1;
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, w);
+    unbox_slice(heap, out);
+    return bad;
+}
+
 fn report[&i](io: &!i Io, name: &static [byte], bad: int) -> [io_write] int {
     io.write_all(io, name);
     if bad == 0 {
@@ -522,6 +810,8 @@ fn main(world: World) -> [conc] int {
     var failed = 0;
     borrow mut heap as &!hp in {
         borrow mut io as &!ip in {
+            failed = failed + report(ip, "exp_table_form_is_std_exp", test_exp_table_form_is_std_exp(hp));
+            failed = failed + report(ip, "log1p_unit_form_is_std_log1p", test_log1p_unit_form_is_std_log1p(hp));
             failed = failed + report(ip, "score_order", test_score_order(hp));
             failed = failed + report(ip, "score_four_rows_equal_one_row", test_score_four_rows_equal_one_row(hp));
             failed = failed + report(ip, "record_bytes_and_round_trip", test_record_bytes_and_round_trip(hp));
@@ -530,6 +820,10 @@ fn main(world: World) -> [conc] int {
             failed = failed + report(ip, "linreg_ridge_leaves_the_intercept", test_linreg_ridge_leaves_the_intercept(hp));
             failed = failed + report(ip, "linreg_refusals", test_linreg_refusals(hp));
             failed = failed + report(ip, "linreg_strided_view", test_linreg_strided_view(hp));
+            failed = failed + report(ip, "logreg_refusals", test_logreg_refusals(hp));
+            failed = failed + report(ip, "logreg_bias_is_not_penalised", test_logreg_bias_is_not_penalised(hp));
+            failed = failed + report(ip, "logreg_objective_decreases", test_logreg_objective_decreases(hp));
+            failed = failed + report(ip, "logreg_predict_at_zero", test_logreg_predict_at_zero(hp));
         }
     }
     release(heap);

@@ -28,6 +28,8 @@ import linalg.tensor;
 import models.common;
 import models.score;
 import models.linreg;
+import models.logreg;
+import models.npass;
 
 fn number_at[&s](text: &s [byte], from: int) -> [] int {
     if from >= len(text) || len(text) - from > 18 {
@@ -285,11 +287,66 @@ fn run_linreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, x
     return refuse.exit_code(code);
 }
 
+// ---------------------------------------------------------------- logreg
+fn run_logreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], n: int, ntr: int, d: int, l2: float, iters: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
+    let p = d + 1;
+    let ww = npass.width(d);
+    let out = box_slice(heap, p, 0.0);
+    let diag = box_slice(heap, iters * (ww + 1) + 1, 0.0);
+    let pred = box_slice(heap, n, 0.0);
+    let prob = box_slice(heap, n, 0.0);
+    var code = 0;
+    var t0 = 0;
+    var t1 = 0;
+    borrow mut out as &!ow in {
+        borrow mut diag as &!dw in {
+            var r = 0;
+            t0 = clock_ms(clock);
+            while r < reps {
+                code = logreg.fit(heap, threads, common.mat(ntr, d), xv, yv, iters, l2, contents(ow), contents(dw));
+                r = r + 1;
+            }
+            t1 = clock_ms(clock);
+        }
+    }
+    if code != 0 {
+        refused_line(io, code);
+    } else {
+        borrow out as &ow in {
+            print_floats(io, "params", contents(ow), p);
+            borrow mut pred as &!pw in {
+                code = logreg.predict(common.mat(n, d), xv, contents(ow), contents(pw));
+            }
+            borrow mut prob as &!qw in {
+                code = logreg.predict_proba(common.mat(n, d), xv, contents(ow), contents(qw));
+            }
+        }
+        borrow diag as &dr in {
+            print_floats(io, "diag", contents(dr), iters * (ww + 1));
+        }
+        borrow pred as &pr in {
+            print_hash(io, "pred", hash_floats(contents(pr), n));
+        }
+        borrow prob as &qr in {
+            print_hash(io, "proba", hash_floats(contents(qr), n));
+        }
+        print_kv(io, "ms", t1 - t0);
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, pred);
+    unbox_slice(heap, prob);
+    return refuse.exit_code(code);
+}
+
 // ---------------------------------------------------------------- the run
 fn run[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], model: int, n: int, ntr: int, d: int, l2m: int, iters: int, k: int, init: int, seed: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
     let l2 = float_of(l2m) / 1000.0;
     if model == 1 {
         return run_linreg(heap, io, clock, xv, yv, n, ntr, d, l2, threads, reps);
+    }
+    if model == 2 {
+        return run_logreg(heap, io, clock, xv, yv, n, ntr, d, l2, iters, threads, reps);
     }
     return 0;
 }

@@ -80,7 +80,153 @@ def linreg(X, y, l2):
     return w, diag, scores(X, w)
 
 
+# ---------------------------------------------------------------- exp and log1p of std/math.cho (ports, elementwise)
+def exp_c(x):
+    """lib/models/mexp.cho exp: |x| <= 660 only (asserted); the same operations as std's exp, 2^k exact"""
+    x = np.asarray(x, dtype=np.float64)
+    assert np.all(np.abs(x) <= 660.0), "exp argument outside the table form"
+    kf = x * 1.44269504088896338700e+00
+    h = np.where(kf < 0.0, -0.5, 0.5)
+    k = np.trunc(kf + h)
+    hi = x - k * 6.93147180369123816490e-01
+    lo = k * 1.90821492927058770002e-10
+    r = hi - lo
+    t = r * r
+    c = r - t * (1.66666666666666019037e-01 + t * (-2.77777777770155933842e-03 + t * (6.61375632143793436117e-05 + t * (-1.65339022054652515390e-06 + t * 4.13813679705723846039e-08))))
+    y = 1.0 - (lo - r * c / (2.0 - c) - hi)
+    return y * np.ldexp(1.0, k.astype(np.int64))
+
+
+def log_c(u):
+    """std log for u in [1, 2] (normal numbers): fdlibm's __ieee754_log as written in std/math.cho"""
+    u = np.asarray(u, dtype=np.float64)
+    raw = (u.view(np.uint64) >> np.uint64(52)) & np.uint64(0x7ff)
+    k = raw.astype(np.int64) - 1023
+    m = u / np.ldexp(1.0, k)
+    big = m > 1.4142135623730951
+    m = np.where(big, m * 0.5, m)
+    k = k + big.astype(np.int64)
+    f = m - 1.0
+    s = f / (2.0 + f)
+    z = s * s
+    w = z * z
+    t1 = w * (3.999999999940941908e-01 + w * (2.222219843214978396e-01 + w * 1.531383769920937332e-01))
+    t2 = z * (6.666666666666735130e-01 + w * (2.857142874366239149e-01 + w * (1.818357216161805012e-01 + w * 1.479819860511658591e-01)))
+    tail = s * (0.5 * f * f + (t2 + t1))
+    n = k.astype(np.float64)
+    r0 = f - (0.5 * f * f - tail)
+    r1 = n * 6.93147180369123816490e-01 - (0.5 * f * f - (tail + n * 1.90821492927058770002e-10) - f)
+    return np.where(k == 0, r0, r1)
+
+
+def log1p_c(x):
+    x = np.asarray(x, dtype=np.float64)
+    u = 1.0 + x
+    return np.where(u == 1.0, x, log_c(np.where(u == 1.0, 2.0, u)) * x / (u - 1.0))
+
+
+# ---------------------------------------------------------------- the block rule over a term matrix
+def block_sums(T):
+    """T: (n, W) terms. The sums per column by the package rule: blocks of 256 rows ascending from +0.0, level-wise tree."""
+    n, W = T.shape
+    if n == 0:
+        return np.zeros(W)
+    nb = -(-n // K)
+    P = np.zeros((nb * K, W))
+    P[:n] = T
+    P3 = P.reshape(nb, K, W)
+    acc = np.zeros((nb, W))
+    for t in range(K):
+        acc = acc + P3[:, t, :]
+    return ol.tree(acc)
+
+
+# ---------------------------------------------------------------- logistic regression
+def sigmoid_terms(z, y):
+    az = np.abs(z)
+    e = exp_c(-az)
+    p = np.where(z >= 0.0, 1.0 / (1.0 + e), e / (1.0 + e))
+    pos = np.where(z >= 0.0, z, 0.0)
+    r = p - y
+    s = p * (1.0 - p)
+    loss = (pos + log1p_c(e)) - y * z
+    return r, s, loss
+
+
+def newton_terms(X, y, w):
+    """(n, W) terms of the Newton pass at w: g (P), H lower by rows (P (P+1)/2), the loss"""
+    n, d = X.shape
+    P = d + 1
+    z = scores(X, w)
+    r, s, loss = sigmoid_terms(z, y)
+    A = np.hstack([X, np.ones((n, 1))])
+    cols = [r * A[:, a] for a in range(P)]
+    for a in range(P):
+        sa = s * A[:, a]
+        for b in range(a + 1):
+            cols.append(sa * A[:, b])
+    cols.append(loss)
+    return np.stack(cols, axis=1)
+
+
+def logreg(X, y, iters, l2, rows_chunk=16384):
+    n, d = X.shape
+    P = d + 1
+    W = P + P * (P + 1) // 2 + 1
+    nf = np.float64(n)
+    w = np.zeros(P)
+    diag = []
+    for it in range(iters):
+        # whole blocks per group so the partials are those of the global rule; groups of rows_chunk rows
+        parts = []
+        for r0 in range(0, n, rows_chunk):
+            T = newton_terms(X[r0:r0 + rows_chunk], y[r0:r0 + rows_chunk], w)
+            m = T.shape[0]
+            nb = -(-m // K)
+            Pm = np.zeros((nb * K, W))
+            Pm[:m] = T
+            P3 = Pm.reshape(nb, K, W)
+            acc = np.zeros((nb, W))
+            for t in range(K):
+                acc = acc + P3[:, t, :]
+            parts.append(acc)
+        sums = ol.tree(np.concatenate(parts, axis=0))
+        q = np.float64(0.0)
+        for j in range(d):
+            q = q + w[j] * w[j]
+        f = sums[W - 1] / nf + (0.5 * l2) * q
+        diag.append(np.concatenate([sums, [f]]))
+        g = sums[:P] / nf
+        for a in range(d):
+            g[a] = g[a] + l2 * w[a]
+        H = np.zeros((P, P))
+        for a in range(P):
+            for b in range(a + 1):
+                H[a, b] = sums[P + a * (a + 1) // 2 + b] / nf
+        for a in range(d):
+            H[a, a] = H[a, a] + l2
+        L = ol.chol_o(H)
+        if L is None:
+            return None
+        u = ol.fwd_o(L, g)
+        dl = ol.bwd_o(L, u)
+        w = w - dl
+    z = scores(X, w)
+    az = np.abs(z)
+    e = exp_c(-az)
+    prob = np.where(z >= 0.0, 1.0 / (1.0 + e), e / (1.0 + e))
+    lab = np.where(z > 0.0, 1.0, 0.0)
+    return w, np.concatenate(diag), lab, prob
+
+
 # ---------------------------------------------------------------- the driver
+def logreg_pred(X, w):
+    z = scores(X, w)
+    e = exp_c(-np.abs(z))
+    prob = np.where(z >= 0.0, 1.0 / (1.0 + e), e / (1.0 + e))
+    return w, None, np.where(z > 0.0, 1.0, 0.0), prob
+
+
 def run_driver(model, args, threads, reps=1):
     r = subprocess.run([BIN, model, "-", "-"] + ["%s=%s" % kv for kv in args.items()] + ["threads=%d" % threads, "reps=%d" % reps],
                        capture_output=True, text=True)
@@ -108,6 +254,12 @@ def case(model, a, threads, quiet=False):
             w, diag, pred = res
             pred = scores(X, w)
             exp = {"params": bits(w), "diag": bits(diag), "pred": "%016x" % ol.hash_bits(pred)}
+    if model == "logreg":
+        res = logreg(X[:ntr], y[:ntr], a.get("iters", 8), l2)
+        if res is not None:
+            w, diag, _, _ = res
+            _, _, lab, prob = logreg_pred(X, w)
+            exp = {"params": bits(w), "diag": bits(diag), "pred": "%016x" % ol.hash_bits(lab), "proba": "%016x" % ol.hash_bits(prob)}
     got = run_driver(model, a, threads)
     if exp is None:
         ok = "refused" in got
@@ -130,9 +282,16 @@ SUITE = {
         (2048, 7, 8, 250), (2049, 7, 9, 0), (4097, 21, 10, 1000), (5000, 1, 11, 0), (20000, 20, 12, 0), (100000, 20, 13, 100)]]
     + [dict(n=1000, d=4, seed=5, l2m=0, dup=1), dict(n=1000, d=4, seed=5, l2m=10, dup=1)],
 }
+SUITE["logreg"] = [dict(n=n, d=d, seed=s, l2m=l, iters=i) for (n, d, s, l, i) in [
+    (40, 1, 1, 0, 6), (300, 2, 2, 0, 8), (255, 3, 3, 1000, 8), (256, 4, 4, 0, 8), (257, 5, 5, 500, 8), (1000, 20, 6, 0, 8),
+    (1000, 20, 7, 2000, 6), (2048, 7, 8, 0, 8), (2049, 7, 9, 100, 8), (4097, 21, 10, 0, 8), (5000, 3, 11, 0, 1), (20000, 20, 12, 0, 8)]]
 THREAD_SUITE = {
     "linreg": [dict(n=n, d=d, seed=s, l2m=l) for (n, d, s, l) in [(5000, 7, 3, 0), (30000, 20, 4, 500), (9000, 21, 5, 0), (4097, 3, 6, 0)]],
 }
+THREAD_SUITE["logreg"] = [dict(n=n, d=d, seed=s, l2m=l, iters=i) for (n, d, s, l, i) in [
+    (5000, 7, 3, 0, 4), (30000, 20, 4, 500, 6), (9000, 21, 5, 0, 5), (4097, 3, 6, 0, 8)]]
+
+
 def main():
     a = sys.argv[1:]
     threads = [1]

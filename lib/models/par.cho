@@ -1,0 +1,192 @@
+edition 5;
+
+module models.par;
+
+import linalg.order;
+import linalg.par;
+import models.common;
+import models.npass;
+import models.kpass;
+
+// The threaded pass of the models (docs/models-linear.md 3 and 5), in the shape of linalg.par: the rows are cut into CHUNKS of
+// G = 8 blocks (2048 rows); a thread is given whole chunks, reduces each chunk with the sequential block code (the root of an
+// aligned subtree of the global tree) and returns the roots in a slot; the parent continues the one global stack with the roots in
+// chunk order (linalg.par.combine_roots, the only place where partials of different threads meet). A thread owns copies of the
+// rows it needs (cancho gives a thread one pointer-width payload and no shared reads, docs/linalg.md 5.6 U2), made at every pass and
+// counted in the time.
+//   kind 1: the Newton pass of logistic regression (npass.block)
+//   kind 2: the Lloyd pass of k-means (kpass.block): the labels of the piece come back with the roots
+
+res struct Job {
+    jx: Box[[float]],
+    jy: Box[[float]],
+    jw: Box[[float]],
+    jout: Box[[float]],
+    jst: Box[[float]],
+    jlv: Box[[int]],
+    jsc: Box[[float]],
+    jlab: Box[[int]],
+    jp: Box[[int]],
+}
+
+// jp: 0 kind, 1 rows of the piece, 2 chunks in the piece, 3 d, 4 slot width W, 5 parameter k (kind 2: clusters)
+
+fn copy_floats[&d, &s](dst: &!d [float], src: &s [float], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the chunks of the piece, one root each, into out[c * W ..]
+fn chunks_of[&x, &y, &w, &c, &o, &s, &l, &q](kind: int, xs: &x [float], rs: int, ys: &y [float], wv: &w [float], sc: &!c [float], ov: &!o [float], st: &!s [float], lv: &!l [int], lab: &!q [int], rows: int, nchunks: int, d: int, k: int, ww: int) -> [] int {
+    let nb = order.blocks(rows);
+    var c = 0;
+    while c < nchunks {
+        var b1 = c * 8 + 8;
+        if b1 > nb {
+            b1 = nb;
+        }
+        var sp = 0;
+        var b = c * 8;
+        while b < b1 {
+            var hi = (b + 1) * 256;
+            if hi > rows {
+                hi = rows;
+            }
+            if kind == 1 {
+                npass.block(xs, rs, ys, b * 256, hi, d, wv, sc, st[sp * ww..sp * ww + ww]);
+            } else {
+                kpass.block(xs, rs, b * 256, hi, d, k, wv, lab, st[sp * ww..sp * ww + ww]);
+            }
+            sp = order.settle(st, lv, sp, ww);
+            b = b + 1;
+        }
+        order.finish(st, sp, ww);
+        copy_floats(ov[c * ww..c * ww + ww], st, ww);
+        c = c + 1;
+    }
+    return 0;
+}
+
+fn work[&r](job: &!r Job) -> [] int {
+    let kind = contents(job.jp)[0];
+    let rows = contents(job.jp)[1];
+    let nch = contents(job.jp)[2];
+    let d = contents(job.jp)[3];
+    let ww = contents(job.jp)[4];
+    let k = contents(job.jp)[5];
+    chunks_of(kind, contents(job.jx), d, contents(job.jy), contents(job.jw), contents(job.jsc), contents(job.jout), contents(job.jst), contents(job.jlv), contents(job.jlab), rows, nch, d, k, ww);
+    return 0;
+}
+
+// Piece k of tt: the chunks [bound(k), bound(k + 1)); recursion spawns the piece's thread and goes on to copy the next one
+fn fan[&h, &x, &y, &w, &o, &q](heap: &!h Heap, kind: int, xs: &x [float], rs: int, ys: &y [float], wv: &w [float], n: int, d: int, kc: int, ww: int, nchunks: int, k: int, tt: int, slots: &!o [float], lab: &!q [int], scratch: int) -> [heap, conc] int {
+    if k >= tt {
+        return 0;
+    }
+    let c0 = par.bound(k, tt, nchunks);
+    let c1 = par.bound(k + 1, tt, nchunks);
+    let r0 = c0 * 2048;
+    var r1 = c1 * 2048;
+    if r1 > n {
+        r1 = n;
+    }
+    let rows = r1 - r0;
+    var ylen = rows;
+    if kind != 1 {
+        ylen = 0;
+    }
+    var job = Job { jx: box_slice(heap, rows * d + 1, 0.0), jy: box_slice(heap, ylen + 1, 0.0), jw: box_slice(heap, len(wv) + 1, 0.0), jout: box_slice(heap, (c1 - c0) * ww + 1, 0.0), jst: box_slice(heap, 6 * ww + 1, 0.0), jlv: box_slice(heap, 8, 0), jsc: box_slice(heap, scratch + 1, 0.0), jlab: box_slice(heap, rows + 1, 0), jp: box_slice(heap, 8, 0) };
+    borrow mut job as &!jk in {
+        contents(jk.jp)[0] = kind;
+        contents(jk.jp)[1] = rows;
+        contents(jk.jp)[2] = c1 - c0;
+        contents(jk.jp)[3] = d;
+        contents(jk.jp)[4] = ww;
+        contents(jk.jp)[5] = kc;
+        var i = 0;
+        let jx = contents(jk.jx);
+        while i < rows {
+            copy_floats(jx[i * d..i * d + d], xs[(r0 + i) * rs..(r0 + i) * rs + d], d);
+            i = i + 1;
+        }
+        if kind == 1 {
+            copy_floats(contents(jk.jy), ys[r0..r1], rows);
+        }
+        copy_floats(contents(jk.jw), wv, len(wv));
+    }
+    var rest = 0;
+    borrow mut job as &!jk in {
+        let body = work;
+        let th = spawn(jk, body);
+        rest = fan(heap, kind, xs, rs, ys, wv, n, d, kc, ww, nchunks, k + 1, tt, slots, lab, scratch);
+        join(th);
+    }
+    let Job { jx, jy, jw, jout, jst, jlv, jsc, jlab, jp } = job;
+    borrow jout as &ow in {
+        copy_floats(slots[c0 * ww..c1 * ww], contents(ow), (c1 - c0) * ww);
+    }
+    if kind == 2 {
+        borrow jlab as &lr in {
+            let src = contents(lr);
+            let dst = lab[r0..r1];
+            var i = 0;
+            while i < rows {
+                dst[i] = src[i];
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, jx);
+    unbox_slice(heap, jy);
+    unbox_slice(heap, jw);
+    unbox_slice(heap, jout);
+    unbox_slice(heap, jst);
+    unbox_slice(heap, jlv);
+    unbox_slice(heap, jsc);
+    unbox_slice(heap, jlab);
+    unbox_slice(heap, jp);
+    return rest;
+}
+
+// The W sums of one pass over n rows with t threads (kind 1). xs positioned at X[0, 0] (row stride rs), ys at y[0], wv the
+// parameters. The result is left in st[0 .. W) (st holds common.depth_for(blocks) * W values, lv as many ints). `sc` is the
+// sequential scratch (npass.scratch_len(d)). The bits do not depend on t.
+pub fn pass[&h, &x, &y, &w, &c, &s, &l, &q](heap: &!h Heap, t: int, kind: int, xs: &x [float], rs: int, ys: &y [float], wv: &w [float], n: int, d: int, kc: int, ww: int, scratch: int, sc: &!c [float], st: &!s [float], lv: &!l [int], lab: &!q [int]) -> [heap, conc] int {
+    let nb = order.blocks(n);
+    let nchunks = par.chunks(n);
+    if t == 1 || nchunks < 2 {
+        var sp = 0;
+        var b = 0;
+        while b < nb {
+            var hi = (b + 1) * 256;
+            if hi > n {
+                hi = n;
+            }
+            if kind == 1 {
+                npass.block(xs, rs, ys, b * 256, hi, d, wv, sc, st[sp * ww..sp * ww + ww]);
+            } else {
+                kpass.block(xs, rs, b * 256, hi, d, kc, wv, lab, st[sp * ww..sp * ww + ww]);
+            }
+            sp = order.settle(st, lv, sp, ww);
+            b = b + 1;
+        }
+        order.finish(st, sp, ww);
+        return 0;
+    }
+    let te = par.threads_for(t, nchunks);
+    let slots = box_slice(heap, nchunks * ww + 1, 0.0);
+    borrow mut slots as &!sw in {
+        fan(heap, kind, xs, rs, ys, wv, n, d, kc, ww, nchunks, 0, te, contents(sw), lab, scratch);
+    }
+    borrow slots as &sr in {
+        par.combine_roots(contents(sr), nchunks, ww, te, st, lv);
+    }
+    unbox_slice(heap, slots);
+    return 0;
+}

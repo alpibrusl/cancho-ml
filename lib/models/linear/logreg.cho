@@ -1,0 +1,263 @@
+module models.logreg;
+
+import linalg.tensor;
+import linalg.chol;
+import linalg.order;
+import ml.refuse;
+import ml.limits;
+import models.common;
+import models.score;
+import models.mexp;
+import models.npass;
+import models.par;
+
+// Binary logistic regression by Newton's method, a fixed number of iterations, no line search, no stopping rule, optional l2
+// that never touches the bias (docs/models-linear.md 3.2). The parameters are w[0..d) and the bias w[d], from zero.
+
+// the iterations. xs positioned at X[0, 0], row stride rs. diag receives, per iteration, the W raw sums then the objective.
+fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, ys: &y [float], n: int, d: int, iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    let p = d + 1;
+    let ww = npass.width(d);
+    let sl = npass.scratch_len(d);
+    let depth = common.depth_for(order.blocks(n));
+    let wv = box_slice(heap, p, 0.0);
+    let sc = box_slice(heap, sl, 0.0);
+    let st = box_slice(heap, depth * ww, 0.0);
+    let lv = box_slice(heap, depth + 1, 0);
+    let hm = box_slice(heap, p * p, 0.0);
+    let lm = box_slice(heap, p * p, 0.0);
+    let gv = box_slice(heap, p, 0.0);
+    let uv = box_slice(heap, p, 0.0);
+    let dl = box_slice(heap, p, 0.0);
+    let nf = float_of(n);
+    let nolab = box_slice(heap, 1, 0);
+    var code = 0;
+    var it = 0;
+    while it < iters && code == 0 {
+        borrow wv as &wr in {
+            borrow mut sc as &!scw in {
+                borrow mut st as &!stw in {
+                    borrow mut lv as &!lvw in {
+                        borrow mut nolab as &!nlw in {
+                            code = par.pass(heap, t, 1, xs, rs, ys, contents(wr), n, d, 0, ww, sl, contents(scw), contents(stw), contents(lvw), contents(nlw));
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow st as &sr in {
+                let sums = contents(sr);
+                var i = 0;
+                var finite = true;
+                while i < ww {
+                    diag[it * (ww + 1) + i] = sums[i];
+                    if !common.is_finite(sums[i]) {
+                        finite = false;
+                    }
+                    i = i + 1;
+                }
+                if !finite {
+                    code = refuse.fit_non_finite();
+                } else {
+                    borrow wv as &wr in {
+                        let w = contents(wr);
+                        // the objective at the w this iteration started from
+                        var q = 0.0;
+                        var j = 0;
+                        while j < d {
+                            q = q + w[j] * w[j];
+                            j = j + 1;
+                        }
+                        diag[it * (ww + 1) + ww] = sums[ww - 1] / nf + 0.5 * l2 * q;
+                        // g = sums / n (+ l2 * w on the d feature entries), H = sums / n (+ l2 on the d feature diagonal entries)
+                        borrow mut gv as &!gw in {
+                            var a = 0;
+                            while a < p {
+                                var gg = sums[a] / nf;
+                                if a < d {
+                                    gg = gg + l2 * w[a];
+                                }
+                                contents(gw)[a] = gg;
+                                a = a + 1;
+                            }
+                        }
+                        borrow mut hm as &!hw in {
+                            var a = 0;
+                            while a < p {
+                                var b = 0;
+                                while b <= a {
+                                    var hh = sums[p + a * (a + 1) / 2 + b] / nf;
+                                    if a < d && b == a {
+                                        hh = hh + l2;
+                                    }
+                                    contents(hw)[a * p + b] = hh;
+                                    b = b + 1;
+                                }
+                                a = a + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow hm as &hr in {
+                borrow mut lm as &!lw in {
+                    code = chol.cholesky(common.mat(p, p), contents(hr), common.mat(p, p), contents(lw));
+                }
+            }
+        }
+        if code == 0 {
+            borrow lm as &lr in {
+                borrow gv as &gr in {
+                    borrow mut uv as &!uw in {
+                        code = chol.solve(0, common.mat(p, p), contents(lr), common.vec(p), contents(gr), common.vec(p), contents(uw));
+                    }
+                }
+                if code == 0 {
+                    borrow uv as &ur in {
+                        borrow mut dl as &!dw in {
+                            code = chol.solve(1, common.mat(p, p), contents(lr), common.vec(p), contents(ur), common.vec(p), contents(dw));
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow dl as &dr in {
+                borrow mut wv as &!wm in {
+                    var a = 0;
+                    while a < p {
+                        contents(wm)[a] = contents(wm)[a] - contents(dr)[a];
+                        if !common.is_finite(contents(wm)[a]) {
+                            code = refuse.fit_non_finite();
+                        }
+                        a = a + 1;
+                    }
+                }
+            }
+        }
+        it = it + 1;
+    }
+    if code == 0 {
+        borrow wv as &wr in {
+            var a = 0;
+            while a < p {
+                out[a] = contents(wr)[a];
+                a = a + 1;
+            }
+        }
+    }
+    unbox_slice(heap, wv);
+    unbox_slice(heap, sc);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    unbox_slice(heap, hm);
+    unbox_slice(heap, lm);
+    unbox_slice(heap, gv);
+    unbox_slice(heap, uv);
+    unbox_slice(heap, dl);
+    unbox_slice(heap, nolab);
+    return code;
+}
+
+// Fit. xt: n x d rank 2, d <= 256; y: n values, each exactly 0.0 or 1.0, both present; iters in 1..1000; l2 >= 0 finite; out: d + 1
+// values (the bias last); diag: iters * (W + 1) values, W = npass.width(d) = P + P (P + 1) / 2 + 1 with P = d + 1: per iteration the W raw
+// decisive sums (g, the lower triangle of H by rows, the bias row, the summed loss) and the objective at the start of the iteration.
+pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    if limits.check_threads(t) != 0 {
+        return refuse.threads();
+    }
+    var c = common.check_iters(iters);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_l2(l2);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_x(xt, len(xd), common.max_features());
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    let p = d + 1;
+    let ww = npass.width(d);
+    if ww > common.max_slot() {
+        return refuse.param_out_of_range();
+    }
+    c = common.check_len(n, len(yd));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(p, len(out));
+    if c != 0 {
+        return c;
+    }
+    if iters > len(diag) / (ww + 1) {
+        return refuse.tensor_bounds();
+    }
+    if common.count_bad(xd[xt.off..len(xd)], xt.t0, n, d) != 0 || common.count_bad_vec(yd, n) != 0 {
+        return refuse.input_non_finite();
+    }
+    var ones = 0;
+    var i = 0;
+    while i < n {
+        if yd[i] == 1.0 {
+            ones = ones + 1;
+        } else if yd[i] != 0.0 {
+            return refuse.label_not_binary();
+        }
+        i = i + 1;
+    }
+    if ones == 0 || ones == n {
+        return refuse.label_single_class();
+    }
+    return newton(heap, t, xd[xt.off..len(xd)], xt.t0, yd, n, d, iters, l2, out, diag);
+}
+
+// the probability of class 1: e = exp(-|z|); 1 / (1 + e) for z >= 0, else e / (1 + e)
+pub fn proba_of(z: float) -> [] float {
+    var az = z;
+    if z < 0.0 {
+        az = 0.0 - z;
+    }
+    let e = mexp.exp(0.0 - az);
+    if z >= 0.0 {
+        return 1.0 / (1.0 + e);
+    }
+    return e / (1.0 + e);
+}
+
+pub fn predict_proba[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
+    let c = score.scores(xt, xd, wv, out);
+    if c != 0 {
+        return c;
+    }
+    var i = 0;
+    while i < xt.s0 {
+        out[i] = proba_of(out[i]);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// class 1.0 if the score z > 0.0, else 0.0
+pub fn predict[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
+    let c = score.scores(xt, xd, wv, out);
+    if c != 0 {
+        return c;
+    }
+    var i = 0;
+    while i < xt.s0 {
+        if out[i] > 0.0 {
+            out[i] = 1.0;
+        } else {
+            out[i] = 0.0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
