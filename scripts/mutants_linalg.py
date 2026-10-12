@@ -38,10 +38,10 @@ GROUPS["axpy"] = (["sh", "scripts/gate_linalg.sh", "t_dot.cho", "axpy"], [
     ("axpy-shape", A, "if xt.s0 != yt.s0 {", "if xt.s0 < yt.s0 {"),
 ])
 GROUPS["gemv"] = (["sh", "scripts/gate_linalg.sh", "t_gemv.cho", "gemv_n", "gemv_t"], [
-    ("gemvn-row-mix", G, "z3 = z3 + r3[j] * wj;", "z3 = z3 + r4[j] * wj;"),
-    ("gemvn-init", G, "var z5 = 0.0;", "var z5 = 1.0e-16;"),
+    ("gemvn-row-mix", G, "z3 = z3 + r3[j] * wj;", "z3 = z3 + r2[j] * wj;"),
+    ("gemvn-init", G, "var z3 = 0.0;", "var z3 = 1.0e-16;"),
     ("gemvn-tail-init", G, "var z = 0.0;\n    var j = 0;\n    while j < d {\n        z = z + r[j] * wr[j];", "var z = 1.0e-16;\n    var j = 0;\n    while j < d {\n        z = z + r[j] * wr[j];"),
-    ("gemvn-store", G, "ys[i + 6] = z6;\n    ys[i + 7] = z7;", "ys[i + 6] = z7;\n    ys[i + 7] = z6;"),
+    ("gemvn-store", G, "ys[i + 2] = z2;\n    ys[i + 3] = z3;", "ys[i + 2] = z3;\n    ys[i + 3] = z2;"),
     ("gemvn-fast-guard", G, "&& d <= 256 && xt.t0 >= 0 {", "&& d <= 300 && xt.t0 >= 0 {"),
     ("gemvn-generic-block", G, "var m = d - b * 256;\n                    if m > 256 {\n                        m = 256;", "var m = d - b * 256;\n                    if m > 255 {\n                        m = 255;"),
     ("gemvn-generic-stride", G, "wd[wt.off + jj * wt.t0]", "wd[wt.off + jj]"),

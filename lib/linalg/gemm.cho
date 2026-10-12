@@ -33,9 +33,12 @@ fn tile44[&a, &b, &o](av: &a [float], ars: int, bv: &b [float], brs: int, i0: in
     var c31 = 0.0;
     var c32 = 0.0;
     var c33 = 0.0;
+    // the offset of B[k0 + k][j0] is carried (wrapping adds: no multiplication to check in the loop); the slice still checks
+    var bq = k0 * brs + j0;
     var k = 0;
     while k < n {
-        let q = bv[(k0 + k) * brs + j0..(k0 + k) * brs + j0 + 4];
+        let q = bv[bq..wrapping_add(bq, 4)];
+        bq = wrapping_add(bq, brs);
         let b0 = q[0];
         let b1 = q[1];
         let b2 = q[2];

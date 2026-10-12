@@ -12,26 +12,19 @@ import ml.refuse;
 
 // ---------------------------------------------------------------- gemv_n
 
-// 8 rows at a time, d <= 256: eight independent chains, each row's additions ascending in j from +0.0.
+// 4 rows at a time, d <= 256: four independent chains, each row's additions ascending in j from +0.0. (Four, not eight: with
+// eight row streams 2 KB apart (d = 256) the loop ran 2.2x slower than with four; scripts/ and docs/linalg.md section 5.)
 // `xs` is positioned at X[0, 0]; the row stride is rs.
-fn rows8[&x, &w, &y](xs: &x [float], rs: int, wv: &w [float], ys: &!y [float], i: int, d: int) -> [] int {
+fn rows4[&x, &w, &y](xs: &x [float], rs: int, wv: &w [float], ys: &!y [float], i: int, d: int) -> [] int {
     let r0 = xs[(i + 0) * rs..(i + 0) * rs + d];
     let r1 = xs[(i + 1) * rs..(i + 1) * rs + d];
     let r2 = xs[(i + 2) * rs..(i + 2) * rs + d];
     let r3 = xs[(i + 3) * rs..(i + 3) * rs + d];
-    let r4 = xs[(i + 4) * rs..(i + 4) * rs + d];
-    let r5 = xs[(i + 5) * rs..(i + 5) * rs + d];
-    let r6 = xs[(i + 6) * rs..(i + 6) * rs + d];
-    let r7 = xs[(i + 7) * rs..(i + 7) * rs + d];
     let wr = wv[0..d];
     var z0 = 0.0;
     var z1 = 0.0;
     var z2 = 0.0;
     var z3 = 0.0;
-    var z4 = 0.0;
-    var z5 = 0.0;
-    var z6 = 0.0;
-    var z7 = 0.0;
     var j = 0;
     while j < d {
         let wj = wr[j];
@@ -39,20 +32,12 @@ fn rows8[&x, &w, &y](xs: &x [float], rs: int, wv: &w [float], ys: &!y [float], i
         z1 = z1 + r1[j] * wj;
         z2 = z2 + r2[j] * wj;
         z3 = z3 + r3[j] * wj;
-        z4 = z4 + r4[j] * wj;
-        z5 = z5 + r5[j] * wj;
-        z6 = z6 + r6[j] * wj;
-        z7 = z7 + r7[j] * wj;
         j = j + 1;
     }
     ys[i + 0] = z0;
     ys[i + 1] = z1;
     ys[i + 2] = z2;
     ys[i + 3] = z3;
-    ys[i + 4] = z4;
-    ys[i + 5] = z5;
-    ys[i + 6] = z6;
-    ys[i + 7] = z7;
     return 0;
 }
 
@@ -71,9 +56,9 @@ fn row1[&x, &w](xs: &x [float], at: int, wv: &w [float], d: int) -> [] float {
 // unit-stride kernel, d <= 256: rows [i0, i1) of y; xs positioned at X[0, 0]
 pub fn gemv_n_rows[&x, &w, &y](xs: &x [float], rs: int, wv: &w [float], ys: &!y [float], i0: int, i1: int, d: int) -> [] int {
     var i = i0;
-    while i + 8 <= i1 {
-        rows8(xs, rs, wv, ys, i, d);
-        i = i + 8;
+    while i + 4 <= i1 {
+        rows4(xs, rs, wv, ys, i, d);
+        i = i + 4;
     }
     while i < i1 {
         ys[i] = row1(xs, i * rs, wv, d);

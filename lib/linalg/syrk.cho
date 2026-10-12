@@ -27,10 +27,15 @@ fn tile44[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, j0: int, k0: int, s
     var c31 = 0.0;
     var c32 = 0.0;
     var c33 = 0.0;
+    // the offsets of row i are carried (wrapping adds: no multiplication to check in the loop); xs[a..b] still checks the range
+    var pj = r0 * rs + j0;
+    var qk = r0 * rs + k0;
     var i = r0;
     while i < r1 {
-        let p = xs[i * rs + j0..i * rs + j0 + 4];
-        let q = xs[i * rs + k0..i * rs + k0 + 4];
+        let p = xs[pj..wrapping_add(pj, 4)];
+        let q = xs[qk..wrapping_add(qk, 4)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
         let a0 = p[0];
         let a1 = p[1];
         let a2 = p[2];

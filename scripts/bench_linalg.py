@@ -8,6 +8,7 @@ A cell is KERNEL:N:D (D is 0 where it does not apply), e.g. gemv_t:100000:64. Op
     --out FILE      append one JSON line per cell
     --threads T     cancho threads (default 1)
     --gate          the cells of the gate (section 1.2)
+    --c             also time the C version of the same algorithm (scripts/c_parity; build/parity), interleaved
     --check-env     print cpu/wall of a numpy gemm 1024 (is the single-thread variable honoured?) and exit
 
 Each sample is the mean over R repetitions (R chosen so that a sample is long enough for clock_ms: cancho >= 100 ms, numpy
@@ -98,7 +99,18 @@ def cancho_ms(kernel, n, d, reps, threads):
     return int(r["ms"]) / reps
 
 
-def cell(kernel, n, d, samples, threads):
+CBIN = os.environ.get("PARITY_BIN", os.path.join(O.ROOT, "build", "parity"))
+
+
+def c_ms(kernel, n, d, reps):
+    r = subprocess.run([CBIN, kernel, str(n), str(d), "1", str(reps)], capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        if line.startswith("ms "):
+            return float(line.split()[1]) / reps
+    raise SystemExit("parity failed: " + r.stdout + r.stderr)
+
+
+def cell(kernel, n, d, samples, threads, with_c=False):
     fn = numpy_case(kernel, n, d)
     fn()  # warm
     # calibrate reps
@@ -111,16 +123,21 @@ def cell(kernel, n, d, samples, threads):
             break
         rc = max(rc * 2, int(rc * 150 / max(ms, 1)))
     load0 = os.getloadavg()[0]
-    np_t, ca_t = [], []
+    np_t, ca_t, c_t = [], [], []
     for _ in range(samples):
         np_t.append(time_numpy(fn, rn))
         ca_t.append(cancho_ms(kernel, n, d, rc, threads) / 1000.0)
+        if with_c:
+            c_t.append(c_ms(kernel, n, d, rc) / 1000.0)
     load1 = os.getloadavg()[0]
     cm, nm = min(ca_t), min(np_t)
-    return dict(kernel=kernel, n=n, d=d, threads=threads, samples=samples, reps_cancho=rc, reps_numpy=rn,
+    extra = {}
+    if with_c:
+        extra = dict(c_s=min(c_t), c_spread=max(c_t) / min(c_t), all_c=c_t, cancho_over_c=cm / min(c_t), c_over_numpy=min(c_t) / nm)
+    return dict(extra, **dict(kernel=kernel, n=n, d=d, threads=threads, samples=samples, reps_cancho=rc, reps_numpy=rn,
                 cancho_s=cm, numpy_s=nm, ratio=cm / nm, spread_cancho=max(ca_t) / cm, spread_numpy=max(np_t) / nm,
                 load_start=load0, load_end=load1, flag_load=bool(max(load0, load1) >= 2.0),
-                all_cancho=ca_t, all_numpy=np_t)
+                all_cancho=ca_t, all_numpy=np_t))
 
 
 GATE = []
@@ -154,6 +171,7 @@ def main():
     samples = int(a[a.index("--samples") + 1]) if "--samples" in a else 7
     threads = int(a[a.index("--threads") + 1]) if "--threads" in a else 1
     out = a[a.index("--out") + 1] if "--out" in a else None
+    with_c = "--c" in a
     cells = []
     skip = set()
     for i, x in enumerate(a):
@@ -168,11 +186,12 @@ def main():
     meta = dict(machine=machine(), compiler=compiler_commit(), numpy=np.__version__,
                 env={k: os.environ.get(k) for k in ENV_VARS}, python=platform.python_version())
     for k, n, d in cells:
-        res = cell(k, n, d, samples, threads)
+        res = cell(k, n, d, samples, threads, with_c)
         res["meta"] = meta
         print("%-7s n=%-8d d=%-4d t=%d  cancho %.6fs  numpy %.6fs  ratio %.2f  spread %.2f/%.2f  load %.1f/%.1f%s  R=%d/%d" % (
             k, n, d, threads, res["cancho_s"], res["numpy_s"], res["ratio"], res["spread_cancho"], res["spread_numpy"],
-            res["load_start"], res["load_end"], " LOAD>=2" if res["flag_load"] else "", res["reps_cancho"], res["reps_numpy"]), flush=True)
+            res["load_start"], res["load_end"], " LOAD>=2" if res["flag_load"] else "", res["reps_cancho"], res["reps_numpy"]) + (
+            "   C %.6fs  cancho/C %.2f  C/numpy %.2f" % (res["c_s"], res["cancho_over_c"], res["c_over_numpy"]) if with_c else ""), flush=True)
         if out:
             with open(out, "a") as f:
                 f.write(json.dumps(res) + "\n")
