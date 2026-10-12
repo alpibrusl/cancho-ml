@@ -1069,6 +1069,475 @@ fn test_kmeans_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
     return bad;
 }
 
+// ---------------------------------------------------------------- limits: a claim is refused before anything is allocated
+fn test_limits_before_allocation[&h](heap: &!h Heap) -> [heap, conc] int {
+    let xs = fill(heap, 100, 11);
+    let ys = fill(heap, 100, 12);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let x = contents(xr);
+            let y = contents(yr);
+            // 2^40 rows, over the row cap, over the column cap, over the cell cap (no product is formed)
+            bad = bad + expect(lin_fit(heap, 1, 1099511627776, 3, x, y, 0.0), refuse.too_many_rows());
+            bad = bad + expect(log_fit(heap, 1, 1099511627776, 3, x, y, 8, 0.0), refuse.too_many_rows());
+            bad = bad + expect(km_fit(heap, 1, 1099511627776, 3, x, 3, 4, 1, 1), refuse.too_many_rows());
+            bad = bad + expect(lin_fit(heap, 1, 10000001, 3, x, y, 0.0), refuse.too_many_rows());
+            bad = bad + expect(lin_fit(heap, 1, 10, 4097, x, y, 0.0), refuse.too_many_columns());
+            bad = bad + expect(km_fit(heap, 1, 10, 4097, x, 3, 4, 1, 1), refuse.too_many_columns());
+            bad = bad + expect(lin_fit(heap, 1, 9000000, 100, x, y, 0.0), refuse.too_many_cells());
+            bad = bad + expect(km_fit(heap, 1, 9223372036854775807, 9223372036854775807, x, 3, 4, 1, 1), refuse.too_many_rows());
+            bad = bad + expect(lin_fit(heap, 1, 0 - 5, 3, x, y, 0.0), refuse.param_out_of_range());
+            // a hand-made descriptor of the wrong rank, and one whose strides run out of the data
+            let r1 = tensor.Tensor { off: 0, rank: 1, s0: 10, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+            let out = box_slice(heap, 8, 0.0);
+            let diag = box_slice(heap, 100, 0.0);
+            borrow mut out as &!ow in {
+                borrow mut diag as &!dw in {
+                    bad = bad + expect(linreg.fit(heap, 1, r1, x, y, 0.0, contents(ow), contents(dw)), refuse.tensor_rank());
+                    let col = tensor.Tensor { off: 0, rank: 2, s0: 10, s1: 3, s2: 1, s3: 1, t0: 1, t1: 10, t2: 0, t3: 0 };
+                    bad = bad + expect(linreg.fit(heap, 1, col, x, y, 0.0, contents(ow), contents(dw)), refuse.tensor_shape());
+                    let neg = tensor.Tensor { off: 0, rank: 2, s0: 10, s1: 3, s2: 1, s3: 1, t0: 0 - 3, t1: 1, t2: 0, t3: 0 };
+                    bad = bad + expect(linreg.fit(heap, 1, neg, x, y, 0.0, contents(ow), contents(dw)), refuse.tensor_bounds());
+                }
+            }
+            unbox_slice(heap, out);
+            unbox_slice(heap, diag);
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    return bad;
+}
+
+// ---------------------------------------------------------------- views: a row stride larger than d and an offset change no bit
+fn views_logreg[&h, &f, &w, &y](heap: &!h Heap, t: int, n: int, d: int, flat: &f [float], wide: &w [float], ys: &y [float]) -> [heap, conc] int {
+    let ww = npass.width(d);
+    let o1 = box_slice(heap, d + 1, 0.0);
+    let o2 = box_slice(heap, d + 1, 0.0);
+    let d1 = box_slice(heap, 6 * (ww + 1), 0.0);
+    let d2 = box_slice(heap, 6 * (ww + 1), 0.0);
+    var bad = 0;
+    borrow mut o1 as &!ow in {
+        borrow mut d1 as &!dw in {
+            bad = bad + logreg.fit(heap, t, mat(n, d), flat, ys, 6, 0.1, contents(ow), contents(dw));
+        }
+    }
+    match tensor.matrix_strided(2, n, d, 5, 1) {
+        tensor.Made::Ok(view) => {
+            borrow mut o2 as &!ow in {
+                borrow mut d2 as &!dw in {
+                    bad = bad + logreg.fit(heap, t, view, wide, ys, 6, 0.1, contents(ow), contents(dw));
+                }
+            }
+        }
+        tensor.Made::Err(c) => {
+            bad = bad + 1;
+        }
+    }
+    borrow o1 as &a in {
+        borrow o2 as &b in {
+            bad = bad + same_bits(contents(a), contents(b), d + 1);
+        }
+    }
+    borrow d1 as &a in {
+        borrow d2 as &b in {
+            bad = bad + same_bits(contents(a), contents(b), 6 * (ww + 1));
+        }
+    }
+    unbox_slice(heap, o1);
+    unbox_slice(heap, o2);
+    unbox_slice(heap, d1);
+    unbox_slice(heap, d2);
+    return bad;
+}
+
+fn views_kmeans[&h, &f, &w](heap: &!h Heap, t: int, n: int, d: int, flat: &f [float], wide: &w [float]) -> [heap, conc] int {
+    let k = 4;
+    let wk = k * d + k + 1;
+    let c1 = box_slice(heap, k * d, 0.0);
+    let c2 = box_slice(heap, k * d, 0.0);
+    let d1 = box_slice(heap, 5 * wk, 0.0);
+    let d2 = box_slice(heap, 5 * wk, 0.0);
+    let l1 = box_slice(heap, n, 0);
+    let l2 = box_slice(heap, n, 0);
+    var bad = 0;
+    borrow mut c1 as &!cw in {
+        borrow mut d1 as &!dw in {
+            borrow mut l1 as &!lw in {
+                bad = bad + kmeans.fit(heap, t, mat(n, d), flat, k, 4, 7, 1, contents(cw), contents(dw), contents(lw));
+            }
+        }
+    }
+    match tensor.matrix_strided(2, n, d, 5, 1) {
+        tensor.Made::Ok(view) => {
+            borrow mut c2 as &!cw in {
+                borrow mut d2 as &!dw in {
+                    borrow mut l2 as &!lw in {
+                        bad = bad + kmeans.fit(heap, t, view, wide, k, 4, 7, 1, contents(cw), contents(dw), contents(lw));
+                    }
+                }
+            }
+        }
+        tensor.Made::Err(c) => {
+            bad = bad + 1;
+        }
+    }
+    borrow c1 as &a in {
+        borrow c2 as &b in {
+            bad = bad + same_bits(contents(a), contents(b), k * d);
+        }
+    }
+    borrow d1 as &a in {
+        borrow d2 as &b in {
+            bad = bad + same_bits(contents(a), contents(b), 5 * wk);
+        }
+    }
+    borrow l1 as &a in {
+        borrow l2 as &b in {
+            var i = 0;
+            while i < n {
+                if contents(a)[i] != contents(b)[i] {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, c1);
+    unbox_slice(heap, c2);
+    unbox_slice(heap, d1);
+    unbox_slice(heap, d2);
+    unbox_slice(heap, l1);
+    unbox_slice(heap, l2);
+    return bad;
+}
+
+fn test_views_same_bits_all_models[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 5000;
+    let d = 3;
+    let wide = fill(heap, 2 + n * 5, 141);
+    let flat = box_slice(heap, n * d, 0.0);
+    let ys = labels(heap, n, d, 141);
+    var bad = 0;
+    borrow wide as &wr in {
+        borrow mut flat as &!fw in {
+            var i = 0;
+            while i < n {
+                var j = 0;
+                while j < d {
+                    contents(fw)[i * d + j] = contents(wr)[2 + i * 5 + j];
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow flat as &fr in {
+            borrow ys as &yr in {
+                bad = bad + views_logreg(heap, 1, n, d, contents(fr), contents(wr), contents(yr));
+                bad = bad + views_logreg(heap, 4, n, d, contents(fr), contents(wr), contents(yr));
+                bad = bad + views_kmeans(heap, 1, n, d, contents(fr), contents(wr));
+                bad = bad + views_kmeans(heap, 4, n, d, contents(fr), contents(wr));
+            }
+        }
+    }
+    unbox_slice(heap, wide);
+    unbox_slice(heap, flat);
+    unbox_slice(heap, ys);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the threads: the same bits at every count, every output
+fn test_threads_same_bits[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 5000;
+    let d = 4;
+    let xs = fill(heap, n * d, 101);
+    let yr = labels(heap, n, d, 101);
+    let ww = npass.width(d);
+    let k = 5;
+    let wk = k * d + k + 1;
+    var bad = 0;
+    let lo = box_slice(heap, d + 1, 0.0);
+    let ld = box_slice(heap, 40, 0.0);
+    let go = box_slice(heap, d + 1, 0.0);
+    let gd = box_slice(heap, 6 * (ww + 1), 0.0);
+    let ko = box_slice(heap, k * d, 0.0);
+    let kd = box_slice(heap, 5 * wk, 0.0);
+    let kl = box_slice(heap, n, 0);
+    let lo2 = box_slice(heap, d + 1, 0.0);
+    let ld2 = box_slice(heap, 40, 0.0);
+    let go2 = box_slice(heap, d + 1, 0.0);
+    let gd2 = box_slice(heap, 6 * (ww + 1), 0.0);
+    let ko2 = box_slice(heap, k * d, 0.0);
+    let kd2 = box_slice(heap, 5 * wk, 0.0);
+    let kl2 = box_slice(heap, n, 0);
+    // t = 1 into the first set
+    borrow xs as &xp in {
+        borrow yr as &yp in {
+            borrow mut lo as &!a in {
+                borrow mut ld as &!b in {
+                    bad = bad + linreg.fit(heap, 1, mat(n, d), contents(xp), contents(yp), 0.5, contents(a), contents(b));
+                }
+            }
+            borrow mut go as &!a in {
+                borrow mut gd as &!b in {
+                    bad = bad + logreg.fit(heap, 1, mat(n, d), contents(xp), contents(yp), 6, 0.1, contents(a), contents(b));
+                }
+            }
+        }
+        borrow mut ko as &!a in {
+            borrow mut kd as &!b in {
+                borrow mut kl as &!c in {
+                    bad = bad + kmeans.fit(heap, 1, mat(n, d), contents(xp), k, 4, 3, 1, contents(a), contents(b), contents(c));
+                }
+            }
+        }
+    }
+    var ti = 0;
+    while ti < 6 {
+        var t = 2;
+        if ti == 1 {
+            t = 3;
+        } else if ti == 2 {
+            t = 4;
+        } else if ti == 3 {
+            t = 8;
+        } else if ti == 4 {
+            t = 16;
+        } else if ti == 5 {
+            t = 7;
+        }
+        borrow xs as &xp in {
+            borrow yr as &yp in {
+                borrow mut lo2 as &!a in {
+                    borrow mut ld2 as &!b in {
+                        bad = bad + linreg.fit(heap, t, mat(n, d), contents(xp), contents(yp), 0.5, contents(a), contents(b));
+                    }
+                }
+                borrow mut go2 as &!a in {
+                    borrow mut gd2 as &!b in {
+                        bad = bad + logreg.fit(heap, t, mat(n, d), contents(xp), contents(yp), 6, 0.1, contents(a), contents(b));
+                    }
+                }
+            }
+            borrow mut ko2 as &!a in {
+                borrow mut kd2 as &!b in {
+                    borrow mut kl2 as &!c in {
+                        bad = bad + kmeans.fit(heap, t, mat(n, d), contents(xp), k, 4, 3, 1, contents(a), contents(b), contents(c));
+                    }
+                }
+            }
+        }
+        borrow lo as &a in {
+            borrow lo2 as &b in {
+                bad = bad + same_bits(contents(a), contents(b), d + 1);
+            }
+        }
+        borrow ld as &a in {
+            borrow ld2 as &b in {
+                bad = bad + same_bits(contents(a), contents(b), (d + 1) * (d + 1) + d + 1);
+            }
+        }
+        borrow go as &a in {
+            borrow go2 as &b in {
+                bad = bad + same_bits(contents(a), contents(b), d + 1);
+            }
+        }
+        borrow gd as &a in {
+            borrow gd2 as &b in {
+                bad = bad + same_bits(contents(a), contents(b), 6 * (ww + 1));
+            }
+        }
+        borrow ko as &a in {
+            borrow ko2 as &b in {
+                bad = bad + same_bits(contents(a), contents(b), k * d);
+            }
+        }
+        borrow kd as &a in {
+            borrow kd2 as &b in {
+                bad = bad + same_bits(contents(a), contents(b), 5 * wk);
+            }
+        }
+        borrow kl as &a in {
+            borrow kl2 as &b in {
+                var i = 0;
+                while i < n {
+                    if contents(a)[i] != contents(b)[i] {
+                        bad = bad + 1;
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+        ti = ti + 1;
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, yr);
+    unbox_slice(heap, lo);
+    unbox_slice(heap, ld);
+    unbox_slice(heap, go);
+    unbox_slice(heap, gd);
+    unbox_slice(heap, ko);
+    unbox_slice(heap, kd);
+    unbox_slice(heap, kl);
+    unbox_slice(heap, lo2);
+    unbox_slice(heap, ld2);
+    unbox_slice(heap, go2);
+    unbox_slice(heap, gd2);
+    unbox_slice(heap, ko2);
+    unbox_slice(heap, kd2);
+    unbox_slice(heap, kl2);
+    return bad;
+}
+
+// ---------------------------------------------------------------- fuzz: no entry traps, an answer is 0 or a code of ml.refuse
+fn special_float(r: int) -> [] float {
+    let m = r % 9;
+    if m == 0 {
+        return 0.0 / 0.0;
+    }
+    if m == 1 {
+        return 1.0 / 0.0;
+    }
+    if m == 2 {
+        return 0.0 - 1.0;
+    }
+    if m == 3 {
+        return 1.0e308;
+    }
+    if m == 4 {
+        return 0.0;
+    }
+    if m == 5 {
+        return 0.5;
+    }
+    if m == 6 {
+        return 1.0e-308;
+    }
+    if m == 7 {
+        return 0.0 - 1.0 / 0.0;
+    }
+    return 3.0;
+}
+
+// an int from an output: small, near a power of two, or extreme
+fn wild(r: int) -> [] int {
+    let m = r >> 3 & 15;
+    let v = r >> 8 & 0x7FFFFFFF;
+    if m < 7 {
+        return v % 40;
+    }
+    if m == 7 {
+        return 0 - v % 9;
+    }
+    if m == 8 {
+        return 9223372036854775807;
+    }
+    if m == 9 {
+        return 0 - 9223372036854775807 - 1;
+    }
+    if m == 10 {
+        return 1099511627776 + v % 3;
+    }
+    if m == 11 {
+        return 4294967296 + v % 5;
+    }
+    if m == 12 {
+        return 257 + v % 3;
+    }
+    if m == 13 {
+        return 1025 + v % 3;
+    }
+    if m == 14 {
+        return 131072 + v % 3;
+    }
+    return v % 2000;
+}
+
+fn valid_code(c: int) -> [] bool {
+    return c >= 0 && c <= refuse.count();
+}
+
+fn test_fuzz_never_traps[&h](heap: &!h Heap) -> [heap, conc] int {
+    let xs = fill(heap, 600, 111);
+    let ys = labels(heap, 200, 3, 111);
+    let out = box_slice(heap, 40, 0.0);
+    let diag = box_slice(heap, 3000, 0.0);
+    let lab = box_slice(heap, 300, 0);
+    let fl = box_slice(heap, 300, 0.0);
+    var bad = 0;
+    var s = 20261013;
+    var iter = 0;
+    while iter < 4000 {
+        s = rng.advance(s);
+        let r0 = rng.output(s);
+        s = rng.advance(s);
+        let r1 = rng.output(s);
+        s = rng.advance(s);
+        let r2 = rng.output(s);
+        s = rng.advance(s);
+        let r3 = rng.output(s);
+        s = rng.advance(s);
+        let r4 = rng.output(s);
+        s = rng.advance(s);
+        let r5 = rng.output(s);
+        // a descriptor with wild fields
+        var rank = 2;
+        if r0 & 7 == 0 {
+            rank = wild(r0 >> 20);
+        }
+        let ds = tensor.Tensor { off: wild(r1), rank: rank, s0: wild(r2), s1: wild(r3), s2: 1, s3: 1, t0: wild(r4), t1: wild(r5 >> 4) % 3, t2: 0, t3: 0 };
+        let t = wild(r5 >> 12) % 70;
+        let l2 = special_float(r4 >> 9);
+        let iters = wild(r3 >> 11);
+        let k = wild(r2 >> 13);
+        borrow xs as &xr in {
+            borrow ys as &yr in {
+                borrow mut out as &!ow in {
+                    borrow mut diag as &!dw in {
+                        borrow mut lab as &!lw in {
+                            borrow mut fl as &!fw in {
+                                if !valid_code(linreg.fit(heap, t, ds, contents(xr), contents(yr), l2, contents(ow), contents(dw))) {
+                                    bad = bad + 1;
+                                }
+                                if !valid_code(logreg.fit(heap, t, ds, contents(xr), contents(yr), iters, l2, contents(ow), contents(dw))) {
+                                    bad = bad + 1;
+                                }
+                                if !valid_code(kmeans.fit(heap, t, ds, contents(xr), k, iters, r0, r1 & 3, contents(ow), contents(dw), contents(lw))) {
+                                    bad = bad + 1;
+                                }
+                                if !valid_code(linreg.predict(ds, contents(xr), contents(yr), contents(fw))) {
+                                    bad = bad + 1;
+                                }
+                                if !valid_code(logreg.predict_proba(ds, contents(xr), contents(yr), contents(fw))) {
+                                    bad = bad + 1;
+                                }
+                                if !valid_code(logreg.predict(ds, contents(xr), contents(yr), contents(fw))) {
+                                    bad = bad + 1;
+                                }
+                                if !valid_code(kmeans.predict(heap, ds, contents(xr), k, contents(yr), contents(lw))) {
+                                    bad = bad + 1;
+                                }
+                                if !valid_code(kmeans.transform(ds, contents(xr), k, contents(yr), contents(fw))) {
+                                    bad = bad + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        iter = iter + 1;
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, lab);
+    unbox_slice(heap, fl);
+    return bad;
+}
+
 fn report[&i](io: &!i Io, name: &static [byte], bad: int) -> [io_write] int {
     io.write_all(io, name);
     if bad == 0 {
@@ -1110,6 +1579,10 @@ fn main(world: World) -> [conc] int {
             failed = failed + report(ip, "kmeans_empty_clusters_keep_their_centroid", test_kmeans_empty_clusters_keep_their_centroid(hp));
             failed = failed + report(ip, "kmeans_k_equals_n_and_seeds", test_kmeans_k_equals_n_and_seeds(hp));
             failed = failed + report(ip, "kmeans_refusals", test_kmeans_refusals(hp));
+            failed = failed + report(ip, "limits_before_allocation", test_limits_before_allocation(hp));
+            failed = failed + report(ip, "views_same_bits_all_models", test_views_same_bits_all_models(hp));
+            failed = failed + report(ip, "threads_same_bits", test_threads_same_bits(hp));
+            failed = failed + report(ip, "fuzz_never_traps", test_fuzz_never_traps(hp));
         }
     }
     release(heap);

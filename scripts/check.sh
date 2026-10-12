@@ -20,6 +20,10 @@ sh scripts/build.sh
 python3 scripts/oracle_linalg.py --tree
 python3 scripts/oracle_linalg.py --suite
 sh scripts/gate_par.sh
+# lib/models (docs/models-linear.md): the program of unit, refusal, limit, thread and fuzz tests and the oracle gates at 1 to 16 threads
+# (the mutants of the gate, scripts/mutants_models.py, rebuild the driver 59 times and run on request, as the other mutants do)
+python3 scripts/mutants_models.py --check
+sh scripts/gate_models.sh
 # stage 2: the command line. Package mode: `cancho install` fetches the pinned contract modules into build/deps (not committed).
 $CANCHO build --bin ml
 python3 scripts/schemas.py --check
