@@ -468,6 +468,7 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
     var have_header = false;
     var have_rec = false;
     var open = false;
+    var rec_quote = false;
     var seps = 0;
     var rec_line = 0;
     var rep = report(0, 0, 0, 0);
@@ -523,6 +524,7 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
                             rec_line = number;
                             seps = 0;
                             open = false;
+                            rec_quote = false;
                             borrow mut rec as &!bw in {
                                 buffer.clear(bw);
                             }
@@ -530,6 +532,9 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
                             rec = buffer.push(heap, rec, byte_of(10));
                         }
                         have_rec = true;
+                        if quote {
+                            rec_quote = true;
+                        }
                         rec = buffer.append(heap, rec, line);
                         if !quote && !open {
                             seps = bytes.count_byte(line, ',');
@@ -628,7 +633,7 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
                 } else {
                     borrow rec as &rr in {
                         let record = buffer.bytes(rr);
-                        let quoted = index_of_byte(record, byte_of(34)) >= 0;
+                        let quoted = rec_quote;
                         borrow mut cells as &!cw in {
                             borrow mut fb as &!fw in {
                                 borrow mut acc as &!aw in {

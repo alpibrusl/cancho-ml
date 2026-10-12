@@ -719,11 +719,35 @@ def fuzz_inputs(rnd, n):
             yield "truncated", rnd.choice(valid)[:rnd.randint(0, 60)]
 
 
+ML = os.environ.get("ML", str(ROOT / "build" / "ml"))
+
+
+def run_ml(td, args, timeout=120):
+    p = subprocess.run([ML, "--root", str(td)] + args, capture_output=True, timeout=timeout)
+    return p.returncode, p.stdout, p.stderr
+
+
+def ml_ok(code, out):
+    """`ml` answers one JSON document on one line and an exit status of the toolbox's table, never a trap."""
+    import json
+    if code in TRAPS or code < 0:
+        return False
+    lines = out.decode("utf-8", "replace").splitlines()
+    if len(lines) != 1:
+        return False
+    try:
+        d = json.loads(lines[0])
+    except ValueError:
+        return False
+    return d.get("ok") == (code in (0, 9)) and code in (0, 1, 2, 3, 4, 5, 8, 9)
+
+
 def gate_fuzz(runs, seed, ml=None):
     """RD6: nothing a file holds reaches a trap; each run ends 0, 8 or 3 and says so in the form the driver promises."""
     rnd = random.Random(seed)
     bad = []
     n = 0
+    ml_runs = 0
     t0 = time.time()
     load0 = load_info()
     with tempfile.TemporaryDirectory() as td:
@@ -731,6 +755,24 @@ def gate_fuzz(runs, seed, ml=None):
         for label, data in fuzz_inputs(rnd, runs):
             with open(path, "wb") as f:
                 f.write(data)
+            if n % 3 == 0 and os.path.exists(ML):
+                # the same bytes through the CLI: fit on the first column (a number, or a refusal), then eval and predict on the model it wrote
+                for verb in (["fit", "--overwrite", "--target", "a", "--output", "m.cml", "f.csv"], ["fit", "--overwrite", "--float", "a", "--target", "a", "--output", "m.cml", "f.csv"],
+                             ["fit", "--overwrite", "--task", "classification", "--target", "a", "--output", "m.cml", "f.csv"]):
+                    try:
+                        code, out, err = run_ml(path.parent, verb)
+                    except subprocess.TimeoutExpired:
+                        bad.append((label, "ml timeout"))
+                        continue
+                    ml_runs += 1
+                    if not ml_ok(code, out):
+                        bad.append((label, "ml " + verb[0], code, out[:80], data[:60]))
+                    elif code == 0:
+                        for follow in (["eval", "--model-file", "m.cml", "f.csv"], ["predict", "--model-file", "m.cml", "f.csv"]):
+                            code2, out2, err2 = run_ml(path.parent, follow)
+                            ml_runs += 1
+                            if not ml_ok(code2, out2):
+                                bad.append((label, "ml " + follow[0], code2, out2[:80], data[:60]))
             for mode in ("dump",) if n % 4 else ("dump", "shape"):
                 try:
                     code, out, err = run(["--mode", mode, "--max-line-bytes", "16777216"], path, timeout=60)
@@ -760,6 +802,11 @@ def gate_fuzz(runs, seed, ml=None):
         for label, data in big:
             with open(path, "wb") as f:
                 f.write(data)
+            if os.path.exists(ML) and len(data) < 2000000:
+                code, out, err = run_ml(path.parent, ["fit", "--overwrite", "--target", "a", "--output", "m.cml", "--max-line-bytes", "16777216", "f.csv"])
+                ml_runs += 1
+                if not ml_ok(code, out):
+                    bad.append((label, "ml fit", code, out[:80]))
             for extra in ([], ["--max-line-bytes", "16777216"]):
                 try:
                     code, out, err = run(["--mode", "dump"] + extra, path, timeout=120)
@@ -769,7 +816,8 @@ def gate_fuzz(runs, seed, ml=None):
                 if code in TRAPS or code < 0 or not valid_output(code, out):
                     bad.append((label, code, out[:60]))
             n += 1
-    print("RD6 fuzz: %d inputs through reader-check (%s), machine %s, load %.2f -> %.2f, %.0f s" % (n, "dump and shape", os.uname().machine, load0, load_info(), time.time() - t0))
+    print("RD6 fuzz: %d inputs through reader-check (dump and shape) and %d runs of ml (fit as a float regression, as a regression, as a classification, then eval and predict), machine %s, load %.2f -> %.2f, %.0f s" %
+          (n, ml_runs, os.uname().machine, load0, load_info(), time.time() - t0))
     for d in bad[:20]:
         print("   TRAP OR BAD OUTPUT", d)
     print("RD6 fuzz: %d traps or malformed answers" % len(bad))

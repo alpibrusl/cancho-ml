@@ -87,12 +87,19 @@ pub fn decimal[&c](cell: &c [byte]) -> [] (int, int, int, int) {
     if ndig == 0 {
         return (2, 0, 0, 0);
     }
+    // more than 12 significant digits: not this grammar's (status 5); the float reader checks the rest of the cell
+    if idig > 12 {
+        return (5, 0, 0, 0);
+    }
     var frac = 0;
     if p < n && int_of(cell[p]) == '.' {
         p = p + 1;
         while p < n && is_digit(int_of(cell[p])) {
             frac = frac + 1;
             p = p + 1;
+            if idig + frac > 12 {
+                return (5, 0, 0, 0);
+            }
         }
         if frac == 0 {
             return (2, 0, 0, 0);
