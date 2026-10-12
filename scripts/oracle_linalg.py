@@ -275,6 +275,16 @@ SUITE = [
 ]
 
 
+# kernels with a threaded variant, shapes with several chunks (2048 rows each), ragged and aligned
+THREAD_SUITE = [
+    ("dot", 4097, 0), ("dot", 123457, 0), ("dot", 1000000, 0),
+    ("gemv_t", 5000, 21), ("gemv_t", 100000, 20), ("gemv_t", 100000, 64),
+    ("syrk", 4097, 7), ("syrk", 30000, 20), ("syrk", 9000, 21), ("syrk", 20000, 64),
+    ("gemv_n", 100000, 20), ("gemv_n", 20001, 64),
+    ("gemm", 64, 0), ("gemm", 129, 0), ("gemm", 300, 0),
+]
+
+
 def tree_check():
     """the stack of lib/linalg/order.cho (re-implemented) equals the level-wise tree, in Python floats, for m up to 4096"""
     rng = np.random.default_rng(7)
@@ -313,7 +323,7 @@ def main():
             threads = [int(t) for t in a[a.index("--threads") + 1].split(",")]
         ok = True
         only = a[a.index("--kernel") + 1].split(",") if "--kernel" in a else None
-        for kernel, n, d in SUITE:
+        for kernel, n, d in (THREAD_SUITE if "--thread-suite" in a else SUITE):
             if only and kernel not in only:
                 continue
             for t in threads:

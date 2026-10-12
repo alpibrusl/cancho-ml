@@ -13,3 +13,4 @@ python3 scripts/mutants_linalg.py --check
 sh scripts/build.sh
 python3 scripts/oracle_linalg.py --tree
 python3 scripts/oracle_linalg.py --suite
+sh scripts/gate_par.sh

@@ -1,0 +1,321 @@
+edition 5;
+
+import std.io;
+import ml.rng;
+import ml.refuse;
+import linalg.tensor;
+import linalg.dot;
+import linalg.gemv;
+import linalg.syrk;
+import linalg.gemm;
+import linalg.par;
+import lref;
+
+// the threaded variants give the bits of the sequential kernels (and so of the reference) at every thread count.
+// A program, not `cancho test` tests: the test runner's main has no `conc` in its row. scripts/gate_par.sh builds and runs it;
+// it prints one line per test and exits with the number of failing ones.
+
+fn mat(off: int, rows: int, cols: int, rs: int, cs: int) -> [] tensor.Tensor {
+    match tensor.matrix_strided(off, rows, cols, rs, cs) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn vec1(off: int, n: int, stride: int) -> [] tensor.Tensor {
+    match tensor.vector(off, n, stride) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn thread_counts(i: int) -> [] int {
+    if i == 0 {
+        return 1;
+    }
+    if i == 1 {
+        return 2;
+    }
+    if i == 2 {
+        return 3;
+    }
+    if i == 3 {
+        return 4;
+    }
+    if i == 4 {
+        return 5;
+    }
+    if i == 5 {
+        return 7;
+    }
+    if i == 6 {
+        return 8;
+    }
+    return 16;
+}
+
+fn dot_case[&h](heap: &!h Heap, n: int, seed: int, mode: int) -> [heap, conc] int {
+    var bad = 0;
+    let x = box_slice(heap, n + 1, 0.0);
+    let y = box_slice(heap, n + 1, 0.0);
+    borrow mut x as &!a in {
+        lref.gen(contents(a), n, seed, mode);
+    }
+    borrow mut y as &!a in {
+        lref.gen(contents(a), n, seed + 1, mode);
+    }
+    borrow x as &xr in {
+        borrow y as &yr in {
+            let want = dot.dot(heap, vec1(0, n, 1), contents(xr), vec1(0, n, 1), contents(yr));
+            var i = 0;
+            while i < 8 {
+                let got = par.dot_par(heap, thread_counts(i), vec1(0, n, 1), contents(xr), vec1(0, n, 1), contents(yr));
+                if got.code != 0 || bits_of(got.v) != bits_of(want.v) {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    return bad;
+}
+
+fn run_dot_par[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    var mode = 0;
+    while mode < 3 {
+        bad = bad + dot_case(heap, 0, 1, mode);
+        bad = bad + dot_case(heap, 100, 2, mode);
+        bad = bad + dot_case(heap, 2047, 3, mode);
+        bad = bad + dot_case(heap, 2048, 4, mode);
+        bad = bad + dot_case(heap, 2049, 5, mode);
+        bad = bad + dot_case(heap, 4096, 6, mode);
+        bad = bad + dot_case(heap, 4097, 7, mode);
+        bad = bad + dot_case(heap, 6144, 8, mode);
+        bad = bad + dot_case(heap, 10000, 9, mode);
+        bad = bad + dot_case(heap, 33000, 10, mode);
+        bad = bad + dot_case(heap, 70001, 11, mode);
+        mode = mode + 1;
+    }
+    return bad;
+}
+
+fn mat_case[&h](heap: &!h Heap, n: int, d: int, seed: int, mode: int) -> [heap, conc] int {
+    var bad = 0;
+    let x = box_slice(heap, n * d + 1, 0.0);
+    let r = box_slice(heap, n + 1, 0.0);
+    let w = box_slice(heap, d + 1, 0.0);
+    let g0 = box_slice(heap, d + 1, 0.0);
+    let g1 = box_slice(heap, d + 1, 0.0);
+    let c0 = box_slice(heap, d * d + 1, 3.0);
+    let c1 = box_slice(heap, d * d + 1, 3.0);
+    let y0 = box_slice(heap, n + 1, 0.0);
+    let y1 = box_slice(heap, n + 1, 0.0);
+    borrow mut x as &!a in {
+        lref.gen(contents(a), n * d, seed, mode);
+    }
+    borrow mut r as &!a in {
+        lref.gen(contents(a), n, seed + 1, mode);
+    }
+    borrow mut w as &!a in {
+        lref.gen(contents(a), d, seed + 2, mode);
+    }
+    borrow x as &xr in {
+        borrow r as &rr in {
+            borrow w as &wr in {
+                borrow mut g0 as &!a in {
+                    bad = bad + gemv.gemv_t(heap, mat(0, n, d, d, 1), contents(xr), vec1(0, n, 1), contents(rr), vec1(0, d, 1), contents(a));
+                }
+                borrow mut c0 as &!a in {
+                    bad = bad + syrk.syrk(heap, mat(0, n, d, d, 1), contents(xr), mat(0, d, d, d, 1), contents(a));
+                }
+                borrow mut y0 as &!a in {
+                    bad = bad + gemv.gemv_n(heap, mat(0, n, d, d, 1), contents(xr), vec1(0, d, 1), contents(wr), vec1(0, n, 1), contents(a));
+                }
+                var i = 0;
+                while i < 8 {
+                    let t = thread_counts(i);
+                    borrow mut g1 as &!a in {
+                        bad = bad + par.gemv_t_par(heap, t, mat(0, n, d, d, 1), contents(xr), vec1(0, n, 1), contents(rr), vec1(0, d, 1), contents(a));
+                    }
+                    borrow mut c1 as &!a in {
+                        bad = bad + par.syrk_par(heap, t, mat(0, n, d, d, 1), contents(xr), mat(0, d, d, d, 1), contents(a));
+                    }
+                    borrow mut y1 as &!a in {
+                        bad = bad + par.gemv_n_par(heap, t, mat(0, n, d, d, 1), contents(xr), vec1(0, d, 1), contents(wr), vec1(0, n, 1), contents(a));
+                    }
+                    borrow g0 as &p in {
+                        borrow g1 as &q in {
+                            bad = bad + lref.same_bits(contents(p), contents(q), d);
+                        }
+                    }
+                    borrow c0 as &p in {
+                        borrow c1 as &q in {
+                            bad = bad + lref.same_bits(contents(p), contents(q), d * d);
+                        }
+                    }
+                    borrow y0 as &p in {
+                        borrow y1 as &q in {
+                            bad = bad + lref.same_bits(contents(p), contents(q), n);
+                        }
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, r);
+    unbox_slice(heap, w);
+    unbox_slice(heap, g0);
+    unbox_slice(heap, g1);
+    unbox_slice(heap, c0);
+    unbox_slice(heap, c1);
+    unbox_slice(heap, y0);
+    unbox_slice(heap, y1);
+    return bad;
+}
+
+fn run_gemv_syrk_par[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    var mode = 0;
+    while mode < 2 {
+        bad = bad + mat_case(heap, 1, 3, 1, mode);
+        bad = bad + mat_case(heap, 100, 5, 2, mode);
+        bad = bad + mat_case(heap, 2048, 7, 3, mode);
+        bad = bad + mat_case(heap, 2049, 8, 4, mode);
+        bad = bad + mat_case(heap, 4097, 9, 5, mode);
+        bad = bad + mat_case(heap, 9000, 20, 6, mode);
+        bad = bad + mat_case(heap, 13001, 21, 7, mode);
+        bad = bad + mat_case(heap, 6500, 64, 8, mode);
+        mode = mode + 1;
+    }
+    return bad;
+}
+
+fn gemm_case[&h](heap: &!h Heap, m: int, n: int, p: int, seed: int) -> [heap, conc] int {
+    var bad = 0;
+    let a = box_slice(heap, m * p + 1, 0.0);
+    let b = box_slice(heap, p * n + 1, 0.0);
+    let c0 = box_slice(heap, m * n + 1, 0.0);
+    let c1 = box_slice(heap, m * n + 1, 9.0);
+    borrow mut a as &!w in {
+        lref.gen(contents(w), m * p, seed, 1);
+    }
+    borrow mut b as &!w in {
+        lref.gen(contents(w), p * n, seed + 1, 0);
+    }
+    borrow a as &ar in {
+        borrow b as &br in {
+            borrow mut c0 as &!w in {
+                bad = bad + gemm.gemm(heap, mat(0, m, p, p, 1), contents(ar), mat(0, p, n, n, 1), contents(br), mat(0, m, n, n, 1), contents(w));
+            }
+            var i = 0;
+            while i < 8 {
+                borrow mut c1 as &!w in {
+                    bad = bad + par.gemm_par(heap, thread_counts(i), mat(0, m, p, p, 1), contents(ar), mat(0, p, n, n, 1), contents(br), mat(0, m, n, n, 1), contents(w));
+                }
+                borrow c0 as &x in {
+                    borrow c1 as &y in {
+                        bad = bad + lref.same_bits(contents(x), contents(y), m * n);
+                    }
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    unbox_slice(heap, c0);
+    unbox_slice(heap, c1);
+    return bad;
+}
+
+fn run_gemm_par[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    bad = bad + gemm_case(heap, 8, 8, 8, 1);
+    bad = bad + gemm_case(heap, 33, 17, 40, 2);
+    bad = bad + gemm_case(heap, 64, 64, 300, 3);
+    bad = bad + gemm_case(heap, 100, 31, 513, 4);
+    bad = bad + gemm_case(heap, 7, 9, 9, 5);
+    return bad;
+}
+
+// refusals and fallbacks: a bad thread count is refused; operands the threaded path does not take (strided, tiny) fall back
+// to the sequential kernel with the same bits
+fn run_par_refusals_and_fallbacks[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let x = box_slice(heap, 20000, 0.5);
+    borrow x as &xr in {
+        if par.dot_par(heap, 0, vec1(0, 100, 1), contents(xr), vec1(0, 100, 1), contents(xr)).code != refuse.threads() {
+            bad = bad + 1;
+        }
+        if par.dot_par(heap, 65, vec1(0, 100, 1), contents(xr), vec1(0, 100, 1), contents(xr)).code != refuse.threads() {
+            bad = bad + 1;
+        }
+        // strided operands fall back
+        let a = par.dot_par(heap, 4, vec1(0, 5000, 2), contents(xr), vec1(1, 5000, 3), contents(xr));
+        let b = dot.dot(heap, vec1(0, 5000, 2), contents(xr), vec1(1, 5000, 3), contents(xr));
+        if a.code != 0 || bits_of(a.v) != bits_of(b.v) {
+            bad = bad + 1;
+        }
+        // bad shapes are refused by the same checks as the sequential kernel
+        if par.dot_par(heap, 4, vec1(0, 5000, 1), contents(xr), vec1(0, 4999, 1), contents(xr)).code != refuse.tensor_shape() {
+            bad = bad + 1;
+        }
+        if par.dot_par(heap, 4, vec1(10000, 20000, 1), contents(xr), vec1(0, 20000, 1), contents(xr)).code != refuse.tensor_bounds() {
+            bad = bad + 1;
+        }
+    }
+    borrow mut x as &!xw in {
+        if par.gemv_t_par(heap, 0, mat(0, 10, 10, 10, 1), contents(xw), vec1(0, 10, 1), contents(xw), vec1(0, 10, 1), contents(xw)) != refuse.threads() {
+            bad = bad + 1;
+        }
+        if par.syrk_par(heap, 99, mat(0, 10, 10, 10, 1), contents(xw), mat(0, 10, 10, 10, 1), contents(xw)) != refuse.threads() {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, x);
+    return bad;
+}
+
+fn report[&i](io: &!i Io, name: &static [byte], bad: int) -> [io_write] int {
+    io.write_all(io, name);
+    if bad == 0 {
+        io.write_all(io, " ... ok\n");
+    } else {
+        io.write_all(io, " ... FAILED\n");
+    }
+    return bad;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    var bad = 0;
+    borrow mut heap as &!hp in {
+        borrow mut io as &!ip in {
+            bad = bad + report(ip, "dot_par", run_dot_par(hp));
+            bad = bad + report(ip, "gemv_syrk_par", run_gemv_syrk_par(hp));
+            bad = bad + report(ip, "gemm_par", run_gemm_par(hp));
+            bad = bad + report(ip, "par_refusals_and_fallbacks", run_par_refusals_and_fallbacks(hp));
+        }
+    }
+    release(heap);
+    release(io);
+    return bad;
+}

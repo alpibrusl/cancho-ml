@@ -92,6 +92,19 @@ GROUPS["fuzz"] = (["sh", "scripts/gate_linalg.sh", "t_fuzz.cho"], [  # the check
     ("fuzz-sane-in-check", "lib/linalg/tensor.cho", "    if sane(t) == false {\n        return refuse.tensor_bounds();\n    }\n    // each (extent - 1)", "    // each (extent - 1)"),
     ("fuzz-reach-guard", "lib/linalg/tensor.cho", "if too_big(shape_at(t, a) - 1, abs_c(stride_at(t, a))) == 1 {\n            return refuse.tensor_bounds();", "if false {\n            return refuse.tensor_bounds();"),
 ])
+GROUPS["par"] = (["sh", "scripts/gate_par.sh"], [
+    # THE required mutant: the partial sums are added in thread order (each thread keeps a running sum of its chunk roots, the
+    # parent adds the threads' sums in thread order). It must fail at more than one thread.
+    ("par-thread-order", "lib/linalg/par.cho", "    var sp = 0;\n    var c = 0;\n    while c < nchunks {\n        sp = order.settle_root(st, lv, sp, w, roots, c * w, 3);\n        c = c + 1;\n    }\n    order.finish(st, sp, w);\n    return 0;", "    var j = 0;\n    while j < w {\n        st[j] = 0.0;\n        j = j + 1;\n    }\n    var k = 0;\n    while k < t {\n        var c = bound(k, t, nchunks);\n        let c1 = bound(k + 1, t, nchunks);\n        while c < c1 {\n            j = 0;\n            while j < w {\n                st[j] = st[j] + roots[c * w + j];\n                j = j + 1;\n            }\n            c = c + 1;\n        }\n        k = k + 1;\n    }\n    return 0;"),
+    ("par-chunk-misaligned", "lib/linalg/par.cho", "r0 = c0 * 2048;\n        r1 = c1 * 2048;", "r0 = c0 * 2047;\n        r1 = c1 * 2047;"),
+    ("par-no-finish", "lib/linalg/par.cho", "    order.finish(st, sp, w);\n    return 0;\n}\n\n// the threads actually used", "    return 0;\n}\n\n// the threads actually used"),
+    ("par-ragged-clamp", "lib/linalg/par.cho", "if b1 > nb {\n            b1 = nb;\n        }\n        var sp = 0;", "var sp = 0;"),
+    ("par-gemm-rows", "lib/linalg/par.cho", "r0 = bound(k, t, tiles) * 4;", "r0 = bound(k, t, tiles) * 4 + 1;"),
+    ("par-copy-row", "lib/linalg/par.cho", "xd[(r0 + i) * rs..(r0 + i) * rs + acols]", "xd[(r0 + i + 1) * rs..(r0 + i + 1) * rs + acols]"),
+    ("par-slot-copy", "lib/linalg/par.cho", "copy_floats(slots[c0 * w..c1 * w], contents(ow), (c1 - c0) * w);", "copy_floats(slots[c0 * w..c1 * w], contents(ow), (c1 - c0) * w - 1);"),
+    ("par-bound", "lib/linalg/par.cho", "return k * nchunks / t;", "return k * nchunks / t + k / 3;"),
+    ("par-dot-second-operand", "lib/linalg/par.cho", "copy_floats(contents(jk.b), yd[r0..r1], rows);\n        } else {", "copy_floats(contents(jk.b), xd[r0..r1], rows);\n        } else {"),
+])
 GROUPS["gemm"] = (["sh", "scripts/gate_linalg.sh", "t_gemm.cho", "gemm"], [
     ("gemm-tile-entry", M, "c13 = c13 + a1 * b3;", "c13 = c13 + a2 * b3;"),
     ("gemm-tile-col", M, "c30 = c30 + a3 * b0;", "c30 = c30 + a3 * b1;"),

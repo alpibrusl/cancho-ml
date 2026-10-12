@@ -27,6 +27,7 @@ import linalg.gemv;
 import linalg.syrk;
 import linalg.chol;
 import linalg.gemm;
+import linalg.par;
 
 // decimal digits only, at most 18 of them (so no overflow); anything else answers -1
 fn number_of[&s](text: &s [byte]) -> [] int {
@@ -140,7 +141,7 @@ fn report[&i, &v](io: &!i Io, vals: &v [float], count: int, code: int, ms: int) 
 // ---------------------------------------------------------------- the kernels
 // each: build the inputs (seed streams derive(seed, 1..)), run once to warm up, time `reps` runs, report
 
-fn run_dot[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, seed: int, reps: int, threads: int) -> [heap, io_write, clock] int {
+fn run_dot[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, seed: int, reps: int, threads: int) -> [heap, io_write, clock, conc] int {
     let x = gen_box(heap, n, rng.derive(seed, 1));
     let y = gen_box(heap, n, rng.derive(seed, 2));
     let outv = zero_box(heap, 1, 0.0);
@@ -153,7 +154,7 @@ fn run_dot[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, seed
                 var r = 0;
                 t0 = clock_ms(clock);
                 while r < reps {
-                    let got = dot.dot(heap, vec1(n), contents(xr), vec1(n), contents(yr));
+                    let got = par.dot_par(heap, threads, vec1(n), contents(xr), vec1(n), contents(yr));
                     code = got.code;
                     contents(ow)[0] = got.v;
                     r = r + 1;
@@ -198,7 +199,7 @@ fn run_axpy[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, see
     return 0;
 }
 
-fn run_gemv_n[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+fn run_gemv_n[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int, threads: int) -> [heap, io_write, clock, conc] int {
     let x = gen_box(heap, n * d, rng.derive(seed, 1));
     let w = gen_box(heap, d, rng.derive(seed, 2));
     let y = zero_box(heap, n, 0.0);
@@ -211,7 +212,7 @@ fn run_gemv_n[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d
                 var r = 0;
                 t0 = clock_ms(clock);
                 while r < reps {
-                    code = gemv.gemv_n(heap, mat(n, d), contents(xr), vec1(d), contents(wr), vec1(n), contents(yw));
+                    code = par.gemv_n_par(heap, threads, mat(n, d), contents(xr), vec1(d), contents(wr), vec1(n), contents(yw));
                     r = r + 1;
                 }
                 t1 = clock_ms(clock);
@@ -227,7 +228,7 @@ fn run_gemv_n[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d
     return 0;
 }
 
-fn run_gemv_t[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+fn run_gemv_t[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int, threads: int) -> [heap, io_write, clock, conc] int {
     let x = gen_box(heap, n * d, rng.derive(seed, 1));
     let r = gen_box(heap, n, rng.derive(seed, 2));
     let g = zero_box(heap, d, 0.0);
@@ -240,7 +241,7 @@ fn run_gemv_t[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d
                 var q = 0;
                 t0 = clock_ms(clock);
                 while q < reps {
-                    code = gemv.gemv_t(heap, mat(n, d), contents(xr), vec1(n), contents(rr), vec1(d), contents(gw));
+                    code = par.gemv_t_par(heap, threads, mat(n, d), contents(xr), vec1(n), contents(rr), vec1(d), contents(gw));
                     q = q + 1;
                 }
                 t1 = clock_ms(clock);
@@ -256,7 +257,7 @@ fn run_gemv_t[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d
     return 0;
 }
 
-fn run_syrk[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+fn run_syrk[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: int, seed: int, reps: int, threads: int) -> [heap, io_write, clock, conc] int {
     let x = gen_box(heap, n * d, rng.derive(seed, 1));
     let c = zero_box(heap, d * d, 0.0);
     var t0 = 0;
@@ -267,7 +268,7 @@ fn run_syrk[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, d: 
             var q = 0;
             t0 = clock_ms(clock);
             while q < reps {
-                code = syrk.syrk(heap, mat(n, d), contents(xr), mat(d, d), contents(cw));
+                code = par.syrk_par(heap, threads, mat(n, d), contents(xr), mat(d, d), contents(cw));
                 q = q + 1;
             }
             t1 = clock_ms(clock);
@@ -352,7 +353,7 @@ fn run_solve[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, d: int, se
     return 0;
 }
 
-fn run_gemm[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, seed: int, reps: int) -> [heap, io_write, clock] int {
+fn run_gemm[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, seed: int, reps: int, threads: int) -> [heap, io_write, clock, conc] int {
     let a = gen_box(heap, n * n, rng.derive(seed, 1));
     let b = gen_box(heap, n * n, rng.derive(seed, 2));
     let c = zero_box(heap, n * n, 0.0);
@@ -365,7 +366,7 @@ fn run_gemm[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, see
                 var q = 0;
                 t0 = clock_ms(clock);
                 while q < reps {
-                    code = gemm.gemm(heap, mat(n, n), contents(ar), mat(n, n), contents(br), mat(n, n), contents(cw));
+                    code = par.gemm_par(heap, threads, mat(n, n), contents(ar), mat(n, n), contents(br), mat(n, n), contents(cw));
                     q = q + 1;
                 }
                 t1 = clock_ms(clock);
@@ -381,7 +382,7 @@ fn run_gemm[&h, &i, &k](heap: &!h Heap, io: &!i Io, clock: &k Clock, n: int, see
     return 0;
 }
 
-fn main(world: World) -> [] int {
+fn main(world: World) -> [conc] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(ffi);
     release(net);
@@ -465,11 +466,11 @@ fn main(world: World) -> [] int {
                 } else if kernel == 2 {
                     code = run_axpy(hp, ip, kc, n, seed, reps);
                 } else if kernel == 3 {
-                    code = run_gemv_n(hp, ip, kc, n, d, seed, reps);
+                    code = run_gemv_n(hp, ip, kc, n, d, seed, reps, threads);
                 } else if kernel == 4 {
-                    code = run_gemv_t(hp, ip, kc, n, d, seed, reps);
+                    code = run_gemv_t(hp, ip, kc, n, d, seed, reps, threads);
                 } else if kernel == 5 {
-                    code = run_syrk(hp, ip, kc, n, d, seed, reps);
+                    code = run_syrk(hp, ip, kc, n, d, seed, reps, threads);
                 } else if kernel == 6 {
                     code = run_chol(hp, ip, kc, n, seed, reps);
                 } else if kernel == 7 {
@@ -477,7 +478,7 @@ fn main(world: World) -> [] int {
                 } else if kernel == 8 {
                     code = run_solve(hp, ip, kc, n, seed, reps, 1);
                 } else if kernel == 9 {
-                    code = run_gemm(hp, ip, kc, n, seed, reps);
+                    code = run_gemm(hp, ip, kc, n, seed, reps, threads);
                 } else {
                     if refused == 0 {
                         refused = refuse.param_out_of_range();
