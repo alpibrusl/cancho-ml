@@ -1,0 +1,140 @@
+module metrics.classify;
+
+import metrics.rules;
+import metrics.ratio;
+
+// Counts-based metrics (docs/metrics.md section 2.5): accuracy, precision, recall, F1. Every value is one division of two exact
+// ints below the row cap, so the IEEE quotient is the correctly rounded one. `pos` is the positive label, stated by the caller.
+
+// the checks every metric starts with: the cap, the lengths, the size. 0 or a code. n is the common length.
+pub fn check_size(n1: int, n2: int, cap: int, ceiling: int) -> [] int {
+    if cap < 1 || cap > ceiling {
+        return rules.out_of_range();
+    }
+    if n1 != n2 {
+        return rules.length_mismatch();
+    }
+    if n1 == 0 {
+        return rules.undefined();
+    }
+    if n1 > cap {
+        return rules.too_many_rows();
+    }
+    return 0;
+}
+
+pub fn ceiling_rows() -> [] int {
+    return 1073741824;
+}
+
+pub fn default_rows() -> [] int {
+    return 10000000;
+}
+
+fn exact(num: int, den: int) -> [] float {
+    return float_of(num) / float_of(den);
+}
+
+// accuracy: rows with y_pred == y_true over n; any labels
+pub fn accuracy[&a, &b](y_true: &a [int], y_pred: &b [int], cap: int) -> [] rules.Scored {
+    let n = len(y_true);
+    let c = check_size(n, len(y_pred), cap, ceiling_rows());
+    if c != 0 {
+        return rules.fail(c);
+    }
+    var hit = 0;
+    var i = 0;
+    while i < n {
+        if y_true[i] == y_pred[i] {
+            hit = hit + 1;
+        }
+        i = i + 1;
+    }
+    return rules.ok(exact(hit, n));
+}
+
+// the confusion counts for positive label `pos`: answers (tp, fp, fn) or a refusal: code != 0 when the labels (y_true, y_pred
+// and pos together) are more than two distinct values
+pub struct Counts {
+    code: int,
+    tp: int,
+    fp: int,
+    fneg: int,
+}
+
+pub fn counts[&a, &b](y_true: &a [int], y_pred: &b [int], pos: int, cap: int) -> [] Counts {
+    let n = len(y_true);
+    let c = check_size(n, len(y_pred), cap, ceiling_rows());
+    if c != 0 {
+        return Counts { code: c, tp: 0, fp: 0, fneg: 0 };
+    }
+    // the other label: the first value that is not pos; a second different one is not binary
+    var other = pos;
+    var have = false;
+    var tp = 0;
+    var fp = 0;
+    var fneg = 0;
+    var i = 0;
+    while i < n {
+        let t = y_true[i];
+        let p = y_pred[i];
+        if t != pos {
+            if have == false {
+                other = t;
+                have = true;
+            } else if t != other {
+                return Counts { code: rules.not_binary(), tp: 0, fp: 0, fneg: 0 };
+            }
+        }
+        if p != pos {
+            if have == false {
+                other = p;
+                have = true;
+            } else if p != other {
+                return Counts { code: rules.not_binary(), tp: 0, fp: 0, fneg: 0 };
+            }
+        }
+        if t == pos && p == pos {
+            tp = tp + 1;
+        } else if p == pos {
+            fp = fp + 1;
+        } else if t == pos {
+            fneg = fneg + 1;
+        }
+        i = i + 1;
+    }
+    return Counts { code: 0, tp: tp, fp: fp, fneg: fneg };
+}
+
+pub fn precision[&a, &b](y_true: &a [int], y_pred: &b [int], pos: int, cap: int) -> [] rules.Scored {
+    let k = counts(y_true, y_pred, pos, cap);
+    if k.code != 0 {
+        return rules.fail(k.code);
+    }
+    if k.tp + k.fp == 0 {
+        return rules.fail(rules.undefined());
+    }
+    return rules.ok(exact(k.tp, k.tp + k.fp));
+}
+
+pub fn recall[&a, &b](y_true: &a [int], y_pred: &b [int], pos: int, cap: int) -> [] rules.Scored {
+    let k = counts(y_true, y_pred, pos, cap);
+    if k.code != 0 {
+        return rules.fail(k.code);
+    }
+    if k.tp + k.fneg == 0 {
+        return rules.fail(rules.undefined());
+    }
+    return rules.ok(exact(k.tp, k.tp + k.fneg));
+}
+
+pub fn f1[&a, &b](y_true: &a [int], y_pred: &b [int], pos: int, cap: int) -> [] rules.Scored {
+    let k = counts(y_true, y_pred, pos, cap);
+    if k.code != 0 {
+        return rules.fail(k.code);
+    }
+    if 2 * k.tp + k.fp + k.fneg == 0 {
+        return rules.fail(rules.undefined());
+    }
+    return rules.ok(exact(2 * k.tp, 2 * k.tp + k.fp + k.fneg));
+}
