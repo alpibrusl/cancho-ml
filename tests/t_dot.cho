@@ -1,0 +1,301 @@
+import std.test;
+import ml.rng;
+import ml.refuse;
+import linalg.order;
+import linalg.tensor;
+import linalg.dot;
+import linalg.axpy;
+import lref;
+
+// dot and axpy against the reference of docs/linalg.md section 2, bit for bit (scripts/check.sh)
+
+fn vec1(n: int, stride: int) -> [] tensor.Tensor {
+    match tensor.vector(0, n, stride) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn one_dot[&h](heap: &!h Heap, n: int, seed: int, mode: int) -> [heap] int {
+    let x = box_slice(heap, n + 1, 0.0);
+    let y = box_slice(heap, n + 1, 0.0);
+    let parts = box_slice(heap, n / 256 + 2, 0.0);
+    var bad = 0;
+    borrow mut x as &!xw in {
+        lref.gen(contents(xw), n, seed, mode);
+    }
+    borrow mut y as &!yw in {
+        lref.gen(contents(yw), n, seed + 77, mode);
+    }
+    borrow x as &xr in {
+        borrow y as &yr in {
+            borrow mut parts as &!pw in {
+                let want = lref.dot(contents(xr), 0, 1, contents(yr), 0, 1, n, contents(pw));
+                let got = dot.dot(heap, vec1(n, 1), contents(xr), vec1(n, 1), contents(yr));
+                if got.code != 0 || bits_of(got.v) != bits_of(want) {
+                    bad = bad + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    unbox_slice(heap, parts);
+    return bad;
+}
+
+fn test_dot_unit_sizes[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var mode = 0;
+    while mode < 4 {
+        bad = bad + one_dot(heap, 0, 11, mode);
+        bad = bad + one_dot(heap, 1, 11, mode);
+        bad = bad + one_dot(heap, 2, 12, mode);
+        bad = bad + one_dot(heap, 7, 13, mode);
+        bad = bad + one_dot(heap, 255, 14, mode);
+        bad = bad + one_dot(heap, 256, 15, mode);
+        bad = bad + one_dot(heap, 257, 16, mode);
+        bad = bad + one_dot(heap, 511, 17, mode);
+        bad = bad + one_dot(heap, 512, 18, mode);
+        bad = bad + one_dot(heap, 513, 19, mode);
+        bad = bad + one_dot(heap, 2047, 20, mode);
+        bad = bad + one_dot(heap, 2048, 21, mode);
+        bad = bad + one_dot(heap, 2049, 22, mode);
+        bad = bad + one_dot(heap, 2304, 23, mode);
+        bad = bad + one_dot(heap, 4096, 24, mode);
+        bad = bad + one_dot(heap, 4097, 25, mode);
+        bad = bad + one_dot(heap, 5000, 26, mode);
+        bad = bad + one_dot(heap, 16384, 27, mode);
+        bad = bad + one_dot(heap, 16385, 28, mode);
+        bad = bad + one_dot(heap, 65537, 29, mode);
+        bad = bad + one_dot(heap, 100000, 30, mode);
+        mode = mode + 1;
+    }
+    return bad;
+}
+
+// every block count from 1 to 40 (the whole tree shape space for small m), full and ragged last block
+fn test_dot_every_block_count[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var m = 1;
+    while m <= 40 {
+        bad = bad + one_dot(heap, m * 256, 100 + m, 1);
+        bad = bad + one_dot(heap, m * 256 - 100, 200 + m, 1);
+        m = m + 1;
+    }
+    return bad;
+}
+
+// strided operands (2, 3, -1, -2) give the same bits as the reference with the same strides, and a strided copy of the data
+// gives the same bits as the unit-stride call
+fn test_dot_strided[&h](heap: &!h Heap) -> [heap] int {
+    let n = 3000;
+    let x = box_slice(heap, n * 3 + 5, 0.0);
+    let y = box_slice(heap, n * 3 + 5, 0.0);
+    let parts = box_slice(heap, 20, 0.0);
+    var bad = 0;
+    borrow mut x as &!xw in {
+        lref.gen(contents(xw), n * 3 + 5, 5, 1);
+    }
+    borrow mut y as &!yw in {
+        lref.gen(contents(yw), n * 3 + 5, 6, 0);
+    }
+    borrow x as &xr in {
+        borrow y as &yr in {
+            borrow mut parts as &!pw in {
+                // stride 3 and 2
+                let w1 = lref.dot(contents(xr), 0, 3, contents(yr), 1, 2, n, contents(pw));
+                let g1 = dot.dot(heap, vec1(n, 3), contents(xr), tensor.Tensor { off: 1, rank: 1, s0: n, s1: 1, s2: 1, s3: 1, t0: 2, t1: 0, t2: 0, t3: 0 }, contents(yr));
+                if g1.code != 0 || bits_of(g1.v) != bits_of(w1) {
+                    bad = bad + 1;
+                }
+                // reversed x (start at n - 1, stride -1) against the reference with a negative stride
+                let w2 = lref.dot(contents(xr), n - 1, 0 - 1, contents(yr), 0, 1, n, contents(pw));
+                let g2 = dot.dot(heap, tensor.Tensor { off: n - 1, rank: 1, s0: n, s1: 1, s2: 1, s3: 1, t0: 0 - 1, t1: 0, t2: 0, t3: 0 }, contents(xr), vec1(n, 1), contents(yr));
+                if g2.code != 0 || bits_of(g2.v) != bits_of(w2) {
+                    bad = bad + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    unbox_slice(heap, parts);
+    return bad;
+}
+
+fn test_dot_refusals[&h](heap: &!h Heap) -> [heap] int {
+    let x = box_slice(heap, 10, 1.0);
+    var bad = 0;
+    borrow x as &xr in {
+        // different extents
+        if dot.dot(heap, vec1(10, 1), contents(xr), vec1(9, 1), contents(xr)).code != refuse.tensor_shape() {
+            bad = bad + 1;
+        }
+        // x runs past its data
+        if dot.dot(heap, vec1(11, 1), contents(xr), vec1(11, 1), contents(xr)).code != refuse.tensor_bounds() {
+            bad = bad + 1;
+        }
+        // a matrix is not a vector
+        let m = tensor.Tensor { off: 0, rank: 2, s0: 2, s1: 5, s2: 1, s3: 1, t0: 5, t1: 1, t2: 0, t3: 0 };
+        if dot.dot(heap, m, contents(xr), vec1(10, 1), contents(xr)).code != refuse.tensor_rank() {
+            bad = bad + 1;
+        }
+        // an absurd hand-made descriptor
+        let evil = tensor.Tensor { off: 9223372036854775807, rank: 1, s0: 4, s1: 1, s2: 1, s3: 1, t0: 9223372036854775807, t1: 0, t2: 0, t3: 0 };
+        if dot.dot(heap, evil, contents(xr), vec1(4, 1), contents(xr)).code == 0 {
+            bad = bad + 1;
+        }
+        // empty vectors: 0.0 and no code
+        let e = dot.dot(heap, vec1(0, 1), contents(xr), vec1(0, 1), contents(xr));
+        if e.code != 0 || bits_of(e.v) != bits_of(0.0) {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, x);
+    return bad;
+}
+
+// the stack equals the level-wise definition for every block count up to 300, on random partials, in cancho
+fn test_order_stack_is_the_tree[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let st = box_slice(heap, 40, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    let parts = box_slice(heap, 300, 0.0);
+    let copy = box_slice(heap, 300, 0.0);
+    borrow mut parts as &!pw in {
+        lref.gen(contents(pw), 300, 4242, 1);
+    }
+    var m = 1;
+    while m <= 300 {
+        borrow mut st as &!sw in {
+            borrow mut lv as &!lw in {
+                borrow parts as &pr in {
+                    borrow mut copy as &!cw in {
+                        var i = 0;
+                        var sp = 0;
+                        while i < m {
+                            contents(sw)[sp] = contents(pr)[i];
+                            contents(cw)[i] = contents(pr)[i];
+                            sp = order.settle(contents(sw), contents(lw), sp, 1);
+                            i = i + 1;
+                        }
+                        order.finish(contents(sw), sp, 1);
+                        let want = lref.tree(contents(cw), m);
+                        if bits_of(contents(sw)[0]) != bits_of(want) {
+                            bad = bad + 1;
+                        }
+                    }
+                }
+            }
+        }
+        m = m + 1;
+    }
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    unbox_slice(heap, parts);
+    unbox_slice(heap, copy);
+    return bad;
+}
+
+// ---------------------------------------------------------------- axpy
+fn one_axpy[&h](heap: &!h Heap, n: int, seed: int, mode: int, a: float) -> [heap] int {
+    let x = box_slice(heap, n + 1, 0.0);
+    let y = box_slice(heap, n + 1, 0.0);
+    let y0 = box_slice(heap, n + 1, 0.0);
+    var bad = 0;
+    borrow mut x as &!xw in {
+        lref.gen(contents(xw), n, seed, mode);
+    }
+    borrow mut y as &!yw in {
+        lref.gen(contents(yw), n, seed + 1, mode);
+    }
+    borrow mut y0 as &!zw in {
+        lref.gen(contents(zw), n, seed + 1, mode);
+    }
+    borrow x as &xr in {
+        borrow mut y as &!yw in {
+            bad = bad + axpy.axpy(a, vec1(n, 1), contents(xr), vec1(n, 1), contents(yw));
+        }
+        // expected: y0[i] + a * x[i], two roundings, written here independently of the kernel
+        borrow mut y0 as &!zw in {
+            let z = contents(zw);
+            var i = 0;
+            while i < n {
+                let p = a * contents(xr)[i];
+                z[i] = z[i] + p;
+                i = i + 1;
+            }
+        }
+    }
+    borrow y as &yr in {
+        borrow y0 as &zr in {
+            bad = bad + lref.same_bits(contents(yr), contents(zr), n);
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    unbox_slice(heap, y0);
+    return bad;
+}
+
+fn test_axpy_sizes[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var mode = 0;
+    while mode < 3 {
+        bad = bad + one_axpy(heap, 0, 1, mode, 0.5);
+        bad = bad + one_axpy(heap, 1, 2, mode, 0.0 - 3.25);
+        bad = bad + one_axpy(heap, 7, 3, mode, 1.0e-3);
+        bad = bad + one_axpy(heap, 100, 4, mode, 0.1);
+        bad = bad + one_axpy(heap, 1000, 5, mode, 0.0 - 0.1);
+        bad = bad + one_axpy(heap, 100001, 6, mode, 1.0e300);
+        mode = mode + 1;
+    }
+    return bad;
+}
+
+// strided and reversed y; the writes land only where the descriptor says
+fn test_axpy_strided[&h](heap: &!h Heap) -> [heap] int {
+    let n = 50;
+    let x = box_slice(heap, 200, 0.0);
+    let y = box_slice(heap, 200, 7.0);
+    var bad = 0;
+    borrow mut x as &!xw in {
+        lref.gen(contents(xw), 200, 3, 0);
+    }
+    borrow x as &xr in {
+        borrow mut y as &!yw in {
+            // y elements 3, 7, 11, ... (stride 4), x reversed from 99 (stride -2)
+            bad = bad + axpy.axpy(2.0, tensor.Tensor { off: 99, rank: 1, s0: n, s1: 1, s2: 1, s3: 1, t0: 0 - 2, t1: 0, t2: 0, t3: 0 }, contents(xr), tensor.Tensor { off: 3, rank: 1, s0: n, s1: 1, s2: 1, s3: 1, t0: 4, t1: 0, t2: 0, t3: 0 }, contents(yw));
+            // a zero-stride output is refused and writes nothing
+            if axpy.axpy(2.0, vec1(n, 1), contents(xr), tensor.Tensor { off: 0, rank: 1, s0: n, s1: 1, s2: 1, s3: 1, t0: 0, t1: 0, t2: 0, t3: 0 }, contents(yw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+            // mismatched extents
+            if axpy.axpy(2.0, vec1(n, 1), contents(xr), vec1(n + 1, 1), contents(yw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+        }
+        borrow y as &yr in {
+            var i = 0;
+            while i < 200 {
+                var want = 7.0;
+                if i >= 3 && (i - 3) % 4 == 0 && (i - 3) / 4 < n {
+                    let j = (i - 3) / 4;
+                    want = 7.0 + 2.0 * contents(xr)[99 - 2 * j];
+                }
+                if bits_of(contents(yr)[i]) != bits_of(want) {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, y);
+    return bad;
+}

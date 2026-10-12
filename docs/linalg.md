@@ -101,7 +101,7 @@ Every reduction has an order that is part of the API and does not depend on the 
 | `gemm` (C = A B) | `A_ik * B_kj`, k = 0..p-1 | per entry exactly `dot` of a row of A and a column of B |
 | `cholesky` (A = L L^T, lower) | `L_ik * L_jk`, k = 0..j-1 | **one running value, ascending, no blocks**: `s = A_ij; s = s - L_ik * L_jk` for k ascending; then `L_ij = s / L_jj`, or for j = i, `L_ii = sqrt(s)` with the pivot test `s > 0.0`, else refusal. It is a recurrence, not a free reduction, so the block rule does not apply |
 | `trsv` forward (L x = b) | `L_ik * x_k`, k = 0..i-1 | `s = b_i; s = s - L_ik * x_k` for k ascending; `x_i = s / L_ii` |
-| `trsv` backward (L^T x = b) | `L_ki * x_k`, k = i+1..d-1 | `s = b_i; s = s - L_ki * x_k` for k ascending; `x_i = s / L_ii`; i from d-1 down |
+| `trsv` backward (L^T x = b) | `L_ki * x_k`, k = d-1 down to i+1 | `s = b_i; s = s - L_ki * x_k` for k **descending** from d-1; `x_i = s / L_ii`; i from d-1 down. *(Corrected in place: the first draft said ascending k. Ascending k makes the first term of row i the x just computed, so the whole solve is one serial chain; descending k lets four columns be summed together. Both are valid fixed orders; this one is the one implemented, and `scripts/bench_linalg.py` measures the difference.)* |
 
 ## 3. API **[choice]**
 
@@ -110,7 +110,7 @@ Every reduction has an order that is part of the API and does not depend on the 
   row-major strides `(cols, 1)`.
 * **Operations** (descriptor edits, no copy): `matrix`, `vector`, `slice` (one axis), `transpose`, `reshape` (only when the strides
   are contiguous), `broadcast` (stride 0), `row`, `column`. Each answers a `Made` (`Ok(Tensor)` or `Err(code)`).
-* **Refusals** (rule tags, exit 8): `ml.tensor.rank` (rank 0 or > 4), `ml.tensor.shape` (a negative or zero extent, a reshape
+* **Refusals** (rule tags, exit 8): `ml.tensor.rank` (rank 0 or > 4), `ml.tensor.shape` (a negative extent, a reshape
   that does not preserve the element count or is not contiguous, an element count that overflows `int`, a broadcast of an axis
   that is not 1), `ml.tensor.bounds` (the descriptor addresses an element outside the data it is given, or a slice lies outside
   its axis). `tensor.check(t, len)` is the single check every kernel entry calls first; no kernel indexes with an unchecked

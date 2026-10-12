@@ -1,0 +1,49 @@
+module linalg.axpy;
+
+import linalg.tensor;
+import ml.refuse;
+
+// y = y + a * x, elementwise (docs/linalg.md section 2.1): no reduction, so no order beyond the two roundings per element
+// (the product, then the sum; never fused). x and y are separate borrows, so they cannot overlap.
+
+// unit stride: both slices positioned at their first element, n elements
+pub fn axpy_unit[&x, &y](a: float, xs: &x [float], ys: &!y [float], n: int) -> [] int {
+    let xr = xs[0..n];
+    let yr = ys[0..n];
+    var i = 0;
+    while i < n {
+        yr[i] = yr[i] + a * xr[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// rank-1 x and y of equal extent; y must be writable. Answers a refusal code, 0 when done.
+pub fn axpy[&x, &y](a: float, xt: tensor.Tensor, xd: &x [float], yt: tensor.Tensor, yd: &!y [float]) -> [] int {
+    var c = tensor.expect(xt, 1, len(xd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.expect(yt, 1, len(yd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.writable(yt);
+    if c != 0 {
+        return c;
+    }
+    if xt.s0 != yt.s0 {
+        return refuse.tensor_shape();
+    }
+    let n = xt.s0;
+    if xt.t0 == 1 && yt.t0 == 1 {
+        return axpy_unit(a, xd[xt.off..xt.off + n], yd[yt.off..yt.off + n], n);
+    }
+    var i = 0;
+    while i < n {
+        let q = yt.off + i * yt.t0;
+        yd[q] = yd[q] + a * xd[xt.off + i * xt.t0];
+        i = i + 1;
+    }
+    return 0;
+}

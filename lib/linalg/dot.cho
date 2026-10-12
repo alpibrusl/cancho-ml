@@ -1,0 +1,173 @@
+module linalg.dot;
+
+import linalg.order;
+import linalg.tensor;
+import ml.refuse;
+
+// dot product, unit stride: docs/linalg.md section 2.1. Block partials are ascending sums from +0.0 over K = 256 terms;
+// 8 blocks (one chunk) are summed together so that eight independent chains are in flight; the partials are then settled
+// into the tree stack in block order. `xs` and `ys` are positioned at the first element and hold at least n elements.
+
+// partial of the block that starts at `at`, length m (m <= 256), one chain
+fn block1[&x, &y](xs: &x [float], ys: &y [float], at: int, m: int) -> [] float {
+    let xr = xs[at..at + m];
+    let yr = ys[at..at + m];
+    var s = 0.0;
+    var j = 0;
+    while j < m {
+        s = s + xr[j] * yr[j];
+        j = j + 1;
+    }
+    return s;
+}
+
+// the 8 full blocks starting at `at` (8 * 256 terms): eight chains; the partials go to w[0..8)
+fn chunk8[&x, &y, &w](xs: &x [float], ys: &y [float], at: int, out: &!w [float]) -> [] int {
+    let x0 = xs[at..at + 256];
+    let x1 = xs[at + 256..at + 512];
+    let x2 = xs[at + 512..at + 768];
+    let x3 = xs[at + 768..at + 1024];
+    let x4 = xs[at + 1024..at + 1280];
+    let x5 = xs[at + 1280..at + 1536];
+    let x6 = xs[at + 1536..at + 1792];
+    let x7 = xs[at + 1792..at + 2048];
+    let y0 = ys[at..at + 256];
+    let y1 = ys[at + 256..at + 512];
+    let y2 = ys[at + 512..at + 768];
+    let y3 = ys[at + 768..at + 1024];
+    let y4 = ys[at + 1024..at + 1280];
+    let y5 = ys[at + 1280..at + 1536];
+    let y6 = ys[at + 1536..at + 1792];
+    let y7 = ys[at + 1792..at + 2048];
+    var s0 = 0.0;
+    var s1 = 0.0;
+    var s2 = 0.0;
+    var s3 = 0.0;
+    var s4 = 0.0;
+    var s5 = 0.0;
+    var s6 = 0.0;
+    var s7 = 0.0;
+    var j = 0;
+    while j < 256 {
+        s0 = s0 + x0[j] * y0[j];
+        s1 = s1 + x1[j] * y1[j];
+        s2 = s2 + x2[j] * y2[j];
+        s3 = s3 + x3[j] * y3[j];
+        s4 = s4 + x4[j] * y4[j];
+        s5 = s5 + x5[j] * y5[j];
+        s6 = s6 + x6[j] * y6[j];
+        s7 = s7 + x7[j] * y7[j];
+        j = j + 1;
+    }
+    out[0] = s0;
+    out[1] = s1;
+    out[2] = s2;
+    out[3] = s3;
+    out[4] = s4;
+    out[5] = s5;
+    out[6] = s6;
+    out[7] = s7;
+    return 0;
+}
+
+// Sum of the terms of blocks [b0, b1) of an n-term product (b0 a multiple of G unless it is the whole range's start of a
+// chunk): pushes each block's partial on the stack (st/lv, width 1) starting at slot sp0; answers the new sp. `st` and `lv`
+// are the caller's workspace (order.slots() entries). Used by dot_unit and by the threads (which start at chunk boundaries).
+pub fn run_blocks[&x, &y, &s, &l, &w](xs: &x [float], ys: &y [float], n: int, b0: int, b1: int, st: &!s [float], lv: &!l [int], sp0: int, wk: &!w [float]) -> [] int {
+    var sp = sp0;
+    var b = b0;
+    while b < b1 {
+        if b + 8 <= b1 && (b + 8) * 256 <= n {
+            chunk8(xs, ys, b * 256, wk);
+            var k = 0;
+            while k < 8 {
+                st[sp] = wk[k];
+                sp = order.settle(st, lv, sp, 1);
+                k = k + 1;
+            }
+            b = b + 8;
+        } else {
+            var m = n - b * 256;
+            if m > 256 {
+                m = 256;
+            }
+            st[sp] = block1(xs, ys, b * 256, m);
+            sp = order.settle(st, lv, sp, 1);
+            b = b + 1;
+        }
+    }
+    return sp;
+}
+
+pub fn dot_unit[&x, &y, &s, &l, &w](xs: &x [float], ys: &y [float], n: int, st: &!s [float], lv: &!l [int], wk: &!w [float]) -> [] float {
+    if n <= 0 {
+        return 0.0;
+    }
+    let sp = run_blocks(xs, ys, n, 0, order.blocks(n), st, lv, 0, wk);
+    order.finish(st, sp, 1);
+    return st[0];
+}
+
+// One block's partial over a strided vector pair: ascending from +0.0 (the generic path; same bits as the unit path).
+fn block_strided[&x, &y](xd: &x [float], xo: int, xs: int, yd: &y [float], yo: int, ys: int, b: int, n: int) -> [] float {
+    var m = n - b * 256;
+    if m > 256 {
+        m = 256;
+    }
+    var s = 0.0;
+    var j = 0;
+    while j < m {
+        let i = b * 256 + j;
+        s = s + xd[xo + i * xs] * yd[yo + i * ys];
+        j = j + 1;
+    }
+    return s;
+}
+
+// dot product of two rank-1 tensors of equal extent. Answers FRes (code 0 and the value, or a refusal and 0.0).
+// Unit strides take the 8-block path; any other stride the generic path; the bits are the same.
+pub fn dot[&h, &x, &y](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], yt: tensor.Tensor, yd: &y [float]) -> [heap] tensor.FRes {
+    var c = tensor.expect(xt, 1, len(xd));
+    if c != 0 {
+        return tensor.fres(c, 0.0);
+    }
+    c = tensor.expect(yt, 1, len(yd));
+    if c != 0 {
+        return tensor.fres(c, 0.0);
+    }
+    if xt.s0 != yt.s0 {
+        return tensor.fres(refuse.tensor_shape(), 0.0);
+    }
+    let n = xt.s0;
+    if n == 0 {
+        return tensor.fres(0, 0.0);
+    }
+    let st = box_slice(heap, 40, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    let wk = box_slice(heap, 8, 0.0);
+    var v = 0.0;
+    borrow mut st as &!sw in {
+        borrow mut lv as &!lw in {
+            borrow mut wk as &!ww in {
+                if xt.t0 == 1 && yt.t0 == 1 {
+                    v = dot_unit(xd[xt.off..xt.off + n], yd[yt.off..yt.off + n], n, contents(sw), contents(lw), contents(ww));
+                } else {
+                    var sp = 0;
+                    var b = 0;
+                    let nb = order.blocks(n);
+                    while b < nb {
+                        contents(sw)[sp] = block_strided(xd, xt.off, xt.t0, yd, yt.off, yt.t0, b, n);
+                        sp = order.settle(contents(sw), contents(lw), sp, 1);
+                        b = b + 1;
+                    }
+                    order.finish(contents(sw), sp, 1);
+                    v = contents(sw)[0];
+                }
+            }
+        }
+    }
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    unbox_slice(heap, wk);
+    return tensor.fres(0, v);
+}
