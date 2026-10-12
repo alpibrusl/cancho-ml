@@ -1,0 +1,150 @@
+module mt;
+
+import ml.rng;
+
+// helpers of the metrics tests: small vectors from text, and the random pools of the fuzz
+
+// ints from a list like "1,0,-3" (at most 18 digits each); the box has len + 1 entries, the count is the second answer
+pub fn ints[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[int]], int) {
+    var n = 0;
+    if len(t) > 0 {
+        n = 1;
+    }
+    var i = 0;
+    while i < len(t) {
+        if int_of(t[i]) == ',' {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    let b = box_slice(heap, n + 1, 0);
+    var o = b;
+    borrow mut o as &!w in {
+        let a = contents(w);
+        var k = 0;
+        var v = 0;
+        var neg = false;
+        i = 0;
+        while i <= len(t) {
+            if i == len(t) || int_of(t[i]) == ',' {
+                if n > 0 {
+                    if neg {
+                        a[k] = 0 - v;
+                    } else {
+                        a[k] = v;
+                    }
+                }
+                k = k + 1;
+                v = 0;
+                neg = false;
+            } else if int_of(t[i]) == '-' {
+                neg = true;
+            } else {
+                v = v * 10 + (int_of(t[i]) - '0');
+            }
+            i = i + 1;
+        }
+    }
+    return (o, n);
+}
+
+// floats from the same list, each int divided by 8.0 (exact)
+pub fn eighths[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[float]], int) {
+    let (ib, n) = ints(heap, t);
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    var q = ib;
+    borrow q as &ir in {
+        borrow mut o as &!w in {
+            var k = 0;
+            while k < n {
+                contents(w)[k] = float_of(contents(ir)[k]) / 8.0;
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, q);
+    return (o, n);
+}
+
+// 64-bit values compared as two halves (cancho int literals are signed)
+pub fn bits_is(x: float, h: int, l: int) -> [] int {
+    let v = bits_of(x);
+    if v >> 32 & 0xFFFFFFFF == h && v & 0xFFFFFFFF == l {
+        return 0;
+    }
+    return 1;
+}
+
+// a draw of the fuzz: the k-th output of the stream of `seed`
+pub fn draw(seed: int, k: int) -> [] int {
+    return rng.mix(wrapping_add(seed, wrapping_mul(k + 1, rng.gold())));
+}
+
+// one float from the hostile pool by a draw: NaN, +-inf, +-0, subnormal, max, tiny, ordinary
+pub fn hostile(z: int) -> [] float {
+    let k = (z >> 1 & 9223372036854775807) % 16;
+    if k == 0 {
+        return 0.0 / 0.0;
+    }
+    if k == 1 {
+        return 1.0 / 0.0;
+    }
+    if k == 2 {
+        return 0.0 - 1.0 / 0.0;
+    }
+    if k == 3 {
+        return 0.0;
+    }
+    if k == 4 {
+        return 0.0 * (0.0 - 1.0);
+    }
+    if k == 5 {
+        return 5.0e-324;
+    }
+    if k == 6 {
+        return 1.7976931348623157e308;
+    }
+    if k == 7 {
+        return 0.0 - 1.7976931348623157e308;
+    }
+    if k == 8 {
+        return 1.0;
+    }
+    if k == 9 {
+        return 0.5;
+    }
+    if k == 10 {
+        return 2.220446049250313e-16;
+    }
+    if k == 11 {
+        return 1.0 - 1.1102230246251565e-16;
+    }
+    if k == 12 {
+        return 0.0 - 0.25;
+    }
+    if k == 13 {
+        return 1.5;
+    }
+    return rng.unit(z);
+}
+
+// one label from a pool that includes the extreme ints
+pub fn label(z: int, wide: bool) -> [] int {
+    let k = (z >> 1 & 9223372036854775807) % 8;
+    if wide {
+        if k == 0 {
+            return 0 - 9223372036854775807 - 1;
+        }
+        if k == 1 {
+            return 9223372036854775807;
+        }
+        if k == 2 {
+            return 0 - 1;
+        }
+        if k == 3 {
+            return 2;
+        }
+    }
+    return k % 2;
+}
