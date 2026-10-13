@@ -26,7 +26,11 @@ import sys
 import tempfile
 from fractions import Fraction
 
+import warnings
+
 import numpy as np
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -515,13 +519,16 @@ def run_case(case, tmp, threads=1, quiet=False):
 def main():
     argv = sys.argv[1:]
     n = 40
+    models = ("linear", "logistic")
     if argv and argv[0] == "--suite":
         n = int(argv[1]) if len(argv) > 1 else 40
+        if len(argv) > 2:
+            models = (argv[2],)
     bad = 0
     refused = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        for model in ("linear", "logistic"):
+        for model in models:
             for seed in range(1, n + 1):
                 case = gen_case(seed * 7919 + (0 if model == "linear" else 101), model)
                 pr = run_case(case, tmp, threads=1 + seed % 4)
