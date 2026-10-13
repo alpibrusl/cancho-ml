@@ -242,15 +242,15 @@ Everything below was printed by a script of this repository, on one machine (thi
 The first version of this section (the CLI slice) ran under a 1-minute load average of 3.8 to 6.0; **the counts below were refreshed at `v1-post`** under a load average of
 about 8 to 10 (other processes on the machine, and the mutant suites running in parallel). It is not a quiet-machine run and no figure here is a benchmark.
 
-**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`; the reader stage's verdicts are in `docs/reader.md` section 6): **105 tests, all
-pass, 1 skipped** (the `--threads` branch of D1, because there is no such flag; the skip says so). The run inside `scripts/check.sh` took 49.0 s. 99 fixtures
-(`tests/conformance/fixtures.py`) reach all 20 flags, all 49 rules and all 4 log records of the tables. *(The CLI slice had 88 tests, 90 fixtures, 19 flags and 48 rules; the reader stage (`test_float.py`, the float options) and `v1-post` (four tests of the
-sum order in `test_model_file.py`) account for the difference; the integration run of `docs/integration.md` had 101.)* The numeric gates of stage 1
+**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`; the reader stage's verdicts are in `docs/reader.md` section 6, the wiring stage's in `docs/wiring.md` section 8): **138 tests, all
+pass, none skipped** (the `--threads` branch of D1 runs since W1). The run inside `scripts/check.sh` took 85.9 s under a load average of about 4 to 6 (the mutant suites ran beside it). 163 fixtures
+(`tests/conformance/fixtures.py`) reach all 29 flags, all 67 rules and all 4 log records of the tables. *(The numbers at `v1-post` were 105 tests, 1 skipped, 99 fixtures, 20 flags and 49 rules; the CLI slice had 88 tests, 90 fixtures, 19 flags and 48 rules; the integration run of `docs/integration.md` had 101.
+W1 added `test_wire_baseline.py`, `test_wire.py`, `test_wire_file.py`, `test_wire_oracle.py`, two tests of `test_authority.py` and one of `test_log.py`, enabled the determinism test of `--threads`, and 64 fixtures.)* The numeric gates of stage 1
 and the unit tests of `lib/core/exact.cho` (7) pass in `scripts/check.sh`, which exits 0.
 
 **Mutants** (`python3 scripts/mutants_cli.py`; the log of the CLI slice's 34 is `docs/bench/mutants_cli.log`, that of the reader stage's 11 more `docs/bench/mutants_cli_reader.log`):
 **53 mutants, each a copy of the tree with one change and the binary rebuilt, run against the tests of the gate it targets; all 53 killed, none survived**, and the unchanged tree
-passes (run at `v1-post`). 34 are the slice's, 11 the reader stage's (RD7), 8 are the sum-order mutants of `v1-post`.
+passes (rerun at W1, `docs/bench/mutants_cli_w1.log`; the full run printed 51 killed and 2 survivors, two patterns that W1 made stale and re-aimed: `t1-fixture-reaches-another-rule`, now that `ml.model.malformed` has two fixtures, and `m1-sum-order-from-kind-5`, now `-from-kind-7`, since kinds 4 and 5 are read by the pipeline's reader and only 6 and 7 reach `mfile.cho`'s check; both re-aimed patterns were killed). 34 are the slice's, 11 the reader stage's (RD7), 8 are the sum-order mutants of `v1-post`. `d1-thread-count-changes-a-byte` is now a stand-in that strips `--threads` and flips a byte, against the real flag.
 
 | gate | mutants | killed | survived | the mutants |
 |---|---|---|---|---|
@@ -284,7 +284,7 @@ How the gates were checked to be able to fail, and what they found:
 * **What the gates do not claim.** O1 compares with an oracle written by the same author from the same text; it checks the tool against
   the document, not the document against anything outside it (the oracle's RMSE repeats the tool's three IEEE steps in Python).
   D2, the same bytes on another machine, is not tested here. T1 checks that the tables, the schema, the skill text and the fixtures
-  agree; it does not check that a help sentence is true. The `--threads` branch of D1 is shown able to fail only by a stand-in binary.
+  agree; it does not check that a help sentence is true. The `--threads` branch of D1 is shown able to fail by a stand-in binary (`d1-thread-count-changes-a-byte`) and by `w-thread-count-modulo-4`.
   The `dry_run` guarantee ("no mutating system call") was not run under `strace`. No gate measures memory or speed.
 
 ## 8. What the pinned contract package says that is wrong or too narrow for `ml`
