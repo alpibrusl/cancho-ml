@@ -55,6 +55,7 @@ def argv(cfg, size, threads=1, out="full", extra=()):
 
 def build(src, exe, cancho=CANCHO, extra=()):
     files = sorted(os.listdir(f"{src}/lib/core")) and [f"{src}/lib/core/{f}" for f in sorted(os.listdir(f"{src}/lib/core")) if f.endswith(".cho")]
+    files += [f"{src}/lib/linalg/tensor.cho"]  # lib/core/matrix.cho imports linalg.tensor (integration)
     files += [f"{src}/lib/models/tree/{f}" for f in sorted(os.listdir(f"{src}/lib/models/tree")) if f.endswith(".cho")]
     files += [f"{src}/tools/tree-check/main.cho"]
     r = subprocess.run([cancho, "build", "--std", *files, "-o", exe], capture_output=True, text=True)
@@ -142,6 +143,7 @@ def thread_gate(exe, sizes_trees=(("C1", "100000", 10), ("C2", "100000", 10), ("
 def unit(src, cancho=CANCHO, verbose=True, timeout=300):
     """tests/t_tree.cho: the refusal fixtures and the hand-worked cases; fails on a FAILED line, a trap or a non-zero exit"""
     files = [f"{src}/lib/core/{f}" for f in sorted(os.listdir(f"{src}/lib/core")) if f.endswith(".cho")]
+    files += [f"{src}/lib/linalg/tensor.cho"]  # lib/core/matrix.cho imports linalg.tensor (integration)
     files += [f"{src}/lib/models/tree/{f}" for f in sorted(os.listdir(f"{src}/lib/models/tree")) if f.endswith(".cho")] + [f"{src}/tests/t_tree.cho"]
     exe = f"{src}/build/t_tree"
     os.makedirs(f"{src}/build", exist_ok=True)
