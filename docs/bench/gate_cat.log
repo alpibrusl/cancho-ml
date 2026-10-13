@@ -1,0 +1,16 @@
+C1/C6: 44 adversarial files and 1500 seeded random files (711 accepted, 789 refused by an oracle verdict), machine arm64, load 2.45
+C1/C6 diff: 1544 runs, 0 differences
+C2: 150 tables (80 accepted at every order), 5 seeded permutations each, machine arm64, load 2.42
+C2 row order: 750 runs, 0 differences
+C3: 9 tables at 5 thread counts through `ml fit --cat` and 5 runs of the reader each, machine arm64, load 2.42
+C3 threads: 90 runs, 0 differences
+   a 203 MB file of 2800000 distinct values in one categorical column: exit 8, ['refused 22 66 1 64'], peak 1.5 MB (16 allowed)
+   the same with --max-categories 1024: exit 8, ['refused 22 1026 1 1024'], peak 1.6 MB
+C4: machine arm64, load 2.42, 1 s
+C4 limits: 75 runs, 0 differences
+C5: 387 valid strings (in chunks) and 4445 invalid ones (each alone and after ASCII), 8901 runs, machine arm64, load 2.59
+C5 utf8: 8901 runs, 0 differences
+C7: 150 tables, a predict file each (another column order, unseen strings, markers, missing columns) and the file through its own vocabulary (150 agree), machine arm64, load 2.59
+C7 round trip: 459 runs, 0 differences
+C8: 3618 runs (reader-check --mode cat and ml fit --cat), machine arm64, load 2.58, 12 s
+C8 no trap: 3618 runs, 0 differences

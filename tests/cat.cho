@@ -1,0 +1,543 @@
+import std.test;
+import std.buffer;
+import std.bytes;
+import ml.catmat;
+import ml.dict;
+import ml.limits;
+import ml.refuse;
+import linalg.tensor;
+
+// tests of lib/core/dict.cho and lib/core/catmat.cho (docs/categorical.md gate C12, and the unit half of C2, C4, C5, C7):
+// `cancho test --std lib/core/*.cho lib/linalg/tensor.cho tests/cat.cho` (scripts/check.sh). A test answers 0 to pass.
+
+fn hexval(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    return c - 'a' + 10;
+}
+
+// the bytes of a string of hex digit pairs
+fn unhex[&h](heap: &!h Heap, s: &static [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, len(s) / 2 + 1);
+    var i = 0;
+    while i + 1 < len(s) {
+        b = buffer.push(heap, b, byte_of(hexval(int_of(s[i])) * 16 + hexval(int_of(s[i + 1]))));
+        i = i + 2;
+    }
+    return b;
+}
+
+// a dictionary of `ncols` columns named "a", "b", ... (one byte each)
+fn make_dict[&h](heap: &!h Heap, ncols: int, maxc: int, maxs: int, maxp: int) -> [heap] (dict.Dict, int) {
+    let names = box_slice(heap, 8, byte_of(0));
+    let ends = box_slice(heap, 8, 0);
+    var nm = names;
+    var en = ends;
+    borrow mut nm as &!nw in {
+        borrow mut en as &!ew in {
+            var i = 0;
+            while i < ncols && i < 8 {
+                contents(nw)[i] = byte_of(97 + i);
+                contents(ew)[i] = i + 1;
+                i = i + 1;
+            }
+        }
+    }
+    var out = dict.empty_dict(heap);
+    var code = 0;
+    borrow nm as &nr in {
+        borrow en as &er in {
+            let (d, c) = dict.make(heap, ncols, 4096, maxc, maxs, maxp, contents(nr), contents(er));
+            dict.drop(heap, out);
+            out = d;
+            code = c;
+        }
+    }
+    unbox_slice(heap, nm);
+    unbox_slice(heap, en);
+    return (out, code);
+}
+
+fn add[&h, &d](d: &!d dict.Dict, col: int, s: &static [byte]) -> [] int {
+    return dict.intern(d, col, s);
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    return bytes.equal(x, y);
+}
+
+// the strings below, interned in the order `order` lists (indexes into the list), and the dump of the frozen vocabulary
+fn dump_after[&h](heap: &!h Heap, n: int, ma: int, mb: int) -> [heap] buffer.Buffer {
+    let (d0, code) = make_dict(heap, 1, 64, 255, 1048576);
+    var d = d0;
+    borrow mut d as &!dm in {
+        var i = 0;
+        while i < n {
+            let k = (i * ma + mb) % 11;
+            if k == 0 {
+                add(dm, 0, "banana");
+            }
+            if k == 1 {
+                add(dm, 0, "apple");
+            }
+            if k == 2 {
+                add(dm, 0, "cherry");
+            }
+            if k == 3 {
+                add(dm, 0, "Apple");
+            }
+            if k == 4 {
+                add(dm, 0, "apple2");
+            }
+            if k == 5 {
+                add(dm, 0, "a");
+            }
+            if k == 6 {
+                add(dm, 0, " a");
+            }
+            if k == 7 {
+                add(dm, 0, "a b");
+            }
+            if k == 8 {
+                add(dm, 0, "é");
+            }
+            if k == 9 {
+                add(dm, 0, "日本");
+            }
+            if k == 10 {
+                add(dm, 0, "😀");
+            }
+            i = i + 1;
+        }
+    }
+    let v = dict.freeze(heap, d);
+    var out = buffer.empty(heap, 1);
+    borrow v as &vr in {
+        buffer.drop(heap, out);
+        out = dict.dump(heap, vr);
+    }
+    dict.drop_vocab(heap, v);
+    return out;
+}
+
+fn test_the_vocabulary_does_not_depend_on_the_order[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // 1 and 10 are coprime with 11: each is a permutation of 0..10 (22 entries: every string twice)
+    let a = dump_after(heap, 11, 1, 0);
+    let b = dump_after(heap, 11, 10, 0);
+    let c = dump_after(heap, 22, 7, 3);
+    let d = dump_after(heap, 11, 3, 5);
+    borrow a as &ar in {
+        borrow b as &br in {
+            borrow c as &cr in {
+                borrow d as &dr in {
+                    if !same(buffer.bytes(ar), buffer.bytes(br)) || !same(buffer.bytes(ar), buffer.bytes(cr)) || !same(buffer.bytes(ar), buffer.bytes(dr)) {
+                        bad = bad + 1;
+                    }
+                    // and it is the hand-written one: " a", "Apple", "a", "a b", "apple", "apple2", "banana", "cherry", "é", "日本", "😀"
+                    let want = unhex(heap, "0100000001000000610b000000020000002061050000004170706c65010000006103000000612062050000006170706c65060000006170706c65320600000062616e616e610600000063686572727902000000c3a906000000e697a5e69cac04000000f09f9880");
+                    borrow want as &wr in {
+                        if !same(buffer.bytes(ar), buffer.bytes(wr)) {
+                            bad = bad + 1;
+                        }
+                    }
+                    buffer.drop(heap, want);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, a);
+    buffer.drop(heap, b);
+    buffer.drop(heap, c);
+    buffer.drop(heap, d);
+    return bad;
+}
+
+// ---------------------------------------------------------------- limits
+
+fn test_categories_limit_is_exact_and_leaves_the_dictionary_as_it_was[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (d0, code) = make_dict(heap, 2, 3, 255, 1048576);
+    var d = d0;
+    if code != 0 {
+        bad = bad + 1;
+    }
+    borrow mut d as &!dm in {
+        // three strings fit, a repeated string is not a new one, the fourth distinct string is refused
+        if add(dm, 0, "x") != 0 || add(dm, 0, "y") != 0 || add(dm, 0, "z") != 0 || add(dm, 0, "x") != 0 || add(dm, 0, "z") != 0 {
+            bad = bad + 1;
+        }
+        if add(dm, 0, "w") != refuse.limit_categories() {
+            bad = bad + 1;
+        }
+        // refused again, and a known string is still accepted: nothing was changed
+        if add(dm, 0, "w") != refuse.limit_categories() || add(dm, 0, "y") != 0 {
+            bad = bad + 1;
+        }
+        // the other column has its own three
+        if add(dm, 1, "w") != 0 || add(dm, 1, "x") != 0 || add(dm, 1, "y") != 0 || add(dm, 1, "z") != refuse.limit_categories() {
+            bad = bad + 1;
+        }
+    }
+    borrow d as &dr in {
+        if dict.dict_count(dr, 0) != 3 || dict.dict_count(dr, 1) != 3 || dict.dict_pool_used(dr) != 6 {
+            bad = bad + 1;
+        }
+    }
+    dict.drop(heap, d);
+    return bad;
+}
+
+fn test_string_bytes_limit_is_exact[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (d0, code) = make_dict(heap, 1, 8, 4, 1048576);
+    var d = d0;
+    borrow mut d as &!dm in {
+        if add(dm, 0, "abcd") != 0 || add(dm, 0, "日") != 0 {
+            bad = bad + 1;
+        }
+        if add(dm, 0, "abcde") != refuse.limit_string_bytes() || add(dm, 0, "日本") != refuse.limit_string_bytes() {
+            bad = bad + 1;
+        }
+        // the length is judged before the bytes: 5 bytes that are not UTF-8 are a long string, not an invalid one
+        if add(dm, 0, "") != refuse.param_out_of_range() {
+            bad = bad + 1;
+        }
+    }
+    borrow d as &dr in {
+        if dict.dict_count(dr, 0) != 2 {
+            bad = bad + 1;
+        }
+    }
+    dict.drop(heap, d);
+    return bad;
+}
+
+fn test_pool_limit_is_exact_and_counts_every_column[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // 10 bytes for all the columns together
+    let (d0, code) = make_dict(heap, 2, 8, 255, 10);
+    var d = d0;
+    borrow mut d as &!dm in {
+        if add(dm, 0, "abcd") != 0 || add(dm, 1, "efghij") != 0 {
+            bad = bad + 1;
+        }
+        // the pool is full: a repeated string needs no room, a new one of one byte does not fit
+        if add(dm, 0, "abcd") != 0 || add(dm, 1, "efghij") != 0 {
+            bad = bad + 1;
+        }
+        if add(dm, 0, "k") != refuse.limit_string_pool() || add(dm, 1, "k") != refuse.limit_string_pool() {
+            bad = bad + 1;
+        }
+    }
+    borrow d as &dr in {
+        if dict.dict_pool_used(dr) != 10 || dict.dict_count(dr, 0) != 1 || dict.dict_count(dr, 1) != 1 {
+            bad = bad + 1;
+        }
+    }
+    dict.drop(heap, d);
+    // one byte less than the sum is refused at the last string
+    let (e0, code2) = make_dict(heap, 2, 8, 255, 9);
+    var e = e0;
+    borrow mut e as &!em in {
+        if add(em, 0, "abcd") != 0 || add(em, 1, "efghij") != refuse.limit_string_pool() {
+            bad = bad + 1;
+        }
+    }
+    dict.drop(heap, e);
+    return bad;
+}
+
+fn test_columns_and_parameters_are_refused_before_anything_is_allocated[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let names = box_slice(heap, 8, byte_of(97));
+    let ends = box_slice(heap, 8, 1);
+    var nm = names;
+    var en = ends;
+    borrow nm as &nr in {
+        borrow en as &er in {
+            // 3 columns, at most 2
+            let (a, ca) = dict.make(heap, 3, 2, 8, 255, 1000, contents(nr), contents(er));
+            var cols_a = 1;
+            borrow a as &ar in {
+                cols_a = dict.dict_columns(ar);
+            }
+            if ca != refuse.limit_categorical_columns() || cols_a != 0 {
+                bad = bad + 1;
+            }
+            dict.drop(heap, a);
+            // 2 columns, at most 2, fine
+            let (b, cb) = dict.make(heap, 2, 2, 8, 255, 1000, contents(nr), contents(er));
+            var cols_b = 0;
+            borrow b as &br in {
+                cols_b = dict.dict_columns(br);
+            }
+            if cb != 0 || cols_b != 2 {
+                bad = bad + 1;
+            }
+            dict.drop(heap, b);
+            // every parameter outside its range, each by one
+            let (c1, k1) = dict.make(heap, 1, 4096, 0, 255, 1000, contents(nr), contents(er));
+            let (c2, k2) = dict.make(heap, 1, 4096, 1025, 255, 1000, contents(nr), contents(er));
+            let (c3, k3) = dict.make(heap, 1, 4096, 8, 0, 1000, contents(nr), contents(er));
+            let (c4, k4) = dict.make(heap, 1, 4096, 8, 65537, 1000, contents(nr), contents(er));
+            let (c5, k5) = dict.make(heap, 1, 4096, 8, 255, 0, contents(nr), contents(er));
+            let (c6, k6) = dict.make(heap, 1, 4096, 8, 255, 8388609, contents(nr), contents(er));
+            let (c7, k7) = dict.make(heap, 1, 4097, 8, 255, 1000, contents(nr), contents(er));
+            let (c8, k8) = dict.make(heap, 0 - 1, 4096, 8, 255, 1000, contents(nr), contents(er));
+            let (c9, k9) = dict.make(heap, 9, 4096, 8, 255, 1000, contents(nr), contents(er));
+            let p = refuse.param_out_of_range();
+            if k1 != p || k2 != p || k3 != p || k4 != p || k5 != p || k6 != p || k7 != p || k8 != p || k9 != p {
+                bad = bad + 1;
+            }
+            dict.drop(heap, c1);
+            dict.drop(heap, c2);
+            dict.drop(heap, c3);
+            dict.drop(heap, c4);
+            dict.drop(heap, c5);
+            dict.drop(heap, c6);
+            dict.drop(heap, c7);
+            dict.drop(heap, c8);
+            dict.drop(heap, c9);
+            // the ceilings themselves are accepted
+            let (d, kd) = dict.make(heap, 1, 4096, 1024, 65536, 8388608, contents(nr), contents(er));
+            if kd != 0 {
+                bad = bad + 1;
+            }
+            dict.drop(heap, d);
+        }
+    }
+    unbox_slice(heap, nm);
+    unbox_slice(heap, en);
+    return bad;
+}
+
+// ---------------------------------------------------------------- UTF-8
+
+fn offset_of[&h](heap: &!h Heap, s: &static [byte]) -> [heap] int {
+    let b = unhex(heap, s);
+    var o = 0;
+    borrow b as &br in {
+        o = dict.utf8_offset(buffer.bytes(br));
+    }
+    buffer.drop(heap, b);
+    return o;
+}
+
+fn test_utf8_valid_and_invalid_forms[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // valid: ASCII, DEL, the boundaries of each width, the last code point, NUL, a BOM, an emoji, composed and decomposed e-acute
+    if offset_of(heap, "41") != 0 - 1 || offset_of(heap, "7f") != 0 - 1 || offset_of(heap, "c280") != 0 - 1 || offset_of(heap, "dfbf") != 0 - 1 {
+        bad = bad + 1;
+    }
+    if offset_of(heap, "e0a080") != 0 - 1 || offset_of(heap, "efbfbf") != 0 - 1 || offset_of(heap, "f0908080") != 0 - 1 || offset_of(heap, "f48fbfbf") != 0 - 1 {
+        bad = bad + 1;
+    }
+    if offset_of(heap, "00") != 0 - 1 || offset_of(heap, "6100620000") != 0 - 1 || offset_of(heap, "efbbbf61") != 0 - 1 || offset_of(heap, "f09f9880") != 0 - 1 {
+        bad = bad + 1;
+    }
+    if offset_of(heap, "c3a9") != 0 - 1 || offset_of(heap, "65cc81") != 0 - 1 {
+        bad = bad + 1;
+    }
+    // invalid, with the offset of the first bad byte: a lone continuation, a truncated sequence, overlong forms, surrogates, past U+10FFFF, FF, Latin-1
+    if offset_of(heap, "80") != 0 || offset_of(heap, "6180") != 1 || offset_of(heap, "e282") != 0 || offset_of(heap, "61e282") != 1 {
+        bad = bad + 1;
+    }
+    if offset_of(heap, "c080") != 0 || offset_of(heap, "c1bf") != 0 || offset_of(heap, "e08080") != 0 || offset_of(heap, "f0808080") != 0 {
+        bad = bad + 1;
+    }
+    if offset_of(heap, "eda080") != 0 || offset_of(heap, "edbfbf") != 0 || offset_of(heap, "f4908080") != 0 || offset_of(heap, "f5808080") != 0 {
+        bad = bad + 1;
+    }
+    if offset_of(heap, "ff") != 0 || offset_of(heap, "fe") != 0 || offset_of(heap, "636166e9") != 3 || offset_of(heap, "f09f98") != 0 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- the vocabulary and the ids
+
+fn test_find_valid_and_freeze_of_two_columns[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (d0, code) = make_dict(heap, 2, 8, 255, 1000);
+    var d = d0;
+    borrow mut d as &!dm in {
+        add(dm, 0, "male");
+        add(dm, 0, "female");
+        add(dm, 0, "male");
+        add(dm, 1, "S");
+        add(dm, 1, "C");
+        add(dm, 1, "Q");
+        add(dm, 1, "C");
+        add(dm, 1, "male");
+    }
+    let v = dict.freeze(heap, d);
+    borrow v as &vr in {
+        if !dict.valid(vr) || dict.ncols(vr) != 2 || dict.total(vr) != 6 || dict.count(vr, 0) != 2 || dict.count(vr, 1) != 4 {
+            bad = bad + 1;
+        }
+        if !same(dict.name(vr, 0), "a") || !same(dict.name(vr, 1), "b") || dict.find_column(vr, "b") != 1 || dict.find_column(vr, "c") != 0 - 1 {
+            bad = bad + 1;
+        }
+        // ranks: column 0 female 0, male 1; column 1 C 0, Q 1, S 2, male 3
+        if dict.find(vr, 0, "female") != 0 || dict.find(vr, 0, "male") != 1 || dict.find(vr, 1, "C") != 0 || dict.find(vr, 1, "Q") != 1 || dict.find(vr, 1, "S") != 2 || dict.find(vr, 1, "male") != 3 {
+            bad = bad + 1;
+        }
+        // not found: another case, a prefix, an extension, one column's string in the other, below and above everything
+        if dict.find(vr, 0, "Male") != 0 - 1 || dict.find(vr, 0, "mal") != 0 - 1 || dict.find(vr, 0, "males") != 0 - 1 || dict.find(vr, 0, "S") != 0 - 1 || dict.find(vr, 0, " ") != 0 - 1 || dict.find(vr, 0, "zzz") != 0 - 1 {
+            bad = bad + 1;
+        }
+        if !same(dict.string(vr, 1, 3), "male") || !same(dict.string(vr, 0, 0), "female") {
+            bad = bad + 1;
+        }
+    }
+    dict.drop_vocab(heap, v);
+    return bad;
+}
+
+fn test_an_empty_column_has_an_empty_vocabulary[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (d0, code) = make_dict(heap, 2, 8, 255, 1000);
+    var d = d0;
+    borrow mut d as &!dm in {
+        add(dm, 1, "x");
+    }
+    let v = dict.freeze(heap, d);
+    borrow v as &vr in {
+        if !dict.valid(vr) || dict.count(vr, 0) != 0 || dict.count(vr, 1) != 1 || dict.find(vr, 0, "x") != 0 - 1 || dict.find(vr, 1, "x") != 0 {
+            bad = bad + 1;
+        }
+    }
+    dict.drop_vocab(heap, v);
+    // no categorical column at all
+    let (e0, c2) = make_dict(heap, 0, 8, 255, 1000);
+    let v2 = dict.freeze(heap, e0);
+    borrow v2 as &v2r in {
+        if !dict.valid(v2r) || dict.ncols(v2r) != 0 || dict.total(v2r) != 0 {
+            bad = bad + 1;
+        }
+    }
+    dict.drop_vocab(heap, v2);
+    return bad;
+}
+
+fn test_ids_refuse_before_allocating_and_agree_with_the_bitmap[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (a, ca) = catmat.make(heap, 2147483647, 4096, 2147483647, 4096, 400000000);
+    if ca != refuse.too_many_cells() {
+        bad = bad + 1;
+    }
+    catmat.drop(heap, a);
+    let (b, cb) = catmat.make(heap, 11, 3, 10, 10, 1000);
+    if cb != refuse.too_many_rows() {
+        bad = bad + 1;
+    }
+    catmat.drop(heap, b);
+    let (c, cc) = catmat.make(heap, 0, 3, 10, 10, 1000);
+    if cc != refuse.input_empty() {
+        bad = bad + 1;
+    }
+    catmat.drop(heap, c);
+    // 70 rows, 2 columns: the ids of column 0 are the row mod 5, column 1 is missing on rows 0, 31, 32, 69 and unseen on row 5
+    let (m0, code) = catmat.make(heap, 70, 2, 100, 10, 1000);
+    if code != 0 {
+        bad = bad + 1;
+    }
+    let (t, ids, miss, unseen, rows, cols, wpc) = catmat.parts(m0);
+    var i1 = ids;
+    var b1 = miss;
+    borrow mut i1 as &!iw in {
+        borrow mut b1 as &!bw in {
+            var r = 0;
+            while r < 70 {
+                catmat.put(contents(iw), cols, r, 0, r % 5);
+                var v = r % 3;
+                if r == 0 || r == 31 || r == 32 || r == 69 {
+                    v = catmat.missing_id();
+                    catmat.mark_missing(contents(bw), wpc, r, 1);
+                }
+                if r == 5 {
+                    v = catmat.unseen_id();
+                }
+                catmat.put(contents(iw), cols, r, 1, v);
+                r = r + 1;
+            }
+        }
+    }
+    let m = catmat.assemble(t, i1, b1, unseen, rows, cols, wpc);
+    let counts = box_slice(heap, 2, 5);
+    var cn = counts;
+    borrow m as &mr in {
+        borrow cn as &cr in {
+            if !catmat.consistent(mr, contents(cr)) {
+                bad = bad + 1;
+            }
+        }
+        if catmat.id(mr, 69, 1) != 0 - 1 || !catmat.is_missing(mr, 69, 1) || catmat.is_missing(mr, 68, 1) || catmat.id(mr, 5, 1) != 0 - 2 || catmat.is_missing(mr, 5, 1) || catmat.id(mr, 7, 0) != 2 {
+            bad = bad + 1;
+        }
+        let tt = catmat.shape(mr);
+        if tensor.shape_at(tt, 0) != 70 || tensor.shape_at(tt, 1) != 2 || tensor.stride_at(tt, 0) != 2 || tensor.stride_at(tt, 1) != 1 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, cn);
+    // a -1 without its bit, and a bit without its -1, are not consistent
+    let (n0, kn) = catmat.make(heap, 3, 1, 10, 10, 100);
+    let (t2, ids2, miss2, un2, r2, c2, w2) = catmat.parts(n0);
+    var i2 = ids2;
+    var b2 = miss2;
+    borrow mut i2 as &!iw2 in {
+        catmat.put(contents(iw2), c2, 1, 0, catmat.missing_id());
+    }
+    let n1 = catmat.assemble(t2, i2, b2, un2, r2, c2, w2);
+    let cnt2 = box_slice(heap, 1, 4);
+    var cn2 = cnt2;
+    borrow n1 as &nr in {
+        borrow cn2 as &cr2 in {
+            if catmat.consistent(nr, contents(cr2)) {
+                bad = bad + 1;
+            }
+        }
+    }
+    unbox_slice(heap, cn2);
+    catmat.drop(heap, n1);
+    catmat.drop(heap, m);
+    return bad;
+}
+
+fn intern_hex[&h, &d](heap: &!h Heap, d: &!d dict.Dict, col: int, s: &static [byte]) -> [heap] int {
+    let b = unhex(heap, s);
+    var code = 0;
+    borrow b as &br in {
+        code = dict.intern(d, col, buffer.bytes(br));
+    }
+    buffer.drop(heap, b);
+    return code;
+}
+
+// a string that is not UTF-8 is refused by the dictionary itself (the reader checks it first, so a lookup pass and the library agree), and changes nothing
+fn test_intern_refuses_what_is_not_utf8_and_changes_nothing[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (d0, code) = make_dict(heap, 1, 8, 255, 1000);
+    var d = d0;
+    borrow mut d as &!dm in {
+        if intern_hex(heap, dm, 0, "c3a9") != 0 {
+            bad = bad + 1;
+        }
+        if intern_hex(heap, dm, 0, "ff") != refuse.input_invalid_utf8() || intern_hex(heap, dm, 0, "c3") != refuse.input_invalid_utf8() || intern_hex(heap, dm, 0, "eda080") != refuse.input_invalid_utf8() {
+            bad = bad + 1;
+        }
+        if intern_hex(heap, dm, 0, "6100ff") != refuse.input_invalid_utf8() || intern_hex(heap, dm, 0, "6100") != 0 {
+            bad = bad + 1;
+        }
+    }
+    borrow d as &dr in {
+        if dict.dict_count(dr, 0) != 2 || dict.dict_pool_used(dr) != 4 {
+            bad = bad + 1;
+        }
+    }
+    dict.drop(heap, d);
+    return bad;
+}

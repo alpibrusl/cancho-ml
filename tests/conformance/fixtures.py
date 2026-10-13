@@ -357,5 +357,45 @@ CASES = [
 ]
 
 
+# ------------------------------------------------------------------ categorical columns (docs/categorical.md): stage 1 reads and checks them and then refuses
+TXT = "id,sex,port,y\n1,male,S,2.5\n2,female,C,3\n3,male,,4\n4,\"fe\"\"male\",Q,5\n5,NA,S,6\n"
+FIT_TXT = ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex,port", "txt.csv"]
+TBASE = BASE + [("write", "txt.csv", TXT)]
+
+
+def _cat_cases():
+    bad_utf8 = ("write", "u.csv", b"id,sex,y\n1,male,2\n2,caf\xe9,3\n")
+    return [
+        case("ml-input-categorical-not-encoded", FIT_TXT, bad("ml.input.categorical-not-encoded", data=None), setup=TBASE),
+        case("ml-input-categorical-not-encoded-with-markers", ["--format", "json"] + FIT_TXT[:-1] + ["--na-values", "NA,?", "txt.csv"],
+             bad("ml.input.categorical-not-encoded"), setup=TBASE),
+        case("ml-limit-categories-of-a-categorical-column", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex,port", "--max-categories", "2", "txt.csv"],
+             bad("ml.limit.categories"), setup=TBASE),
+        case("ml-limit-string-bytes", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex,port", "--max-string-bytes", "5", "txt.csv"],
+             bad("ml.limit.string-bytes"), setup=TBASE),
+        case("ml-limit-string-pool", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex,port", "--max-pool-bytes", "20", "txt.csv"],
+             bad("ml.limit.string-pool"), setup=TBASE),
+        case("ml-limit-categorical-columns", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex,port", "--max-cat-columns", "1", "txt.csv"],
+             bad("ml.limit.categorical-columns"), setup=TBASE),
+        case("ml-input-invalid-utf8", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex", "u.csv"], bad("ml.input.invalid-utf8"), setup=BASE + [bad_utf8]),
+        case("ml-input-unknown-column-of-cat", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex,nope", "txt.csv"], bad("ml.input.unknown-column"), setup=TBASE),
+        case("args-conflict-cat-on-the-target", ["fit", "--target", "y", "--output", "m.cml", "--cat", "y", "txt.csv"], bad("args.conflict"), setup=TBASE),
+        case("args-conflict-cat-on-a-dropped-column", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex", "--drop", "sex", "txt.csv"], bad("args.conflict"), setup=TBASE),
+        case("args-conflict-cat-on-a-float-column", ["fit", "--target", "y", "--output", "m.cml", "--cat", "id", "--float", "id", "txt.csv"], bad("args.conflict"), setup=TBASE),
+        case("args-conflict-na-values-without-cat", ["fit", "--target", "y", "--output", "m.cml", "--na-values", "NA", "txt.csv"], bad("args.conflict"), setup=TBASE),
+        case("args-conflict-max-categories-without-cat", ["fit", "--target", "y", "--output", "m.cml", "--max-categories", "5", "txt.csv"], bad("args.conflict"), setup=TBASE),
+        case("args-conflict-max-string-bytes-without-cat", ["fit", "--target", "y", "--output", "m.cml", "--max-string-bytes", "5", "txt.csv"], bad("args.conflict"), setup=TBASE),
+        case("args-conflict-max-pool-bytes-without-cat", ["fit", "--target", "y", "--output", "m.cml", "--max-pool-bytes", "5", "txt.csv"], bad("args.conflict"), setup=TBASE),
+        case("args-conflict-max-cat-columns-without-cat", ["fit", "--target", "y", "--output", "m.cml", "--max-cat-columns", "5", "txt.csv"], bad("args.conflict"), setup=TBASE),
+        case("args-bad-value-cat-empty", ["fit", "--target", "y", "--output", "m.cml", "--cat", "", "txt.csv"], bad("args.bad-value"), setup=TBASE),
+        case("args-bad-value-na-values-empty-marker", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex", "--na-values", "NA,,?", "txt.csv"], bad("args.bad-value"), setup=TBASE),
+        case("ml-param-out-of-range-max-categories", ["fit", "--target", "y", "--output", "m.cml", "--cat", "sex", "--max-categories", "1025", "txt.csv"], bad("ml.param.out-of-range"), setup=TBASE),
+        case("args-conflict-cat-in-predict", ["predict", "--model-file", "m.cml", "--cat", "sex", "reg.csv"], bad("args.conflict"), setup=WITH_MODEL),
+    ]
+
+
+CASES += _cat_cases()
+
+
 def log_cases():
     return [c for c in CASES if c.get("log")]

@@ -1,0 +1,145 @@
+module ml.catmat;
+
+import ml.limits;
+import ml.refuse;
+import linalg.tensor;
+
+// The integer ids of the categorical columns, beside the float matrix (docs/categorical.md section 3): a rank-2 i64 tensor descriptor (row-major, strides
+// (cols, 1)) over `rows * cols` integers, the same missing bitmap layout as ml.matrix (column j's bit for row i is bit i mod 32 of word j * wpc + i / 32) and,
+// per column, the number of cells that were not in the vocabulary.
+//
+// An id is the rank of the string in its column's vocabulary (0 .. k-1), MISSING (-1) for a missing cell (and then the bitmap bit is set: the two always
+// agree, `consistent` checks it) and UNSEEN (-2) for a string the vocabulary does not hold (only when a vocabulary was given by the caller: predict).
+//
+// `make` is the only way to allocate one and it compares the shape with the caps BEFORE it allocates anything, as ml.matrix.make does.
+
+pub fn missing_id() -> [] int {
+    return 0 - 1;
+}
+
+pub fn unseen_id() -> [] int {
+    return 0 - 2;
+}
+
+pub res struct Ids {
+    t: tensor.Tensor,
+    ids: Box[[int]],
+    miss: Box[[int]],
+    unseen: Box[[int]],
+    rows: int,
+    cols: int,
+    wpc: int,
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Ids {
+    return Ids { t: tensor.Tensor { off: 0, rank: 2, s0: 0, s1: 0, s2: 1, s3: 1, t0: 0, t1: 0, t2: 0, t3: 0 }, ids: box_slice(heap, 1, 0), miss: box_slice(heap, 1, 0), unseen: box_slice(heap, 1, 0), rows: 0, cols: 0, wpc: 0 };
+}
+
+// (the ids, 0) or (an empty one, the refusal code of ml.refuse). Zero columns are allowed (no categorical column): the answer is an Ids with no cells.
+pub fn make[&h](heap: &!h Heap, rows: int, cols: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (Ids, int) {
+    if cols == 0 {
+        if rows < 0 || rows_cap < 1 || rows_cap > limits.ceiling_dim() {
+            return (empty(heap), refuse.param_out_of_range());
+        }
+        if rows > rows_cap {
+            return (empty(heap), refuse.too_many_rows());
+        }
+        return (Ids { t: tensor.Tensor { off: 0, rank: 2, s0: rows, s1: 0, s2: 1, s3: 1, t0: 0, t1: 1, t2: 0, t3: 0 }, ids: box_slice(heap, 1, 0), miss: box_slice(heap, 1, 0), unseen: box_slice(heap, 1, 0), rows: rows, cols: 0, wpc: (rows + 31) / 32 }, 0);
+    }
+    let code = limits.check_matrix(rows, cols, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (empty(heap), code);
+    }
+    match tensor.matrix(0, rows, cols) {
+        tensor.Made::Err(c) => {
+            return (empty(heap), c);
+        }
+        tensor.Made::Ok(t) => {
+            let wpc = (rows + 31) / 32;
+            return (Ids { t: t, ids: box_slice(heap, rows * cols, 0), miss: box_slice(heap, cols * wpc, 0), unseen: box_slice(heap, cols, 0), rows: rows, cols: cols, wpc: wpc }, 0);
+        }
+    }
+}
+
+pub fn drop[&h](heap: &!h Heap, m: Ids) -> [heap] int {
+    let Ids { t, ids, miss, unseen, rows, cols, wpc } = m;
+    unbox_slice(heap, ids);
+    unbox_slice(heap, miss);
+    unbox_slice(heap, unseen);
+    return rows;
+}
+
+pub fn rows[&m](m: &m Ids) -> [] int {
+    return m.rows;
+}
+
+pub fn cols[&m](m: &m Ids) -> [] int {
+    return m.cols;
+}
+
+pub fn wpc[&m](m: &m Ids) -> [] int {
+    return m.wpc;
+}
+
+pub fn shape[&m](m: &m Ids) -> [] tensor.Tensor {
+    return m.t;
+}
+
+pub fn parts(m: Ids) -> [] (tensor.Tensor, Box[[int]], Box[[int]], Box[[int]], int, int, int) {
+    let Ids { t, ids, miss, unseen, rows, cols, wpc } = m;
+    return (t, ids, miss, unseen, rows, cols, wpc);
+}
+
+pub fn assemble(t: tensor.Tensor, ids: Box[[int]], miss: Box[[int]], unseen: Box[[int]], rows: int, cols: int, wpc: int) -> [] Ids {
+    return Ids { t: t, ids: ids, miss: miss, unseen: unseen, rows: rows, cols: cols, wpc: wpc };
+}
+
+// the id at (r, c); the caller keeps r < rows and c < cols
+pub fn id[&m](m: &m Ids, r: int, c: int) -> [] int {
+    return contents(m.ids)[r * m.cols + c];
+}
+
+pub fn is_missing[&m](m: &m Ids, r: int, c: int) -> [] bool {
+    return contents(m.miss)[c * m.wpc + (r >> 5)] >> (r & 31) & 1 != 0;
+}
+
+// how many cells of column c were not in the vocabulary
+pub fn unseen_count[&m](m: &m Ids, c: int) -> [] int {
+    return contents(m.unseen)[c];
+}
+
+// writers on the pieces `parts` gives
+pub fn put[&d](ids: &!d [int], cols: int, r: int, c: int, v: int) -> [] int {
+    ids[r * cols + c] = v;
+    return 0;
+}
+
+pub fn mark_missing[&b](miss: &!b [int], wpc: int, r: int, c: int) -> [] int {
+    let w = c * wpc + (r >> 5);
+    miss[w] = miss[w] | 1 << (r & 31);
+    return 0;
+}
+
+// Whether the ids and the bitmap agree and every id is possible: a bit is set exactly when the id is -1, and an id is -2 or -1 or below counts[c]
+// (`counts` are the sizes of the vocabulary's columns). A reader that wrote a cell without its bit, or the bit without the -1, fails this.
+pub fn consistent[&m, &k](m: &m Ids, counts: &k [int]) -> [] bool {
+    if len(counts) < m.cols {
+        return false;
+    }
+    var c = 0;
+    while c < m.cols {
+        var r = 0;
+        while r < m.rows {
+            let v = id(m, r, c);
+            if is_missing(m, r, c) != (v == missing_id()) {
+                return false;
+            }
+            if v < unseen_id() || v >= counts[c] {
+                return false;
+            }
+            r = r + 1;
+        }
+        c = c + 1;
+    }
+    return true;
+}

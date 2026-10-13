@@ -352,6 +352,18 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.input.missing-value` | 8 | a feature cell is empty after the steps of the plan (no `impute` covers its column); the columns are in `detail` | `retry` with `--step "impute column=NAMES strategy=mean"` when the plan came from no flag, else `none` with the step to add |
 | `ml.plan.model-not-built` | 8 | the `model` line of a plan names a model `ml` does not build (`kmeans`, `tree`, `forest`, `constant`) | none |
 
+*Added by stage 1 of issue 21, categorical columns (`docs/categorical.md` section 5; `tools/ml/spec.tmpl`, `lib/core/refuse.cho` codes 16 to 20, one fixture per tag in `tests/conformance/fixtures.py`):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.limit.string-bytes` | 8 | a cell of a categorical column (`--cat`) is longer than `--max-string-bytes` (default 255, ceiling 65,536) | none (raise the flag, or drop the column) |
+| `ml.limit.string-pool` | 8 | the distinct categories of all the categorical columns together would take more than `--max-pool-bytes` (default 1 MiB, ceiling 8 MiB) | none |
+| `ml.limit.categorical-columns` | 8 | `--cat` names more columns than `--max-cat-columns` (default 128, ceiling 4,096), seen at the header | none |
+| `ml.input.invalid-utf8` | 8 | a cell of a categorical column is not well-formed UTF-8; line, column, name and byte offset in `detail` | none: re-encode the file, or remove the column from `--cat` and drop it |
+| `ml.input.categorical-not-encoded` | 8 | a column named by `--cat` was read and no step reads text columns yet (stage 2); names, category counts and the SHA-256 of the canonical vocabulary dump in `detail` | none: an `encode` step (stage 2), or `--drop` |
+
+`ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
+
 ## 8.1 The numeric codes of the libraries (added at integration)
 
 The libraries answer a refusal as an `int` code (0 is none) and each has a function from code to tag, exit code and repair. Three
@@ -380,6 +392,11 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 13 | `ml.label.single-class` | 8 | `ml.refuse` |
 | 14 | `ml.label.not-binary` | 8 | `ml.refuse` |
 | 15 | `ml.fit.non-finite` | 8 | `ml.refuse` |
+| 16 | `ml.limit.categories` | 8 | `ml.refuse` |
+| 17 | `ml.limit.string-bytes` | 8 | `ml.refuse` |
+| 18 | `ml.limit.string-pool` | 8 | `ml.refuse` |
+| 19 | `ml.limit.categorical-columns` | 8 | `ml.refuse` |
+| 20 | `ml.input.invalid-utf8` | 8 | `ml.refuse` |
 | 101 | `ml.input.non-finite` | 8 | `tree.deny` |
 | 102 | `ml.label.not-binary` | 8 | `tree.deny` |
 | 103 | `ml.label.single-class` | 8 | `tree.deny` |
@@ -539,3 +556,10 @@ What it changes in this document: section 4.1 (kinds 4 and 5 are built by `ml`; 
 section 7 (`conc` is in the row of `ml`, with its reason), section 8 (two tags, `ml.input.missing-value` and `ml.plan.model-not-built`; sixteen tags moved from
 `pending()` to the tables of `introspect` with a fixture each, nine stay in `pending()` because no input can reach them), and section 4.2 (the keys of the `model` line are
 generated from the manifests). The summation order, the registry of kinds and the stream kinds are unchanged.
+
+## 20. Stage 1 of issue 21: categorical columns, the reader, the matrix and the limits (`docs/categorical.md`)
+
+Text columns are **declared** (`--cat NAMES` of `fit`, never inferred), read into a dictionary sorted bytewise (`lib/core/dict.cho`: a sorted array with binary search, no hash) and an `i64` id
+tensor beside the float matrix (`lib/core/catmat.cho`), with a missing bitmap, `--na-values`, and five limits each refused before the thing it limits exists (categories 64/1,024, bytes 255/65,536,
+pool 1 MiB/8 MiB, columns 128/4,096, and the id cells in `--max-cells`). Until stage 2's encode steps read text columns, a fit that declares one is refused with `ml.input.categorical-not-encoded`.
+The reader's column kind 4 and the schema type code 3 are registered in `lib/core/kinds.cho`. No model file changes. Stages 2 to 4 of the issue are not built.

@@ -14,31 +14,43 @@ module ml.csvload;
 // matrix has) and never writes outside the matrix.
 
 import std.vec;
+import ml.catmat;
 import ml.csv;
+import ml.dict;
+import ml.limits;
 import ml.matrix;
 import ml.refuse;
 import toolbox.place;
 
 // a pass over the file `rel`: (shape, report, sinks); report.status 99 when the open failed (aux: the errno)
 pub fn pass[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks) {
+    let (sh, rep, k2, cs) = pass_cat(heap, fs, root, rel, full, cfg, csv.no_cats(), target, sk, csv.off_state(heap));
+    csv.drop_state(heap, cs);
+    return (sh, rep, k2);
+}
+
+// the same with the categorical part of the scan (docs/categorical.md): (shape, report, sinks, state); report.status 99 when the open failed
+pub fn pass_cat[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], sk: csv.Sinks, cs: csv.CatState) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks, csv.CatState) {
     match place.open_operand(fs, root, rel, full) {
         Opened::Failed(reason) => {
-            return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: reason }, sk);
+            return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: reason }, sk, cs);
         }
         Opened::Ok(opened) => {
             var handle = opened;
             var sink = sk;
+            var state = cs;
             var sh = csv.empty_shape(heap);
             var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
             borrow mut handle as &!fh in {
-                let (s2, r2, k2) = csv.scan(heap, fh, cfg, target, sink);
+                let (s2, r2, k2, c2) = csv.scan_cat(heap, fh, cfg, cc, target, sink, state);
                 csv.drop_shape(heap, sh);
                 sh = s2;
                 rep = r2;
                 sink = k2;
+                state = c2;
             }
             file_close(handle);
-            return (sh, rep, sink);
+            return (sh, rep, sink, state);
         }
     }
 }
@@ -99,4 +111,121 @@ pub fn load_t[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r 
     unbox_slice(heap, a2);
     vec.drop(heap, f2);
     return (matrix.assemble(t, d2, m2s, mrows, mcols, wpc), sh, rep2, 0);
+}
+
+// kept columns of a shape that are columns of the float matrix: not dropped and not categorical
+pub fn numeric_kept[&s](sh: &s csv.Shape) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < csv.cols(sh) {
+        if !csv.dropped(sh, i) && csv.catplace(sh, i) == 0 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// What `load_cat` answers: the float matrix of the numeric kept columns, the ids of the categorical ones, the vocabulary (built at fit, the one given at
+// predict), the shape, the report and the code of the shape check.
+pub res struct CatLoad {
+    x: matrix.Matrix,
+    ids: catmat.Ids,
+    voc: dict.Vocab,
+    sh: csv.Shape,
+    rep: csv.Report,
+    code: int,
+}
+
+pub fn cat_load_parts(l: CatLoad) -> [] (matrix.Matrix, catmat.Ids, dict.Vocab, csv.Shape, csv.Report, int) {
+    let CatLoad { x, ids, voc, sh, rep, code } = l;
+    return (x, ids, voc, sh, rep, code);
+}
+
+// The loader with categorical columns (docs/categorical.md section 7). `given` false is a FIT: the columns named in cc.cols are categorical; pass 1
+// builds the dictionaries (every limit is refused there, before the id matrix exists), `dict.freeze` makes the vocabulary, pass 2 fills the float matrix
+// and the ids by looking each cell up in it. `given` true is a PREDICT: `vocab` is the stored vocabulary, the categorical columns are its own (by name), a
+// string it does not hold is id -2 and counted, nothing is added to it. Either way the vocabulary comes back in the answer (an empty one when the read
+// was refused). `skip` is as in load_t (the target is not a column of the matrix).
+pub fn load_cat[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], skip: bool, vocab: dict.Vocab, given: bool) -> [heap, fs_read(""), dir_read, file_read] CatLoad {
+    var m1 = 0;
+    var m2 = 8;
+    if skip {
+        m1 = 5;
+        m2 = 9;
+    }
+    let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m1, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+    var st1 = csv.build_state(heap);
+    if given {
+        csv.drop_state(heap, st1);
+        st1 = csv.lookup_state(heap, 3, vocab, box_slice(heap, 1, 0), box_slice(heap, 1, 0), box_slice(heap, 1, 0), 0, 0, 0);
+    } else {
+        dict.drop_vocab(heap, vocab);
+    }
+    let (sh, rep, sk, s1) = pass_cat(heap, fs, root, rel, full, c1, cc, target, csv.plain_sinks(heap, 8, false), st1);
+    csv.drop_sinks(heap, sk);
+    if rep.status != 0 {
+        csv.drop_state(heap, s1);
+        return CatLoad { x: matrix.empty(heap), ids: catmat.empty(heap), voc: dict.empty_vocab(heap), sh: sh, rep: rep, code: 0 };
+    }
+    // the vocabulary: built from the dictionary (fit), or taken back from the state (predict)
+    let (kind1, bld, voc0, ia, ib, ic) = csv.state_parts(s1);
+    unbox_slice(heap, ia);
+    unbox_slice(heap, ib);
+    unbox_slice(heap, ic);
+    var voc = voc0;
+    if kind1 == 1 {
+        dict.drop_vocab(heap, voc);
+        voc = dict.freeze(heap, bld);
+    } else {
+        dict.drop(heap, bld);
+    }
+    var ncat = 0;
+    borrow voc as &vr in {
+        ncat = dict.ncols(vr);
+    }
+    var k = 0;
+    var rows = 0;
+    borrow sh as &sr in {
+        k = numeric_kept(sr);
+        rows = csv.rows(sr);
+        if skip && csv.tcol(sr) >= 0 && !csv.dropped(sr, csv.tcol(sr)) && csv.catplace(sr, csv.tcol(sr)) == 0 {
+            k = k - 1;
+        }
+    }
+    // the ids count in --max-cells like the doubles do; nothing sized by the rows exists yet
+    let shape_code = limits.check_matrix(rows, k + ncat, cfg.max_rows, cfg.max_cols, cfg.max_cells);
+    if shape_code != 0 {
+        return CatLoad { x: matrix.empty(heap), ids: catmat.empty(heap), voc: voc, sh: sh, rep: rep, code: shape_code };
+    }
+    var mx = matrix.empty(heap);
+    if k > 0 {
+        let (mm, mcode) = matrix.make(heap, rows, k, cfg.max_rows, cfg.max_cols, cfg.max_cells);
+        matrix.drop(heap, mx);
+        mx = mm;
+        if mcode != 0 {
+            return CatLoad { x: mx, ids: catmat.empty(heap), voc: voc, sh: sh, rep: rep, code: mcode };
+        }
+    }
+    let (im, icode) = catmat.make(heap, rows, ncat, cfg.max_rows, limits.ceiling_dim(), cfg.max_cells);
+    if icode != 0 {
+        matrix.drop(heap, mx);
+        return CatLoad { x: matrix.empty(heap), ids: im, voc: voc, sh: sh, rep: rep, code: icode };
+    }
+    let (t, data, miss, mrows, mcols, wpc) = matrix.parts(mx);
+    let (it, ids, cmiss, unseen, irows, icols, iwpc) = catmat.parts(im);
+    let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m2, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
+    var kind2 = 2;
+    if given {
+        kind2 = 3;
+    }
+    let st2 = csv.lookup_state(heap, kind2, voc, ids, cmiss, unseen, icols, irows, iwpc);
+    let (sh2, rep2, sk2, s2) = pass_cat(heap, fs, root, rel, full, c2, cc, target, csv.sinks(heap, 8, false, data, miss), st2);
+    csv.drop_shape(heap, sh2);
+    let (a2, f2, d2, m2s) = csv.sink_parts(sk2);
+    unbox_slice(heap, a2);
+    vec.drop(heap, f2);
+    let (kind3, bld3, voc3, ids3, cmiss3, unseen3) = csv.state_parts(s2);
+    dict.drop(heap, bld3);
+    return CatLoad { x: matrix.assemble(t, d2, m2s, mrows, mcols, wpc), ids: catmat.assemble(it, ids3, cmiss3, unseen3, irows, icols, iwpc), voc: voc3, sh: sh, rep: rep2, code: 0 };
 }
