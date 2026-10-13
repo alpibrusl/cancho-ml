@@ -83,10 +83,10 @@ term `i` of the block (counted from the block start) is added to lane `i mod 4`,
 `(lane0 + lane1) + (lane2 + lane3)`. The block partials are combined by the fixed binary tree of `docs/linalg.md` section 2
 (level by level, left operand first, an odd last one carried up; evaluated by the stack of `lib/linalg/order.cho`, which `oracle_linalg.py --tree`
 checks equal to the level-wise definition). Products are not fused. This is the lane rule of `docs/simd-ceiling.md` section 2
-(L = 4) applied to the metrics. **`lib/linalg/order.cho` of this tree still has one chain per block (L = 1)**; the metrics have
-their own lane constant `sums.lanes()`, so that the choice of L for linalg (open, `docs/linalg.md` 5.7) cannot change a metric
-silently, and the block length and the tree are the shared ones. If the maintainer chooses L = 4 for the linalg package the two
-orders coincide and this note is deleted. For `n = 0` a sum is not made: the metric is undefined (a refusal).
+(L = 4), which since `v1-lanes` is the one rule of the whole package: `docs/linalg.md` section 2 defines it and `lib/linalg/order.cho` holds its
+constants (`lanes()`, `lane_combine`, `block_partial`); `lib/metrics/sums.cho` no longer has a constant of its own (before `v1-lanes` it had
+`sums.lanes()` while `order.cho` had one chain per block, and the two orders differed). The metrics' bits did not change at that merge: the
+rule they already followed is the one that was adopted. For `n = 0` a sum is not made: the metric is undefined (a refusal).
 
 Why not an exact sum **[choice]**: the terms of RMSE and MAE are already rounded (`fl(e*e)`), and those of log-loss carry the error of
 `log` (1 ulp, `design.md` section 3); an exact sum of rounded terms is not a more correct metric, only a more expensive one. What

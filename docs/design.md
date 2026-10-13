@@ -83,6 +83,8 @@ order inside a block of a fixed length `K`; block partials are combined in a fix
 shape are constants of the package, never functions of the thread count. This is the fixed-reduction arm C of `docs/spikes.md`,
 or its exact-accumulator alternative; which one is **[M0]**. Each kernel's document says its order, and its test compares it to
 a reference written in that order (as spikes L and S do with numpy). Threading only decides which thread runs which block.
+**Decided at `v1-lanes` (section 17):** inside a block the order is 4 lanes (term `i` to lane `i mod 4`, lanes combined as
+`(l0 + l1) + (l2 + l3)`), `K = 256`, then the tree; the definition is `docs/linalg.md` section 2.
 
 **Where it lives.** A module in cancho-ml first; extracted to its own repository when a second consumer needs it. The
 descriptor has no ML types in it, so tensors for other programs (and later a cancho-gpu backend, whose tile kernels would take
@@ -410,3 +412,26 @@ registered what it adds: its rule tags in section 8 and 8.1 (codes 201 to 211, `
 of its sums, which is **not** the one of `docs/linalg.md` section 2 (4 lanes in a block of 256 terms against one chain): section 3.1 says every
 reduction has *a* normative order, each kernel's document names its own, and `docs/integration.md` says where the constant lives. The library
 is not called by the command line yet.
+
+## 17. `v1-lanes`: one summation order with four lanes (and what it does to bytes)
+
+**Decision [choice, from `cancho-ml-simd/docs/simd-ceiling.md` section 11].** `K = 256`, `L = 4`, tree across blocks, Cholesky panels of
+`NB = 32`; one definition, `docs/linalg.md` section 2, one set of constants, `lib/linalg/order.cho` (`block`, `lanes`, `lane_combine`,
+`block_partial`, `panel`, `group`). The two conventions that existed (`order.cho`: one chain per block; `sums.cho`: 4 lanes) are one.
+`docs/lanes.md` has the gates, the mutants and the list of gates whose expected values had to change.
+
+**What changed in bytes.** Any number produced by the previous order and a number produced by this one can differ in the last bits:
+`dot`, `gemv_n`, `gemv_t`, `syrk`, `gemm`, `cholesky`; therefore every linear-regression coefficient, every logistic and k-means fit
+(gradient, Hessian, loss, cluster sums, inertia) and everything derived from them. **Unchanged bytes:** `axpy`, the triangular solves,
+the metrics (they already followed this rule), the tree and forest (their regression sums are sequential in a fixed row order), the
+random generator and splits, the command line's constant models (exact integer and `facc` arithmetic: no float order), and the
+model file of kinds 1 to 3. Which bytes were measured to be unchanged is in `docs/lanes.md`.
+
+**The model file and the order.** There are no shipped models of kinds 4 to 7: `mfile.cho` refuses them and the libraries' `record.cho`
+writes the `model` section payload only. The CML1 `meta` section records the compiler pin; its `u32 hyperparameters` is a count that is 0
+and has no defined entries, and the file `version` covers the layout, not the arithmetic. **So there is no existing place for a "sum order
+version", and none was added.** Proposal [not implemented, needs the maintainer]: when the verbs first write kinds 4 to 7, the `meta` section
+gets a `u32 sum order` after the compiler pin (1 = one chain per block, retired and never written by a model file; **2 = this order**), and a
+reader refuses a file whose value it does not implement (`ml.model.version`). The extension costs nothing in compatibility because no file
+that needs it exists; kinds 1 to 3 do not depend on a float order and keep writing the layout of section 4.1 unchanged.
+

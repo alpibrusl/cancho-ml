@@ -67,19 +67,31 @@ it is not dropped.
 It does not say cancho is as fast as numpy on shapes outside the table, on other machines, or with several threads. It does not
 compare to a vendor BLAS with its threads on. A verdict is for the cells measured, on the machine and load printed.
 
-## 2. The normative summation order **[choice, provisional]**
+## 2. The normative summation order **[choice; revised at `v1-lanes`: four lanes inside a block]**
 
-Every reduction has an order that is part of the API and does not depend on the thread count. The maintainer's provisional rule:
+Every reduction has an order that is part of the API and does not depend on the thread count. **The order changed once, at the
+branch `v1-lanes`:** until then a block was one ascending chain; now a block is four interleaved chains (the lane rule below). The
+text of this section is the single definition; `lib/linalg/order.cho` holds its constants and `lib/metrics/sums.cho` no longer has
+a second one (before: `order.cho` one chain per block, `sums.lanes()` = 4 four lanes; `docs/metrics.md` 2.4 already had this rule).
+The evidence for the lane count is `cancho-ml-simd/docs/simd-ceiling.md` section 11 (a C ceiling experiment with NEON intrinsics,
+bit-identical to a scalar reference of this very rule for L in {1, 2, 4, 8, 16}; L = 4 recommended: worst cell 1.20 of the best L,
+geometric mean 1.07 over 22 cells), **not** a measurement of cancho. What it buys is stated there: one definition that a scalar
+cancho, a future vector cancho and C can all follow bit for bit. What it does not buy: speed of the scalar code (not measured).
 
 * **Block rule.** A reduction over `n` terms `t_0 .. t_{n-1}` is cut into **blocks of `K` terms** (block `b` holds
-  `t_{bK} .. t_{min(n,(b+1)K)-1}`). Inside a block the sum is **ascending index starting from `+0.0`**:
-  `((0.0 + t_a) + t_{a+1}) + ...`. `K = 256` (`order.block()`), a constant of the package, never a function of the thread
-  count or of `n`.
-* **Tree rule.** The block partials `p_0 .. p_{m-1}` are combined by a **fixed binary tree by block index**: level by level,
-  `q_i = p_{2i} + p_{2i+1}` (left operand first), and when the count is odd the last partial is carried up unchanged. `m = 1`
-  gives `p_0` with no further addition; `n = 0` gives `0.0`.
-* **One swappable function.** The combine of two partials is `order.combine` (a scalar add); the whole combining step of every
-  kernel goes through `lib/linalg/order.cho`. The exact-accumulator alternative (being measured elsewhere) replaces that file's
+  `t_{bK} .. t_{min(n,(b+1)K)-1}`). `K = 256` (`order.block()`), a constant of the package, never a function of the thread count
+  or of `n`.
+* **Lane rule (inside a block).** `L = 4` (`order.lanes()`). A block with terms `u_0 .. u_{m-1}` (`m <= K`, numbered from the
+  start of the block) has four accumulators `s_0 .. s_3`, each **starting at `+0.0`**; **term `u_i` is added to lane `i mod 4`**,
+  each lane in ascending `i`: `s_l <- s_l + u_i`. `K` is a multiple of `L`, so the lane of a term is also its global index mod 4.
+  A lane with no term holds `+0.0`. **The lane combine** (`order.lane_combine`, fixed, written down): the block partial is
+  `(s_0 + s_1) + (s_2 + s_3)`, the left operand first in each addition, the level-wise tree of the four lanes. A block of `m <= 3`
+  terms still takes this combine (`m = 1`: `(u_0 + 0.0) + (0.0 + 0.0)`), which only matters for the sign of a zero.
+* **Tree rule (across blocks, unchanged).** The block partials `p_0 .. p_{m-1}` are combined by a **fixed binary tree by block
+  index**: level by level, `q_i = p_{2i} + p_{2i+1}` (left operand first), and when the count is odd the last partial is carried
+  up unchanged. `m = 1` gives `p_0` with no further addition; `n = 0` gives `0.0`.
+* **One swappable function.** The combine of two partials is `order.combine` (a scalar add); the lane combine and the whole
+  combining step of every kernel go through `lib/linalg/order.cho`. The exact-accumulator alternative replaces that file's
   combine and partial type; no kernel is edited.
 * **Streaming form, same tree.** The tree is evaluated by a stack of at most `log2(m) + 1` partials (push each block at level 0,
   merge while the two top entries have equal level, finish by merging right to left). `scripts/oracle_linalg.py --tree` checks
@@ -88,20 +100,37 @@ Every reduction has an order that is part of the API and does not depend on the 
   continues the same stack with those roots. That is why the thread count cannot change a bit (`G` is a package constant too).
 * **Products are not fused**: a term is `fl(a*b)`, then added (`floating-point.md`: no contraction). The oracle multiplies and
   adds separately in numpy as well.
+* **What is a function of what.** The order is a function of the term index (block = `i div 256`, lane = `i mod 4`) and of the
+  constants `K`, `L`, `G` and (Cholesky) `NB`; not of the thread count, the vector width, the strides or the fast path taken.
 
 ### 2.1 Per kernel
 
 | kernel | term and reduction axis | order |
 |---|---|---|
-| `dot(x, y)` | `x_i * y_i`, i = 0..n-1 | block rule, then tree rule |
-| `axpy` | none (`y_i = y_i + a * x_i`) | elementwise; no reduction; one rounding for the product, one for the add |
-| `gemv_n` (y = X w) | for row i: `X_ij * w_j`, j = 0..d-1 | per row exactly `dot` of the row and `w` (one block when d <= K) |
-| `gemv_t` (g = X^T r) | for column j: `X_ij * r_i`, i = 0..n-1 | block rule over rows i, tree rule, independently per column |
+| `dot(x, y)` | `x_i * y_i`, i = 0..n-1 | block rule, lane rule inside each block, tree rule |
+| `axpy` | none (`y_i = y_i + a * x_i`) | elementwise; no reduction; one rounding for the product, one for the add; **unchanged** |
+| `gemv_n` (y = X w) | for row i: `X_ij * w_j`, j = 0..d-1 | per row exactly `dot` of the row and `w` (one block when d <= K: lane = j mod 4) |
+| `gemv_t` (g = X^T r) | for column j: `X_ij * r_i`, i = 0..n-1 | block rule over rows i, lane = (i - block start) mod 4 = i mod 4, tree rule, independently per column |
 | `syrk` (C = X^T X, entries j <= k) | `X_ij * X_ik`, i = 0..n-1 | as `gemv_t`, per entry; the other triangle is not written |
-| `gemm` (C = A B) | `A_ik * B_kj`, k = 0..p-1 | per entry exactly `dot` of a row of A and a column of B |
-| `cholesky` (A = L L^T, lower) | `L_ik * L_jk`, k = 0..j-1 | **one running value, ascending, no blocks**: `s = A_ij; s = s - L_ik * L_jk` for k ascending; then `L_ij = s / L_jj`, or for j = i, `L_ii = sqrt(s)` with the pivot test `s > 0.0`, else refusal. It is a recurrence, not a free reduction, so the block rule does not apply |
-| `trsv` forward (L x = b) | `L_ik * x_k`, k = 0..i-1 | `s = b_i; s = s - L_ik * x_k` for k ascending; `x_i = s / L_ii` |
-| `trsv` backward (L^T x = b) | `L_ki * x_k`, k = d-1 down to i+1 | `s = b_i; s = s - L_ki * x_k` for k **descending** from d-1; `x_i = s / L_ii`; i from d-1 down. *(Corrected in place: the first draft said ascending k. Ascending k makes the first term of row i the x just computed, so the whole solve is one serial chain; descending k lets four columns be summed together. Both are valid fixed orders; this one is the one implemented, and `scripts/bench_linalg.py` measures the difference.)* |
+| `gemm` (C = A B) | `A_ik * B_kj`, k = 0..p-1 | per entry exactly `dot` of a row of A and a column of B. Follows from the definition; the SIMD experiment did not run `gemm` |
+| `cholesky` (A = L L^T, lower) | `L_ik * L_jk`, k = 0..j-1 | **panels of `NB = 32` columns** (`order.panel()`), aligned at multiples of 32. For the entry `(i, j)`, `i >= j`: `s = A_ij`; for every full panel `p = 0 .. c-1` (`c = j div 32`, so every `k` of it is `< j`) `s = s - P_p` where `P_p` is the **lane rule** (4 lanes, lane = `(k - 32p) mod 4`, lane combine as above) over `L_ik * L_jk` for `k` in the panel; then once more `s = s - P_c` with `P_c` the lane rule over `k = 32c .. j-1` (empty = `+0.0`). Then `L_ij = s / L_jj`, or for `i = j`, `L_ii = sqrt(s)` with the pivot test `s > 0.0`, else refusal. This is `ref_chol` of `cancho-ml-simd/scripts/simd/simd.c`, the order a blocked right-looking algorithm computes. **It is not a recurrence over single terms any more: `NB` and `L` are part of the order** |
+| `trsv` forward (L x = b) | `L_ik * x_k`, k = 0..i-1 | `s = b_i; s = s - L_ik * x_k` for k ascending; `x_i = s / L_ii`; **unchanged** (a recurrence; not in the SIMD experiment, so no evidence for another order) |
+| `trsv` backward (L^T x = b) | `L_ki * x_k`, k = d-1 down to i+1 | `s = b_i; s = s - L_ki * x_k` for k **descending** from d-1; `x_i = s / L_ii`; i from d-1 down; **unchanged** *(corrected in place earlier: the first draft said ascending k; descending lets four columns be summed together)* |
+
+**What the evidence supports, and what was not adopted.** `simd-ceiling.md` shows (its section 4) the lane rule for `dot`, `gemv_n`,
+`gemv_t` and `syrk` and the panel rule for Cholesky each bit-identical to a scalar reference, on 11 to 17 shapes per kernel, with
+five runtime mutants of the reference (lane count, lane combine order, element-to-lane map, block size, panel width) all detected
+(162 killed, 22 equivalent and explained). Its section 11 recommends `L = 4`, `K = 256` and Cholesky panels of 32; it records that
+the Cholesky order differs from the one-running-value order (its caveat 5). **Adopted:** exactly that, with `NB = 32` as the
+experiment fixed it. **Not adopted, because no evidence exists:** a different `NB` (only 16 was tried, as a mutant that must differ),
+a different order for `trsv` (outside the experiment), any change to `axpy`. No performance claim is made here: the experiment's
+speed figures are for C with intrinsics, one session, loaded; the scalar cancho kernels of this branch were not benchmarked.
+
+**The decisive sums of the models** (`docs/models-linear.md` 3) follow the block and lane rule over the rows of a block: the logistic
+gradient, Hessian and loss, the k-means cluster sums, counts and inertia, and the linear-regression `G` and `b` (through `syrk` and
+`gemv_t`). **Not under the rule, as before and for the reason given there:** a row's score `z`, a row-to-centroid distance, the
+k-means++ total (left folds, a row is never split among threads); the regression sums of the trees (sequential, one thread per
+tree, `models-tree.md` 3.2); the exact sums of the command line (`ml`: integer limbs and `facc`, order-free).
 
 ## 3. API **[choice]**
 
@@ -135,6 +164,8 @@ Every reduction has an order that is part of the API and does not depend on the 
 5. `scripts/c_parity/parity.c`: the same algorithms in C; its hashes must equal the driver's.
 
 ## 5. Results
+
+**Every figure and every bit hash in sections 5 and 6 below was produced with the previous order (one ascending chain per block, a one-running-value Cholesky), before `v1-lanes` (section 2). None was re-measured on the lane order: no benchmark was run on that branch (`docs/lanes.md`). The correctness statements of 5.1 stand for the order they name; the bits of today are checked by the gates listed in `docs/lanes.md`.**
 
 Everything here was printed by a script of this repository; the raw lines are in `docs/bench/`. **Conditions.** Apple M4 Max (16
 cores), macOS 26.2, cancho `a4572ea` (default LLVM backend), numpy 2.4.6, scipy 1.17.1, Python 3.14, Accelerate BLAS, Apple clang

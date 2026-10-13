@@ -75,10 +75,11 @@ exactly `0.0` or `1.0` (the CLI will map its integer column to that).
 
 Common. `n` rows, `d` features, `P = d + 1` parameters (the intercept or bias is **last**: `w[d]`). A float is binary64; no
 operation is fused; `a*b` is rounded before it is added. `sum` below always means **the package rule of `docs/linalg.md`
-section 2**: cut the rows into blocks of 256, each block's partial is the ascending sum from `+0.0` of the terms of the rows
-of the block, the partials are combined by the fixed binary tree by block index (`linalg.order`); a thread is given whole chunks of 8
-blocks and the thread count never changes a bit. A **term that is not present (a row not in the cluster) is `+0.0`**, which cannot
-change a sum that starts at `+0.0`, so a partial is the ascending sum over the rows that are present.
+section 2** (revised at `v1-lanes`): cut the rows into blocks of 256; inside a block the terms go to 4 lanes (term `i` of the block to lane
+`i mod 4`, each lane ascending from `+0.0`), the block's partial is `(l0 + l1) + (l2 + l3)`, and the partials are combined by the fixed binary
+tree by block index (`linalg.order`); a thread is given whole chunks of 8 blocks and the thread count never changes a bit. (Before `v1-lanes`
+a block was one ascending chain; every number in section 6 below was measured with that order.) A **term that is not present (a row not in the cluster) is `+0.0`**, which cannot
+change a lane that starts at `+0.0` (a lane is a sum, and `x + 0.0 = x` for every `x` but `-0.0`, which no lane can hold: it starts at `+0.0`), so a lane is the ascending sum over the rows of the lane that are present.
 
 **Score order** (used by `predict`, `predict_proba`, the logistic pass, the linear `predict`): `z = w[d]; z = z + x[i][j] * w[j]`
 for `j = 0 .. d-1` ascending. It is a left fold over the features, not the block rule: one row's score is never split among
