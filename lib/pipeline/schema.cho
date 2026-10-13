@@ -1,0 +1,297 @@
+module pipeline.schema;
+
+import std.buffer;
+import std.bytes;
+import ml.fbits;
+import pipeline.names;
+import transforms.rules;
+
+// The fitted schema (docs/pipeline.md section 3.1) and its section (`schema`, section 2 of the file, the layout of tools/ml/mfile.cho):
+//     u32 columns | u32 target | per column: u32 name length | name | u32 type (0 int, 1 dec, 2 float) | u32 scale (0 for int and float)
+// The FEATURES are the columns but the target, in order. An input is aligned to them by name, never by position.
+
+pub fn max_columns() -> [] int {
+    return 8192;
+}
+
+pub res struct Schema {
+    nm: names.Names,
+    // per column: [2 i] type, [2 i + 1] scale
+    types: Box[[int]],
+    target: int,
+}
+
+pub fn make(nm: names.Names, types: Box[[int]], target: int) -> [] Schema {
+    return Schema { nm: nm, types: types, target: target };
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Schema {
+    return Schema { nm: names.empty(heap), types: box_slice(heap, 2, 0), target: 0 };
+}
+
+pub fn drop[&h](heap: &!h Heap, s: Schema) -> [heap] int {
+    let Schema { nm, types, target } = s;
+    names.drop(heap, nm);
+    unbox_slice(heap, types);
+    return target;
+}
+
+pub fn columns[&s](sc: &s Schema) -> [] int {
+    return names.count(sc.nm);
+}
+
+pub fn target[&s](sc: &s Schema) -> [] int {
+    return sc.target;
+}
+
+pub fn name[&s](sc: &s Schema, i: int) -> [] &s [byte] {
+    return names.name(sc.nm, i);
+}
+
+pub fn type_of[&s](sc: &s Schema, i: int) -> [] int {
+    return contents(sc.types)[2 * i];
+}
+
+pub fn scale_of[&s](sc: &s Schema, i: int) -> [] int {
+    return contents(sc.types)[2 * i + 1];
+}
+
+fn put32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+// the section payload
+pub fn encode[&h, &s](heap: &!h Heap, sc: &s Schema) -> [heap] buffer.Buffer {
+    let c = columns(sc);
+    var o = put32(heap, buffer.empty(heap, 64), c);
+    o = put32(heap, o, sc.target);
+    var i = 0;
+    while i < c {
+        let nm = name(sc, i);
+        o = put32(heap, o, len(nm));
+        o = buffer.append(heap, o, nm);
+        o = put32(heap, o, type_of(sc, i));
+        o = put32(heap, o, scale_of(sc, i));
+        i = i + 1;
+    }
+    return o;
+}
+
+// (Schema, code): 0, or ml.model.malformed; every field is checked against the bytes there and against its bound before it is used
+pub fn decode[&h, &d](heap: &!h Heap, sc: &d [byte]) -> [heap] (Schema, int) {
+    let bad = rules.malformed();
+    if len(sc) < 8 {
+        return (empty(heap), bad);
+    }
+    let cols = get32(sc, 0);
+    let target = get32(sc, 4);
+    if cols < 1 || cols > max_columns() || target >= cols {
+        return (empty(heap), bad);
+    }
+    var nm = names.empty(heap);
+    var types = box_slice(heap, 2 * cols, 0);
+    var pos = 8;
+    var i = 0;
+    var failed = false;
+    borrow mut types as &!tw in {
+        while i < cols && !failed {
+            if pos + 4 > len(sc) {
+                failed = true;
+            } else {
+                let nl = get32(sc, pos);
+                pos = pos + 4;
+                if nl < 0 || nl > len(sc) - pos || len(sc) - pos - nl < 8 {
+                    failed = true;
+                } else {
+                    nm = names.add(heap, nm, sc[pos..pos + nl]);
+                    pos = pos + nl;
+                    let ty = get32(sc, pos);
+                    let scl = get32(sc, pos + 4);
+                    pos = pos + 8;
+                    if ty > 2 || scl > 12 || (ty == 0 || ty == 2) && scl != 0 {
+                        failed = true;
+                    } else {
+                        contents(tw)[2 * i] = ty;
+                        contents(tw)[2 * i + 1] = scl;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+    }
+    if !failed && pos != len(sc) {
+        failed = true;
+    }
+    if !failed {
+        borrow nm as &nr in {
+            if names.first_bad(nr) >= 0 {
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        names.drop(heap, nm);
+        unbox_slice(heap, types);
+        return (empty(heap), bad);
+    }
+    return (Schema { nm: nm, types: types, target: target }, 0);
+}
+
+// ---------------------------------------------------------------- aligning an input to the features, by name
+
+fn add_name[&h, &s](heap: &!h Heap, out: buffer.Buffer, first: bool, s: &s [byte]) -> [heap] buffer.Buffer {
+    var o = out;
+    if !first {
+        o = buffer.push(heap, o, byte_of(','));
+    }
+    return buffer.append(heap, o, s);
+}
+
+// The features of `sc` against the given names and types (given_types: [2 i] type, [2 i + 1] scale). (perm, detail, code): code 0 and perm[j] = the index
+// in the input of feature j, or code ml.schema.mismatch and detail the text `missing: a,b; extra: c; mistyped: d; duplicate: e`
+// (names sorted by position, at most 8 KiB). The input may hold the columns in any order; it must hold exactly the features.
+pub fn align[&h, &s, &g, &t](heap: &!h Heap, sc: &s Schema, given: &g names.Names, given_types: &t [int]) -> [heap] (Box[[int]], buffer.Buffer, int) {
+    let nf = columns(sc) - 1;
+    let ng = names.count(given);
+    let perm = box_slice(heap, nf + 1, 0 - 1);
+    let used = box_slice(heap, ng + 1, 0);
+    var pw = perm;
+    var uw = used;
+    var missing = buffer.empty(heap, 16);
+    var extra = buffer.empty(heap, 16);
+    var mistyped = buffer.empty(heap, 16);
+    var dup = buffer.empty(heap, 16);
+    var nmiss = 0;
+    var nextra = 0;
+    var ntype = 0;
+    var ndup = 0;
+    borrow mut pw as &!p in {
+        borrow mut uw as &!u in {
+            var j = 0;
+            var f = 0;
+            while j < columns(sc) {
+                if j != sc.target {
+                    let nm = name(sc, j);
+                    let at = names.find(given, nm);
+                    if at < 0 {
+                        missing = add_name(heap, missing, nmiss == 0, nm);
+                        nmiss = nmiss + 1;
+                    } else {
+                        contents(p)[f] = at;
+                        contents(u)[at] = 1;
+                        if given_types[2 * at] != type_of(sc, j) || given_types[2 * at + 1] != scale_of(sc, j) {
+                            mistyped = add_name(heap, mistyped, ntype == 0, nm);
+                            ntype = ntype + 1;
+                        }
+                        // a second column of the same name
+                        var q = at + 1;
+                        var again = false;
+                        while q < ng && !again {
+                            let o = names.name(given, q);
+                            if len(o) == len(nm) && bytes.equal(o, nm) {
+                                again = true;
+                            }
+                            q = q + 1;
+                        }
+                        if again {
+                            dup = add_name(heap, dup, ndup == 0, nm);
+                            ndup = ndup + 1;
+                        }
+                    }
+                    f = f + 1;
+                }
+                j = j + 1;
+            }
+            var g = 0;
+            while g < ng {
+                if contents(u)[g] == 0 {
+                    // a name that is no feature (a duplicate of a feature was counted above)
+                    let gn = names.name(given, g);
+                    var isdup = false;
+                    var jj = 0;
+                    while jj < columns(sc) {
+                        if jj != sc.target {
+                            let fn0 = name(sc, jj);
+                            if len(fn0) == len(gn) && bytes.equal(fn0, gn) {
+                                isdup = true;
+                            }
+                        }
+                        jj = jj + 1;
+                    }
+                    if !isdup {
+                        extra = add_name(heap, extra, nextra == 0, gn);
+                        nextra = nextra + 1;
+                    }
+                }
+                g = g + 1;
+            }
+        }
+    }
+    unbox_slice(heap, uw);
+    if nmiss + nextra + ntype + ndup == 0 {
+        buffer.drop(heap, missing);
+        buffer.drop(heap, extra);
+        buffer.drop(heap, mistyped);
+        buffer.drop(heap, dup);
+        return (pw, buffer.empty(heap, 1), 0);
+    }
+    var d = buffer.empty(heap, 64);
+    var first = true;
+    if nmiss > 0 {
+        d = buffer.append(heap, d, "missing: ");
+        borrow missing as &r in {
+            d = clip(heap, d, buffer.bytes(r));
+        }
+        first = false;
+    }
+    if nextra > 0 {
+        if !first {
+            d = buffer.append(heap, d, "; ");
+        }
+        d = buffer.append(heap, d, "extra: ");
+        borrow extra as &r in {
+            d = clip(heap, d, buffer.bytes(r));
+        }
+        first = false;
+    }
+    if ntype > 0 {
+        if !first {
+            d = buffer.append(heap, d, "; ");
+        }
+        d = buffer.append(heap, d, "mistyped: ");
+        borrow mistyped as &r in {
+            d = clip(heap, d, buffer.bytes(r));
+        }
+        first = false;
+    }
+    if ndup > 0 {
+        if !first {
+            d = buffer.append(heap, d, "; ");
+        }
+        d = buffer.append(heap, d, "duplicate: ");
+        borrow dup as &r in {
+            d = clip(heap, d, buffer.bytes(r));
+        }
+    }
+    buffer.drop(heap, missing);
+    buffer.drop(heap, extra);
+    buffer.drop(heap, mistyped);
+    buffer.drop(heap, dup);
+    return (pw, d, rules.schema_mismatch());
+}
+
+// at most 8 KiB of a list, then `...`
+fn clip[&h, &s](heap: &!h Heap, out: buffer.Buffer, s: &s [byte]) -> [heap] buffer.Buffer {
+    if len(s) <= 8192 {
+        return buffer.append(heap, out, s);
+    }
+    return buffer.append(heap, buffer.append(heap, out, s[0..8192]), "...");
+}

@@ -123,6 +123,49 @@ pub fn all_columns[&p](p: &p Plan, i: int) -> [] bool {
     return contents(p.specs)[8 * i + 7] < 0;
 }
 
+// the number of names step i lists (0 for *)
+pub fn listed[&p](p: &p Plan, i: int) -> [] int {
+    if contents(p.specs)[8 * i + 7] < 0 {
+        return 0;
+    }
+    return contents(p.specs)[8 * i + 7];
+}
+
+// the model kind of the model line: 0 constant, 1 linear, 2 logistic, 3 kmeans, 4 tree, 5 forest
+pub fn model_kind[&p](p: &p Plan) -> [] int {
+    let line = buffer.bytes(p.text)[p.model_from..p.model_to];
+    // the canonical line starts `model kind=`
+    let e = until(line, 11, len(line), ' ');
+    let k = line[11..e];
+    var i = 0;
+    while i < 6 {
+        if bytes.equal(k, model_name(i)) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+pub fn model_name(i: int) -> [] &static [byte] {
+    if i == 0 {
+        return "constant";
+    }
+    if i == 1 {
+        return "linear";
+    }
+    if i == 2 {
+        return "logistic";
+    }
+    if i == 3 {
+        return "kmeans";
+    }
+    if i == 4 {
+        return "tree";
+    }
+    return "forest";
+}
+
 // the line (1-based, of the input) that step i came from
 pub fn line_of[&p](p: &p Plan, i: int) -> [] int {
     return contents(p.specs)[8 * i + 5];
