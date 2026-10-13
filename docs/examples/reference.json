@@ -1,0 +1,550 @@
+{
+ "generated_by": {
+  "command": "python3 scripts/examples_data.py",
+  "python": "3.14.5",
+  "scikit-learn": "1.8.0",
+  "numpy": "2.4.6",
+  "scipy": "1.17.1",
+  "split": "train_test_split(test_size=0.25, random_state=0), stratified by the target for a classification",
+  "note": "scikit-learn's results on the committed CSVs; scripts/site.py and check_docs.sh read this file and do not re-run scikit-learn"
+ },
+ "examples": {
+  "breast_cancer": {
+   "files": {
+    "train": {
+     "path": "docs/examples/data/breast_cancer_train.csv",
+     "rows": 426,
+     "sha256": "be53948511a807722cd6da1efd116a26bda58b683bc1ac00efc9d73135985e31"
+    },
+    "test": {
+     "path": "docs/examples/data/breast_cancer_test.csv",
+     "rows": 143,
+     "sha256": "cc94498262d3b5fe16203084f63e432f7b00397f83f29aa0e4bf2e70c31a5f4b"
+    }
+   },
+   "features": 30,
+   "runs": {
+    "fit": {
+     "l2": "0.01",
+     "model": "logistic",
+     "sklearn_params": "LogisticRegression(C=0.2347417840375587, solver='lbfgs', tol=1e-12, max_iter=100000)",
+     "metrics": {
+      "accuracy": 0.951048951048951,
+      "precision": 0.946236559139785,
+      "recall": 0.9777777777777777,
+      "f1": 0.9617486338797814,
+      "roc_auc": 0.9939203354297694,
+      "log_loss": 0.09862905898568457
+     },
+     "proba_first": [
+      0.9840230942955774,
+      0.0006316140869508134,
+      0.0037556007153575,
+      0.9972196218282875,
+      0.018134481865584817
+     ],
+     "label_first": [
+      1,
+      0,
+      0,
+      1,
+      0
+     ],
+     "n_iter": 27,
+     "newton_params": "LogisticRegression(C=0.2347417840375587, solver='newton-cholesky', tol=1e-12, max_iter=100000)",
+     "newton_coef": [
+      -0.4816189535993988,
+      -0.3785298089266758,
+      -0.45923192625225456,
+      -0.4647560013136082,
+      -0.11098850873771898,
+      0.07215761216996837,
+      -0.5081785576195399,
+      -0.6331629860090436,
+      -0.032372506808778075,
+      0.32197651300202534,
+      -0.5745771912984108,
+      -0.05800651961576808,
+      -0.3534853653010596,
+      -0.411501431315031,
+      -0.08440199333009549,
+      0.3305325798236016,
+      0.02534317526864606,
+      -0.16056620444158387,
+      0.26209247576297356,
+      0.26810781701926456,
+      -0.6818140161135542,
+      -0.7380382125919233,
+      -0.6046756880696497,
+      -0.5950873312222745,
+      -0.4401597048517694,
+      -0.15644921034943535,
+      -0.4780755144317085,
+      -0.6630255863576132,
+      -0.4469774576277266,
+      -0.2881400026652933
+     ],
+     "newton_intercept": 0.5419593279854454,
+     "newton_n_iter": 8,
+     "scores_min_abs": 0.01206256868476796,
+     "coef": [
+      {
+       "name": "mean_radius",
+       "value": -0.48161898487527954
+      },
+      {
+       "name": "mean_texture",
+       "value": -0.3785297874902275
+      },
+      {
+       "name": "mean_perimeter",
+       "value": -0.4592319558069395
+      },
+      {
+       "name": "mean_area",
+       "value": -0.4647557352224034
+      },
+      {
+       "name": "mean_smoothness",
+       "value": -0.11098858281516971
+      },
+      {
+       "name": "mean_compactness",
+       "value": 0.07215784409244098
+      },
+      {
+       "name": "mean_concavity",
+       "value": -0.5081785625447485
+      },
+      {
+       "name": "mean_concave_points",
+       "value": -0.6331633081864286
+      },
+      {
+       "name": "mean_symmetry",
+       "value": -0.03237256467634753
+      },
+      {
+       "name": "mean_fractal_dimension",
+       "value": 0.3219766551087508
+      },
+      {
+       "name": "radius_error",
+       "value": -0.5745770826601041
+      },
+      {
+       "name": "texture_error",
+       "value": -0.05800610185723813
+      },
+      {
+       "name": "perimeter_error",
+       "value": -0.3534856309343349
+      },
+      {
+       "name": "area_error",
+       "value": -0.4115015024707787
+      },
+      {
+       "name": "smoothness_error",
+       "value": -0.08440208206551601
+      },
+      {
+       "name": "compactness_error",
+       "value": 0.33053253676768857
+      },
+      {
+       "name": "concavity_error",
+       "value": 0.025342773575973344
+      },
+      {
+       "name": "concave_points_error",
+       "value": -0.1605660514883475
+      },
+      {
+       "name": "symmetry_error",
+       "value": 0.26209267655001506
+      },
+      {
+       "name": "fractal_dimension_error",
+       "value": 0.26810795921711694
+      },
+      {
+       "name": "worst_radius",
+       "value": -0.6818141226004635
+      },
+      {
+       "name": "worst_texture",
+       "value": -0.738038502280982
+      },
+      {
+       "name": "worst_perimeter",
+       "value": -0.6046756418272178
+      },
+      {
+       "name": "worst_area",
+       "value": -0.5950871991672446
+      },
+      {
+       "name": "worst_smoothness",
+       "value": -0.4401597907075258
+      },
+      {
+       "name": "worst_compactness",
+       "value": -0.15644888193401585
+      },
+      {
+       "name": "worst_concavity",
+       "value": -0.47807523262716256
+      },
+      {
+       "name": "worst_concave_points",
+       "value": -0.6630256234179291
+      },
+      {
+       "name": "worst_symmetry",
+       "value": -0.4469775429062205
+      },
+      {
+       "name": "worst_fractal_dimension",
+       "value": -0.28814027759055016
+      }
+     ],
+     "intercept": 0.5419595258807699
+    }
+   },
+   "positive_share_train": 0.6267605633802817
+  },
+  "diabetes": {
+   "files": {
+    "train": {
+     "path": "docs/examples/data/diabetes_train.csv",
+     "rows": 331,
+     "sha256": "1c8d8c76719c1cdb82d8dbb50ffeb00f3ef15753be80a8d182bed6cb28cc027a"
+    },
+    "test": {
+     "path": "docs/examples/data/diabetes_test.csv",
+     "rows": 111,
+     "sha256": "02e71bea883ba344fea67c4defba59a8127f17f564b9cb776154596ad94f9ffd"
+    }
+   },
+   "features": 10,
+   "runs": {
+    "ols": {
+     "l2": "0",
+     "model": "linear",
+     "sklearn_params": "LinearRegression()",
+     "metrics": {
+      "rmse": 56.39290423586856,
+      "mae": 45.12056307439618,
+      "r2": 0.3594088038177712
+     },
+     "pred_first": [
+      241.84546349485322,
+      250.11946623756975,
+      164.96775859014505,
+      119.11621898041025,
+      188.23195880780094
+     ],
+     "coef": [
+      {
+       "name": "age",
+       "value": -43.26198867265814
+      },
+      {
+       "name": "sex",
+       "value": -208.6658985548154
+      },
+      {
+       "name": "bmi",
+       "value": 593.406548015534
+      },
+      {
+       "name": "bp",
+       "value": 302.8910054194212
+      },
+      {
+       "name": "s1",
+       "value": -560.1909401411016
+      },
+      {
+       "name": "s2",
+       "value": 261.40753499076664
+      },
+      {
+       "name": "s3",
+       "value": -8.86674757963465
+      },
+      {
+       "name": "s4",
+       "value": 135.93174293160666
+      },
+      {
+       "name": "s5",
+       "value": 703.1835411211954
+      },
+      {
+       "name": "s6",
+       "value": 28.349771761051286
+      }
+     ],
+     "intercept": 153.06786205925664
+    },
+    "ridge": {
+     "l2": "0.05",
+     "model": "linear",
+     "sklearn_params": "Ridge(alpha=0.05, solver=\"cholesky\")",
+     "metrics": {
+      "rmse": 56.27420487723619,
+      "mae": 44.9573682109911,
+      "r2": 0.3621026796026512
+     },
+     "pred_first": [
+      236.99983040527675,
+      246.04434578522273,
+      164.60560506983472,
+      120.62903834913998,
+      183.91707796129145
+     ],
+     "coef": [
+      {
+       "name": "age",
+       "value": -31.638509573916945
+      },
+      {
+       "name": "sex",
+       "value": -190.6654425178205
+      },
+      {
+       "name": "bmi",
+       "value": 569.9209948085606
+      },
+      {
+       "name": "bp",
+       "value": 288.1283823910489
+      },
+      {
+       "name": "s1",
+       "value": -98.4423181097482
+      },
+      {
+       "name": "s2",
+       "value": -92.80270369265216
+      },
+      {
+       "name": "s3",
+       "value": -199.99425438058879
+      },
+      {
+       "name": "s4",
+       "value": 95.45378956002821
+      },
+      {
+       "name": "s5",
+       "value": 494.8821758186319
+      },
+      {
+       "name": "s6",
+       "value": 45.67687749970033
+      }
+     ],
+     "intercept": 152.92443163819598
+    }
+   }
+  },
+  "iris": {
+   "files": {
+    "train": {
+     "path": "docs/examples/data/iris_train.csv",
+     "rows": 75,
+     "sha256": "e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b"
+    },
+    "test": {
+     "path": "docs/examples/data/iris_test.csv",
+     "rows": 25,
+     "sha256": "2f2d0019bf6499c83794a19e06faa5f7860803e62ccfeac279d445867de3747b"
+    }
+   },
+   "features": 4,
+   "runs": {
+    "fit": {
+     "l2": "0",
+     "model": "logistic",
+     "sklearn_params": "LogisticRegression(C=inf, solver='lbfgs', tol=1e-12, max_iter=100000)",
+     "metrics": {
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "roc_auc": 1.0,
+      "log_loss": 0.024399937949542223
+     },
+     "proba_first": [
+      0.99999984976512,
+      0.9999999991883828,
+      1.244543938495462e-05,
+      5.316225560019039e-05,
+      4.866662007388857e-05
+     ],
+     "label_first": [
+      1,
+      1,
+      0,
+      0,
+      0
+     ],
+     "n_iter": 48,
+     "newton_params": "LogisticRegression(C=inf, solver='newton-cholesky', tol=1e-12, max_iter=100000)",
+     "newton_coef": [
+      -2.3466679390217093,
+      -6.929972260252273,
+      9.539045048499606,
+      17.159779107873423
+     ],
+     "newton_intercept": -41.54877417042032,
+     "newton_n_iter": 10,
+     "scores_min_abs": 0.25632226025484073,
+     "coef": [
+      {
+       "name": "sepal_length_cm",
+       "value": -2.3466689040332973
+      },
+      {
+       "name": "sepal_width_cm",
+       "value": -6.929961012987715
+      },
+      {
+       "name": "petal_length_cm",
+       "value": 9.53902467400629
+      },
+      {
+       "name": "petal_width_cm",
+       "value": 17.15975639332778
+      }
+     ],
+     "intercept": -41.54866121980242
+    }
+   },
+   "positive_share_train": 0.5066666666666667
+  },
+  "wine": {
+   "files": {
+    "train": {
+     "path": "docs/examples/data/wine_train.csv",
+     "rows": 133,
+     "sha256": "ebf82dc6d6aab735e45a6d47249fec7c80a01bb6a08223929f98fc40bb03c9a0"
+    },
+    "test": {
+     "path": "docs/examples/data/wine_test.csv",
+     "rows": 45,
+     "sha256": "6f4f8d50e44c1bd13d70613a064fc275a01b7df69f846d5d083d8170dde7110b"
+    }
+   },
+   "features": 13,
+   "runs": {
+    "fit": {
+     "l2": "0.01",
+     "model": "logistic",
+     "sklearn_params": "LogisticRegression(C=0.7518796992481203, solver='lbfgs', tol=1e-12, max_iter=100000)",
+     "metrics": {
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "roc_auc": 1.0,
+      "log_loss": 0.05163738956541201
+     },
+     "proba_first": [
+      0.8702115445840107,
+      0.004605419961296707,
+      0.16651817844344563,
+      0.002577703674208557,
+      0.9986904518695946
+     ],
+     "label_first": [
+      1,
+      0,
+      0,
+      0,
+      1
+     ],
+     "n_iter": 23,
+     "newton_params": "LogisticRegression(C=0.7518796992481203, solver='newton-cholesky', tol=1e-12, max_iter=100000)",
+     "newton_coef": [
+      1.2821234601268534,
+      0.2917736568433627,
+      0.8130040793128326,
+      -1.2550191733378258,
+      0.20149980526341973,
+      0.3407100377004473,
+      0.8012216441499762,
+      -0.1382879376185446,
+      0.0007806570074127634,
+      -0.14881226811136566,
+      0.09703303543656078,
+      0.7275823705949362,
+      1.5698104452379045
+     ],
+     "newton_intercept": -1.7363039620817744,
+     "newton_n_iter": 8,
+     "scores_min_abs": 0.45159690886569437,
+     "coef": [
+      {
+       "name": "alcohol",
+       "value": 1.282123507481528
+      },
+      {
+       "name": "malic_acid",
+       "value": 0.2917736658628147
+      },
+      {
+       "name": "ash",
+       "value": 0.8130040694263753
+      },
+      {
+       "name": "alcalinity_of_ash",
+       "value": -1.2550191691289858
+      },
+      {
+       "name": "magnesium",
+       "value": 0.20149980972072012
+      },
+      {
+       "name": "total_phenols",
+       "value": 0.340710056713179
+      },
+      {
+       "name": "flavanoids",
+       "value": 0.8012216093997512
+      },
+      {
+       "name": "nonflavanoid_phenols",
+       "value": -0.13828796868761078
+      },
+      {
+       "name": "proanthocyanins",
+       "value": 0.0007806857729183279
+      },
+      {
+       "name": "color_intensity",
+       "value": -0.14881224995014555
+      },
+      {
+       "name": "hue",
+       "value": 0.09703305158895975
+      },
+      {
+       "name": "od280_od315_of_diluted_wines",
+       "value": 0.7275823537951617
+      },
+      {
+       "name": "proline",
+       "value": 1.5698104391615977
+      }
+     ],
+     "intercept": -1.7363039781969911
+    }
+   },
+   "positive_share_train": 0.3308270676691729
+  }
+ }
+}

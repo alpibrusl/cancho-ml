@@ -60,6 +60,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import site_examples as sx  # noqa: E402  (the worked examples: docs/examples.md)
+from site_examples import Drift  # noqa: E402
 
 FILES = {
     # four houses' worth of numbers; area is a float column (a decimal point, so it is read as a decimal or a double)
@@ -126,10 +129,6 @@ REPAIRED = {"bad": "fixed", "p_bad": "p_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
-class Drift(Exception):
-    pass
-
-
 def e(s):
     return html.escape(s, quote=False)
 
@@ -171,9 +170,11 @@ def make_context(binary, tmp):
             if status2 != 0:
                 raise Drift("the repair of the demo `%s` does not run" % key)
             results[REPAIRED[key]] = (shlex.join(argv), out2, status2)
+    ref = sx.reference()
+    examples = sx.run_examples(run, tmp, ref)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
-    return {"results": results, "introspect": json.loads(r.stdout), "run": run}
+    return {"results": results, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
 
 
 def item(ctx, key):
@@ -382,9 +383,32 @@ REGIONS = {
 }
 
 
+def example_regions():
+    """The regions of docs/examples.html and of the README that come from the worked examples."""
+    regions = {"ex-meta": lambda c: sx.meta_html(c["ref"]),
+               "ex-runit": lambda c: '<pre class="code" tabindex="0">' + e("\n".join(sx.runit_lines())) + "</pre>"}
+    for key, ex in sx.EXAMPLES.items():
+        regions["ex-%s-facts" % key] = lambda c, k=key: sx.facts_html(c["ref"], k)
+        regions["ex-%s-cmds" % key] = lambda c, k=key: html_pre(sx.cmd_items(c["examples"], k))
+        if any("same_as" in r for r in ex["runs"]):
+            regions["ex-%s-conv" % key] = lambda c, k=key: sx.conv_html(c["examples"], c["ref"], k)
+        for r in ex["runs"]:
+            if r.get("ref"):
+                regions["ex-%s-table-%s" % (key, r["id"])] = lambda c, k=key, i=r["id"]: sx.table_html(c["examples"], c["ref"], k, i)
+                regions["ex-%s-pred-%s" % (key, r["id"])] = lambda c, k=key, i=r["id"]: sx.pred_html(c["examples"], c["ref"], k, i)
+                regions["ex-%s-coef-%s" % (key, r["id"])] = lambda c, k=key, i=r["id"]: sx.coef_html(c["examples"], c["ref"], k, i)
+    return regions
+
+
+REGIONS["docs/examples.html"] = example_regions()
+REGIONS["README.md"]["ex-flow"] = lambda c: md_block(sx.cmd_items(c["examples"], "iris", only=["fit"]))
+REGIONS["docs/examples.md"] = {"ex-results": lambda c: sx.full_md(c["examples"], c["ref"])}
+REGIONS["README.md"]["ex-summary"] = lambda c: sx.summary_md(c["examples"], c["ref"])
+
+
 SITE_BASE = "https://alpibrusl.github.io/cancho-ml/"
 # the pages that are meant to be found
-PAGES = ["", "evidence.html", "benchmarks.html"]
+PAGES = ["", "examples.html", "evidence.html", "benchmarks.html"]
 
 
 def sitemap(_ctx=None):
