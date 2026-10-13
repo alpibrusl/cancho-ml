@@ -1,0 +1,49 @@
+# scripts/mutants_cat.py, run on 2026-10-13, Mac arm64, compiler a4572ea (load 2 to 4, shared). The first 41 patterns in one run; the three first-appearance patterns were then redefined (the vocabulary lookup made linear too, so ids stay consistent) and re-run alone with --only.
+control (unmutated): passes every gate
+c2-first-appearance                          KILLED   (order) order: DIFF accepted in one order and refused in another (64, 6, 1048576, 128, 'rows 2\ncols 7\ncol 0 1 0 id\ncol 1 4 0 
+c1-first-appearance-diff                     KILLED   (diff) diff: DIFF adversarial duplicate-looking strings status 8 vs oracle 0; first difference at line 0: got ['refused 15 2 1 
+c1-descending                                KILLED   (diff,unit) diff: DIFF adversarial duplicate-looking strings status 8 vs oracle 0; first difference at line 0: got ['refused 15 2 1 
+c1-freeze-reversed                           KILLED   (diff,unit) diff: DIFF adversarial duplicate-looking strings status 8 vs oracle 0; first difference at line 0: got ['refused 15 2 1 
+c1-ids-from-the-row                          KILLED   (diff,roundtrip) diff: DIFF adversarial duplicate-looking strings status 0 vs oracle 0; first difference at line 22: got ['id 0 0 0 0'] w
+c1-trim                                      KILLED   (diff) diff: DIFF random file 40 status 0 vs oracle 0; first difference at line 115: got ['id 3 3 12 0'] want ['id 3 3 13 0']; 
+c1-doubled-quotes-kept                       KILLED   (diff) diff: DIFF random file 50 status 0 vs oracle 0; first difference at line 193: got ['cat 1 2 2222'] want ['cat 1 2 22']; 
+c1-category-bitmap-missing                   KILLED   (diff) diff: DIFF random file 6 status 0 vs oracle 0; first difference at line 909: got ['id 0 0 -1 0'] want ['id 0 0 -1 1']; d
+c1-column-places-reversed                    KILLED   (diff) diff: DIFF adversarial duplicate-looking strings status 8 vs oracle 0; first difference at line 0: got ['refused 30 2 1 
+c6-empty-is-a-category                       KILLED   (diff) diff: DIFF random file 13 status 8 vs oracle 0; first difference at line 0: got ['refused 30 2 1 8'] want ['rows 30']; d
+c6-markers-ignored                           KILLED   (diff) diff: DIFF random file 17 status 0 vs oracle 0; first difference at line 14: got ['id 0 0 1 0'] want ['id 0 0 -1 1']; da
+c6-marker-by-prefix                          KILLED   (diff) diff: DIFF random file 134 status 0 vs oracle 0; first difference at line 35: got ['id 2 2 1 0'] want ['id 2 2 2 0']; da
+c6-marker-ignoring-case                      KILLED   (diff) diff: DIFF random file 190 status 0 vs oracle 0; first difference at line 18: got ['id 0 2 -1 1'] want ['id 0 2 0 0']; d
+c6-marker-last-ignored                       KILLED   (diff) diff: DIFF random file 17 status 0 vs oracle 0; first difference at line 14: got ['id 0 0 1 0'] want ['id 0 0 -1 1']; da
+c5-intern-no-utf8-check                      KILLED   (unit) unit: test result: FAILED. 9 passed; 1 failed
+c5-reader-no-utf8-check                      KILLED   (diff,roundtrip) diff: DIFF adversarial invalid utf8 late status 8 vs oracle 8; first difference at line 0: got ['refused 30 3 1 20'] wan
+c5-utf8-errors-skipped                       KILLED   (utf8,unit) utf8: DIFF invalid after ascii b'\xc0\x80' status 0 vs oracle 8; first difference at line 0: got ['rows 1'] want ['refus
+c5-utf8-first-byte-width                     KILLED   (utf8,unit) utf8: DIFF valid chunk 200 status 8 vs oracle 0; first difference at line 0: got ['refused 20 2 1 1'] want ['rows 40']; 
+c5-offset-off-by-one                         KILLED   (utf8,diff) utf8: DIFF invalid after ascii b'\xc0\x80' status 8 vs oracle 8; first difference at line 0: got ['refused 20 2 1 4'] wa
+c4-categories-off-by-one                     KILLED   (unit,diff) unit: test result: FAILED. 9 passed; 1 failed; diff: DIFF random file 56 status 8 vs oracle 8; first difference at line 
+c4-categories-one-short                      KILLED   (unit,diff) unit: test result: FAILED. 9 passed; 1 failed; diff: DIFF random file 25 status 8 vs oracle 8; first difference at line 
+c4-string-bytes-off-by-one-dict              KILLED   (unit) unit: test result: FAILED. 9 passed; 1 failed
+c4-string-bytes-off-by-one-reader            KILLED   (diff,limits) diff: DIFF random file 83 status 8 vs oracle 8; first difference at line 0: got ['refused 21 3 1 6'] want ['refused 21 2
+c4-string-bytes-after-utf8                   KILLED   (diff) diff: DIFF adversarial a cell both too long and not UTF-8 is a long cell status 8 vs oracle 8; first difference at line 
+c4-pool-off-by-one                           KILLED   (unit,diff) unit: test result: FAILED. 9 passed; 1 failed; diff: DIFF adversarial two cat columns, the second breaks the pool status
+c4-pool-counts-only-new-strings              KILLED   (unit) unit: test result: FAILED. 9 passed; 1 failed
+c4-columns-off-by-one-reader                 KILLED   (diff,limits) diff: DIFF random file 147 status 8 vs oracle 8; first difference at line 0: got ['refused 24 1 0 2'] want ['refused 21 
+c4-columns-off-by-one-dict                   KILLED   (unit) unit: test result: FAILED. 9 passed; 1 failed
+c4-dict-columns-limit-unchecked              KILLED   (unit) unit: test result: FAILED. 9 passed; 1 failed
+c4-ids-not-counted-in-cells                  SURVIVED, explained: the scan's own row check divides the cell cap by every column of the header, dropped ones too, so no file reaches this second check with mor
+c7-unseen-mapped-to-an-id                    KILLED   (roundtrip) roundtrip: DIFF predict unseen only status 0 vs oracle 0; first difference at line 25: got ['p-id 0 0 0 0'] want ['p-id 
+c7-unseen-not-counted                        KILLED   (roundtrip) roundtrip: DIFF predict unseen only status 0 vs oracle 0; first difference at line 28: got ['p-unseen 0 0'] want ['p-uns
+c7-fit-lookup-miss-ignored                   SURVIVED, explained: pass 2 of a fit reads the file the first pass read; the gates read a file that does not change between the passes, so the branch (a file cha
+c7-predict-columns-from-the-flag             KILLED   (roundtrip) roundtrip: DIFF predict file lacks a column status 8 vs oracle 8; first difference at line 0: got ['refused 15 2 1 0'] w
+c3-threads-in-the-detail                     KILLED   (threads) threads: DIFF thread count changed the answer 5
+c11-invalid-utf8-reported-as-a-length        KILLED   (cli) cli: FAILED (failures=2)
+c11-target-may-be-categorical                KILLED   (cli,diff) cli: FAILED (failures=2); diff: DIFF adversarial cat names the target status 8 vs oracle 8; first difference at line 0: 
+c11-limit-flag-without-cat-accepted          KILLED   (cli) cli: FAILED (failures=2)
+c11-na-values-list-not-checked               KILLED   (cli) cli: FAILED (failures=2)
+c11-cat-fit-writes-a-model                   KILLED   (cli) cli: FAILED (failures=10, errors=3)
+c11-unknown-cat-name-ignored                 KILLED   (cli) cli: FAILED (failures=2)
+39 killed, 2 survived and explained, 0 unexplained or invalid
+# re-run alone after the redefinition (--only):
+c2-first-appearance                          KILLED   (order) order: DIFF ids or cells of a row (1, 1, {0: (-1, 1), 1: (0, 0)}, {0: (-1, 1), 1: (1, 0)})
+c1-first-appearance-diff                     KILLED   (diff) diff: DIFF adversarial duplicate-looking strings status 0 vs oracle 0; first difference at line 22: got ['id 0 0 0 0'] w
+c2-first-appearance-dictionary-only          KILLED   (order) order: DIFF accepted in one order and refused in another (64, 6, 1048576, 128, 'rows 2\ncols 7\ncol 0 1 0 id\ncol 1 4 0 
+# total: 42 patterns, 40 killed, 2 survived and explained (c4-ids-not-counted-in-cells, c7-fit-lookup-miss-ignored), 0 unexplained. The 41-pattern run reported "39 killed, 2 survived and explained"; its c2-first-appearance, c1-first-appearance-diff lines above are of the first definition (also KILLED).

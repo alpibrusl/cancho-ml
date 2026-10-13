@@ -54,7 +54,7 @@ table to drift (gate T1 checks the one table against its projections).
 
 | verb | needs | takes also |
 |---|---|---|
-| `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--overwrite`, `--dry-run`, the `--max-*` caps, `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) |
+| `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) |
 | `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
 | `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
 
@@ -97,7 +97,7 @@ file is absent afterwards and unchanged when it exists. *Not checked under `stra
 Every number sized by input has a flag, a default and a ceiling, listed by `introspect.limits` (the table is `limits()` in
 `spec.cho`, and gate T1 checks it against the flags): `--max-rows` (default 10,000,000, ceiling 1,000,000,000), `--max-columns`
 (4,096 / 8,192), `--max-cells`, `--max-line-bytes` (1 MiB / 16 MiB), `--max-bytes` for a model file (16 MiB / 256 MiB), `--limit`,
-`--from`, `--log-max-bytes`. A value outside its range is `ml.param.out-of-range` with the range in `detail`. The ceilings keep every
+`--from`, `--log-max-bytes`, and the four limits of the categorical columns of `fit`, `--max-categories` (64 / 1,024), `--max-string-bytes` (255 / 65,536), `--max-pool-bytes` (1 MiB / 8 MiB) and `--max-cat-columns` (128 / 4,096), whose reasons are in `docs/categorical.md` section 4. A value outside its range is `ml.param.out-of-range` with the range in `detail`. The ceilings keep every
 sum in the exact accumulators below 2^63 (section 3.4); they are **choices**, not measurements, and section 9 of `design.md` still
 waits for the speed factor.
 

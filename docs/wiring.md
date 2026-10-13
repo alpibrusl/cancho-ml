@@ -69,9 +69,12 @@ repair for extras); the columns are aligned to the fitted features by name; `pip
 the estimator predicts. `eval` reads the target too, applies `--split` to the file if asked, and computes the metrics of `lib/metrics`.
 
 **Matrices and column types.** The reader builds the matrix of all kept columns in file order; text and non-numeric cells are `ml.input.non-numeric` with the `--drop` repair, as before. *The hook for W2
-(text categories):* the schema section already has a type code per column (0 int, 1 dec, 2 float; 3 is reserved), the reader's shape has a kind per column (0 none, 1 int, 2 dec, 3 float; 4 is reserved
-for text), and the only place that decides a cell is not a number is `ml.csvcell.read` through `read_row` in `tools/ml/csv.cho`. W2 adds a column kind `text` there, a code column (an interned
-category index) in the matrix, and the `encode` step reading it; nothing in `tools/ml/wire.cho` or the estimators looks at a cell, so nothing in them changes.
+(text categories) was used by stage 1 of issue 21 (`docs/categorical.md`):* the reader's shape has a kind per column (0 none, 1 int, 2 dec, 3 float, **4 categorical**; the schema type code 3 is reserved for it
+until stage 3 writes it, both registered in `lib/core/kinds.cho`), a text column is **declared** with `fit --cat NAMES` and never inferred, it is not a column of the float matrix but
+of an `i64` id tensor beside it (`lib/core/catmat.cho`, ids from the bytewise-sorted dictionary of `lib/core/dict.cho`, -1 missing, -2 unseen at predict), and the only place that reads a cell as a
+string is `read_row` through `cat_cell` in `tools/ml/csv.cho`. **Nothing in `tools/ml/wire.cho` or the estimators looks at a cell, and they did not change:** the wired models still see only the float
+matrix, and a fit that declares a categorical column is refused by `tools/ml/catcli.cho` with `ml.input.categorical-not-encoded` until stage 2's `encode` reads text columns, which is the one
+place in the plan that will need to learn that a column name may be a categorical one.
 
 ## 4. The model file
 
@@ -150,4 +153,4 @@ Machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python 3.14.5, numpy 2.4.6
 
 1. `--step` takes several steps in one value because the parser refuses a repeated flag. A repeatable flag kind would be a change to the pinned contract package.
 2. `eval --threads` is inert. If a threaded predict is ever added the flag already exists.
-3. Text categories are W2.
+3. Text categories: stage 1 of issue 21 reads, bounds and refuses them (`docs/categorical.md`); the encode steps on text are stage 2, the string table in the model file stage 3.
