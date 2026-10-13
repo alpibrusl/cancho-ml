@@ -139,7 +139,7 @@ auc-tie-half-pos                         killed
 auc-den-halved                           killed
 auc-not-binary                           killed
 auc-top-digit                            killed
-auc-skip-none                            SURVIVED (explained: equivalent in the result: a counting pass over a byte that is the same for every key is a stable copy; the skip only saves time (the speed table shows what it saves))
+auc-skip-none                            SURVIVED (explained: equivalent in the result: a counting pass over a byte that is the same for every key is a stable copy; the skip only saves time (11 ms on 16-valued scores, docs/metrics.md 5.4))
 auc-merge-tie-pick                       SURVIVED (explained: equivalent: when the two heads are equal either one gives the same v, and both runs are then consumed)
 ratio-sticky                             killed
 ratio-range                              killed
