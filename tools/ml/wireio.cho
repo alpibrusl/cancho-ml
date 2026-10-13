@@ -1,0 +1,799 @@
+edition 6;
+
+module ml.wireio;
+
+// predict and eval for the models that go through the pipeline (docs/wiring.md section 3). A constant model is handed to tools/ml/verbs.cho unchanged.
+// The stored steps are applied, never a plan: the only description of the transformation is the model file.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.vec;
+import ml.csv;
+import ml.csvcell;
+import ml.csvload;
+import ml.est;
+import ml.exact;
+import ml.fbits;
+import ml.fsio;
+import ml.logrec;
+import ml.matrix;
+import ml.mfile;
+import ml.paths;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import metrics.rules;
+import metrics.splits;
+import models.record;
+import pipeline.file;
+import pipeline.names;
+import pipeline.run;
+import pipeline.schema;
+import transforms.codes;
+import flt;
+import toolbox.fail;
+
+// ---------------------------------------------------------------- the model file's kind
+
+// The kind of the model in a CML1 file, from the structure alone (nothing is checked but what is needed to find it); 0 when the structure does not
+// allow it. The old reader gives the real error for such a file.
+pub fn peek_kind[&d](data: &d [byte]) -> [] int {
+    let n = len(data);
+    if n < 44 || !bytes.equal(data[0..4], "CML1") || record.get32(data, 8) != 5 {
+        return 0;
+    }
+    let body = n - 32;
+    var pos = 12;
+    var s = 0;
+    while s < 5 {
+        if pos + 12 > body {
+            return 0;
+        }
+        let length = fbits.get64(data, pos + 4);
+        if length < 0 || length > body - pos - 12 {
+            return 0;
+        }
+        if s == 3 {
+            if length < 4 {
+                return 0;
+            }
+            return record.get32(data, pos + 12);
+        }
+        pos = pos + 12 + length;
+        s = s + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- the stored model
+
+// A model file of a planned kind, decoded and checked: the file (kept: the stored steps are views into it), the schema, the estimator's parameters and labels,
+// and the schema as the old schema check reads it (an mfile.Model with no statistics)
+res struct Stored {
+    lo: file.Loaded,
+    sc: schema.Schema,
+    kind: int,
+    wv: Box[[float]],
+    c0: int,
+    c1: int,
+    d: int,
+    view: mfile.Model,
+}
+
+fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
+    let Stored { lo, sc, kind, wv, c0, c1, d, view } = s;
+    file.drop(heap, lo);
+    schema.drop(heap, sc);
+    unbox_slice(heap, wv);
+    mfile.drop_model(heap, view);
+    return kind;
+}
+
+fn empty_stored[&h](heap: &!h Heap) -> [heap] Stored {
+    return Stored { lo: file.empty(heap), sc: schema.empty(heap), kind: 0, wv: box_slice(heap, 2, 0.0), c0: 0, c1: 0, d: 0, view: mfile.empty_model(heap) };
+}
+
+// the schema as an mfile.Model without statistics
+fn view_of[&h, &s](heap: &!h Heap, sc: &s schema.Schema, rows: int) -> [heap] mfile.Model {
+    let cols = schema.columns(sc);
+    var nm = buffer.empty(heap, 64);
+    var ends = vec.empty(heap, 16, 0);
+    var types = box_slice(heap, 2 * cols + 1, 0);
+    borrow mut types as &!tw in {
+        var i = 0;
+        while i < cols {
+            nm = buffer.append(heap, nm, schema.name(sc, i));
+            var size = 0;
+            borrow nm as &nr in {
+                size = buffer.size(nr);
+            }
+            ends = vec.push(heap, ends, size);
+            contents(tw)[i] = schema.type_of(sc, i);
+            contents(tw)[cols + i] = schema.scale_of(sc, i);
+            i = i + 1;
+        }
+    }
+    return mfile.Model { kind: 0, rows: rows, cols: cols, target: schema.target(sc), names: nm, ends: ends, types: types, stats: box_slice(heap, 8, 0), nstats: 0 };
+}
+
+fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], errs: fail.Errors) -> [heap] (Stored, bool, fail.Errors) {
+    var e = errs;
+    let (lo, f) = file.decode(heap, data);
+    if f.code != 0 {
+        file.drop(heap, lo);
+        return (empty_stored(heap), false, wiredata.file_fault(heap, e, f, shown));
+    }
+    var kind = 0;
+    var width = 0;
+    var rows = 0;
+    borrow lo as &lr in {
+        kind = file.model_kind(lr);
+        width = file.width(lr);
+        rows = file.rows(lr);
+    }
+    let bad = codes.fault(codes.malformed(), 4, 0, 0);
+    if !est.wired(kind) {
+        file.drop(heap, lo);
+        return (empty_stored(heap), false, wiredata.file_fault(heap, e, bad, shown));
+    }
+    var sc = schema.empty(heap);
+    var scode = 0;
+    borrow lo as &lr in {
+        let (s2, c2) = schema.decode(heap, file.schema_bytes(lr));
+        schema.drop(heap, sc);
+        sc = s2;
+        scode = c2;
+    }
+    if scode != 0 {
+        file.drop(heap, lo);
+        schema.drop(heap, sc);
+        return (empty_stored(heap), false, wiredata.file_fault(heap, e, codes.fault(codes.malformed(), 2, 0, 0), shown));
+    }
+    var wv = box_slice(heap, est.out_len(kind, width) + 1, 0.0);
+    var c0 = 0;
+    var c1 = 0;
+    var dcode = 0;
+    borrow lo as &lr in {
+        borrow mut wv as &!ww in {
+            let dec = est.decode(kind, file.model_bytes(lr), width, contents(ww));
+            dcode = dec.code;
+            c0 = dec.c0;
+            c1 = dec.c1;
+        }
+    }
+    if dcode != 0 {
+        file.drop(heap, lo);
+        schema.drop(heap, sc);
+        unbox_slice(heap, wv);
+        return (empty_stored(heap), false, wiredata.file_fault(heap, e, bad, shown));
+    }
+    var view = mfile.empty_model(heap);
+    borrow sc as &scr in {
+        mfile.drop_model(heap, view);
+        view = view_of(heap, scr, rows);
+    }
+    return (Stored { lo: lo, sc: sc, kind: kind, wv: wv, c0: c0, c1: c1, d: width, view: view }, true, e);
+}
+
+// ---------------------------------------------------------------- the input of predict and eval
+
+// The CSV aligned to the fitted features by name: the matrix of the fitted features in the fitted order (`xa`), the matrix as read (`x`) and the shape (`sh`)
+res struct Input {
+    x: matrix.Matrix,
+    sh: csv.Shape,
+    // the fitted features' columns in x, in the order of the schema
+    cols: Box[[int]],
+    // the target's column in x (eval), -1 when the matrix has none
+    tj: int,
+}
+
+fn drop_input[&h](heap: &!h Heap, i: Input) -> [heap] int {
+    let Input { x, sh, cols, tj } = i;
+    matrix.drop(heap, x);
+    csv.drop_shape(heap, sh);
+    unbox_slice(heap, cols);
+    return tj;
+}
+
+fn empty_input[&h](heap: &!h Heap) -> [heap] Input {
+    return Input { x: matrix.empty(heap), sh: csv.empty_shape(heap), cols: box_slice(heap, 2, 0), tj: 0 - 1 };
+}
+
+// Read the CSV (predict: the target column is skipped; eval: it is a column) and check it against the stored schema: the old schema check (ml.schema.mismatch,
+// named columns, --drop as the repair), then the place in the matrix of each fitted feature
+fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, st: &ss Stored, o: verbs.Opts, need_target: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Input, bool, fail.Errors, buffer.Buffer) {
+    var e = errs;
+    var lg = log;
+    var go = true;
+    let tname = schema.name(st.sc, schema.target(st.sc));
+    let (x, sh, rep, code) = csvload.load_t(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), tname, !need_target);
+    borrow sh as &sr in {
+        if rep.status == 99 {
+            e = fail.io_error(heap, e, rep.aux, false, paths.shown(file));
+            go = false;
+        } else if rep.status != 0 {
+            e = verbs.explain(heap, args, e, rep, sr, o, paths.shown(file));
+            go = false;
+        } else if code != 0 {
+            e = wiredata.code_error(heap, e, code, 0, 0, 0);
+            go = false;
+        } else {
+            lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
+            let (e2, same) = verbs.schema_check(heap, args, e, st.view, sr, o, need_target);
+            e = e2;
+            go = same;
+        }
+    }
+    if !go {
+        csv.drop_shape(heap, sh);
+        matrix.drop(heap, x);
+        return (empty_input(heap), false, e, lg);
+    }
+    // the matrix columns are the kept columns of the file in order, the target's left out when it is skipped
+    var cols = box_slice(heap, schema.columns(st.sc) + 1, 0);
+    var tj = 0 - 1;
+    borrow sh as &sr in {
+        var gn = names.empty(heap);
+        var gidx = box_slice(heap, csv.cols(sr) + 1, 0);
+        var m = 0;
+        var i = 0;
+        borrow mut gidx as &!gw in {
+            while i < csv.cols(sr) {
+                if !csv.dropped(sr, i) && (need_target || i != csv.tcol(sr)) {
+                    gn = names.add(heap, gn, csv.name(sr, i));
+                    contents(gw)[m] = m;
+                    m = m + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow gn as &gq in {
+            tj = names.find(gq, tname);
+        }
+        if !need_target {
+            tj = 0 - 1;
+        }
+        borrow mut cols as &!cw in {
+            var f2 = 0;
+            var j = 0;
+            while j < schema.columns(st.sc) {
+                if j != schema.target(st.sc) {
+                    borrow gn as &gq2 in {
+                        contents(cw)[f2] = names.find(gq2, schema.name(st.sc, j));
+                    }
+                    f2 = f2 + 1;
+                }
+                j = j + 1;
+            }
+        }
+        names.drop(heap, gn);
+        unbox_slice(heap, gidx);
+    }
+    return (Input { x: x, sh: sh, cols: cols, tj: tj }, true, e, lg);
+}
+
+// the names of the columns the steps left: the features' when the width is the same, else the positions (`#0`, `#1`, ...)
+fn output_names[&h, &s](heap: &!h Heap, sc: &s schema.Schema, width: int) -> [heap] names.Names {
+    if width == schema.columns(sc) - 1 {
+        return wiredata.feature_names(heap, sc);
+    }
+    var nm = names.empty(heap);
+    var j = 0;
+    while j < width {
+        var one = buffer.empty(heap, 8);
+        one = buffer.push(heap, one, byte_of('#'));
+        one = buffer.push_nat(heap, one, j);
+        borrow one as &or in {
+            nm = names.add(heap, nm, buffer.bytes(or));
+        }
+        buffer.drop(heap, one);
+        j = j + 1;
+    }
+    return nm;
+}
+
+// the rows of the input that `want` selects, through the stored steps: (the matrix the estimator takes, the unknown categories met, ok, errors)
+fn through_steps[&h, &g, &ii, &ss, &s](heap: &!h Heap, args: &g Args, inp: &ii Input, st: &ss Stored, sel: &s [int], want: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (matrix.Matrix, int, bool, fail.Errors) {
+    var e = errs;
+    var go = true;
+    var unknown = 0;
+    var xs = matrix.empty(heap);
+    let nfeat = schema.columns(st.sc) - 1;
+    if true {
+        let (xa, code) = wiredata.take(heap, inp.x, sel, want, contents(inp.cols), nfeat, o.max_rows, o.max_cols, o.max_cells);
+        if code != 0 {
+            e = wiredata.code_error(heap, e, code, 0, 0, 0);
+            go = false;
+        } else {
+            borrow xa as &xr in {
+                if true {
+                    let (x2, u2, f2) = run.apply_steps(heap, file.steps_bytes(st.lo), xr, o.max_rows, o.max_cols, o.max_cells);
+                    matrix.drop(heap, xs);
+                    xs = x2;
+                    unknown = u2;
+                    if f2.code != 0 {
+                        e = wiredata.code_error(heap, e, f2.code, f2.a, f2.b, f2.c);
+                        go = false;
+                    }
+                }
+            }
+        }
+        matrix.drop(heap, xa);
+    }
+    if go {
+        // the steps leave nothing empty: the names of the columns after the steps are the features' when no encoding widened them; a message with the count is enough
+        var width = 0;
+        borrow xs as &xw in {
+            width = matrix.cols(xw);
+        }
+        let onames = output_names(heap, st.sc, width);
+        var mc = 0;
+        var mlist = buffer.empty(heap, 1);
+        borrow xs as &xq in {
+            borrow onames as &onq in {
+                let (mc2, ml2) = wiredata.missing_columns(heap, xq, onq);
+                buffer.drop(heap, mlist);
+                mc = mc2;
+                mlist = ml2;
+            }
+        }
+        names.drop(heap, onames);
+        if mc > 0 {
+            borrow mlist as &lr in {
+                e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), false);
+            }
+            go = false;
+        }
+        buffer.drop(heap, mlist);
+    }
+    return (xs, unknown, go, e);
+}
+
+// ---------------------------------------------------------------- predict
+
+// one value of the answer: the double `v` as the shortest decimal that reads back
+fn put_cell[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: float) -> [heap] (json.Writer, buffer.Buffer) {
+    var b = flt.put_float(heap, buffer.empty(heap, 32), csvcell.bits_of_key(bits_of(v)));
+    var o = w;
+    var p = plain;
+    borrow b as &br in {
+        o = json.put_string(heap, o, buffer.bytes(br));
+        p = buffer.append(heap, p, buffer.bytes(br));
+    }
+    buffer.drop(heap, b);
+    return (o, p);
+}
+
+fn put_label[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: int) -> [heap] (json.Writer, buffer.Buffer) {
+    var b = exact.put_scaled(heap, buffer.empty(heap, 24), v, 0);
+    var o = w;
+    var p = plain;
+    borrow b as &br in {
+        o = json.put_string(heap, o, buffer.bytes(br));
+        p = buffer.append(heap, p, buffer.bytes(br));
+    }
+    buffer.drop(heap, b);
+    return (o, p);
+}
+
+// the page of predictions: (the data object, the text, the refusal code of the estimator)
+fn predict_page[&h, &x, &w2](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, wv: &w2 [float], c0: int, c1: int, unknown: int, with_proba: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+    let total = matrix.rows(xs);
+    var start = o.from;
+    if start > total {
+        start = total;
+    }
+    var end = total;
+    if start + o.limit < end {
+        end = start + o.limit;
+    }
+    var pred = box_slice(heap, total + 1, 0.0);
+    var prob = box_slice(heap, total + 1, 0.0);
+    var code = 0;
+    borrow mut pred as &!pw in {
+        code = est.predict(kind, matrix.shape(xs), contents(xs.data), wv, contents(pw));
+    }
+    if code == 0 && est.task(kind) == 2 {
+        borrow mut prob as &!qw in {
+            code = est.proba(kind, matrix.shape(xs), contents(xs.data), wv, contents(qw));
+        }
+    }
+    var w = json.writer(heap, 512);
+    var plain = buffer.empty(heap, 64);
+    borrow pred as &pq in {
+        borrow prob as &qq in {
+            if code == 0 {
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "model");
+                w = json.put_string(heap, w, est.name(kind));
+                w = json.put_key(heap, w, "task");
+                w = json.put_string(heap, w, wiredata.task_word(est.task(kind)));
+                w = json.put_key(heap, w, "columns");
+                w = json.begin_array(heap, w);
+                if est.task(kind) == 1 {
+                    w = json.put_string(heap, w, "prediction");
+                } else {
+                    w = json.put_string(heap, w, "label");
+                    if with_proba {
+                        w = json.put_string(heap, w, "probability");
+                    }
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "rows");
+                w = json.begin_array(heap, w);
+                var k = start;
+                while k < end {
+                    w = json.begin_array(heap, w);
+                    if est.task(kind) == 1 {
+                        let (w2, p2) = put_cell(heap, w, plain, contents(pq)[k]);
+                        w = w2;
+                        plain = p2;
+                    } else {
+                        var label = c0;
+                        if contents(pq)[k] > 0.5 {
+                            label = c1;
+                        }
+                        let (w2, p2) = put_label(heap, w, plain, label);
+                        w = w2;
+                        plain = p2;
+                        if with_proba {
+                            plain = buffer.push(heap, plain, byte_of(9));
+                            let (w3, p3) = put_cell(heap, w, plain, contents(qq)[k]);
+                            w = w3;
+                            plain = p3;
+                        }
+                    }
+                    w = json.end_array(heap, w);
+                    plain = buffer.push(heap, plain, byte_of(10));
+                    k = k + 1;
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "row_count");
+                w = json.put_int(heap, w, end - start);
+                w = json.put_key(heap, w, "total_rows");
+                w = json.put_int(heap, w, total);
+                w = json.put_key(heap, w, "truncated");
+                w = json.put_bool(heap, w, end < total);
+                w = json.put_key(heap, w, "next");
+                if end < total {
+                    w = json.begin_object(heap, w);
+                    w = json.put_key(heap, w, "from");
+                    w = json.put_int(heap, w, end);
+                    w = json.end_object(heap, w);
+                } else {
+                    w = json.put_null(heap, w);
+                }
+                w = json.put_key(heap, w, "unknown_categories");
+                w = json.put_int(heap, w, unknown);
+                w = json.end_object(heap, w);
+            }
+        }
+    }
+    unbox_slice(heap, pred);
+    unbox_slice(heap, prob);
+    return (json.finish(w), plain, code);
+}
+
+fn conflict_out[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer, flag: &static [byte], message: &static [byte]) -> [heap] verbs.Out {
+    return verbs.nothing(heap, wiredata.conflict(heap, errs, flag, message), log);
+}
+
+// --positive, --split, --seed, --threads and --proba mean nothing to a model of the constant kinds
+fn constant_conflict[&h](heap: &!h Heap, errs: fail.Errors, o: verbs.Opts, verb: int) -> [heap] fail.Errors {
+    var e = errs;
+    if o.positive_given {
+        e = wiredata.conflict(heap, e, "positive", "a constant model has no positive label: its files are those of docs/cli.md");
+    }
+    if o.split_given {
+        e = wiredata.conflict(heap, e, "split", "--split needs a model fitted through the pipeline: linear or logistic");
+    }
+    if o.threads_given {
+        e = wiredata.conflict(heap, e, "threads", "a constant model has no threaded kernel");
+    }
+    if verb == 2 && o.proba {
+        e = wiredata.conflict(heap, e, "proba", "a constant classification always prints its probability, and a constant regression has none");
+    }
+    return e;
+}
+
+// read the model file once to see its kind: (the bytes, whether this module takes it)
+fn peek_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, o: verbs.Opts) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, bool) {
+    let (data, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(model), paths.full(model), o.max_bytes);
+    if st != 0 {
+        return (data, false);
+    }
+    var mine = false;
+    borrow data as &dr in {
+        mine = est.wired(peek_kind(buffer.bytes(dr)));
+    }
+    return (data, mine);
+}
+
+pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] verbs.Out {
+    let (data, mine) = peek_model(heap, fs, root, model, o);
+    if !mine {
+        buffer.drop(heap, data);
+        let e0 = constant_conflict(heap, errs, o, 2);
+        var none = true;
+        borrow e0 as &er in {
+            none = fail.count(er) == 0;
+        }
+        if !none {
+            return verbs.nothing(heap, e0, log);
+        }
+        return verbs.predict(heap, args, fs, root, file, model, o, e0, log);
+    }
+    var e = errs;
+    var lg = log;
+    var st = empty_stored(heap);
+    var go = true;
+    borrow data as &dr in {
+        let (s2, ok2, e2) = load_stored(heap, buffer.bytes(dr), paths.shown(model), e);
+        drop_stored(heap, st);
+        st = s2;
+        e = e2;
+        go = ok2;
+    }
+    buffer.drop(heap, data);
+    if go && o.proba {
+        var is_reg = false;
+        borrow st as &sq0 in {
+            is_reg = est.task(sq0.kind) == 1;
+        }
+        if is_reg {
+            e = wiredata.conflict(heap, e, "proba", "a regression has no probability");
+            go = false;
+        }
+    }
+    var inp = empty_input(heap);
+    if go {
+        borrow st as &sq in {
+            let (i2, ok3, e3, lg3) = read_input(heap, args, fs, root, file, sq, o, false, e, lg);
+            drop_input(heap, inp);
+            inp = i2;
+            e = e3;
+            lg = lg3;
+            go = ok3;
+        }
+    }
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if go {
+        let none = box_slice(heap, 1, 0);
+        borrow inp as &ir in {
+            borrow st as &sr in {
+                borrow none as &nr in {
+                    let (xs, unk, ok4, e4) = through_steps(heap, args, ir, sr, contents(nr), 0 - 1, o, e);
+                    e = e4;
+                    if ok4 {
+                        borrow xs as &xq in {
+                            let (p2, t2, code) = predict_page(heap, sr.kind, xq, contents(sr.wv), sr.c0, sr.c1, unk, o.proba, o);
+                            buffer.drop(heap, payload);
+                            buffer.drop(heap, plain);
+                            payload = p2;
+                            plain = t2;
+                            if code != 0 {
+                                e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                            }
+                        }
+                    }
+                    matrix.drop(heap, xs);
+                }
+            }
+        }
+        unbox_slice(heap, none);
+    }
+    drop_input(heap, inp);
+    drop_stored(heap, st);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
+}
+
+// ---------------------------------------------------------------- eval
+
+pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] verbs.Out {
+    let (data, mine) = peek_model(heap, fs, root, model, o);
+    if !mine {
+        buffer.drop(heap, data);
+        let e0 = constant_conflict(heap, errs, o, 3);
+        var none = true;
+        borrow e0 as &er in {
+            none = fail.count(er) == 0;
+        }
+        if !none {
+            return verbs.nothing(heap, e0, log);
+        }
+        return verbs.eval(heap, args, fs, root, file, model, o, e0, log);
+    }
+    var e = errs;
+    var lg = log;
+    var st = empty_stored(heap);
+    var go = true;
+    borrow data as &dr in {
+        let (s2, ok2, e2) = load_stored(heap, buffer.bytes(dr), paths.shown(model), e);
+        drop_stored(heap, st);
+        st = s2;
+        e = e2;
+        go = ok2;
+    }
+    buffer.drop(heap, data);
+    var inp = empty_input(heap);
+    if go {
+        borrow st as &sq in {
+            let (i2, ok3, e3, lg3) = read_input(heap, args, fs, root, file, sq, o, true, e, lg);
+            drop_input(heap, inp);
+            inp = i2;
+            e = e3;
+            lg = lg3;
+            go = ok3;
+        }
+    }
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if go {
+        var kind = 0;
+        var c0 = 0;
+        var c1 = 0;
+        borrow st as &sq0 in {
+            kind = sq0.kind;
+            c0 = sq0.c0;
+            c1 = sq0.c1;
+        }
+        var nrows = 0;
+        borrow inp as &ir0 in {
+            nrows = matrix.rows(ir0.x);
+        }
+        // the labels the model knows
+        var pos = c1;
+        if est.task(kind) == 2 && o.positive_given {
+            let (pok, pv) = wiredata.parse_label(o.positive);
+            if pv == c0 || pv == c1 {
+                pos = pv;
+            } else {
+                var w = fail.open_in(heap, spec.extra(), "ml.param.out-of-range", "--positive is not one of the two labels of the model", "the labels are in detail");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_str(heap, w, "flag", "--positive");
+                w = fail.detail_int(heap, w, "value", pv);
+                w = fail.detail_int(heap, w, "label0", c0);
+                w = fail.detail_int(heap, w, "label1", c1);
+                e = fail.add(heap, e, w);
+                go = false;
+            }
+        }
+        var sel = box_slice(heap, nrows + 1, 0);
+        var want = 0 - 1;
+        var ntest = 0;
+        if go && o.split_given {
+            let (sok, num, den) = wiredata.parse_split(o.split);
+            let nt = splits.n_test_for(nrows, num, den);
+            var code = 0;
+            if nt < 1 {
+                code = rules.empty_fold();
+            } else {
+                borrow mut sel as &!sw in {
+                    code = splits.train_test(heap, nrows, nt, o.seed, 0, o.max_rows, contents(sw)[0..nrows]);
+                }
+            }
+            if code != 0 {
+                e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                go = false;
+            } else {
+                want = 1;
+                ntest = nt;
+            }
+        }
+        if go {
+            var yv = box_slice(heap, 2, 0.0);
+            var bad = 0;
+            borrow inp as &ir in {
+                borrow sel as &sr2 in {
+                    let (y2, b2) = wiredata.take_col(heap, ir.x, contents(sr2), want, ir.tj);
+                    unbox_slice(heap, yv);
+                    yv = y2;
+                    bad = b2;
+                }
+            }
+            if bad > 0 {
+                borrow st as &sq3 in {
+                    e = wiredata.empty_target(heap, e, schema.name(sq3.sc, schema.target(sq3.sc)), bad);
+                }
+                go = false;
+            }
+            var rows = 0;
+            borrow sel as &sq4 in {
+                rows = wiredata.count_rows(contents(sq4), nrows, want);
+            }
+            if go && est.task(kind) == 2 {
+                var i = 0;
+                var foreign = 0 - 1;
+                borrow yv as &yq in {
+                    while i < rows {
+                        let lab = truncate(contents(yq)[i]);
+                        if lab != c0 && lab != c1 && foreign < 0 {
+                            foreign = i;
+                        }
+                        i = i + 1;
+                    }
+                }
+                if foreign >= 0 {
+                    var w = fail.open_in(heap, spec.extra(), "ml.label.not-binary", "a classification target has more than two values", "the file holds a label the model was not fitted on");
+                    w = fail.no_repair(heap, w);
+                    w = fail.detail_open(heap, w);
+                    w = fail.detail_int(heap, w, "row", foreign + 1);
+                    borrow yv as &yq2 in {
+                        w = fail.detail_int(heap, w, "label", truncate(contents(yq2)[foreign]));
+                    }
+                    e = fail.add(heap, e, w);
+                    go = false;
+                }
+            }
+            if go {
+                borrow inp as &ir in {
+                    borrow st as &sr in {
+                        borrow sel as &sr2 in {
+                            let (xs, unk, ok4, e4) = through_steps(heap, args, ir, sr, contents(sr2), want, o, e);
+                            e = e4;
+                            if ok4 {
+                                if true {
+                                    borrow yv as &yr in {
+                                        borrow xs as &xq in {
+                                            let (mobj, mplain, mund, fl) = wiredata.metrics_block(heap, kind, xq, contents(yr), contents(sr.wv), c0, c1, pos, o.max_rows);
+                                            if fl.code != 0 {
+                                                e = wiredata.bad_metric(heap, e, fl);
+                                                buffer.drop(heap, mplain);
+                                            } else {
+                                                var w = json.writer(heap, 256);
+                                                w = json.begin_object(heap, w);
+                                                w = json.put_key(heap, w, "model");
+                                                w = json.put_string(heap, w, est.name(kind));
+                                                w = json.put_key(heap, w, "task");
+                                                w = json.put_string(heap, w, wiredata.task_word(est.task(kind)));
+                                                w = json.put_key(heap, w, "rows");
+                                                w = json.put_int(heap, w, rows);
+                                                if est.task(kind) == 2 {
+                                                    w = json.put_key(heap, w, "positive");
+                                                    w = json.put_int(heap, w, pos);
+                                                }
+                                                w = json.put_key(heap, w, "metrics");
+                                                borrow mobj as &mor in {
+                                                    w = json.put_fragment(heap, w, buffer.bytes(mor));
+                                                }
+                                                w = json.put_key(heap, w, "unknown_categories");
+                                                w = json.put_int(heap, w, unk);
+                                                if o.split_given {
+                                                    w = json.put_key(heap, w, "split");
+                                                    w = json.begin_object(heap, w);
+                                                    w = json.put_key(heap, w, "train");
+                                                    w = json.put_int(heap, w, nrows - ntest);
+                                                    w = json.put_key(heap, w, "test");
+                                                    w = json.put_int(heap, w, ntest);
+                                                    w = json.put_key(heap, w, "seed");
+                                                    w = json.put_int(heap, w, o.seed);
+                                                    w = json.end_object(heap, w);
+                                                }
+                                                w = json.end_object(heap, w);
+                                                buffer.drop(heap, payload);
+                                                payload = json.finish(w);
+                                                buffer.drop(heap, plain);
+                                                plain = mplain;
+                                            }
+                                            buffer.drop(heap, mobj);
+                                            buffer.drop(heap, mund);
+                                        }
+                                    }
+                                }
+                            }
+                            matrix.drop(heap, xs);
+                        }
+                    }
+                }
+            }
+            unbox_slice(heap, yv);
+        }
+        unbox_slice(heap, sel);
+    }
+    drop_input(heap, inp);
+    drop_stored(heap, st);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
+}

@@ -72,7 +72,7 @@ class Rules(unittest.TestCase):
                 return 5
             if area in ("limit", "parse"):
                 return 8
-            if tag == "ml.param.out-of-range":
+            if tag in ("ml.param.out-of-range", "ml.param.threads"):
                 return 2
             if tag == "ml.input.unknown-column":
                 return 3

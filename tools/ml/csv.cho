@@ -3,7 +3,7 @@ edition 5;
 module ml.csv;
 
 // The CSV reader (docs/reader.md section 2). Cells are read by ml.csvcell (the CLI slice's exact grammar for ints and short decimals,
-// cancho-table's `flt.parse_float` for everything else: pinned by table.pin, not copied); records are RFC 4180, split by cancho-table's
+// cancho-table's `flt.parse_float` for everything else: a pinned package dependency, not copied); records are RFC 4180, split by cancho-table's
 // `reader` module:
 //
 // * the first non-blank record is the header; a UTF-8 byte order mark on the first line is dropped; a CR before the LF is dropped; a
@@ -34,7 +34,8 @@ pub fn digits_max() -> [] int {
 // squared errors against `pred`, a prediction at scale `tscale` + 6), 4 eval a classification (count the rows whose target is `pred`),
 // 5 predict (the target column, if present, is skipped: its cells are not read), 6 fit a regression of a float target (the exact
 // sum of the doubles in `fv`, the count in acc[2]), 7 eval a regression of a float target (the exact sum of (y - P)^2 in `acc`, P the
-// double whose bits are `pred`), 8 load every kept cell into the matrix of the sinks (rows `mrows`, words per column `wpc`).
+// double whose bits are `pred`), 8 load every kept cell into the matrix of the sinks (rows `mrows`, words per column `wpc`), 9 the same
+// but the target column (if the file has one) is neither read nor loaded: it is not a column of the matrix (predict of a planned model, docs/wiring.md).
 // `missing`: an empty cell is a missing value (the loader), else it is ml.input.non-numeric. `floats`: columns read as float whatever
 // their cells are (--float).
 pub struct Cfg {
@@ -379,10 +380,11 @@ fn read_row[&l, &s, &a, &v, &d, &b, &f](line: &l [byte], cols: int, tcol: int, c
             p = q + 1;
         }
         let dropped = flags[3 * cols + i] != 0;
-        if !dropped && !(cfg.mode == 5 && i == tcol) {
+        let skipped = (cfg.mode == 5 || cfg.mode == 9) && i == tcol;
+        if !dropped && !skipped {
             let (st, kind, m, frac, idig, key) = csvcell.read(line[first..last]);
             if st == 1 && cfg.missing {
-                if cfg.mode == 8 {
+                if cfg.mode == 8 || cfg.mode == 9 {
                     if row >= cfg.mrows {
                         return (15, i, 0);
                     }
@@ -426,7 +428,7 @@ fn read_row[&l, &s, &a, &v, &d, &b, &f](line: &l [byte], cols: int, tcol: int, c
                         return (f, i, 0);
                     }
                 }
-                if cfg.mode == 8 {
+                if cfg.mode == 8 || cfg.mode == 9 {
                     if row >= cfg.mrows {
                         return (15, i, 0);
                     }
@@ -434,7 +436,7 @@ fn read_row[&l, &s, &a, &v, &d, &b, &f](line: &l [byte], cols: int, tcol: int, c
                 }
             }
         }
-        if !dropped {
+        if !dropped && !skipped {
             mj = mj + 1;
         }
         i = i + 1;
@@ -610,7 +612,7 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
                                         }
                                     }
                                     tcol = column_of(buffer.bytes(nr), er, cols, target);
-                                    if tcol >= 0 && cfg.mode != 5 && contents(cw)[3 * cols + tcol] != 0 && going {
+                                    if tcol >= 0 && cfg.mode != 5 && cfg.mode != 9 && contents(cw)[3 * cols + tcol] != 0 && going {
                                         rep = report(14, rec_line, tcol, 0);
                                         going = false;
                                     }

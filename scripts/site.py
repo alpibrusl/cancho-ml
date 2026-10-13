@@ -23,6 +23,9 @@ generated:
                                           what the built binary prints for it
     flow          README.md, index.html   one complete flow: fit, predict, eval, a
                                           refusal with its repair, the repair run
+    pflow         README.md, index.html   the same for a model that goes through the pipeline: a
+                                          float CSV with an empty cell, a refusal with its repair,
+                                          impute + standardise + logistic, predict --proba, eval
     qs            README.md, index.html   the quick start's commands and output
     hero          index.html              the first example
     agentio       README.md, index.html   excerpts of `ml introspect`
@@ -69,6 +72,9 @@ FILES = {
     "shop.csv": "id,visits,spend,bought\n1,3,12.50,1\n2,1,0.00,0\n3,7,40.25,1\n4,2,5.00,0\n5,5,22.75,1\n6,4,18.00,1\n",
     # a float target (an exponent makes a cell a float)
     "sensor.csv": "id,x,reading\n1,1.5,1e1\n2,2.5,2.75\n3,0.1,3e-1\n4,4,5.5\n",
+    # the pipeline flow: float columns, an empty cell, two classes that overlap (so a logistic regression has a finite fit)
+    "shop2.csv": "id,visits,spend,bought\n1,3,12.5,1\n2,1,0.0,0\n3,7,,1\n4,2,5.25,0\n5,5,22.75,1\n6,4,18.0,1\n7,1,3.5,0\n8,6,9.75,0\n9,2,14.0,1\n10,3,2.25,0\n11,4,6.0,1\n12,5,4.5,0\n",
+    "new2.csv": "id,visits,spend\n13,3,\n14,6,20.0\n15,1,1.5\n",
 }
 
 # What is shown is what is typed; the argv run is shlex.split of it. The order is the order of running.
@@ -86,8 +92,14 @@ DEMOS = [
     ("exists", "ml fit --target price --output houses.ml houses.csv"),
     ("dry", "ml fit --dry-run --overwrite --target price --output houses.ml houses.csv"),
     ("damaged", "ml eval --model-file damaged.ml houses.csv"),
-    ("other_model", "ml fit --model linear --target price --output linear.ml houses.csv"),
+    ("other_model", "ml fit --model forest --target price --output forest.ml houses.csv"),
     ("typo", "ml fit --target prize --output typo.ml houses.csv"),
+    # the models that go through the pipeline (docs/wiring.md): a refusal with its repair first, then the plan written out
+    ("p_bad", "ml fit --model logistic --target bought --output shop2.ml shop2.csv"),
+    ("p_fit", "ml fit --model logistic --overwrite --step 'impute column=spend strategy=mean;scale column=visits,spend kind=standard' --iterations 50 --l2 0.1 --target bought --output shop2.ml shop2.csv"),
+    ("p_predict", "ml predict --model-file shop2.ml --proba new2.csv"),
+    ("p_eval", "ml eval --model-file shop2.ml shop2.csv"),
+    ("p_split", "ml fit --model linear --l2 0.1 --split train=0.8 --seed 3 --target price --output houses-lin.ml houses.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 SUMMARY = {
@@ -96,6 +108,7 @@ SUMMARY = {
     "damaged": ["rule", "hint"],
     "other_model": ["rule", "detail"],
     "typo": ["rule", "hint", "detail"],
+    "p_bad": ["rule", "hint", "repair"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -105,8 +118,11 @@ TASKS = {
     "dry": ["exists", "dry"],
     "damaged": ["damaged"],
     "honest": ["other_model", "typo"],
+    "split": ["p_split"],
 }
 QS = ["fit", "predict", "eval", "bad"]
+# a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -145,16 +161,16 @@ def make_context(binary, tmp):
             (Path(tmp) / "damaged.ml").write_bytes(bytes(b))
         out, status = run(shlex.split(typed))
         results[key] = (typed, out, status)
-        if key == "bad":
+        if key in REPAIRED:
             doc = json.loads(out)
             repair = doc["error"]["repair"]
             if repair is None or repair["kind"] != "retry":
-                raise Drift("the demo `bad` no longer carries a retry repair")
+                raise Drift("the demo `%s` no longer carries a retry repair" % key)
             argv = repair["argv"]
             out2, status2 = run(argv)
             if status2 != 0:
-                raise Drift("the repair of the demo `bad` does not run")
-            results["fixed"] = (shlex.join(argv), out2, status2)
+                raise Drift("the repair of the demo `%s` does not run" % key)
+            results[REPAIRED[key]] = (shlex.join(argv), out2, status2)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
     return {"results": results, "introspect": json.loads(r.stdout), "run": run}
@@ -190,6 +206,18 @@ def flow_items(ctx):
             item(ctx, "bad"),
             ("# The tool offered the corrected command. Run it:", None, 0, None),
             item(ctx, "fixed")]
+
+
+def pflow_items(ctx):
+    """The pipeline flow: a float CSV with an empty cell, the refusal and its repair, then impute + standardise + logistic, predict with probabilities, eval."""
+    return [("# A float CSV with an empty cell: the plan must say what to do with it. The refusal offers a repair", None, 0, None),
+            item(ctx, "p_bad"),
+            ("# The repair works, but a plan can say more: impute, standardise, then a logistic regression (50 Newton iterations, ridge 0.1)", None, 0, None),
+            item(ctx, "p_fit"),
+            ("# Predict with probabilities for new rows (the empty cell is filled with the mean STORED in the model)", None, 0, None),
+            item(ctx, "p_predict"),
+            ("# Score it: accuracy, precision, recall, F1, ROC-AUC, log-loss", None, 0, None),
+            item(ctx, "p_eval")]
 
 
 def render(items, html_mode):
@@ -345,10 +373,10 @@ def exit_codes(ctx):
 
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
-                      flow=lambda c: md_block(flow_items(c)), qs=lambda c: md_block(qs_items(c)),
+                      flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
-                            hero=hero, flow=lambda c: html_pre(flow_items(c)), qs=lambda c: html_pre(qs_items(c)),
+                            hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

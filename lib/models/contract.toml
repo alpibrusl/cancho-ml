@@ -1,0 +1,17 @@
+# What every model module shares (docs/modules.md). scripts/admit.py and scripts/gen_models.py read this file.
+
+# The authority row of `ml` before any model needed another label (the row of v1-post, docs/cli.md section 6). A label beyond it must be declared by a
+# model's [authority] adds with a reason, and by tools.toml [ml.reasons].
+[authority]
+base = ["args", "dir_read", "dir_write", "err_write", "file_read", "file_write", "fs_read(\"\")", "heap", "io_write"]
+
+[limits]
+max_file_lines = 2000
+thread_counts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+
+# The registries a module must not collide with
+[registry]
+kinds = "lib/core/kinds.cho"
+refuse = "lib/core/refuse.cho"
+tags = "tools/ml/spec.tmpl"
+order = "lib/linalg/order.cho"

@@ -11,7 +11,7 @@ gap the section 7 of docs/cli.md names.
     python3 scripts/mutants_cli.py --list
     python3 scripts/mutants_cli.py --check      # every `old` text is found exactly where it is expected (no build, no test)
 
-The copy is built with the explicit file list that package mode would pass (`cancho build --std lib/core/*.cho build/deps/*.cho
+The copy is built with the explicit file list that package mode would pass (`cancho build --std lib/core/*.cho ... build/deps/*.cho
 generated/ml/built.cho tools/ml/*.cho`), so no mutant runs `cancho install`.
 """
 
@@ -46,11 +46,11 @@ MUTANTS = [
     M("t1-flag-missing-from-the-schema", "T1", "the schema's flag enum loses --limit",
       [("schemas/ml.v1.json", '"--limit",', "", 1)], ["test_tables"]),
     M("t1-rule-without-fixture", "T1", "a rule is added to the table (schemas regenerated); no fixture reaches it",
-      [("tools/ml/spec.cho", ";ml.model.malformed\";", ";ml.model.malformed;ml.input.too-wide\";", 1),
+      [("tools/ml/spec.cho", ";ml.plan.model-not-built\";", ";ml.plan.model-not-built;ml.input.too-wide\";", 1),
        ("tools/ml/spec.cho", ";limit.log-full|8|never|", ";ml.input.too-wide|8|never|a rule nothing reaches. Hint: none. Repair: none.;limit.log-full|8|never|", 1)],
       ["test_tables"], regen=True),
-    M("t1-fixture-reaches-another-rule", "T1", "the only fixture of ml.model.malformed now claims another rule",
-      [("tests/conformance/fixtures.py", 'bad("ml.model.malformed")', 'bad("ml.model.checksum")', 1)], ["test_tables"]),
+    M("t1-fixture-reaches-another-rule", "T1", "the two fixtures of ml.model.malformed now claim another rule",
+      [("tests/conformance/fixtures.py", 'bad("ml.model.malformed")', 'bad("ml.model.checksum")', 1), ("tests/conformance/fixtures.py", 'bad("ml.model.malformed")', 'bad("ml.model.checksum")', 1)], ["test_tables"]),
     M("t1-log-record-without-fixture", "T1", "a log record is added to the table (schemas regenerated); no run writes it",
       [("tools/ml/spec.cho", ";end|event,seq,ok,exit,rule\";", ";end|event,seq,ok,exit,rule;skip|event,seq\";", 1)],
       ["test_tables"], regen=True),
@@ -81,7 +81,7 @@ MUTANTS = [
       [("tools/ml/mfile.cho", "if length < 0 || length > body - pos - 12 {", "if length < 0 {", 1)], ["test_model_file"]),
     M("m1-sum-order-not-compared", "M1", "the sum order of a model of kind 4 to 7 is not compared", [("tools/ml/mfile.cho", "if so != sum_order() {", "if false {", 1)], ["test_model_file"]),
     M("m1-sum-order-implemented-is-3", "M1", "the reader implements sum order 3 instead of 2", [("tools/ml/mfile.cho", "pub fn sum_order() -> [] int {\n    return 2;", "pub fn sum_order() -> [] int {\n    return 3;", 1)], ["test_model_file"]),
-    M("m1-sum-order-from-kind-5", "M1", "the sum order is read for kinds from 5, not 4", [("tools/ml/mfile.cho", "pub fn first_ordered_kind() -> [] int {\n    return 4;", "pub fn first_ordered_kind() -> [] int {\n    return 5;", 1)], ["test_model_file"]),
+    M("m1-sum-order-from-kind-7", "M1", "the sum order is read for kind 7 only, not from 4 (kinds 4 and 5 are read by the pipeline's reader since W1, so only 6 and 7 reach this check)", [("tools/ml/mfile.cho", "pub fn first_ordered_kind() -> [] int {\n    return 4;", "pub fn first_ordered_kind() -> [] int {\n    return 7;", 1)], ["test_model_file"]),
     M("m1-sum-order-to-kind-6", "M1", "the sum order is read for kinds up to 6, not 7", [("tools/ml/mfile.cho", "pub fn last_kind() -> [] int {\n    return 7;", "pub fn last_kind() -> [] int {\n    return 6;", 1)], ["test_model_file"]),
     M("m1-sum-order-meta-longer-ok", "M1", "a meta longer than 36 + the pin length is read for the order", [("tools/ml/mfile.cho", "len(me0) == 36 + cl0", "len(me0) >= 36 + cl0", 1)], ["test_model_file"]),
     M("m1-sum-order-offset", "M1", "the order is read four bytes early", [("tools/ml/mfile.cho", "let so = get32(me0, 32 + cl0);", "let so = get32(me0, 28 + cl0);", 1)], ["test_model_file"]),
@@ -114,13 +114,12 @@ MUTANTS = [
     # ------------------------------------------------------------------ D1: determinism
     M("d1-model-holds-the-byte-count", "D1", "the stored row count is the CSV's byte count",
       [("tools/ml/verbs.cho", "rows: csv.rows(sh), cols: kept", "rows: csv.bytes_read(sh), cols: kept", 1)], ["test_determinism"]),
-    M("d1-thread-count-changes-a-byte", "D1", "a stand-in with a --threads flag whose model bytes depend on the count",
-      [("tools/ml/spec.cho", ";format||choice:json/text|none|json|", ";threads||nat|none|1|a stand-in;format||choice:json/text|none|json|", 1)],
-      ["test_determinism"], kind="wrapper:threads", regen=True),
+    M("d1-thread-count-changes-a-byte", "D1", "a stand-in that strips --threads and, with a count other than 1, changes the last byte of the model it wrote",
+      [], ["test_determinism"], kind="wrapper:threads"),
     # ------------------------------------------------------------------ A1: authority
     M("a1-reads-standard-input", "A1", "run() reads a byte of standard input (io_read)",
-      [("tools/ml/main.cho", 'fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write] int {\n    let which',
-        'fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, io_read, err_write] int {\n    getchar(io);\n    let which', 1)],
+      [("tools/ml/main.cho", 'fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write, conc] int {\n    let which',
+        'fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, io_read, err_write, conc] int {\n    getchar(io);\n    let which', 1)],
       [], kind="authority"),
     M("a1-reads-the-clock", "A1", "main() reads the clock", [("tools/ml/main.cho", "    release(clock);\n", "    borrow clock as &c in {\n        clock_ms(c);\n    }\n    release(clock);\n", 1)],
       [], kind="authority"),
@@ -128,7 +127,7 @@ MUTANTS = [
       [("manifests/ml.authority.json", '"name": "heap",', '"name": "heapx",', 1)], ["test_authority"], kind="manifest"),
     # ------------------------------------------------------------------ H1: honesty
     M("h1-a-model-in-the-table-that-is-not-built", "H1", "logreg is a choice of --model, with no implementation",
-      [("tools/ml/spec.cho", "model||choice:constant|", "model||choice:constant/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
+      [("tools/ml/spec.cho", "model||choice:constant/linear/logistic|", "model||choice:constant/linear/logistic/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
     M("h1-an-exponent-is-read-as-a-prefix", "H1", "1e5 is read as 1", [("tools/ml/csvcell.cho", "return (4, 0, 0, 0);", "return (0, 1, 0, 1);", 1)],
       ["test_honesty"]),
     # ------------------------------------------------------------------ RD7: the constant model on floats (docs/reader.md section 5)
@@ -160,11 +159,6 @@ MUTANTS = [
 def copy_tree(dest):
     ignore = shutil.ignore_patterns(".git", "build", "__pycache__", "*.pyc")
     shutil.copytree(ROOT, dest, ignore=ignore, symlinks=True)
-    # the numeric modules of cancho-table sit beside the tree, where cancho.toml's LOCAL-DEV sources name them
-    table = pathlib.Path(os.environ.get("CANCHO_TABLE", str(ROOT.parent / "cancho-table-main")))
-    link = dest.parent / "cancho-table-main"
-    if not link.exists():
-        link.symlink_to(table)
     deps = ROOT / "build" / "deps"
     if deps.is_dir():
         (dest / "build").mkdir(exist_ok=True)
@@ -188,14 +182,11 @@ def apply_edits(tree, m, strict=True):
     return problems
 
 
-def table_sources():
-    t = pathlib.Path(os.environ.get("CANCHO_TABLE", str(ROOT.parent / "cancho-table-main"))) / "tools" / "table"
-    return [str(t / (m + ".cho")) for m in ("pow5", "dec", "flt", "query", "facc", "reader")]
-
-
 def build(tree):
-    files = (sorted(glob.glob(str(tree / "lib/core/*.cho"))) + [str(tree / "lib/linalg/tensor.cho")] + sorted(glob.glob(str(tree / "build/deps/*.cho"))) +
-             [str(tree / "generated/ml/built.cho")] + sorted(glob.glob(str(tree / "tools/ml/*.cho"))) + table_sources())
+    g = lambda pat: sorted(glob.glob(str(tree / pat)))
+    files = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
+             g("lib/models/logistic/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(tree / "generated/ml/built.cho")] +
+             g("tools/ml/*.cho"))
     out = tree / "build" / "ml"
     p = subprocess.run([compiler(), "build", "--std", *files, "-o", str(out)], capture_output=True, text=True, cwd=tree)
     return out if p.returncode == 0 else None, p.stdout + p.stderr

@@ -1,0 +1,40 @@
+# Linear regression by the normal equations and Cholesky (docs/models-linear.md), ridge with l2 > 0.
+name = "linear"
+kind = 4
+kind_fn = "model_linear"
+task = "regression"
+tier = "supported"
+wired = true
+adapter = "models.adapter_linear"
+payload_version = 1
+doc = "docs/models-linear.md"
+files = ["lib/models/linear/adapter.cho", "lib/models/linear/linreg.cho"]
+plan_order = 1
+
+[limits]
+max_features = 256
+
+[tags]
+emits = [
+  "ml.tensor.rank", "ml.tensor.shape", "ml.tensor.bounds", "ml.input.non-finite", "ml.input.too-many-columns", "ml.param.out-of-range",
+  "ml.linalg.not-positive-definite", "ml.linalg.singular", "ml.param.threads", "ml.fit.non-finite",
+]
+
+[authority]
+adds = ["conc"]
+reason = "lib/linalg/par.cho spawns the threads of fit --threads N; the label is derived from the code, so it is in the row at --threads 1 too (docs/wiring.md section 6)"
+
+[sums]
+decisive = ["lib/models/linear/linreg.cho"]
+
+[oracle]
+script = "scripts/oracle_wire.py"
+args = "linear"
+tolerance = "bits"
+
+[[hyperparameter]]
+name = "l2"
+type = "float"
+nonneg = true
+default = "0.0"
+doc = "the ridge penalty, a finite number, 0 or more. The intercept is not penalised"

@@ -3,14 +3,16 @@
 # package-mode build of `ml`, the schemas and the authority manifest checked against the sources, the conformance gates, and a
 # check that every edit of the mutant list still applies. The gates of lib/metrics and
 # lib/models/tree and the registry check are run here too. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
-# once per pattern, 53 of them, and run on request, as the stage 1 mutants do.
+# once per pattern, 53 of them, and run on request, as the stage 1 mutants do (the wiring stage's are scripts/mutants_wire.py: 40 patterns).
 set -e
 cd "$(dirname "$0")/.."
 # absolute, because the conformance tests run from tests/conformance
 CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
 export CANCHO
-# RD1: the cancho-table modules the reader compiles are the pinned ones and are not copied here (LOCAL-DEV, docs/reader.md section 1.3)
+# RD1: the cancho-table modules the reader compiles are a pinned package dependency and are not copied here (docs/reader.md section 1)
 sh scripts/check_table_pin.sh
+# the pinned packages, fetched into build/deps (needs the network the first time; build/deps is not committed)
+$CANCHO install
 $CANCHO fmt --check lib tests tools
 $CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/core.cho
 $CANCHO test --std lib/core/exact.cho tests/exact.cho
@@ -33,8 +35,7 @@ sh scripts/gate_models.sh
 # the gates of the stages that were merged after the first two: lib/metrics (docs/metrics.md section 1) and lib/models/tree
 # (docs/models-tree.md section 8; needs ../ml-data, the files of spike F; its mutants and the scikit-learn comparison run on request)
 # (t_registry imports the transforms and the pipeline too since the merge, so they and the table decimal modules are in the program, as in gate_pipe.sh)
-T=${TABLE_SRC:-${CANCHO_TABLE:-$(cd .. && pwd)/cancho-table-main}/tools/table}
-$CANCHO test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho $T/pow5.cho $T/dec.cho $T/flt.cho tests/t_registry.cho
+$CANCHO test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho build/deps/*.cho tests/t_registry.cho
 python3 scripts/check_registry.py
 python3 scripts/mutants_metrics.py --check
 sh scripts/gate_metrics.sh
@@ -46,10 +47,19 @@ $CANCHO build --bin ml
 sh scripts/build_reader.sh
 python3 scripts/gate_reader.py all
 python3 scripts/mutants_reader.py --check
+python3 scripts/gen_models.py --check
 python3 scripts/schemas.py --check
 python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
+# the model module contract and the wiring (docs/modules.md, docs/wiring.md): the admission script on the wired models, the mutant modules it must refuse,
+# the byte-for-byte oracle (also run by the conformance tests above, with its own cases) and the patterns of the wiring mutants. The mutants and the
+# scikit-learn comparison (scripts/mutants_wire.py, scripts/gate_wire_sklearn.py, scripts/admit.py without --fast) run on request.
+python3 scripts/admit.py constant --fast
+python3 scripts/admit.py linear --fast
+python3 scripts/admit.py logistic --fast
+python3 tests/modules/run.py
+python3 scripts/mutants_wire.py --check
 # the check tools open no path that holds two dots in a row and trap on no missing operand (docs/lanes.md section 1)
 python3 scripts/gate_paths.py
 python3 scripts/mutants_paths.py --check

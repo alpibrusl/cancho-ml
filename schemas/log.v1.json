@@ -178,7 +178,25 @@
         "ml.model.version",
         "ml.model.truncated",
         "ml.model.checksum",
-        "ml.model.malformed"
+        "ml.model.malformed",
+        "ml.linalg.not-positive-definite",
+        "ml.param.threads",
+        "ml.fit.non-finite",
+        "ml.split.empty-fold",
+        "ml.fit.all-missing",
+        "ml.limit.categories",
+        "ml.input.unknown-category",
+        "ml.plan.syntax",
+        "ml.plan.unknown-step",
+        "ml.plan.unknown-key",
+        "ml.plan.missing-key",
+        "ml.plan.bad-value",
+        "ml.plan.duplicate-key",
+        "ml.plan.model-line",
+        "ml.plan.unknown-column",
+        "ml.limit.plan",
+        "ml.input.missing-value",
+        "ml.plan.model-not-built"
       ]
     }
   }

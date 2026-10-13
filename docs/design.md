@@ -43,7 +43,7 @@ If D1 cannot be kept for a feature, the feature is refused or the exception is w
   works from the bitmap.
 * **Reading.** Cells go through cancho-table's exact reader (`:int`, `:dec(S)`, `:float`, correctly rounded). *(Corrected in place: this
   bullet said the reader of 15 to 17 digit doubles, `tools/table/flt.cho`, was on a branch and **not merged**. It is merged: cancho-table PR #32,
-  `main` at `7f36608`. What `ml` does with it, how it is pinned, and why it is not yet a `[dependencies.*]`, is `docs/reader.md`.)*
+  `main` at `7f36608`. What `ml` does with it and how it is pinned (six `[dependencies.*]` at cancho-table `202b214`) is `docs/reader.md`.)*
 * **No `float_of_bits`.** cancho has `bits_of` and no inverse; it is "missing on purpose" (`floating-point.md` §4.1)
   **[read]**. A stored double is therefore rebuilt from integers: mantissa as `float_of`, then `ldexp` from `std/math.cho`,
   which is exact for normal numbers. The cost of that load is **[M0]** (it is outside the timed fit but inside `predict`
@@ -153,8 +153,8 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 1 | constant regression of an int or dec target | one i64 record, shape [4] | CLI slice | yes |
 | 2 | constant classification | one i64 record, shape [6] | CLI slice | yes |
 | 3 | constant regression of a float target | one i64 record, shape [2] | reader stage | yes |
-| 4 | linear regression | `coef` f64 rank 1 `d`; `intercept` f64 rank 1 `1` | `lib/models/record.cho` | no |
-| 5 | logistic regression | the same two records | `lib/models/record.cho` | no |
+| 4 | linear regression | `coef` f64 rank 1 `d`; `intercept` f64 rank 1 `1` | `lib/models/record.cho` | no (`pipeline.file`, since W1) |
+| 5 | logistic regression | the same two records, then `labels` i64 rank 1 `2`: the negative and the positive label (payload version 2, W1) | `lib/models/record.cho` | no (`pipeline.file`, since W1) |
 | 6 | k-means | `centroids` f64 rank 2 `k x d` | `lib/models/record.cho` | no |
 | 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
 
@@ -171,8 +171,8 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 
 **Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta. The next step kind is 7.
 
-Kinds 4 to 7 are written by libraries only: `mfile.cho` refuses them as `ml.model.malformed` until the verbs call the libraries
-(`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
+Kinds 4 and 5 are built by `ml` since W1 (`tools/ml/wire.cho`, through `lib/pipeline/file.cho` and the adapters of `lib/models`; the logistic payload gained a labels record, `docs/wiring.md` section 4); kinds 6 and 7 are written by libraries only, and `mfile.cho` (the reader of the constant kinds)
+refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
 dtypes: 1 = i64, 2 = f64 (one table for every record, the same in `mfile.cho`, `record.cho` and `tree/model.cho`). Section tags of the
 file: 1 plan, 2 schema, 3 steps, 4 model, 5 meta, in that order. The column types in `schema` (0 int, 1 dec, 2 float) are not dtypes.
 The stream kinds of the random generator have their own registry in `docs/rng.md`; the numeric refusal codes of the libraries are in
@@ -237,11 +237,11 @@ CI (`tools.toml`, `manifests/`). The expected rows **[choice]**:
 
 | binary | rows | not allowed |
 |---|---|---|
-| `ml` (fit, predict, eval, introspect, skill) | read files named on the command line (`file_read`, `fs_read("")`, `dir_read`); write the model and the log it is told to, beneath a directory it opened (`dir_write`, `file_write`: no `fs_write`, no path write); heap; `conc` (`spawn`) **once a threaded kernel is in the binary** | network, exec, ffi, clock, environment beyond arguments, standard input |
+| `ml` (fit, predict, eval, introspect, skill) | read files named on the command line (`file_read`, `fs_read("")`, `dir_read`); write the model and the log it is told to, beneath a directory it opened (`dir_write`, `file_write`: no `fs_write`, no path write); heap; `conc` (`spawn`): in the row since W1, because `fit --threads N` calls `lib/linalg/par.cho`; its reason is in `tools.toml` `[ml.reasons]` and `docs/wiring.md` section 6 | network, exec, ffi, clock, environment beyond arguments, standard input |
 | `ml-predict` (M10) | read a model file, read an input; heap | everything else, including writes other than standard output and `conc` if single-threaded |
 
 A change to a binary's authority fails CI until the manifest changes in the same diff (M9's gate, built: `scripts/manifest.py
---check`, `tools.toml`, `manifests/ml.authority.json`; the derived row of the slice is the first, without `conc`, in `docs/cli.md`
+--check`, `tools.toml`, `manifests/ml.authority.json`; the derived row of the CLI slice was the first, without `conc`; W1 added `conc` deliberately, `docs/cli.md`
 section 6). Model files and data files are inputs and are never executed or `include`d.
 
 ## 8. Refusals
@@ -290,9 +290,9 @@ No refusal depends on running out of memory: every allocation sized by input is 
 Reused from the toolbox catalogue: `args.*`, `path.*`, `io.*`, `conflict.exists`, `limit.line-too-long`, `limit.input-too-large`
 (the model file over `--max-bytes`). `ml.input.non-numeric` gained a `retry` repair (`--drop NAME`, for a feature column) and
 `ml.schema.mismatch` one when only extra columns differ (`--drop` them); otherwise a repair is `none` with a reason naming the
-columns. **Not reachable from the CLI today, so without a fixture and not in `introspect`:** `ml.tensor.*`, `ml.linalg.*`,
-`ml.param.threads` (no kernel uses linear algebra yet, no `--threads`), `ml.limit.depth/nodes/fits`, `ml.fit.non-finite`
-(no tree, no iterative fit). *(`ml.metric.undefined` became reachable with float regression.)* `ml.model.schema-mismatch` of the first list is
+columns. **Not reachable from the CLI when the slice was written, so without a fixture and not in `introspect`:** `ml.tensor.*`, `ml.linalg.*`,
+`ml.param.threads` (no kernel used linear algebra, no `--threads`), `ml.limit.depth/nodes/fits`, `ml.fit.non-finite`
+(no tree, no iterative fit). *(At W1 the verbs call the libraries: all of these but `ml.tensor.*`, `ml.linalg.singular`, `ml.limit.depth`, `ml.limit.nodes` and `ml.limit.fits` became reachable, with a fixture each: section 19, `docs/wiring.md` section 5.)* *(`ml.metric.undefined` became reachable with float regression.)* `ml.model.schema-mismatch` of the first list is
 dropped: it said "see `ml.schema.mismatch`", and a second tag for one rule is the repurposing D5 forbids. `ml.input.empty`,
 `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.non-numeric`, `ml.input.non-finite`, `ml.label.single-class`,
 `ml.label.not-binary`, `ml.schema.mismatch` and the four model tags of the first list are built as listed there, at the exits listed.
@@ -304,8 +304,8 @@ that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot 
 `ml.linalg.singular` (exit 8: a zero diagonal entry in a triangular solve); `ml.param.threads` (exit 2: a thread count outside
 1..64). The default caps (10,000,000 rows, 4,096 columns, 400,000,000 cells) are provisional and wait for section 9.
 
-*Registered at integration: the tags of the libraries that `ml` does not call yet (`tools/ml/spec.cho` `pending()`; not in `introspect`, the
-schemas or the fixtures until a verb reaches them, when each moves to `extra()` and `rules()` with a fixture). The tags of the libraries
+*Registered at integration: the tags of the libraries that `ml` did not call yet (`tools/ml/spec.cho` `pending()`; not in `introspect`, the
+schemas or the fixtures until a verb reaches them, when each moves to `extra()` and `rules()` with a fixture; the ones the wired verbs reach moved at W1, nine stay: `docs/wiring.md` section 5). The tags of the libraries
 that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.truncated` and `malformed`, `ml.metric.undefined`,
 `ml.param.out-of-range`) are in the tables above. `ml.limit.fits` of the first list is built by no stage and stays unlisted.*
 
@@ -344,6 +344,13 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 
 The library also answers, with its own codes in its band, tags that exist above: `ml.input.empty`, `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.too-many-cells`, `ml.param.out-of-range`,
 `ml.input.non-finite` (a cell of a matrix given to a transform, or a transformed value that overflowed), `ml.fit.non-finite`, `ml.schema.mismatch` and `ml.model.bad-magic`, `version`, `truncated`, `checksum`, `malformed`.
+
+*Added at W1 (`tools/ml/spec.tmpl`, `docs/wiring.md` section 5):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.input.missing-value` | 8 | a feature cell is empty after the steps of the plan (no `impute` covers its column); the columns are in `detail` | `retry` with `--step "impute column=NAMES strategy=mean"` when the plan came from no flag, else `none` with the step to add |
+| `ml.plan.model-not-built` | 8 | the `model` line of a plan names a model `ml` does not build (`kmeans`, `tree`, `forest`, `constant`) | none |
 
 ## 8.1 The numeric codes of the libraries (added at integration)
 
@@ -429,10 +436,10 @@ matrix is 160 MB; **[estimate]**, not measured here).
 What is shared: the reader (`:int`, `:dec`, `:float`), the typed keys and the exact accumulator (`facc`). What is shared by
 **pin, not copy** (`CLAUDE.md`): the `contract/` package of `cancho-tools`. Options for the first three: (a) a package that
 cancho-table exports and cancho-ml depends on at a pinned commit; (b) a small `cancho-numeric` package both depend on.
-Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. *(Looked at, `docs/reader.md` section 1: option (a) needs
-no change to any source of cancho-table, only that it publishes `pow5`, `dec`, `flt`, `query`, `facc` and `reader` as `.cancho-vcs` stores
-at a commit, with a CI check that they match; measured on a scratch repository with compilers `a4572ea` and `e47d647`. Until it does, `ml`
-compiles the files of a pinned read-only clone. The draft for cancho-table is `docs/upstream/`.)*
+Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. *(Done, `docs/reader.md` section 1: option (a) needed
+no change to any source of cancho-table, only that it publish `pow5`, `dec`, `flt`, `query`, `facc` and `reader` as `.cancho-vcs` stores
+at a commit, with a CI check that they match (cancho-table PR #44, merged). `ml` pins them as six `[dependencies.*]`; the proposal is kept in
+`docs/upstream/` as the record.)*
 
 ## 11. What M0 must settle before section 6 and 9 are final
 
@@ -458,8 +465,8 @@ data beside them; every reduction has the fixed-block, fixed-tree order of `docs
 (`--model constant`), the log, the authority and the verdicts. What it changes in this document: the model file's digest is a
 trailer (section 4.1, corrected in place), section 7's row for `ml` has the labels the derivation printed, section 8 has the tags the
 slice added and the ones nothing reaches yet. What it does not settle: the speed factor (section 9), the second machine for D2, the
-shared reader (section 10). *(Settled by the reader stage: `tools/ml/csv*.cho` now reads cells with cancho-table's own modules, pinned by
-file list until cancho-table publishes stores; `docs/reader.md`.)*
+shared reader (section 10). *(Settled by the reader stage: `tools/ml/csv*.cho` now reads cells with cancho-table's own modules, pinned as
+`[dependencies.*]` on cancho-table's `.cancho-vcs` stores; `docs/reader.md`.)*
 
 
 ## 14. Stage M6 of v1: linear regression, logistic regression, k-means (library; not wired into the command line)
@@ -524,3 +531,11 @@ line does not call them yet. What they change here: section 4.1 gains the step k
 the band 301 to 325 (`lib/transforms/codes.cho`), `tools/ml/spec.cho` `pending()` twelve tags. Section 4.2 is made precise by `docs/pipeline.md` section 2
 (the model line's keys are provisional); section 5 is built (`pipeline.run`, `pipeline.schema`, `pipeline.file`).
 
+## 19. Stage W1: the module contract and the first models in the verbs
+
+`docs/modules.md` is the contract of a model module (a manifest, a fixed adapter, a generator, an admission script, mutant modules that the script must
+refuse) and `docs/wiring.md` is the wiring of `linear` and `logistic` into `ml fit | predict | eval` through the pipeline, with its gates, flow, refusals and results.
+What it changes in this document: section 4.1 (kinds 4 and 5 are built by `ml`; the logistic payload has a labels record; `mfile.cho` still reads the constant kinds only),
+section 7 (`conc` is in the row of `ml`, with its reason), section 8 (two tags, `ml.input.missing-value` and `ml.plan.model-not-built`; sixteen tags moved from
+`pending()` to the tables of `introspect` with a fixture each, nine stay in `pending()` because no input can reach them), and section 4.2 (the keys of the `model` line are
+generated from the manifests). The summation order, the registry of kinds and the stream kinds are unchanged.

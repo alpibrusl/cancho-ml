@@ -28,7 +28,7 @@ stage test programs and `lib/core` compile in one program: `tests/t_registry.cho
 one); `cancho.toml` (`linalg-check`, `models-check`, `ml`: distinct names, `lib/core` shared; the drivers `metrics-check`, `tree-check` and
 `reader-check` have no `[[bin]]` entry and are built by their gate scripts from explicit lists, as `models-check` is); `tools.toml` (one tool, `ml`,
 whose derived authority is unchanged: `manifest.py --check`); `schemas/` and `generated/ml` (not changed by any stage but the CLI's; `schemas.py
---check`); `table.pin` (`check_table_pin.sh`). The mutant harnesses of the stages each copy their own file lists and do not interact.
+--check`); `check_table_pin.sh` (reads `cancho.toml` and `docs/reader.md`). The mutant harnesses of the stages each copy their own file lists and do not interact.
 
 ## 2. What was changed (one commit each)
 
@@ -126,7 +126,7 @@ disagreement. Summary:
   metric.length-mismatch, metric.bad-probability, split.empty-fold, split.stratum-too-small). 301 and above are free. A tag in two bands is one
   rule with two library-local codes: the wiring translates by tag.
 * **Exit codes:** 2 for `ml.param.out-of-range` and `ml.param.threads`, 8 for every other library tag, one exit code per tag in all three bands.
-* **Rule tags reachable from `ml`:** `extra()` and `rules()` of `tools/ml/spec.cho`, unchanged. **Tags of the libraries not reachable yet:**
+* **Rule tags reachable from `ml`:** `extra()` and `rules()` of `tools/ml/spec.cho`, unchanged *(at the merge; 18 were added at W1: `docs/design.md` section 19)*. **Tags of the libraries not reachable yet:**
   `pending()` (13): ml.tensor.rank, ml.tensor.shape, ml.tensor.bounds, ml.linalg.not-positive-definite, ml.linalg.singular, ml.param.threads,
   ml.fit.non-finite, ml.limit.depth, ml.limit.nodes, ml.metric.length-mismatch, ml.metric.bad-probability, ml.split.empty-fold,
   ml.split.stratum-too-small. `ml.limit.fits` of the first list in `design.md` section 8 is built by no stage.
@@ -146,6 +146,10 @@ disagreement. Summary:
   integers: neither depends on a lane count.
 
 ## 6. What is not wired
+
+> **Superseded at stage W1 (`docs/wiring.md`), kept as it was written at the merge.** `ml fit | predict | eval` now call the pipeline, the transforms, the metrics
+> and the splits, and build linear (kind 4) and logistic (kind 5) models through `tools/ml/wire.cho`; `--threads` exists and `conc` is in the authority row; the tags the
+> verbs reach moved out of `pending()` (nine stay, `docs/wiring.md` section 5). Still not wired: k-means, trees and forests, multiclass, `ml.limit.fits`, text columns.
 
 * **The CLI verbs call none of the libraries.** `ml fit | predict | eval` build and read only kinds 1, 2, 3 (the constant model). `lib/linalg`,
   `lib/metrics`, `lib/models` (linear, logistic, k-means) and `lib/models/tree` are reached by their own drivers and tests only.
@@ -167,7 +171,7 @@ disagreement. Summary:
    prints 132 (SIGILL) and nothing, where a missing file prints `error: bad or missing file` and exits 1, and an absolute path without `..`
    works. It is a test driver, not a library, and `ml` checks paths itself (`path.dotdot`); not fixed here because the cause (the runtime's
    `open_read` on such a path) was not investigated. **Fixed afterwards: `docs/lanes.md` section 1** (the cause is `docs/upstream/dotdot_path.cho`).
-3. `check.sh` now needs `../ml-data` (the files of spike F) for the tree gate, in addition to `../cancho-table-main`.
+3. `check.sh` now needs `../ml-data` (the files of spike F) for the tree gate, (`../cancho-table-main` is no longer needed: cancho-table is a pinned dependency, `docs/reader.md` section 1).
 
 ## 8. Post-merge (`v1-post`: the tree after `v1-lanes`, `v1-pipe` and `v1-docs` were merged into `v1-int`)
 

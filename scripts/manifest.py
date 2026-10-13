@@ -140,12 +140,24 @@ def label_text(label):
     return '%s("%s")' % (label["name"], label["argument"])
 
 
+def base_row():
+    """The authority row before any model needed another label: lib/models/contract.toml."""
+    with open(ROOT / "lib" / "models" / "contract.toml", "rb") as f:
+        return set(tomllib.load(f)["authority"]["base"])
+
+
 def gate(tool, authority, ceilings):
     problems = []
     ceiling = ceilings.get(tool)
     if ceiling is None:
         return ["%s: no ceiling in tools.toml" % tool]
     allowed = set(ceiling.get("allow", []))
+    reasons = ceiling.get("reasons", {})
+    if tool == "ml":
+        # a label beyond the base row is allowed only with a stated reason (docs/wiring.md section 6)
+        for text in sorted(allowed - base_row()):
+            if not reasons.get(text.split("(")[0]):
+                problems.append("%s: %s is allowed beyond the base row and has no reason in [%s.reasons] of tools.toml" % (tool, text, tool))
     if not authority.get("bounded", False):
         problems.append("%s: bounded is false" % tool)
     if authority.get("foreign_symbols"):

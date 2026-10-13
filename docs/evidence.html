@@ -92,11 +92,11 @@
 
 <section id="reader">
   <h2>The reader</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/reader.md">docs/reader.md</a> sections 5 and 6. The cell reader is cancho-table&rsquo;s, compiled from a pinned clone and not copied; the oracle is Python&rsquo;s <code>float()</code> and <code>fractions.Fraction</code>.</p>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/reader.md">docs/reader.md</a> sections 5 and 6. The cell reader is cancho-table&rsquo;s, a pinned package dependency (<code>[dependencies.*]</code> at one cancho-table commit), not copied; the oracle is Python&rsquo;s <code>float()</code> and <code>fractions.Fraction</code>.</p>
   <div class="fitwrap"><table class="fit wide">
     <thead><tr><th>gate</th><th>result</th></tr></thead>
     <tbody>
-      <tr><th>RD1 pinned, not copied</th><td>The clone is at the commit of <code>table.pin</code> with the pinned SHA-256 of each of the six files, and no file of this repository declares one of the six modules or holds its bytes. Four mutants caught.</td></tr>
+      <tr><th>RD1 pinned, not copied</th><td>The six <code>[dependencies.*]</code> of <code>cancho.toml</code> agree on one cancho-table rev, the one <code>docs/reader.md</code> documents, no <code>sources</code> entry leaves the tree, and no file of this repository declares one of the six modules. Eight mutants caught.</td></tr>
       <tr><th>RD2 differential</th><td>1,966,143 accepted cells compared bit for bit with Python <code>float()</code>, and 34,380 refusals compared: <strong>0 differences</strong>. The cells include halfway points written exactly (up to 767 digits), subnormals, every power of ten from 1e-330 to 1e310 and huge exponents.</td></tr>
       <tr><th>RD3 matrix and missing bitmap</th><td>192 random files, 28,518 cells, plus 216 kind and scale checks: 0 differences.</td></tr>
       <tr><th>RD4 limits before allocation</th><td>36 checks, 0 differences. A 200 MB file refused at its 11th row peaks at 1.5 MB; read whole into the matrix it peaks at 414 MB.</td></tr>
@@ -127,7 +127,7 @@
 
 <section id="models">
   <h2>Linear regression, logistic regression, k-means</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> sections 6.2 to 6.4. A library; no verb calls it.</p>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> sections 6.2 to 6.4. <code>linear</code> and <code>logistic</code> are called by the verbs since stage W1 (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/wiring.md">docs/wiring.md</a>); k-means is a library only.</p>
   <div class="fitwrap"><table class="fit wide">
     <thead><tr><th>gate</th><th>result</th></tr></thead>
     <tbody>
@@ -224,7 +224,7 @@
   <ul class="plain">
     <li><strong>Nothing here is a claim about speed.</strong> No gate measures it; <a href="benchmarks.html">the benchmarks page</a> has the timings and their load.</li>
     <li><strong>An oracle written from the same text</strong> shows the code does what the document says, not that the document is right. The stages that compared with an outside implementation (Python <code>float()</code>, numpy, scikit-learn) say where they agree and where only within a tolerance.</li>
-    <li><strong>The command line builds one model.</strong> The gates of the other models judge libraries; they do not show that a verb that calls them will be right, because no verb does yet. Wiring a verb is a change with its own gates (<code>docs/integration.md</code> section 6).</li>
+    <li><strong>The command line builds three models.</strong> The gates of k-means and the trees judge libraries; they do not show that a verb that calls them will be right, because no verb does yet. The wiring of linear and logistic has its own gates, oracle, mutants and admission script (<code>docs/wiring.md</code>, <code>docs/modules.md</code>).</li>
     <li><strong>One machine, one operating system, one compiler revision.</strong> A second-machine run (D2) is not done.</li>
     <li><strong>Not run at integration:</strong> the benchmarks, a package-mode build of <code>models-check</code>, and the 1,000,000-row identity and timing runs of the tree stage beyond the defaults.</li>
     <li><strong>Open items with reproducers</strong> (<code>docs/integration.md</code> section 7): the red gate above; <code>models-check</code> traps without a message on a path containing <code>..</code> (a test driver, not a library; <code>ml</code> checks paths itself); <code>check.sh</code> needs <code>../ml-data</code> and <code>../cancho-table-main</code>.</li>

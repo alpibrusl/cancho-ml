@@ -6,10 +6,11 @@
 set -e
 cd "$(dirname "$0")/.."
 CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
-T=${TABLE_SRC:-${CANCHO_TABLE:-$(cd .. && pwd)/cancho-table-main}/tools/table}
+# the pinned packages (cancho-table's numeric modules among them), installed by `cancho install`; ML_DEPS names another directory (the mutants)
+DEPS=${ML_DEPS:-$(pwd)/build/deps}
 D=$(mktemp -d)
 trap 'rm -rf $D' EXIT
-LIB="lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/sums.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho $T/pow5.cho $T/dec.cho $T/flt.cho tests/pt.cho"
+LIB="lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/sums.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho $DEPS/*.cho tests/pt.cho"
 for TST in t_transforms t_transforms_fuzz t_pipeline t_pipeline_fuzz; do
   $CANCHO test --std $LIB tests/$TST.cho > $D/$TST.out 2>&1 || true
   if grep -q "error:" $D/$TST.out; then echo BUILD_ERROR; cat $D/$TST.out; exit 1; fi
@@ -17,7 +18,7 @@ for TST in t_transforms t_transforms_fuzz t_pipeline t_pipeline_fuzz; do
   echo "$TST: $(grep 'test result' $D/$TST.out)"
 done
 # the registry program: all libraries in one program (module names must not collide)
-$CANCHO test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho $T/pow5.cho $T/dec.cho $T/flt.cho tests/t_registry.cho > $D/reg.out 2>&1 || true
+$CANCHO test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho $DEPS/*.cho tests/t_registry.cho > $D/reg.out 2>&1 || true
 if grep -q "error:" $D/reg.out; then echo BUILD_ERROR; cat $D/reg.out; exit 1; fi
 if grep -q FAILED $D/reg.out || ! grep -q "test result: ok" $D/reg.out; then cat $D/reg.out; exit 1; fi
 echo "t_registry: $(grep 'test result' $D/reg.out)"
