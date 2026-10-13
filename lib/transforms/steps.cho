@@ -3,7 +3,7 @@ module transforms.steps;
 import std.buffer;
 import ml.fbits;
 import ml.kinds;
-import transforms.rules;
+import transforms.codes;
 
 // One fitted step and its bytes (docs/transforms.md section 4): `u32 kind | ints record | floats record`, a record being
 // `u32 dtype | u32 rank | rank x u64 shape | elements` (dtype 1 = i64, 2 = f64; design.md 4.1), all little-endian.
@@ -88,7 +88,7 @@ pub fn extra_len(kind: int, k: int) -> [] int {
 
 // the ints of a step are shaped as `kind` says and every number is in its range; cols_in_want < 1 means "any width". 0, or ml.model.malformed.
 pub fn check_ints[&a](kind: int, a: &a [int], cols_in_want: int) -> [] int {
-    let bad = rules.malformed();
+    let bad = codes.malformed();
     if kind < 1 || kind > kinds.step_count() || len(a) < 3 {
         return bad;
     }
@@ -246,7 +246,7 @@ pub fn payload_size[&s](st: &s Step) -> [] int {
 // ml.model.malformed (the step is empty then). Everything sized by the bytes is bounded by a limit and by the bytes that are there before it
 // is allocated.
 pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte], cols_in: int) -> [heap] (Step, int, int) {
-    let bad = rules.malformed();
+    let bad = codes.malformed();
     let n = len(data);
     if n < 4 + 16 {
         return (empty(heap), bad, 0);

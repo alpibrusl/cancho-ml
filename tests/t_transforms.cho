@@ -2,7 +2,7 @@ import std.test;
 import std.buffer;
 import ml.matrix;
 import ml.kinds;
-import transforms.rules;
+import transforms.codes;
 import transforms.steps;
 import transforms.fit;
 import transforms.apply;
@@ -160,7 +160,7 @@ fn test_unknown_refuse_is_a_refusal_with_the_cell[&h](heap: &!h Heap) -> [heap] 
             borrow t as &tr in {
                 borrow st as &sr in {
                     let (y, u, f2) = apply.apply(heap, sr, tr, 5, 1000, 100, 100000);
-                    if f2.code != rules.unknown_category() || f2.a != 5 || f2.b != 0 || f2.c != 1 {
+                    if f2.code != codes.unknown_category() || f2.a != 5 || f2.b != 0 || f2.c != 1 {
                         bad = bad + 1;
                     }
                     matrix.drop(heap, y);
@@ -208,7 +208,7 @@ fn test_refusals_have_their_tags[&h](heap: &!h Heap) -> [heap] int {
     borrow cb as &cr in {
         borrow e as &er in {
             let (st, f) = fit.fit(heap, spec(2, 0, 0, 0.0), er, contents(cr), 3);
-            if f.code != rules.input_empty() || f.a != 3 {
+            if f.code != codes.input_empty() || f.a != 3 {
                 bad = bad + 1;
             }
             steps.drop(heap, st);
@@ -217,10 +217,10 @@ fn test_refusals_have_their_tags[&h](heap: &!h Heap) -> [heap] int {
     matrix.drop(heap, e);
     unbox_slice(heap, cb);
     // all-missing, for every kind but impute constant
-    if fit_code(heap, spec(1, 0, 0, 0.0), "?;?", "0") != rules.all_missing() {
+    if fit_code(heap, spec(1, 0, 0, 0.0), "?;?", "0") != codes.all_missing() {
         bad = bad + 1;
     }
-    if fit_code(heap, spec(1, 1, 0, 0.0), "?;?", "0") != rules.all_missing() {
+    if fit_code(heap, spec(1, 1, 0, 0.0), "?;?", "0") != codes.all_missing() {
         bad = bad + 1;
     }
     if fit_code(heap, spec(1, 2, 0, 1.0), "?;?", "0") != 0 {
@@ -228,45 +228,45 @@ fn test_refusals_have_their_tags[&h](heap: &!h Heap) -> [heap] int {
     }
     var kind = 2;
     while kind <= 6 {
-        if fit_code(heap, spec(kind, 0, 4, 0.0), "?;?", "0") != rules.all_missing() {
+        if fit_code(heap, spec(kind, 0, 4, 0.0), "?;?", "0") != codes.all_missing() {
             bad = bad + 1;
         }
         kind = kind + 1;
     }
     // too many categories
-    if fit_code(heap, spec(4, 0, 2, 0.0), "1;2;3", "0") != rules.categories() {
+    if fit_code(heap, spec(4, 0, 2, 0.0), "1;2;3", "0") != codes.categories() {
         bad = bad + 1;
     }
     if fit_code(heap, spec(4, 0, 3, 0.0), "1;2;3", "0") != 0 {
         bad = bad + 1;
     }
     // a range that overflows, a sum that overflows
-    if fit_code(heap, spec(2, 0, 0, 0.0), "-1e308;1e308", "0") != rules.fit_non_finite() {
+    if fit_code(heap, spec(2, 0, 0, 0.0), "-1e308;1e308", "0") != codes.fit_non_finite() {
         bad = bad + 1;
     }
-    if fit_code(heap, spec(3, 0, 0, 0.0), "1e308;1e308;1e308;-1e308", "0") != rules.fit_non_finite() {
+    if fit_code(heap, spec(3, 0, 0, 0.0), "1e308;1e308;1e308;-1e308", "0") != codes.fit_non_finite() {
         bad = bad + 1;
     }
-    if fit_code(heap, spec(6, 0, 4, 0.0), "-1e308;1e308", "0") != rules.fit_non_finite() {
+    if fit_code(heap, spec(6, 0, 4, 0.0), "-1e308;1e308", "0") != codes.fit_non_finite() {
         bad = bad + 1;
     }
     // parameters and columns out of range
-    if fit_code(heap, spec(6, 0, 1, 0.0), "1;2", "0") != rules.out_of_range() {
+    if fit_code(heap, spec(6, 0, 1, 0.0), "1;2", "0") != codes.out_of_range() {
         bad = bad + 1;
     }
-    if fit_code(heap, spec(6, 0, 257, 0.0), "1;2", "0") != rules.out_of_range() {
+    if fit_code(heap, spec(6, 0, 257, 0.0), "1;2", "0") != codes.out_of_range() {
         bad = bad + 1;
     }
-    if fit_code(heap, spec(3, 2, 0, 0.0), "1;2", "0") != rules.out_of_range() {
+    if fit_code(heap, spec(3, 2, 0, 0.0), "1;2", "0") != codes.out_of_range() {
         bad = bad + 1;
     }
-    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "2") != rules.out_of_range() {
+    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "2") != codes.out_of_range() {
         bad = bad + 1;
     }
-    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "1,0") != rules.out_of_range() {
+    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "1,0") != codes.out_of_range() {
         bad = bad + 1;
     }
-    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "1,1") != rules.out_of_range() {
+    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "1,1") != codes.out_of_range() {
         bad = bad + 1;
     }
     return bad;
@@ -283,7 +283,7 @@ fn test_apply_refuses_a_matrix_of_another_width[&h](heap: &!h Heap) -> [heap] in
             borrow t as &tr in {
                 borrow st as &sr in {
                     let (y, u, f2) = apply.apply(heap, sr, tr, 1, 1000, 100, 100000);
-                    if f2.code != rules.schema_mismatch() {
+                    if f2.code != codes.schema_mismatch() {
                         bad = bad + 1;
                     }
                     matrix.drop(heap, y);
@@ -308,12 +308,12 @@ fn test_apply_refuses_an_output_over_the_cap_before_allocating[&h](heap: &!h Hea
             let (st, f) = fit.fit(heap, spec(4, 0, 64, 0.0), xr, contents(cr), 1);
             borrow st as &sr in {
                 let (y, u, f2) = apply.apply(heap, sr, xr, 1, 1000, 2, 100000);
-                if f2.code != rules.too_many_columns() {
+                if f2.code != codes.too_many_columns() {
                     bad = bad + 1;
                 }
                 matrix.drop(heap, y);
                 let (y2, u2, f3) = apply.apply(heap, sr, xr, 1, 1000, 3, 8);
-                if f3.code != rules.too_many_cells() {
+                if f3.code != codes.too_many_cells() {
                     bad = bad + 1;
                 }
                 matrix.drop(heap, y2);
@@ -424,14 +424,14 @@ fn test_every_kind_round_trips_and_every_truncation_is_refused[&h](heap: &!h Hea
                         steps.drop(heap, d);
                         // the wrong input width is refused
                         let (d2, code2, w2) = steps.decode(heap, bytes, 3);
-                        if code2 != rules.malformed() {
+                        if code2 != codes.malformed() {
                             bad = bad + 1;
                         }
                         steps.drop(heap, d2);
                         var cut = 0;
                         while cut < len(bytes) {
                             let (d3, code3, w3) = steps.decode(heap, bytes[0..cut], 2);
-                            if code3 != rules.malformed() {
+                            if code3 != codes.malformed() {
                                 bad = bad + 1;
                             }
                             steps.drop(heap, d3);

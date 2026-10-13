@@ -1,4 +1,4 @@
-module transforms.rules;
+module transforms.codes;
 
 // The refusals of lib/transforms and lib/pipeline (docs/transforms.md section 1 X7, docs/pipeline.md section 2.1): a code (an int, 0 is
 // "no refusal"), a stable rule tag, an exit code from the toolbox table (arguments 2, a limit or a parse failure 8). The codes are this

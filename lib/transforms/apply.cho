@@ -1,7 +1,7 @@
 module transforms.apply;
 
 import ml.matrix;
-import transforms.rules;
+import transforms.codes;
 import transforms.steps;
 
 // The apply of every transform (docs/transforms.md sections 2 and 3). It reads the parameters of the Step and nothing else: there is no
@@ -42,20 +42,20 @@ fn upper[&f](f: &f [float], from: int, n: int, v: float) -> [] int {
     return lo;
 }
 
-fn gone[&h](heap: &!h Heap, f: rules.Fault) -> [heap] (matrix.Matrix, int, rules.Fault) {
+fn gone[&h](heap: &!h Heap, f: codes.Fault) -> [heap] (matrix.Matrix, int, codes.Fault) {
     return (matrix.empty(heap), 0, f);
 }
 
 // (the transformed matrix, the number of unknown categories met, Fault). step_no is for the Fault only. The caps are those of
 // matrix.make for the output.
-pub fn apply[&h, &s, &m](heap: &!h Heap, st: &s steps.Step, x: &m matrix.Matrix, step_no: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int, rules.Fault) {
+pub fn apply[&h, &s, &m](heap: &!h Heap, st: &s steps.Step, x: &m matrix.Matrix, step_no: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int, codes.Fault) {
     let kind = st.kind;
     let a = contents(st.ints);
     let f = contents(st.floats);
     let nc = matrix.cols(x);
     let n = matrix.rows(x);
     if steps.check_ints(kind, a, nc) != 0 || nc != a[1] {
-        return gone(heap, rules.fault(rules.schema_mismatch(), step_no, 0, 0));
+        return gone(heap, codes.fault(codes.schema_mismatch(), step_no, 0, 0));
     }
     let k = a[0];
     let base = 2 + k;
@@ -63,7 +63,7 @@ pub fn apply[&h, &s, &m](heap: &!h Heap, st: &s steps.Step, x: &m matrix.Matrix,
     let (out, code) = matrix.make(heap, n, wout, rows_cap, cols_cap, cells_cap);
     if code != 0 {
         matrix.drop(heap, out);
-        return gone(heap, rules.fault(rules.from_refuse(code), step_no, 0, 0));
+        return gone(heap, codes.fault(codes.from_refuse(code), step_no, 0, 0));
     }
     // sel[c] = index j of the selected column c, or -1; off[c] = the first output column of input column c; coff[j] = the first category
     let sel = box_slice(heap, nc + 1, 0 - 1);
@@ -107,7 +107,7 @@ pub fn apply[&h, &s, &m](heap: &!h Heap, st: &s steps.Step, x: &m matrix.Matrix,
     var dw0 = data;
     var mw0 = miss;
     var unknown = 0;
-    var fault = rules.none();
+    var fault = codes.none();
     borrow selw as &sr in {
         borrow offw as &orr in {
             borrow coffw as &cr in {
@@ -145,7 +145,7 @@ pub fn apply[&h, &s, &m](heap: &!h Heap, st: &s steps.Step, x: &m matrix.Matrix,
                                         let idx = lookup(f, contents(cr)[j], cn, v);
                                         if idx < 0 {
                                             if a[base] == 1 {
-                                                fault = rules.fault(rules.unknown_category(), step_no, c, r);
+                                                fault = codes.fault(codes.unknown_category(), step_no, c, r);
                                             } else {
                                                 unknown = unknown + 1;
                                                 if kind == 5 {
@@ -179,5 +179,5 @@ pub fn apply[&h, &s, &m](heap: &!h Heap, st: &s steps.Step, x: &m matrix.Matrix,
         matrix.drop(heap, made);
         return gone(heap, fault);
     }
-    return (made, unknown, rules.none());
+    return (made, unknown, codes.none());
 }

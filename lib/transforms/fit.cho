@@ -1,14 +1,14 @@
 module transforms.fit;
 
 import ml.matrix;
-import transforms.rules;
+import transforms.codes;
 import transforms.steps;
 import transforms.dsum;
 import transforms.sortf;
 
 // The fit of every transform (docs/transforms.md sections 2 and 3). `fit` looks at the matrix it is given, which the pipeline makes the
 // TRAINING matrix and nothing else, learns the parameters of one step for the selected columns and answers them as a Step (the records of
-// docs/transforms.md section 4). It has no access to a test row. A refusal is a Fault of transforms.rules (a = step, b = column of the
+// docs/transforms.md section 4). It has no access to a test row. A refusal is a Fault of transforms.codes (a = step, b = column of the
 // matrix) and the Step is then empty.
 
 // what a plan line asks for: kind = the step kind (kinds.cho); a, b by kind:
@@ -73,7 +73,7 @@ fn distinct[&o](v: &!o [float], m: int) -> [] int {
     return d;
 }
 
-fn bail[&h](heap: &!h Heap, a: Box[[int]], b: Box[[float]], f: rules.Fault) -> [heap] (steps.Step, rules.Fault) {
+fn bail[&h](heap: &!h Heap, a: Box[[int]], b: Box[[float]], f: codes.Fault) -> [heap] (steps.Step, codes.Fault) {
     unbox_slice(heap, a);
     unbox_slice(heap, b);
     return (steps.empty(heap), f);
@@ -91,7 +91,7 @@ fn quantile_edge[&v](v: &v [float], m: int, i: int, bins: int) -> [] float {
 }
 
 // the parameters of columns cols[0..k) into fl (layout by kind); a Fault, with a = step. vals has n cells of room.
-fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix, cols: &c [int], step_no: int, ints: &a [int], fl: &!f [float], vals: &!v [float]) -> [heap] rules.Fault {
+fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix, cols: &c [int], step_no: int, ints: &a [int], fl: &!f [float], vals: &!v [float]) -> [heap] codes.Fault {
     let k = len(cols);
     let kind = sp.kind;
     var j = 0;
@@ -100,7 +100,7 @@ fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix,
         let col = cols[j];
         let (cnt, lo, hi) = gather(x, col, vals);
         if cnt == 0 && !(kind == 1 && sp.a == 2) {
-            return rules.fault(rules.all_missing(), step_no, col, 0);
+            return codes.fault(codes.all_missing(), step_no, col, 0);
         }
         let constant = lo == hi;
         if kind == 1 {
@@ -120,13 +120,13 @@ fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix,
                 }
             }
             if !finite(fill) {
-                return rules.fault(rules.fit_non_finite(), step_no, col, 0);
+                return codes.fault(codes.fit_non_finite(), step_no, col, 0);
             }
             fl[j] = fill;
         } else if kind == 2 {
             var d = hi - lo;
             if !finite(d) {
-                return rules.fault(rules.fit_non_finite(), step_no, col, 0);
+                return codes.fault(codes.fit_non_finite(), step_no, col, 0);
             }
             if d == 0.0 {
                 d = 1.0;
@@ -139,14 +139,14 @@ fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix,
             if !constant {
                 mean = dsum.total(heap, vals, cnt) / float_of(cnt);
                 if !finite(mean) {
-                    return rules.fault(rules.fit_non_finite(), step_no, col, 0);
+                    return codes.fault(codes.fit_non_finite(), step_no, col, 0);
                 }
                 let den = cnt - sp.a;
                 if den >= 1 {
                     let var0 = dsum.sq_dev(heap, vals, mean, cnt) / float_of(den);
                     let sd = sqrt(var0);
                     if !finite(sd) {
-                        return rules.fault(rules.fit_non_finite(), step_no, col, 0);
+                        return codes.fault(codes.fit_non_finite(), step_no, col, 0);
                     }
                     if sd > 0.0 {
                         d = sd;
@@ -170,7 +170,7 @@ fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix,
             if sp.a == 0 {
                 let range = hi - lo;
                 if !finite(range) {
-                    return rules.fault(rules.fit_non_finite(), step_no, col, 0);
+                    return codes.fault(codes.fit_non_finite(), step_no, col, 0);
                 }
                 var i = 1;
                 while i < bins {
@@ -183,7 +183,7 @@ fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix,
                 while i < bins {
                     var e = quantile_edge(vals, cnt, i, bins);
                     if !finite(e) {
-                        return rules.fault(rules.fit_non_finite(), step_no, col, 0);
+                        return codes.fault(codes.fit_non_finite(), step_no, col, 0);
                     }
                     if i > 1 && e < fl[j * w + i - 2] {
                         e = fl[j * w + i - 2];
@@ -203,11 +203,11 @@ fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix,
         }
         j = j + 1;
     }
-    return rules.none();
+    return codes.none();
 }
 
 // the categories of each column: counts into ints (after the unknown mode), the bound checked; (total categories, Fault)
-fn count_categories[&m, &c, &a, &v](x: &m matrix.Matrix, cols: &c [int], step_no: int, maxcat: int, ints: &!a [int], vals: &!v [float]) -> [] (int, rules.Fault) {
+fn count_categories[&m, &c, &a, &v](x: &m matrix.Matrix, cols: &c [int], step_no: int, maxcat: int, ints: &!a [int], vals: &!v [float]) -> [] (int, codes.Fault) {
     let k = len(cols);
     var total = 0;
     var j = 0;
@@ -215,29 +215,29 @@ fn count_categories[&m, &c, &a, &v](x: &m matrix.Matrix, cols: &c [int], step_no
         let col = cols[j];
         let (cnt, lo, hi) = gather(x, col, vals);
         if cnt == 0 {
-            return (0, rules.fault(rules.all_missing(), step_no, col, 0));
+            return (0, codes.fault(codes.all_missing(), step_no, col, 0));
         }
         sortf.sort(vals, cnt);
         let dn = distinct(vals, cnt);
         if dn > maxcat {
-            return (0, rules.fault(rules.categories(), step_no, col, 0));
+            return (0, codes.fault(codes.categories(), step_no, col, 0));
         }
         ints[3 + k + j] = dn;
         total = total + dn;
         j = j + 1;
     }
-    return (total, rules.none());
+    return (total, codes.none());
 }
 
-pub fn fit[&h, &m, &c](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix, cols: &c [int], step_no: int) -> [heap] (steps.Step, rules.Fault) {
+pub fn fit[&h, &m, &c](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix, cols: &c [int], step_no: int) -> [heap] (steps.Step, codes.Fault) {
     let n = matrix.rows(x);
     let nc = matrix.cols(x);
     let k = len(cols);
     let kind = sp.kind;
     if n < 1 || nc < 1 {
-        return (steps.empty(heap), rules.fault(rules.input_empty(), step_no, 0, 0));
+        return (steps.empty(heap), codes.fault(codes.input_empty(), step_no, 0, 0));
     }
-    let range_bad = rules.fault(rules.out_of_range(), step_no, 0, 0);
+    let range_bad = codes.fault(codes.out_of_range(), step_no, 0, 0);
     if k < 1 || k > nc || nc > steps.max_columns() || kind < 1 || kind > 6 {
         return (steps.empty(heap), range_bad);
     }
@@ -293,7 +293,7 @@ pub fn fit[&h, &m, &c](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix, cols: &c [
         fsize = k * (sp.b - 1);
     }
     if kind == 4 || kind == 5 {
-        var f0 = rules.none();
+        var f0 = codes.none();
         var total = 0;
         borrow mut iw as &!w in {
             borrow mut vw as &!vv in {
@@ -309,13 +309,13 @@ pub fn fit[&h, &m, &c](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix, cols: &c [
         // the width the step gives must fit the widest matrix a model file allows
         if nc - k + total > steps.max_columns() && kind == 4 || total > steps.max_category_total() {
             unbox_slice(heap, vw);
-            return bail(heap, iw, box_slice(heap, 1, 0.0), rules.fault(rules.too_many_columns(), step_no, 0, 0));
+            return bail(heap, iw, box_slice(heap, 1, 0.0), codes.fault(codes.too_many_columns(), step_no, 0, 0));
         }
         fsize = total;
     }
     let fl = box_slice(heap, fsize, 0.0);
     var fw = fl;
-    var fault = rules.none();
+    var fault = codes.none();
     borrow iw as &ir in {
         borrow mut fw as &!fx in {
             borrow mut vw as &!vv in {
@@ -327,5 +327,5 @@ pub fn fit[&h, &m, &c](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix, cols: &c [
     if fault.code != 0 {
         return bail(heap, iw, fw, fault);
     }
-    return (steps.make(kind, iw, fw), rules.none());
+    return (steps.make(kind, iw, fw), codes.none());
 }

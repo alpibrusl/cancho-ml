@@ -2,7 +2,7 @@ import std.test;
 import std.buffer;
 import std.bytes;
 import ml.matrix;
-import transforms.rules;
+import transforms.codes;
 import transforms.steps;
 import transforms.fit;
 import transforms.apply;
@@ -65,9 +65,9 @@ fn test_floats_have_one_spelling[&h](heap: &!h Heap) -> [heap] int {
     // 0.1 + 0.2 as a decimal of 17 digits is a different double from 0.3, and keeps its own spelling
     bad = bad + canon_is(heap, "impute column=a strategy=constant value=0.30000000000000004\nmodel kind=linear", "impute column=a strategy=constant value=0.30000000000000004\nmodel kind=linear l2=0.0\n");
     // a float that is not finite or not a number, a negative l2
-    bad = bad + refused(heap, "impute column=a strategy=constant value=nan\nmodel kind=linear", rules.plan_bad_value(), 1, 41);
-    bad = bad + refused(heap, "impute column=a strategy=constant value=1e999\nmodel kind=linear", rules.plan_bad_value(), 1, 41);
-    bad = bad + refused(heap, "model kind=linear l2=-1", rules.plan_bad_value(), 1, 22);
+    bad = bad + refused(heap, "impute column=a strategy=constant value=nan\nmodel kind=linear", codes.plan_bad_value(), 1, 41);
+    bad = bad + refused(heap, "impute column=a strategy=constant value=1e999\nmodel kind=linear", codes.plan_bad_value(), 1, 41);
+    bad = bad + refused(heap, "model kind=linear l2=-1", codes.plan_bad_value(), 1, 22);
     return bad;
 }
 
@@ -139,49 +139,49 @@ fn test_refusals_have_a_tag_a_line_and_a_column[&h](heap: &!h Heap) -> [heap] in
     var bad = 0;
     let m = "\nmodel kind=constant task=regression\n";
     // the model line
-    bad = bad + refused(heap, "", rules.plan_model_line(), 1, 1);
-    bad = bad + refused(heap, "# only a comment\n", rules.plan_model_line(), 2, 1);
-    bad = bad + refused(heap, "model kind=constant task=regression\nscale column=a kind=minmax\n", rules.plan_model_line(), 2, 1);
-    bad = bad + refused(heap, "model kind=constant task=regression\nmodel kind=constant task=regression\n", rules.plan_model_line(), 2, 1);
-    bad = bad + refused(heap, "scale column=a kind=minmax\n", rules.plan_model_line(), 2, 1);
+    bad = bad + refused(heap, "", codes.plan_model_line(), 1, 1);
+    bad = bad + refused(heap, "# only a comment\n", codes.plan_model_line(), 2, 1);
+    bad = bad + refused(heap, "model kind=constant task=regression\nscale column=a kind=minmax\n", codes.plan_model_line(), 2, 1);
+    bad = bad + refused(heap, "model kind=constant task=regression\nmodel kind=constant task=regression\n", codes.plan_model_line(), 2, 1);
+    bad = bad + refused(heap, "scale column=a kind=minmax\n", codes.plan_model_line(), 2, 1);
     // the verb
-    bad = bad + refused(heap, "frobnicate column=a\nmodel kind=constant task=regression", rules.plan_unknown_step(), 1, 1);
-    bad = bad + refused(heap, "\n  model:constant task=regression", rules.plan_unknown_step(), 2, 3);
+    bad = bad + refused(heap, "frobnicate column=a\nmodel kind=constant task=regression", codes.plan_unknown_step(), 1, 1);
+    bad = bad + refused(heap, "\n  model:constant task=regression", codes.plan_unknown_step(), 2, 3);
     // the keys
-    bad = bad + refused(heap, "impute column=a strategy=mean extra=1\nmodel kind=constant task=regression", rules.plan_unknown_key(), 1, 31);
-    bad = bad + refused(heap, "model kind=constant task=regression l2=1", rules.plan_unknown_key(), 1, 37);
-    bad = bad + refused(heap, "impute column=a\nmodel kind=constant task=regression", rules.plan_missing_key(), 1, 1);
-    bad = bad + refused(heap, "impute column=a strategy=constant\nmodel kind=constant task=regression", rules.plan_missing_key(), 1, 1);
-    bad = bad + refused(heap, "model task=regression", rules.plan_missing_key(), 1, 1);
-    bad = bad + refused(heap, "bucket column=a kind=width\nmodel kind=constant task=regression", rules.plan_missing_key(), 1, 1);
-    bad = bad + refused(heap, "impute column=a column=b strategy=mean\nmodel kind=constant task=regression", rules.plan_duplicate_key(), 1, 17);
+    bad = bad + refused(heap, "impute column=a strategy=mean extra=1\nmodel kind=constant task=regression", codes.plan_unknown_key(), 1, 31);
+    bad = bad + refused(heap, "model kind=constant task=regression l2=1", codes.plan_unknown_key(), 1, 37);
+    bad = bad + refused(heap, "impute column=a\nmodel kind=constant task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "impute column=a strategy=constant\nmodel kind=constant task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "model task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "bucket column=a kind=width\nmodel kind=constant task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "impute column=a column=b strategy=mean\nmodel kind=constant task=regression", codes.plan_duplicate_key(), 1, 17);
     // the values
-    bad = bad + refused(heap, "impute column=a strategy=avg\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 26);
-    bad = bad + refused(heap, "impute column=a strategy=mean value=1\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 37);
-    bad = bad + refused(heap, "scale column=a kind=minmax ddof=1\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 33);
-    bad = bad + refused(heap, "impute column=a strategy=constant value=abc\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 41);
-    bad = bad + refused(heap, "bucket column=a kind=width bins=x\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 33);
-    bad = bad + refused(heap, "bucket column=a kind=width bins=1234567890\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 33);
-    bad = bad + refused(heap, "model kind=svm", rules.plan_bad_value(), 1, 12);
-    bad = bad + refused(heap, "scale column=a,a kind=minmax\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 16);
-    bad = bad + refused(heap, "scale column=a,,b kind=minmax\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 16);
-    bad = bad + refused(heap, "scale column=a,#b kind=minmax\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 16);
-    bad = bad + refused(heap, "scale column=a,*,b kind=minmax\nmodel kind=constant task=regression", rules.plan_bad_value(), 1, 16);
-    bad = bad + refused(heap, "model kind=constant task=speed", rules.plan_bad_value(), 1, 26);
+    bad = bad + refused(heap, "impute column=a strategy=avg\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 26);
+    bad = bad + refused(heap, "impute column=a strategy=mean value=1\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 37);
+    bad = bad + refused(heap, "scale column=a kind=minmax ddof=1\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 33);
+    bad = bad + refused(heap, "impute column=a strategy=constant value=abc\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 41);
+    bad = bad + refused(heap, "bucket column=a kind=width bins=x\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 33);
+    bad = bad + refused(heap, "bucket column=a kind=width bins=1234567890\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 33);
+    bad = bad + refused(heap, "model kind=svm", codes.plan_bad_value(), 1, 12);
+    bad = bad + refused(heap, "scale column=a,a kind=minmax\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 16);
+    bad = bad + refused(heap, "scale column=a,,b kind=minmax\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 16);
+    bad = bad + refused(heap, "scale column=a,#b kind=minmax\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 16);
+    bad = bad + refused(heap, "scale column=a,*,b kind=minmax\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 16);
+    bad = bad + refused(heap, "model kind=constant task=speed", codes.plan_bad_value(), 1, 26);
     // out of range
-    bad = bad + refused(heap, "bucket column=a kind=width bins=1\nmodel kind=constant task=regression", rules.out_of_range(), 1, 33);
-    bad = bad + refused(heap, "bucket column=a kind=width bins=257\nmodel kind=constant task=regression", rules.out_of_range(), 1, 33);
-    bad = bad + refused(heap, "scale column=a kind=standard ddof=2\nmodel kind=constant task=regression", rules.out_of_range(), 1, 35);
-    bad = bad + refused(heap, "encode column=a kind=onehot max-categories=1025\nmodel kind=constant task=regression", rules.out_of_range(), 1, 44);
-    bad = bad + refused(heap, "encode column=a kind=onehot max-categories=0\nmodel kind=constant task=regression", rules.out_of_range(), 1, 44);
+    bad = bad + refused(heap, "bucket column=a kind=width bins=1\nmodel kind=constant task=regression", codes.out_of_range(), 1, 33);
+    bad = bad + refused(heap, "bucket column=a kind=width bins=257\nmodel kind=constant task=regression", codes.out_of_range(), 1, 33);
+    bad = bad + refused(heap, "scale column=a kind=standard ddof=2\nmodel kind=constant task=regression", codes.out_of_range(), 1, 35);
+    bad = bad + refused(heap, "encode column=a kind=onehot max-categories=1025\nmodel kind=constant task=regression", codes.out_of_range(), 1, 44);
+    bad = bad + refused(heap, "encode column=a kind=onehot max-categories=0\nmodel kind=constant task=regression", codes.out_of_range(), 1, 44);
     // the shape of a line
-    bad = bad + refused(heap, "impute column\nmodel kind=constant task=regression", rules.plan_syntax(), 1, 8);
-    bad = bad + refused(heap, "impute =a\nmodel kind=constant task=regression", rules.plan_syntax(), 1, 8);
-    bad = bad + refused(heap, "impute column=\nmodel kind=constant task=regression", rules.plan_syntax(), 1, 8);
-    bad = bad + refused(heap, "impute column=a=b\nmodel kind=constant task=regression", rules.plan_syntax(), 1, 8);
-    bad = bad + refused(heap, "impute=1 column=a\nmodel kind=constant task=regression", rules.plan_syntax(), 1, 7);
-    bad = bad + refused(heap, "impute column=a\0b strategy=mean\nmodel kind=constant task=regression", rules.plan_syntax(), 1, 16);
-    bad = bad + refused(heap, "impute column=café strategy=mean\nmodel kind=constant task=regression", rules.plan_syntax(), 1, 18);
+    bad = bad + refused(heap, "impute column\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 8);
+    bad = bad + refused(heap, "impute =a\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 8);
+    bad = bad + refused(heap, "impute column=\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 8);
+    bad = bad + refused(heap, "impute column=a=b\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 8);
+    bad = bad + refused(heap, "impute=1 column=a\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 7);
+    bad = bad + refused(heap, "impute column=a\0b strategy=mean\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 16);
+    bad = bad + refused(heap, "impute column=café strategy=mean\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 18);
     return bad;
 }
 
@@ -513,18 +513,18 @@ fn test_editing_a_stored_parameter_changes_the_prediction[&h](heap: &!h Heap) ->
         bad = bad + d1 + ac1;
         // the same edit, trailer not repaired: ml.model.checksum
         let (d2, dc2, ac2) = edit_and_apply(heap, all, 60, 10.0, 20.0, false, "5", "0.25");
-        if ac2 != rules.checksum() {
+        if ac2 != codes.checksum() {
             bad = bad + 1;
         }
         // lo = 0.0 -> 1.0 (the first double of the step after the plan: lo is 0.0 and may match elsewhere, so edit the divisor to 0.0 instead):
         // a zero divisor is refused as malformed, with the checksum repaired
         let (d3, dc3, ac3) = edit_and_apply(heap, all, 60, 10.0, 0.0, true, "5", "0.5");
-        if ac3 != rules.malformed() {
+        if ac3 != codes.malformed() {
             bad = bad + 1;
         }
         // a negative divisor and a NaN-making edit are refused too
         let (d4, dc4, ac4) = edit_and_apply(heap, all, 60, 10.0, 0.0 - 10.0, true, "5", "0.5");
-        if ac4 != rules.malformed() {
+        if ac4 != codes.malformed() {
             bad = bad + 1;
         }
     }
@@ -580,32 +580,32 @@ fn test_the_plan_must_agree_with_the_steps[&h](heap: &!h Heap) -> [heap] int {
         }
         // another column of the same width name: canonical, but not the column the step stored
         let (c1, a1, b1) = edit_text(heap, all, "scale column=a", "scale column=b");
-        if c1 != rules.malformed() || a1 != 3 || b1 != 1 {
+        if c1 != codes.malformed() || a1 != 3 || b1 != 1 {
             bad = bad + 1;
         }
         // another unknown-category mode of the same length
         let (c2, a2, b2) = edit_text(heap, all, "unknown=ignore", "unknown=refuse");
-        if c2 != rules.malformed() || a2 != 3 || b2 != 2 {
+        if c2 != codes.malformed() || a2 != 3 || b2 != 2 {
             bad = bad + 1;
         }
         // a name that does not exist
         let (c3, a3, b3) = edit_text(heap, all, "scale column=a", "scale column=z");
-        if c3 != rules.malformed() || a3 != 3 {
+        if c3 != codes.malformed() || a3 != 3 {
             bad = bad + 1;
         }
         // an enum value that is not one: the plan no longer parses
         let (c4, a4, b4) = edit_text(heap, all, "task=regression", "task=regressioN");
-        if c4 != rules.malformed() || a4 != 1 {
+        if c4 != codes.malformed() || a4 != 1 {
             bad = bad + 1;
         }
         // a plan that parses but is not canonical (the names out of order) is not accepted either
         let (c5, a5, b5) = edit_text(heap, all, "task=regression", "task=classifica");
-        if c5 != rules.malformed() || a5 != 1 {
+        if c5 != codes.malformed() || a5 != 1 {
             bad = bad + 1;
         }
         // the model line of another family than the model section
         let (c6, a6, b6) = edit_text(heap, all, "kind=constant", "kind=linear  ");
-        if c6 != rules.malformed() {
+        if c6 != codes.malformed() {
             bad = bad + 1;
         }
     }
@@ -678,12 +678,12 @@ fn test_columns_are_matched_by_name[&h](heap: &!h Heap) -> [heap] int {
     bad = bad + align_case(heap, "c,a,b", "222", 0, "", "1,2,0");
     bad = bad + align_case(heap, "b,c,a", "222", 0, "", "2,0,1");
     // missing, extra, mistyped (the type of b is int), duplicate, the target in the input (extra), all together
-    bad = bad + align_case(heap, "a,b", "22", rules.schema_mismatch(), "missing: c", "0,1,2");
-    bad = bad + align_case(heap, "a,b,c,d", "2222", rules.schema_mismatch(), "extra: d", "0,1,2");
-    bad = bad + align_case(heap, "a,b,c", "202", rules.schema_mismatch(), "mistyped: b", "0,1,2");
-    bad = bad + align_case(heap, "y,a,b,c", "2222", rules.schema_mismatch(), "extra: y", "0,1,2");
-    bad = bad + align_case(heap, "a,c,c,d", "2222", rules.schema_mismatch(), "missing: b; extra: d; duplicate: c", "0,1,2");
-    bad = bad + align_case(heap, "d,e,a", "222", rules.schema_mismatch(), "missing: b,c; extra: d,e", "0,1,2");
+    bad = bad + align_case(heap, "a,b", "22", codes.schema_mismatch(), "missing: c", "0,1,2");
+    bad = bad + align_case(heap, "a,b,c,d", "2222", codes.schema_mismatch(), "extra: d", "0,1,2");
+    bad = bad + align_case(heap, "a,b,c", "202", codes.schema_mismatch(), "mistyped: b", "0,1,2");
+    bad = bad + align_case(heap, "y,a,b,c", "2222", codes.schema_mismatch(), "extra: y", "0,1,2");
+    bad = bad + align_case(heap, "a,c,c,d", "2222", codes.schema_mismatch(), "missing: b; extra: d; duplicate: c", "0,1,2");
+    bad = bad + align_case(heap, "d,e,a", "222", codes.schema_mismatch(), "missing: b,c; extra: d,e", "0,1,2");
     return bad;
 }
 

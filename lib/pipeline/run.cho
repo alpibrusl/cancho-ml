@@ -3,7 +3,7 @@ module pipeline.run;
 import std.buffer;
 import ml.matrix;
 import ml.fbits;
-import transforms.rules;
+import transforms.codes;
 import transforms.steps;
 import transforms.fit;
 import transforms.apply;
@@ -32,7 +32,7 @@ fn get32[&s](src: &s [byte], at: int) -> [] int {
 pub fn clone[&h, &m](heap: &!h Heap, x: &m matrix.Matrix, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int) {
     let (out, code) = matrix.make(heap, matrix.rows(x), matrix.cols(x), rows_cap, cols_cap, cells_cap);
     if code != 0 {
-        return (out, rules.from_refuse(code));
+        return (out, codes.from_refuse(code));
     }
     let (t, data, miss, rows, cols, wpc) = matrix.parts(out);
     var d = data;
@@ -61,7 +61,7 @@ pub fn clone[&h, &m](heap: &!h Heap, x: &m matrix.Matrix, rows_cap: int, cols_ca
 pub fn permute[&h, &m, &p](heap: &!h Heap, x: &m matrix.Matrix, perm: &p [int], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int) {
     let (out, code) = matrix.make(heap, matrix.rows(x), matrix.cols(x), rows_cap, cols_cap, cells_cap);
     if code != 0 {
-        return (out, rules.from_refuse(code));
+        return (out, codes.from_refuse(code));
     }
     let (t, data, miss, rows, cols, wpc) = matrix.parts(out);
     var d = data;
@@ -75,7 +75,7 @@ pub fn permute[&h, &m, &p](heap: &!h Heap, x: &m matrix.Matrix, perm: &p [int], 
                 while c < cols {
                     let from = perm[c];
                     if from < 0 || from >= cols {
-                        bad = rules.out_of_range();
+                        bad = codes.out_of_range();
                     } else if matrix.is_missing(x, r, from) {
                         matrix.mark_missing(contents(bw), wpc, r, c);
                     } else {
@@ -173,7 +173,7 @@ fn resolve[&h, &p, &n](heap: &!h Heap, pl: &p plan.Plan, i: int, nm: &n names.Na
             if e == len(list) || int_of(list[e]) == ',' {
                 let at = names.find(nm, list[from..e]);
                 if at < 0 || t >= k {
-                    bad = rules.plan_unknown_column();
+                    bad = codes.plan_unknown_column();
                 } else {
                     contents(x)[t] = at;
                 }
@@ -200,11 +200,11 @@ fn resolve[&h, &p, &n](heap: &!h Heap, pl: &p plan.Plan, i: int, nm: &n names.Na
 
 // Fit the plan's steps on the training matrix `x` whose columns are `nm`. (Fitted, the transformed matrix, Fault). On a Fault the Fitted and
 // the matrix are empty. a = the step (1-based) of a Fault of a step.
-pub fn fit[&h, &p, &n, &m](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Names, x: &m matrix.Matrix, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (Fitted, matrix.Matrix, rules.Fault) {
+pub fn fit[&h, &p, &n, &m](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Names, x: &m matrix.Matrix, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (Fitted, matrix.Matrix, codes.Fault) {
     let (c0, code0) = clone(heap, x, rows_cap, cols_cap, cells_cap);
     if code0 != 0 {
         matrix.drop(heap, c0);
-        return (empty_fitted(heap), matrix.empty(heap), rules.fault(code0, 0, 0, 0));
+        return (empty_fitted(heap), matrix.empty(heap), codes.fault(code0, 0, 0, 0));
     }
     var cur = c0;
     var cur_names = names.empty(heap);
@@ -216,7 +216,7 @@ pub fn fit[&h, &p, &n, &m](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Names,
     var body = buffer.empty(heap, 64);
     let ns = plan.steps(pl);
     var s = 0;
-    var fault = rules.none();
+    var fault = codes.none();
     while s < ns && fault.code == 0 {
         var cols = box_slice(heap, 1, 0);
         borrow cur_names as &cn in {
@@ -224,7 +224,7 @@ pub fn fit[&h, &p, &n, &m](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Names,
             unbox_slice(heap, cols);
             cols = cb;
             if rc != 0 {
-                fault = rules.fault(rc, s + 1, 0, 0);
+                fault = codes.fault(rc, s + 1, 0, 0);
             }
         }
         if fault.code == 0 {
@@ -281,7 +281,7 @@ pub fn fit[&h, &p, &n, &m](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Names,
         payload = buffer.append(heap, payload, buffer.bytes(br));
     }
     buffer.drop(heap, body);
-    return (Fitted { payload: payload, n: ns, nm: cur_names }, cur, rules.none());
+    return (Fitted { payload: payload, n: ns, nm: cur_names }, cur, codes.none());
 }
 
 fn fbits_put_len[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
@@ -292,8 +292,8 @@ fn fbits_put_len[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.
 
 // The steps payload against a matrix of `cols_in` columns: (number of steps, the width out, Fault). Nothing is applied. A step is decoded and checked
 // against the width the one before it leaves (a = 3, b = the step).
-pub fn check_steps[&h, &s](heap: &!h Heap, payload: &s [byte], cols_in: int) -> [heap] (int, int, rules.Fault) {
-    let bad = rules.fault(rules.malformed(), 3, 0, 0);
+pub fn check_steps[&h, &s](heap: &!h Heap, payload: &s [byte], cols_in: int) -> [heap] (int, int, codes.Fault) {
+    let bad = codes.fault(codes.malformed(), 3, 0, 0);
     if len(payload) < 4 {
         return (0, 0, bad);
     }
@@ -306,17 +306,17 @@ pub fn check_steps[&h, &s](heap: &!h Heap, payload: &s [byte], cols_in: int) -> 
     var i = 0;
     while i < n {
         if len(payload) - pos < 8 {
-            return (0, 0, rules.fault(rules.malformed(), 3, i + 1, 0));
+            return (0, 0, codes.fault(codes.malformed(), 3, i + 1, 0));
         }
         let l = fbits.get64(payload, pos);
         pos = pos + 8;
         if l < 0 || l > len(payload) - pos {
-            return (0, 0, rules.fault(rules.malformed(), 3, i + 1, 0));
+            return (0, 0, codes.fault(codes.malformed(), 3, i + 1, 0));
         }
         let (st, code, w) = steps.decode(heap, payload[pos..pos + l], width);
         steps.drop(heap, st);
         if code != 0 {
-            return (0, 0, rules.fault(rules.malformed(), 3, i + 1, 0));
+            return (0, 0, codes.fault(codes.malformed(), 3, i + 1, 0));
         }
         width = w;
         pos = pos + l;
@@ -325,11 +325,11 @@ pub fn check_steps[&h, &s](heap: &!h Heap, payload: &s [byte], cols_in: int) -> 
     if pos != len(payload) {
         return (0, 0, bad);
     }
-    return (n, width, rules.none());
+    return (n, width, codes.none());
 }
 
 // Apply the stored steps to x. (the matrix, the number of unknown categories met over all steps, Fault)
-pub fn apply_steps[&h, &s, &m](heap: &!h Heap, payload: &s [byte], x: &m matrix.Matrix, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int, rules.Fault) {
+pub fn apply_steps[&h, &s, &m](heap: &!h Heap, payload: &s [byte], x: &m matrix.Matrix, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int, codes.Fault) {
     let (n, width, f0) = check_steps(heap, payload, matrix.cols(x));
     if f0.code != 0 {
         return (matrix.empty(heap), 0, f0);
@@ -337,12 +337,12 @@ pub fn apply_steps[&h, &s, &m](heap: &!h Heap, payload: &s [byte], x: &m matrix.
     let (c0, code0) = clone(heap, x, rows_cap, cols_cap, cells_cap);
     if code0 != 0 {
         matrix.drop(heap, c0);
-        return (matrix.empty(heap), 0, rules.fault(code0, 0, 0, 0));
+        return (matrix.empty(heap), 0, codes.fault(code0, 0, 0, 0));
     }
     var cur = c0;
     var pos = 4;
     var unknown = 0;
-    var fault = rules.none();
+    var fault = codes.none();
     var i = 0;
     while i < n && fault.code == 0 {
         let l = fbits.get64(payload, pos);
@@ -354,7 +354,7 @@ pub fn apply_steps[&h, &s, &m](heap: &!h Heap, payload: &s [byte], x: &m matrix.
         let (st, code, w) = steps.decode(heap, payload[pos..pos + l], cw);
         pos = pos + l;
         if code != 0 {
-            fault = rules.fault(rules.malformed(), 3, i + 1, 0);
+            fault = codes.fault(codes.malformed(), 3, i + 1, 0);
         } else {
             var ynew = matrix.empty(heap);
             var have = false;
@@ -386,7 +386,7 @@ pub fn apply_steps[&h, &s, &m](heap: &!h Heap, payload: &s [byte], x: &m matrix.
         matrix.drop(heap, cur);
         return (matrix.empty(heap), 0, fault);
     }
-    return (cur, unknown, rules.none());
+    return (cur, unknown, codes.none());
 }
 
 // ---------------------------------------------------------------- the plan and the steps agree

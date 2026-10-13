@@ -5,7 +5,7 @@ import std.bytes;
 import std.crypto;
 import ml.fbits;
 import ml.kinds;
-import transforms.rules;
+import transforms.codes;
 import pipeline.plan;
 import pipeline.names;
 import pipeline.schema;
@@ -206,8 +206,8 @@ pub fn model_kind[&l](l: &l Loaded) -> [] int {
     return l.model_kind;
 }
 
-fn mal(sec_tag: int, step: int) -> [] rules.Fault {
-    return rules.fault(rules.malformed(), sec_tag, step, 0);
+fn mal(sec_tag: int, step: int) -> [] codes.Fault {
+    return codes.fault(codes.malformed(), sec_tag, step, 0);
 }
 
 // the checksum matches the 32 bytes at the end
@@ -238,24 +238,24 @@ fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
     let n = len(data);
     let body = n - 32;
     if body < 12 {
-        return (rules.truncated(), 0);
+        return (codes.truncated(), 0);
     }
     if get32(data, 8) != 5 {
-        return (rules.malformed(), 0);
+        return (codes.malformed(), 0);
     }
     var pos = 12;
     var s = 0;
     while s < 5 {
         if pos + 12 > body {
-            return (rules.truncated(), 0);
+            return (codes.truncated(), 0);
         }
         let tag = get32(data, pos);
         let length = fbits.get64(data, pos + 4);
         if length < 0 || length > body - pos - 12 {
-            return (rules.truncated(), 0);
+            return (codes.truncated(), 0);
         }
         if tag != kinds.section_at(s + 1) {
-            return (rules.malformed(), tag);
+            return (codes.malformed(), tag);
         }
         places[2 * s] = pos + 12;
         places[2 * s + 1] = length;
@@ -263,7 +263,7 @@ fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
         s = s + 1;
     }
     if pos != body {
-        return (rules.malformed(), 0);
+        return (codes.malformed(), 0);
     }
     return (0, 0);
 }
@@ -286,8 +286,8 @@ fn model_family_ok(pk: int, mk: int) -> [] bool {
 }
 
 // every field of the five sections (the checksum is right). (Fault, features, width, nsteps, rows, seed, model kind)
-fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [heap] (rules.Fault, int, int, int, int, int, int) {
-    let none = rules.none();
+fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [heap] (codes.Fault, int, int, int, int, int, int) {
+    let none = codes.none();
     // 1 plan: it parses and is its own canonical form
     let pbytes = data[places[0]..places[0] + places[1]];
     let (pl, pf) = plan.parse(heap, pbytes);
@@ -393,20 +393,20 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
 
 // Decode the file in `data`. (Loaded, Fault): the Loaded is empty unless the Fault is none. A file is input: a right checksum says it is the file
 // that was written, not that it is sensible.
-pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Loaded, rules.Fault) {
+pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Loaded, codes.Fault) {
     let n = len(data);
     if n < 4 {
-        return (empty(heap), rules.fault(rules.truncated(), 0, 0, 0));
+        return (empty(heap), codes.fault(codes.truncated(), 0, 0, 0));
     }
     if !bytes.equal(data[0..4], "CML1") {
-        return (empty(heap), rules.fault(rules.bad_magic(), 0, 0, 0));
+        return (empty(heap), codes.fault(codes.bad_magic(), 0, 0, 0));
     }
     if n < 8 {
-        return (empty(heap), rules.fault(rules.truncated(), 0, 0, 0));
+        return (empty(heap), codes.fault(codes.truncated(), 0, 0, 0));
     }
     let v = get32(data, 4);
     if v != 1 {
-        return (empty(heap), rules.fault(rules.bad_version(), v, 0, 0));
+        return (empty(heap), codes.fault(codes.bad_version(), v, 0, 0));
     }
     let places = box_slice(heap, 10, 0);
     var pw = places;
@@ -419,13 +419,13 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Loaded, rules.
     }
     if code != 0 {
         unbox_slice(heap, pw);
-        return (empty(heap), rules.fault(code, tag, 0, 0));
+        return (empty(heap), codes.fault(code, tag, 0, 0));
     }
     if !checksum_ok(heap, data) {
         unbox_slice(heap, pw);
-        return (empty(heap), rules.fault(rules.checksum(), 0, 0, 0));
+        return (empty(heap), codes.fault(codes.checksum(), 0, 0, 0));
     }
-    var fault = rules.none();
+    var fault = codes.none();
     var feats = 0;
     var width = 0;
     var nsteps = 0;
@@ -447,5 +447,5 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Loaded, rules.
         return (empty(heap), fault);
     }
     let keep = buffer.append(heap, buffer.empty(heap, n), data);
-    return (Loaded { data: keep, places: pw, nsteps: nsteps, features: feats, width: width, columns: feats + 1, rows: rows, seed: seed, model_kind: mk }, rules.none());
+    return (Loaded { data: keep, places: pw, nsteps: nsteps, features: feats, width: width, columns: feats + 1, rows: rows, seed: seed, model_kind: mk }, codes.none());
 }

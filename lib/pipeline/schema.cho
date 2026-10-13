@@ -4,7 +4,7 @@ import std.buffer;
 import std.bytes;
 import ml.fbits;
 import pipeline.names;
-import transforms.rules;
+import transforms.codes;
 
 // The fitted schema (docs/pipeline.md section 3.1) and its section (`schema`, section 2 of the file, the layout of tools/ml/mfile.cho):
 //     u32 columns | u32 target | per column: u32 name length | name | u32 type (0 int, 1 dec, 2 float) | u32 scale (0 for int and float)
@@ -87,7 +87,7 @@ pub fn encode[&h, &s](heap: &!h Heap, sc: &s Schema) -> [heap] buffer.Buffer {
 
 // (Schema, code): 0, or ml.model.malformed; every field is checked against the bytes there and against its bound before it is used
 pub fn decode[&h, &d](heap: &!h Heap, sc: &d [byte]) -> [heap] (Schema, int) {
-    let bad = rules.malformed();
+    let bad = codes.malformed();
     if len(sc) < 8 {
         return (empty(heap), bad);
     }
@@ -285,7 +285,7 @@ pub fn align[&h, &s, &g, &t](heap: &!h Heap, sc: &s Schema, given: &g names.Name
     buffer.drop(heap, extra);
     buffer.drop(heap, mistyped);
     buffer.drop(heap, dup);
-    return (pw, d, rules.schema_mismatch());
+    return (pw, d, codes.schema_mismatch());
 }
 
 // at most 8 KiB of a list, then `...`

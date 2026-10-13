@@ -4,6 +4,7 @@ import ml.refuse;
 import metrics.rules;
 import metrics.splits;
 import tree.deny;
+import transforms.codes;
 import tree.model;
 import models.record;
 import models.kmeans;
@@ -138,7 +139,7 @@ fn test_no_two_stages_share_a_model_kind() -> [] int {
     return bad;
 }
 
-// the tag of a code by band: 1 to 99 ml.refuse, 101 to 199 tree.deny, 201 to 299 metrics.rules
+// the tag of a code by band: 1 to 99 ml.refuse, 101 to 199 tree.deny, 201 to 299 metrics.rules, 301 to 399 transforms.codes
 fn tag_of(c: int) -> [] &static [byte] {
     if c >= 1 && c <= 99 {
         return refuse.tag(c);
@@ -149,6 +150,9 @@ fn tag_of(c: int) -> [] &static [byte] {
     if c >= 201 && c <= 299 {
         return rules.tag(c);
     }
+    if c >= 301 && c <= 399 {
+        return codes.tag(c);
+    }
     return "";
 }
 
@@ -158,6 +162,9 @@ fn exit_of(c: int) -> [] int {
     }
     if c >= 101 && c <= 199 {
         return deny.exit_code(c);
+    }
+    if c >= 301 && c <= 399 {
+        return codes.exit_code(c);
     }
     return rules.exit_code(c);
 }
@@ -195,10 +202,20 @@ fn test_refusal_codes_are_unique() -> [] int {
     if rules.first() < 201 || rules.last() > 299 {
         bad = bad + 1;
     }
+    c = codes.first();
+    while c <= codes.last() {
+        if len(codes.tag(c)) == 0 || codes.exit_code(c) == 0 {
+            bad = bad + 1;
+        }
+        c = c + 1;
+    }
+    if codes.first() < 301 || codes.last() > 399 || codes.last() - codes.first() + 1 != codes.count() {
+        bad = bad + 1;
+    }
     // no number is claimed by two libraries: a code outside a library's own band has no tag there (tree.deny answers ml.refuse's
     // codes by design, so it is asked only inside 101 to 199)
     c = 0;
-    while c <= 400 {
+    while c <= 500 {
         var claims = 0;
         if len(refuse.tag(c)) != 0 {
             claims = claims + 1;
@@ -209,6 +226,9 @@ fn test_refusal_codes_are_unique() -> [] int {
         if len(rules.tag(c)) != 0 {
             claims = claims + 1;
         }
+        if len(codes.tag(c)) != 0 {
+            claims = claims + 1;
+        }
         if claims > 1 {
             bad = bad + 1;
         }
@@ -216,10 +236,10 @@ fn test_refusal_codes_are_unique() -> [] int {
     }
     // one tag, one exit code, whichever band answers; one tag at most once inside a band
     var a = 1;
-    while a <= 299 {
+    while a <= 399 {
         if len(tag_of(a)) != 0 {
             var b = a + 1;
-            while b <= 299 {
+            while b <= 399 {
                 if same(tag_of(a), tag_of(b)) {
                     if exit_of(a) != exit_of(b) {
                         bad = bad + 1;
@@ -232,6 +252,59 @@ fn test_refusal_codes_are_unique() -> [] int {
             }
         }
         a = a + 1;
+    }
+    return bad;
+}
+
+// the step kinds and section tags of the model file: distinct, from 1, with the stages' own numbers where a stage writes them
+fn test_step_kinds_and_section_tags_are_distinct() -> [] int {
+    var bad = 0;
+    var i = 1;
+    while i <= kinds.step_count() {
+        if kinds.step_at(i) != i {
+            bad = bad + 1;
+        }
+        var j = i + 1;
+        while j <= kinds.step_count() {
+            if kinds.step_at(i) == kinds.step_at(j) {
+                bad = bad + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if kinds.step_at(0) != 0 || kinds.step_at(kinds.step_count() + 1) != 0 || kinds.step_count() != 6 {
+        bad = bad + 1;
+    }
+    i = 1;
+    while i <= kinds.section_count() {
+        if kinds.section_at(i) != i {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    if kinds.section_at(0) != 0 || kinds.section_at(kinds.section_count() + 1) != 0 || kinds.section_count() != 5 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// the library's own constants (steps.cho, file.cho) are the registry's; the exit codes of the band: 303 is the only one that is not 8
+fn test_pipeline_codes_follow_the_registry() -> [] int {
+    var bad = 0;
+    var c = codes.first();
+    while c <= codes.last() {
+        var want = 8;
+        if c == 303 {
+            want = 2;
+        }
+        if codes.exit_code(c) != want {
+            bad = bad + 1;
+        }
+        c = c + 1;
+    }
+    if codes.exit_code(300) != 0 || codes.exit_code(codes.last() + 1) != 0 {
+        bad = bad + 1;
     }
     return bad;
 }
