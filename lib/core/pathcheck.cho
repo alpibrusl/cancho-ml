@@ -1,0 +1,27 @@
+module ml.pathcheck;
+
+// The one check every tool that opens a path from its arguments makes first (docs/lanes.md section 1; the bug is recorded in
+// docs/upstream/dotdot_path.cho). The builtins open_read and open_dir end the process with SIGILL (exit 132, no message) on a path
+// that holds two dots in a row anywhere, `a..b` and `.../x` included, and toolbox.path.has_dotdot looks at whole components only.
+// `ml` (tools/ml/paths.cho) wraps this function; the drivers models-check, tree-check and reader-check call it directly, because
+// they import nothing from the contract package. The refusal has one tag and one exit code everywhere.
+
+pub fn tag() -> [] &static [byte] {
+    return "path.dotdot";
+}
+
+pub fn exit_code() -> [] int {
+    return 2;
+}
+
+// Whether `p` holds two dots in a row anywhere.
+pub fn has_double_dot[&p](p: &p [byte]) -> [] bool {
+    var i = 0;
+    while i + 1 < len(p) {
+        if int_of(p[i]) == '.' && int_of(p[i + 1]) == '.' {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}

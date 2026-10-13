@@ -1,7 +1,6 @@
 // GAP 9 (stage M7, seen first in spike F): open_read on a path that contains two dots in a row ends the process with SIGILL (exit
 // 132) instead of returning Opened::Failed (the path check of check-cost.md traps, it does not refuse). A command line tool that
-// takes a path from its arguments must pre-check every path itself (tools/ml/paths.cho does; tools/tree-check does not, it is a
-// test driver) or die without a message. Expected: Opened::Failed(reason) for a path the filesystem policy refuses.
+// takes a path from its arguments must pre-check every path itself (tools/ml/paths.cho does, and so do the drivers models-check, tree-check and reader-check since docs/lanes.md section 1, through lib/core/pathcheck.cho) or die without a message. Expected: Opened::Failed(reason) for a path the filesystem policy refuses.
 //     cancho build --std dotdot_path.cho -o dd && ./dd ../x.bin; echo $?     -> 132   (./dd x.bin gives 3, a missing file)
 edition 5;
 

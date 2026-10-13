@@ -166,5 +166,5 @@ disagreement. Summary:
    `sh scripts/gate_models.sh`: `head -c 8000 /dev/zero > y.bin; build/gate-models/models-check linreg ../ml-data/n1000/x.bin y.bin n=1000 d=20; echo $?`
    prints 132 (SIGILL) and nothing, where a missing file prints `error: bad or missing file` and exits 1, and an absolute path without `..`
    works. It is a test driver, not a library, and `ml` checks paths itself (`path.dotdot`); not fixed here because the cause (the runtime's
-   `open_read` on such a path) was not investigated.
+   `open_read` on such a path) was not investigated. **Fixed afterwards: `docs/lanes.md` section 1** (the cause is `docs/upstream/dotdot_path.cho`).
 3. `check.sh` now needs `../ml-data` (the files of spike F) for the tree gate, in addition to `../cancho-table-main`.

@@ -18,6 +18,7 @@ import std.buffer;
 import std.crypto;
 import std.io;
 import ml.fbits;
+import ml.pathcheck;
 import ml.refuse;
 import ml.rng;
 import ml.testdata;
@@ -1248,15 +1249,17 @@ fn main(world: World) -> [conc] int {
     var reps = 1;
     var preps = 1;
     var phase = 0;
+    var code = 0;
+    var dotdot = false;
     borrow args as &g in {
         let mi = find_arg(g, "mode");
         if mi >= 0 {
             let m = arg(g, mi);
-            if m[5] == byte_of('f') && m[6] == byte_of('i') {
+            if len(m) >= 7 && m[5] == byte_of('f') && m[6] == byte_of('i') {
                 mode = 1;
-            } else if m[5] == byte_of('f') && m[6] == byte_of('u') {
+            } else if len(m) >= 7 && m[5] == byte_of('f') && m[6] == byte_of('u') {
                 mode = 2;
-            } else if m[5] == byte_of('g') {
+            } else if len(m) >= 6 && m[5] == byte_of('g') {
                 mode = 3;
             }
         }
@@ -1278,15 +1281,27 @@ fn main(world: World) -> [conc] int {
         phase = int_arg(g, "phase", 0);
         let oi = find_arg(g, "out");
         if oi >= 0 {
-            if arg(g, oi)[4] == byte_of('h') {
+            if len(arg(g, oi)) >= 5 && arg(g, oi)[4] == byte_of('h') {
                 full = false;
             }
+        }
+        // the file operands are checked before any builtin sees one (ml.pathcheck): open_read traps on two dots in a row
+        let ix = find_arg(g, "x");
+        let iy = find_arg(g, "y");
+        let im = find_arg(g, "miss");
+        if ix >= 0 && pathcheck.has_double_dot(arg(g, ix)) || iy >= 0 && pathcheck.has_double_dot(arg(g, iy)) || im >= 0 && pathcheck.has_double_dot(arg(g, im)) {
+            dotdot = true;
         }
     }
     let p = params.Params { task: task, trees: trees, max_depth: depth, min_leaf: leaf, max_nodes: nodes, bins: nbins, mtry: mtry, bootstrap: boot, seed: seed, threads: threads };
     borrow mut heap as &!hp in {
         borrow mut io as &!i in {
-            if mode == 3 {
+            if dotdot {
+                io.write_all(i, "refused ");
+                io.write_all(i, pathcheck.tag());
+                io.newline(i);
+                code = pathcheck.exit_code();
+            } else if mode == 3 {
                 mode_gt(i);
             } else if mode == 1 || mode == 2 {
                 var xb = buffer.empty(hp, 1);
@@ -1359,5 +1374,5 @@ fn main(world: World) -> [conc] int {
     release(clock);
     release(heap);
     release(io);
-    return 0;
+    return code;
 }

@@ -1,0 +1,118 @@
+{
+  "comment": "Fixtures of scripts/gate_paths.py (docs/lanes.md section 1). {x} {y} {csv} {miss} are scratch files the gate writes; a status of null means 'any status the tool declares, never a trap'. Each tool that opens a path from its arguments must refuse two dots in a row, anywhere in the path, with the tag path.dotdot and exit 2, before any builtin sees the path.",
+  "tools": {
+    "models-check": {
+      "ok": [
+        {"argv": ["linreg", "{x}", "{y}", "n=10", "d=2"], "status": 0},
+        {"argv": ["kmeans", "{x}", "{y}", "n=10", "d=2", "k=2"], "status": 0},
+        {"argv": ["linreg", "-", "-", "n=10", "d=2"], "status": 0}
+      ],
+      "missing_file": [
+        {"argv": ["linreg", "nofile.bin", "{y}", "n=10", "d=2"], "status": 1, "stdout": "bad or missing file"}
+      ],
+      "dotdot": [
+        {"argv": ["linreg", "../x.bin", "{y}", "n=10", "d=2"]},
+        {"argv": ["linreg", "{x}", "../y.bin", "n=10", "d=2"]},
+        {"argv": ["logreg", "a..b", "{y}", "n=10", "d=2"]},
+        {"argv": ["linreg", "{x}", ".../y.bin", "n=10", "d=2"]},
+        {"argv": ["kmeans", "..", "{y}", "n=10", "d=2"]},
+        {"argv": ["kmeans", "x..", "{y}", "n=10", "d=2"]},
+        {"argv": ["linreg", "sub/../x.bin", "{y}", "n=10", "d=2"]},
+        {"argv": ["nomodel", "../x.bin", "{y}", "n=10", "d=2"]}
+      ],
+      "operands": [
+        {"argv": [], "status": 2},
+        {"argv": ["linreg"], "status": 2},
+        {"argv": ["linreg", "{x}"], "status": 2},
+        {"argv": ["linreg", "{x}", "{y}"], "status": 1},
+        {"argv": ["linreg", "", "", "n=10"], "status": null},
+        {"argv": ["linreg", "{x}", "{y}", "n="], "status": 2},
+        {"argv": ["linreg", "{x}", "{y}", "n"], "status": null}
+      ]
+    },
+    "tree-check": {
+      "ok": [
+        {"argv": ["mode=fit", "x={x}", "y={y}", "n=10", "d=2", "ntr=8", "task=0", "trees=2", "depth=2", "out=hash"], "status": 0}
+      ],
+      "missing_file": [
+        {"argv": ["mode=fit", "x=nofile.bin", "y={y}", "n=10", "d=2"], "status": 0, "stdout": "#error"}
+      ],
+      "dotdot": [
+        {"argv": ["mode=fit", "x=../x.bin", "y={y}", "n=10", "d=2"]},
+        {"argv": ["mode=fit", "x={x}", "y=../y.bin", "n=10", "d=2"]},
+        {"argv": ["mode=fit", "x={x}", "y={y}", "miss=../m.bin", "n=10", "d=2"]},
+        {"argv": ["mode=fuzz", "x=a..b", "y={y}", "n=10", "d=2"]},
+        {"argv": ["mode=fit", "x={x}", "y=.../y.bin", "n=10", "d=2"]},
+        {"argv": ["mode=fit", "x=..", "y={y}", "n=10", "d=2"]},
+        {"argv": ["mode=gt", "x=../x.bin"]},
+        {"argv": ["x=sub/../x.bin"]}
+      ],
+      "operands": [
+        {"argv": [], "status": null},
+        {"argv": ["mode="], "status": null},
+        {"argv": ["mode=f"], "status": null},
+        {"argv": ["mode=fi"], "status": null},
+        {"argv": ["mode=fu"], "status": null},
+        {"argv": ["mode=g"], "status": null},
+        {"argv": ["mode=fit", "out="], "status": null},
+        {"argv": ["mode=fit", "x=", "y=", "miss=", "n=", "d="], "status": null},
+        {"argv": ["x"], "status": null},
+        {"argv": ["x=", "y="], "status": null}
+      ]
+    },
+    "reader-check": {
+      "ok": [
+        {"argv": ["{csv}"], "status": 0},
+        {"argv": ["--mode", "hash", "{csv}"], "status": 0}
+      ],
+      "missing_file": [
+        {"argv": ["nofile.csv"], "status": null}
+      ],
+      "dotdot": [
+        {"argv": ["../a.csv"]},
+        {"argv": ["a..b"]},
+        {"argv": [".../a.csv"]},
+        {"argv": [".."]},
+        {"argv": ["--mode", "hash", "sub/../a.csv"]}
+      ],
+      "operands": [
+        {"argv": [], "status": 2},
+        {"argv": ["--mode"], "status": 2},
+        {"argv": ["--max-rows"], "status": 2},
+        {"argv": ["--drop"], "status": 2},
+        {"argv": ["--mode", "hash"], "status": 2},
+        {"argv": ["--"], "status": 2}
+      ]
+    },
+    "linalg-check": {
+      "ok": [
+        {"argv": ["dot", "100", "1"], "status": 0}
+      ],
+      "dotdot": [],
+      "operands": [
+        {"argv": [], "status": null},
+        {"argv": ["dot"], "status": null},
+        {"argv": ["gemv_n", "5"], "status": null},
+        {"argv": ["dot", "", "", ""], "status": null}
+      ]
+    },
+    "metrics-check": {
+      "ok": [
+        {"argv": ["ratio", "1", "2"], "status": 0}
+      ],
+      "dotdot": [],
+      "operands": [
+        {"argv": [], "status": 2},
+        {"argv": ["split"], "status": null},
+        {"argv": ["metric"], "status": null},
+        {"argv": ["terms"], "status": null},
+        {"argv": ["ratio"], "status": null},
+        {"argv": ["ratio", "1"], "status": null},
+        {"argv": ["testcount"], "status": null},
+        {"argv": ["bounded"], "status": null},
+        {"argv": ["split", "strat"], "status": null},
+        {"argv": ["split", "strat", "0,1"], "status": null}
+      ]
+    }
+  }
+}

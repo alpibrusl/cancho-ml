@@ -67,7 +67,7 @@ MUTANTS = [
       [("tools/ml/main.cho", "    var verb = 0;\n    if cli.operand_count(parsed) == 0 {", "    var verb = verb_of(arg(args, 1));\n    if cli.operand_count(parsed) == 0 {", 1)],
       ["test_fuzz_args"]),
     M("n1-double-dot-check-removed", "N1", "a path with two dots in a row reaches the builtins",
-      [("tools/ml/paths.cho", "        if int_of(p[i]) == '.' && int_of(p[i + 1]) == '.' {\n            return true;", "        if int_of(p[i]) == '.' && int_of(p[i + 1]) == '.' {\n            return false;", 1)],
+      [("lib/core/pathcheck.cho", "        if int_of(p[i]) == '.' && int_of(p[i + 1]) == '.' {\n            return true;", "        if int_of(p[i]) == '.' && int_of(p[i + 1]) == '.' {\n            return false;", 1)],
       ["test_fuzz_args"]),
     # ------------------------------------------------------------------ L1: the log
     M("l1-column-name-logged", "L1", "the write record carries a column name where the hash goes",

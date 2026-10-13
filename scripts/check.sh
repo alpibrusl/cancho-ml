@@ -48,3 +48,6 @@ python3 scripts/schemas.py --check
 python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
+# the check tools open no path that holds two dots in a row and trap on no missing operand (docs/lanes.md section 1)
+python3 scripts/gate_paths.py
+python3 scripts/mutants_paths.py --check

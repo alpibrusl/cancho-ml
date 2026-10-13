@@ -335,6 +335,14 @@ fn print_assign[&i, &a](io: &!i Io, v: &a [int], n: int, show: bool) -> [io_writ
     return 0;
 }
 
+// operand i, or the empty text when the command line is shorter: arg() traps beyond the last argument (docs/lanes.md section 1)
+fn operand[&g](g: &g Args, i: int) -> [args] &g [byte] {
+    if arg_count(g) <= i {
+        return "";
+    }
+    return arg(g, i);
+}
+
 fn num[&g](g: &g Args, i: int) -> [args] int {
     if arg_count(g) <= i {
         return 0 - 1;
@@ -347,7 +355,7 @@ fn num[&g](g: &g Args, i: int) -> [args] int {
 }
 
 fn run_split[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
-    let kind = arg(g, 2);
+    let kind = operand(g, 2);
     var code = 0;
     var n = num(g, 3);
     var k = num(g, 4);
@@ -362,7 +370,7 @@ fn run_split[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_wr
         rep = num(g, 6);
         cap = num(g, 7);
         show = arg_count(g) > 8;
-        let (lb, ln) = make_ints(heap, arg(g, 3));
+        let (lb, ln) = make_ints(heap, operand(g, 3));
         var out = box_slice(heap, ln + 1, 0);
         var lbo = lb;
         if ln < 0 {
@@ -432,7 +440,7 @@ fn naive_logloss[&y, &p](labels: &y [int], prob: &p [float], pos: int) -> [] rul
 }
 
 fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k Clock) -> [heap, io_write, clock, args] int {
-    let name = arg(g, 2);
+    let name = operand(g, 2);
     let pos = num(g, 5);
     let cap = num(g, 6);
     var reps = num(g, 7);
@@ -451,8 +459,8 @@ fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k 
     var t0 = 0;
     var t1 = 0;
     if float_pair {
-        let (ya, yn) = make_floats(heap, arg(g, 3));
-        let (pa, pn) = make_floats(heap, arg(g, 4));
+        let (ya, yn) = make_floats(heap, operand(g, 3));
+        let (pa, pn) = make_floats(heap, operand(g, 4));
         var yb = ya;
         var pb = pa;
         if yn >= 0 && pn >= 0 {
@@ -479,8 +487,8 @@ fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k 
         unbox_slice(heap, yb);
         unbox_slice(heap, pb);
     } else if float_second {
-        let (ya, yn) = make_ints(heap, arg(g, 3));
-        let (pa, pn) = make_floats(heap, arg(g, 4));
+        let (ya, yn) = make_ints(heap, operand(g, 3));
+        let (pa, pn) = make_floats(heap, operand(g, 4));
         var yb = ya;
         var pb = pa;
         if yn >= 0 && pn >= 0 {
@@ -507,8 +515,8 @@ fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k 
         unbox_slice(heap, yb);
         unbox_slice(heap, pb);
     } else {
-        let (ya, yn) = make_ints(heap, arg(g, 3));
-        let (pa, pn) = make_ints(heap, arg(g, 4));
+        let (ya, yn) = make_ints(heap, operand(g, 3));
+        let (pa, pn) = make_ints(heap, operand(g, 4));
         var yb = ya;
         var pb = pa;
         if yn >= 0 && pn >= 0 {
@@ -542,8 +550,8 @@ fn run_metric[&h, &i, &g, &k](heap: &!h Heap, io: &!i Io, g: &g Args, clock: &k 
 
 fn run_terms[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
     let pos = num(g, 4);
-    let (ya, yn) = make_ints(heap, arg(g, 2));
-    let (pa, pn) = make_floats(heap, arg(g, 3));
+    let (ya, yn) = make_ints(heap, operand(g, 2));
+    let (pa, pn) = make_floats(heap, operand(g, 3));
     var yb = ya;
     var pb = pa;
     if yn >= 0 && yn == pn {
@@ -584,8 +592,8 @@ fn main(world: World) -> [] int {
                     } else if same(arg(g, 1), "terms") {
                         code = run_terms(hp, ip, g);
                     } else if same(arg(g, 1), "ratio") {
-                        let (oa, a) = parse_int(arg(g, 2));
-                        let (ob, b) = parse_int(arg(g, 3));
+                        let (oa, a) = parse_int(operand(g, 2));
+                        let (ob, b) = parse_int(operand(g, 3));
                         io.write_all(ip, "value ");
                         hex16(ip, bits_of(ratio.ratio(a, b)));
                         io.newline(ip);

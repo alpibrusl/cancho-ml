@@ -13,6 +13,7 @@ import std.json;
 import toolbox.cli;
 import toolbox.fail;
 import toolbox.path;
+import ml.pathcheck;
 
 // a checked path: the whole path to open, and where the part below --root starts in it
 pub res struct Rp {
@@ -48,14 +49,7 @@ pub fn shown[&r](r: &r Rp) -> [] &r [byte] {
 // would end the process with SIGILL (found by the fuzz, tests/conformance/test_fuzz_args.py). Under --root the tool opens each
 // name by itself (toolbox.place), which refuses exactly `..`, so only the root, and a path with no root, need this.
 pub fn has_double_dot[&p](p: &p [byte]) -> [] bool {
-    var i = 0;
-    while i + 1 < len(p) {
-        if int_of(p[i]) == '.' && int_of(p[i + 1]) == '.' {
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
+    return pathcheck.has_double_dot(p);
 }
 
 pub fn refuse_double_dot[&h, &p](heap: &!h Heap, errs: fail.Errors, shown: &p [byte], at: int) -> [heap] fail.Errors {

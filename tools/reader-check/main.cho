@@ -22,7 +22,7 @@ import ml.limits;
 import ml.matrix;
 import ml.refuse;
 import ml.rng;
-import ml.paths;
+import ml.pathcheck;
 import linalg.tensor;
 
 // decimal digits only, at most 18 of them; anything else answers -1
@@ -282,7 +282,15 @@ fn main(world: World) -> [] int {
         }
     }
     var code = 0;
-    if bad || len(file) == 0 || paths.has_double_dot(file) || max_rows < 1 || max_cols < 1 || max_cells < 1 || max_line < 1 {
+    if !bad && pathcheck.has_double_dot(file) {
+        // the same tag and exit as ml, models-check and tree-check: open_read traps on two dots in a row
+        borrow mut io as &!ip in {
+            word(ip, "refused ");
+            word(ip, pathcheck.tag());
+            io.newline(ip);
+        }
+        code = pathcheck.exit_code();
+    } else if bad || len(file) == 0 || max_rows < 1 || max_cols < 1 || max_cells < 1 || max_line < 1 {
         borrow mut io as &!ip in {
             word(ip, "usage: reader-check [--mode shape|dump|hash] [--max-rows N] [--max-columns N] [--max-cells N] [--max-line-bytes N] [--drop NAMES] [--float NAMES] FILE\n");
         }

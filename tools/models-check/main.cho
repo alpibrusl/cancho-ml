@@ -24,6 +24,7 @@ import ml.refuse;
 import ml.rng;
 import ml.fbits;
 import ml.limits;
+import ml.pathcheck;
 import linalg.tensor;
 import models.common;
 import models.score;
@@ -441,6 +442,7 @@ fn main(world: World) -> [conc] int {
     var ntr = 0 - 1;
     var dup = 0;
     var bad_arg = 0;
+    var dotdot = 0;
     borrow args as &g in {
         if arg_count(g) < 4 {
             bad_arg = 1;
@@ -456,6 +458,9 @@ fn main(world: World) -> [conc] int {
             }
             if same(arg(g, 2), "-") {
                 gen = 1;
+                // the file operands are checked before any builtin sees one (ml.pathcheck): open_read traps on two dots in a row
+            } else if pathcheck.has_double_dot(arg(g, 2)) || model != 3 && pathcheck.has_double_dot(arg(g, 3)) {
+                dotdot = 1;
             }
             var a = 4;
             while a < arg_count(g) {
@@ -512,7 +517,18 @@ fn main(world: World) -> [conc] int {
     } else {
         refused = limits.check_matrix(n, d, limits.default_rows(), limits.default_cols(), limits.default_cells());
     }
-    if refused != 0 {
+    if dotdot != 0 {
+        // a path that holds two dots in a row is refused before anything else is looked at (the same tag and exit as ml, tree-check)
+        refused = 0 - 1;
+    }
+    if refused < 0 {
+        borrow mut io as &!ip in {
+            io.write_all(ip, "refused ");
+            io.write_all(ip, pathcheck.tag());
+            io.newline(ip);
+        }
+        code = pathcheck.exit_code();
+    } else if refused != 0 {
         borrow mut io as &!ip in {
             refused_line(ip, refused);
         }
