@@ -94,7 +94,7 @@ no benchmark was run.
 
 | gate | result on the final tree |
 |---|---|
-| `sh scripts/check.sh` | exit 0 (fmt clean; core 20, exact 7, matrix 2, fsq 3; linalg 8, 4, 2, 5, 2, 8 and the new `t_order` 3 = 32 against 29 before; models 23 (`p_models`); registry 5; `oracle_linalg.py --tree` ok; `--suite` all bits equal, now 98 shapes against 46; `gate_par.sh` thread suite at 1, 2, 3, 4, 8, 16 all bits equal; `gate_models.sh` oracle suite (now 69 configurations at one thread, tails of the lanes added) and thread suite at 1, 2, 4, 8, 16 all bits equal; metrics gate; `check_tree.sh` "GATE passed"; reader gates RD2 to RD6 0 differences, 0 traps; schemas, manifest; conformance 101 tests OK (1 skipped); path gate 69 fixtures, 595 sweep vectors, 2,000 fuzz vectors, 0 failures) |
+| `sh scripts/check.sh` | exit 0 (fmt clean; core 20, exact 7, matrix 2, fsq 3; linalg 8, 4, 2, 5, 2, 8 and the new `t_order` 3 = 32 against 29 before; models 23 (`p_models`); registry 5; `oracle_linalg.py --tree` ok; `--suite` all bits equal, now 104 shapes against 46; `gate_par.sh` thread suite at 1, 2, 3, 4, 8, 16 all bits equal; `gate_models.sh` oracle suite (now 63 configurations at one thread against 55, tails of the lanes added) and thread suite at 1, 2, 4, 8, 16 all bits equal; metrics gate; `check_tree.sh` "GATE passed"; reader gates RD2 to RD6 0 differences, 0 traps; schemas, manifest; conformance 101 tests OK (1 skipped); path gate 69 fixtures, 595 sweep vectors, 2,000 fuzz vectors, 0 failures) |
 | `sklearn_models.py` | "sklearn gate: all PASS" (all comparisons) |
 | `gate_sklearn.py --big` | exit 1 as recorded: G-ref R1 fails; the output equals `docs/bench/gate_sklearn.txt` byte for byte (the trees were not touched) |
 | thread-order mutant | killed (`par-thread-order`, in `mutants_linalg` group par and in `mutants_models`) |
@@ -117,7 +117,7 @@ The new mutants for the constants and the order: lane count (`order-lanes-2`, `o
 the block size (`order-block-128`, `*-block-hi`, `*-generic-block`, `gemm-block`), the panel (`order-panel-16`, `chol-rows4-panel`, `chol-entry-panel`, `chol-generic-panel`, `chol-entry-step`), the lane start
 and tails (`*-init`, `*-tail*`). The first full run left five survivors; each was analysed, not waved through: three were **equivalent** (swapping the last two lanes inside one addition, `b3 + b2 = b2 + b3`, which is
 the lane combine's commutativity: replaced by a swap across the pairs), one was a start value of `1e-16` absorbed by data of magnitude 1e18 (now `1e30`), and one needed shapes the oracle did not have (rows mod 4 with
-columns mod 4 in `gemv_n`; likewise the lane tails of the logistic Hessian): 52 shapes were added to the linalg oracle and 8 configurations to the model oracle, and the five (then three more in the models) were killed on a rerun of those mutants. The
+columns mod 4 in `gemv_n`; likewise the lane tails of the logistic Hessian): 58 shapes were added to the linalg oracle and 8 configurations to the model oracle, and the five (then three more in the models) were killed on a rerun of those mutants. The
 `order-lane-combine-swap` mutant (`(l1 + l0) + (l3 + l2)`) was dropped from the list: it is equivalent for the same reason and cannot be killed.
 The explained survivors that remain are the same ones as before the change, plus none: `order-blocks` and `order-level-eq` (linalg), `log-sigmoid-boundary` and `par-models-ragged` (models), the eight of the metrics, six of the trees, four of the reader, two of the core.
 
