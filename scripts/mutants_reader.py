@@ -101,7 +101,7 @@ MUTANTS = [
     M("rd3-float-flag-ignored", "matrix", "--float forces nothing",
       [("tools/ml/csv.cho", "cfg.floats, 0, 3, 19", "cfg.floats, 0, 0, 19")]),
     M("rd3-column-index-counts-dropped", "matrix", "the matrix column of a cell is its file column, dropped ones included",
-      [("tools/ml/csv.cho", "        if !dropped {\n            mj = mj + 1;\n        }", "        mj = mj + 1;")]),
+      [("tools/ml/csv.cho", "        if !dropped && !skipped {\n            mj = mj + 1;\n        }", "        mj = mj + 1;")]),
     # ------------------------------------------------------------------ RD4: the limits
     M("rd4-row-cap-off-by-one", "limits", "one more row than --max-rows is read",
       [("tools/ml/csv.cho", "if rows > cfg.max_rows {", "if rows > cfg.max_rows + 1 {")]),

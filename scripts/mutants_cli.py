@@ -11,7 +11,7 @@ gap the section 7 of docs/cli.md names.
     python3 scripts/mutants_cli.py --list
     python3 scripts/mutants_cli.py --check      # every `old` text is found exactly where it is expected (no build, no test)
 
-The copy is built with the explicit file list that package mode would pass (`cancho build --std lib/core/*.cho build/deps/*.cho
+The copy is built with the explicit file list that package mode would pass (`cancho build --std lib/core/*.cho ... build/deps/*.cho
 generated/ml/built.cho tools/ml/*.cho`), so no mutant runs `cancho install`.
 """
 
@@ -46,7 +46,7 @@ MUTANTS = [
     M("t1-flag-missing-from-the-schema", "T1", "the schema's flag enum loses --limit",
       [("schemas/ml.v1.json", '"--limit",', "", 1)], ["test_tables"]),
     M("t1-rule-without-fixture", "T1", "a rule is added to the table (schemas regenerated); no fixture reaches it",
-      [("tools/ml/spec.cho", ";ml.model.malformed\";", ";ml.model.malformed;ml.input.too-wide\";", 1),
+      [("tools/ml/spec.cho", ";ml.plan.model-not-built\";", ";ml.plan.model-not-built;ml.input.too-wide\";", 1),
        ("tools/ml/spec.cho", ";limit.log-full|8|never|", ";ml.input.too-wide|8|never|a rule nothing reaches. Hint: none. Repair: none.;limit.log-full|8|never|", 1)],
       ["test_tables"], regen=True),
     M("t1-fixture-reaches-another-rule", "T1", "the only fixture of ml.model.malformed now claims another rule",
@@ -114,13 +114,12 @@ MUTANTS = [
     # ------------------------------------------------------------------ D1: determinism
     M("d1-model-holds-the-byte-count", "D1", "the stored row count is the CSV's byte count",
       [("tools/ml/verbs.cho", "rows: csv.rows(sh), cols: kept", "rows: csv.bytes_read(sh), cols: kept", 1)], ["test_determinism"]),
-    M("d1-thread-count-changes-a-byte", "D1", "a stand-in with a --threads flag whose model bytes depend on the count",
-      [("tools/ml/spec.cho", ";format||choice:json/text|none|json|", ";threads||nat|none|1|a stand-in;format||choice:json/text|none|json|", 1)],
-      ["test_determinism"], kind="wrapper:threads", regen=True),
+    M("d1-thread-count-changes-a-byte", "D1", "a stand-in that strips --threads and, with a count other than 1, changes the last byte of the model it wrote",
+      [], ["test_determinism"], kind="wrapper:threads"),
     # ------------------------------------------------------------------ A1: authority
     M("a1-reads-standard-input", "A1", "run() reads a byte of standard input (io_read)",
-      [("tools/ml/main.cho", 'fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write] int {\n    let which',
-        'fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, io_read, err_write] int {\n    getchar(io);\n    let which', 1)],
+      [("tools/ml/main.cho", 'fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write, conc] int {\n    let which',
+        'fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, io_read, err_write, conc] int {\n    getchar(io);\n    let which', 1)],
       [], kind="authority"),
     M("a1-reads-the-clock", "A1", "main() reads the clock", [("tools/ml/main.cho", "    release(clock);\n", "    borrow clock as &c in {\n        clock_ms(c);\n    }\n    release(clock);\n", 1)],
       [], kind="authority"),
@@ -128,7 +127,7 @@ MUTANTS = [
       [("manifests/ml.authority.json", '"name": "heap",', '"name": "heapx",', 1)], ["test_authority"], kind="manifest"),
     # ------------------------------------------------------------------ H1: honesty
     M("h1-a-model-in-the-table-that-is-not-built", "H1", "logreg is a choice of --model, with no implementation",
-      [("tools/ml/spec.cho", "model||choice:constant|", "model||choice:constant/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
+      [("tools/ml/spec.cho", "model||choice:constant/linear/logistic|", "model||choice:constant/linear/logistic/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
     M("h1-an-exponent-is-read-as-a-prefix", "H1", "1e5 is read as 1", [("tools/ml/csvcell.cho", "return (4, 0, 0, 0);", "return (0, 1, 0, 1);", 1)],
       ["test_honesty"]),
     # ------------------------------------------------------------------ RD7: the constant model on floats (docs/reader.md section 5)
@@ -194,8 +193,10 @@ def table_sources():
 
 
 def build(tree):
-    files = (sorted(glob.glob(str(tree / "lib/core/*.cho"))) + [str(tree / "lib/linalg/tensor.cho")] + sorted(glob.glob(str(tree / "build/deps/*.cho"))) +
-             [str(tree / "generated/ml/built.cho")] + sorted(glob.glob(str(tree / "tools/ml/*.cho"))) + table_sources())
+    g = lambda pat: sorted(glob.glob(str(tree / pat)))
+    files = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
+             g("lib/models/logistic/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(tree / "generated/ml/built.cho")] +
+             g("tools/ml/*.cho") + table_sources())
     out = tree / "build" / "ml"
     p = subprocess.run([compiler(), "build", "--std", *files, "-o", str(out)], capture_output=True, text=True, cwd=tree)
     return out if p.returncode == 0 else None, p.stdout + p.stderr

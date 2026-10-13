@@ -9,7 +9,7 @@ import os
 import random
 import unittest
 
-from fixtures import CASES, REG, CLS
+from fixtures import CASES, REG, CLS, LCLS, LIN, LINMIS
 from harness import TRAPS, Sandbox, introspect, run, spec, validate
 
 T = spec.tables()
@@ -18,6 +18,10 @@ FLAGS = ["--" + f["name"] for f in T["flags"]] + ["--", "-", "-x", "---", "--=",
 VALUES = ["1", "0", "-1", "1000", "99999999999999999999", "18446744073709551616", "", "..", "../x", "a/../b", "./x", "a//b", "a/",
           "/etc/passwd", "/dev/null", "/nonexistent", "a" * 5000, "reg.csv", "cls.csv", "m.cml", "c.cml", "bad.cml", "sub", "sub/reg.csv",
           "missing", "y", "lab", "id", "x", "id,x", "y,y", ",", ",,", "\n", "\x01", "\xe9", "\xff", "constant", "regression", "classification",
+          "linear", "logistic", "train=0.8", "train=2", "train=.5", "train=0.123456789", "train=", "0.5", "-0.5", "1e400", "nan", "1e-5", "p.txt", "lin.csv",
+          "lcls.csv", "lin.cml", "log.cml", "impute column=* strategy=mean", "scale column=a kind=standard;impute column=b strategy=median",
+          "scale column=zzz kind=minmax", "model kind=linear", ";", ";;;", "encode column=a kind=onehot max-categories=0", "bucket column=a kind=quantile bins=300",
+          "impute column=a strategy=constant", "scale column= kind=minmax", "a=b=c", "# c", "\n",
           "json", "text", "tab", "log.ndjson", "Y", "a b", "--x", "-1e5", "0x10", "1_0", "\ud800".encode("utf-8", "surrogatepass").decode("latin-1")]
 
 
@@ -32,7 +36,12 @@ def sandbox():
     sb.write("cls.csv", CLS)
     (sb.dir / "sub").mkdir()
     sb.write("sub/reg.csv", REG)
+    sb.write("lin.csv", LIN)
+    sb.write("lcls.csv", LCLS)
+    sb.write("p.txt", "impute column=* strategy=mean\nscale column=* kind=standard\nmodel kind=linear l2=0.1\n")
     assert sb.run("fit", "--target", "y", "--output", "m.cml", "reg.csv").status == 0
+    assert sb.run("fit", "--model", "linear", "--target", "y", "--output", "lin.cml", "lin.csv").status == 0
+    assert sb.run("fit", "--model", "logistic", "--step", "scale column=* kind=standard", "--target", "lab", "--output", "log.cml", "lcls.csv").status == 0
     assert sb.run("fit", "--task", "classification", "--target", "lab", "--output", "c.cml", "cls.csv").status == 0
     sb.write("bad.cml", sb.read("m.cml")[:100])
     return sb
@@ -111,6 +120,20 @@ class Fuzz(unittest.TestCase):
             self.check([verb])
             self.check([verb, "--"])
             self.check([verb, "--", *base])
+
+    def test_every_flag_of_the_planned_models_every_mistake(self):
+        for base in (["fit", "--model", "linear", "--target", "y", "--output", "o.cml", "lin.csv"],
+                     ["fit", "--model", "logistic", "--step", "scale column=* kind=standard", "--target", "lab", "--output", "o.cml", "lcls.csv"],
+                     ["fit", "--plan", "p.txt", "--target", "y", "--output", "o.cml", "lin.csv"],
+                     ["predict", "--model-file", "lin.cml", "lin.csv"], ["predict", "--model-file", "log.cml", "--proba", "lcls.csv"],
+                     ["eval", "--model-file", "lin.cml", "lin.csv"], ["eval", "--model-file", "log.cml", "lcls.csv"]):
+            for flag in ("--plan", "--step", "--l2", "--iterations", "--positive", "--split", "--seed", "--threads", "--proba", "--model", "--task"):
+                self.check([*base, flag])
+                self.check([*base, flag, flag])
+                for v in VALUES[:0] + ["", "1", "0", "-1", "65", "99999999999999999999", "0.5", "-0.5", "1e400", "nan", "linear", "logistic", "train=0.8", "train=2",
+                                       "train=0.01", "p.txt", "..", "impute column=* strategy=mean", "scale column=zzz kind=minmax", ";", "model kind=linear"]:
+                    self.check([*base, flag, v])
+                    self.check([*base, flag + "=" + v])
 
     def test_seeded_vectors(self):
         rng = random.Random(int(os.environ.get("FUZZ_SEED", "20261012")))
