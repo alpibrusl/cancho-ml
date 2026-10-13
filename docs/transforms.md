@@ -65,7 +65,8 @@ of about `n * eps * |c|` on a constant column and is reported in X4.
 * The categories of a column are its **distinct non-missing values**, sorted ascending as numbers (`-0.0` and `0.0` are one category,
   stored as `+0.0`). Equality is `==` on the double. There is no text category in this slice: the reader (`docs/reader.md`) gives
   numbers, and a text column is `--drop`ped. *(Stage 1 of issue 21, `docs/categorical.md`, gave the reader declared text columns, `fit --cat`, with their
-  own dictionary, bound and ids; `encode` reading them is stage 2 and does not exist yet.)*
+  own dictionary, bound and ids; stage 2 (`docs/categorical-encoders.md`) gives `encode` on those columns, a rare bucket, `freq` and `hash`; the numeric `encode` of this
+  section is unchanged, byte for byte.)*
 * **Bound.** `max-categories` (default 64, `1 .. 1024`): more distinct values is `ml.limit.categories` at fit. The sorted copy is
   `n` doubles, `n` already under the matrix caps; the output width (`columns - selected + categories`) is compared with the column cap
   by `matrix.make` before the output is allocated (`ml.input.too-many-columns`).

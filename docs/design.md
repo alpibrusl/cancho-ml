@@ -366,7 +366,8 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.limit.string-pool` | 8 | the distinct categories of all the categorical columns together would take more than `--max-pool-bytes` (default 1 MiB, ceiling 8 MiB) | none |
 | `ml.limit.categorical-columns` | 8 | `--cat` names more columns than `--max-cat-columns` (default 128, ceiling 4,096), seen at the header | none |
 | `ml.input.invalid-utf8` | 8 | a cell of a categorical column is not well-formed UTF-8; line, column, name and byte offset in `detail` | none: re-encode the file, or remove the column from `--cat` and drop it |
-| `ml.input.categorical-not-encoded` | 8 | a column named by `--cat` was read and no step reads text columns yet (stage 2); names, category counts and the SHA-256 of the canonical vocabulary dump in `detail` | none: an `encode` step (stage 2), or `--drop` |
+| `ml.input.categorical-not-encoded` | 8 | a column named by `--cat` is read by no step of the plan (since stage 2; at stage 1 no step could); names, category counts and the SHA-256 of the canonical vocabulary dump in `detail` | none: an `encode`, `freq` or `hash` step, or `--drop` |
+| `ml.model.vocabulary-not-stored` | 8 | a fit with a categorical step would write a model file and the file cannot hold the vocabulary (stage 3 of issue 21); nothing is written; the columns in `detail` | none: `--split train=F` fits and scores without a file, or `--dry-run` |
 
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
 
@@ -569,5 +570,5 @@ generated from the manifests). The summation order, the registry of kinds and th
 
 Text columns are **declared** (`--cat NAMES` of `fit`, never inferred), read into a dictionary sorted bytewise (`lib/core/dict.cho`: a sorted array with binary search, no hash) and an `i64` id
 tensor beside the float matrix (`lib/core/catmat.cho`), with a missing bitmap, `--na-values`, and five limits each refused before the thing it limits exists (categories 64/1,024, bytes 255/65,536,
-pool 1 MiB/8 MiB, columns 128/4,096, and the id cells in `--max-cells`). Until stage 2's encode steps read text columns, a fit that declares one is refused with `ml.input.categorical-not-encoded`.
+pool 1 MiB/8 MiB, columns 128/4,096, and the id cells in `--max-cells`). Stage 2 (`docs/categorical-encoders.md`) built the steps that read them: `encode` on a categorical column (one-hot or label, with the rare bucket `min-count`, `missing`, `unknown`), `freq` and `hash`, in `lib/transforms/catenc.cho` and `lib/pipeline/mixed.cho`; a declared column that no step reads is refused with `ml.input.categorical-not-encoded`, and a fit that would write a file is refused with `ml.model.vocabulary-not-stored` until stage 3.
 The reader's column kind 4 and the schema type code 3 are registered in `lib/core/kinds.cho`. No model file changes. Stages 2 to 4 of the issue are not built.

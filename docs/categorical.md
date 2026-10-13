@@ -6,9 +6,10 @@ the conditions.** Tags as in `design.md`: **[choice]** a decision the maintainer
 printed by a script here, **[open]** not decided. The decisions of the issue (alpibrusl/cancho-ml#21) are binding and are quoted where they apply.
 
 Stage 1 of four. This stage reads **declared** text columns into a bounded dictionary and an integer id matrix, with limits and refusals. It does **not**
-encode anything (stage 2), store anything in a model file (stage 3) or split on categories (stage 4). Until stage 2 a declared categorical column is read,
-checked and then refused by `ml fit` with `ml.input.categorical-not-encoded` (section 8); the dictionary and the ids are reached through the library, the
-loader API (section 7) and `reader-check`, which is how the gates see them.
+encode anything (stage 2), store anything in a model file (stage 3) or split on categories (stage 4). *Stage 2 is built (`docs/categorical-encoders.md`): the steps
+`encode`, `freq` and `hash` read these columns, and the sections below that say "until stage 2" describe stage 1 as it was merged; `ml.input.categorical-not-encoded` now
+names the declared columns that no step of a planned model reads, and is still what `--model constant` answers (it has no steps).* The dictionary and the ids are reached
+through the library, the loader API (section 7) and `reader-check`, which is how the gates see them.
 
 ## 1. The gates (fixed before the code; each can fail, section 9 shows it failing)
 
@@ -130,7 +131,7 @@ begins, as for numbers). The libraries answer a code (`ml.refuse`, band 1 to 99,
 | `ml.input.invalid-utf8` | a cell of a categorical column is not well-formed UTF-8 | `line`, `column`, `name`, `offset` (byte offset of the first bad byte in the cell) | `retry` with `--drop NAME` when that is plain; the hint says to re-encode the file as UTF-8 |
 | `ml.input.unknown-column` (reused, exit 3 as before) | `--cat` names a column that is not in the header | `flag`, `position`, `name` | none |
 | `args.conflict` (reused) | `--cat` names the target, a dropped column or a `--float` column; `--na-values` or a limit without `--cat` | `flags` | none |
-| `ml.input.categorical-not-encoded` | a declared column and no step reads text columns (all of fit until stage 2) | `columns` (the names), `categories` (their counts), `vocabulary_sha256` | none: the hint names `encode column=NAME kind=onehot` (stage 2) and `--drop NAME` |
+| `ml.input.categorical-not-encoded` | a declared column and no step reads text columns (all of fit at stage 1; since stage 2, the columns no step of a planned model reads, and every fit of `--model constant`) | `columns` (the names), `categories` (their counts), `vocabulary_sha256` | none: the hint names `encode column=NAME kind=onehot` (stage 2) and `--drop NAME` |
 | `ml.schema.mismatch` (reused; library only in this stage) | the loader of `predict` is given a vocabulary with a column the file does not have | the missing names | none |
 | `args.bad-value` (reused) | a bad `--na-values` list: an empty marker, more than 64, one over 255 bytes | `flag`, `reason` | none |
 
@@ -257,7 +258,7 @@ branch does); after they are merged, `python3 scripts/site.py` rewrites exactly 
    given; `unseen` counted per column; every limit already enforced, so an `encode` over a categorical column needs no limit of its own beyond its output width
    (`k` columns for one-hot against `--max-columns`); the float matrix holds only numeric columns, so a plan's column resolution must learn that a name may
    be a categorical column (the schema has the kind 4 for it); `--cat` is the only way a column becomes categorical.
-2. **Whether `encode`'s own `max-categories` should remain** now that the reader holds a bound of the same name. Today both exist and the smaller wins; stage 2 decides.
+2. **Whether `encode`'s own `max-categories` should remain** now that the reader holds a bound of the same name. *Answered at stage 2 (`categorical-encoders.md` section 3.1): both stay and they compose. The reader's bound limits the distinct strings it will intern; the step's bound limits the effective categories after the rare bucket, so `min-count` can bring a column of 500 strings under a step bound of 32.*
 3. **Empty as a category** (the issue's "unless declared otherwise") is not built (section 2).
 4. **`--na-values` for numeric columns** is not built: the stored model cannot carry markers until stage 3, and a marker honoured at fit and not at predict would skew silently.
 5. **Speed of the sorted array** is not measured.
