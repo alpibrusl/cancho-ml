@@ -86,3 +86,46 @@ Printed by the two drivers built from each tree; "same" means the same hash.
 * **Metrics, trees, forests, the random generator and splits, the command line, model files of kinds 1 to 3:** same bytes (not re-measured one by one: the gates that pin them, below, pass unchanged).
 
 A model or a prediction made before this change therefore differs in the last bits from one made after. There are no shipped models of kinds 4 to 7; `design.md` 17 records that the model file has no field for the order and proposes `meta` + `u32 sum order` (not implemented, format untouched).
+
+## 5. Every gate on the final tree, and the mutants (counts before and after)
+
+Machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python 3.14.5, numpy 2.4.6, scikit-learn 1.8.0; the machine was shared and loaded (the mutant suites ran 8 at a time); no time is quoted, and
+no benchmark was run.
+
+| gate | result on the final tree |
+|---|---|
+| `sh scripts/check.sh` | exit 0 (fmt clean; core 20, exact 7, matrix 2, fsq 3; linalg 8, 4, 2, 5, 2, 8 and the new `t_order` 3 = 32 against 29 before; models 23 (`p_models`); registry 5; `oracle_linalg.py --tree` ok; `--suite` all bits equal, now 98 shapes against 46; `gate_par.sh` thread suite at 1, 2, 3, 4, 8, 16 all bits equal; `gate_models.sh` oracle suite (now 69 configurations at one thread, tails of the lanes added) and thread suite at 1, 2, 4, 8, 16 all bits equal; metrics gate; `check_tree.sh` "GATE passed"; reader gates RD2 to RD6 0 differences, 0 traps; schemas, manifest; conformance 101 tests OK (1 skipped); path gate 69 fixtures, 595 sweep vectors, 2,000 fuzz vectors, 0 failures) |
+| `sklearn_models.py` | "sklearn gate: all PASS" (all comparisons) |
+| `gate_sklearn.py --big` | exit 1 as recorded: G-ref R1 fails; the output equals `docs/bench/gate_sklearn.txt` byte for byte (the trees were not touched) |
+| thread-order mutant | killed (`par-thread-order`, in `mutants_linalg` group par and in `mutants_models`) |
+
+| mutant suite | patterns before | killed / explained survivors before | patterns after | killed / explained survivors after | unexplained |
+|---|---|---|---|---|---|
+| `mutants_core.py` | 50 | 48 / 2 | 50 | 48 / 2 | 0 |
+| `mutants_linalg.py` | 86 | 84 / 2 | 127 (dot 17, axpy 7, gemv 25, syrk 16, chol 26, order 10 new, fuzz 2, par 9, gemm 15) | 125 / 2 | 0 |
+| `mutants_linalg.py oracle` (deliberately wrong oracles) | none | | 11 (tree left fold, carry, block 255, reversed dot and gemv_t, backward ascending, **lanes 2, lanes 8, lane map, lane combine as a left fold, Cholesky panel 16**) | 11 / 0 | 0 |
+| `mutants_models.py` | 67 | 65 / 2 | 81 (14 new for the lanes) | 79 / 2 | 0 |
+| `mutants_metrics.py` | 146 | 138 / 8 | 146 (the six lane patterns re-aimed at `order.cho`) | 138 / 8 | 0 |
+| `mutants_tree.py` | 100 | 94 / 6 | 100 | 94 / 6 | 0 |
+| `mutants_reader.py` | 40 | 36 / 4 | 40 | 36 / 4 | 0 |
+| `mutants_cli.py` | 45 | 45 / 0 | 45 | 45 / 0 | 0 |
+| `mutants_paths.py` (new, task 1) | | | 19 | 19 / 0 | 0 |
+
+The new mutants for the constants and the order: lane count (`order-lanes-2`, `order-lanes-8`), the lane map (`dot-lane-map`, `dot-strided-lane`, `gemvn-lane-map`, `gemvt-lane-map`, `gemvt-generic-lane`,
+`syrk-tile-lane`, `syrk-generic-lane`, `gemm-tile-lane`, `gemm-run-lane`, `chol-generic-lane`, `log-lane-map`, `log-lane-map-halves`, `km-lane-map`, `order-partial-lane-map`), the lane combine order
+(`order-lane-combine-fold`, `order-lane-combine-pairs`, one per kernel's combine: `dot-pair-combine`, `gemvn-combine`, `gemvt-combine`, `syrk-tile-store`, `gemm-combine`, `log-lane-combine-*`, `km-lane-combine`),
+the block size (`order-block-128`, `*-block-hi`, `*-generic-block`, `gemm-block`), the panel (`order-panel-16`, `chol-rows4-panel`, `chol-entry-panel`, `chol-generic-panel`, `chol-entry-step`), the lane start
+and tails (`*-init`, `*-tail*`). The first full run left five survivors; each was analysed, not waved through: three were **equivalent** (swapping the last two lanes inside one addition, `b3 + b2 = b2 + b3`, which is
+the lane combine's commutativity: replaced by a swap across the pairs), one was a start value of `1e-16` absorbed by data of magnitude 1e18 (now `1e30`), and one needed shapes the oracle did not have (rows mod 4 with
+columns mod 4 in `gemv_n`; likewise the lane tails of the logistic Hessian): 52 shapes were added to the linalg oracle and 8 configurations to the model oracle, and the five (then three more in the models) were killed on a rerun of those mutants. The
+`order-lane-combine-swap` mutant (`(l1 + l0) + (l3 + l2)`) was dropped from the list: it is equivalent for the same reason and cannot be killed.
+The explained survivors that remain are the same ones as before the change, plus none: `order-blocks` and `order-level-eq` (linalg), `log-sigmoid-boundary` and `par-models-ragged` (models), the eight of the metrics, six of the trees, four of the reader, two of the core.
+
+## 6. Not done, unresolved, and things to know
+
+* **No benchmark was run** (a serial rerun comes later). Every figure in `linalg.md` section 5 and `models-linear.md` 6 is from the old order. What the lane order costs or buys in scalar cancho is **unmeasured**; the only evidence for the lane count is the C experiment of `simd-ceiling.md`.
+* `scripts/ablate/` (variants that edit the old kernels) and the benchmark scripts were not touched or run; `scripts/c_parity/parity.c` was brought to the lane order and its hashes checked against `linalg-check` on 12 shapes (dot, gemv_n, gemv_t, syrk, chol), but it is not in `check.sh`.
+* Cholesky's panel width `NB = 32` is the one `simd-ceiling.md` fixed; no other width was evaluated (only 16, as a mutant). The scalar cancho Cholesky is not faster for it: nothing was measured.
+* The proposal for a "sum order" field in the model file (`design.md` 17) needs the maintainer; the format was not changed.
+* Equal columns with `l2 = 0` are no longer refused by the linear fit (section 3). If a hard guarantee of refusing dependent columns is wanted it needs a rank test, not a pivot test; not built.
+* Two-dots check: the `ml` tool's own fuzz (`test_fuzz_args.py`) still passes through the shared helper; `tree-check` still answers a bad argument or file size with `#error` and exit 0 (a test driver; only the paths and the missing operands were in scope).
