@@ -1,0 +1,114 @@
+module metrics.regress;
+
+import std.math;
+import metrics.rules;
+import metrics.sums;
+import metrics.classify;
+
+// RMSE, MAE and R-squared (docs/metrics.md section 2.8). Decisive sums by metrics.sums. A refusal is a code of metrics.rules.
+
+// 0 if every element of v is finite (x - x == 0.0 is false for NaN and the infinities)
+pub fn all_finite[&v](v: &v [float]) -> [] bool {
+    var i = 0;
+    while i < len(v) {
+        if v[i] - v[i] != 0.0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn finite(x: float) -> [] bool {
+    return x - x == 0.0;
+}
+
+// the common checks of the three: cap, lengths, size, finiteness. 0 or a code
+fn check[&a, &b](y: &a [float], p: &b [float], cap: int) -> [] int {
+    let c = classify.check_size(len(y), len(p), cap, classify.ceiling_rows());
+    if c != 0 {
+        return c;
+    }
+    if all_finite(y) == false || all_finite(p) == false {
+        return rules.non_finite();
+    }
+    return 0;
+}
+
+// the decisive sum of one kind over n >= 1 rows, with its own workspace
+fn dsum[&h, &a, &b](heap: &!h Heap, kind: int, y: &a [float], p: &b [float], center: float) -> [heap] float {
+    let n = len(y);
+    let buf = box_slice(heap, 256, 0.0);
+    let st = box_slice(heap, 40, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    var out = 0.0;
+    var bb = buf;
+    var ss = st;
+    var ll = lv;
+    borrow mut bb as &!bw in {
+        borrow mut ss as &!sw in {
+            borrow mut ll as &!lw in {
+                out = sums.reduce(kind, y, p, center, n, contents(bw), contents(sw), contents(lw));
+            }
+        }
+    }
+    unbox_slice(heap, bb);
+    unbox_slice(heap, ss);
+    unbox_slice(heap, ll);
+    return out;
+}
+
+pub fn rmse[&h, &a, &b](heap: &!h Heap, y: &a [float], p: &b [float], cap: int) -> [heap] rules.Scored {
+    let c = check(y, p, cap);
+    if c != 0 {
+        return rules.fail(c);
+    }
+    let sse = dsum(heap, sums.kind_sq(), y, p, 0.0);
+    let v = math.sqrt(sse / float_of(len(y)));
+    if finite(v) == false {
+        return rules.fail(rules.undefined());
+    }
+    return rules.ok(v);
+}
+
+pub fn mae[&h, &a, &b](heap: &!h Heap, y: &a [float], p: &b [float], cap: int) -> [heap] rules.Scored {
+    let c = check(y, p, cap);
+    if c != 0 {
+        return rules.fail(c);
+    }
+    let v = dsum(heap, sums.kind_abs(), y, p, 0.0) / float_of(len(y));
+    if finite(v) == false {
+        return rules.fail(rules.undefined());
+    }
+    return rules.ok(v);
+}
+
+pub fn r2[&h, &a, &b](heap: &!h Heap, y: &a [float], p: &b [float], cap: int) -> [heap] rules.Scored {
+    let c = check(y, p, cap);
+    if c != 0 {
+        return rules.fail(c);
+    }
+    let n = len(y);
+    var constant = true;
+    var i = 1;
+    while i < n {
+        if y[i] != y[0] {
+            constant = false;
+        }
+        i = i + 1;
+    }
+    if constant {
+        return rules.fail(rules.undefined());
+    }
+    let mean = dsum(heap, sums.kind_val(), y, p, 0.0) / float_of(n);
+    let sst = dsum(heap, sums.kind_dev(), y, p, mean);
+    let sse = dsum(heap, sums.kind_sq(), y, p, 0.0);
+    if finite(mean) == false || finite(sst) == false || finite(sse) == false || sst == 0.0 {
+        return rules.fail(rules.undefined());
+    }
+    let v = 1.0 - sse / sst;
+    if finite(v) == false {
+        return rules.fail(rules.undefined());
+    }
+    return rules.ok(v);
+}

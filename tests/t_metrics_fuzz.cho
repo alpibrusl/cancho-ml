@@ -1,0 +1,214 @@
+import std.test;
+import ml.rng;
+import metrics.rules;
+import metrics.splits;
+import metrics.classify;
+import metrics.rank;
+import metrics.regress;
+import metrics.logloss;
+import mt;
+
+// gate F1 (docs/metrics.md): hostile inputs through every entry. No call may trap; every answer is a code of metrics.rules, and an
+// answer that is a value is finite and in its range. A trap ends the test binary, so "passes" means no trap. A test answers 0 to pass.
+
+fn valid(r: rules.Scored, lo: float, hi: float) -> [] int {
+    if r.code < 0 || r.code > rules.count() {
+        return 1;
+    }
+    if r.code == 0 {
+        if r.v - r.v != 0.0 || r.v < lo || r.v > hi {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+fn test_fuzz_metrics[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var round = 0;
+    var rmse_ok = 0;
+    var auc_ok = 0;
+    var ll_ok = 0;
+    while round < 4000 {
+        let seed = round * 7919 + 13;
+        let n = mt.draw(seed, 0) >> 1 & 511;
+        let wide = round % 2 == 0;
+        var fy = box_slice(heap, n + 1, 0.0);
+        var fp = box_slice(heap, n + 1, 0.0);
+        var iy = box_slice(heap, n + 1, 0);
+        var ip = box_slice(heap, n + 1, 0);
+        var pr = box_slice(heap, n + 1, 0.0);
+        borrow mut fy as &!a in {
+            borrow mut fp as &!b in {
+                borrow mut iy as &!c in {
+                    borrow mut ip as &!d in {
+                        borrow mut pr as &!e in {
+                            var i = 0;
+                            while i < n {
+                                // some rounds are mostly clean so that value paths are exercised too
+                                var hostile = round % 4 < 2;
+                                if hostile {
+                                    contents(a)[i] = mt.hostile(mt.draw(seed + 1, i));
+                                    contents(b)[i] = mt.hostile(mt.draw(seed + 2, i));
+                                    contents(e)[i] = mt.hostile(mt.draw(seed + 5, i));
+                                } else {
+                                    contents(a)[i] = rng.unit(mt.draw(seed + 1, i));
+                                    contents(b)[i] = rng.unit(mt.draw(seed + 2, i));
+                                    contents(e)[i] = (rng.unit(mt.draw(seed + 5, i)) + 1.0) * 0.5;
+                                }
+                                contents(c)[i] = mt.label(mt.draw(seed + 3, i), wide);
+                                contents(d)[i] = mt.label(mt.draw(seed + 4, i), wide);
+                                i = i + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        borrow fy as &fyr in {
+            borrow fp as &fpr in {
+                borrow iy as &iyr in {
+                    borrow ip as &ipr in {
+                        borrow pr as &prr in {
+                            let y = contents(fyr)[0..n];
+                            let p = contents(fpr)[0..n];
+                            let ly = contents(iyr)[0..n];
+                            let lp = contents(ipr)[0..n];
+                            let pb = contents(prr)[0..n];
+                            let pos = mt.label(mt.draw(seed, 9), wide);
+                            bad = bad + valid(regress.rmse(heap, y, p, 600), 0.0, 1.0e308);
+                            if regress.rmse(heap, y, p, 600).code == 0 {
+                                rmse_ok = rmse_ok + 1;
+                            }
+                            if rank.auc(heap, ly, y, pos, 600).code == 0 {
+                                auc_ok = auc_ok + 1;
+                            }
+                            if logloss.logloss(heap, ly, pb, pos, 600).code == 0 {
+                                ll_ok = ll_ok + 1;
+                            }
+                            bad = bad + valid(regress.mae(heap, y, p, 600), 0.0, 1.0e308);
+                            bad = bad + valid(regress.r2(heap, y, p, 600), 0.0 - 1.0e308, 1.0);
+                            bad = bad + valid(classify.accuracy(ly, lp, 600), 0.0, 1.0);
+                            bad = bad + valid(classify.precision(ly, lp, pos, 600), 0.0, 1.0);
+                            bad = bad + valid(classify.recall(ly, lp, pos, 600), 0.0, 1.0);
+                            bad = bad + valid(classify.f1(ly, lp, pos, 600), 0.0, 1.0);
+                            bad = bad + valid(rank.auc(heap, ly, y, pos, 600), 0.0, 1.0);
+                            bad = bad + valid(rank.auc(heap, ly, pb, pos, 600), 0.0, 1.0);
+                            bad = bad + valid(logloss.logloss(heap, ly, pb, pos, 600), 0.0, 40.0);
+                            // a cap below n is refused with the right code and nothing is allocated for it
+                            if n > 5 {
+                                let r = rank.auc(heap, ly, y, pos, 5);
+                                if r.code != rules.too_many_rows() {
+                                    bad = bad + 1;
+                                }
+                            }
+                            // lengths that differ
+                            if n > 1 {
+                                let r = regress.rmse(heap, y, p[0..n - 1], 600);
+                                if r.code != rules.length_mismatch() {
+                                    bad = bad + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, fy);
+        unbox_slice(heap, fp);
+        unbox_slice(heap, iy);
+        unbox_slice(heap, ip);
+        unbox_slice(heap, pr);
+        round = round + 1;
+    }
+    // the fuzz must reach the value paths too, or it proves little
+    if rmse_ok < 1000 || auc_ok < 100 || ll_ok < 100 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn code_ok(c: int) -> [] int {
+    if c < 0 || c > rules.count() {
+        return 1;
+    }
+    return 0;
+}
+
+// splits with hostile parameters: any n, k, n_test, cap, repeat, seed; the output slice is small or empty on purpose
+fn test_fuzz_splits[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var round = 0;
+    var out = box_slice(heap, 70, 0);
+    var lab = box_slice(heap, 70, 0);
+    borrow mut lab as &!lw in {
+        var i = 0;
+        while i < 64 {
+            contents(lw)[i] = mt.label(mt.draw(5, i), round % 2 == 0);
+            i = i + 1;
+        }
+    }
+    borrow mut out as &!ow in {
+        borrow lab as &lr in {
+            while round < 6000 {
+                let seed = mt.draw(round, 1);
+                let wide_n = round % 3 == 0;
+                var n = (mt.draw(round, 2) >> 1 & 9223372036854775807) % 80;
+                var k = (mt.draw(round, 3) >> 1 & 9223372036854775807) % 90 - 5;
+                var cap = (mt.draw(round, 4) >> 1 & 9223372036854775807) % 100 - 5;
+                var rep = (mt.draw(round, 5) >> 1 & 9223372036854775807) % 5 - 1;
+                if wide_n {
+                    n = mt.draw(round, 6);
+                    k = mt.draw(round, 7);
+                    cap = mt.draw(round, 8);
+                    rep = mt.draw(round, 9);
+                }
+                var m = n;
+                if m < 0 || m > 64 {
+                    m = round % 65;
+                }
+                bad = bad + code_ok(splits.kfold(heap, n, k, seed, rep, cap, contents(ow)[0..m]));
+                bad = bad + code_ok(splits.train_test(heap, n, k, seed, rep, cap, contents(ow)[0..m]));
+                bad = bad + code_ok(splits.stratified(heap, contents(lr)[0..m], k, seed, rep, cap, contents(ow)[0..m]));
+                bad = bad + code_ok(splits.n_test_for(n, k, cap) * 0);
+                round = round + 1;
+            }
+        }
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, lab);
+    return bad;
+}
+
+// limits before allocation: an n no heap could hold is refused from the number alone
+fn test_huge_n_is_refused_before_allocating[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var out = box_slice(heap, 4, 0);
+    borrow mut out as &!ow in {
+        var big = 1099511627776;
+        while big < 9223372036854775807 / 2 {
+            if splits.kfold(heap, big, 2, 1, 0, 10000000, contents(ow)[0..3]) != rules.too_many_rows() {
+                bad = bad + 1;
+            }
+            if splits.train_test(heap, big, 1, 1, 0, 10000000, contents(ow)[0..3]) != rules.too_many_rows() {
+                bad = bad + 1;
+            }
+            big = big * 7;
+        }
+        if splits.kfold(heap, 9223372036854775807, 2, 1, 0, 1073741824, contents(ow)[0..3]) != rules.too_many_rows() {
+            bad = bad + 1;
+        }
+        // a cap above its ceiling is out of range, even for a small n
+        if splits.kfold(heap, 3, 2, 1, 0, 1073741825, contents(ow)[0..3]) != rules.out_of_range() {
+            bad = bad + 1;
+        }
+        if splits.kfold(heap, 1000, 2, 1, 0, 999, contents(ow)[0..3]) != rules.too_many_rows() {
+            bad = bad + 1;
+        }
+        if splits.kfold(heap, 0 - 9223372036854775807, 2, 1, 0, 100, contents(ow)[0..3]) != rules.out_of_range() {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, out);
+    return bad;
+}

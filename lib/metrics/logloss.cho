@@ -1,0 +1,104 @@
+module metrics.logloss;
+
+import std.math;
+import metrics.rules;
+import metrics.sums;
+import metrics.classify;
+import metrics.regress;
+import linalg.order;
+
+// Binary log-loss (docs/metrics.md section 2.8): the clip of scikit-learn, std.math.log, the decisive sum of metrics.sums.
+
+// eps = 2^-52 (numpy's finfo(float64).eps); 1 - eps is exact
+pub fn eps() -> [] float {
+    return 2.220446049250313e-16;
+}
+
+// the term of one row: -log(clip(p)) for a positive row, -log(clip(1.0 - p)) for a negative one
+pub fn term(is_pos: bool, p: float) -> [] float {
+    var x = p;
+    if is_pos == false {
+        x = 1.0 - p;
+    }
+    if x < eps() {
+        x = eps();
+    }
+    if x > 1.0 - eps() {
+        x = 1.0 - eps();
+    }
+    return 0.0 - math.log(x);
+}
+
+// terms of rows [at, at + m) into buf
+fn fill[&y, &p, &o](labels: &y [int], prob: &p [float], pos: int, at: int, m: int, buf: &!o [float]) -> [] int {
+    var j = 0;
+    while j < m {
+        buf[j] = term(labels[at + j] == pos, prob[at + j]);
+        j = j + 1;
+    }
+    return 0;
+}
+
+pub fn logloss[&h, &y, &p](heap: &!h Heap, labels: &y [int], prob: &p [float], pos: int, cap: int) -> [heap] rules.Scored {
+    let n = len(labels);
+    let c = classify.check_size(n, len(prob), cap, classify.ceiling_rows());
+    if c != 0 {
+        return rules.fail(c);
+    }
+    if regress.all_finite(prob) == false {
+        return rules.fail(rules.non_finite());
+    }
+    // probabilities in [0, 1]; the labels are pos and at most one other value
+    var other = pos;
+    var have = false;
+    var i = 0;
+    while i < n {
+        if prob[i] < 0.0 || prob[i] > 1.0 {
+            return rules.fail(rules.bad_probability());
+        }
+        let t = labels[i];
+        if t != pos {
+            if have == false {
+                other = t;
+                have = true;
+            } else if t != other {
+                return rules.fail(rules.not_binary());
+            }
+        }
+        i = i + 1;
+    }
+    let buf = box_slice(heap, 256, 0.0);
+    let st = box_slice(heap, 40, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    var bb = buf;
+    var ss = st;
+    var ll = lv;
+    var total = 0.0;
+    borrow mut bb as &!bw in {
+        borrow mut ss as &!sw in {
+            borrow mut ll as &!lw in {
+                let b = contents(bw);
+                let s = contents(sw);
+                let l = contents(lw);
+                var sp = 0;
+                var at = 0;
+                while at < n {
+                    var m = n - at;
+                    if m > 256 {
+                        m = 256;
+                    }
+                    fill(labels, prob, pos, at, m, b);
+                    s[sp] = sums.block_partial(b, m);
+                    sp = order.settle(s, l, sp, 1);
+                    at = at + m;
+                }
+                order.finish(s, sp, 1);
+                total = s[0];
+            }
+        }
+    }
+    unbox_slice(heap, bb);
+    unbox_slice(heap, ss);
+    unbox_slice(heap, ll);
+    return rules.ok(total / float_of(n));
+}
