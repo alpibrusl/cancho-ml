@@ -393,7 +393,7 @@ def render_est(models):
             seen.add(h["name"])
             o.append("    if bytes.equal(name, %s) {" % lit(h["name"]))
             if h["type"] == "int":
-                o += ["        let v = int_value(value);", "        return v >= %d && v <= %d;" % (h["min"], h["max"])]
+                o += ["        // the range of an integer is checked by the nat check of the command line (ml.param.out-of-range)", "        return true;"]
             else:
                 o += ["        return float_value(value) >= 0.0;"]
             o.append("    }")

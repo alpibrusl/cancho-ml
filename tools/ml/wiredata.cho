@@ -335,82 +335,120 @@ pub fn fine() -> [] Failed {
     return Failed { code: 0, name: "" };
 }
 
-// The metrics of a regression: rmse, mae, r2 (lib/metrics), into `w` as the members of an object and into `plain` as lines. y and p are the doubles.
-pub fn regression_metrics[&h, &y, &p](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, yv: &y [float], pv: &p [float], cap: int) -> [heap] (json.Writer, buffer.Buffer, Failed) {
+// One metric: its value as the member `key` of the object and a line of the text, or null and `undefined` when the library says it has no value
+// (metrics.rules.undefined: a zero denominator, a constant target for R-squared, a non-finite result). Any other refusal stops the eval.
+// (writer, text, the names of the undefined metrics so far, the refusal code or 0)
+fn member[&h, &u](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, key: &static [byte], label: &static [byte], sc: rules.Scored, undefined: buffer.Buffer) -> [heap] (json.Writer, buffer.Buffer, buffer.Buffer, int) {
     var o = w;
     var t = plain;
+    var u = undefined;
+    if sc.code == 0 {
+        o = json.put_key(heap, o, key);
+        o = verbs.put_double(heap, o, bits_of(sc.v));
+        t = verbs.line_double(heap, t, label, bits_of(sc.v));
+        return (o, t, u, 0);
+    }
+    if sc.code == rules.undefined() {
+        o = json.put_key(heap, o, key);
+        o = json.put_null(heap, o);
+        t = buffer.append(heap, t, key);
+        t = buffer.append(heap, t, " undefined\n");
+        u = buffer.append(heap, u, key);
+        u = buffer.push(heap, u, byte_of(','));
+        return (o, t, u, 0);
+    }
+    return (o, t, u, sc.code);
+}
+
+// The metrics of a regression: rmse, mae, r2 (lib/metrics), as the members of an object into `w` and lines into `plain`; the names of the undefined ones,
+// comma separated, in `undefined`
+pub fn regression_metrics[&h, &y, &p](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, undefined: buffer.Buffer, yv: &y [float], pv: &p [float], cap: int) -> [heap] (json.Writer, buffer.Buffer, buffer.Buffer, Failed) {
+    var o = w;
+    var t = plain;
+    var u = undefined;
+    var code = 0;
     let a = regress.rmse(heap, yv, pv, cap);
-    if a.code != 0 {
-        return (o, t, Failed { code: a.code, name: "rmse" });
+    let (o1, t1, u1, c1) = member(heap, o, t, "rmse", "rmse ", a, u);
+    o = o1;
+    t = t1;
+    u = u1;
+    if c1 != 0 {
+        return (o, t, u, Failed { code: c1, name: "rmse" });
     }
     let b = regress.mae(heap, yv, pv, cap);
-    if b.code != 0 {
-        return (o, t, Failed { code: b.code, name: "mae" });
+    let (o2, t2, u2, c2) = member(heap, o, t, "mae", "mae ", b, u);
+    o = o2;
+    t = t2;
+    u = u2;
+    if c2 != 0 {
+        return (o, t, u, Failed { code: c2, name: "mae" });
     }
     let c = regress.r2(heap, yv, pv, cap);
-    if c.code != 0 {
-        return (o, t, Failed { code: c.code, name: "r2" });
+    let (o3, t3, u3, c3) = member(heap, o, t, "r2", "r2 ", c, u);
+    o = o3;
+    t = t3;
+    u = u3;
+    if c3 != 0 {
+        return (o, t, u, Failed { code: c3, name: "r2" });
     }
-    o = json.put_key(heap, o, "rmse");
-    o = verbs.put_double(heap, o, bits_of(a.v));
-    o = json.put_key(heap, o, "mae");
-    o = verbs.put_double(heap, o, bits_of(b.v));
-    o = json.put_key(heap, o, "r2");
-    o = verbs.put_double(heap, o, bits_of(c.v));
-    t = verbs.line_double(heap, t, "rmse ", bits_of(a.v));
-    t = verbs.line_double(heap, t, "mae ", bits_of(b.v));
-    t = verbs.line_double(heap, t, "r2 ", bits_of(c.v));
-    return (o, t, fine());
+    return (o, t, u, fine());
 }
 
 // The metrics of a binary classification (lib/metrics): accuracy, precision, recall, F1, ROC-AUC, log-loss. yt and yp are labels, `score` is the probability of
 // the label `pos`, which is one of the two labels.
-pub fn classification_metrics[&h, &y, &p, &s](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, yt: &y [int], yp: &p [int], score: &s [float], pos: int, cap: int) -> [heap] (json.Writer, buffer.Buffer, Failed) {
+pub fn classification_metrics[&h, &y, &p, &s](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, undefined: buffer.Buffer, yt: &y [int], yp: &p [int], score: &s [float], pos: int, cap: int) -> [heap] (json.Writer, buffer.Buffer, buffer.Buffer, Failed) {
     var o = w;
     var t = plain;
+    var u = undefined;
     let a = classify.accuracy(yt, yp, cap);
-    if a.code != 0 {
-        return (o, t, Failed { code: a.code, name: "accuracy" });
+    let (o1, t1, u1, c1) = member(heap, o, t, "accuracy", "accuracy ", a, u);
+    o = o1;
+    t = t1;
+    u = u1;
+    if c1 != 0 {
+        return (o, t, u, Failed { code: c1, name: "accuracy" });
     }
     let pr = classify.precision(yt, yp, pos, cap);
-    if pr.code != 0 {
-        return (o, t, Failed { code: pr.code, name: "precision" });
+    let (o2, t2, u2, c2) = member(heap, o, t, "precision", "precision ", pr, u);
+    o = o2;
+    t = t2;
+    u = u2;
+    if c2 != 0 {
+        return (o, t, u, Failed { code: c2, name: "precision" });
     }
     let rc = classify.recall(yt, yp, pos, cap);
-    if rc.code != 0 {
-        return (o, t, Failed { code: rc.code, name: "recall" });
+    let (o3, t3, u3, c3) = member(heap, o, t, "recall", "recall ", rc, u);
+    o = o3;
+    t = t3;
+    u = u3;
+    if c3 != 0 {
+        return (o, t, u, Failed { code: c3, name: "recall" });
     }
     let f1 = classify.f1(yt, yp, pos, cap);
-    if f1.code != 0 {
-        return (o, t, Failed { code: f1.code, name: "f1" });
+    let (o4, t4, u4, c4) = member(heap, o, t, "f1", "f1 ", f1, u);
+    o = o4;
+    t = t4;
+    u = u4;
+    if c4 != 0 {
+        return (o, t, u, Failed { code: c4, name: "f1" });
     }
     let au = rank.auc(heap, yt, score, pos, cap);
-    if au.code != 0 {
-        return (o, t, Failed { code: au.code, name: "roc_auc" });
+    let (o5, t5, u5, c5) = member(heap, o, t, "roc_auc", "roc_auc ", au, u);
+    o = o5;
+    t = t5;
+    u = u5;
+    if c5 != 0 {
+        return (o, t, u, Failed { code: c5, name: "roc_auc" });
     }
     let ll = logloss.logloss(heap, yt, score, pos, cap);
-    if ll.code != 0 {
-        return (o, t, Failed { code: ll.code, name: "log_loss" });
+    let (o6, t6, u6, c6) = member(heap, o, t, "log_loss", "log_loss ", ll, u);
+    o = o6;
+    t = t6;
+    u = u6;
+    if c6 != 0 {
+        return (o, t, u, Failed { code: c6, name: "log_loss" });
     }
-    o = json.put_key(heap, o, "accuracy");
-    o = verbs.put_double(heap, o, bits_of(a.v));
-    o = json.put_key(heap, o, "precision");
-    o = verbs.put_double(heap, o, bits_of(pr.v));
-    o = json.put_key(heap, o, "recall");
-    o = verbs.put_double(heap, o, bits_of(rc.v));
-    o = json.put_key(heap, o, "f1");
-    o = verbs.put_double(heap, o, bits_of(f1.v));
-    o = json.put_key(heap, o, "roc_auc");
-    o = verbs.put_double(heap, o, bits_of(au.v));
-    o = json.put_key(heap, o, "log_loss");
-    o = verbs.put_double(heap, o, bits_of(ll.v));
-    t = verbs.line_double(heap, t, "accuracy ", bits_of(a.v));
-    t = verbs.line_double(heap, t, "precision ", bits_of(pr.v));
-    t = verbs.line_double(heap, t, "recall ", bits_of(rc.v));
-    t = verbs.line_double(heap, t, "f1 ", bits_of(f1.v));
-    t = verbs.line_double(heap, t, "roc_auc ", bits_of(au.v));
-    t = verbs.line_double(heap, t, "log_loss ", bits_of(ll.v));
-    return (o, t, fine());
+    return (o, t, u, fine());
 }
 
 // ---------------------------------------------------------------- answers shared by the verbs of the planned models
@@ -544,20 +582,24 @@ pub fn too_wide[&h](heap: &!h Heap, errs: fail.Errors, d: int) -> [heap] fail.Er
 }
 
 pub fn bad_metric[&h](heap: &!h Heap, errs: fail.Errors, f: Failed) -> [heap] fail.Errors {
-    var e = code_error(heap, errs, f.code, 0, 0, 0);
-    return e;
+    var w = open_tag(heap, tag_of(f.code));
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "metric", f.name);
+    return fail.add(heap, errs, w);
 }
 
 // ---------------------------------------------------------------- the scores of a model on a matrix
 
 // The predictions of the model (weights `wv`, labels c0 and c1) on xs, a matrix the stored steps produced, and the metrics against `yv` (the targets as
 // doubles). (the object of the metrics as JSON, the lines for --format text, the refusal, if any). `pos` is the label precision and the rest are about.
-pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], c0: int, c1: int, pos: int, cap: int) -> [heap] (buffer.Buffer, buffer.Buffer, Failed) {
+pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], c0: int, c1: int, pos: int, cap: int) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, Failed) {
     let n = matrix.rows(xs);
     var pred = box_slice(heap, n + 1, 0.0);
     var obj = json.writer(heap, 256);
     obj = json.begin_object(heap, obj);
     var plain = buffer.empty(heap, 64);
+    var und = buffer.empty(heap, 16);
     var fl = fine();
     var code = 0;
     borrow mut pred as &!pw in {
@@ -567,9 +609,10 @@ pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Ma
         fl = Failed { code: code, name: "predict" };
     } else if est.task(kind) == 1 {
         borrow pred as &pr in {
-            let (o2, p2, f2) = regression_metrics(heap, obj, plain, yv[0..n], contents(pr)[0..n], cap);
+            let (o2, p2, u2, f2) = regression_metrics(heap, obj, plain, und, yv[0..n], contents(pr)[0..n], cap);
             obj = o2;
             plain = p2;
+            und = u2;
             fl = f2;
         }
     } else {
@@ -611,9 +654,10 @@ pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Ma
             borrow yt as &tr in {
                 borrow yp as &pr2 in {
                     borrow score as &sr in {
-                        let (o2, p2, f2) = classification_metrics(heap, obj, plain, contents(tr)[0..n], contents(pr2)[0..n], contents(sr)[0..n], pos, cap);
+                        let (o2, p2, u2, f2) = classification_metrics(heap, obj, plain, und, contents(tr)[0..n], contents(pr2)[0..n], contents(sr)[0..n], pos, cap);
                         obj = o2;
                         plain = p2;
+                        und = u2;
                         fl = f2;
                     }
                 }
@@ -626,7 +670,7 @@ pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Ma
     }
     unbox_slice(heap, pred);
     obj = json.end_object(heap, obj);
-    return (json.finish(obj), plain, fl);
+    return (json.finish(obj), plain, und, fl);
 }
 
 pub fn feature_names[&h, &s](heap: &!h Heap, sc: &s schema.Schema) -> [heap] names.Names {

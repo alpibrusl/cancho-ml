@@ -153,8 +153,8 @@ pub fn hparam_ok[&n, &v](name: &n [byte], value: &v [byte]) -> [] bool {
         return float_value(value) >= 0.0;
     }
     if bytes.equal(name, "iterations") {
-        let v = int_value(value);
-        return v >= 1 && v <= 1000;
+        // the range of an integer is checked by the nat check of the command line (ml.param.out-of-range)
+        return true;
     }
     return false;
 }

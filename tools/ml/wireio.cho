@@ -738,7 +738,7 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                                 if true {
                                     borrow yv as &yr in {
                                         borrow xs as &xq in {
-                                            let (mobj, mplain, fl) = wiredata.metrics_block(heap, kind, xq, contents(yr), contents(sr.wv), c0, c1, pos, o.max_rows);
+                                            let (mobj, mplain, mund, fl) = wiredata.metrics_block(heap, kind, xq, contents(yr), contents(sr.wv), c0, c1, pos, o.max_rows);
                                             if fl.code != 0 {
                                                 e = wiredata.bad_metric(heap, e, fl);
                                                 buffer.drop(heap, mplain);
@@ -779,6 +779,7 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                                                 plain = mplain;
                                             }
                                             buffer.drop(heap, mobj);
+                                            buffer.drop(heap, mund);
                                         }
                                     }
                                 }

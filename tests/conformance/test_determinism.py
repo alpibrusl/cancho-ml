@@ -107,17 +107,28 @@ class Determinism(unittest.TestCase):
         self.assertIn(pin.encode(), body)
 
     def test_no_thread_count_changes_a_byte(self):
+        """The test docs/cli.md section 6 asked for before `conc` could appear: linear and logistic, fitted at 1, 2, 4, 8 and 16 threads, give the
+        same model file, the same stdout (it holds no thread count) and the same predictions and metrics."""
         names = [f["name"] for f in spec.tables()["flags"]]
-        if "threads" not in names:
-            self.skipTest("there is no --threads flag: nothing can vary (docs/cli.md section 6)")
+        self.assertIn("threads", names, "the flag the authority row's conc is for")
         sb = self.sandbox()
-        sb.write("reg.csv", REG)
-        models = set()
-        for t in (1, 2, 8, 64):
-            r = sb.run("fit", "--overwrite", "--threads", str(t), "--target", "y", "--output", "m.cml", "reg.csv")
-            self.assertEqual(r.status, 0, r)
-            models.add(sb.read("m.cml"))
-        self.assertEqual(len(models), 1)
+        lin = "".join("%d,%d,%s\n" % (i, (i * 7) % 11, "%.3f" % (1.5 * i - 0.25 * ((i * 7) % 11) + 0.01 * ((i * 13) % 5))) for i in range(1, 400))
+        sb.write("lin.csv", "a,b,y\n" + lin)
+        cls = "".join("%d,%d,%d\n" % (i, (i * 7) % 11, 1 if (i + 3 * ((i * 7) % 11) + (i * 5) % 4) % 9 > 4 else 0) for i in range(1, 400))
+        sb.write("cls.csv", "a,b,lab\n" + cls)
+        for model, target, csv, extra in (("linear", "y", "lin.csv", ["--l2", "0.25", "--split", "train=0.8", "--seed", "5"]),
+                                          ("logistic", "lab", "cls.csv", ["--iterations", "20", "--l2", "0.5", "--step", "scale column=* kind=standard"])):
+            files, outs = set(), set()
+            for t in (1, 2, 4, 8, 16):
+                r = sb.run("fit", "--overwrite", "--model", model, "--threads", str(t), "--target", target, "--output", "m.cml", *extra, csv)
+                self.assertEqual(r.status, 0, (model, t, r))
+                files.add(sb.read("m.cml"))
+                outs.add(r.stdout)
+                e = sb.run("eval", "--model-file", "m.cml", "--threads", str(t), csv)
+                self.assertEqual(e.status, 0, e)
+                outs.add(e.stdout)
+            self.assertEqual(len(files), 1, "%s: the thread count changed the model file" % model)
+            self.assertEqual(len(outs), 2, "%s: the thread count changed an answer" % model)
 
 
 if __name__ == "__main__":

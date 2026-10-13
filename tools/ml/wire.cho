@@ -781,10 +781,11 @@ fn holdout[&h, &g, &dd, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Dat
                     let (yte, bad) = wiredata.take_col(heap, ds.x, sel, 1, ds.tj);
                     borrow yte as &yr in {
                         borrow xs as &xq2 in {
-                            let (mo, mplain, fl) = wiredata.metrics_block(heap, pls.kind, xq2, contents(yr), contents(tr.wv), ds.c0, ds.c1, ds.c1, o.max_rows);
+                            let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, xq2, contents(yr), contents(tr.wv), ds.c0, ds.c1, ds.c1, o.max_rows);
                             buffer.drop(heap, mobj);
                             mobj = mo;
                             buffer.drop(heap, mplain);
+                            buffer.drop(heap, mund);
                             if fl.code != 0 {
                                 e = wiredata.bad_metric(heap, e, fl);
                                 go = false;
