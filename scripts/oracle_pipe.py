@@ -59,13 +59,13 @@ def ulps(a, b):
 
 # ---------------------------------------------------------------- the decisive sums (the package's order, written again)
 K = 256  # block length of the reduction
-LANES = 4  # accumulators inside a block (metrics.sums)
+LANES = 4  # accumulators inside a block (linalg.order.lanes)
 
 
 def ordered_sum(t):
-    """THE order of the package reduction `metrics.sums.reduce` as of this tree: blocks of K terms, LANES accumulators in a block (term i to lane
+    """THE order of the package (lib/linalg/order.cho, docs/linalg.md section 2; reached by `transforms.dsum` through `metrics.sums.reduce`): blocks of K terms, LANES accumulators in a block (term i to lane
     i mod LANES), block partial (l0 + l1) + (l2 + l3), partials combined by a stack that merges equal levels, then right to left. When the package's
-    order changes this is the one function to follow (and `--sums` fails until it does)."""
+    order changes this is the one function to follow (and `--sums` fails until it does; mutants of order.cho are in mutants_pipe.py)."""
     n = len(t)
     stack = []  # (level, value)
     for b in range(0, n, K):

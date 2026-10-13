@@ -32,7 +32,9 @@ sh scripts/gate_models.sh
 # integration (docs/integration.md): the registries of model kinds, stream kinds and refusal codes (two stages must not claim one number), then
 # the gates of the stages that were merged after the first two: lib/metrics (docs/metrics.md section 1) and lib/models/tree
 # (docs/models-tree.md section 8; needs ../ml-data, the files of spike F; its mutants and the scikit-learn comparison run on request)
-$CANCHO test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho tests/t_registry.cho
+# (t_registry imports the transforms and the pipeline too since the merge, so they and the table decimal modules are in the program, as in gate_pipe.sh)
+T=${TABLE_SRC:-${CANCHO_TABLE:-$(cd .. && pwd)/cancho-table-main}/tools/table}
+$CANCHO test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho $T/pow5.cho $T/dec.cho $T/flt.cho tests/t_registry.cho
 python3 scripts/check_registry.py
 python3 scripts/mutants_metrics.py --check
 sh scripts/gate_metrics.sh
@@ -55,3 +57,5 @@ python3 scripts/mutants_paths.py --check
 # registries and the Python oracles (scripts/oracle_pipe.py --sklearn and scripts/mutants_pipe.py run on request, as the other mutants do)
 python3 scripts/mutants_pipe.py --check
 sh scripts/gate_pipe.sh
+# the documentation checks (docs: program output in README and the page, links, the pages' basics); they need build/ml, built above
+sh scripts/check_docs.sh

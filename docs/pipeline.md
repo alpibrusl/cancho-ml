@@ -5,7 +5,7 @@ holds the results; a number or a verdict is in it only if a script in `scripts/`
 `design.md`: **[choice]** is a decision the maintainer can overturn, **[open]** is not decided.
 
 An internal library, **not wired into the CLI**: `lib/pipeline/*.cho` on top of `lib/transforms` (`docs/transforms.md`), a driver
-`tools/pipe-check`, tests in `tests/t_pipeline*.cho`. The wiring stage (once the 4-lane order change has landed) adds the plan flags
+`tools/pipe-check`, tests in `tests/t_pipeline*.cho`. The wiring stage (the 4-lane order change has landed, `docs/lanes.md`) adds the plan flags
 to `fit`, the stored steps to `predict` and `eval`, and the estimators of kinds 4 to 7 behind the hook of section 5.4.
 
 ## 1. The gates (fixed before the code; each can fail, section 6 shows it failing)

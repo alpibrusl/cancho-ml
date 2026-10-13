@@ -4,7 +4,7 @@ import metrics.sums;
 
 // THE decisive sums of lib/transforms (docs/transforms.md section 2.5), behind one door. A transform adds decisive terms (the mean,
 // the squared deviations of a standard scaler) only through the two functions here, which call the package's reduction
-// (metrics.sums.reduce: the order of that file, whatever it is). Nothing in lib/transforms or lib/pipeline names a block length, a lane
+// (metrics.sums.reduce, which takes its block, lanes and tree from lib/linalg/order.cho: the one order of the package, docs/linalg.md section 2). Nothing in lib/transforms or lib/pipeline names a block length, a lane
 // count or a tree, and nothing else adds more than two decisive terms. If the order of the package changes, these two functions
 // follow it by being recompiled; if the signature of the reduction changes, this is the one file to edit.
 

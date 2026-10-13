@@ -63,8 +63,8 @@ pub fn reduce[&x, &y, &o, &s, &l](kind: int, a: &x [float], b: &y [float], cente
     var at = 0;
     while at < n {
         var m = n - at;
-        if m > 256 {
-            m = 256;
+        if m > order.block() {
+            m = order.block();
         }
         terms(kind, a, b, center, at, m, buf);
         st[sp] = order.block_partial(buf, m);

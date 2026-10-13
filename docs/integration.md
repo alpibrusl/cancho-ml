@@ -168,3 +168,22 @@ disagreement. Summary:
    works. It is a test driver, not a library, and `ml` checks paths itself (`path.dotdot`); not fixed here because the cause (the runtime's
    `open_read` on such a path) was not investigated. **Fixed afterwards: `docs/lanes.md` section 1** (the cause is `docs/upstream/dotdot_path.cho`).
 3. `check.sh` now needs `../ml-data` (the files of spike F) for the tree gate, in addition to `../cancho-table-main`.
+
+## 8. Post-merge (`v1-post`: the tree after `v1-lanes`, `v1-pipe` and `v1-docs` were merged into `v1-int`)
+
+Machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python 3.14.5, numpy 2.4.6. No benchmark was run. Each step below is one commit.
+
+### 8.1 Green tree (step 1)
+
+Run on `v1-int` (`819e027`): `scripts/gate_pipe.sh` passed unchanged (t_transforms 29, fuzz 2, t_pipeline 13, fuzz 4, registry 7; `oracle_pipe.py`
+all cases agree, `sums` 186 vectors); `scripts/check.sh` stopped at the registry program and `check_docs.sh` was not part of it. What the merge broke, and the fix:
+
+| finding | fix (code, not gate) |
+|---|---|
+| `scripts/check.sh` compiled `tests/t_registry.cho` from the old file list, but the merged `t_registry.cho` imports `transforms.codes` (error: no module) | the list is the one of `gate_pipe.sh` (transforms, pipeline, `tools/ml/csvcell.cho` and the three decimal modules of cancho-table) |
+| `check.sh` ran neither `check_docs.sh` nor (it did) `gate_pipe.sh`/`mutants_pipe.py --check` | `gate_pipe.sh` and `mutants_pipe.py --check` were already in the merged block (verified); `check_docs.sh` added at its end |
+| expected: the oracle's `ordered_sum` out of step with the package order | **did not happen.** `v1-pipe` already reached the decisive sums through `metrics.sums.reduce`, which `v1-lanes` moved onto `linalg.order` (`block_partial`); the oracle already had the lane rule, and `--sums` agreed bit for bit before and after. `dsum.cho` still calls `metrics.sums.reduce` (one door), not `order.cho` directly: calling it directly would be a second copy of the block loop |
+| a real gap found while checking "one order": `metrics.sums.reduce` cut blocks at a literal `256`, not at `order.block()`, so a change of K in `order.cho` would not have reached the metrics or the transforms | `reduce` uses `order.block()`; two new mutants in `mutants_pipe.py` (`order-lane-combine-fold`, `order-block-length-128`; the second **survived** before the fix and is killed after); `mutants_metrics.py` `sum-block`, `sum-block-up` re-aimed at the new text (still killed) |
+| stale prose: `transforms.md`, `pipeline.md`, the oracle docstring and `dsum.cho` said the lane change was "in progress" or named `metrics.sums` as the order | corrected in place |
+
+`mutants_pipe.py`: 62 patterns before, 64 after. `mutants_metrics.py`: 146 and 146.

@@ -4,7 +4,7 @@
 Section 6 holds the results; a number or a verdict is in it only if a script in `scripts/` printed it, with its conditions.** Tags as in
 `design.md`: **[choice]** is a decision the maintainer can overturn, **[open]** is not decided.
 
-An internal library, **not wired into the CLI** (a later stage does that, once the lane-order change has landed):
+An internal library, **not wired into the CLI** (a later stage does that; the lane-order change has landed, `docs/lanes.md`):
 `lib/transforms/*.cho`, a driver `tools/pipe-check` that the gates call, tests in `tests/t_transforms*.cho`, scripts in
 `scripts/*pipe*`. The pipeline that strings transforms together, the plan text and the model-file payload are `docs/pipeline.md`.
 
@@ -94,8 +94,10 @@ of about `n * eps * |c|` on a constant column and is reported in X4.
 `(x - mean)^2`; `std = sqrt(var)` (the builtin, one correctly rounded instruction). **`ddof` is `0` (population, the default: numpy,
 scikit-learn's `StandardScaler`) or `1` (sample: pandas)**, a key of the plan, stored in the step record. Both sums go through
 `transforms.dsum`, which calls the package's reduction (`metrics.sums.reduce`, kinds `val` and `dev`); nothing in `lib/transforms` adds
-decisive terms in any other place. The order of that reduction is the package's and may change (the lane-order change in progress);
-no code or test here names a lane count, and the oracle's `ordered_sum` is the one line to follow it.
+decisive terms in any other place. That reduction is `linalg.order` (`docs/linalg.md` section 2: blocks of K = 256, 4 lanes, `(l0 + l1) + (l2 + l3)`, the fixed tree), through `metrics.sums`
+(its block length is `order.block()`, since `v1-post`); there is ONE order in the package. No code or test here names a lane count, and the oracle's
+`ordered_sum` is the one function that re-implements it in Python, checked bit for bit by `oracle_pipe.py --sums` (186 vectors); the mutants
+`order-lane-combine-fold` and `order-block-length-128` of `scripts/mutants_pipe.py` change `lib/linalg/order.cho` and are killed by it.
 
 The median sorts the non-missing values with a comparison sort whose result does not depend on its algorithm (a total order on finite
 doubles; ties are equal values), so there is no order to specify: `(v[m/2 - 1] + v[m/2]) / 2.0` for even `m`, `v[m/2]` for odd.

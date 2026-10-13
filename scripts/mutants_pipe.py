@@ -24,6 +24,7 @@ SC = "lib/pipeline/schema.cho"
 FI = "lib/pipeline/file.cho"
 R = "lib/pipeline/run.cho"
 K = "lib/core/kinds.cho"
+O = "lib/linalg/order.cho"
 
 HELP_MINMAX = """fn colmin[&m](x: &m matrix.Matrix, c: int, n: int) -> [] float {
     var lo = matrix.value(x, 0, c);
@@ -93,6 +94,9 @@ M = [
     ("encode-floats-dtype-tag", [(S, "    o = put32(heap, o, 2);\n    o = put32(heap, o, rank);", "    o = put32(heap, o, 3);\n    o = put32(heap, o, rank);")]),
     ("onehot-width-forgets-the-replaced-column", [(S, "return a[1] - a[0] + category_total(a);", "return a[1] + category_total(a);")]),
     # ---- decisive sums
+    # the one order: the decisive sums follow lib/linalg/order.cho through lib/metrics/sums.cho, so a change there must show in --sums
+    ("order-lane-combine-fold", [(O, "return combine(combine(l0, l1), combine(l2, l3));", "return combine(combine(combine(l0, l1), l2), l3);")]),
+    ("order-block-length-128", [(O, "    return 256;\n}\n\n// L, the lanes", "    return 128;\n}\n\n// L, the lanes")]),
     ("dsum-total-adds-magnitudes", [(D, "return run(heap, sums.kind_val(), vals, 0.0, n);", "return run(heap, sums.kind_abs(), vals, 0.0, n);")]),
     ("dsum-total-in-another-order", [(D, "return run(heap, sums.kind_val(), vals, 0.0, n);", "let junk = box_slice(heap, 1, 0.0);\n    unbox_slice(heap, junk);\n    var s = 0.0;\n    var i = 0;\n    while i < n {\n        s = s + vals[i];\n        i = i + 1;\n    }\n    return s;")]),
     ("sort-descending", [(SO, "if a[root] < a[child] {", "if a[root] > a[child] {")]),
