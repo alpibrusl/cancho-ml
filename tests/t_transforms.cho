@@ -1,0 +1,451 @@
+import std.test;
+import std.buffer;
+import ml.matrix;
+import ml.kinds;
+import transforms.rules;
+import transforms.steps;
+import transforms.fit;
+import transforms.apply;
+import pt;
+
+// Gates X1, X2 and X5 of docs/transforms.md: fixtures whose parameters and outputs are written by hand here (not computed by the code under test),
+// the written rules for empty, constant, all-missing and missing columns, and the bytes of a step record.
+// `cancho test --std lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/sums.cho lib/transforms/*.cho tools/ml/csvcell.cho
+//  ../cancho-table-main/tools/table/{pow5,dec,flt}.cho tests/pt.cho tests/t_transforms.cho`. A test answers 0 to pass.
+
+fn spec(kind: int, a: int, b: int, value: float) -> [] fit.Spec {
+    return fit.Spec { kind: kind, a: a, b: b, value: value };
+}
+
+// fit on `train` over `cols`, apply to `test`; the number of differences from `want` (a Fault counts 100); `unk` is the expected unknown count
+fn go[&h](heap: &!h Heap, sp: fit.Spec, train: &static [byte], cols: &static [byte], test: &static [byte], want: &static [byte], unk: int) -> [heap] int {
+    let x = pt.mat(heap, train);
+    let t = pt.mat(heap, test);
+    let cb = pt.ints_of(heap, cols);
+    var bad = 0;
+    borrow cb as &cr in {
+        borrow x as &xr in {
+            let (st, f) = fit.fit(heap, sp, xr, contents(cr), 1);
+            if f.code != 0 {
+                bad = 100;
+                steps.drop(heap, st);
+            } else {
+                borrow t as &tr in {
+                    borrow st as &sr in {
+                        let (y, u, f2) = apply.apply(heap, sr, tr, 1, 1000, 100, 100000);
+                        if f2.code != 0 {
+                            bad = 100;
+                        } else {
+                            borrow y as &yr in {
+                                bad = pt.diff(yr, want);
+                            }
+                            if u != unk {
+                                bad = bad + 1;
+                            }
+                        }
+                        matrix.drop(heap, y);
+                    }
+                }
+                steps.drop(heap, st);
+            }
+        }
+    }
+    matrix.drop(heap, x);
+    matrix.drop(heap, t);
+    unbox_slice(heap, cb);
+    return bad;
+}
+
+// the code of the first refusal of a fit (0 if none)
+fn fit_code[&h](heap: &!h Heap, sp: fit.Spec, train: &static [byte], cols: &static [byte]) -> [heap] int {
+    let x = pt.mat(heap, train);
+    let cb = pt.ints_of(heap, cols);
+    var code = 0;
+    borrow cb as &cr in {
+        borrow x as &xr in {
+            let (st, f) = fit.fit(heap, sp, xr, contents(cr), 3);
+            code = f.code;
+            if f.code != 0 && f.a != 3 {
+                code = 0 - 1;
+            }
+            steps.drop(heap, st);
+        }
+    }
+    matrix.drop(heap, x);
+    unbox_slice(heap, cb);
+    return code;
+}
+
+// ---------------------------------------------------------------- impute
+fn test_impute_mean[&h](heap: &!h Heap) -> [heap] int {
+    // column 0 holds 1 and 3 (mean 2), column 1 holds 2 and 4 (mean 3)
+    return go(heap, spec(1, 0, 0, 0.0), "1,?;3,2;?,4", "0,1", "?,?;5,6;?,1", "2,3;5,6;2,1", 0);
+}
+
+fn test_impute_leaves_other_columns_and_does_not_learn_from_test[&h](heap: &!h Heap) -> [heap] int {
+    // only column 1 is selected; column 0 keeps its missing cell; the test's own values (100) do not move the mean (2)
+    return go(heap, spec(1, 0, 0, 0.0), "1,1;1,3", "1", "?,?;100,100", "?,2;100,100", 0);
+}
+
+fn test_impute_median_odd_and_even[&h](heap: &!h Heap) -> [heap] int {
+    var bad = go(heap, spec(1, 1, 0, 0.0), "5;1;3;?", "0", "?", "3", 0);
+    bad = bad + go(heap, spec(1, 1, 0, 0.0), "4;1;3;2;?", "0", "?", "2.5", 0);
+    return bad;
+}
+
+fn test_impute_constant_allows_all_missing[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(1, 2, 0, 7.5), "?;?", "0", "?;1", "7.5;1", 0);
+}
+
+fn test_impute_constant_column_is_its_own_mean[&h](heap: &!h Heap) -> [heap] int {
+    // three copies of 0.1 sum to 0.30000000000000004, whose third is not 0.1: a constant column must give back the constant
+    return go(heap, spec(1, 0, 0, 0.0), "0.1;0.1;0.1", "0", "?", "0.1", 0);
+}
+
+// ---------------------------------------------------------------- scale
+fn test_minmax[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(2, 0, 0, 0.0), "2;4;10", "0", "2;6;10;18;0;?", "0;0.5;1;2;-0.25;?", 0);
+}
+
+fn test_minmax_constant_column_divisor_is_one[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(2, 0, 0, 0.0), "5;5", "0", "5;7", "0;2", 0);
+}
+
+fn test_standard_population[&h](heap: &!h Heap) -> [heap] int {
+    // mean 5, squared deviations sum to 32, population variance 4, std 2
+    return go(heap, spec(3, 0, 0, 0.0), "2;4;4;4;5;5;7;9", "0", "5;7;1;?", "0;1;-2;?", 0);
+}
+
+fn test_standard_sample[&h](heap: &!h Heap) -> [heap] int {
+    // 1, 2, 3: mean 2, squared deviations 2, sample variance 2 / 2 = 1, std 1
+    return go(heap, spec(3, 1, 0, 0.0), "1;2;3", "0", "2;3;0", "0;1;-2", 0);
+}
+
+fn test_standard_constant_column_is_zero_exactly[&h](heap: &!h Heap) -> [heap] int {
+    // the mean of three 0.1 is not 0.1; the rule takes the constant itself and the divisor 1, so the training output is exactly 0
+    var bad = go(heap, spec(3, 0, 0, 0.0), "0.1;0.1;0.1", "0", "0.1;0.2", "0;0.1", 0);
+    // one non-missing cell with ddof 1: n - ddof < 1 is a zero variance, so the divisor is 1
+    bad = bad + go(heap, spec(3, 1, 0, 0.0), "4;?", "0", "4", "0", 0);
+    return bad;
+}
+
+fn test_standard_ignores_missing_cells_in_fit[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(3, 0, 0, 0.0), "2;?;4;4;4;5;5;?;7;9", "0", "5;?", "0;?", 0);
+}
+
+// ---------------------------------------------------------------- encode
+fn test_onehot_sorted_unknown_ignored_and_counted[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(4, 0, 64, 0.0), "3;1;2;1;?", "0", "2;3;9;?;1", "0,1,0;0,0,1;0,0,0;?,?,?;1,0,0", 1);
+}
+
+fn test_onehot_keeps_the_other_columns_in_place[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(4, 0, 64, 0.0), "7,3,5;8,1,6", "1", "9,1,2", "9,1,0,2", 0);
+}
+
+fn test_onehot_negative_zero_is_zero[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(4, 0, 64, 0.0), "0;1;-1", "0", "0;1;-1", "0,1,0;0,0,1;1,0,0", 0);
+}
+
+fn test_unknown_refuse_is_a_refusal_with_the_cell[&h](heap: &!h Heap) -> [heap] int {
+    let x = pt.mat(heap, "1;2");
+    let t = pt.mat(heap, "2;9");
+    let cb = pt.ints_of(heap, "0");
+    var bad = 0;
+    borrow cb as &cr in {
+        borrow x as &xr in {
+            let (st, f) = fit.fit(heap, spec(4, 1, 64, 0.0), xr, contents(cr), 1);
+            if f.code != 0 {
+                bad = bad + 1;
+            }
+            borrow t as &tr in {
+                borrow st as &sr in {
+                    let (y, u, f2) = apply.apply(heap, sr, tr, 5, 1000, 100, 100000);
+                    if f2.code != rules.unknown_category() || f2.a != 5 || f2.b != 0 || f2.c != 1 {
+                        bad = bad + 1;
+                    }
+                    matrix.drop(heap, y);
+                }
+            }
+            steps.drop(heap, st);
+        }
+    }
+    matrix.drop(heap, x);
+    matrix.drop(heap, t);
+    unbox_slice(heap, cb);
+    return bad;
+}
+
+fn test_label_sorted_and_unknown[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(5, 0, 64, 0.0), "30;10;20", "0", "20;30;10;99;?", "1;2;0;-1;?", 1);
+}
+
+// ---------------------------------------------------------------- bucket
+fn test_bucket_width_edge_goes_up[&h](heap: &!h Heap) -> [heap] int {
+    // 0 .. 10 in 4 buckets: edges 2.5, 5, 7.5; a value equal to an edge is in the upper bucket; outside the range is the first or last
+    return go(heap, spec(6, 0, 4, 0.0), "0;10", "0", "-1;0;2.5;4.9;5;7.5;10;11;?", "0;0;1;1;2;3;3;3;?", 0);
+}
+
+fn test_bucket_quantile_picks_values[&h](heap: &!h Heap) -> [heap] int {
+    // m = 5, bins = 4: positions 1, 2, 3 exactly: edges 2, 3, 4
+    return go(heap, spec(6, 1, 4, 0.0), "1;2;3;4;5", "0", "1;2;2.5;3;4;5", "0;1;1;2;3;3", 0);
+}
+
+fn test_bucket_quantile_interpolates[&h](heap: &!h Heap) -> [heap] int {
+    // m = 2, bins = 4: positions 0.25, 0.5, 0.75 between 0 and 10: edges 2.5, 5, 7.5
+    return go(heap, spec(6, 1, 4, 0.0), "0;10", "0", "2.4;2.5;5;7.4;7.5", "0;1;2;2;3", 0);
+}
+
+fn test_bucket_constant_column_is_the_last_bucket[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(6, 0, 3, 0.0), "5;5;5", "0", "4;5;6", "0;2;2", 0) + go(heap, spec(6, 1, 3, 0.0), "5;5;5", "0", "4;5;6", "0;2;2", 0);
+}
+
+// ---------------------------------------------------------------- the written rules of empty, all-missing, non-finite, bounds
+fn test_refusals_have_their_tags[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // an empty matrix
+    let e = matrix.empty(heap);
+    let cb = pt.ints_of(heap, "0");
+    borrow cb as &cr in {
+        borrow e as &er in {
+            let (st, f) = fit.fit(heap, spec(2, 0, 0, 0.0), er, contents(cr), 3);
+            if f.code != rules.input_empty() || f.a != 3 {
+                bad = bad + 1;
+            }
+            steps.drop(heap, st);
+        }
+    }
+    matrix.drop(heap, e);
+    unbox_slice(heap, cb);
+    // all-missing, for every kind but impute constant
+    if fit_code(heap, spec(1, 0, 0, 0.0), "?;?", "0") != rules.all_missing() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(1, 1, 0, 0.0), "?;?", "0") != rules.all_missing() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(1, 2, 0, 1.0), "?;?", "0") != 0 {
+        bad = bad + 1;
+    }
+    var kind = 2;
+    while kind <= 6 {
+        if fit_code(heap, spec(kind, 0, 4, 0.0), "?;?", "0") != rules.all_missing() {
+            bad = bad + 1;
+        }
+        kind = kind + 1;
+    }
+    // too many categories
+    if fit_code(heap, spec(4, 0, 2, 0.0), "1;2;3", "0") != rules.categories() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(4, 0, 3, 0.0), "1;2;3", "0") != 0 {
+        bad = bad + 1;
+    }
+    // a range that overflows, a sum that overflows
+    if fit_code(heap, spec(2, 0, 0, 0.0), "-1e308;1e308", "0") != rules.fit_non_finite() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(3, 0, 0, 0.0), "1e308;1e308;1e308;-1e308", "0") != rules.fit_non_finite() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(6, 0, 4, 0.0), "-1e308;1e308", "0") != rules.fit_non_finite() {
+        bad = bad + 1;
+    }
+    // parameters and columns out of range
+    if fit_code(heap, spec(6, 0, 1, 0.0), "1;2", "0") != rules.out_of_range() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(6, 0, 257, 0.0), "1;2", "0") != rules.out_of_range() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(3, 2, 0, 0.0), "1;2", "0") != rules.out_of_range() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "2") != rules.out_of_range() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "1,0") != rules.out_of_range() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(2, 0, 0, 0.0), "1,2;3,4", "1,1") != rules.out_of_range() {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_apply_refuses_a_matrix_of_another_width[&h](heap: &!h Heap) -> [heap] int {
+    let x = pt.mat(heap, "1,2;3,4");
+    let t = pt.mat(heap, "1;2");
+    let cb = pt.ints_of(heap, "0");
+    var bad = 0;
+    borrow cb as &cr in {
+        borrow x as &xr in {
+            let (st, f) = fit.fit(heap, spec(2, 0, 0, 0.0), xr, contents(cr), 1);
+            borrow t as &tr in {
+                borrow st as &sr in {
+                    let (y, u, f2) = apply.apply(heap, sr, tr, 1, 1000, 100, 100000);
+                    if f2.code != rules.schema_mismatch() {
+                        bad = bad + 1;
+                    }
+                    matrix.drop(heap, y);
+                }
+            }
+            steps.drop(heap, st);
+        }
+    }
+    matrix.drop(heap, x);
+    matrix.drop(heap, t);
+    unbox_slice(heap, cb);
+    return bad;
+}
+
+fn test_apply_refuses_an_output_over_the_cap_before_allocating[&h](heap: &!h Heap) -> [heap] int {
+    // a one-hot of 3 categories makes 3 columns; a column cap of 2 refuses it
+    let x = pt.mat(heap, "1;2;3");
+    let cb = pt.ints_of(heap, "0");
+    var bad = 0;
+    borrow cb as &cr in {
+        borrow x as &xr in {
+            let (st, f) = fit.fit(heap, spec(4, 0, 64, 0.0), xr, contents(cr), 1);
+            borrow st as &sr in {
+                let (y, u, f2) = apply.apply(heap, sr, xr, 1, 1000, 2, 100000);
+                if f2.code != rules.too_many_columns() {
+                    bad = bad + 1;
+                }
+                matrix.drop(heap, y);
+                let (y2, u2, f3) = apply.apply(heap, sr, xr, 1, 1000, 3, 8);
+                if f3.code != rules.too_many_cells() {
+                    bad = bad + 1;
+                }
+                matrix.drop(heap, y2);
+            }
+            steps.drop(heap, st);
+        }
+    }
+    matrix.drop(heap, x);
+    unbox_slice(heap, cb);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the records
+fn same_bytes[&a, &b](x: &a [byte], y: &b [byte], n: int) -> [] bool {
+    if len(x) < n || len(y) < n {
+        return false;
+    }
+    var i = 0;
+    while i < n {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn test_minmax_payload_is_the_bytes_written_by_hand[&h](heap: &!h Heap) -> [heap] int {
+    // kind 2 | ints: dtype 1, rank 1, shape [3], [k = 1, cols_in = 1, column 0] | floats: dtype 2, rank 2, shape [1, 2], lo = 2.0, d = 8.0
+    let want = pt.hex(heap, "02000000 01000000 01000000 0300000000000000 0100000000000000 0100000000000000 0000000000000000 02000000 02000000 0100000000000000 0200000000000000 0000000000000040 0000000000002040");
+    let x = pt.mat(heap, "2;4;10");
+    let cb = pt.ints_of(heap, "0");
+    var bad = 0;
+    borrow cb as &cr in {
+        borrow x as &xr in {
+            let (st, f) = fit.fit(heap, spec(2, 0, 0, 0.0), xr, contents(cr), 1);
+            borrow st as &sr in {
+                var o = buffer.empty(heap, 16);
+                o = steps.encode_payload(heap, o, sr);
+                borrow o as &orr in {
+                    borrow want as &wr in {
+                        if buffer.size(orr) != 84 || steps.payload_size(sr) != buffer.size(orr) {
+                            bad = bad + 1;
+                        }
+                        if !same_bytes(buffer.bytes(orr), contents(wr), 84) {
+                            bad = bad + 1;
+                        }
+                    }
+                }
+                buffer.drop(heap, o);
+            }
+            steps.drop(heap, st);
+        }
+    }
+    matrix.drop(heap, x);
+    unbox_slice(heap, cb);
+    unbox_slice(heap, want);
+    return bad;
+}
+
+// encode then decode gives the same parameter bits, for every kind; every truncation of the payload is refused
+fn test_every_kind_round_trips_and_every_truncation_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var kind = 1;
+    while kind <= 6 {
+        let x = pt.mat(heap, "3,1.5;1,2.5;2,?;3,9");
+        let cb = pt.ints_of(heap, "0,1");
+        borrow cb as &cr in {
+            borrow x as &xr in {
+                var sp = spec(kind, 0, 4, 0.5);
+                if kind == 4 || kind == 5 {
+                    sp = spec(kind, 1, 64, 0.0);
+                }
+                let (st, f) = fit.fit(heap, sp, xr, contents(cr), 1);
+                if f.code != 0 {
+                    bad = bad + 1000;
+                }
+                borrow st as &sr in {
+                    var o = buffer.empty(heap, 16);
+                    o = steps.encode_payload(heap, o, sr);
+                    borrow o as &orr in {
+                        let bytes = buffer.bytes(orr);
+                        let (d, code, width) = steps.decode(heap, bytes, 2);
+                        if code != 0 {
+                            bad = bad + 1;
+                        } else {
+                            borrow d as &dr in {
+                                if steps.ints_len(dr) != steps.ints_len(sr) || steps.floats_len(dr) != steps.floats_len(sr) {
+                                    bad = bad + 1;
+                                } else {
+                                    var i = 0;
+                                    while i < steps.ints_len(sr) {
+                                        if steps.int_at(dr, i) != steps.int_at(sr, i) {
+                                            bad = bad + 1;
+                                        }
+                                        i = i + 1;
+                                    }
+                                    i = 0;
+                                    while i < steps.floats_len(sr) {
+                                        if bits_of(steps.float_at(dr, i)) != bits_of(steps.float_at(sr, i)) {
+                                            bad = bad + 1;
+                                        }
+                                        i = i + 1;
+                                    }
+                                }
+                            }
+                        }
+                        steps.drop(heap, d);
+                        // the wrong input width is refused
+                        let (d2, code2, w2) = steps.decode(heap, bytes, 3);
+                        if code2 != rules.malformed() {
+                            bad = bad + 1;
+                        }
+                        steps.drop(heap, d2);
+                        var cut = 0;
+                        while cut < len(bytes) {
+                            let (d3, code3, w3) = steps.decode(heap, bytes[0..cut], 2);
+                            if code3 != rules.malformed() {
+                                bad = bad + 1;
+                            }
+                            steps.drop(heap, d3);
+                            cut = cut + 1;
+                        }
+                    }
+                    buffer.drop(heap, o);
+                }
+                steps.drop(heap, st);
+            }
+        }
+        matrix.drop(heap, x);
+        unbox_slice(heap, cb);
+        kind = kind + 1;
+    }
+    return bad;
+}

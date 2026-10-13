@@ -69,6 +69,60 @@ pub fn stream_count() -> [] int {
     return 6;
 }
 
+// ---- section tags of the CML1 file (docs/design.md section 4.1; only tools/ml/mfile.cho and lib/pipeline/file.cho write them)
+pub fn section_plan() -> [] int {
+    return 1;
+}
+
+pub fn section_schema() -> [] int {
+    return 2;
+}
+
+pub fn section_steps() -> [] int {
+    return 3;
+}
+
+pub fn section_model() -> [] int {
+    return 4;
+}
+
+pub fn section_meta() -> [] int {
+    return 5;
+}
+
+pub fn section_count() -> [] int {
+    return 5;
+}
+
+// ---- step kinds: the `u32 kind` that opens one step of the `steps` section (docs/transforms.md section 4)
+pub fn step_impute() -> [] int {
+    return 1;
+}
+
+pub fn step_minmax() -> [] int {
+    return 2;
+}
+
+pub fn step_standard() -> [] int {
+    return 3;
+}
+
+pub fn step_onehot() -> [] int {
+    return 4;
+}
+
+pub fn step_label() -> [] int {
+    return 5;
+}
+
+pub fn step_bucket() -> [] int {
+    return 6;
+}
+
+pub fn step_count() -> [] int {
+    return 6;
+}
+
 // the number of the i-th entry of each list, 1 <= i <= count (0 beyond), for the registry test
 pub fn model_at(i: int) -> [] int {
     if i == 1 {
@@ -113,6 +167,47 @@ pub fn stream_at(i: int) -> [] int {
     }
     if i == 6 {
         return stream_stratified();
+    }
+    return 0;
+}
+
+pub fn section_at(i: int) -> [] int {
+    if i == 1 {
+        return section_plan();
+    }
+    if i == 2 {
+        return section_schema();
+    }
+    if i == 3 {
+        return section_steps();
+    }
+    if i == 4 {
+        return section_model();
+    }
+    if i == 5 {
+        return section_meta();
+    }
+    return 0;
+}
+
+pub fn step_at(i: int) -> [] int {
+    if i == 1 {
+        return step_impute();
+    }
+    if i == 2 {
+        return step_minmax();
+    }
+    if i == 3 {
+        return step_standard();
+    }
+    if i == 4 {
+        return step_onehot();
+    }
+    if i == 5 {
+        return step_label();
+    }
+    if i == 6 {
+        return step_bucket();
     }
     return 0;
 }

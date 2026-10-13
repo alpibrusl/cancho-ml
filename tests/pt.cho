@@ -1,0 +1,180 @@
+module pt;
+
+import ml.matrix;
+import ml.csvcell;
+
+// Helpers of the transform and pipeline tests: a matrix from text and a comparison of a matrix with text. A matrix is `r0c0,r0c1;r1c0,r1c1`
+// (rows separated by `;`, cells by `,`; a cell is read by ml.csvcell, the reader of the CLI; `?` is a missing cell).
+
+pub fn count_byte[&s](t: &s [byte], b: int) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(t) {
+        if int_of(t[i]) == b {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// the double of a cell text (the caller has checked it is a number)
+pub fn num[&s](t: &s [byte]) -> [] float {
+    let (st, kind, m, frac, idig, key) = csvcell.read(t);
+    if st != 0 {
+        return 0.0 / 0.0;
+    }
+    return csvcell.double(kind, m, frac, key);
+}
+
+pub fn cols_of[&s](t: &s [byte]) -> [] int {
+    var n = 1;
+    var i = 0;
+    while i < len(t) && int_of(t[i]) != ';' {
+        if int_of(t[i]) == ',' {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+pub fn rows_of[&s](t: &s [byte]) -> [] int {
+    return count_byte(t, ';') + 1;
+}
+
+pub fn mat[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] matrix.Matrix {
+    let rows = rows_of(t);
+    let cols = cols_of(t);
+    let (m0, code) = matrix.make(heap, rows, cols, 1000000, 8192, 100000000);
+    if code != 0 {
+        return m0;
+    }
+    let (tt, data, miss, r, c, wpc) = matrix.parts(m0);
+    var d = data;
+    var b = miss;
+    borrow mut d as &!dw in {
+        borrow mut b as &!bw in {
+            var ri = 0;
+            var ci = 0;
+            var start = 0;
+            var i = 0;
+            while i <= len(t) {
+                if i == len(t) || int_of(t[i]) == ',' || int_of(t[i]) == ';' {
+                    if ri < r && ci < c {
+                        if i - start == 1 && int_of(t[start]) == '?' {
+                            matrix.mark_missing(contents(bw), wpc, ri, ci);
+                        } else {
+                            matrix.put(contents(dw), c, ri, ci, num(t[start..i]));
+                        }
+                    }
+                    ci = ci + 1;
+                    if i < len(t) && int_of(t[i]) == ';' {
+                        ri = ri + 1;
+                        ci = 0;
+                    }
+                    start = i + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return matrix.assemble(tt, d, b, r, c, wpc);
+}
+
+// the number of cells in which the matrix differs from the text (shape, missing bit, value bits); a difference of shape counts all
+pub fn diff[&m, &s](x: &m matrix.Matrix, t: &s [byte]) -> [] int {
+    let rows = rows_of(t);
+    let cols = cols_of(t);
+    if matrix.rows(x) != rows || matrix.cols(x) != cols {
+        return rows * cols + 1;
+    }
+    var bad = 0;
+    var ri = 0;
+    var ci = 0;
+    var start = 0;
+    var i = 0;
+    while i <= len(t) {
+        if i == len(t) || int_of(t[i]) == ',' || int_of(t[i]) == ';' {
+            if ri < rows && ci < cols {
+                if i - start == 1 && int_of(t[start]) == '?' {
+                    if !matrix.is_missing(x, ri, ci) {
+                        bad = bad + 1;
+                    }
+                } else if matrix.is_missing(x, ri, ci) || bits_of(matrix.value(x, ri, ci)) != bits_of(num(t[start..i])) {
+                    bad = bad + 1;
+                }
+            }
+            ci = ci + 1;
+            if i < len(t) && int_of(t[i]) == ';' {
+                ri = ri + 1;
+                ci = 0;
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+// a list `0,2,5` of column indices
+pub fn ints_of[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] Box[[int]] {
+    let n = count_byte(t, ',') + 1;
+    let b = box_slice(heap, n, 0);
+    var o = b;
+    borrow mut o as &!w in {
+        var k = 0;
+        var v = 0;
+        var i = 0;
+        while i <= len(t) {
+            if i == len(t) || int_of(t[i]) == ',' {
+                contents(w)[k] = v;
+                k = k + 1;
+                v = 0;
+            } else {
+                v = v * 10 + (int_of(t[i]) - '0');
+            }
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+fn hexval(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    return c - 'a' + 10;
+}
+
+// bytes from hex digits; blanks are skipped
+pub fn hex[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] Box[[byte]] {
+    var n = 0;
+    var i = 0;
+    while i < len(t) {
+        if int_of(t[i]) != ' ' {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    let b = box_slice(heap, n / 2 + 1, byte_of(0));
+    var o = b;
+    borrow mut o as &!w in {
+        var k = 0;
+        var hi = 0 - 1;
+        i = 0;
+        while i < len(t) {
+            if int_of(t[i]) != ' ' {
+                if hi < 0 {
+                    hi = hexval(int_of(t[i]));
+                } else {
+                    contents(w)[k] = byte_of(hi * 16 + hexval(int_of(t[i])));
+                    k = k + 1;
+                    hi = 0 - 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return o;
+}
