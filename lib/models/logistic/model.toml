@@ -1,0 +1,49 @@
+# Binary logistic regression by Newton's method, a fixed number of iterations, optional l2 (docs/models-linear.md).
+name = "logistic"
+kind = 5
+kind_fn = "model_logistic"
+task = "classification"
+tier = "supported"
+wired = true
+adapter = "models.adapter_logistic"
+payload_version = 2
+doc = "docs/models-linear.md"
+files = ["lib/models/logistic/adapter.cho", "lib/models/linear/logreg.cho", "lib/models/linear/npass.cho"]
+plan_order = 2
+
+[limits]
+max_features = 256
+max_iterations = 1000
+
+[tags]
+emits = [
+  "ml.tensor.rank", "ml.tensor.shape", "ml.tensor.bounds", "ml.input.non-finite", "ml.input.too-many-columns", "ml.param.out-of-range",
+  "ml.linalg.not-positive-definite", "ml.linalg.singular", "ml.param.threads", "ml.fit.non-finite", "ml.label.single-class", "ml.label.not-binary",
+]
+
+[authority]
+adds = ["conc"]
+reason = "lib/linalg/par.cho spawns the threads of fit --threads N; the label is derived from the code, so it is in the row at --threads 1 too (docs/wiring.md section 6)"
+
+[sums]
+decisive = ["lib/models/linear/npass.cho", "lib/models/linear/logreg.cho"]
+
+[oracle]
+script = "scripts/oracle_wire.py"
+args = "logistic"
+tolerance = "bits"
+
+[[hyperparameter]]
+name = "iterations"
+type = "int"
+min = 1
+max = 1000
+default = "100"
+doc = "the Newton iterations, a fixed number: 1 to 1000"
+
+[[hyperparameter]]
+name = "l2"
+type = "float"
+nonneg = true
+default = "0.0"
+doc = "the ridge penalty, a finite number, 0 or more. The intercept is not penalised"

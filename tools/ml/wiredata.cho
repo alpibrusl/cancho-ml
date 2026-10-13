@@ -1,0 +1,660 @@
+edition 6;
+
+module ml.wiredata;
+
+// The pieces of the planned models' verbs that do not depend on a verb (docs/wiring.md section 3): errors from the numeric codes of the libraries, the
+// matrices a fit or a prediction is made of (a copy of some rows and some columns), the schema of a CSV, the grammar of `--split`, and the metrics.
+// Nothing here reads a file or writes one.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.csv;
+import ml.est;
+import ml.mfile;
+import ml.matrix;
+import ml.refuse;
+import ml.spec;
+import ml.verbs;
+import models.common;
+import metrics.classify;
+import metrics.logloss;
+import metrics.rank;
+import metrics.regress;
+import metrics.rules;
+import pipeline.names;
+import pipeline.schema;
+import transforms.codes;
+import toolbox.fail;
+import toolbox.text;
+
+// ---------------------------------------------------------------- errors from the codes of the libraries
+
+// the summary of a rule of spec.extra(): `message. Hint: text. Repair: ...`
+fn summary_of(tag: &static [byte]) -> [] &static [byte] {
+    let table = spec.extra();
+    let count = bytes.count_byte(table, ';') + 1;
+    var k = 1;
+    while k <= count {
+        let entry = bytes.field(table, ';', k);
+        if bytes.equal(bytes.field(entry, '|', 1), tag) {
+            return bytes.field(entry, '|', 4);
+        }
+        k = k + 1;
+    }
+    return "";
+}
+
+pub fn message_of(tag: &static [byte]) -> [] &static [byte] {
+    let s = summary_of(tag);
+    let i = bytes.find(s, " Hint: ");
+    if i < 0 {
+        return s;
+    }
+    return s[0..i];
+}
+
+pub fn hint_of(tag: &static [byte]) -> [] &static [byte] {
+    let s = summary_of(tag);
+    let i = bytes.find(s, " Hint: ");
+    if i < 0 {
+        return "see introspect";
+    }
+    let j = bytes.find(s, " Repair:");
+    if j < i {
+        return s[i + 7..len(s)];
+    }
+    return s[i + 7..j];
+}
+
+// an error of `tag` (a rule of spec.extra()) with the message and the hint of its summary
+pub fn open_tag[&h](heap: &!h Heap, tag: &static [byte]) -> [heap] json.Writer {
+    return fail.open_in(heap, spec.extra(), tag, message_of(tag), hint_of(tag));
+}
+
+// the tag of a code of any of the libraries: ml.refuse 1 to 99, metrics.rules 201 to 211, transforms.codes 301 to 325 (docs/design.md section 8.1)
+pub fn tag_of(code: int) -> [] &static [byte] {
+    if code >= 1 && code <= 99 {
+        return refuse.tag(code);
+    }
+    if code >= rules.first() && code <= rules.last() {
+        return rules.tag(code);
+    }
+    return codes.tag(code);
+}
+
+// an error for a code of a library, with the integers of a Fault as the detail its tag gives them (transforms.codes header)
+pub fn code_error[&h](heap: &!h Heap, errs: fail.Errors, code: int, a: int, b: int, c: int) -> [heap] fail.Errors {
+    let tag = tag_of(code);
+    var w = open_tag(heap, tag);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    if code >= codes.plan_syntax() && code <= codes.plan_model_line() {
+        w = fail.detail_int(heap, w, "line", a);
+        if b > 0 {
+            w = fail.detail_int(heap, w, "column", b);
+        }
+    } else if code == codes.plan_unknown_column() {
+        w = fail.detail_int(heap, w, "step", a);
+    } else if code == codes.plan_limit() {
+        w = fail.detail_int(heap, w, "limit", a);
+    } else if code == codes.input_non_finite() || code == codes.unknown_category() {
+        w = fail.detail_int(heap, w, "step", a);
+        w = fail.detail_int(heap, w, "column", b);
+        w = fail.detail_int(heap, w, "row", c);
+    } else if code == codes.fit_non_finite() || code == codes.all_missing() || code == codes.categories() || code == codes.too_many_columns() || code == codes.out_of_range() {
+        if a > 0 {
+            w = fail.detail_int(heap, w, "step", a);
+            w = fail.detail_int(heap, w, "column", b);
+        }
+    } else if code == codes.malformed() {
+        w = fail.detail_int(heap, w, "section", a);
+        if a == 3 {
+            w = fail.detail_int(heap, w, "step", b);
+        }
+    }
+    return fail.add(heap, errs, w);
+}
+
+// ---------------------------------------------------------------- matrices
+
+// A copy of x: the rows r with sel[r] == want (all rows when want < 0) and the columns cols[0 .. nc) of x, in that order. (matrix, 0) or (empty, a code of ml.refuse)
+pub fn take[&h, &m, &s, &c](heap: &!h Heap, x: &m matrix.Matrix, sel: &s [int], want: int, cols: &c [int], nc: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int) {
+    var n = 0;
+    var r = 0;
+    while r < matrix.rows(x) {
+        if want < 0 || sel[r] == want {
+            n = n + 1;
+        }
+        r = r + 1;
+    }
+    let (out, code) = matrix.make(heap, n, nc, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (out, code);
+    }
+    let (t, data, miss, rows, ncols, wpc) = matrix.parts(out);
+    var d = data;
+    var b = miss;
+    borrow mut d as &!dw in {
+        borrow mut b as &!bw in {
+            var at = 0;
+            r = 0;
+            while r < matrix.rows(x) {
+                if want < 0 || sel[r] == want {
+                    var j = 0;
+                    while j < nc {
+                        if matrix.is_missing(x, r, cols[j]) {
+                            matrix.mark_missing(contents(bw), wpc, at, j);
+                        } else {
+                            matrix.put(contents(dw), ncols, at, j, matrix.value(x, r, cols[j]));
+                        }
+                        j = j + 1;
+                    }
+                    at = at + 1;
+                }
+                r = r + 1;
+            }
+        }
+    }
+    return (matrix.assemble(t, d, b, rows, ncols, wpc), 0);
+}
+
+// The column `col` of x for the selected rows (as take) as doubles, and the 1-based place among them of the first missing cell (0 if none)
+pub fn take_col[&h, &m, &s](heap: &!h Heap, x: &m matrix.Matrix, sel: &s [int], want: int, col: int) -> [heap] (Box[[float]], int) {
+    var n = 0;
+    var r = 0;
+    while r < matrix.rows(x) {
+        if want < 0 || sel[r] == want {
+            n = n + 1;
+        }
+        r = r + 1;
+    }
+    var out = box_slice(heap, n + 1, 0.0);
+    var bad = 0;
+    borrow mut out as &!ow in {
+        var at = 0;
+        r = 0;
+        while r < matrix.rows(x) {
+            if want < 0 || sel[r] == want {
+                if matrix.is_missing(x, r, col) {
+                    if bad == 0 {
+                        bad = at + 1;
+                    }
+                } else {
+                    contents(ow)[at] = matrix.value(x, r, col);
+                }
+                at = at + 1;
+            }
+            r = r + 1;
+        }
+    }
+    return (out, bad);
+}
+
+// the number of selected rows
+pub fn count_rows[&s](sel: &s [int], n: int, want: int) -> [] int {
+    if want < 0 {
+        return n;
+    }
+    var k = 0;
+    var r = 0;
+    while r < n {
+        if sel[r] == want {
+            k = k + 1;
+        }
+        r = r + 1;
+    }
+    return k;
+}
+
+// The columns of x that still hold a missing cell: how many, and their names (comma separated) in `list`. `nm` are the names of the columns of x.
+pub fn missing_columns[&h, &m, &n](heap: &!h Heap, x: &m matrix.Matrix, nm: &n names.Names) -> [heap] (int, buffer.Buffer) {
+    var list = buffer.empty(heap, 32);
+    var found = 0;
+    var c = 0;
+    while c < matrix.cols(x) {
+        if matrix.missing_count(x, c) > 0 {
+            if found > 0 {
+                list = buffer.push(heap, list, byte_of(','));
+            }
+            list = buffer.append(heap, list, names.name(nm, c));
+            found = found + 1;
+        }
+        c = c + 1;
+    }
+    return (found, list);
+}
+
+// ---------------------------------------------------------------- the schema of a CSV
+
+// The schema section of a fit: the kept columns of the shape in file order, the target marked; a column of no cell (all missing) is a float. The types: [2 i] 0 int,
+// 1 dec, 2 float, [2 i + 1] the scale. The target is the column of that name (tname), which must be kept.
+pub fn schema_of_shape[&h, &s, &t](heap: &!h Heap, sh: &s csv.Shape, tname: &t [byte]) -> [heap] schema.Schema {
+    var nm = names.empty(heap);
+    var kept = 0;
+    var i = 0;
+    while i < csv.cols(sh) {
+        if !csv.dropped(sh, i) {
+            kept = kept + 1;
+        }
+        i = i + 1;
+    }
+    var types = box_slice(heap, 2 * kept + 2, 0);
+    var target = 0;
+    borrow mut types as &!tw in {
+        var at = 0;
+        i = 0;
+        while i < csv.cols(sh) {
+            if !csv.dropped(sh, i) {
+                nm = names.add(heap, nm, csv.name(sh, i));
+                let k = csv.kind(sh, i);
+                if k == 1 {
+                    contents(tw)[2 * at] = 0;
+                } else if k == 2 {
+                    contents(tw)[2 * at] = 1;
+                    contents(tw)[2 * at + 1] = csv.scale(sh, i);
+                } else {
+                    contents(tw)[2 * at] = 2;
+                }
+                if bytes.equal(csv.name(sh, i), tname) {
+                    target = at;
+                }
+                at = at + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return schema.make(nm, types, target);
+}
+
+// the index among the kept columns of the shape of the column named `name`, or -1
+pub fn kept_index[&s, &n](sh: &s csv.Shape, name: &n [byte]) -> [] int {
+    var at = 0;
+    var i = 0;
+    while i < csv.cols(sh) {
+        if !csv.dropped(sh, i) {
+            if bytes.equal(csv.name(sh, i), name) {
+                return at;
+            }
+            at = at + 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// ---------------------------------------------------------------- --split
+
+// `train=F`: F a decimal with 0 < F < 1 and at most 6 digits after the point (`0.8`, `.75`, `0.125`). (ok, test numerator, denominator): the test side is
+// (den - F * den) / den of the rows, rounded up (metrics.splits.n_test_for)
+pub fn parse_split[&t](text: &t [byte]) -> [] (bool, int, int) {
+    if len(text) < 8 || !bytes.equal(text[0..6], "train=") {
+        return (false, 0, 0);
+    }
+    let f = text[6..len(text)];
+    var i = 0;
+    var whole = 0;
+    while i < len(f) && int_of(f[i]) >= '0' && int_of(f[i]) <= '9' {
+        whole = whole * 10 + int_of(f[i]) - '0';
+        i = i + 1;
+        if whole > 1 {
+            return (false, 0, 0);
+        }
+    }
+    if i >= len(f) || int_of(f[i]) != '.' {
+        return (false, 0, 0);
+    }
+    i = i + 1;
+    var digits = 0;
+    var frac = 0;
+    var den = 1;
+    while i < len(f) && int_of(f[i]) >= '0' && int_of(f[i]) <= '9' {
+        digits = digits + 1;
+        if digits > 6 {
+            return (false, 0, 0);
+        }
+        frac = frac * 10 + int_of(f[i]) - '0';
+        den = den * 10;
+        i = i + 1;
+    }
+    if i != len(f) || digits == 0 || whole != 0 || frac == 0 || frac >= den {
+        return (false, 0, 0);
+    }
+    return (true, den - frac, den);
+}
+
+// ---------------------------------------------------------------- metrics
+
+// a metric that was refused: its name and the code
+pub struct Failed {
+    code: int,
+    name: &static [byte],
+}
+
+pub fn fine() -> [] Failed {
+    return Failed { code: 0, name: "" };
+}
+
+// The metrics of a regression: rmse, mae, r2 (lib/metrics), into `w` as the members of an object and into `plain` as lines. y and p are the doubles.
+pub fn regression_metrics[&h, &y, &p](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, yv: &y [float], pv: &p [float], cap: int) -> [heap] (json.Writer, buffer.Buffer, Failed) {
+    var o = w;
+    var t = plain;
+    let a = regress.rmse(heap, yv, pv, cap);
+    if a.code != 0 {
+        return (o, t, Failed { code: a.code, name: "rmse" });
+    }
+    let b = regress.mae(heap, yv, pv, cap);
+    if b.code != 0 {
+        return (o, t, Failed { code: b.code, name: "mae" });
+    }
+    let c = regress.r2(heap, yv, pv, cap);
+    if c.code != 0 {
+        return (o, t, Failed { code: c.code, name: "r2" });
+    }
+    o = json.put_key(heap, o, "rmse");
+    o = verbs.put_double(heap, o, bits_of(a.v));
+    o = json.put_key(heap, o, "mae");
+    o = verbs.put_double(heap, o, bits_of(b.v));
+    o = json.put_key(heap, o, "r2");
+    o = verbs.put_double(heap, o, bits_of(c.v));
+    t = verbs.line_double(heap, t, "rmse ", bits_of(a.v));
+    t = verbs.line_double(heap, t, "mae ", bits_of(b.v));
+    t = verbs.line_double(heap, t, "r2 ", bits_of(c.v));
+    return (o, t, fine());
+}
+
+// The metrics of a binary classification (lib/metrics): accuracy, precision, recall, F1, ROC-AUC, log-loss. yt and yp are labels, `score` is the probability of
+// the label `pos`, which is one of the two labels.
+pub fn classification_metrics[&h, &y, &p, &s](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, yt: &y [int], yp: &p [int], score: &s [float], pos: int, cap: int) -> [heap] (json.Writer, buffer.Buffer, Failed) {
+    var o = w;
+    var t = plain;
+    let a = classify.accuracy(yt, yp, cap);
+    if a.code != 0 {
+        return (o, t, Failed { code: a.code, name: "accuracy" });
+    }
+    let pr = classify.precision(yt, yp, pos, cap);
+    if pr.code != 0 {
+        return (o, t, Failed { code: pr.code, name: "precision" });
+    }
+    let rc = classify.recall(yt, yp, pos, cap);
+    if rc.code != 0 {
+        return (o, t, Failed { code: rc.code, name: "recall" });
+    }
+    let f1 = classify.f1(yt, yp, pos, cap);
+    if f1.code != 0 {
+        return (o, t, Failed { code: f1.code, name: "f1" });
+    }
+    let au = rank.auc(heap, yt, score, pos, cap);
+    if au.code != 0 {
+        return (o, t, Failed { code: au.code, name: "roc_auc" });
+    }
+    let ll = logloss.logloss(heap, yt, score, pos, cap);
+    if ll.code != 0 {
+        return (o, t, Failed { code: ll.code, name: "log_loss" });
+    }
+    o = json.put_key(heap, o, "accuracy");
+    o = verbs.put_double(heap, o, bits_of(a.v));
+    o = json.put_key(heap, o, "precision");
+    o = verbs.put_double(heap, o, bits_of(pr.v));
+    o = json.put_key(heap, o, "recall");
+    o = verbs.put_double(heap, o, bits_of(rc.v));
+    o = json.put_key(heap, o, "f1");
+    o = verbs.put_double(heap, o, bits_of(f1.v));
+    o = json.put_key(heap, o, "roc_auc");
+    o = verbs.put_double(heap, o, bits_of(au.v));
+    o = json.put_key(heap, o, "log_loss");
+    o = verbs.put_double(heap, o, bits_of(ll.v));
+    t = verbs.line_double(heap, t, "accuracy ", bits_of(a.v));
+    t = verbs.line_double(heap, t, "precision ", bits_of(pr.v));
+    t = verbs.line_double(heap, t, "recall ", bits_of(rc.v));
+    t = verbs.line_double(heap, t, "f1 ", bits_of(f1.v));
+    t = verbs.line_double(heap, t, "roc_auc ", bits_of(au.v));
+    t = verbs.line_double(heap, t, "log_loss ", bits_of(ll.v));
+    return (o, t, fine());
+}
+
+// ---------------------------------------------------------------- answers shared by the verbs of the planned models
+
+// ---------------------------------------------------------------- the command line
+
+pub fn conflict[&h, &n](heap: &!h Heap, errs: fail.Errors, flag: &n [byte], message: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "args.conflict", message, "see the verbs and their flags in introspect usage");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "flag", flag);
+    return fail.add(heap, errs, w);
+}
+
+pub fn bad_value[&h, &n, &v](heap: &!h Heap, errs: fail.Errors, flag: &n [byte], value: &v [byte], expected: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "args.bad-value", "a flag has a value it cannot take", "see the flag in introspect");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "flag", flag);
+    w = fail.detail_text(heap, w, "value", value);
+    w = fail.detail_str(heap, w, "expected", expected);
+    return fail.add(heap, errs, w);
+}
+
+// a label: an optional minus sign and 1 to 12 digits. (ok, value)
+pub fn parse_label[&t](text: &t [byte]) -> [] (bool, int) {
+    var i = 0;
+    var neg = false;
+    if len(text) > 0 && int_of(text[0]) == '-' {
+        neg = true;
+        i = 1;
+    }
+    if i >= len(text) || len(text) - i > 12 {
+        return (false, 0);
+    }
+    var v = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < '0' || c > '9' {
+            return (false, 0);
+        }
+        v = v * 10 + c - '0';
+        i = i + 1;
+    }
+    if neg {
+        return (true, 0 - v);
+    }
+    return (true, v);
+}
+
+// ---------------------------------------------------------------- answers
+
+pub fn out_of(payload: buffer.Buffer, plain: buffer.Buffer, extra: buffer.Buffer, errs: fail.Errors, log: buffer.Buffer, dry: bool) -> [] verbs.Out {
+    return verbs.Out { payload: payload, plain: plain, extra: extra, errs: errs, log: log, dry: dry };
+}
+
+// the problem of a model file read by pipeline.file.decode: the same tags and details as verbs.model_error
+pub fn file_fault[&h, &p](heap: &!h Heap, errs: fail.Errors, f: codes.Fault, shown: &p [byte]) -> [heap] fail.Errors {
+    var rule: &static [byte] = codes.tag(f.code);
+    var message: &static [byte] = message_of(rule);
+    var hint: &static [byte] = hint_of(rule);
+    if f.code == codes.bad_version() && f.b == 1 {
+        message = "the model was made with a summation order this reader does not implement";
+        hint = "refit the model with this version of ml";
+    }
+    var w = fail.open_in(heap, spec.extra(), rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    if f.code == codes.bad_version() {
+        if f.b == 1 {
+            w = fail.detail_int(heap, w, "sum_order", f.a);
+            w = fail.detail_int(heap, w, "known", f.c);
+        } else {
+            w = fail.detail_int(heap, w, "version", f.a);
+            w = fail.detail_int(heap, w, "known", mfile.version());
+        }
+    }
+    if f.code == codes.malformed() {
+        w = fail.detail_int(heap, w, "section", f.a);
+    }
+    return fail.add(heap, errs, w);
+}
+
+// `ml.input.missing-value`: some feature cells are still empty after the steps. The repair appends an impute step when the plan came from no flag at all
+pub fn missing_error[&h, &g, &l](heap: &!h Heap, args: &g Args, errs: fail.Errors, count: int, list: &l [byte], retry_ok: bool) -> [heap, args] fail.Errors {
+    var w = open_tag(heap, "ml.input.missing-value");
+    let plain_names = len(list) > 0 && bytes.count_byte(list, ' ') == 0 && bytes.count_byte(list, '=') == 0 && bytes.count_byte(list, '#') == 0 && text.is_utf8(list);
+    if retry_ok && plain_names {
+        var step = buffer.empty(heap, 64);
+        step = buffer.append(heap, step, "impute column=");
+        step = buffer.append(heap, step, list);
+        step = buffer.append(heap, step, " strategy=mean");
+        var rw = fail.retry_open(heap, w);
+        var i = 0;
+        while i < arg_count(args) {
+            rw = json.put_string(heap, rw, arg(args, i));
+            i = i + 1;
+        }
+        rw = json.put_string(heap, rw, "--step");
+        borrow step as &sr in {
+            rw = json.put_string(heap, rw, buffer.bytes(sr));
+        }
+        buffer.drop(heap, step);
+        w = fail.retry_close(heap, rw);
+    } else {
+        w = fail.repair_none(heap, w, "add a step that imputes these columns before the model, for example impute column=NAMES strategy=mean in the plan, or drop the columns with --drop");
+    }
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "columns", count);
+    w = fail.detail_text(heap, w, "names", list);
+    return fail.add(heap, errs, w);
+}
+
+// a plan whose model line names a model that is not wired
+pub fn not_built[&h, &n](heap: &!h Heap, errs: fail.Errors, name: &n [byte]) -> [heap] fail.Errors {
+    var w = open_tag(heap, "ml.plan.model-not-built");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "model", name);
+    return fail.add(heap, errs, w);
+}
+
+pub fn too_wide[&h](heap: &!h Heap, errs: fail.Errors, d: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.input.too-many-columns", "the steps leave more feature columns than the model takes", "drop columns, bucket them, or encode fewer categories: the linear models take at most 256 feature columns");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "columns", d);
+    w = fail.detail_int(heap, w, "max", common.max_features());
+    return fail.add(heap, errs, w);
+}
+
+pub fn bad_metric[&h](heap: &!h Heap, errs: fail.Errors, f: Failed) -> [heap] fail.Errors {
+    var e = code_error(heap, errs, f.code, 0, 0, 0);
+    return e;
+}
+
+// ---------------------------------------------------------------- the scores of a model on a matrix
+
+// The predictions of the model (weights `wv`, labels c0 and c1) on xs, a matrix the stored steps produced, and the metrics against `yv` (the targets as
+// doubles). (the object of the metrics as JSON, the lines for --format text, the refusal, if any). `pos` is the label precision and the rest are about.
+pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], c0: int, c1: int, pos: int, cap: int) -> [heap] (buffer.Buffer, buffer.Buffer, Failed) {
+    let n = matrix.rows(xs);
+    var pred = box_slice(heap, n + 1, 0.0);
+    var obj = json.writer(heap, 256);
+    obj = json.begin_object(heap, obj);
+    var plain = buffer.empty(heap, 64);
+    var fl = fine();
+    var code = 0;
+    borrow mut pred as &!pw in {
+        code = est.predict(kind, matrix.shape(xs), contents(xs.data), wv, contents(pw));
+    }
+    if code != 0 {
+        fl = Failed { code: code, name: "predict" };
+    } else if est.task(kind) == 1 {
+        borrow pred as &pr in {
+            let (o2, p2, f2) = regression_metrics(heap, obj, plain, yv[0..n], contents(pr)[0..n], cap);
+            obj = o2;
+            plain = p2;
+            fl = f2;
+        }
+    } else {
+        var prob = box_slice(heap, n + 1, 0.0);
+        borrow mut prob as &!qw in {
+            code = est.proba(kind, matrix.shape(xs), contents(xs.data), wv, contents(qw));
+        }
+        if code != 0 {
+            fl = Failed { code: code, name: "proba" };
+        } else {
+            var yt = box_slice(heap, n + 1, 0);
+            var yp = box_slice(heap, n + 1, 0);
+            var score = box_slice(heap, n + 1, 0.0);
+            borrow mut yt as &!tw in {
+                borrow mut yp as &!pw2 in {
+                    borrow mut score as &!sw in {
+                        borrow pred as &pr in {
+                            borrow prob as &qr in {
+                                var i = 0;
+                                while i < n {
+                                    contents(tw)[i] = truncate(yv[i]);
+                                    if contents(pr)[i] > 0.5 {
+                                        contents(pw2)[i] = c1;
+                                    } else {
+                                        contents(pw2)[i] = c0;
+                                    }
+                                    if pos == c1 {
+                                        contents(sw)[i] = contents(qr)[i];
+                                    } else {
+                                        contents(sw)[i] = 1.0 - contents(qr)[i];
+                                    }
+                                    i = i + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            borrow yt as &tr in {
+                borrow yp as &pr2 in {
+                    borrow score as &sr in {
+                        let (o2, p2, f2) = classification_metrics(heap, obj, plain, contents(tr)[0..n], contents(pr2)[0..n], contents(sr)[0..n], pos, cap);
+                        obj = o2;
+                        plain = p2;
+                        fl = f2;
+                    }
+                }
+            }
+            unbox_slice(heap, yt);
+            unbox_slice(heap, yp);
+            unbox_slice(heap, score);
+        }
+        unbox_slice(heap, prob);
+    }
+    unbox_slice(heap, pred);
+    obj = json.end_object(heap, obj);
+    return (json.finish(obj), plain, fl);
+}
+
+pub fn feature_names[&h, &s](heap: &!h Heap, sc: &s schema.Schema) -> [heap] names.Names {
+    var nm = names.empty(heap);
+    var i = 0;
+    while i < schema.columns(sc) {
+        if i != schema.target(sc) {
+            nm = names.add(heap, nm, schema.name(sc, i));
+        }
+        i = i + 1;
+    }
+    return nm;
+}
+
+// a refusal for a target cell that is empty (row is 1-based among the rows taken)
+pub fn empty_target[&h, &n](heap: &!h Heap, errs: fail.Errors, name: &n [byte], row: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.input.non-numeric", "a cell of a kept column is not a number, or is empty", "the target must have a value in every row: remove the row");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "row", row);
+    w = fail.detail_text(heap, w, "name", name);
+    w = fail.detail_str(heap, w, "reason", "empty");
+    return fail.add(heap, errs, w);
+}
+
+pub fn task_word(task: int) -> [] &static [byte] {
+    if task == 2 {
+        return "classification";
+    }
+    return "regression";
+}
