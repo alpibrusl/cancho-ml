@@ -151,7 +151,7 @@ pub fn repair(code: int) -> [] &static [byte] {
         return "see the allowed range of the parameter";
     }
     if code == 9 {
-        return "add a ridge to the diagonal, or scale the columns";
+        return "set l2 above 2^-40 times the largest diagonal element of the normal equations (n for standardised features), drop one of the dependent columns, or centre and scale the columns";
     }
     if code == 11 {
         return "give a thread count of 1 to 64";

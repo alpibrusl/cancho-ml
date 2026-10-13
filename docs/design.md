@@ -279,7 +279,7 @@ dropped: it said "see `ml.schema.mismatch`", and a second tag for one rule is th
 
 *Added by stage 1 (`lib/core/refuse.cho`, one fixture per tag in `tests/core.cho`):* `ml.tensor.rank`, `ml.tensor.shape`,
 `ml.tensor.bounds` (exit 8); `ml.input.too-many-cells` (exit 8: rows x columns over the cell cap, checked without a multiplication
-that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot that is not > 0.0, NaN included),
+that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot that is not > 2^-40 times its own diagonal element (so not > 0.0 either), NaN included; the relative test is `v1-post`, `models-linear.md` 3.1),
 `ml.linalg.singular` (exit 8: a zero diagonal entry in a triangular solve); `ml.param.threads` (exit 2: a thread count outside
 1..64). The default caps (10,000,000 rows, 4,096 columns, 400,000,000 cells) are provisional and wait for section 9.
 
@@ -293,7 +293,7 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.tensor.rank` | 8 | a kernel was given a tensor of rank 0 or above 4 | use a tensor of rank 1 to 4 |
 | `ml.tensor.shape` | 8 | an extent below 1, or a reshape of a tensor that is not contiguous | extents of at least 1; reshape only a contiguous tensor to the same element count |
 | `ml.tensor.bounds` | 8 | the offset, shape and strides of a descriptor reach outside the data beside it | keep them inside the data |
-| `ml.linalg.not-positive-definite` | 8 | a Cholesky pivot that is not above 0.0, NaN included | a ridge on the diagonal, or scaling the columns |
+| `ml.linalg.not-positive-definite` | 8 | a Cholesky pivot that is not above 2^-40 times its own diagonal element (a non-positive pivot included) (dependent or nearly dependent columns), NaN included | set l2 above 2^-40 times the diagonal (n for standardised features), drop one of the dependent columns, or centre and scale the columns |
 | `ml.linalg.singular` | 8 | a zero on the diagonal of a triangular solve | none |
 | `ml.param.threads` | 2 | a thread count outside 1 to 64, or thread copies of a tree fit over the memory ceiling | a thread count of 1 to 64 |
 | `ml.fit.non-finite` | 8 | a coefficient, a loss or a gain became non-finite during a fit | scale the features, add l2, or fewer iterations |

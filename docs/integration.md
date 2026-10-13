@@ -187,3 +187,16 @@ all cases agree, `sums` 186 vectors); `scripts/check.sh` stopped at the registry
 | stale prose: `transforms.md`, `pipeline.md`, the oracle docstring and `dsum.cho` said the lane change was "in progress" or named `metrics.sums` as the order | corrected in place |
 
 `mutants_pipe.py`: 62 patterns before, 64 after. `mutants_metrics.py`: 146 and 146.
+
+### 8.2 Rank deficiency (step 2)
+
+The 4-lane order made equal columns with `l2 = 0` silently fit (`docs/lanes.md` section 3): the pivot test `s > 0.0` saw rounding noise. The pivot test is now
+`s > 2^-40 * a_jj` in `lib/linalg/chol.cho` (`pivot_tol()`, `pivot_ok`), tag unchanged (`ml.linalg.not-positive-definite`, exit 8), with new repair texts in
+`lib/core/refuse.cho` `repair(9)`, `tools/ml/spec.cho` `pending()` and `design.md` section 8. The rule, the choice of `tol` and the measurements (relative pivot of
+well-conditioned data 0.96 to 0.99; of a standardised pair with correlation 0.999999, 2.0e-06; rounding noise of dependent columns at most 7.9e-16 in absolute value over 960
+fits; the pair at `1 - rho = 1e-12`, 2.0e-12, accepted) are `models-linear.md` 3.1 and `scripts/pivot_evidence.py`. Gates that changed their expectation: `tests/p_models.cho`
+`linreg_refusals` (the strong form is back: equal columns refused at 1 and 4 threads; plus a nearly dependent design fitted, a 1e-7 one refused, a badly scaled one fitted);
+`tests/t_chol.cho` (new `test_chol_relative_pivot`); the oracle suite (`oracle_models.py`: 7 configurations added with `dup=4`, `5`, `6` in the driver `tools/models-check`
+and the Python generator); `oracle_linalg.py` `chol_o` follows the rule. No tolerance of any comparison was changed. The `sklearn_models.py` comparison passes (all rows PASS,
+numbers as before: the pivot test does not touch a well-conditioned fit). Mutants: `mutants_linalg.py` 127 -> 134 (the two `chol-pivot` patterns re-aimed, 7 new,
+all killed), `mutants_models.py` 81 -> 87 (6 new, all killed; `lin-pivot-wrong-diag` first survived, until the badly scaled design was added to the gate).

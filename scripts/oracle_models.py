@@ -44,6 +44,12 @@ def gen(model, n, d, seed, dup=0):
             y = np.where((z + 6.0 * e) + 0.25 > 0.0, 1.0, 0.0)
     if dup == 1 and d >= 2:
         X[:, 0] = X[:, 1]
+    if dup == 4 and d >= 2:
+        X[:, 0] = X[:, 1] + (1.0 / 100000.0) * X[:, 0]
+    if dup == 5 and d >= 2:
+        X[:, 0] = X[:, 1] + (1.0 / 10000000.0) * X[:, 0]
+    if dup == 6:
+        X[:, 0] = X[:, 0] * 1000000.0
     if dup == 2:
         X[:] = X[0]
     if dup == 3 and n > 2:
@@ -403,7 +409,10 @@ SUITE = {
     "linreg": [dict(n=n, d=d, seed=s, l2m=l) for (n, d, s, l) in [
         (1, 1, 1, 1000), (2, 1, 2, 0), (30, 3, 3, 0), (255, 3, 4, 0), (256, 4, 5, 1500), (257, 5, 6, 0), (1000, 20, 7, 0),
         (2048, 7, 8, 250), (2049, 7, 9, 0), (4097, 21, 10, 1000), (5000, 1, 11, 0), (20000, 20, 12, 0), (100000, 20, 13, 100)]]
-    + [dict(n=1000, d=4, seed=5, l2m=0, dup=1), dict(n=1000, d=4, seed=5, l2m=10, dup=1)],
+    # dup=1: equal columns (refused with l2 = 0, fitted with l2 > 0); dup=4: nearly dependent, relative pivot about 1e-10 (fitted); dup=5: about 1e-14 (refused); dup=6: column 0 times 1e6 (fitted: the test is relative to each column's own diagonal)
+    + [dict(n=1000, d=4, seed=5, l2m=0, dup=1), dict(n=1000, d=4, seed=5, l2m=10, dup=1), dict(n=1000, d=4, seed=5, l2m=0, dup=4),
+       dict(n=4097, d=21, seed=10, l2m=0, dup=4), dict(n=1000, d=4, seed=5, l2m=0, dup=5), dict(n=257, d=3, seed=6, l2m=0, dup=5), dict(n=2049, d=7, seed=9, l2m=0, dup=1),
+       dict(n=1000, d=4, seed=5, l2m=0, dup=6), dict(n=4097, d=9, seed=10, l2m=0, dup=6)],
 }
 SUITE["logreg"] = [dict(n=n, d=d, seed=s, l2m=l, iters=i) for (n, d, s, l, i) in [
     (40, 1, 1, 0, 6), (300, 2, 2, 0, 8), (255, 3, 3, 1000, 8), (256, 4, 4, 0, 8), (257, 5, 5, 500, 8), (1000, 20, 6, 0, 8),

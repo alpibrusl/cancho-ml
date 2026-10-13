@@ -371,3 +371,83 @@ fn test_solve_generic_paths[&h](heap: &!h Heap) -> [heap] int {
     unbox_slice(heap, x2);
     return bad;
 }
+
+// the relative pivot test (docs/models-linear.md 3.1): s > 2^-40 * A_jj, on the fast path (row-major) and the generic path
+// (column-major A: a different stride, the same test). A is symmetric, so one array serves both layouts.
+fn chol_code[&h](heap: &!h Heap, a00: float, a01: float, a11: float, generic: int) -> [heap] int {
+    let a = box_slice(heap, 4, 0.0);
+    let l = box_slice(heap, 4, 7.0);
+    var code = 0;
+    borrow mut a as &!aw in {
+        let s = contents(aw);
+        s[0] = a00;
+        s[1] = a01;
+        s[2] = a01;
+        s[3] = a11;
+    }
+    borrow a as &ar in {
+        borrow mut l as &!lw in {
+            if generic == 0 {
+                code = chol.cholesky(mat(0, 2, 2, 2, 1), contents(ar), mat(0, 2, 2, 2, 1), contents(lw));
+            } else {
+                code = chol.cholesky(mat(0, 2, 2, 1, 2), contents(ar), mat(0, 2, 2, 1, 2), contents(lw));
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, l);
+    return code;
+}
+
+fn test_chol_relative_pivot[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var g = 0;
+    while g < 2 {
+        // second pivot = a11 - a01^2 / a00. [[1, 1], [1, 1 + 2^-30]]: pivot 2^-30 = 9.3e-10 > 2^-40 * (1 + 2^-30): fitted
+        if chol_code(heap, 1.0, 1.0, 1.0 + 1.0 / 1073741824.0, g) != 0 {
+            bad = bad + 1;
+        }
+        // [[1, 1], [1, 1 + 2^-45]]: pivot 2^-45 = 2.8e-14, positive and exactly representable, but below 2^-40 times 1.0: refused (the old test accepted it)
+        if chol_code(heap, 1.0, 1.0, 1.0 + 1.0 / 35184372088832.0, g) != refuse.not_positive_definite() {
+            bad = bad + 10;
+        }
+        // the test is relative to the diagonal element, so it does not depend on the scale: the same two matrices times 2^-100 and times 2^100
+        if chol_code(heap, 1.0 / 1267650600228229401496703205376.0, 1.0 / 1267650600228229401496703205376.0, (1.0 + 1.0 / 1073741824.0) / 1267650600228229401496703205376.0, g) != 0 {
+            bad = bad + 100;
+        }
+        if chol_code(heap, 1267650600228229401496703205376.0, 1267650600228229401496703205376.0, (1.0 + 1.0 / 35184372088832.0) * 1267650600228229401496703205376.0, g) != refuse.not_positive_definite() {
+            bad = bad + 1000;
+        }
+        // exactly dependent: pivot exactly 0.0; and a negative pivot
+        if chol_code(heap, 2.0, 2.0, 2.0, g) != refuse.not_positive_definite() {
+            bad = bad + 10000;
+        }
+        // a negative diagonal element is refused (the bar tol * a is below a, so s <= a never passes): a00 = -1
+        if chol_code(heap, 0.0 - 1.0, 0.0, 1.0, g) != refuse.not_positive_definite() {
+            bad = bad + 100000;
+        }
+        // NaN diagonal element, and a NaN pivot
+        if chol_code(heap, 1.0, 0.0, 0.0 / 0.0, g) != refuse.not_positive_definite() {
+            bad = bad + 1000000;
+        }
+        // the boundary: a pivot of exactly 2^-40 * a_jj is NOT above it: [[1, 1], [1, 1 + 2^-40]] is refused
+        if chol_code(heap, 1.0, 1.0, 1.0 + 1.0 / 1099511627776.0, g) != refuse.not_positive_definite() {
+            bad = bad + 100000000;
+        }
+        // the diagonal element is the one of the column being tested, not the first: a00 = 1, a01 = 2^10, a11 = 2^20 + 2^-30: pivot 2^-30, which is 2^-50 of a11
+        // (refused) although it is above 2^-40 times a00; and a00 = 2^20, a01 = 2^10, a11 = 1 + 2^-30: pivot 2^-30, about 2^-30 of a11 (fitted) although it is
+        // below 2^-40 times a00 = 2^-20
+        if chol_code(heap, 1.0, 1024.0, 1048576.0 + 1.0 / 1073741824.0, g) != refuse.not_positive_definite() {
+            bad = bad + 1000000000;
+        }
+        if chol_code(heap, 1048576.0, 1024.0, 1.0 + 1.0 / 1073741824.0, g) != 0 {
+            bad = bad + 10000000000;
+        }
+        // an ordinary matrix is still fitted
+        if chol_code(heap, 4.0, 2.0, 3.0, g) != 0 {
+            bad = bad + 10000000;
+        }
+        g = g + 1;
+    }
+    return bad;
+}

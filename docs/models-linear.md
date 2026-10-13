@@ -92,17 +92,51 @@ Terms: `G[j][k] = sum_i x_ij x_ik` (`j <= k < d`, `linalg.syrk`), `G[j][d] = sum
 mirror of the upper. These raw sums are the **decisive sums** of this estimator (`diag` of the fit holds `G` then `b`).
 Ridge: `G[j][j] = G[j][j] + l2` for `j < d` only (**the intercept is not penalised**), once, after the sums. The objective is
 `||y - Xw - b||^2 + l2 ||w||^2` (scikit-learn's `Ridge(alpha = l2)`, not divided by `n`). Solve `G = L L^T`
-(`linalg.chol`, one running value, ascending; pivot `s > 0.0` else `ml.linalg.not-positive-definite`), `L u = b` forward, `L^T w = u`
+(`linalg.chol`, panels of 32, lane rule; pivot `s > 2^-40 * a_jj` with `a_jj` the diagonal of the matrix being factored, else `ml.linalg.not-positive-definite`; the rule and its evidence are below), `L u = b` forward, `L^T w = u`
 backward with `k` **descending** (`docs/linalg.md` 2.1). The model is `coef = w[0..d)`, `intercept = w[d]`. A non-finite result is
 `ml.fit.non-finite`.
 
-No QR and no SVD: a rank-deficient `X` (with `l2 = 0`) is **refused when the pivot test sees it**, not solved by a minimum-norm fallback
-(`ml.linalg.not-positive-definite`, repair "set l2 > 0 or drop the dependent column"). *(Corrected in place at `v1-lanes`: this sentence said
-"is refused" without condition. The test is `s > 0.0` on a rounded pivot, so it fires on an exactly dependent column only when the rounding
-leaves `s <= 0.0`: an all-zero column always gives exactly `+0.0`, but two equal columns were refused under the old order by rounding luck and
-are fitted, with an ill-conditioned result, under the lane order. `tests/p_models.cho` `linreg_refusals` now asks for the zero column and, for
-the equal columns, only that one and four threads agree. Use `l2 > 0`.)* The normal equations square the condition
-number; this is the cost of the fixed, thread-independent order and is stated in section 6.
+No QR and no SVD: a rank-deficient `X` (with `l2 = 0`) is **refused by a relative pivot test**, not solved by a minimum-norm fallback.
+*(History, kept because it is the reason for the rule. The first draft said "refused" and tested `s > 0.0` on the rounded pivot. At `v1-lanes` that test
+was found to see only rounding noise: an all-zero column gives exactly `+0.0`, but two equal columns were refused under the old order by luck and were
+fitted, with an ill-conditioned result, under the lane order. The sentence was corrected then; the test is replaced at `v1-post` by the rule below.)*
+
+**The rule [choice, written before the code at `v1-post`].** In `Cholesky`, column `j`'s pivot sum `s_jj` (after the updates of the columns before it) is
+accepted only if `s_jj > tol * a_jj`, `a_jj` being the diagonal element of the matrix given to the factorisation (for linear
+regression: the Gram diagonal `sum_i x_ij^2` plus `l2`, or `n` for the intercept; for logistic regression: the Newton Hessian's diagonal), and `tol = 2^-40`
+(`9.09e-13`, an exact power of two). (No separate `s_jj > 0.0`: it follows for `a_jj > 0`, and for `a_jj <= 0` the test is never true, since the updates only subtract sums of squares from the diagonal element, so `s_jj <= a_jj`.) Otherwise `ml.linalg.not-positive-definite` (exit 8; the tag was not changed: it already names "a pivot that is not
+positive", and the repair text now names the two ways out). `s_jj / a_jj` is `1 - R_j^2`, where `R_j` is the multiple correlation of column `j` with the
+columns before it (about `1 - rho^2` for a pair), so the test says: refuse a column that the earlier ones explain to within `2^-40` of its own sum of squares.
+The intercept column is in the matrix: a feature whose mean is more than about `10^6` standard deviations is refused too. Repair: `l2` above `2^-40 * a_jj`
+(for standardised features `a_jj = n`: `l2 > n * 9.1e-13`), or drop one of the dependent columns, or scale (centre) the features.
+
+**Why `2^-40`: measured** (`python3 scripts/pivot_evidence.py`, seed 20261013, the factorisation being `oracle_linalg.chol_o`, the Python
+twin of `lib/linalg/chol.cho` checked bit for bit by the gates; machine Mac arm64, numpy 2.4.6; n = 1,000 unless said):
+
+| data | smallest relative pivot `s_jj / a_jj` | verdict at `tol = 2^-40 = 9.1e-13` |
+|---|---|---|
+| well conditioned (uniform features, d = 1, 4, 20; minimum of 50 seeds each) | 0.994, 0.989, 0.959 | accepted (margin about 10^12) |
+| standardised pair, correlation 0.999999 (`1 - rho = 1e-6`) | 2.000e-06 | **accepted**: it must fit |
+| standardised pair, `1 - rho` = 1e-9, 1e-10, 1e-11, 1e-12 | 2.0e-09, 2.0e-10, 2.0e-11, 2.0e-12 | accepted |
+| standardised pair, `1 - rho` = 1e-13 | 2.0e-13 | refused (a pair that close to dependent is below what the normal equations can resolve; they square the condition number) |
+| **rounding noise** of exactly dependent columns, l2 = 0 (two equal columns, a column and 3 times it, a column with the sum of two others; n = 7 to 20,000; 40 seeds per n; 960 fits) | between `-7.9e-16` and `+7.4e-16`; positive (so accepted by the old test `s > 0.0`) in 62 + 67 + 87 + 99 of 240 fits each | **all refused** (the largest noise is about 1,100 times below `tol`) |
+| an all-zero column | exactly `0.0` (and `a_jj = 0.0`) | refused |
+| one feature with mean/sd = 1e5, 5e5, 1e6, 1e7 (the intercept's pivot) | 9.8e-11, 4.0e-12, 9.9e-13, 9.4e-15 | accepted, accepted, accepted (barely), refused |
+| equal columns with `l2` = 1e-9, 1e-6, 1e-3, 1 (`a_jj` about 1000) | 2e-12, 2e-9, 2e-6, 2e-3 | accepted (the repair works; `l2 = 0`: refused) |
+
+So `tol` has to be above the noise (at most `8e-16` was seen, which rounding bounds by a small multiple of the unit roundoff `1.1e-16` times the number of
+terms; with n = 20,000 and d <= 3 the growth with `n` is not visible) and below the smallest relative pivot of data one wants to fit. `2^-40` leaves a factor of
+about 1,100 above the largest noise seen and a factor of 2 below the pair at `1 - rho = 1e-12`. It is a choice: any `tol` between about `1e-14` and `1e-12` separates
+what was measured; nothing is claimed about noise at `d` in the hundreds or at `n` of millions, which was not measured. *Not claimed:* that every rank-deficient
+matrix has noise below `tol` (a matrix whose columns are ill-scaled against each other changes `a_jj` and the noise together, which is why the test is relative to
+`a_jj`, but the noise of a long sum can exceed `8e-16 * a_jj` for much larger `n`; the repair then is `l2 > 0`).
+
+The gate that was weakened at `v1-lanes` is restored (`tests/p_models.cho` `linreg_refusals`): two equal columns with `l2 = 0` are refused, at one and at four threads;
+an all-zero column is refused; a column `x1 + 1e-5 * x0` (relative pivot about `1e-10`) is **fitted**; with `l2 = 0.01` the equal columns are fitted. A design whose column 0 is a million times larger than the others is fitted (the test is relative to each column's own diagonal). The oracle suite has
+the same data (`dup=1` refused, `dup=4` fitted, `dup=5` refused, `dup=6` the scaled column fitted; 7 configurations added) and compares the verdict and the bits. `tests/t_chol.cho` `test_chol_relative_pivot` has the boundary (a pivot of exactly `2^-40 * a_jj` is refused), the scale invariance, the wrong-diagonal pairs and a negative diagonal element, on both paths. Mutants: `tol` 2^20 times smaller (the noise is accepted), 2^20 times larger
+(legitimate data is refused), the test absolute instead of relative, the test against the wrong diagonal, the test inverted, the test removed, `>=` for `>`: `scripts/mutants_linalg.py` group chol (9, both Cholesky paths) and `scripts/mutants_models.py` (6); all killed.
+The logistic regression uses the same factorisation: a Newton step whose Hessian has a relative pivot below `2^-40` (a nearly separable fit with saturated weights) is now
+`ml.linalg.not-positive-definite`; it was `ml.fit.non-finite` or a poor fit before. The effect on the gates' logistic data: none (the oracle suite still agrees bit for bit).
 
 ### 3.2 Logistic regression (binary), Newton, fixed iterations
 
@@ -120,8 +154,8 @@ number; this is the cost of the fixed, thread-independent order and is stated in
   from `0.0` (the "loss line"; it is the value at the `w` the iteration started from). The penalty is `(l2/2) ||w||^2` on the mean
   log-loss, so scikit-learn's `C` is `1 / (l2 n)`.
 * `H = L L^T` (`chol`), `L u = g`, `L^T dl = u` (descending), `w_a = w_a - dl_a`. No damping, no jitter, no line search, no
-  convergence test: **the number of iterations is a flag** (`1 .. 1000`). A non-finite `w` is `ml.fit.non-finite`; a pivot that is not
-  `> 0.0` is `ml.linalg.not-positive-definite`.
+  convergence test: **the number of iterations is a flag** (`1 .. 1000`). A non-finite `w` is `ml.fit.non-finite`; a pivot that fails the
+  relative test of section 3.1 (`s > 2^-40 * H_aa`) is `ml.linalg.not-positive-definite`.
 * `K = 8` is the value used by the gates **[choice]**: spike S found `K = 6` converged to `1e-13` on this data; 8 leaves margin for
   other data. The library takes `K` from the caller and has no default.
 * The labels must be `0.0` or `1.0` exactly (`ml.label.not-binary`) and both present (`ml.label.single-class`).

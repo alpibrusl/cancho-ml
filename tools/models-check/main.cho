@@ -155,6 +155,9 @@ fn hash_floats[&v](vals: &v [float], n: int) -> [] int {
 //   linreg: y_i = (z_i + 0.5*e_i) + 2.0         logreg: y_i = 1.0 if ((z_i + 6.0*e_i) + 0.25) > 0.0 else 0.0
 //   kmeans: g_i = trunc((e_i + 1.0) * 2.5) in 0..4, X[i][j] += float(((g_i*7 + j*3) % 11) - 5) * 1.5
 // dup=1 copies column 1 into column 0 after the features are made (a collinear design for the refusal of the normal equations);
+// dup=4 makes column 0 = column 1 + (1/100000) * column 0 and dup=5 the same with 1/10000000: nearly dependent columns, whose smallest
+// relative Cholesky pivot is about 1e-10 (dup=4, fitted) and 1e-14 (dup=5, refused; docs/models-linear.md 3.1);
+// dup=6 multiplies column 0 by 1e6 (a badly scaled, independent design: fitted);
 // dup=2 makes every row a copy of row 0 (identical points: ties everywhere and empty clusters for k-means);
 // dup=3 makes row i a copy of row i mod 2 (two distinct points: the k-means++ weights vanish after two centers).
 fn gen_data[&x, &y](model: int, n: int, d: int, seed: int, dup: int, xs: &!x [float], ys: &!y [float]) -> [] int {
@@ -196,6 +199,15 @@ fn gen_data[&x, &y](model: int, n: int, d: int, seed: int, dup: int, xs: &!x [fl
         }
         if dup == 1 && d >= 2 {
             row[0] = row[1];
+        }
+        if dup == 4 && d >= 2 {
+            row[0] = row[1] + 1.0 / 100000.0 * row[0];
+        }
+        if dup == 5 && d >= 2 {
+            row[0] = row[1] + 1.0 / 10000000.0 * row[0];
+        }
+        if dup == 6 {
+            row[0] = row[0] * 1000000.0;
         }
         if dup == 2 && i > 0 {
             var q = 0;

@@ -210,7 +210,16 @@ def gemm_o(A, B):
     return tree(np.array(parts))
 
 
-def chol_o(A):
+TOL = 1.0 / 1099511627776.0  # 2^-40, the relative pivot test (docs/linalg.md 2.1, lib/linalg/chol.cho `pivot_tol`)
+
+
+def pivot_ok(s, a):
+    """the pivot test of lib/linalg/chol.cho: s > TOL * a, a being the diagonal element A_jj before any update (no ORACLE_MUTANT of
+    its own: the linalg suite factors only positive definite matrices; the refusals are in tests/t_chol.cho, tests/p_models.cho and the models suite)"""
+    return s > TOL * a
+
+
+def chol_o(A, pivots=None):
     """panels of NB = 32 (docs/linalg.md 2.1): s = A_ij; s = s - P_p for every full panel before the one holding j; s = s - P_c over
     k = 32c .. j - 1; the lane rule inside a panel (lane = k mod 4). Vectorised over the rows i >= j of column j."""
     d = A.shape[0]
@@ -222,7 +231,9 @@ def chol_o(A):
         for p0 in range(0, c0, nb):
             s = s - lane_partial(lambda t: L[j:, p0 + t] * L[j, p0 + t], nb, (d - j,))
         s = s - lane_partial(lambda t: L[j:, c0 + t] * L[j, c0 + t], j - c0, (d - j,))
-        if not s[0] > 0.0:
+        if pivots is not None:
+            pivots.append((float(s[0]), float(A[j, j])))
+        if not pivot_ok(s[0], A[j, j]):
             return None
         ljj = np.sqrt(s[0])
         L[j, j] = ljj

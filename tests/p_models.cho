@@ -469,6 +469,9 @@ fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
     let ys = fill(heap, 60, 34);
     let xd = fill(heap, 60 * 4, 33);
     let xz = fill(heap, 60 * 4, 36);
+    let xn = fill(heap, 60 * 4, 33);
+    let xm = fill(heap, 60 * 4, 33);
+    let xb = fill(heap, 60 * 4, 33);
     let big = box_slice(heap, 60 * 3, 1.0e200);
     var bad = 0;
     borrow mut xz as &!zw in {
@@ -484,6 +487,28 @@ fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
         var i = 0;
         while i < 60 {
             contents(dw)[i * 4] = contents(dw)[i * 4 + 1];
+            i = i + 1;
+        }
+    }
+    borrow mut xn as &!nw in {
+        var i = 0;
+        while i < 60 {
+            contents(nw)[i * 4] = contents(nw)[i * 4 + 1] + 1.0 / 100000.0 * contents(nw)[i * 4];
+            i = i + 1;
+        }
+    }
+    borrow mut xb as &!bw in {
+        // column 0 a million times larger than the others: the pivot test is relative to each column's own diagonal element
+        var i = 0;
+        while i < 60 {
+            contents(bw)[i * 4] = contents(bw)[i * 4] * 1000000.0;
+            i = i + 1;
+        }
+    }
+    borrow mut xm as &!mw in {
+        var i = 0;
+        while i < 60 {
+            contents(mw)[i * 4] = contents(mw)[i * 4 + 1] + 1.0 / 10000000.0 * contents(mw)[i * 4];
             i = i + 1;
         }
     }
@@ -509,19 +534,28 @@ fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
     borrow ys as &yr in {
         borrow xd as &dr in {
             borrow xz as &zr in {
-                // two equal columns with l2 = 0: the Gram matrix is singular in exact arithmetic, and whether the pivot test `s > 0.0` sees it
-                // is a matter of rounding, so it depends on the summation order (docs/lanes.md section 3: before v1-lanes this data was refused,
-                // with the lane order it is not). The test therefore asks for what does not depend on the order: the answer is the same at one
-                // thread and at four, and it is either the refusal or a fit.
-                let c1 = lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.0);
-                let c4 = lin_fit(heap, 4, 60, 4, contents(dr), contents(yr), 0.0);
-                if c1 != c4 || c1 != 0 && c1 != refuse.not_positive_definite() {
-                    bad = bad + 1 + c1 * 100 + c4;
+                borrow xn as &nr in {
+                    borrow xm as &mr in {
+                        borrow xb as &br in {
+                            // two equal columns with l2 = 0: the Gram matrix is singular in exact arithmetic and the rounded pivot is noise (about 1e-16 of the
+                            // diagonal, of either sign, under the lane order: docs/lanes.md section 3). The relative pivot test (s > 2^-40 * a_jj, docs/models-linear.md
+                            // 3.1) refuses it, at one thread and at four, whatever the order.
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.0), refuse.not_positive_definite());
+                            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(dr), contents(yr), 0.0), refuse.not_positive_definite());
+                            // a nearly dependent but legitimate design (column 0 = column 1 + 1e-5 * its own values: relative pivot about 1e-10) is fitted
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(nr), contents(yr), 0.0), 0);
+                            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(nr), contents(yr), 0.0), 0);
+                            // the same design with column 0 = column 1 + 1e-7 * ...: relative pivot about 1e-14, below the tolerance: refused
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(mr), contents(yr), 0.0), refuse.not_positive_definite());
+                            // an all-zero column is singular whatever the order: its pivot is exactly +0.0
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(zr), contents(yr), 0.0), refuse.not_positive_definite());
+                            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(zr), contents(yr), 0.0), refuse.not_positive_definite());
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.01), 0);
+                            // a badly scaled but independent design is fitted (a pivot relative to the first column's diagonal would refuse it)
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(br), contents(yr), 0.0), 0);
+                        }
+                    }
                 }
-                // an all-zero column is singular whatever the order: its pivot is exactly +0.0
-                bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(zr), contents(yr), 0.0), refuse.not_positive_definite());
-                bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(zr), contents(yr), 0.0), refuse.not_positive_definite());
-                bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.01), 0);
             }
         }
         borrow big as &gr in {
@@ -571,6 +605,9 @@ fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
     unbox_slice(heap, ys);
     unbox_slice(heap, xd);
     unbox_slice(heap, xz);
+    unbox_slice(heap, xn);
+    unbox_slice(heap, xm);
+    unbox_slice(heap, xb);
     unbox_slice(heap, big);
     unbox_slice(heap, out);
     unbox_slice(heap, diag);

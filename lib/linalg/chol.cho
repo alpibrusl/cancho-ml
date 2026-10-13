@@ -10,7 +10,10 @@ import ml.refuse;
 // cut at k < j) the panel's sum P of L_ik L_jk is formed by the lane rule (lane = k mod 4, each lane ascending from +0.0, the
 // partial (l0 + l1) + (l2 + l3)) and subtracted once: s = s - P_0; s = s - P_1; ... An empty last panel subtracts +0.0, which
 // changes no bit, so it is not formed.
-//   L_jj = sqrt(s_jj)                  refused (ml.linalg.not-positive-definite) unless s_jj > 0.0
+//   L_jj = sqrt(s_jj)                  refused (ml.linalg.not-positive-definite) unless s_jj > tol * A_jj, tol = 2^-40
+//                                      (`pivot_tol()`, `pivot_ok`; A_jj is the diagonal element of the matrix given, before any update:
+//                                      docs/linalg.md section 2.1, docs/models-linear.md 3.1: a pivot that rounding noise could
+//                                      have produced is not a pivot)
 //   L_ij = s_ij / L_jj                 for i > j
 // The triangular solves keep ONE running value (a recurrence, not a free reduction; they were not part of the lane experiment):
 //   forward  L x = b:   x_i = (b_i - L_i0 x_0 - ... - L_i,i-1 x_i-1) / L_ii               k ascending
@@ -19,6 +22,18 @@ import ml.refuse;
 //     whole solve; descending k lets four columns be summed together)
 // The speed comes from independent chains: a column of L is computed 4 rows at a time (sixteen lane chains), a solve 4 rows
 // (forward) or 4 columns (backward) at a time; each entry's own additions keep the order above.
+
+// tol of the relative pivot test: 2^-40 (an exact power of two, so the division is exact). Measured evidence: docs/models-linear.md 3.1.
+pub fn pivot_tol() -> [] float {
+    return 1.0 / 1099511627776.0;
+}
+
+// the pivot test: s is the pivot sum of column j, a the diagonal element A_jj of the matrix given. NaN in either is a refusal (the
+// comparison is false). No separate `s > 0.0`: for a > 0 the test implies it, and for a <= 0 it is never true, because the updates
+// subtract sums of squares from the diagonal element, so s <= a: for a < 0, s <= a < tol * a, and for a = 0, s <= 0 = tol * a
+fn pivot_ok(s: float, a: float) -> [] bool {
+    return s > pivot_tol() * a;
+}
 
 // the entry sum s_ij of the fast path: `lv` is L (positioned at L[0][0], row stride ls); rows i and j (j <= i, row i has j entries
 // computed); `aij` is A_ij. Panels of 32, four lanes each.
@@ -156,7 +171,7 @@ fn chol_fast[&l, &a](lv: &!l [float], ls: int, av: &a [float], as_: int, d: int)
     var j = 0;
     while j < d {
         let s = entry_sum(lv, ls, j, j, av[j * as_ + j]);
-        if !(s > 0.0) {
+        if !pivot_ok(s, av[j * as_ + j]) {
             return refuse.not_positive_definite();
         }
         let ljj = sqrt(s);
@@ -218,7 +233,7 @@ fn chol_generic[&l, &a](lv: &!l [float], lt: tensor.Tensor, av: &a [float], at: 
         while i < d {
             let s = entry_sum_generic(lv, lt, i, j, av[at.off + i * at.t0 + j * at.t1]);
             if i == j {
-                if !(s > 0.0) {
+                if !pivot_ok(s, av[at.off + j * at.t0 + j * at.t1]) {
                     return refuse.not_positive_definite();
                 }
                 lv[lt.off + j * lt.t0 + j * lt.t1] = sqrt(s);

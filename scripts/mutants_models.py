@@ -17,6 +17,7 @@ KM = "lib/models/kmeans/kmeans.cho"
 KP = "lib/models/kmeans/kpass.cho"
 PAR = "lib/models/par.cho"
 LPAR = "lib/linalg/par.cho"
+LCH = "lib/linalg/chol.cho"
 SC = "lib/models/score.cho"
 MX = "lib/models/mexp.cho"
 
@@ -30,6 +31,13 @@ M = [
     ("lin-backward-as-forward", LIN, "code = chol.solve(1, common.mat(p, p), contents(lr), common.vec(p), contents(ur), common.vec(p), contents(wwr));", "code = chol.solve(0, common.mat(p, p), contents(lr), common.vec(p), contents(ur), common.vec(p), contents(wwr));"),
     ("lin-mirror", LIN, "diag[k * p + j] = cc[j * d + k];", "diag[k * p + j] = 0.0;"),
     ("lin-intercept-out", LIN, "out[j] = w[j];", "out[j] = w[p - 1 - j];"),
+    # ---- the relative pivot test of the factorisation (docs/models-linear.md 3.1)
+    ("lin-pivot-tol-small", LCH, "return 1.0 / 1099511627776.0;", "return 1.0 / 1152921504606846976.0;"),
+    ("lin-pivot-tol-large", LCH, "return 1.0 / 1099511627776.0;", "return 1.0 / 1048576.0;"),
+    ("lin-pivot-absolute", LCH, "return s > pivot_tol() * a;", "return s > pivot_tol();"),
+    ("lin-pivot-none", LCH, "return s > pivot_tol() * a;", "return s > 0.0;"),
+    ("lin-pivot-inverted", LCH, "return s > pivot_tol() * a;", "return !(s > pivot_tol() * a);"),
+    ("lin-pivot-wrong-diag", LCH, "if !pivot_ok(s, av[j * as_ + j]) {", "if !pivot_ok(s, av[0]) {"),
     # ---- logistic regression
     ("log-iters-minus-one", LOG, "while it < iters && code == 0 {", "while it < iters - 1 && code == 0 {"),
     ("log-iters-plus-one", LOG, "while it < iters && code == 0 {", "while it < iters + 1 && code == 0 {"),
