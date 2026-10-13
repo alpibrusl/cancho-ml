@@ -449,3 +449,65 @@ fn test_every_kind_round_trips_and_every_truncation_is_refused[&h](heap: &!h Hea
     }
     return bad;
 }
+
+// the code of the first refusal of the apply of a step fitted on `train` to `test` (a = step 1, b = column, c = row), 0 if none
+fn apply_code[&h](heap: &!h Heap, sp: fit.Spec, train: &static [byte], cols: &static [byte], test: &static [byte]) -> [heap] (int, int, int) {
+    let x = pt.mat(heap, train);
+    let t = pt.mat(heap, test);
+    let cb = pt.ints_of(heap, cols);
+    var code = 0 - 1;
+    var b = 0;
+    var c = 0;
+    borrow cb as &cr in {
+        borrow x as &xr in {
+            let (st, f) = fit.fit(heap, sp, xr, contents(cr), 1);
+            borrow t as &tr in {
+                borrow st as &sr in {
+                    let (y, u, f2) = apply.apply(heap, sr, tr, 1, 1000, 100, 100000);
+                    code = f2.code;
+                    b = f2.b;
+                    c = f2.c;
+                    matrix.drop(heap, y);
+                }
+            }
+            steps.drop(heap, st);
+        }
+    }
+    matrix.drop(heap, x);
+    matrix.drop(heap, t);
+    unbox_slice(heap, cb);
+    return (code, b, c);
+}
+
+// a cell that is not finite, and a result that overflows, are refused and never stored
+fn test_non_finite_cells_and_overflows_are_refused[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    if fit_code(heap, spec(2, 0, 0, 0.0), "1;nan", "0") != codes.input_non_finite() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(1, 1, 0, 0.0), "1;inf;3", "0") != codes.input_non_finite() {
+        bad = bad + 1;
+    }
+    if fit_code(heap, spec(4, 0, 4, 0.0), "1;nan;3", "0") != codes.input_non_finite() {
+        bad = bad + 1;
+    }
+    // a step fitted on 0 and 1e-300 (d = 1e-300) overflows on 1e10 / 1e-300; the cell is row 1 of column 0
+    let (c1, b1, r1) = apply_code(heap, spec(2, 0, 0, 0.0), "0;1e-300", "0", "0;1e10");
+    if c1 != codes.input_non_finite() || b1 != 0 || r1 != 1 {
+        bad = bad + 1;
+    }
+    let (c2, b2, r2) = apply_code(heap, spec(3, 0, 0, 0.0), "0;1;2", "0", "1;nan");
+    if c2 != codes.input_non_finite() || r2 != 1 {
+        bad = bad + 1;
+    }
+    let (c3, b3, r3) = apply_code(heap, spec(6, 0, 4, 0.0), "0;1;2", "0", "1;inf");
+    if c3 != codes.input_non_finite() {
+        bad = bad + 1;
+    }
+    // and a refusal of the apply that is not one: the same step on a finite test
+    let (c4, b4, r4) = apply_code(heap, spec(2, 0, 0, 0.0), "0;1e-300", "0", "0;1e-300");
+    if c4 != 0 {
+        bad = bad + 1;
+    }
+    return bad;
+}

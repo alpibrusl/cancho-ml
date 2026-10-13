@@ -134,12 +134,19 @@ pub fn apply[&h, &s, &m](heap: &!h Heap, st: &s steps.Step, x: &m matrix.Matrix,
                                     }
                                 } else {
                                     let v = matrix.value(x, r, c);
-                                    if j < 0 {
+                                    if !(v - v == 0.0) {
+                                        fault = codes.fault(codes.input_non_finite(), step_no, c, r);
+                                    } else if j < 0 {
                                         matrix.put(contents(dw), cols, r, o, v);
                                     } else if kind == 1 {
                                         matrix.put(contents(dw), cols, r, o, v);
                                     } else if kind == 2 || kind == 3 {
-                                        matrix.put(contents(dw), cols, r, o, (v - f[2 * j]) / f[2 * j + 1]);
+                                        let z = (v - f[2 * j]) / f[2 * j + 1];
+                                        if !(z - z == 0.0) {
+                                            fault = codes.fault(codes.input_non_finite(), step_no, c, r);
+                                        } else {
+                                            matrix.put(contents(dw), cols, r, o, z);
+                                        }
                                     } else if kind == 4 || kind == 5 {
                                         let cn = a[base + 1 + j];
                                         let idx = lookup(f, contents(cr)[j], cn, v);

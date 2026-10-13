@@ -27,7 +27,7 @@ fn finite(v: float) -> [] bool {
     return v - v == 0.0;
 }
 
-// the non-missing cells of column c in row order into out (as +0.0 for -0.0); (count, min, max)
+// the non-missing cells of column c in row order into out (as +0.0 for -0.0); (count, min, max); the count is -1 at a cell that is not finite
 fn gather[&m, &o](x: &m matrix.Matrix, c: int, out: &!o [float]) -> [] (int, float, float) {
     let n = matrix.rows(x);
     var cnt = 0;
@@ -37,6 +37,9 @@ fn gather[&m, &o](x: &m matrix.Matrix, c: int, out: &!o [float]) -> [] (int, flo
     while r < n {
         if !matrix.is_missing(x, r, c) {
             let v = matrix.value(x, r, c) + 0.0;
+            if !finite(v) {
+                return (0 - 1, 0.0, 0.0);
+            }
             if cnt == 0 {
                 lo = v;
                 hi = v;
@@ -99,6 +102,9 @@ fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix,
     while j < k {
         let col = cols[j];
         let (cnt, lo, hi) = gather(x, col, vals);
+        if cnt < 0 {
+            return codes.fault(codes.input_non_finite(), step_no, col, 0);
+        }
         if cnt == 0 && !(kind == 1 && sp.a == 2) {
             return codes.fault(codes.all_missing(), step_no, col, 0);
         }
@@ -174,7 +180,11 @@ fn params[&h, &m, &c, &a, &f, &v](heap: &!h Heap, sp: Spec, x: &m matrix.Matrix,
                 }
                 var i = 1;
                 while i < bins {
-                    fl[j * w + i - 1] = lo + range * float_of(i) / float_of(bins);
+                    let e = lo + range * float_of(i) / float_of(bins);
+                    if !finite(e) {
+                        return codes.fault(codes.fit_non_finite(), step_no, col, 0);
+                    }
+                    fl[j * w + i - 1] = e;
                     i = i + 1;
                 }
             } else {
@@ -214,6 +224,9 @@ fn count_categories[&m, &c, &a, &v](x: &m matrix.Matrix, cols: &c [int], step_no
     while j < k {
         let col = cols[j];
         let (cnt, lo, hi) = gather(x, col, vals);
+        if cnt < 0 {
+            return (0, codes.fault(codes.input_non_finite(), step_no, col, 0));
+        }
         if cnt == 0 {
             return (0, codes.fault(codes.all_missing(), step_no, col, 0));
         }

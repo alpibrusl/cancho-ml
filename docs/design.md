@@ -320,7 +320,7 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.limit.plan` | 8 | a plan over 64 KiB, 64 lines or 4,096 listed names, or a name over 255 bytes | shorten the plan |
 
 The library also answers, with its own codes in its band, tags that exist above: `ml.input.empty`, `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.too-many-cells`, `ml.param.out-of-range`,
-`ml.fit.non-finite`, `ml.schema.mismatch` and `ml.model.bad-magic`, `version`, `truncated`, `checksum`, `malformed`.
+`ml.input.non-finite` (a cell of a matrix given to a transform, or a transformed value that overflowed), `ml.fit.non-finite`, `ml.schema.mismatch` and `ml.model.bad-magic`, `version`, `truncated`, `checksum`, `malformed`.
 
 ## 8.1 The numeric codes of the libraries (added at integration)
 
@@ -393,6 +393,7 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 322 | `ml.limit.plan` | 8 | `transforms.codes` |
 | 323 | `ml.input.too-many-rows` | 8 | `transforms.codes` |
 | 324 | `ml.input.too-many-cells` | 8 | `transforms.codes` |
+| 325 | `ml.input.non-finite` | 8 | `transforms.codes` |
 
 ## 9. Limits and sizes — waits for M0
 

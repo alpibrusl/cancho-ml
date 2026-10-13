@@ -122,7 +122,7 @@ Section 2.3. Lookup is a binary search over the sorted categories with `==` on t
 Section 2.4.
 
 ### 3.6 Output shape
-All but `onehot` keep the number of columns and rows. Every output cell is a finite double or missing.
+All but `onehot` keep the number of columns and rows. Every output cell is a finite double or missing: a cell of the input that is not finite, and a scaled value that overflows, are `ml.input.non-finite` (step, column and row in `detail`), never stored.
 
 ### 3.7 Where scikit-learn differs, stated before measuring
 * `StandardScaler` computes mean and variance with numpy's pairwise algorithm and treats near-constant columns by tolerance:
