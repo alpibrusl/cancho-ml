@@ -6,6 +6,7 @@ import ml.csvcell;
 import flt;
 import transforms.codes;
 import transforms.fit;
+import pipeline.modeldefs;
 
 // The plan text (docs/pipeline.md section 2): parse, check and write the canonical form. One step per line, `verb key=value ...`, then one
 // `model` line. Input may have blanks, CRLF, blank lines, `#` comments and the keys in any order; the canonical form has one space between
@@ -15,8 +16,8 @@ import transforms.fit;
 //
 // THE GRAMMAR IS A TABLE: defs_of() below. A def is `name:type:rule` or `name:type:rule@cond`: type `cols`, `enum=a,b,c`, `int=lo,hi`, `float`,
 // `fnn` (a finite float >= 0); rule `req` (required), `opt` (omitted when absent) or `=text` (the default); `@key=value` makes the key legal only when
-// the earlier key has that value (it is then required or defaulted as the rule says; otherwise a present key is ml.plan.bad-value). The model
-// lines' keys are PROVISIONAL (the wiring stage owns them when it plugs the estimators); the four step verbs are final.
+// the earlier key has that value (it is then required or defaulted as the rule says; otherwise a present key is ml.plan.bad-value). The keys of the model
+// lines come from modeldefs (generated from the manifests of lib/models); the four step verbs are final.
 
 pub fn max_bytes() -> [] int {
     return 65536;
@@ -51,28 +52,8 @@ fn defs_of[&s](verb: &s [byte]) -> [] &static [byte] {
     if bytes.equal(verb, "bucket") {
         return "column:cols:req kind:enum=width,quantile:req bins:int=2,256:req";
     }
-    if bytes.equal(verb, "model") {
-        return "kind:enum=constant,linear,logistic,kmeans,tree,forest:req";
-    }
-    if bytes.equal(verb, "model:constant") {
-        return "task:enum=regression,classification:req";
-    }
-    if bytes.equal(verb, "model:linear") {
-        return "l2:fnn:=0.0";
-    }
-    if bytes.equal(verb, "model:logistic") {
-        return "iterations:int=1,1000:=100 l2:fnn:=0.0";
-    }
-    if bytes.equal(verb, "model:kmeans") {
-        return "k:int=1,1024:req iterations:int=1,1000:=10";
-    }
-    if bytes.equal(verb, "model:tree") {
-        return "task:enum=classification,regression:req max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
-    }
-    if bytes.equal(verb, "model:forest") {
-        return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
-    }
-    return "";
+    // the keys of the `model` line are generated from the manifests of lib/models (docs/modules.md section 3)
+    return modeldefs.defs(verb);
 }
 
 // ---------------------------------------------------------------- the plan
@@ -131,15 +112,15 @@ pub fn listed[&p](p: &p Plan, i: int) -> [] int {
     return contents(p.specs)[8 * i + 7];
 }
 
-// the model kind of the model line: 0 constant, 1 linear, 2 logistic, 3 kmeans, 4 tree, 5 forest
+// the model kind of the model line: its place in modeldefs.name (plan_order of the manifests: 0 constant, 1 linear, 2 logistic, 3 kmeans, 4 tree, 5 forest)
 pub fn model_kind[&p](p: &p Plan) -> [] int {
     let line = buffer.bytes(p.text)[p.model_from..p.model_to];
     // the canonical line starts `model kind=`
     let e = until(line, 11, len(line), ' ');
     let k = line[11..e];
     var i = 0;
-    while i < 6 {
-        if bytes.equal(k, model_name(i)) {
+    while i < modeldefs.count() {
+        if bytes.equal(k, modeldefs.name(i)) {
             return i;
         }
         i = i + 1;
@@ -148,22 +129,7 @@ pub fn model_kind[&p](p: &p Plan) -> [] int {
 }
 
 pub fn model_name(i: int) -> [] &static [byte] {
-    if i == 0 {
-        return "constant";
-    }
-    if i == 1 {
-        return "linear";
-    }
-    if i == 2 {
-        return "logistic";
-    }
-    if i == 3 {
-        return "kmeans";
-    }
-    if i == 4 {
-        return "tree";
-    }
-    return "forest";
+    return modeldefs.name(i);
 }
 
 // the line (1-based, of the input) that step i came from
@@ -542,25 +508,7 @@ fn emit[&h, &s, &k, &w, &f](heap: &!h Heap, src: &s [byte], line_no: int, ls: in
 
 // the defs of a model kind by its name in v, or "" when there is no such kind
 fn model_defs[&v](v: &v [byte]) -> [] &static [byte] {
-    if bytes.equal(v, "constant") {
-        return defs_of("model:constant");
-    }
-    if bytes.equal(v, "linear") {
-        return defs_of("model:linear");
-    }
-    if bytes.equal(v, "logistic") {
-        return defs_of("model:logistic");
-    }
-    if bytes.equal(v, "kmeans") {
-        return defs_of("model:kmeans");
-    }
-    if bytes.equal(v, "tree") {
-        return defs_of("model:tree");
-    }
-    if bytes.equal(v, "forest") {
-        return defs_of("model:forest");
-    }
-    return "";
+    return modeldefs.model_defs(v);
 }
 
 // is `key` a key of the def string

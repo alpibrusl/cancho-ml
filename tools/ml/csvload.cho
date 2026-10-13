@@ -59,30 +59,44 @@ pub fn kept[&s](sh: &s csv.Shape) -> [] int {
 // (matrix, shape, report, code). code is 0, or the refusal of ml.refuse that stopped the matrix being made (no rows, a cap); when
 // report.status is not 0 the matrix is empty and the report says what stopped the read.
 pub fn load[&h, &f, &r, &pf, &pq](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
-    let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: 0, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
-    let (sh, rep, sk) = pass(heap, fs, root, rel, full, c1, "", csv.plain_sinks(heap, 8, false));
+    return load_t(heap, fs, root, rel, full, cfg, "", false);
+}
+
+// The same with a target: its column is found by name in the shape (`tcol`; -1 if the header has none). `skip` false: the target is a column of the
+// matrix like the others (fit and eval read it, and --drop of the target is status 14). `skip` true: the target is not read and not a column of the
+// matrix (predict of a planned model: the file may lack it, or hold anything there); pass 1 runs in mode 5 and pass 2 in mode 9 (docs/wiring.md section 3).
+pub fn load_t[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, target: &t [byte], skip: bool) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
+    var m1 = 0;
+    var m2 = 8;
+    if skip {
+        m1 = 5;
+        m2 = 9;
+    }
+    let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m1, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+    let (sh, rep, sk) = pass(heap, fs, root, rel, full, c1, target, csv.plain_sinks(heap, 8, false));
     csv.drop_sinks(heap, sk);
     if rep.status != 0 {
         return (matrix.empty(heap), sh, rep, 0);
     }
     var k = 0;
-    borrow sh as &sr in {
-        k = kept(sr);
-    }
     var rows = 0;
     borrow sh as &sr in {
+        k = kept(sr);
         rows = csv.rows(sr);
+        if skip && csv.tcol(sr) >= 0 && !csv.dropped(sr, csv.tcol(sr)) {
+            k = k - 1;
+        }
     }
     let (mx, code) = matrix.make(heap, rows, k, cfg.max_rows, cfg.max_cols, cfg.max_cells);
     if code != 0 {
         return (mx, sh, rep, code);
     }
     let (t, data, miss, mrows, mcols, wpc) = matrix.parts(mx);
-    let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: 8, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
-    let (sh2, rep2, sk2) = pass(heap, fs, root, rel, full, c2, "", csv.sinks(heap, 8, false, data, miss));
+    let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m2, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
+    let (sh2, rep2, sk2) = pass(heap, fs, root, rel, full, c2, target, csv.sinks(heap, 8, false, data, miss));
     csv.drop_shape(heap, sh2);
-    let (a2, f2, d2, m2) = csv.sink_parts(sk2);
+    let (a2, f2, d2, m2s) = csv.sink_parts(sk2);
     unbox_slice(heap, a2);
     vec.drop(heap, f2);
-    return (matrix.assemble(t, d2, m2, mrows, mcols, wpc), sh, rep2, 0);
+    return (matrix.assemble(t, d2, m2s, mrows, mcols, wpc), sh, rep2, 0);
 }

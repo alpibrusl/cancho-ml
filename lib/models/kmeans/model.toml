@@ -1,0 +1,37 @@
+# k-means (docs/models-linear.md): a library, not wired into the verbs in this stage.
+name = "kmeans"
+kind = 6
+kind_fn = "model_kmeans"
+task = "clustering"
+tier = "experimental"
+wired = false
+payload_version = 1
+doc = "docs/models-linear.md"
+files = ["lib/models/kmeans/kmeans.cho", "lib/models/kmeans/kpass.cho"]
+plan_order = 3
+
+[tags]
+emits = ["ml.input.non-finite", "ml.param.out-of-range", "ml.param.threads"]
+
+[authority]
+adds = []
+reason = ""
+
+[sums]
+decisive = ["lib/models/kmeans/kpass.cho"]
+
+[[hyperparameter]]
+name = "k"
+type = "int"
+min = 1
+max = 1024
+required = true
+doc = "the number of clusters"
+
+[[hyperparameter]]
+name = "iterations"
+type = "int"
+min = 1
+max = 1000
+default = "10"
+doc = "the Lloyd iterations"

@@ -20,6 +20,7 @@ LPAR = "lib/linalg/par.cho"
 LCH = "lib/linalg/chol.cho"
 SC = "lib/models/score.cho"
 MX = "lib/models/mexp.cho"
+RC = "lib/models/record.cho"
 
 M = [
     # ---- linear regression
@@ -61,6 +62,13 @@ M = [
     ("log-predict-threshold", LOG, "        if out[i] > 0.0 {\n            out[i] = 1.0;", "        if out[i] >= 0.0 {\n            out[i] = 1.0;"),
     ("log-proba-branch", LOG, "    if z >= 0.0 {\n        return 1.0 / (1.0 + e);\n    }\n    return e / (1.0 + e);", "    if z >= 0.0 {\n        return e / (1.0 + e);\n    }\n    return 1.0 / (1.0 + e);"),
     ("log-exp-table", MX, "return y * pow2tab[k + 1075];", "return y * pow2tab[k + 1074];"),
+    # ---- the logistic payload and its labels (docs/wiring.md section 4, added at W1)
+    ("rec-labels-equal-accepted", RC, "    if a == b {\n        return decoded(1, 0, 0, at);", "    if a == b {\n        return decoded(0, a, b, at + 32);"),
+    ("rec-labels-dtype-unchecked", RC, "    if get32(src, at) != dtype_i64() || get32(src, at + 4) != 1 ||", "    if get32(src, at + 4) != 1 ||"),
+    ("rec-labels-swapped", RC, "    return decoded(0, a, b, at + 32);", "    return decoded(0, b, a, at + 32);"),
+    ("rec-payload-trailing-bytes-ok", RC, "    if !labels {\n        if r2.end != len(src) {", "    if !labels {\n        if false {"),
+    ("rec-labels-end-unchecked", RC, "    if r3.code != 0 || r3.end != len(src) {", "    if r3.code != 0 {"),
+    ("rec-kind-unchecked", RC, "    if len(src) < 4 || get32(src, 0) != kind || d < 1 {", "    if len(src) < 4 || d < 1 {"),
     # ---- k-means
     ("km-tie-rule-lane", KP, "        if a4 < bd {", "        if a4 <= bd {"),
     ("km-tie-rule-group", KP, "a7 = a7 + u7 * u7;\n            j = j + 1;\n        }\n        if a0 < bd {", "a7 = a7 + u7 * u7;\n            j = j + 1;\n        }\n        if a0 <= bd {"),

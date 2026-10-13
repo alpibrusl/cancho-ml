@@ -4,9 +4,9 @@
 holds the results; a number or a verdict is in it only if a script in `scripts/` printed it, with its conditions.** Tags as in
 `design.md`: **[choice]** is a decision the maintainer can overturn, **[open]** is not decided.
 
-An internal library, **not wired into the CLI**: `lib/pipeline/*.cho` on top of `lib/transforms` (`docs/transforms.md`), a driver
-`tools/pipe-check`, tests in `tests/t_pipeline*.cho`. The wiring stage (the 4-lane order change has landed, `docs/lanes.md`) adds the plan flags
-to `fit`, the stored steps to `predict` and `eval`, and the estimators of kinds 4 to 7 behind the hook of section 5.4.
+A library: `lib/pipeline/*.cho` on top of `lib/transforms` (`docs/transforms.md`), a driver `tools/pipe-check`, tests in `tests/t_pipeline*.cho`.
+**Stage W1 wired it** (`docs/wiring.md`): `ml fit` takes the plan (`--plan`, `--step`) and fits the steps on the training rows, `predict` and `eval` apply the
+stored steps, and the estimators of kinds 4 and 5 (linear, logistic) sit behind the hook of section 5.4. Kinds 6 and 7 are still libraries.
 
 ## 1. The gates (fixed before the code; each can fail, section 6 shows it failing)
 
@@ -36,7 +36,7 @@ ascending.
 | `scale` | `column` `kind` `ddof` | list or `*`; `minmax` `standard`; `ddof` `0` `1`, **only** with `standard` (written `ddof=0` by default) |
 | `encode` | `column` `kind` `max-categories` `unknown` | list or `*`; `onehot` `label`; `1 .. 1024` (default 64); `ignore` `refuse` (default `ignore`) |
 | `bucket` | `column` `kind` `bins` | list or `*`; `width` `quantile`; `2 .. 256` (required) |
-| `model` | `kind`, then the keys of the kind (table in `lib/pipeline/plan.cho`, **provisional: the wiring stage owns it**) | `constant` (`task`), `linear` (`l2`), `logistic` (`iterations` `l2`), `kmeans` (`k` `iterations`), `tree` / `forest` (`task`, `max-depth` ...) |
+| `model` | `kind`, then the keys of the kind (generated from the manifests of `lib/models`, `docs/modules.md` section 3, into `lib/pipeline/modeldefs.cho`) | `constant` (`task`), `linear` (`l2`), `logistic` (`iterations` `l2`), `kmeans` (`k` `iterations`), `tree` / `forest` (`task`, `max-depth` ...) |
 
 * **Numbers.** An int is `[0-9]+` (at most 9 digits, leading zeros allowed and dropped). A float is read by `ml.csvcell.read` /
   `double` (cancho-table's `flt.parse_float` underneath: correctly rounded, ties to even; an exponent, a leading or trailing point and more
@@ -115,7 +115,7 @@ step is the kind its line asks for), the model payload (its leading `u32 kind` i
 4; **the estimator's own layout is checked by the estimator's reader**), the meta section (as `mfile.cho`, `hyperparameters = 0`; for a model kind of 4 or above it is 4 bytes longer: the `u32 sum_order` = 2 after the compiler pin, which `file.encode` writes for such a kind and `decode` requires; kinds 1 to 3 keep the exact bytes of `mfile.cho`).
 Anything else is a code of `transforms.codes` (`ml.model.*`).
 
-### 5.4 The estimator hook
+### 5.4 The estimator hook *(wired at W1: `tools/ml/est.cho` is the generated dispatch, `docs/modules.md`)*
 `file.encode(plan, schema, steps, model_payload, meta)` takes the `model` section payload as bytes (`u32 kind` then the records of
 `models.record`, `tree.model` or `mfile.cho`). `file.decode` returns a view of those bytes (offset and length); the caller decodes them
 with the estimator's own reader, with the width the steps leave (`pipeline.run.output_width`). Wiring kinds 4 to 7 means calling those
@@ -130,7 +130,7 @@ oracle and the mutants are in `docs/transforms.md` section 6, which judges the s
 |---|---|
 | P1 plan | `tests/t_pipeline.cho` (canonical forms by hand, floats `1e-1` `.10` `-0` `0.30000000000000004`, fixed point, 45 refusals with code, line and column); `oracle_pipe.py --plans`: 1,500 respelled plans (key order, blanks, tabs, CRLF, comments, leading zeros, equivalent floats), 1,500 fixed points, 1,188 float spellings against a Python canonicaliser, and 1,500 garbage plans whose verdict and position equal a second implementation of the grammar written in Python |
 | P2, P3 | `test_fit_uses_the_training_rows_only`, `test_each_step_feeds_the_next`; chains in `oracle_pipe.py --pipeline` (600); mutants `fit-on-the-test-rows`, `step-two-fitted-on-the-raw-matrix` killed |
-| P4 | `file.encode`/`decode` round trip; a file with no steps is accepted by the independent reader of `tests/conformance/test_model_file.py` and equals the layout of `mfile.cho` written again in Python, byte for byte (2 files); 150 files with steps read by an independent Python reader that applies the stored parameters and equals the driver's predict bit for bit. **Not compared with a file written by the `ml` binary**: it needs `cancho install`, which was not allowed here (the hash printed in `docs/cli.md` section 3 for the sales example is not reproduced by this layout with any of the pins and scales tried; the size, 316 bytes, is) |
+| P4 | `file.encode`/`decode` round trip; a file with no steps is accepted by the independent reader of `tests/conformance/test_model_file.py` and equals the layout of `mfile.cho` written again in Python, byte for byte (2 files); 150 files with steps read by an independent Python reader that applies the stored parameters and equals the driver's predict bit for bit. *Since W1 it is compared with files written by the `ml` binary:* `tests/conformance/test_wire_oracle.py` (`scripts/oracle_wire.py`) compares the bytes of the file `ml fit` wrote with the bytes a Python implementation writes, for linear and logistic, byte for byte (`docs/wiring.md` gate W3); the sales example's hash of `docs/cli.md` section 2.4 is also reproduced (`golden_constant.json`). |
 | P5 | `scripts/check_pipeline_api.py` (no `pub fn` that applies takes a plan or a spec or mentions a fit; `Loaded` is built by `file.decode` only; every matrix-returning `pub fn` is classified); `test_editing_a_stored_parameter_changes_the_prediction` (divisor 10.0 -> 20.0 with the trailer repaired: the output halves; without repair `ml.model.checksum`; 0.0 and -10.0: `ml.model.malformed`); `test_the_plan_must_agree_with_the_steps` |
 | P6 | `test_columns_are_matched_by_name`, `test_a_reordered_input_gives_the_same_output`; `oracle_pipe.py --pipeline`: 300 alignments (missing, extra, mistyped, duplicate, reordered) against a Python reference, text of the repair included |
 | P7, P8 | `tests/t_pipeline_fuzz.cho` 4 passed: 4,000 mutated plans, the limits at both sides of 64 KiB, 64 lines, 4,096 names, 255 bytes; 1,500 fits through the pipeline with hostile plans and caps; every truncation, every byte flipped three ways with and without a repaired trailer, and 600 seeded multi-byte damages of a 3-step file |
@@ -138,8 +138,9 @@ oracle and the mutants are in `docs/transforms.md` section 6, which judges the s
 
 ## 7. Open questions
 
-1. **The `model` line's keys are provisional** (`lib/pipeline/plan.cho` `defs_of`): constant, linear, logistic, kmeans, tree and forest with the keys the libraries
-   have today. The design example `rate=0.1` for logistic regression is not accepted because the Newton fit has no rate; the wiring stage owns this table.
+1. **The `model` line's keys** *(answered at W1: they are generated from the `[[hyperparameter]]` tables of `lib/models/*/model.toml`, `docs/modules.md`)*: constant,
+   linear, logistic, kmeans, tree and forest with the keys the libraries have. The design example `rate=0.1` for logistic regression is not accepted because the
+   Newton fit has no rate.
 2. **Names with a blank, `,`, `=` or `#`** cannot be addressed in a plan (only by `*`). Quoting is not designed.
 3. **Text categories** are not supported (the reader gives numbers). A text column must be dropped.
 4. **`unknown=ignore` for `label` gives -1.0**, a value no category has; a downstream estimator sees it as a number.
@@ -147,5 +148,5 @@ oracle and the mutants are in `docs/transforms.md` section 6, which judges the s
    there is updated (one function), and the stored step bytes of standard scalers and mean imputers change with it: model files fitted before the change are
    not byte-identical to files fitted after it, though they still apply (the stored parameters are read, not recomputed).
 6. The O(n^2) name matching (`names.find`, `first_bad`, `schema.align`) is bounded by 8,192 columns; it was not timed.
-7. `mfile.cho` still reads only `steps = u32 0`; the wiring stage extends it (or switches to `pipeline.file`).
+7. `mfile.cho` still reads only `steps = u32 0` *(answered at W1: it was left as it is; `ml` reads a model of kind 4 or 5 with `pipeline.file.decode` in `tools/ml/wireio.cho`, and a constant model with `mfile.decode`)*.
 8. D2 (the same bytes on another machine) is untested, as in every stage.

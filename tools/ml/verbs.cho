@@ -42,6 +42,20 @@ pub struct Opts {
     drops: &static [byte],
     floats: &static [byte],
     target: &static [byte],
+    // the flags of the planned models (docs/wiring.md section 2); each `*_given` is whether the flag was on the command line
+    model: &static [byte],
+    plan_given: bool,
+    step: &static [byte],
+    step_given: bool,
+    positive: &static [byte],
+    positive_given: bool,
+    split: &static [byte],
+    split_given: bool,
+    seed: int,
+    threads: int,
+    threads_given: bool,
+    proba: bool,
+    task_given: bool,
 }
 
 // What a verb hands back. `payload` is the `data` object, `plain` the text of --format text, `extra` the keys of a dry run
@@ -75,7 +89,7 @@ pub fn nothing[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer) -> [he
 
 // ---------------------------------------------------------------- errors
 
-fn problem[&h, &m](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message: &m [byte], hint: &static [byte], key: &static [byte], value: &static [byte]) -> [heap] fail.Errors {
+pub fn problem[&h, &m](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message: &m [byte], hint: &static [byte], key: &static [byte], value: &static [byte]) -> [heap] fail.Errors {
     var w = fail.open_in(heap, spec.extra(), rule, message, hint);
     w = fail.no_repair(heap, w);
     w = fail.detail_open(heap, w);
@@ -87,7 +101,7 @@ fn problem[&h, &m](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message
 
 // `--drop NAME` appended to the invocation, when that is a repair that cannot hurt: the name is one plain name and no --drop
 // was given
-fn drop_retry[&h, &g, &n](heap: &!h Heap, w: json.Writer, args: &g Args, name: &n [byte]) -> [heap, args] json.Writer {
+pub fn drop_retry[&h, &g, &n](heap: &!h Heap, w: json.Writer, args: &g Args, name: &n [byte]) -> [heap, args] json.Writer {
     var o = fail.retry_open(heap, w);
     var i = 0;
     while i < arg_count(args) {
@@ -104,7 +118,7 @@ fn can_drop[&n](o: Opts, col: int, tcol: int, name: &n [byte]) -> [] bool {
 }
 
 // the errors for what stopped a scan
-fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors, rep: csv.Report, sh: &s csv.Shape, o: Opts, shown: &p [byte]) -> [heap, args] fail.Errors {
+pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors, rep: csv.Report, sh: &s csv.Shape, o: Opts, shown: &p [byte]) -> [heap, args] fail.Errors {
     var e = errs;
     let st = rep.status;
     if st == 99 {
@@ -275,19 +289,19 @@ fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte]
     }
 }
 
-fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {
+pub fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {
     return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops, floats: o.floats, missing: false, mrows: 0, mcols: 0, wpc: 0 };
 }
 
 // ---------------------------------------------------------------- text
 
-fn put_name[&h, &n](heap: &!h Heap, w: json.Writer, key: &static [byte], name: &n [byte]) -> [heap] json.Writer {
+pub fn put_name[&h, &n](heap: &!h Heap, w: json.Writer, key: &static [byte], name: &n [byte]) -> [heap] json.Writer {
     let k = json.put_key(heap, w, key);
     return text.put(heap, k, name);
 }
 
 // a scaled integer as a JSON string
-fn put_dec[&h](heap: &!h Heap, w: json.Writer, v: int, scale: int) -> [heap] json.Writer {
+pub fn put_dec[&h](heap: &!h Heap, w: json.Writer, v: int, scale: int) -> [heap] json.Writer {
     var b = exact.put_scaled(heap, buffer.empty(heap, 24), v, scale);
     var o = w;
     borrow b as &r in {
@@ -297,7 +311,7 @@ fn put_dec[&h](heap: &!h Heap, w: json.Writer, v: int, scale: int) -> [heap] jso
     return o;
 }
 
-fn line_dec[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: int, scale: int) -> [heap] buffer.Buffer {
+pub fn line_dec[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: int, scale: int) -> [heap] buffer.Buffer {
     var p = buffer.append(heap, plain, label);
     p = exact.put_scaled(heap, p, v, scale);
     return buffer.push(heap, p, byte_of(10));
@@ -306,7 +320,7 @@ fn line_dec[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: 
 // a double, given as its bits, as the shortest decimal that reads back to it (cancho-table's flt.put_float: positional from 1e-6 to 1e21,
 // scientific outside, always a point or an exponent), as a JSON string. flt's key of a double is its bits with the low 63 flipped when
 // negative, an involution, so csvcell.bits_of_key converts either way.
-fn put_double[&h](heap: &!h Heap, w: json.Writer, bits: int) -> [heap] json.Writer {
+pub fn put_double[&h](heap: &!h Heap, w: json.Writer, bits: int) -> [heap] json.Writer {
     var b = flt.put_float(heap, buffer.empty(heap, 32), csvcell.bits_of_key(bits));
     var o = w;
     borrow b as &r in {
@@ -316,21 +330,21 @@ fn put_double[&h](heap: &!h Heap, w: json.Writer, bits: int) -> [heap] json.Writ
     return o;
 }
 
-fn line_double[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], bits: int) -> [heap] buffer.Buffer {
+pub fn line_double[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], bits: int) -> [heap] buffer.Buffer {
     var p = buffer.append(heap, plain, label);
     p = flt.put_float(heap, p, csvcell.bits_of_key(bits));
     return buffer.push(heap, p, byte_of(10));
 }
 
 // the key of a double that is not zero, and 0 for zero (there is no negative zero): the bits of the double as flt reads them
-fn bits_key(x: float) -> [] int {
+pub fn bits_key(x: float) -> [] int {
     if x == 0.0 {
         return 0;
     }
     return flt.key_of(x);
 }
 
-fn line_int[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: int) -> [heap] buffer.Buffer {
+pub fn line_int[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], v: int) -> [heap] buffer.Buffer {
     var p = buffer.append(heap, plain, label);
     p = buffer.push_nat(heap, p, v);
     return buffer.push(heap, p, byte_of(10));
@@ -385,7 +399,7 @@ fn summary[&h, &m](heap: &!h Heap, w: json.Writer, mo: &m mfile.Model) -> [heap]
     return json.end_object(heap, o);
 }
 
-fn task_name(kind: int) -> [] &static [byte] {
+pub fn task_name(kind: int) -> [] &static [byte] {
     if kind != 2 {
         return "regression";
     }
@@ -473,7 +487,7 @@ fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a 
     return mfile.Model { kind: mkind, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats };
 }
 
-fn write_failure[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
+pub fn write_failure[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
     if status == 2 {
         var w = fail.open(heap, "conflict.exists", "the output file exists", "use --overwrite to replace it, or name another file");
         w = fail.no_repair(heap, w);
@@ -835,7 +849,7 @@ fn name_list[&h, &n](heap: &!h Heap, b: buffer.Buffer, name: &n [byte], first: b
 
 // Compare the input's columns with the model's. Errors gain ml.schema.mismatch when they differ: the missing, the extra and
 // the mistyped columns by name, and a repair. `need_target`: eval reads the target column, predict does not need it.
-fn schema_check[&h, &g, &m, &s](heap: &!h Heap, args: &g Args, errs: fail.Errors, mo: &m mfile.Model, sh: &s csv.Shape, o: Opts, need_target: bool) -> [heap, args] (fail.Errors, bool) {
+pub fn schema_check[&h, &g, &m, &s](heap: &!h Heap, args: &g Args, errs: fail.Errors, mo: &m mfile.Model, sh: &s csv.Shape, o: Opts, need_target: bool) -> [heap, args] (fail.Errors, bool) {
     let mc = mfile.cols(mo);
     var missing = 0;
     var mistyped = 0;

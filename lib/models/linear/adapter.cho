@@ -1,0 +1,44 @@
+module models.adapter_linear;
+
+import linalg.tensor;
+import models.common;
+import models.linreg;
+import models.record;
+import ml.refuse;
+
+// The adapter of the `linear` module (docs/modules.md section 4): the fixed interface over models.linreg. It adds no arithmetic: the fit is the
+// library's (normal equations through linalg.syrk and linalg.gemv, the order of docs/linalg.md section 2) and the prediction is models.score.
+// Hyperparameters, in manifest order: floats [l2].
+
+pub fn diag_len[&i](d: int, ip: &i [int]) -> [] int {
+    return (d + 1) * (d + 1) + d + 1;
+}
+
+pub fn out_len(d: int) -> [] int {
+    return d + 1;
+}
+
+pub fn fit[&h, &x, &y, &i, &f, &o, &g](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], ip: &i [int], fp: &f [float], seed: int, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    return linreg.fit(heap, threads, xt, xd, yd, fp[0], out, diag);
+}
+
+pub fn predict[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
+    return linreg.predict(xt, xd, wv, out);
+}
+
+// a regression has no probability
+pub fn proba[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
+    return refuse.param_out_of_range();
+}
+
+pub fn payload_size(d: int) -> [] int {
+    return record.linear_size(d);
+}
+
+pub fn encode[&b, &w](dst: &!b [byte], at: int, d: int, wv: &w [float], c0: int, c1: int) -> [] int {
+    return record.encode_linear(dst, at, record.kind_linear(), d, wv);
+}
+
+pub fn decode[&s, &o](src: &s [byte], d: int, out: &!o [float]) -> [] record.Decoded {
+    return record.decode_linear(src, record.kind_linear(), d, false, out);
+}

@@ -1,0 +1,34 @@
+{
+ "model": "logistic",
+ "machine": "Mac arm64 (Darwin 25.2.0), cancho a4572ea",
+ "suites": [
+  {
+   "script": "scripts/mutants_models.py",
+   "log": "docs/bench/mutants_models.log",
+   "patterns": 93,
+   "killed": 91,
+   "survivors": [
+    {
+     "id": "log-sigmoid-boundary",
+     "why": "z == 0 happens only at the first iteration (w = 0), where e = 1 and 1/(1+e) = e/(1+e) = 0.5 with the same bits; no other row has z exactly 0"
+    },
+    {
+     "id": "par-models-ragged",
+     "why": "without the clamp the last chunk runs blocks past the end; each is an all-zero partial (m <= 0 rows), and x + 0.0 = x, so the tree of the real blocks keeps its bits: an equivalent mutant (the clamp is kept so that no block is made of nothing)"
+    }
+   ]
+  },
+  {
+   "script": "scripts/mutants_wire.py",
+   "log": "docs/bench/mutants_wire.log",
+   "patterns": 40,
+   "killed": 39,
+   "survivors": [
+    {
+     "id": "w-bad-hyperparameter-token-ignored",
+     "why": "the plan parser has already refused every token that hparams would (its grammar is the same table): this check is a second line of defence that no input reaches"
+    }
+   ]
+  }
+ ]
+}

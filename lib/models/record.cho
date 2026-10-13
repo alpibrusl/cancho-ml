@@ -163,3 +163,79 @@ pub fn encode_kmeans[&d, &c](dst: &!d [byte], at: int, k: int, nfeat: int, cen: 
     put32(dst, at, kind_kmeans());
     return encode_f64(dst, at + 4, 2, k, nfeat, cen[0..k * nfeat]);
 }
+
+// ---------------------------------------------------------------- the payloads the wiring reads and writes (docs/wiring.md section 4)
+
+pub fn dtype_i64() -> [] int {
+    return 1;
+}
+
+// a decoded payload: code 0 or 1 (malformed: any field outside what the layout allows), the two labels of a classifier, the offset after it
+pub struct Decoded {
+    code: int,
+    c0: int,
+    c1: int,
+    end: int,
+}
+
+pub fn decoded(code: int, c0: int, c1: int, end: int) -> [] Decoded {
+    return Decoded { code: code, c0: c0, c1: c1, end: end };
+}
+
+// bytes of the logistic payload: the linear one and the labels record
+pub fn logistic_size(d: int) -> [] int {
+    return linear_size(d) + size(1, 2);
+}
+
+// an i64 record of rank 1 with two elements; answers the end offset
+pub fn encode_labels[&d](dst: &!d [byte], at: int, c0: int, c1: int) -> [] int {
+    put32(dst, at, dtype_i64());
+    put32(dst, at + 4, 1);
+    fbits.put64(dst, at + 8, 2);
+    fbits.put64(dst, at + 16, c0);
+    fbits.put64(dst, at + 24, c1);
+    return at + 32;
+}
+
+// the labels record at `at`: (ok, c0, c1, end). The two labels differ.
+pub fn decode_labels[&s](src: &s [byte], at: int) -> [] Decoded {
+    if at < 0 || len(src) - at < 32 {
+        return decoded(1, 0, 0, at);
+    }
+    if get32(src, at) != dtype_i64() || get32(src, at + 4) != 1 || fbits.get64(src, at + 8) != 2 {
+        return decoded(1, 0, 0, at);
+    }
+    let a = fbits.get64(src, at + 16);
+    let b = fbits.get64(src, at + 24);
+    if a == b {
+        return decoded(1, 0, 0, at);
+    }
+    return decoded(0, a, b, at + 32);
+}
+
+// kind | coef (shape [d]) | intercept (shape [1]) [| labels]: the parameters to out (d + 1 values, the intercept last), then the labels when `labels`.
+// The payload must end where the layout does.
+pub fn decode_linear[&s, &o](src: &s [byte], kind: int, d: int, labels: bool, out: &!o [float]) -> [] Decoded {
+    if len(src) < 4 || get32(src, 0) != kind || d < 1 {
+        return decoded(1, 0, 0, 0);
+    }
+    let r1 = decode_f64(src, 4, d, out[0..d]);
+    if r1.code != 0 || r1.rank != 1 || r1.s0 != d {
+        return decoded(1, 0, 0, 0);
+    }
+    let r2 = decode_f64(src, r1.end, 1, out[d..d + 1]);
+    if r2.code != 0 || r2.rank != 1 || r2.s0 != 1 {
+        return decoded(1, 0, 0, 0);
+    }
+    if !labels {
+        if r2.end != len(src) {
+            return decoded(1, 0, 0, 0);
+        }
+        return decoded(0, 0, 0, r2.end);
+    }
+    let r3 = decode_labels(src, r2.end);
+    if r3.code != 0 || r3.end != len(src) {
+        return decoded(1, 0, 0, 0);
+    }
+    return r3;
+}

@@ -16,6 +16,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import gen_models  # noqa: E402
 import spec  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -24,6 +25,7 @@ NAT = {"type": "integer", "minimum": 0}
 CODES = ["GENERAL_ERROR", "INVALID_ARGS", "NOT_FOUND", "PERMISSION_DENIED", "CONFLICT", "PRECONDITION_FAILED"]
 SHA = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
 DEC = {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$"}
+FLT = {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"}
 
 
 def obj(props, required=None):
@@ -62,6 +64,19 @@ def common_defs(t):
     }
 
 
+def wired_models():
+    """The names of the wired models other than constant, from the manifests (docs/modules.md)."""
+    return [m["name"] for m in gen_models.wired(gen_models.load_manifests(ROOT))]
+
+
+def metrics_defs():
+    # a metric with no value (a zero denominator, a constant target for R-squared) is null: docs/wiring.md section 2
+    val = {"oneOf": [FLT, {"type": "null"}]}
+    reg = obj({"rmse": val, "mae": val, "r2": val})
+    cls = obj({"accuracy": val, "precision": val, "recall": val, "f1": val, "roc_auc": val, "log_loss": val})
+    return reg, cls
+
+
 def data_defs():
     fit_summary = {"oneOf": [
         obj({"mean": DEC}),
@@ -89,7 +104,35 @@ def data_defs():
         "model": {"const": "constant"}, "task": {"const": "classification"}, "rows": NAT,
         "metrics": obj({"accuracy": DEC, "correct": NAT, "total": NAT, "prediction": {"type": "integer"}}),
     })
-    return {"oneOf": [fit, predict, eval_reg, eval_cls]}
+    # the models that go through the pipeline (docs/wiring.md section 2)
+    names = {"enum": wired_models()}
+    mreg, mcls = metrics_defs()
+    split = obj({"train": NAT, "test": NAT, "seed": NAT})
+    holdout_reg = obj({"rows": NAT, "metrics": mreg})
+    holdout_cls = obj({"rows": NAT, "metrics": mcls})
+    summary_keys = {
+        "plan": {"type": "string"}, "steps": NAT, "features": NAT,
+        "coefficients": {"type": "array", "items": obj({"name": TB, "value": FLT})}, "intercept": FLT,
+    }
+    summary_reg = obj({**summary_keys, "split": split, "holdout": holdout_reg}, list(summary_keys))
+    summary_cls = obj({**summary_keys, "classes": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+                       "positive": {"type": "integer"}, "split": split, "holdout": holdout_cls}, list(summary_keys) + ["classes", "positive"])
+    fit_p = obj({
+        "model": names, "task": {"enum": ["regression", "classification"]}, "rows": NAT, "columns": NAT, "target": TB, "path": TB,
+        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls]},
+    })
+    predict_p = obj({
+        "model": names, "task": {"enum": ["regression", "classification"]},
+        "columns": {"type": "array", "items": {"type": "string"}},
+        "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+        "row_count": NAT, "total_rows": NAT, "truncated": {"type": "boolean"},
+        "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]}, "unknown_categories": NAT,
+    })
+    eval_reg_p = obj({"model": names, "task": {"const": "regression"}, "rows": NAT, "metrics": mreg, "unknown_categories": NAT, "split": split},
+                     ["model", "task", "rows", "metrics", "unknown_categories"])
+    eval_cls_p = obj({"model": names, "task": {"const": "classification"}, "rows": NAT, "positive": {"type": "integer"}, "metrics": mcls,
+                      "unknown_categories": NAT, "split": split}, ["model", "task", "rows", "positive", "metrics", "unknown_categories"])
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p]}
 
 
 def planned():

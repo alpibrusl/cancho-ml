@@ -1,0 +1,13 @@
+{
+ "model": "constant",
+ "machine": "Mac arm64 (Darwin 25.2.0), cancho a4572ea",
+ "suites": [
+  {
+   "script": "scripts/mutants_cli.py",
+   "log": "docs/bench/mutants_cli_w1.log",
+   "patterns": 53,
+   "killed": 53,
+   "survivors": []
+  }
+ ]
+}

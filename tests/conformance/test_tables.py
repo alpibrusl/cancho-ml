@@ -123,7 +123,10 @@ class Tables(unittest.TestCase):
     def test_the_models_in_the_flag_table_are_the_built_ones(self):
         # honesty (H1): the list of models is one choice flag, and this is the list of what is built
         by = {f["name"]: f for f in T["flags"]}
-        self.assertEqual(by["model"]["kind"], "choice:constant")
+        import gen_models
+        built = [m["name"] for m in gen_models.load_manifests(ROOT) if m["wired"]]
+        self.assertEqual(by["model"]["kind"], "choice:" + "/".join(built))
+        self.assertEqual(built, ["constant", "linear", "logistic"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,53 @@
+module models.adapter_logistic;
+
+import linalg.tensor;
+import models.common;
+import models.logreg;
+import models.npass;
+import models.record;
+import ml.refuse;
+
+// The adapter of the `logistic` module (docs/modules.md section 4): the fixed interface over models.logreg. No arithmetic of its own: the Newton
+// pass is the library's. Hyperparameters, in manifest order: ints [iterations], floats [l2]. The labels record (docs/wiring.md section 4) carries the
+// two labels of the CSV target; the library's classes are 0.0 and 1.0.
+
+// the diagnostics the library demands, one slot of W + 1 floats per iteration, capped so a wide model with many iterations cannot ask for gigabytes:
+// 2^25 floats (256 MiB). Over the cap the size is -1 and the caller refuses with ml.param.out-of-range.
+pub fn diag_len[&i](d: int, ip: &i [int]) -> [] int {
+    let ww = npass.width(d) + 1;
+    if ww > common.max_slot() || ip[0] > 33554432 / ww {
+        return 0 - 1;
+    }
+    return ip[0] * ww + 1;
+}
+
+pub fn out_len(d: int) -> [] int {
+    return d + 1;
+}
+
+pub fn fit[&h, &x, &y, &i, &f, &o, &g](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], ip: &i [int], fp: &f [float], seed: int, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    return logreg.fit(heap, threads, xt, xd, yd, ip[0], fp[0], out, diag);
+}
+
+// 0.0 or 1.0 per row
+pub fn predict[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
+    return logreg.predict(xt, xd, wv, out);
+}
+
+// the probability of the positive class per row
+pub fn proba[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
+    return logreg.predict_proba(xt, xd, wv, out);
+}
+
+pub fn payload_size(d: int) -> [] int {
+    return record.logistic_size(d);
+}
+
+pub fn encode[&b, &w](dst: &!b [byte], at: int, d: int, wv: &w [float], c0: int, c1: int) -> [] int {
+    let end = record.encode_linear(dst, at, record.kind_logistic(), d, wv);
+    return record.encode_labels(dst, end, c0, c1);
+}
+
+pub fn decode[&s, &o](src: &s [byte], d: int, out: &!o [float]) -> [] record.Decoded {
+    return record.decode_linear(src, record.kind_logistic(), d, true, out);
+}

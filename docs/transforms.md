@@ -4,7 +4,7 @@
 Section 6 holds the results; a number or a verdict is in it only if a script in `scripts/` printed it, with its conditions.** Tags as in
 `design.md`: **[choice]** is a decision the maintainer can overturn, **[open]** is not decided.
 
-An internal library, **not wired into the CLI** (a later stage does that; the lane-order change has landed, `docs/lanes.md`):
+A library, **wired into `ml fit | predict | eval` at stage W1** (`docs/wiring.md`; the lane-order change had landed before, `docs/lanes.md`):
 `lib/transforms/*.cho`, a driver `tools/pipe-check` that the gates call, tests in `tests/t_transforms*.cho`, scripts in
 `scripts/*pipe*`. The pipeline that strings transforms together, the plan text and the model-file payload are `docs/pipeline.md`.
 

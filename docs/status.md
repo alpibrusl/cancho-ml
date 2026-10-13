@@ -6,23 +6,25 @@ All the measurements are from one machine, a Mac (arm64, Apple M4 Max, 16 cores,
 
 ## What is built, and reachable from the command line
 
-The command line is `ml fit | predict | eval | introspect | skill`. The only model it can build is `--model constant`: the training mean for a regression, the majority class and its probability for a classification.
+The command line is `ml fit | predict | eval | introspect | skill`. It builds three models: `--model constant` (the training mean for a regression, the majority class and its probability for a classification), `--model linear` and `--model logistic`, the last two through a pipeline of fitted steps stored in the same file ([wiring.md](wiring.md), [modules.md](modules.md)).
 
 | item | what it is | source |
 |---|---|---|
 | `fit`, `predict`, `eval` with `--model constant` | A regression of an integer, decimal or float target (the exact mean; for `eval`, the exact sum of squared errors and an `rmse`), or a binary classification (the majority class, the smaller label on a tie, the probability to six digits; `eval` gives the accuracy). | [cli.md](cli.md) sections 2, 3 |
-| the CSV reader | Integer, decimal and float columns, RFC 4180 quoting, a byte order mark, CRLF. A float is the nearest double, by cancho-table's exact reader (a pinned clone, not a copy). `nan`, `inf`, an empty cell and a non-number are refused with line and column. | [reader.md](reader.md) |
+| `fit`, `predict`, `eval` with `--model linear` and `--model logistic` | Least squares (ridge with `--l2`) and binary logistic regression (Newton, `--iterations`, `--l2`), fitted through the steps of a plan (`--step`, `--plan`: `impute`, `scale`, `encode`, `bucket`) on the training rows; the fitted steps and the estimator are one `CML1` file, and `predict` (with `--proba` for the probability) and `eval` apply the stored steps. `--split train=F --seed N` holds out rows (the metrics library's split); `--positive LABEL` names the positive class; `--threads N` for `fit`. `eval` gives RMSE, MAE and R2, or accuracy, precision, recall, F1, ROC-AUC and log-loss. An empty cell is a missing value that the plan must impute, else `ml.input.missing-value` with a repair. | [wiring.md](wiring.md) |
+| the model module contract | A manifest per model (`lib/models/*/model.toml`), a generator (`scripts/gen_models.py`) for the dispatch, the flag and plan-key tables and the docs table, an admission script (`scripts/admit.py`, checks Q0 to Q11) and mutant modules that it must refuse (`tests/modules`). | [modules.md](modules.md) |
+| the CSV reader | Integer, decimal and float columns, RFC 4180 quoting, a byte order mark, CRLF. A float is the nearest double, by cancho-table's exact reader (a pinned clone, not a copy). `nan`, `inf` and a non-number are refused with line and column, and so is an empty cell by the constant model; the pipeline models read it as a missing value. | [reader.md](reader.md) |
 | the model file `CML1` | Five sections, tensor records, a SHA-256 trailer. No timestamp, host or path. Written to a temporary name, synced and renamed. | [cli.md](cli.md) section 4, [design.md](design.md) section 4.1 |
-| refusals | 49 rule tags in `introspect`, each with an exit code and whether a repair can exist; one JSON line against `ml.v1`. | [cli.md](cli.md), [design.md](design.md) section 8 |
+| refusals | 67 rule tags in `introspect`, each with an exit code and whether a repair can exist; one JSON line against `ml.v1`. | [cli.md](cli.md), [design.md](design.md) section 8 |
 | `--dry-run`, `--overwrite` | `fit --dry-run` answers what it would write and exits 9. Not run under `strace`. | [cli.md](cli.md) section 2 |
-| limits | Eight flags with a default and a ceiling, checked before allocation. | [cli.md](cli.md) section 2.2 |
+| limits | Nine flags with a default and a ceiling (`--iterations` is the ninth), checked before allocation. | [cli.md](cli.md) section 2.2 |
 | `introspect`, `skill` | Generated from the table the parser runs on. | [cli.md](cli.md) section 1 |
-| the authority row | `args`, `dir_read`, `dir_write`, `err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, `io_write`; bounded; no foreign function; no `net_out`, `net_in`, `ffi`, `clock`, standard input or `conc`. | [`manifests/ml.authority.json`](../manifests/ml.authority.json), [cli.md](cli.md) section 6 |
+| the authority row | `args`, `conc`, `dir_read`, `dir_write`, `err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, `io_write`; bounded; no foreign function; no `net_out`, `net_in`, `ffi`, `clock` or standard input. `conc` is there for `fit --threads`, with its reason in `tools.toml`. | [`manifests/ml.authority.json`](../manifests/ml.authority.json), [cli.md](cli.md) section 6 |
 | `--log` | NDJSON records of counts, flags, rule tags and a hash; no cell, column name or path; bounded. | [cli.md](cli.md) section 5 |
 
-## What is built as a library and not reachable
+## What is built as a library and is only partly reachable
 
-Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl.github.io/cancho-ml/evidence.html)). No verb calls any of them: the transforms and the pipeline are not wired into `fit`, `predict` or `eval` any more than the models are. Wiring a verb means a model kind in `tools/ml/mfile.cho` with a parser in the conformance tests, the library's rule tags moved from `pending()` to the tables of `introspect`, schemas and fixtures regenerated, and `conc` in the authority row when `--threads` arrives ([integration.md](integration.md) section 6).
+Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl.github.io/cancho-ml/evidence.html)). The transforms, the pipeline, the metrics and splits, linear and logistic regression are called by the verbs since stage W1 (they stay listed here because their library gates are what judge them; the wiring has its own, [wiring.md](wiring.md)). k-means, decision trees and random forests are not called by any verb: they have a manifest with `wired = false`, and wiring one means an adapter and the admission script.
 
 | item | what it is | source |
 |---|---|---|
@@ -42,13 +44,14 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 
 | item | state |
 |---|---|
-| wiring the transforms, the pipeline and the models into the verbs (a plan flag, model kinds in `mfile.cho`, the tags moved to `introspect`) | next; all are libraries today, see above |
-| `--threads` in `ml` | not built; the libraries are threaded |
+| wiring k-means, trees and forests into the verbs | not done: each needs an adapter, a manifest with `wired = true` and a passing `scripts/admit.py` ([modules.md](modules.md)) |
+| text columns (categories) | the next stage (W2); the hook is [wiring.md](wiring.md) section 3 |
+| `eval --threads` | accepted and checked, nothing in `eval` is threaded |
 | the MCP server | not started; how it would be derived is [cli.md](cli.md) section 9 |
 | `ml-serve` (issue #16) | not started |
 | multiclass | not built; the format reserves a class count |
 | boosting, naive Bayes, k-NN | in the plan ([design.md](design.md) section 1), not built |
-| imputation of a missing cell in `fit` | the `impute` transform exists as a library; `fit` still refuses an empty cell |
+| imputation of a missing cell in the constant model | `--model constant` still refuses an empty cell; the pipeline models take it as a missing value |
 | neural networks, GPU | not planned in v1 |
 | the reader as a package dependency | waits for [alpibrusl/cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) (draft); until then a local clone at `../cancho-table-main` ([reader.md](reader.md) section 1) |
 | a second machine | not done; the bytes are untested across machines |
@@ -56,12 +59,13 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 
 ## What was measured
 
-Correctness, by script, on the merged tree ([integration.md](integration.md) section 3), and the conformance suite rerun on this commit (105 tests, OK, 1 skipped, 49 seconds, Mac, load average about 8 to 10):
+Correctness, by script, on the merged tree ([integration.md](integration.md) section 3), and the conformance suite rerun on this commit (138 tests, OK, 0 skipped, about 50 to 70 seconds, Mac):
 
 | what | figure | source |
 |---|---|---|
-| mutants | 702 patterns across nine scripts (670 at the merge); 677 killed; 25 survive, each explained; 0 unexplained; plus 11 deliberately wrong oracles of the linear algebra, all caught | [integration.md](integration.md) section 8.4 |
-| command line conformance | 105 tests pass, 1 skipped (the `--threads` branch of the determinism test: there is no such flag) | [cli.md](cli.md) section 7 |
+| mutants | 748 patterns across ten scripts (702 at `v1-post`; the wiring stage added `mutants_wire.py` with 40 and six patterns to `mutants_models.py`); 722 killed; 26 survive, each explained; 0 unexplained; plus 11 deliberately wrong oracles of the linear algebra, all caught. The suites rerun at W1 are `mutants_cli.py` (53, all killed), `mutants_models.py` (93: 91 killed, 2 explained) and `mutants_wire.py` (40: 39 killed, 1 explained); the others are as recorded at `v1-post` | [integration.md](integration.md) section 8.5, [wiring.md](wiring.md) section 8, `docs/bench/mutants_*.log` |
+| command line conformance | 138 tests pass, none skipped (the determinism test of `--threads` runs); 163 fixtures reach all 29 flags, 67 rules and 4 log records | [cli.md](cli.md) section 7 |
+| the wired models against an oracle | the model file of `linear` and `logistic` equal, byte for byte, to the file a Python implementation writes (60 seeded cases each, with missing cells, constant columns, impute/min-max/standard steps, a split and a positive label), and `predict` and `eval` equal to its doubles; against scikit-learn within bounds fixed first (worst observed relative coefficient error 8.8e-15 for linear against a bound of 1e-9, 1.9e-14 for logistic against 1e-5) | [wiring.md](wiring.md) sections 7, 8 |
 | reader against Python `float()` | 1,966,143 accepted cells and 34,380 refusals compared: 0 differences | [reader.md](reader.md) section 6 |
 | linear algebra against numpy (the 4-lane order) | 104 shapes, all bits equal; the same bytes at 1, 2, 3, 4, 8 and 16 threads; three implementations of the order (Cancho, numpy, C) agree bit for bit | [lanes.md](lanes.md) sections 2, 5 |
 | linear models and k-means | 70 oracle cases bit for bit (including nearly dependent and badly scaled designs); 65 runs at 1 to 16 threads equal; 39 scikit-learn comparisons within the tolerance written beforehand | [models-linear.md](models-linear.md) section 3.1, 6.2, 6.4 |
@@ -98,7 +102,7 @@ From [integration.md](integration.md) section 7 and the stage documents:
 | `rmse` is not exact | three IEEE steps after the exact sum; an exact integer square root is about 60 lines and is not decided | [cli.md](cli.md) section 10 |
 | **the speed tables predate the 4-lane order** | every timing in this page and in `docs/bench/` was taken with the previous summation order (one chain per block in linalg); what the lane order costs or buys in scalar cancho was not measured. The benchmarks were not rerun | [lanes.md](lanes.md) section 6 |
 | the pivot test is a threshold, not a rank computation | a column explained by the earlier ones to within 2^-40 of its own sum of squares is refused; noise above that was not seen in 960 fits (n up to 20,000) and was not measured for larger n or d in the hundreds | [models-linear.md](models-linear.md) section 3.1 |
-| the sum-order field has one writer | only `lib/pipeline/file.cho` writes it (and a Python writer in the conformance tests); no verb writes a model of kind 4 to 7 yet | [design.md](design.md) section 4.1 |
+| the sum-order field has one writer | only `lib/pipeline/file.cho` writes it (and a Python writer in the conformance tests); `ml` writes kinds 4 and 5 through it since W1, no verb writes kinds 6 and 7 | [design.md](design.md) section 4.1 |
 | the contract package's text is wrong for `ml` in six places | `introspect.guarantees.concurrency` says "read-only: it never writes", and `integers_only` is true of the output and not of the code, among others; upstream issues not filed | [cli.md](cli.md) section 8, [reader.md](reader.md) section 7 |
 | `dry_run` and atomicity | "no mutating system call" under `--dry-run` was not run under `strace`; two writers racing on one output can fail one of them, and was not tested | [cli.md](cli.md) sections 2, 8 |
 | the tree library is limited to 2^20 rows | the exact Gini comparison; `ml`'s cap is 10,000,000 rows, so a verb needs a sampled-fit repair or a wider comparison | [models-tree.md](models-tree.md) section 10.11 |
