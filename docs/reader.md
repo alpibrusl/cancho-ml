@@ -153,11 +153,70 @@ with the survivors. A mutant of a cancho-table module is a **copy in a scratch d
 
 ## 6. Results
 
-*(Filled in as the stage lands; see the end of the commit history of this file.)*
+Everything below was printed by a script of this repository (`scripts/check.sh` exits 0; the logs are in `docs/bench/`), on one machine: this
+Mac, arm64, macOS, compiler `a4572ea`, cancho-table clone at `7f36608`. The machine was **not quiet**: the 1-minute load average was 3 to 12
+during the gates (other processes), 3.6 to 4.8 during the speed run, and it reached 47 at the end of the last fuzz. Nothing here is a
+benchmark of anything but the binaries named.
+
+| gate | result |
+|---|---|
+| RD1 pin | ok; 4 mutants (another hash, another commit, a vendored copy, a vendored and edited copy) all caught |
+| RD2 differential | **1,966,143 accepted cells compared bit for bit with Python `float()` and 34,380 refusals compared (status, aux): 0 differences** (seed 1) |
+| RD3 matrix | 192 random files (missing cells, `--drop`, `--float`, rows 1 to 200 across the 32-row word edges), 28,518 cells, values, missing bits, kinds, hash; 216 kind/scale checks: 0 differences |
+| RD4 limits | 36 checks, 0 differences. A 200 MB file refused at its 11th row, at the cell cap, and at `matrix.make` peaks at 1.5 MB (16 MB allowed); read whole into the matrix the same file peaks at 414 MB, so an allocation before the check would show |
+| RD5 csv | 277 files, 11,331 numeric cells against Python's `csv` module, 17 refusal cases (lines of errors in records that span lines): 0 differences |
+| RD6 fuzz | 5,014 inputs through `reader-check`, 5,115 runs of `ml`; 14 large cases (a 100,000-digit cell, a 10^6 exponent, a 5 MB line, a 5 MB header, a million blank lines...): **0 traps, 0 malformed answers** |
+| RD7 CLI oracle | `tests/conformance/test_float.py`, 11 tests (240 seeded datasets, exact ties in the mean and in `sse`, row-order independence): all pass |
+| conformance suite | 101 tests, all pass, 1 skipped (the `--threads` branch of D1). Of the 88 of the CLI slice, **2 were rewritten because they asserted the refusal this stage removes** (`test_float_text_is_refused_not_approximated`, `test_the_hint_names_the_missing_dependency`); the other 86 are untouched |
+
+**Mutants.** `scripts/mutants_reader.py`: 40 on the reader gates + 4 on the pin, `docs/bench/mutants_reader.log`: **36 killed, 4 survivors, all
+explained**: `rd2-nan-one-layer` (nan and inf are refused twice, by `ml.csvcell` and by `flt`: equivalent), `rd4-cell-cap-by-product` (every cap is at most
+2^31 - 1 so `rows * cols` cannot overflow: equivalent), `rd5-blank-line-in-quote-skipped` (the text of a quoted field is never read as a number: the only
+observable is the byte length against the cap), `rd6-fields-count-ignored` (`reader.scan` has counted the same fields: equivalent). Mutants of a
+cancho-table module are made in a scratch copy (Clinger limit 23, mantissa 2^53 + 1, the sticky retry, the halfway test, truncation, the sign, signed
+zero, subnormals; the bad-quote flag of `reader`). `scripts/mutants_cli.py` (the CLI slice's 34 and 11 new for RD7): **45 killed, 0 survived**,
+`docs/bench/mutants_cli_reader.log`. **What the mutants found about the gates**: five survived the first run and each was a gate that checked less
+than it said: the differential generated no empty cell and too few mantissas of 2^53 + 1 (now a family of 610 and the empty cell); the matrix gate
+compared kinds only on columns that were always float (now 216 single-cell and ordered-column checks); the allocation of the limits mutant was
+optimised away by the compiler (the mutant now uses it), and the model-file test had no float model (now it has one). One kill is a trap, not a
+value (`rd2-clinger-limit-23` indexes past a 23-entry table): it is still a kill.
+
+**Found about the dependency while doing it.** `table`'s `main` cannot be built by `a4572ea` (`bulk.cho` is `edition 9`; `a4572ea` knows 1 to 7), but
+its numeric modules (editions 5 and 6 features) compile and run under both compilers; the reader-check built by `e47d647` is the same size and speed
+as the `a4572ea` one (the speed log has both).
+
+**Speed (RD9)**, `docs/bench/bench_reader.log`, 500,000 rows x 8 columns (4.0 M cells), one thread, minimum of 7 interleaved rounds, load 3.6 to 4.8.
+`table` is the binary of cancho-table `main` built by its own pin `e47d647`. Cells per second = cells scanned / seconds:
+
+| file | `reader-check` pass 1 (every cell read, none kept) | `reader-check` whole load (2 passes + matrix) | `table --agg max:c0..c7:float` | `table --agg max:c0:float` | `table --agg count` |
+|---|---|---|---|---|---|
+| float17 (94 MB, `%.16e`) | 17.1 M/s | 7.6 M/s | 19.6 M/s | 51.6 M/s (6.5 M parsed/s) | 67.3 M/s |
+| short (30 MB, `%.2f`, the int/dec path) | 41.8 M/s | 19.9 M/s | 40.7 M/s | 91.4 M/s (11.4 M parsed/s) | 104.7 M/s |
+| mixed (62 MB) | 22.2 M/s | 9.9 M/s | 23.4 M/s | 58.1 M/s (7.3 M parsed/s) | 71.5 M/s |
+
+So, on this file and machine, reading every cell of a float file in pass 1 is **13% slower than cancho-table's** (17.1 against 19.6) and on short
+decimals equal; the whole load is about 2.3 times a pass (it reads every cell twice, by design: the shape must be known before the matrix is
+allocated). Where the 13% goes was not profiled: ml copies each record into a buffer and searches it for a quote and a comma count before
+splitting, which table's fused reader does not (docs/readers.md of cancho-table); that is a hypothesis, not a measurement.
 
 ## 7. Open questions
 
-*(Filled in at the end.)*
+1. **Who files the cancho-table proposal** (`docs/upstream/`), and whether `query` should be split so a consumer does not carry its 38 other
+   declarations. Until then the LOCAL-DEV file list cannot run in CI.
+2. **The CLI builds no matrix.** The constant model needs none; the loader is exercised by `reader-check` and the gates. Wiring it into `fit` waits for
+   the first model that reads features.
+3. **Missing cells.** The loader records them; the CLI still refuses an empty cell (no imputation step exists, ignoring a cell would be silent).
+   One consequence of "a blank line is not a record": in a one-column file an empty cell must be written `""`.
+4. **`-0` reads as `0.0`** (cancho-table's rule B2). A model that wants the sign of zero needs another reader.
+5. **A float target's `mean` is a double, an int or decimal target's is a decimal with six more digits.** `--float` on an int target therefore changes the
+   output form. Is that wanted, or should every regression be a double?
+6. **Compiler pins differ**: cancho-ml `a4572ea`, cancho-table `e47d647`. The stores of the proposal install under either (measured), but a single
+   pin would remove the question.
+7. **`describe`'s `integers_only: true`** is a constant of the pinned contract package. It is true of the JSON `ml` prints (every decimal is a string) and
+   not of its code, which now reads and sums floats.
+8. **Speed**: the 13% on float cells (section 6) and the second pass of the loader; a loader that grows its matrix in one pass would trade the
+   exact-size allocation and the early refusal for one parse per cell.
+9. **D2 on a second machine** is still untested (no float operation in the model path but `float_of`, one division, `ldexp` and `sqrt`).
 
 ## 9. Statements corrected in place
 
