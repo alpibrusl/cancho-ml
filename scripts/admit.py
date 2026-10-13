@@ -455,6 +455,12 @@ def q9(c):
     script = c.root / o["script"]
     if not script.exists():
         return "FAIL", "the oracle %s does not exist" % o["script"]
+    if script.name.startswith("test_"):
+        # a unittest module of the conformance tests (the constant model's exact-rational oracle)
+        p = subprocess.run([sys.executable, "-m", "unittest", script.stem], capture_output=True, text=True, env=dict(os.environ, ML_BIN=str(c.bin)), cwd=script.parent)
+        if p.returncode != 0:
+            return "FAIL", (p.stdout + p.stderr)[-300:]
+        return "PASS", "%s: %s" % (o["script"], (p.stderr.strip().splitlines() or ["ok"])[-1])
     p = subprocess.run([sys.executable, str(script), "--suite", "30", o["args"]], capture_output=True, text=True, env=dict(os.environ, ML_BIN=str(c.bin)), cwd=c.root)
     if p.returncode != 0:
         return "FAIL", (p.stdout + p.stderr)[-300:]
@@ -484,6 +490,8 @@ def q10(c):
 
 
 def q11(c):
+    if c.model.get("adapter") == "builtin":
+        return "SKIP", "%s is exact integer arithmetic, compared with fractions.Fraction (Q9); scikit-learn's DummyRegressor would add nothing with a stated tolerance" % c.name
     s = needs_binary(c)
     if s:
         return s

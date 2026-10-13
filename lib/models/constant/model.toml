@@ -23,6 +23,11 @@ reason = ""
 [sums]
 decisive = []
 
+[oracle]
+script = "tests/conformance/test_oracle.py"
+args = ""
+tolerance = "exact rationals (fractions.Fraction), docs/cli.md section 3"
+
 [[hyperparameter]]
 name = "task"
 type = "enum"
