@@ -8,6 +8,7 @@ loads = rows[0]["loads"]
 print("size %s; %d rounds; load average (1 min) at the start / end of each round: %s" % (size, len(rows[0]["fit"]), " ".join("%.1f/%.1f" % (a, b) for a, b in loads)))
 def cell(v):
     return min(v), max(v) / min(v)
+print("(* spread above the 1.25 of the protocol; the cell was not rerun)")
 base = {}
 print("\n| entry | trees | threads | fit min (s) | spread | fit speedup | predict min (s) | spread | predict speedup |")
 print("|---|---|---|---|---|---|---|---|---|")
@@ -20,4 +21,5 @@ for r in rows:
     if kind == "cancho" and trees in base:
         sf = "%.2fx" % (base[trees][0] / f); sp = "%.2fx" % (base[trees][1] / p)
     name = {"cancho": "cancho", "sklearn-rf": "scikit-learn RandomForestClassifier (exact splits)", "sklearn-hgb-1iter": "scikit-learn HistGradientBoosting, 1 iteration (context only)"}[kind]
-    print("| %s | %d | %d | %.4f | %.2f | %s | %.4f | %.2f | %s |" % (name, trees, t, f, fs, sf, p, ps, sp))
+    mark = lambda v: "%.2f%s" % (v, " *" if v > 1.25 else "")
+    print("| %s | %d | %d | %.4f | %s | %s | %.4f | %s | %s |" % (name, trees, t, f, mark(fs), sf, p, mark(ps), sp))

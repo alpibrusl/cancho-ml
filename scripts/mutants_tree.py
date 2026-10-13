@@ -113,6 +113,7 @@ M = [
  ("pbins: missing cell in bin 0", [(PB_, "        var c = nbins;\n        if len(mc) == 0", "        var c = 0;\n        if len(mc) == 0")]),
  ("pbins: missing cells enter the sort", [(PB_, "            if int_of(mc[i >> 3]) >> (i & 7) & 1 == 0 {\n                ka[nv]", "            if true {\n                ka[nv]")]),
  ("pbins: a column with no value has edge 1.0", [(PB_, "            ed[k - 1] = 0.0;", "            ed[k - 1] = 1.0;")]),
+ ("a column with no value has edge 1.0 (serial)", [(B_, "                ed[f * ne + k - 1] = 0.0;", "                ed[f * ne + k - 1] = 1.0;")]),
  ("pbins: another static partition of the columns", [(PB_, "    return k * d / te;", "    return (k * d + 1) / te;")]),
  # --- the model reader (G-fuzz)
  ("reader: left child must be i + 1 not checked", [(M_, "if lc != i + 1 || cur >= max_depth {", "if cur >= max_depth {")]),
@@ -141,6 +142,7 @@ ALLOWED = {
  "score: swapped operands (an equivalent: + commutes)": "equivalent: IEEE addition is commutative, a + b and b + a have the same bits",
  "aggregation: sum starts from the first tree": "equivalent: acc starts at -0.0 instead of +0.0; the first addition gives the same bits unless a leaf value is -0.0, and no leaf value is -0.0 (sums start from +0.0, 0.0 / m is +0.0, class values are ratios of counts)",
  "threads: another static partition of the prediction rows": "equivalent by design: rows are independent, so any partition of them gives the same bits; this mutant IS another partition (it is the property G-thread relies on)",
+ "pbins: a column with no value has edge 1.0": "unobservable by construction: a column with no present value has only missing cells, so every bin of it is the missing bin and no split of it is valid; its edges are never read and are not part of the model (the serial path's value 0.0 is checked by the E lines of the edge-case set, mutant 'a column with no value has edge 1.0 (serial)')",
  "pbins: another static partition of the columns": "equivalent by design: a column's edges and bins depend on that column alone, so any partition of the columns gives the same arrays (G-thread relies on it)",
  "threads: refusal of the highest tree": "not observable today: the only refusal a tree returns is ml.limit.nodes, so which tree's refusal is reported cannot change the tag; the lowest-tree rule is kept for the day a second code exists",
 }
