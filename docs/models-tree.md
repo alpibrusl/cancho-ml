@@ -355,15 +355,15 @@ depends on the content of the data. (These are the fixtures of G-refuse.)
 
 ## 10. Results
 
-*(Sections 10.1 to 10.10 are filled from the output of the scripts named in each; the raw lines of the timing are in
-`docs/bench/tree_100000.*` and `docs/bench/tree_1000000.*`.)*
+*(Sections 10.1 to 10.11 are filled from the output of the scripts named in each; the raw lines of the timing are in
+`docs/bench/tree_<size>.*` and `docs/bench/tree_<size>_b.*`, the mutant logs in `docs/bench/mutants_tree*.log`.)*
 
 ### 10.1 Conditions
 
 Apple M4 Max (12 performance and 4 efficiency cores, 64 GB), macOS 26.2, cancho `a4572ea` (default LLVM backend, `--std`, edition 5),
 Python 3.14.5, numpy 2.4.6, scikit-learn 1.8.0. Seed 20261012 everywhere. **The machine is shared with other users and with other
-agents' builds and benchmarks: the one-minute load average was 3 to 12 during every timing below (and 8 to 40 during the
-mutant runs, which are not timings), never the "about 1" of the start of the stage. Every timing cell is flagged `load >= 2`; none is a quiet-machine number.**
+agents' builds and benchmarks: the one-minute load average was 3 to 12 during every timing below (and 8 to 24 during part of the
+mutant runs), never the "about 1" of the start of the stage. Every timing cell is flagged `load >= 2`; none is a quiet-machine number.**
 Gates other than timing do not depend on the load.
 
 ### 10.2 G-ident: passed, 20 pairs (`scripts/gate_tree.py --ident`)
@@ -388,8 +388,7 @@ sends the missing rows left):
 So the tie rule is exercised (C3 at 100,000 rows has none; the others have many) and so is the missing rule (`v1` > 0 wherever
 there are missing cells). Not exercised by the oracle configurations: an exact tie between the two sides for the missing rows that is
 also the winner (the mutant "variant 1 first" survives the oracle alone); the unit test `tie_variants` covers it with a three-row case.
-C1 at 1,000,000 rows (800,000 training rows) was also run, once the code was final: **IDENTICAL** (5,110 nodes, 5 exact ties; the same figures as
-spike F's, `docs/spikes.md` 11.1). The other configurations were not run at 1,000,000 rows.
+The identity at 1,000,000 rows was not run (the oracle's cost; spike F ran it for C1, `docs/spikes.md` 11.1).
 
 ### 10.3 The port of spike F: identical (`scripts/gate_tree.py --spike`)
 
@@ -406,8 +405,8 @@ columns are covered by `tests/t_tree.cho` (64 threads on a 2-tree, 40-row fit).
 
 ### 10.5 G-mutants: passed, no unexplained survivor
 
-100 mutants (`scripts/mutants_tree.py`; log `docs/bench/mutants_tree.log`). The unmutated control passes every gate. **94 killed;
-6 survivors, all explained; no unexplained survivor; none failed to build.** By the first gate that failed: 58 by the unit tests, 16 by the fuzz, 13 by the oracle at 1,000 rows, 4 by the thread gate, 1 by the exact comparison, 1 by the oracle at 100,000 rows, 1 by the unit tests (a hang). Survivors
+100 mutants (`scripts/mutants_tree.py`; log `docs/bench/mutants_tree.log`). The unmutated control passes every gate. **94 killed,
+6 survivors, all explained, no unexplained survivor, none failed to build.** By the first gate that failed: 58 by the unit tests, 16 by the fuzz, 13 by the oracle at 1,000 rows, 4 by the thread gate, 1 by the exact comparison, 1 by the oracle at 100,000 rows, 1 by the unit tests (a hang). Survivors
 (each is an equivalent mutant or unobservable by construction, with the argument in the script):
 
 * `score: swapped operands`: IEEE addition is commutative;
@@ -423,7 +422,7 @@ columns are covered by `tests/t_tree.cho` (64 threads on a 2-tree, 40-row fit).
 
 **What the oracle alone kills.** A second run with only the oracle identity (1,000 and 100,000 rows) and the thread gate
 (`--gates ident1000,ident100000,threads`, log `docs/bench/mutants_tree_oracle.log`): 62 killed (48 by identity at 1,000 rows, 2 at
-100,000 rows, 11 by the thread gate, 1 more by a hang the thread gate ran into). Every mutant of the algorithm named in the stage's list is among them: the tie
+100,000 rows, 11 by the thread gate, 1 of them a hang). Every mutant of the algorithm named in the stage's list is among them: the tie
 rule (both criteria), the bin boundary, the bootstrap draw, the child direction (training, prediction, both), the depth, the
 feature subset size, the aggregation order, the missing side (always left, always right, flipped, missing in bin 0), the `min_samples_leaf`
 boundary, the sums of the regression criterion in their order, the unstable partition and the thread group. The oracle does **not** kill:
@@ -431,9 +430,7 @@ the two ties between the sides for missing rows (the unit test does), the checks
 (the unit tests, the exact comparison and the fuzz do): that is the division of work, and it is on record, not assumed.
 
 
-### 10.6 G-fuzz: passed
-
-`scripts/gate_tree.py --fuzz`, about 0.6 s. Payloads of 13,836 bytes (classification, 4 trees, 212 nodes, with missing cells)
+### 10.6 G-fuzz: passed (`scripts/gate_tree.py --fuzz`, about 0.6 s). Payloads of 13,836 bytes (classification, 4 trees, 212 nodes, with missing cells)
 and 11,588 bytes (regression, 3 trees, 177 nodes). Byte-level and seeded damage: 6,699 accepted and 43,771 refused (classification),
 9,062 accepted and 36,343 refused (regression), plus the structured set (every field of every node at 9 values, every `val` at 5, the
 header, the offsets, the record headers) and the crafted payloads; **no trap, no hang, no answer that disagrees with the rules
@@ -489,10 +486,11 @@ Minimum of 7 interleaved rounds (each round runs every entry once, in turn); spr
 64 bins, `mtry` 4, bootstrap, 20 columns, train = first 80% of the rows, test = last 20%. cancho fit includes the edges, the bin
 matrix, the thread copies and the merge; predict includes the piece copies. cancho times are read in the program (`clock_ms`): 100,000
 rows: mean of 10 fits / 10 predicts; 1,000,000 rows: 1 fit, mean of 3 predicts. scikit-learn times: `perf_counter` around `fit` and
-`predict_proba`. **Load average (1 min), start/end of each round: 100,000 rows 3.3 to 4.9; 1,000,000 rows 4.9 to 11.9. All flagged.**
-The figures at 16 threads on a loaded machine with 12 performance cores should be read as "no worse than", not as a scaling law.
+`predict_proba`. **Two sessions per size, each of 7 rounds; the load average (1 min) over the rounds: 100,000 rows 3.3 to 4.9 (first) and 5.2 to 8.4
+(replicate); 1,000,000 rows 4.9 to 11.9 (first) and 2.6 to 5.0 (second). All flagged.** The figures at 16 threads on a loaded machine
+with 12 performance cores should be read as "no worse than", not as a scaling law.
 
-**100,000 rows** (train 80,000, test 20,000). size 100000; 7 rounds; load average (1 min) at the start / end of each round: 3.3/3.6 3.6/3.5 3.5/3.5 3.5/3.6 3.6/3.5 3.5/4.6 4.6/4.9
+**100,000 rows** (train 80,000, test 20,000), the first session (lower load). size 100000; 7 rounds; load average (1 min) at the start / end of each round: 3.3/3.6 3.6/3.5 3.5/3.5 3.5/3.6 3.6/3.5 3.5/4.6 4.6/4.9
 (* spread above the 1.25 of the protocol; the cell was not rerun)
 
 | entry | trees | threads | fit min (s) | spread | fit speedup | predict min (s) | spread | predict speedup |
@@ -511,24 +509,50 @@ The figures at 16 threads on a loaded machine with 12 performance cores should b
 | scikit-learn RandomForestClassifier (exact splits) | 10 | 16 | 0.1316 | 1.13 |  | 0.0134 | 1.23 |  |
 | scikit-learn HistGradientBoosting, 1 iteration (context only) | 1 | 1 | 0.1055 | 1.08 |  | 0.0007 | 1.15 |  |
 
-**1,000,000 rows** (train 800,000, test 200,000). size 1000000; 7 rounds; load average (1 min) at the start / end of each round: 4.9/5.5 5.5/6.0 6.0/6.4 6.4/7.5 7.5/10.1 10.1/9.7 9.7/11.9
+The replicate session of the same rows (load 5 to 8), minimum fits and predicts only. size 100000_b; 7 rounds; load average (1 min) at the start / end of each round: 8.4/8.1 8.1/7.5 7.5/6.6 6.6/6.1 6.1/5.8 5.8/5.6 5.6/5.2
+
+| entry | trees | what | 1 thread | 2 | 4 | 8 | 16 | worst spread |
+|---|---|---|---|---|---|---|---|---|
+| cancho | 10 | fit (s) | 0.0473 | 0.0238 | 0.0151 | 0.0120 | 0.0096 | 1.07 |
+| cancho | 10 | predict (s) | 0.0081 | 0.0046 | 0.0027 | 0.0016 | 0.0013 | 1.15 |
+| cancho | 32 | fit (s) | 0.1093 | 0.0563 | 0.0304 | 0.0187 | 0.0176 | 1.07 |
+| cancho | 32 | predict (s) | 0.0339 | 0.0175 | 0.0101 | 0.0055 | 0.0039 | 1.33 |
+| scikit-learn RF | 10 | fit (s) | 1.0163 |  |  |  | 0.1347 | 1.05 |
+| scikit-learn RF | 10 | predict (s) | 0.0087 |  |  |  | 0.0161 | 1.02 |
+| scikit-learn HGB 1 iteration | 1 | fit (s) | 0.1000 |  |  |  |  | 1.04 |
+| scikit-learn HGB 1 iteration | 1 | predict (s) | 0.0006 |  |  |  |  | 1.07 |
+
+**1,000,000 rows** (train 800,000, test 200,000), the second session (lower load, tighter spreads). size 1000000; 7 rounds; load average (1 min) at the start / end of each round: 5.0/4.8 4.8/4.5 4.5/3.8 3.8/3.0 3.0/2.6 2.6/3.2 3.2/3.5
 (* spread above the 1.25 of the protocol; the cell was not rerun)
 
 | entry | trees | threads | fit min (s) | spread | fit speedup | predict min (s) | spread | predict speedup |
 |---|---|---|---|---|---|---|---|---|
-| cancho | 10 | 1 | 0.6390 | 1.19 | 1.00x | 0.0940 | 1.13 | 1.00x |
-| cancho | 10 | 2 | 0.3350 | 1.15 | 1.91x | 0.0517 | 1.06 | 1.82x |
-| cancho | 10 | 4 | 0.2220 | 1.18 | 2.88x | 0.0277 | 1.04 | 3.40x |
-| cancho | 10 | 8 | 0.2160 | 1.11 | 2.96x | 0.0150 | 1.16 | 6.27x |
-| cancho | 10 | 16 | 0.2340 | 1.09 | 2.73x | 0.0113 | 1.32 * | 8.29x |
-| cancho | 32 | 1 | 1.4780 | 1.20 | 1.00x | 0.4050 | 1.04 | 1.00x |
-| cancho | 32 | 2 | 0.7770 | 1.23 | 1.90x | 0.2070 | 1.03 | 1.96x |
-| cancho | 32 | 4 | 0.4950 | 1.10 | 2.99x | 0.1037 | 1.05 | 3.91x |
-| cancho | 32 | 8 | 0.3700 | 1.19 | 3.99x | 0.0540 | 1.06 | 7.50x |
-| cancho | 32 | 16 | 0.3890 | 1.14 | 3.80x | 0.0343 | 1.28 * | 11.80x |
-| scikit-learn RandomForestClassifier (exact splits) | 10 | 1 | 15.7432 | 1.08 |  | 0.0999 | 1.07 |  |
-| scikit-learn RandomForestClassifier (exact splits) | 10 | 16 | 1.9526 | 1.33 * |  | 0.0152 | 2.00 * |  |
-| scikit-learn HistGradientBoosting, 1 iteration (context only) | 1 | 1 | 0.6702 | 1.06 |  | 0.0059 | 1.17 |  |
+| cancho | 10 | 1 | 0.5830 | 1.04 | 1.00x | 0.0863 | 1.11 | 1.00x |
+| cancho | 10 | 2 | 0.3060 | 1.07 | 1.91x | 0.0453 | 1.11 | 1.90x |
+| cancho | 10 | 4 | 0.2330 | 1.06 | 2.50x | 0.0263 | 1.03 | 3.28x |
+| cancho | 10 | 8 | 0.2070 | 1.05 | 2.82x | 0.0147 | 1.02 | 5.89x |
+| cancho | 10 | 16 | 0.2210 | 1.02 | 2.64x | 0.0103 | 1.29 * | 8.35x |
+| cancho | 32 | 1 | 1.2890 | 1.04 | 1.00x | 0.3563 | 1.03 | 1.00x |
+| cancho | 32 | 2 | 0.7590 | 1.06 | 1.70x | 0.1807 | 1.03 | 1.97x |
+| cancho | 32 | 4 | 0.5710 | 1.01 | 2.26x | 0.1020 | 1.02 | 3.49x |
+| cancho | 32 | 8 | 0.3860 | 1.04 | 3.34x | 0.0533 | 1.01 | 6.68x |
+| cancho | 32 | 16 | 0.3810 | 1.06 | 3.38x | 0.0337 | 1.25 | 10.58x |
+| scikit-learn RandomForestClassifier (exact splits) | 10 | 1 | 12.6230 | 1.03 |  | 0.0845 | 1.05 |  |
+| scikit-learn RandomForestClassifier (exact splits) | 10 | 16 | 1.8624 | 1.02 |  | 0.0139 | 1.30 * |  |
+| scikit-learn HistGradientBoosting, 1 iteration (context only) | 1 | 1 | 0.6020 | 1.02 |  | 0.0058 | 1.20 |  |
+
+The first session of the same rows (load 5 to 12). size 1000000; 7 rounds; load average (1 min) at the start / end of each round: 4.9/5.5 5.5/6.0 6.0/6.4 6.4/7.5 7.5/10.1 10.1/9.7 9.7/11.9
+
+| entry | trees | what | 1 thread | 2 | 4 | 8 | 16 | worst spread |
+|---|---|---|---|---|---|---|---|---|
+| cancho | 10 | fit (s) | 0.6390 | 0.3350 | 0.2220 | 0.2160 | 0.2340 | 1.19 |
+| cancho | 10 | predict (s) | 0.0940 | 0.0517 | 0.0277 | 0.0150 | 0.0113 | 1.32 |
+| cancho | 32 | fit (s) | 1.4780 | 0.7770 | 0.4950 | 0.3700 | 0.3890 | 1.23 |
+| cancho | 32 | predict (s) | 0.4050 | 0.2070 | 0.1037 | 0.0540 | 0.0343 | 1.28 |
+| scikit-learn RF | 10 | fit (s) | 15.7432 |  |  |  | 1.9526 | 1.33 |
+| scikit-learn RF | 10 | predict (s) | 0.0999 |  |  |  | 0.0152 | 2.00 |
+| scikit-learn HGB 1 iteration | 1 | fit (s) | 0.6702 |  |  |  |  | 1.06 |
+| scikit-learn HGB 1 iteration | 1 | predict (s) | 0.0059 |  |  |  |  | 1.17 |
 
 
 **What the comparison is, and is not.** scikit-learn `RandomForestClassifier` is an **exact-split** forest: a different algorithm,
@@ -538,8 +562,8 @@ installed Python packages were checked (`lightgbm`, `xgboost`, `catboost`, `pola
 scikit-learn, numba, pandas, torch are present) and **no histogram random forest is installed**, so there is none to compare
 with; nothing was installed. `HistGradientBoostingClassifier` with one iteration is a histogram tree, but gradient boosting (leaf-wise
 growth, second-order leaf values, no bagging, no feature subsets, 63 bins here to match), so its row is context only: it builds one
-tree where the library builds 10 or 32. The same machine and data; the scikit-learn rows are `n_jobs` 1 and 16 (the histogram one single-threaded: `OMP_NUM_THREADS` and
-the BLAS variables are 1). That they really used the threads asked for was not checked with a counter.
+tree where the library builds 10 or 32. The same machine, the same data, one thread each (`OMP_NUM_THREADS` and the BLAS variables 1).
+That scikit-learn's `n_jobs = 1` and the histogram implementation really ran on one thread was not checked with a counter.
 
 **Where the time goes** (the macOS `sample` profiler, 1 ms, one run of 6 fits and 1 predict at 1,000,000 rows, 1 thread, T = 10, load 3
 to 8, taken before the last two small changes (the partition and the 64-entry search); the share of 1,268 samples): the histogram
@@ -548,18 +572,19 @@ sort keys 11%, the bin search 6%, prediction 5%. The binning work a 1-thread fit
 (`phase=1`): edges 0.221 s and bin matrix 0.038 s at 1,000,000 rows (0.018 s and 0.004 s at 100,000); with threads they are done
 column by column in threads.
 
-**Thread scaling and its limit.** Speed-up of the fit against the same configuration at 1 thread (minimum of 7): 100,000 rows, T = 32:
-1.98x, 3.84x, 6.37x, 6.61x at 2, 4, 8, 16 threads; 1,000,000 rows, T = 32: 1.90x, 2.99x, 3.99x, 3.80x. Prediction scales better (the
-copies are small against the work): 11.8x at 16 threads at 1,000,000 rows. T = 10 does not divide by 4, 8 or 16 (groups of 2 or 3
-trees, 1 for 8 threads, 10 threads busy at most): 2.96x at 8 threads and 2.73x at 16 at 1,000,000 rows. **What bounds the fit is
-the job creation, not the algorithm:** cancho gives a thread one pointer and no shared read, so the parent builds, for each thread, a copy
-of the bin matrix (16 MB at 800,000 rows), the labels and the `n`-sized scratch (about 13 MB), sequentially, while the earlier threads already run
-(`docs/upstream/spawn_shared_slice.cho`). The separate cost of that was not measured; it is the explanation by elimination
-(binning is in threads since the commit that added `tree.pbins`; the trees are independent) and is stated as such. The same equality
-of bytes holds at every thread count (10.4).
+**Thread scaling and its limit.** Speed-up of the fit against the same configuration at 1 thread (minimum of 7), T = 32: 100,000 rows
+1.98x, 3.84x, 6.37x, 6.61x at 2, 4, 8, 16 threads (replicate session 1.94x, 3.60x, 5.84x, 6.21x); 1,000,000 rows 1.70x, 2.26x, 3.34x,
+3.38x (first session 1.90x, 2.99x, 3.99x, 3.80x). T = 10 does not divide by 4, 8 or 16 (groups of 2 or 3 trees; at most 10 threads busy): at
+1,000,000 rows 1.91x, 2.50x, 2.82x, 2.64x. Prediction scales better (the piece copies are small against the work): 10.6x at 16 threads
+at 1,000,000 rows, 9.3x at 100,000 (T = 32). Read as one number, the 1,000,000-row T = 32 fit behaves like a program with about a quarter
+of its 1-thread time not parallel (an Amdahl fit to 3.38x at 16 threads: a fit of the table, not a measurement of any part).
+**What I think bounds it is the job creation, not the algorithm** (an explanation by elimination: the trees are independent and the binning
+is in threads; the cost itself was not measured): cancho gives a thread one pointer and no shared read, so the parent builds, for each
+thread, a copy of the bin matrix (16 MB at 800,000 rows), the labels and the `n`-sized scratch (about 13 MB), sequentially, while the earlier
+threads already run (`docs/upstream/spawn_shared_slice.cho`). The bytes are the same at every thread count (10.4).
 
-**Memory.** A fit of 800,000 x 20 at 16 threads holds about 16 x 30 MB of copies besides the matrix (16 MB of bins, 13 MB of
-scratch, 1 MB of labels, per thread); the ceiling of section 5 (2^34 bytes) refuses what would exceed it.
+**Memory.** A fit of 800,000 x 20 at 16 threads holds about 16 x (16 MB + 19 MB) of copies besides the matrix; the ceiling of
+section 5 (2^34 bytes) refuses what would exceed it.
 
 ### 10.10 What the work found (corrections and findings, in the order they were made)
 
@@ -582,8 +607,8 @@ scratch, 1 MB of labels, per thread); the ceiling of section 5 (2^34 bytes) refu
 
 * Only this Mac, aarch64; no second machine (D2 across machines is **not tested** for the forest; the arithmetic is integer, IEEE
   `+ - * /` without `fma`, and `fbits`, so the expectation is the same bytes, unverified). The gram host was not used.
-* The oracle identity is at 1,000 and 100,000 rows for every configuration and at 1,000,000 rows for C1 only. The thread equality at
-  1,000,000 rows is by hash of the benchmark runs, without an oracle.
+* The oracle identity is at 1,000 and 100,000 rows; the 1,000,000-row identity was not run. The thread equality at 1,000,000 rows is by hash of
+  the benchmark runs, without an oracle.
 * The timings were taken on a loaded, shared machine (3 to 12 load average); 16-thread cells in particular are upper bounds.
   scikit-learn's thread use was not checked with a counter.
 * Quality against scikit-learn: the regression tolerance fixed in advance is not met on R1 (10.8); nothing was run on real data beyond the
