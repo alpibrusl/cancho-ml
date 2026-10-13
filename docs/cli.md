@@ -11,7 +11,7 @@ The agent-visible surface of cancho-ml is the command line (and later an MCP ser
 `fit`, `predict`, `eval`, `introspect` and `skill`, built the way `cancho-table`'s `table` is: one flag table drives the
 parser, `introspect` and `skill`; every refusal is data with a `<area>.<name>` tag, an exit code and, where safe, a repair;
 the authority is derived by the compiler and gated against a committed manifest. The linear-algebra and tensor packages stay
-internal: nothing in this slice imports them, because the one model built here (`--model constant`) needs none.
+internal: nothing in this slice imports them, because the one model built here (`--model constant`) needs none. *(Stage W1, `docs/wiring.md`, wires `--model linear` and `--model logistic` through the pipeline; they import them. `--model constant` and every file it writes are unchanged, byte for byte: `tests/conformance/test_wire_baseline.py`.)*
 
 It is a **vertical slice**: one real model end to end, not a framework. There are no fake models: the `--model` flag's choice list (in `introspect`) is the list of what is built, and a test pins it.
 
@@ -30,7 +30,7 @@ catch); a survivor is listed with its reason in section 7.
 | M1 | **Model file.** The writer and the reader round-trip; bad magic, a version the reader does not know, a truncated file at every length, a flipped bit anywhere and a wrong checksum are refused with `ml.model.bad-magic`, `ml.model.version`, `ml.model.truncated`, `ml.model.checksum`; a structurally corrupt file whose checksum was recomputed is `ml.model.malformed`. A corrupted-file fuzz (every truncation, every single-byte flip of a small model, seeded multi-byte damage, seeded structural damage with a repaired checksum) never traps and never reports success for a file whose checksum is wrong. | `test_model_file.py` | checksum not compared; a section length not checked against the file size; version not compared |
 | S1 | **Schema check.** A prediction input whose columns differ from the fitted schema is `ml.schema.mismatch` with the missing, extra and mistyped columns in `detail` and a repair that names them; column order may differ. | `test_schema.py` | the check removed; the repair listing the wrong side |
 | O1 | **Oracle.** The model is real and right: `fit`, `predict` and `eval` agree, value for value, with an exact-rational oracle in Python (`fractions.Fraction`) on seeded data that includes values whose sums leave 64 bits. | `test_oracle.py` | mean divided by n-1; tie broken the other way; rounding of the prediction changed; a carry dropped in the exact sum; accuracy counted wrongly; eval using the wrong scale |
-| D1 | **Determinism.** The same input and plan give the same model bytes, whatever the working directory, the spelling of the path or the number of repetitions; the same command gives the same stdout bytes. If a `--threads` flag ever appears in the table, the test runs it at 1, 2, 8 and 64 and compares bytes; today there is none and the test says so. | `test_determinism.py` | a stand-in binary whose bytes depend on a `--threads` value (the test must fail on it) |
+| D1 | **Determinism.** The same input and plan give the same model bytes, whatever the working directory, the spelling of the path or the number of repetitions; the same command gives the same stdout bytes. *(Since W1 there is a `--threads` flag, and the test that no thread count changes a byte runs linear and logistic at 1, 2, 4, 8 and 16 threads, `fit` and `eval`, and compares the model bytes and the answers; `scripts/admit.py` Q6 runs 1 to 16.)* | `test_determinism.py` | a stand-in binary whose bytes depend on a `--threads` value (the test must fail on it) |
 | A1 | **Authority.** `scripts/manifest.py` derives the authority with `cancho authority`, writes `manifests/ml.authority.json` and `generated/ml/built.cho`, and `--check` fails if the committed manifest, the embedded one or the binary's `introspect` differ from a fresh derivation, or if a derived label is outside the ceiling of `tools.toml`. | `test_authority.py`, `scripts/manifest.py --check` | a mutant that adds a capability (a file write by path, a `Clock`, `Ffi`) must fail the check |
 | H1 | **Honesty.** the `--model` choice list is exactly the built models; asking for another is `args.bad-value`; a float column is read to the nearest double by cancho-table's exact reader (`docs/reader.md`), never approximately. *(Corrected in place: this row said a float column was refused with `ml.input.unsupported-type`, because the float reader was believed unmerged; it is merged, PR #32, and the rule is gone.)* | `test_honesty.py` | a model name added to the table without an implementation |
 
@@ -54,9 +54,9 @@ table to drift (gate T1 checks the one table against its projections).
 
 | verb | needs | takes also |
 |---|---|---|
-| `fit` | `--target NAME --output MODEL` | `--model constant`, `--task regression\|classification`, `--drop`, `--float`, `--overwrite`, `--dry-run`, the `--max-*` caps, `--log`, `--format` |
-| `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format` |
-| `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format` |
+| `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--overwrite`, `--dry-run`, the `--max-*` caps, `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) |
+| `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
+| `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
 
 **Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,
 error, errors, meta}`, errors `{code, rule, message, hint, repair, detail}`, no timestamp, no duration, no float (every decimal is a
@@ -146,7 +146,7 @@ $ ml --root . fit --target y --output g.cml flt2.csv                # flt2.csv: 
 
 ## 3. The constant model and its arithmetic
 
-`--model constant` is the only model built, and it is a real one: it is the baseline every other model is compared with, and the
+`--model constant` is the model this slice built, and it is a real one (stage W1 added `linear` and `logistic`: `docs/wiring.md`): it is the baseline every other model is compared with, and the
 slice is judged on whether the whole path (CSV, schema, file, prediction, score) is right, not on how clever the estimator is.
 
 ### 3.1 Regression
@@ -206,7 +206,7 @@ whose lengths fit the bytes that are there, checked before anything is allocated
 before the checksum, a flipped bit in a length field reports `truncated` or `malformed` rather than `checksum`; no damaged file is
 ever accepted (gate M1 flips every byte three ways).
 
-*Added at `v1-post` (rule in `design.md` section 4.1).* A file of a model kind of 4 to 7 (written by the libraries, not by `ml`) has a `u32 sum_order` as the last four bytes of `meta`; `ml` still builds kinds 1 to 3, whose `meta` has no such field and is unchanged. The reader checks that field after the checksum and before the other fields: a kind 4 to 7 file with a sum order other than 2 is `ml.model.version` (detail `sum_order`, `known`); with order 2 it is `ml.model.malformed` in section 4 (kind not built by `ml`).
+*Added at `v1-post` (rule in `design.md` section 4.1).* A file of a model kind of 4 to 7 (written by the libraries, not by `ml`) has a `u32 sum_order` as the last four bytes of `meta`; `ml` still builds kinds 1 to 3, whose `meta` has no such field and is unchanged. The reader checks that field after the checksum and before the other fields: a kind 4 to 7 file with a sum order other than 2 is `ml.model.version` (detail `sum_order`, `known`); with order 2 it is `ml.model.malformed` in section 4 (kind not built by `ml`). *(Since W1 kinds 4 and 5 are built: a valid file of those kinds is read by the pipeline's reader, `tools/ml/wireio.cho`, and an invalid payload is `ml.model.malformed`; kinds 6 and 7 are still "not built".)*
 
 ## 5. The log
 
@@ -220,12 +220,16 @@ logged; gate L1 plants canaries in all three and in every kind of run. Bounded: 
 
 ## 6. Authority and determinism
 
-`tools.toml` is the ceiling and `manifests/ml.authority.json` the derivation (`scripts/manifest.py`): `args`, `dir_read`, `dir_write`,
+`tools.toml` is the ceiling and `manifests/ml.authority.json` the derivation (`scripts/manifest.py`): `args`, **`conc`**, `dir_read`, `dir_write`,
 `err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, `io_write` and nothing else. In words: it reads the files named on its
 command line; it creates, appends to, renames and removes only beneath a directory it opened itself, and holds no `fs_write`, so no
-path write; it has no standard input, no clock, no environment, no network, no foreign code. `design.md` section 7 expected `conc`; there
-is none, because the slice has no `--threads`. **The label arrives with the first threaded kernel, in the same diff as the test that
-no thread count changes a byte** (gate D1 already contains that test and skips today, with the reason). `fs_read("")` is the only
+path write; it spawns threads for `fit --threads N` (`conc`); it has no standard input, no clock, no environment, no network, no foreign code.
+`design.md` section 7 expected `conc`. **The label arrived at stage W1, deliberately, in the same diff as the test that no thread count changes a byte**
+(`tests/conformance/test_determinism.py`, gate D1), as this section asked: `ml` now links `lib/linalg/par.cho`, which spawns, and the compiler derives
+`conc` from the code, so the label is in the row at `--threads 1` too. The reason is stated in `tools.toml` (`[ml.reasons]`), in the manifests of the two
+models that need it (`lib/models/linear/model.toml`, `lib/models/logistic/model.toml`, `[authority] adds`) and in `docs/wiring.md` section 6;
+`scripts/manifest.py` refuses a label beyond the base row (`lib/models/contract.toml`) that has no reason, so the ceiling cannot be widened by editing its list
+alone (`test_authority.py`; the mutants `a1-*` still kill a clock or a standard-input read). `fs_read("")` is the only
 extent the compiler can state: the directory is a run-time value (agent-toolbox.md L5), so the row names the verb, not the place.
 
 Determinism is tested from the outside (gate D1): the same data and plan give the same model bytes whatever the working directory, the
@@ -320,8 +324,7 @@ description of its own. From the flag table:
 
 ## 10. Open questions
 
-1. **`--threads` and `conc`.** When the first threaded kernel is wired in, does `fit` get `--threads` (as table does) or does the
-   thread count stay internal? Section 6 of `design.md` says the block size must not depend on it; gate D1 is ready either way.
+1. **`--threads` and `conc`.** *(Answered at W1: `fit` and `eval` get `--threads`, 1 to 64, `ml.param.threads` outside; the block size does not depend on it, and gate D1 runs at 1, 2, 4, 8 and 16. In `eval` nothing is threaded and the flag is checked and unused.)*
 2. **Quoted CSV and the shared reader.** *(Answered by the reader stage: quoted CSV is read through cancho-table's `reader` module; the
    shared code is a pinned dependency in intent and a pinned local file list in fact, until cancho-table commits its stores: `docs/reader.md`
    section 1.)*

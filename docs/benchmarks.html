@@ -41,7 +41,7 @@
   <p class="lead">What was timed, on what, and under what load. None of it is a claim yet.</p>
   <div class="notice">
     <p><b>Read this first.</b> Every table on this page was taken on one Mac (arm64, 16 cores, macOS 26.2; the documents that name the chip say Apple M4 Max) that other users and other agents&rsquo; builds and benchmarks were also using. The load average (1 minute) was 2.4 or more in every cell, and up to 10 in the linear-algebra table: every cell is flagged <code>load &gt;= 2</code>, and none is a quiet-machine number. <b>A serial rerun on a quiet machine is pending.</b> Until it is done, these are the conditions of one stretch of time, not measurements to quote.</p>
-    <p><b>The command line has not been timed.</b> All of this is the libraries under <code>ml</code>, and no verb calls most of them yet. There is no timing of <code>ml fit</code>, <code>predict</code> or <code>eval</code> in this repository.</p>
+    <p><b>The command line has not been timed.</b> All of this is the libraries under <code>ml</code>; since stage W1 the verbs call the linear and logistic models, the pipeline and the metrics, and none of that was timed through the command line. There is no timing of <code>ml fit</code>, <code>predict</code> or <code>eval</code> in this repository.</p>
   </div>
   <ul class="toc">
     <li><a href="#models">Models against numpy and scikit-learn</a></li><li><a href="#threads">Threads</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#metrics">Metrics</a></li><li><a href="#trees">Forests</a></li><li><a href="#reader">The reader</a></li><li><a href="#not">What was not measured</a></li>
@@ -182,7 +182,7 @@
 <section id="not">
   <h2>What was not measured</h2>
   <ul class="plain">
-    <li><strong>The command line.</strong> <code>ml fit</code>, <code>predict</code> and <code>eval</code> have no benchmark, and the constant model needs no matrix.</li>
+    <li><strong>The command line.</strong> <code>ml fit</code>, <code>predict</code> and <code>eval</code> have no benchmark (the constant model needs no matrix; the pipeline models read one).</li>
     <li><strong>A quiet machine.</strong> The serial rerun is pending, and so are the quiet-machine versions of every table above.</li>
     <li><strong>Another machine.</strong> Everything is one Mac, arm64. A Linux x86-64 box has not been used.</li>
     <li><strong>Memory.</strong> No gate measures it. The reader&rsquo;s refusal of a 200 MB file peaked at 1.5 MB, and the tree fit holds about 16 times 35 MB of thread copies at 16 threads for 800,000 rows (<code>docs/models-tree.md</code> section 10.9); there is no measurement of a model fit.</li>

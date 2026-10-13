@@ -203,9 +203,8 @@ splitting, which table's fused reader does not (docs/readers.md of cancho-table)
 
 1. **Who files the cancho-table proposal** (`docs/upstream/`), and whether `query` should be split so a consumer does not carry its 38 other
    declarations. Until then the LOCAL-DEV file list cannot run in CI.
-2. **The CLI builds no matrix.** The constant model needs none; the loader is exercised by `reader-check` and the gates. Wiring it into `fit` waits for
-   the first model that reads features.
-3. **Missing cells.** The loader records them; the CLI still refuses an empty cell (no imputation step exists, ignoring a cell would be silent).
+2. **The CLI builds no matrix for the constant model** *(answered at W1 for the other models: `linear` and `logistic` read the file with the loader, `tools/ml/csvload.cho` `load_t`; mode 9 of the scan skips a target column that predict does not need)*.
+3. **Missing cells.** The loader records them; the constant model still refuses an empty cell. *(At W1 the pipeline models take it as a missing value that the plan must `impute`; if it is not imputed the fit is refused with `ml.input.missing-value` and a repair.)*
    One consequence of "a blank line is not a record": in a one-column file an empty cell must be written `""`.
 4. **`-0` reads as `0.0`** (cancho-table's rule B2). A model that wants the sign of zero needs another reader.
 5. **A float target's `mean` is a double, an int or decimal target's is a decimal with six more digits.** `--float` on an int target therefore changes the

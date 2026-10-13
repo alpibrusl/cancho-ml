@@ -4,7 +4,7 @@
 holds the results; a number or a verdict is in it only if a script in `scripts/` printed it, with its conditions.** Tags as in
 `design.md`: **[choice]** is a decision the maintainer can overturn, **[open]** is not decided.
 
-An internal library, **not wired into the CLI** (a later stage does that): `lib/metrics/*.cho`, a driver `tools/metrics-check`
+A library, **wired into `ml eval` and `--split` at stage W1** (`docs/wiring.md`; for the constant models `eval` keeps its exact arithmetic of `docs/cli.md`): `lib/metrics/*.cho`, a driver `tools/metrics-check`
 that the gates call, tests in `tests/t_metrics*.cho`, scripts in `scripts/*metrics*`.
 
 ## 1. The gates (fixed before the code; each can fail, section 6 shows it failing)
@@ -177,8 +177,8 @@ is reported as such and not used to tighten the bound.
 
 Registered in `lib/metrics/rules.cho` in the table convention of `tools/ml/spec.cho` (`tag|exit|repairable|summary`, entries separated by `;`), the
 exit codes of `design.md` section 8 (arguments 2, a limit or a parse failure 8). `design.md` was **not** edited by this stage (other stages edited it
-in parallel); the integration registered the four new rows in its section 8 and in `spec.cho`'s `pending()` (not `extra()`: no verb calls the
-library, so no fixture reaches them); the wiring stage moves them to `extra()` and `rules()` with a fixture each. The numeric codes are 201 to 211 (design.md 8.1).
+in parallel); the integration registered the four new rows in its section 8 and in `spec.cho`'s `pending()` (not `extra()`: no verb called the
+library, so no fixture reached them); the wiring stage (W1) moved `ml.split.empty-fold` to `extra()` and `rules()` with a fixture, and `ml.metric.length-mismatch`, `ml.metric.bad-probability` and `ml.split.stratum-too-small` stay in `pending()` because no input reaches them (`docs/wiring.md` section 5). The numeric codes are 201 to 211 (design.md 8.1).
 
 | tag | exit | when | in design.md section 8? |
 |---|---|---|---|

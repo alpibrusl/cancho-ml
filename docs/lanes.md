@@ -48,8 +48,8 @@ to bytes. Code: `lib/linalg/order.cho` (`lanes()`, `panel()`, `lane_combine`, `b
 sixteen accumulators; the old 4 x 4 tile would have needed sixty-four), `chol.cho` (panels of 32), `par.cho` (workspace sizes), `lib/models/linear/npass.cho`
 and `lib/models/kmeans/kpass.cho` (the decisive sums of logistic regression and k-means), `lib/metrics/sums.cho` and `logloss.cho` (use `order.block_partial`).
 Unchanged on purpose: `axpy`, the triangular solves, a row's score and distance (left folds, `models-linear.md` 3), the k-means++ total, the trees' regression
-sums (sequential, one thread per tree), the command line (constant models are exact integer and `facc` arithmetic: no float order at all; `tools/ml` imports
-nothing from `linalg`, and its 101 conformance tests pass unchanged).
+sums (sequential, one thread per tree), the command line (constant models are exact integer and `facc` arithmetic: no float order at all; when this was written `tools/ml` imported
+nothing from `linalg`, and its 101 conformance tests passed unchanged; since W1 the pipeline models import it, and the constant models' files are still byte for byte those of `v1-post`, `docs/wiring.md` gate W1).
 
 Three independent implementations of the order agree bit for bit: the Cancho reference `tests/lref.cho`, the numpy oracles (`scripts/oracle_linalg.py`,
 `oracle_models.py`; `oracle_metrics.py` already had this rule) and the C kernels of `scripts/c_parity/parity.c` (rewritten to the lane order; its hashes

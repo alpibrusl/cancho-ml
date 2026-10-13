@@ -127,7 +127,7 @@
 
 <section id="models">
   <h2>Linear regression, logistic regression, k-means</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> sections 6.2 to 6.4. A library; no verb calls it.</p>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> sections 6.2 to 6.4. <code>linear</code> and <code>logistic</code> are called by the verbs since stage W1 (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/wiring.md">docs/wiring.md</a>); k-means is a library only.</p>
   <div class="fitwrap"><table class="fit wide">
     <thead><tr><th>gate</th><th>result</th></tr></thead>
     <tbody>
@@ -224,7 +224,7 @@
   <ul class="plain">
     <li><strong>Nothing here is a claim about speed.</strong> No gate measures it; <a href="benchmarks.html">the benchmarks page</a> has the timings and their load.</li>
     <li><strong>An oracle written from the same text</strong> shows the code does what the document says, not that the document is right. The stages that compared with an outside implementation (Python <code>float()</code>, numpy, scikit-learn) say where they agree and where only within a tolerance.</li>
-    <li><strong>The command line builds one model.</strong> The gates of the other models judge libraries; they do not show that a verb that calls them will be right, because no verb does yet. Wiring a verb is a change with its own gates (<code>docs/integration.md</code> section 6).</li>
+    <li><strong>The command line builds three models.</strong> The gates of k-means and the trees judge libraries; they do not show that a verb that calls them will be right, because no verb does yet. The wiring of linear and logistic has its own gates, oracle, mutants and admission script (<code>docs/wiring.md</code>, <code>docs/modules.md</code>).</li>
     <li><strong>One machine, one operating system, one compiler revision.</strong> A second-machine run (D2) is not done.</li>
     <li><strong>Not run at integration:</strong> the benchmarks, a package-mode build of <code>models-check</code>, and the 1,000,000-row identity and timing runs of the tree stage beyond the defaults.</li>
     <li><strong>Open items with reproducers</strong> (<code>docs/integration.md</code> section 7): the red gate above; <code>models-check</code> traps without a message on a path containing <code>..</code> (a test driver, not a library; <code>ml</code> checks paths itself); <code>check.sh</code> needs <code>../ml-data</code> and <code>../cancho-table-main</code>.</li>

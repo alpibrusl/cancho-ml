@@ -2,8 +2,7 @@
 
 **Status: sections 1 to 5 (the gate and the specification) were written before any code of `lib/models`. Section 6 holds the
 results; a number is in it only if a script in `scripts/` printed it, with its conditions.** Tags as in `design.md`:
-**[choice]** is a decision, **[estimate]** is not measured. Library only: nothing here is wired into the `ml` command line
-(`docs/cli.md` still has only `--model constant`).
+**[choice]** is a decision, **[estimate]** is not measured. `linear` and `logistic` are wired into the `ml` command line at stage W1 through an adapter each (`docs/wiring.md`, `docs/modules.md`; the logistic model file gained a labels record: payload version 2, `docs/wiring.md` section 4); k-means is a library only (`wired = false`).
 
 ## 1. What is built
 
