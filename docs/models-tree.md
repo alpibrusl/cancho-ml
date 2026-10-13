@@ -388,7 +388,8 @@ sends the missing rows left):
 So the tie rule is exercised (C3 at 100,000 rows has none; the others have many) and so is the missing rule (`v1` > 0 wherever
 there are missing cells). Not exercised by the oracle configurations: an exact tie between the two sides for the missing rows that is
 also the winner (the mutant "variant 1 first" survives the oracle alone); the unit test `tie_variants` covers it with a three-row case.
-The identity at 1,000,000 rows was not run (the oracle's cost; spike F ran it for C1, `docs/spikes.md` 11.1).
+C1 at 1,000,000 rows (800,000 training rows) was also run, once the code was final: **IDENTICAL** (5,110 nodes, 5 exact ties; the same figures as
+spike F's, `docs/spikes.md` 11.1). The other configurations were not run at 1,000,000 rows.
 
 ### 10.3 The port of spike F: identical (`scripts/gate_tree.py --spike`)
 
@@ -581,8 +582,8 @@ scratch, 1 MB of labels, per thread); the ceiling of section 5 (2^34 bytes) refu
 
 * Only this Mac, aarch64; no second machine (D2 across machines is **not tested** for the forest; the arithmetic is integer, IEEE
   `+ - * /` without `fma`, and `fbits`, so the expectation is the same bytes, unverified). The gram host was not used.
-* The oracle identity is at 1,000 and 100,000 rows; the 1,000,000-row identity was not run. The thread equality at 1,000,000 rows is by hash of
-  the benchmark runs, without an oracle.
+* The oracle identity is at 1,000 and 100,000 rows for every configuration and at 1,000,000 rows for C1 only. The thread equality at
+  1,000,000 rows is by hash of the benchmark runs, without an oracle.
 * The timings were taken on a loaded, shared machine (3 to 12 load average); 16-thread cells in particular are upper bounds.
   scikit-learn's thread use was not checked with a counter.
 * Quality against scikit-learn: the regression tolerance fixed in advance is not met on R1 (10.8); nothing was run on real data beyond the
