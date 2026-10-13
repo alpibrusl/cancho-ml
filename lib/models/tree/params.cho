@@ -52,6 +52,11 @@ pub fn nodes_total_max() -> [] int {
     return 16777216;
 }
 
+// the copies a threaded fit makes (docs/models-tree.md section 5) may not exceed this many bytes: 2^34 (16 GiB) [choice, provisional]
+pub fn copies_max() -> [] int {
+    return 17179869184;
+}
+
 // regression targets are refused above this magnitude (section 3.2)
 pub fn y_max() -> [] float {
     return 1.0e100;
@@ -151,6 +156,11 @@ pub fn check(p: Params, n: int, d: int, rows_cap: int, cols_cap: int, cells_cap:
     }
     if p.trees > nodes_total_max() / node_cap(p, n) {
         return deny.limit_nodes();
+    }
+    // every thread owns a copy of the bin matrix and n-sized scratch (about 24 bytes a row), and the binning gathers the matrix once
+    // more: n * d * 9 + threads * (n * d + 24 n) bytes, compared before anything is allocated (both products are far below 2^62)
+    if n * d * 9 + p.threads * (n * d + 24 * n) > copies_max() {
+        return refuse.threads();
     }
     return 0;
 }

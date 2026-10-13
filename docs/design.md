@@ -288,8 +288,10 @@ shared reader (section 10: cancho-table is not a package, so the slice has a rea
 
 ## 14. Stage M7: decision trees and random forests (library only)
 
-`docs/models-tree.md` holds the algorithm, the numeric decisions (exact integer Gini, sequential float regression sums in a
-fixed row order), the limits and tags, the missing-value rule (a learned default side), the tensor records of the model
-section, the gates and the timing protocol; it was written before the code. It is a library under `lib/models/tree/`; the
-command line does not call it yet. Its rule tags (`ml.limit.depth`, `ml.limit.nodes`, `ml.label.*`, `ml.input.non-finite`,
-`ml.model.truncated`, `ml.model.malformed`) are those of section 8.
+`docs/models-tree.md` holds the algorithm, the numeric decisions (exact integer Gini; sequential float regression sums in a
+fixed row order), the limits and tags, the missing-value rule (a learned default side per split), the tensor records of the
+`model` section (kind 3), the gates, the timing protocol and the verdicts (its section 10); it was written before the code.
+It is a library under `lib/models/tree/`, driven by `tools/tree-check` for the gates; the command line does not call it yet.
+What it changes in this document: model kind 3 for section 4.1; the tags `ml.limit.depth`, `ml.limit.nodes`, `ml.param.threads`
+(also for the memory the thread copies would take) become reachable from a library call (section 8; none is reachable from `ml`
+until the verbs call the library); the row ceiling of a tree fit is 2^20 (the exact Gini comparison), a figure for section 9.

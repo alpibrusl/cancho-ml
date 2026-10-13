@@ -90,6 +90,7 @@ M = [
  ("node total check off by one", [(Q_, "if p.trees > nodes_total_max() / node_cap(p, n) {", "if p.trees > nodes_total_max() / node_cap(p, n) + 1 {")]),
  ("row bound of the exact comparison", [(Q_, "if n > rows_max() {", "if n > rows_max() + 1 {")]),
  ("min_leaf range", [(Q_, "if p.min_leaf < 1 || p.min_leaf > n {", "if p.min_leaf < 1 {")]),
+ ("copies ceiling: not checked", [(Q_, "    if n * d * 9 + p.threads * (n * d + 24 * n) > copies_max() {", "    if n * d * 9 + p.threads * (n * d + 24 * n) > copies_max() * 1000 {")]),
  ("single class not refused", [(F_, "if ones == 0 || ones == n {", "if ones == n + 1 {")]),
  ("label check: 2.0 accepted as 1", [(F_, "            } else if v != 0.0 {\n                return deny.not_binary();", "            } else if v != 0.0 && v != 2.0 {\n                return deny.not_binary();")]),
  ("target bound 1e100", [(F_, "v <= big && v >= 0.0 - big", "v <= big")]),

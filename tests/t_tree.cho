@@ -372,6 +372,12 @@ fn t_nodes_boundary() -> [] int {
     bad = bad + pass(params.check(ok, 1048576, 1, 10000000, 4096, 400000000) == 0 || true);
     let rows = params.Params { task: 0, trees: 1, max_depth: 4, min_leaf: 1, max_nodes: 100, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 1 };
     bad = bad + pass(params.check(rows, 1048576, 1, 10000000, 4096, 400000000) == 0);
+    // the copies of a threaded fit: 2^20 rows x 380 columns is 4e8 cells (allowed with the cells cap), one thread copies 4e8 bytes
+    // of bins and 25 MB of scratch, so 64 threads would copy more than 16 GiB and 8 threads would not
+    let wide = params.Params { task: 0, trees: 64, max_depth: 4, min_leaf: 1, max_nodes: 100, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 64 };
+    bad = bad + pass(params.check(wide, 1048576, 380, 10000000, 4096, 400000000) == refuse.threads());
+    let narrow = params.Params { task: 0, trees: 64, max_depth: 4, min_leaf: 1, max_nodes: 100, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 8 };
+    bad = bad + pass(params.check(narrow, 1048576, 380, 10000000, 4096, 400000000) == 0);
     bad = bad + pass(params.check(rows, 1048577, 1, 10000000, 4096, 400000000) == refuse.too_many_rows());
     return bad;
 }

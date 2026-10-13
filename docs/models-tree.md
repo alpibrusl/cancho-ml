@@ -104,10 +104,11 @@ thread count. Classification: `predict_proba` is `result` (the probability of cl
 ### 3.1 Gini by exact integer arithmetic
 
 `N < m^3` and `Dn <= m^2/4`, so for `m <= 2^20` the products `N1 Dn2` stay below `2^98`: they do not fit an `int` (cancho has no
-multiply-high, upstream gap U1). The comparison multiplies in base `2^30` limbs, exactly. **Row ceiling [choice]: `n <= 2^20 =
+multiply-high: `docs/upstream/mulhi.cho`). The comparison multiplies in base `2^30` limbs, exactly. **Row ceiling [choice]: `n <= 2^20 =
 1,048,576`** training rows (`ml.input.too-many-rows` above it; the bound is the proof above, and raising it needs a three-limb
-numerator). The ceiling applies to `n`, which is also the root size of every tree (the bootstrap draws `n` rows). `tree-check mode=gt` prints the comparison of 2,006 pairs (2,000 pseudo-random from the SplitMix64 stream, 6 at the bounds) and
-`scripts/gate_tree.py --exact` checks every answer against Python integers.
+numerator). The ceiling applies to `n`, which is also the root size of every tree (the bootstrap draws `n` rows). `tree-check mode=gt` prints the
+comparison of 2,006 pairs (2,000 pseudo-random from the SplitMix64 stream, 6 at the bounds) and `scripts/gate_tree.py --exact` checks
+every answer against Python integers. (A tighter bound is `N <= m nl nr <= 2^58`; the products are below 2^96.)
 
 ### 3.2 Regression sums: float64 in a fixed row order (not the linalg block order, not exact integers) **[choice]**
 
@@ -139,7 +140,7 @@ either way, **identically in every run and at every thread count**; this is the 
 |---|---|---|---|
 | `ml.input.empty` / `ml.input.too-many-rows` / `too-many-columns` / `too-many-cells` | 8 | `ml.limits` caps; rows also above 2^20 (3.1) | the flag, or a row sample |
 | `ml.param.out-of-range` | 2 | any parameter outside its range above, a negative seed, a bitmap of the wrong length | the range |
-| `ml.param.threads` | 2 | threads outside 1..64 | 1 to 64 |
+| `ml.param.threads` | 2 | threads outside 1..64; or the copies the threads would make (`n d 9 + threads (n d + 24 n)` bytes, section 5) above 2^34 | 1 to 64, or fewer threads |
 | `ml.limit.depth` | 8 | `max_depth` above 30 (the ceiling that keeps the heap number inside 31 bits) | a depth of at most 30 |
 | `ml.limit.nodes` | 8 | `max_nodes` above 2^22; the forest's allocation `trees * cap` above 2^24 nodes (`cap = min(max_nodes, 2^(MAXD+1)-1, 2n-1)`); **or a tree that needs more than `max_nodes` nodes while growing** | `--max-nodes`, a smaller depth or more `min_samples_leaf` |
 | `ml.input.non-finite` | 8 | a present `X` cell that is NaN or infinite; a regression `y` that is not finite or above `1e100` | impute, mark it missing, or drop the row |
@@ -160,8 +161,15 @@ every thread count.
   (2.1), so a tree's bytes are a function of `(data, params, seed, t)` only.
 * A cancho thread gets one pointer-width payload and no shared reads (`docs/upstream/spawn_shared_slice.cho`): each thread
   **owns a copy** of the bin matrix and the labels (bytes: `copy_into`), builds into its own boxes (fixed slots, `cap` nodes per
-  tree), and the parent merges the trees **in tree order** after `join`. The copies are timed. Binning (edges, bin matrix) runs
-  in the parent before the threads start; it is the serial part of `fit` and is reported separately.
+  tree), and the parent merges the trees **in tree order** after `join`. The copies are timed. The memory they take is bounded
+  before anything is allocated: `n d 9 + threads (n d + 24 n)` bytes (the bin matrix and about 24 bytes of scratch a row per
+  thread, and one more gather of the matrix by the binning) must not exceed 2^34 [choice, provisional], else `ml.param.threads`.
+* **Binning in threads (added after the first benchmark showed the serial binning as the limit of the scaling):** with more than
+  one thread and more than one column the columns are cut among the threads (`tree.pbins`). A column's edges and bins depend on
+  that column and its missing bits alone, so any partition of the columns gives the same arrays; the parent gathers each thread's
+  columns column-major, the thread sorts and bins them, the parent copies the results into the global arrays. With one thread the
+  whole matrix is binned in the parent (`bins.make_edges`, `bins.make_bins`: two implementations of the same definition, and G-thread
+  compares their bytes at 1 and at 2 or more threads).
 * `predict` with `threads = t`: rows are cut into `t` contiguous pieces by a static partition; each row's value depends only on
   that row and the forest (2.6), so any partition gives the same bits. Pieces are copied into the threads like the bins.
 * D1 for this stage: **the packed forest and every prediction are bit-identical at 1, 2, 4, 8 and 16 threads** (G-thread).
@@ -258,36 +266,58 @@ C1 is the configuration of spike F; its nodes and probabilities must also equal 
 The oracle prints the number of exactly equal score comparisons it saw (so the tie rule is shown to be exercised) and the
 number of nodes whose winner is variant 1 (so the missing rule is exercised).
 
-**G-mutants.** Each mutant is a one-site edit of the library (`scripts/mutants_tree.py`, each pattern asserted to occur
-exactly once, the unmutated control must pass first, built and run against the cached oracle output at both sizes). A mutant
-must be **killed** (some line differs, the program refuses, or it does not finish); a survivor is explained or voids the gate.
-The list (group, mutant): tie rule (replace on equal); equal tie among variants (variant 1 first); bin boundary (`e <= x`
-becomes `e < x`); bootstrap draw (draw 0 of tree 0 plus one); child swap (training and prediction); depth (`MAXD - 1`); feature
-subset size (`MTRY - 1`); aggregation order (trees summed from the last to the first); missing side (missing always left;
-missing always right; missing bin treated as bin 0); `min_samples_leaf` boundary (`nl > ML`); leaf rule (`m < 2 ML` becomes
-`m <= 2 ML`); edge index (`k nv / B` becomes `k nv / (B+1)`); the Gini comparison (an operand swap, and a limb shift); regression
-sum order (the node total summed in reverse; cumulative from `-0.0` is NOT a mutant, it is equal); stability of the partition
-(unstable swap partition); regression purity test removed; leaf value (`Sm / m` becomes `Sm / (m + 1)`); stream index (the
-feature stream uses the node's preorder rank instead of its heap number); the thread group below.
+**G-mutants.** Each mutant is a list of one-site edits of the library (`scripts/mutants_tree.py`, each pattern asserted to occur
+exactly once, applied to a copy of `lib/`, `tools/` and `tests/`). The unmutated control must pass every gate first. A mutant is
+**killed** if the build of the driver succeeds and then one of the gates fails, times out or traps, in this order: `unit`
+(`tests/t_tree.cho`), `exact`, `fuzz`, `ident` at 1,000 rows, `ident` at 100,000 rows, `threads`. A survivor must be explained
+(an equivalent mutant) in the script or the gate does not pass; a mutant that does not build is reported and fails the run. The
+list covers, at least: the tie rule (an equal score replaces, for both criteria), the tie between the two sides for missing rows
+(variant 1 tried first, for both criteria), the bin boundary (`e <= x` becomes `e < x`), the bootstrap draw (draw 0 of tree 0 plus
+one; the stream of tree + 1), the child direction (training, prediction, both), the depth (`MAXD - 1`), the feature subset size
+(`MTRY - 1`; the first `MTRY - 1` marked; a draw over all `d`; the stream index), the aggregation order (trees summed from the last
+to the first; a multiplication by `1/T`; the sum started from `-0.0`), the missing side (always left, always right, flipped in
+prediction, missing in bin 0, variant 1 never tried, variant 1 without its sums or counts, missing cells entering the edges, the
+default side not stored), the `min_samples_leaf` boundary and the leaf rule, the edge index and the threshold index, the leaf
+values, the Gini comparison (an operand, a limb shift, the carry, the high part), the regression sums (the node total summed last to
+first, the bin sums last to first, the cumulative sum from the last bin, the right sum perturbed), the stability of the partition
+(an unstable swap partition replaces the stable one), the regression purity test, the node budget and every limit of section 4 at its
+boundary, the label, target and finiteness checks, the thread group below, the binning in threads, and every validation of the
+reader of section 7.
+*(Corrected in place: the first draft's list had 18 items; the final one has 98 mutants, the added ones found by running the
+earlier mutants and reading which checks nothing could distinguish.)* A second run restricts the gates to the oracle and the thread
+gate (`--gates ident1000,ident100000,threads`) so that what the oracle alone kills is on record next to what needs the unit tests,
+the exact comparison and the fuzz.
 
-**G-thread.** `tree-check` prints a hash of the packed forest (the section 7 payload) and of all predictions. For C1, C2, R1
-and for T = 10 and T = 32 at 100,000 rows, the hashes at 1, 2, 4, 8 and 16 threads (also 3 and 5, which do not divide T) are
-equal. Mutants that must be killed by it: the tree's bootstrap stream indexed by the thread-local rather than the global tree
-number; the merge in reverse thread order; the partition `k T / t` replaced by `k * ceil(T/t)` with the extra trees dropped
-(a model with missing trees); the prediction partition giving the last piece one row less (a row left unwritten).
+**G-thread.** `tree-check` prints a SHA-256 of the packed forest (the section 7 payload) and a hash of all predictions. For C1,
+C2, R1, C4 at 100,000 rows with T = 10 and T = 32 trees where listed, and C2, C5, E1, E2, E4 at 1,000 rows, the hashes at 1, 2, 3,
+4, 5, 8 and 16 threads (3 and 5 do not divide T) are equal. *(Corrected in place: the first draft said 1, 2, 4, 8, 16 and three
+configurations.)* The prediction uses the same thread count as the fit. `tests/t_tree.cho` also compares the payload bytes and the
+predictions at 1 to 7 threads for both tasks, and with more threads than trees and than rows. Mutants that must be killed by it: the
+tree's stream indexed by the thread-local rather than the global tree number; the partition `k T / t` replaced by `k * ceil(T/t)`,
+or the last group one tree short; the merge into the wrong slot; the prediction pieces leaving a row; the bitmap copy of a prediction
+piece at a wrong column; every copy of the binning in threads.
 
-**G-fuzz.** `tree-check fuzz`: a model payload of a real forest (classification with missing, and regression) is damaged in
-every way listed, and for each damaged payload `model.read` and, if it accepts, `predict` on 200 rows (some missing) must
-return; nothing traps and nothing runs without end. Damage: every prefix (every truncation); every byte replaced by 0x00,
-0xFF and its complement; every byte flipped in each of 8 bits for the first 512 bytes; 4,000 seeded multi-byte damages. The
-expected result of each class of damage is also checked where it is determined (a truncation is `ml.model.truncated`; an
-undamaged payload is accepted and equals the forest). Mutants that must be killed: any one of the validations of section 7
-removed (child order, feature range, leaf form, tree offsets, the length equation, the `val` finiteness, `dleft`); the process
-dying (SIGILL), an unexpected acceptance or a hang (timeout 120 s) is a kill.
+**G-fuzz.** `tree-check mode=fuzz` fits two small forests (classification with missing cells, 4 trees of at most 6 levels; and
+regression, 3 trees) on the 1,000-row inputs, writes their payloads (13,836 and 11,588 bytes) and damages them. For every damaged
+payload `model.read` must return; an accepted forest is walked by `predict` on 32 rows with a missing cell in every 7th position; a
+trap or a hang (timeout) is a failure. The damage: **every prefix** (answer must be `ml.model.truncated`); **every byte** replaced by
+0x00, 0xFF and its complement, and each of its 8 bits flipped for the first 2,048 bytes; **8,000 seeded multi-byte damages**;
+**every field of every node** (records 3 to 9) set to 0, 1, 2, the node count, 2^40, -2, -1, 2^62 and the original plus one; the
+`val` of every node set to NaN and to infinities; the eight header values; every tree offset; the kind and every record header. For
+those with a determined answer the reader's answer is compared with a rule written in the driver independently of the reader (for
+example: a leaf's `bin` must be -1, an internal node's `left` must be its index plus one, its `right` must be the original, a class
+leaf's `val` must be the ratio of its counts, a header `max_depth` below the real depth must be refused); a disagreement counts as
+`unexpected`. And **payloads built to break one rule at a time** that a single-field damage cannot reach: an empty tree, nodes that
+belong to no tree, the last node of a tree made internal. The undamaged payload must be accepted and write back the same bytes.
+*(Corrected in place: the first draft judged only "does not trap". The first mutant run showed that removing a validation was not
+detected by that, so the answers are now judged.)*
 
-**G-refuse.** One fixture per tag of section 4 (a unit test: `cancho test`), including the limits checked before allocation
-(a request with `trees * cap` over the ceiling is refused without allocating, shown by passing a huge `n` with an empty slice),
-and a **refusal reproducible at any thread count** (`ml.limit.nodes` from a tree of the last thread, same tag at 1 and 8 threads).
+**G-refuse.** One fixture per tag of section 4 and per parameter range, in `tests/t_tree.cho` (a program, not `cancho test`: the
+library spawns and the test runner's `main` has no `conc` in its row, `docs/upstream/test_runner_conc.cho`), including the limits
+checked before allocation (a shape that says millions of rows or a forest of 2^24 nodes is refused while the data slices passed are
+empty, so nothing sized by the shape can have been allocated), the boundary of the node ceiling (1024 trees of 16,384 nodes
+allowed, of 16,385 refused), and a **refusal reproducible at any thread count** (`ml.limit.nodes` from a growing tree: the same
+tag at 1, 2, 4 and 8 threads, and the same fit succeeds with room). The tags are checked to have a name and an exit code.
 
 **G-ref (scikit-learn).** `RandomForestClassifier` / `RandomForestRegressor` with `n_estimators`, `max_depth`,
 `max_features`, `min_samples_leaf`, `bootstrap` matching, `n_jobs = 1`, `random_state = 0`, on the same train/test split.
@@ -298,14 +328,16 @@ at 100,000 rows. A tolerance that no mutant could break is not evidence of corre
 only a sanity bound against a shared misreading of the algorithm. Its ability to fail is shown with a deliberately broken
 control (a forest of depth 1) that must be outside the tolerance.
 
-**G-limits.** `max_depth` 31 and `max_nodes` over the ceiling are refused; a tree stopped by `max_nodes` growth is refused with
-`ml.limit.nodes` and never silently truncated; memory is bounded: the largest allocation of `fit` is computed from the
-parameters (reported by the driver), not from the data content.
+**G-limits.** `max_depth` 31 and `max_nodes` over the ceiling are refused; a tree that needs more than `max_nodes` is refused with
+`ml.limit.nodes` and never silently truncated; every allocation of `fit` is a formula of `(n, d, trees, cap, bins, threads)` (the
+slot arrays `trees * 7 * cap` ints and `trees * cap` floats, the bin matrix `n * d` bytes, `n`-sized scratch per thread) and none
+depends on the content of the data. (These are the fixtures of G-refuse.)
 
 ## 9. Timing protocol (fixed now)
 
-* One machine: Apple M4 Max, macOS, 16 cores (10 performance, 4 efficiency, 2 more by the OS count; the OS decides the core
-  class of a thread: **thread scaling beyond the performance cores is not linear and is reported as measured**). The load
+* One machine: Apple M4 Max, macOS 26.2, 16 cores (12 performance and 4 efficiency, `sysctl hw.perflevel*`; 64 GB; the OS decides the
+  core class of a thread: **thread scaling beyond 12 threads is not linear and is reported as measured**; the machine is shared with
+  other users and processes, so the load is whatever the load average says, printed with every table). The load
   average (1 min) is read at the start and the end of every cell; a cell with load >= 2 at either end is flagged.
 * `fit` = from the loaded float arrays to the packed forest, **including** edges, bin matrix, the thread copies and the merge;
   `predict` = from the loaded test matrix to the probabilities in memory (including the piece copies when threaded). Timed in
@@ -323,4 +355,33 @@ parameters (reported by the driver), not from the data content.
 
 ## 10. Results
 
-*(filled in after the gates have run)*
+*(Sections 10.1 to 10.10 are filled from the output of the scripts named in each; the raw lines of the timing are in
+`docs/bench/tree_100000.*` and `docs/bench/tree_1000000.*`.)*
+
+@@RESULTS@@
+
+## 11. API and effect rows
+
+`tree.forest.fit(heap, params, n, d, xs, bm, ys, rows_cap, cols_cap, cells_cap) -> (Forest, code)` with row `[heap, conc]`;
+`forest.drop` `[heap]`; `tree.predict.predict(heap, forest, xs, bm, rows, d, threads, out) -> code` and `predict_class`, `[heap, conc]`;
+`tree.model.write(heap, forest) -> Buffer` and `model.read(heap, bytes, max_total) -> (Forest, code)`, `[heap]`; `tree.params.check`,
+`tree.bins.*` (except the threaded `tree.pbins.run`, `[heap, conc]`) and `tree.exact.gt` have the empty row. The compiler checks a row
+exactly, so this is also the authority a program that uses the library needs: **heap and conc, and nothing else** (no clock, no
+file, no console, no network). `res struct Forest` holds three boxes (`toff`, `ni`, `nv`) and eight sizes, and is dropped by the caller; a refusal
+returns an empty forest that must be dropped too.
+
+## 12. Upstream gaps found in this stage (reproducers in `docs/upstream/`)
+
+| file | gap | cost here |
+|---|---|---|
+| `mulhi.cho` | no multiply-high: the exact Gini comparison forms 98-bit products in 30-bit limbs (`tree.exact`) | effort and review, not time; and the 2^20 row ceiling (section 3.1) |
+| `sort_std.cho` | no sort in `std` | a 50-line radix sort; it is 17% of a fit at 1,000,000 rows (profile below) |
+| `lshr.cho` | `>>` is arithmetic: every SplitMix64 shift is `>> k & mask` | a place for a wrong mask |
+| `clock_resolution.cho` | `clock_ms` has 1 ms resolution: 182 of 200 runs of a 0.2 ms job read 0 | a cell under ~100 ms is repeated in the program and divided |
+| `region_trap.cho` | a `region` is one 64 KiB arena chunk; `alloc_slice` beyond it is a silent trap, **at a size that depends on the data** | found by bisection after the fit died at 100,000 rows and ran at 1,000 |
+| `dotdot_path.cho` | `open_read` on a path with `..` is SIGILL, not `Opened::Failed` | the driver needs absolute paths |
+| `bounds_branch.cho` | a guarded bounds-checked load makes the bin search 12x (6x against the masked form) slower | measured, section 10.9 |
+| `copy_into_float.cho`, `spawn_shared_slice.cho`, `test_runner_conc.cho` | (met again) float `copy_into`; no shared read-only slice for threads; `cancho test` cannot spawn | job creation is the serial part of a threaded fit (10.9); the thread tests are a program |
+
+Frictions that are not gaps: `let S { a: b } = x` does not rename; `val` is a keyword; `main` and helpers must carry exact rows
+(`err_write` in a row that does not perform it is an error); a boolean test of a `res` value must be consumed on every path.
