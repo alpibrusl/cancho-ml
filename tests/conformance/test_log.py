@@ -66,6 +66,26 @@ class Log(unittest.TestCase):
         # seq restarts with each run
         self.assertEqual([x["seq"] for x in recs], [0, 1, 2, 3, 0, 1, 2, 0, 1, 2])
 
+    def test_planned_models_log_counts_and_hashes_only(self):
+        # the plan, the step text, the column names of the steps and the coefficients are in the answer, never in the log
+        self.sb.write("zzcanarydir/mis.csv", "id,zzcanaryname,y\n1,424242,10\n2,,20\n3,424244,31\n4,424245,38\n5,424246,52\n")
+        r = self.go("fit", "--model", "linear", "--step", "impute column=zzcanaryname strategy=mean", "--target", "y", "--output", "zzcanarydir/zzcanaryout.cml",
+                    "zzcanarydir/mis.csv")
+        self.assertEqual(r.status, 0, r)
+        self.assertIn(b"zzcanaryname", r.stdout)                                  # the answer names the column
+        r = self.go("predict", "--model-file", "zzcanarydir/zzcanaryout.cml", "zzcanarydir/mis.csv")
+        self.assertEqual(r.status, 0, r)
+        r = self.go("eval", "--model-file", "zzcanarydir/zzcanaryout.cml", "--split", "train=0.6", "--seed", "3", "zzcanarydir/mis.csv")
+        self.assertEqual(r.status, 0, r)
+        r = self.go("fit", "--model", "linear", "--target", "y", "--output", "zzcanarydir/zzcanaryout.cml", "--overwrite", "zzcanarydir/mis.csv")
+        self.assertEqual(r.first_rule(), "ml.input.missing-value", r)
+        r = self.go("fit", "--model", "linear", "--step", "scale column=zzcanarycell", "--target", "y", "--output", "zzcanarydir/zzcanaryout.cml", "zzcanarydir/mis.csv")
+        self.assertEqual(r.first_rule(), "ml.plan.missing-key", r)
+        recs = self.log_lines()
+        self.assertEqual([x["event"] for x in recs],
+                         ["start", "read", "write", "end", "start", "read", "end", "start", "read", "end", "start", "read", "end", "start", "end"])
+        self.assertEqual([x["rule"] for x in recs if x["event"] == "end"], [None, None, None, "ml.input.missing-value", "ml.plan.missing-key"])
+
     def test_refusals_log_the_tag_and_nothing_else(self):
         self.sb.write("zzcanarydir/bad.csv", "id,zzcanaryname,y\n1,zzcanarycell,10\n")
         r = self.go("fit", "--target", "y", "--output", "zzcanarydir/zzcanaryout.cml", "zzcanarydir/bad.csv")

@@ -486,13 +486,26 @@ def run_case(case, tmp, threads=1, quiet=False):
                 problems.append("predict on reordered columns: the values differ from the oracle's")
         elif [int(c[0]) for c in cells] != want[0] or [float(c[1]) for c in cells] != want[1]:
             problems.append("predict on reordered columns: labels or probabilities differ from the oracle's")
-    # eval: on all rows, or on the test side of the split
-    ev = ["eval", "--model-file", "m.cml", "d.csv"]
+    # eval: on all rows, or on the test side of the split; for a classification once more with the OTHER label as the positive one
     idx = list(range(len(rows)))
     if case.split:
-        ev += ["--split", case.split, "--seed", str(case.seed)]
         mask = split_masks(len(rows), case.split, case.seed)
         idx = [i for i in idx if mask[i] == 1]
+    problems += check_eval(case, ctx, idx, tmp, threads)
+    if case.model == "logistic":
+        import copy
+        other = copy.copy(case)
+        c0, c1 = ctx["labels"]
+        other.positive = c0 if (case.positive if case.positive is not None else c1) == c1 else c1
+        problems += check_eval(other, ctx, idx, tmp, threads)
+    return problems
+
+
+def check_eval(case, ctx, idx, tmp, threads):
+    problems = []
+    ev = ["eval", "--model-file", "m.cml", "d.csv"]
+    if case.split:
+        ev += ["--split", case.split, "--seed", str(case.seed)]
     if case.positive is not None and case.model == "logistic":
         ev += ["--positive", str(case.positive)]
     rc, out = ml("--root", tmp, *ev, "--threads", threads)
@@ -507,12 +520,12 @@ def run_case(case, tmp, threads=1, quiet=False):
         g = got.get(k, "missing")
         if v is None:
             if g is not None:
-                problems.append("eval %s: expected null, got %r" % (k, g))
+                problems.append("eval %s (positive %s): expected null, got %r" % (k, case.positive, g))
         elif k == "log_loss":
             if g is None or abs(float(g) - v) > 4e-16 * max(1.0, abs(v)) * 8:
-                problems.append("eval %s: %r vs %r" % (k, g, put_float(v)))
+                problems.append("eval %s (positive %s): %r vs %r" % (k, case.positive, g, put_float(v)))
         elif g != put_float(v):
-            problems.append("eval %s: %r vs %r" % (k, g, put_float(v)))
+            problems.append("eval %s (positive %s): %r vs %r" % (k, case.positive, g, put_float(v)))
     return problems
 
 

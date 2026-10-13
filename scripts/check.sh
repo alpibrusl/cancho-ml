@@ -3,7 +3,7 @@
 # package-mode build of `ml`, the schemas and the authority manifest checked against the sources, the conformance gates, and a
 # check that every edit of the mutant list still applies. The gates of lib/metrics and
 # lib/models/tree and the registry check are run here too. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
-# once per pattern, 53 of them, and run on request, as the stage 1 mutants do.
+# once per pattern, 53 of them, and run on request, as the stage 1 mutants do (the wiring stage's are scripts/mutants_wire.py: 38 patterns).
 set -e
 cd "$(dirname "$0")/.."
 # absolute, because the conformance tests run from tests/conformance
@@ -46,10 +46,19 @@ $CANCHO build --bin ml
 sh scripts/build_reader.sh
 python3 scripts/gate_reader.py all
 python3 scripts/mutants_reader.py --check
+python3 scripts/gen_models.py --check
 python3 scripts/schemas.py --check
 python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
+# the model module contract and the wiring (docs/modules.md, docs/wiring.md): the admission script on the wired models, the mutant modules it must refuse,
+# the byte-for-byte oracle (also run by the conformance tests above, with its own cases) and the patterns of the wiring mutants. The mutants and the
+# scikit-learn comparison (scripts/mutants_wire.py, scripts/gate_wire_sklearn.py, scripts/admit.py without --fast) run on request.
+python3 scripts/admit.py constant --fast
+python3 scripts/admit.py linear --fast
+python3 scripts/admit.py logistic --fast
+python3 tests/modules/run.py
+python3 scripts/mutants_wire.py --check
 # the check tools open no path that holds two dots in a row and trap on no missing operand (docs/lanes.md section 1)
 python3 scripts/gate_paths.py
 python3 scripts/mutants_paths.py --check

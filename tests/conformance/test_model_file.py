@@ -95,7 +95,9 @@ def payloads(data):
 def ordered_file(base, kind, order, pin=None):
     """The file `base` (a constant model) turned into one of model kind `kind` (4 to 7) with `order` as the last four bytes of meta, the way design.md 4.1 says
     a library writes it: meta = rows, columns, seed, hyperparameters 0, pin length, pin, u32 sum_order. The model payload keeps the constant model's
-    record after the kind (the reader of `ml` looks at the kind and the order and says the kind is not built)."""
+    record after the kind: for kinds 4 and 5 (linear, logistic, which `ml` has built since the wiring stage) the estimator's reader finds a payload that is not
+    its layout and says `ml.model.malformed`; for kinds 6 and 7 (not wired) `ml` says the kind is not built, with the same tag. Real files of kinds 4 and 5 are
+    judged by test_wire_file.py and test_wire_oracle.py."""
     secs = payloads(base)
     secs[4] = struct.pack("<I", kind) + secs[4][4:]
     me = secs[5]
@@ -168,7 +170,8 @@ class ModelFile(unittest.TestCase):
                 self.assertEqual(self.check_refused(data, "kind %d order %d" % (kind, order)), "ml.model.version")
                 err = self.try_model(data).error()
                 self.assertEqual((err["detail"]["sum_order"], err["detail"]["known"]), (order, SUM_ORDER))
-            # order 2 is the one this reader implements; ml builds kinds 1 to 3 only, so it is refused as a model it does not build
+            # order 2 is the one this reader implements; the payload is a constant model's record under another kind, so the estimator's reader (kinds 4, 5)
+            # or the table of built models (kinds 6, 7) refuses it as malformed
             self.assertEqual(self.check_refused(ordered_file(self.reg, kind, SUM_ORDER), "kind %d order 2" % kind), "ml.model.malformed")
             # the pin may be any length 0 to 255: the field is always the last four bytes
             for pin in (b"", b"x", b"a4572ea" * 36):

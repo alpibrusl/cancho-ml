@@ -397,6 +397,7 @@
     "model_const_regression",
     "model_count",
     "model_defs",
+    "model_defs",
     "model_family_ok",
     "model_kind",
     "model_kind",
@@ -615,5 +616,5 @@
   ],
   "folded_operators": 118,
   "folded_calls": 2,
-  "functions": 983
+  "functions": 984
 }
