@@ -16,6 +16,7 @@ The gates run with reduced sizes (diff 300,000 cells, fuzz 1,500 runs) so that t
 import glob
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -197,36 +198,48 @@ def build_and_gate(m, gates):
 
 
 def pin_mutants():
-    """RD1: the pin check must fail on a changed hash, a changed commit, and a copy of a module in this repository."""
+    """RD1: the pin check must fail on a rev that differs between modules, a rev the docs do not document, a short rev, a wrong path, a
+    missing dependency, a local sources entry, and a module declared under lib/, tools/ or tests/ (a copy)."""
     results = []
     script = ROOT / "scripts" / "check_table_pin.sh"
-    pin = (ROOT / "table.pin").read_text()
+    toml = (ROOT / "cancho.toml").read_text()
+    doc = (ROOT / "docs" / "reader.md").read_text()
     control = subprocess.run(["sh", str(script)], capture_output=True, text=True, cwd=ROOT)
     results.append(("rd1-control", control.returncode == 0, control.stdout.strip() or control.stderr.strip()))
-    with tempfile.TemporaryDirectory() as td:
-        td = pathlib.Path(td)
-        bad = td / "pin1"
-        first = [l for l in pin.splitlines() if l.startswith("sha256")][2]
-        h = first.split()[1]
-        bad.write_text(pin.replace(h, ("0" if h[0] != "0" else "1") + h[1:]))
-        r = subprocess.run(["sh", str(script)], capture_output=True, text=True, cwd=ROOT, env=dict(os.environ, TABLE_PIN=str(bad)))
-        results.append(("rd1-pin-with-another-hash", r.returncode != 0, r.stderr.strip()))
-        bad2 = td / "pin2"
-        rev = [l for l in pin.splitlines() if l.startswith("rev ")][0].split()[1]
-        bad2.write_text(pin.replace(rev, "0" * 40))
-        r = subprocess.run(["sh", str(script)], capture_output=True, text=True, cwd=ROOT, env=dict(os.environ, TABLE_PIN=str(bad2)))
-        results.append(("rd1-pin-at-another-commit", r.returncode != 0, r.stderr.strip()))
-        tree = td / "tree"
-        shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(".git", "build", "__pycache__"))
-        shutil.copy(TABLE / "tools" / "table" / "flt.cho", tree / "tools" / "ml" / "flt.cho")
-        r = subprocess.run(["sh", str(tree / "scripts" / "check_table_pin.sh")], capture_output=True, text=True, cwd=tree, env=dict(os.environ, CANCHO_TABLE=str(TABLE)))
-        results.append(("rd1-vendored-copy", r.returncode != 0, r.stderr.strip()))
-        tree2 = td / "tree2"
-        shutil.copytree(ROOT, tree2, ignore=shutil.ignore_patterns(".git", "build", "__pycache__"))
-        text = (TABLE / "tools" / "table" / "dec.cho").read_text() + "\n// edited\n"
-        (tree2 / "tools" / "ml" / "dec.cho").write_text(text)
-        r = subprocess.run(["sh", str(tree2 / "scripts" / "check_table_pin.sh")], capture_output=True, text=True, cwd=tree2, env=dict(os.environ, CANCHO_TABLE=str(TABLE)))
-        results.append(("rd1-vendored-and-edited-copy", r.returncode != 0, r.stderr.strip()))
+    m = re.search(r'\[dependencies\.flt\]\ngit = "[^"]*"\nrev = "([0-9a-f]{40})"', toml)
+    assert m, "no [dependencies.flt] in cancho.toml"
+    good = m.group(1)
+    other = ("0" if good[0] != "0" else "1") + good[1:]
+
+    def run(name, toml_text=None, doc_text=None, files=None):
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            env = dict(os.environ)
+            cwd = ROOT
+            if toml_text is not None:
+                (td / "cancho.toml").write_text(toml_text)
+                env["TOML"] = str(td / "cancho.toml")
+            if doc_text is not None:
+                (td / "reader.md").write_text(doc_text)
+                env["DOC"] = str(td / "reader.md")
+            if files:
+                tree = td / "tree"
+                shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(".git", "build", "__pycache__"))
+                for f, text in files.items():
+                    (tree / f).write_text(text)
+                cwd = tree
+            r = subprocess.run(["sh", str(cwd / "scripts" / "check_table_pin.sh")], capture_output=True, text=True, cwd=cwd, env=env)
+            results.append((name, r.returncode != 0, r.stderr.strip()))
+
+    flt_blk = 'git = "https://github.com/alpibrusl/cancho-table"\nrev = "%s"\npath = ".cancho-vcs/flt"' % good
+    run("rd1-rev-of-one-module-differs", toml.replace(flt_blk, flt_blk.replace(good, other)))
+    run("rd1-rev-not-the-documented-one", None, doc.replace("cancho-table rev: `%s`" % good, "cancho-table rev: `%s`" % other))
+    run("rd1-rev-short", toml.replace('rev = "%s"\npath = ".cancho-vcs/flt"' % good, 'rev = "%s"\npath = ".cancho-vcs/flt"' % good[:7]))
+    run("rd1-path-of-another-module", toml.replace('path = ".cancho-vcs/flt"', 'path = ".cancho-vcs/dec"'))
+    run("rd1-dependency-missing", toml.replace("[dependencies.reader]", "[dependencies.readerx]"))
+    run("rd1-local-sources-entry", toml.replace('"tools/ml", "generated/ml"', '"tools/ml", "generated/ml", "../cancho-table-main/tools/table/flt.cho"'))
+    run("rd1-vendored-copy", files={"tools/ml/flt.cho": "module flt;\n"})
+    run("rd1-vendored-copy-under-lib", files={"lib/core/reader.cho": "// edited\nmodule reader;\n"})
     return results
 
 

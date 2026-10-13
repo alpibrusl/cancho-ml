@@ -52,15 +52,12 @@ values); a smaller `num` module with only the three would make the dependency sm
 and it is not asked for. Then `cancho add flt https://github.com/alpibrusl/cancho-table --rev <commit> --path .cancho-vcs/flt`
 (and the other three) is the whole consumer side. The note and the issue text are `docs/upstream/cancho-table-numeric-package.md`.
 
-### 1.3 What `ml` does until then (LOCAL-DEV fallback, marked as such)
+### 1.3 What `ml` does (the pinned dependency)
 
-`cancho.toml`'s `[[bin]] ml` (and the other binaries that read cells) list the **files** of a read-only clone of cancho-table as
-extra sources: `../cancho-table-main/tools/table/{pow5,dec,flt,query,facc,reader}.cho`. Nothing is copied into this repository.
-This is pinned by `table.pin` (the commit and the SHA-256 of each of the six files) and checked by `scripts/check_table_pin.sh`,
-which `scripts/check.sh` runs first: a clone at another commit, a dirty clone, or a source whose hash differs fails the check. The
-check also fails if any file under `lib/`, `tools/` or `tests/` declares one of the six module names, or has the bytes of one of
-them (the anti-vendoring gate, RD1). The clone is `../cancho-table-main` or `$CANCHO_TABLE`. **This cannot be CI** (CI has no
-sibling clone); it is a development arrangement whose end is section 1.2.
+cancho-table rev: `202b214372a03ec6ed8ca841357f3d2ed4de8aa0`
+
+*(Written first, as the gate RD1 reads it; the rest of section 1 is rewritten with the switch.)* `cancho.toml` has one `[dependencies.X]`
+for each of `pow5`, `dec`, `flt`, `query`, `facc` and `reader`, all at the rev above, which is the merge commit of cancho-table PR #44.
 
 ## 2. What is read
 
@@ -138,7 +135,7 @@ listed with its reason in section 6.
 
 | id | gate | test | mutants that must be killed |
 |---|---|---|---|
-| RD1 | **Pinned, not copied.** The clone is at the commit of `table.pin`, clean, and each of the six sources has the pinned SHA-256; no file of this repository declares one of the six modules or contains one's bytes. | `scripts/check_table_pin.sh` | pin file with another hash; a pin at another commit; `tools/ml/flt.cho` a copy of the module |
+| RD1 | **Pinned, not copied.** `cancho.toml` has `[dependencies.X]` for the six modules, each `git` = cancho-table, `path` = `.cancho-vcs/X`, one `rev` of 40 hex digits, the same in all six and equal to the one documented in section 1.3; no `sources` entry leaves this tree; no `.cho` file under `lib/`, `tools/` or `tests/` declares one of the six modules; after `cancho install` the six modules are in `build/deps`; with `CHECK_REMOTE=1` the rev has the six stores on GitHub (skipped offline). | `scripts/check_table_pin.sh` | a rev that differs in one module; a rev the docs do not document; a short rev; the path of another module; a missing dependency; a `../cancho-table-main` sources entry; a module declared in `tools/ml` or in `lib/core` |
 | RD2 | **Differential, zero differences.** `reader-check` reads files of generated and adversarial cells and prints every cell's 64 bits; Python's `float()` (and `Fraction` for the halfway cells) gives the expected bits; the number of differences is 0 over at least 2,000,000 cells, which hold: 17-digit and shortest-repr doubles, every power of ten from 1e-330 to 1e310 with the digits 1, 9, 17-digit neighbours, the midpoint between adjacent doubles written exactly (up to 767 digits) and its neighbours one unit of the last digit either side, subnormals (the smallest, half of it, the largest, one below normal), `2^53 + 1`, exponents (`e`, `E`, `+`, `-`, leading zeros, 20-digit exponents, huge ones), signed zeros, `.5`, `5.`, `+5`, leading and trailing zeros, ints and decs with up to 12 digits. Expected refusals (one file each, about 200: `nan`, `inf`, `infinity` in all cases and signs, `1e400`, `1e-400`, `0x10`, `1_0`, ` 1`, `1 `, `1e`, `e5`, `.`, `-`, `+`, `1.2.3`, `--1`, 1,101 bytes, an empty exponent, a NUL) have the tag and reason the spec says. | `scripts/gate_reader.py diff` | Clinger limit 22 to 23; Eisel-Lemire's sticky retry removed; ties not to even in the exact tier; a negative sign dropped; the int/dec path multiplying by the reciprocal; the mantissa digits capped at 11; `-0` kept as a negative zero; the bitmap bit written to the next column; NaN stored; `.5` refused |
 | RD3 | **Matrix and bitmap.** For the same files with empty cells, the missing set printed by `reader-check` equals the set Python computed, per column and in total; a missing cell's data is `0.0`; the kept columns are the non-dropped; types inferred equal Python's (int < dec(S) < float). | `scripts/gate_reader.py matrix` | empty cell treated as 0 with no bit; bit word/shift off by one at row 31/32 and at 1 row; types not widening; `--drop` column kept |
 | RD4 | **Limits, before allocation.** Each cap has a file one over it that is refused with its tag (rows, columns, cells, line, and the 1,100-byte cell), and the refusal is reached with the matrix not built: peak memory of the refusal of a 200 MB file stays under 16 MB. `ml.matrix.make` with `2^31 - 1` rows and 4,096 columns answers a refusal code and allocates nothing (a unit test). | `scripts/gate_reader.py limits`, `tests/matrix.cho` | the row check after the row is stored; the cell cap by a product that overflows; the column cap off by one; the line cap not applied to a record that spans lines |

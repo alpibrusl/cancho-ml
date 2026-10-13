@@ -1,33 +1,54 @@
 #!/bin/sh
-# RD1 (docs/reader.md section 5): the cancho-table modules `ml` compiles are the pinned ones and are not copied here.
-#   - the clone ($CANCHO_TABLE, default ../cancho-table-main) is at the commit of table.pin and has no change to tracked files
-#   - each of the six sources has the pinned SHA-256
-#   - no file under lib/, tools/ or tests/ declares one of the six modules, or has the bytes of one of them
-# Exit 1 with the reason when any of that is false. LOCAL-DEV: it ends when the modules are a [dependencies.*] (docs/reader.md 1.2).
+# RD1 (docs/reader.md section 5): cancho-table's numeric modules are a pinned package dependency and are not copied here.
+#   - cancho.toml has a [dependencies.X] for each of pow5, dec, flt, query, facc and reader, with git = cancho-table, a path of
+#     .cancho-vcs/X, and one rev, 40 hex digits, the same in all six
+#   - that rev is the one docs/reader.md documents (the line "cancho-table rev: <hash>"; bumping the pin edits both)
+#   - no `sources` entry of cancho.toml reaches outside this tree (no ../cancho-table-main)
+#   - no .cho file under lib/, tools/ or tests/ declares one of the six modules
+#   - if build/deps exists, the installed sources declare the six modules (a rev without the stores installs none)
+#   - CHECK_REMOTE=1: the rev has .cancho-vcs/X for the six on GitHub (needs gh and the network; skipped, not failed, when offline)
+# TOML and DOC override the files read (the mutants). Exit 1 with the reason when any of that is false.
 set -e
 cd "$(dirname "$0")/.."
-PIN=${TABLE_PIN:-table.pin}
-CLONE=${CANCHO_TABLE:-../cancho-table-main}
+TOML=${TOML:-cancho.toml}
+DOC=${DOC:-docs/reader.md}
+MODS="pow5 dec flt query facc reader"
+URL=https://github.com/alpibrusl/cancho-table
 fail() { echo "check_table_pin: $1" >&2; exit 1; }
-[ -f "$PIN" ] || fail "no $PIN"
-[ -d "$CLONE/tools/table" ] || fail "no clone of cancho-table at $CLONE (set CANCHO_TABLE)"
-rev=$(sed -n 's/^rev //p' "$PIN")
-[ ${#rev} -eq 40 ] || fail "$PIN: rev is not a full commit hash"
-head=$(git -C "$CLONE" rev-parse HEAD) || fail "$CLONE is not a git checkout"
-[ "$head" = "$rev" ] || fail "the clone is at $head, the pin is $rev"
-[ -z "$(git -C "$CLONE" status --porcelain --untracked-files=no)" ] || fail "the clone has changes to tracked files"
-n=0
-while read -r kind hash path; do
-  [ "$kind" = sha256 ] || continue
-  n=$((n + 1))
-  got=$(shasum -a 256 "$CLONE/$path" | cut -d' ' -f1)
-  [ "$got" = "$hash" ] || fail "$path has sha256 $got, the pin says $hash"
-  mod=$(basename "$path" .cho)
-  # a copy: the same bytes, or the same module declaration, anywhere in this repository
-  for f in $(find lib tools tests -name '*.cho' 2>/dev/null); do
-    if [ "$(shasum -a 256 "$f" | cut -d' ' -f1)" = "$hash" ]; then fail "$f is a copy of $path"; fi
-    if grep -q "^module $mod;" "$f"; then fail "$f declares module $mod, which is cancho-table's"; fi
+[ -f "$TOML" ] || fail "no $TOML"
+want=$(sed -n 's/^cancho-table rev: `\([0-9a-f]*\)`.*/\1/p' "$DOC" | head -1)
+[ ${#want} -eq 40 ] || fail "$DOC has no line 'cancho-table rev: \`<40 hex digits>\`'"
+for m in $MODS; do
+  blk=$(awk -v h="[dependencies.$m]" '$0==h{f=1;next} /^\[/{f=0} f' "$TOML")
+  [ -n "$blk" ] || fail "$TOML has no [dependencies.$m]"
+  git=$(echo "$blk" | sed -n 's/^git *= *"\(.*\)".*/\1/p')
+  rev=$(echo "$blk" | sed -n 's/^rev *= *"\(.*\)".*/\1/p')
+  path=$(echo "$blk" | sed -n 's/^path *= *"\(.*\)".*/\1/p')
+  [ "$git" = "$URL" ] || fail "[dependencies.$m]: git is '$git', not $URL"
+  [ "$path" = ".cancho-vcs/$m" ] || fail "[dependencies.$m]: path is '$path', not .cancho-vcs/$m"
+  case "$rev" in *[!0-9a-f]*|"") fail "[dependencies.$m]: rev is not a full commit hash" ;; esac
+  [ ${#rev} -eq 40 ] || fail "[dependencies.$m]: rev is not a full commit hash (${#rev} digits)"
+  [ "$rev" = "$want" ] || fail "[dependencies.$m]: rev $rev is not the documented $want ($DOC)"
+done
+if grep -n '^sources *=.*\.\./' "$TOML" >&2; then fail "a sources entry reaches outside this tree"; fi
+for f in $(find lib tools tests -name '*.cho' 2>/dev/null); do
+  for m in $MODS; do
+    if grep -q "^module $m;" "$f"; then fail "$f declares module $m, which is cancho-table's"; fi
   done
-done < "$PIN"
-[ "$n" -eq 6 ] || fail "$PIN lists $n sources, not 6"
-echo "check_table_pin: ok ($n sources at ${rev%"${rev#???????}"}, none copied)"
+done
+if [ -d build/deps ] && ls build/deps/*.cho >/dev/null 2>&1; then
+  for m in $MODS; do
+    grep -qs "^module $m;" build/deps/*.cho || fail "build/deps has no installed module $m (run cancho install)"
+  done
+fi
+if [ -n "$CHECK_REMOTE" ]; then
+  if command -v gh >/dev/null 2>&1 && gh api repos/alpibrusl/cancho-table >/dev/null 2>&1; then
+    for m in $MODS; do
+      gh api "repos/alpibrusl/cancho-table/contents/.cancho-vcs/$m?ref=$want" >/dev/null 2>&1 || fail "$want has no .cancho-vcs/$m on GitHub"
+    done
+    echo "check_table_pin: remote ok"
+  else
+    echo "check_table_pin: remote check skipped (offline or no gh)"
+  fi
+fi
+echo "check_table_pin: ok (6 dependencies at ${want%"${want#???????}"}, none copied)"
