@@ -1,0 +1,181 @@
+edition 5;
+
+module tree.pbins;
+
+import tree.bins;
+
+// Binning with the columns cut among threads (docs/models-tree.md section 5): the same edges and bins as tree.bins.make_edges and
+// make_bins, column by column, so the bytes do not depend on the number of threads. A column's result depends on that column alone,
+// so any partition of the columns gives the same arrays. The parent gathers each thread's columns (column-major) and their bitmap
+// bytes, the thread sorts and bins them, the parent copies the results into the global arrays.
+
+res struct Job {
+    xc: Box[[float]],
+    mc: Box[[byte]],
+    ka: Box[[int]],
+    kb: Box[[int]],
+    cn: Box[[int]],
+    ed: Box[[float]],
+    ep: Box[[float]],
+    bn: Box[[byte]],
+    pr: Box[[int]],
+}
+
+// pr: 0 n, 1 columns in the job, 2 nbins, 3 bitmap stride (0 for none)
+
+fn copy_floats[&d2, &s](dst: &!d2 [float], src: &s [float], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the edges of one column (values xc[0 .. n), missing bits mc, or none) into ed[0 .. nbins - 1) and the bins into out[0 .. n)
+pub fn column[&x, &m, &a, &b, &c, &e, &p, &o](xc: &x [float], mc: &m [byte], n: int, nbins: int, ka: &!a [int], kb: &!b [int], cn: &!c [int], ed: &!e [float], ep: &!p [float], out: &!o [byte]) -> [] int {
+    let ne = nbins - 1;
+    var nv = 0;
+    var i = 0;
+    if len(mc) == 0 {
+        while i < n {
+            ka[i] = bins.key_of(bits_of(xc[i]));
+            i = i + 1;
+        }
+        nv = n;
+    } else {
+        while i < n {
+            if int_of(mc[i >> 3]) >> (i & 7) & 1 == 0 {
+                ka[nv] = bins.key_of(bits_of(xc[i]));
+                nv = nv + 1;
+            }
+            i = i + 1;
+        }
+    }
+    bins.radix(ka, kb, cn, nv);
+    var k = 1;
+    while k < nbins {
+        if nv == 0 {
+            ed[k - 1] = 0.0;
+        } else {
+            ed[k - 1] = bins.edge_value(ka[k * nv / nbins]);
+        }
+        k = k + 1;
+    }
+    bins.pad_column(ed, nbins, ep);
+    i = 0;
+    while i < n {
+        var c = nbins;
+        if len(mc) == 0 || int_of(mc[i >> 3]) >> (i & 7) & 1 == 0 {
+            if nbins <= 64 {
+                c = bins.bin_of64(ep[0..64], xc[i]);
+            } else {
+                c = bins.bin_of(ep[0..256], xc[i]);
+            }
+        }
+        out[i] = byte_of(c);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn work[&r](job: &!r Job) -> [] int {
+    let pr = contents(job.pr);
+    let n = pr[0];
+    let q = pr[1];
+    let nbins = pr[2];
+    let st = pr[3];
+    var j = 0;
+    while j < q {
+        var mcol = contents(job.mc)[0..0];
+        if st > 0 {
+            mcol = contents(job.mc)[j * st..(j + 1) * st];
+        }
+        column(contents(job.xc)[j * n..(j + 1) * n], mcol, n, nbins, contents(job.ka), contents(job.kb), contents(job.cn), contents(job.ed)[j * (nbins - 1)..(j + 1) * (nbins - 1)], contents(job.ep), contents(job.bn)[j * n..(j + 1) * n]);
+        j = j + 1;
+    }
+    return 0;
+}
+
+// the first column of group k of te groups over d columns
+pub fn group_start(k: int, te: int, d: int) -> [] int {
+    return k * d / te;
+}
+
+fn fan[&h, &x, &b, &e, &o](heap: &!h Heap, xs: &x [float], bm: &b [byte], n: int, d: int, nbins: int, k: int, te: int, ged: &!e [float], gbn: &!o [byte]) -> [heap, conc] int {
+    if k >= te {
+        return 0;
+    }
+    let c0 = group_start(k, te, d);
+    let c1 = group_start(k + 1, te, d);
+    let q = c1 - c0;
+    let st = bins.stride(n);
+    var bst = 0;
+    var mbytes = 1;
+    if len(bm) != 0 {
+        bst = st;
+        mbytes = q * st + 1;
+    }
+    var ps = 64;
+    if nbins > 64 {
+        ps = 256;
+    }
+    var job = Job { xc: box_slice(heap, q * n + 1, 0.0), mc: box_slice(heap, mbytes, byte_of(0)), ka: box_slice(heap, n + 1, 0), kb: box_slice(heap, n + 1, 0), cn: box_slice(heap, 2048, 0), ed: box_slice(heap, q * (nbins - 1) + 1, 0.0), ep: box_slice(heap, ps, 0.0), bn: box_slice(heap, q * n + 1, byte_of(0)), pr: box_slice(heap, 8, 0) };
+    borrow mut job as &!jk in {
+        let pr = contents(jk.pr);
+        pr[0] = n;
+        pr[1] = q;
+        pr[2] = nbins;
+        pr[3] = bst;
+        // the columns c0 .. c1 - 1, column-major (a strided read of the row-major matrix)
+        let xc = contents(jk.xc);
+        var i = 0;
+        while i < n {
+            let row = xs[i * d + c0..i * d + c1];
+            var j = 0;
+            while j < q {
+                xc[j * n + i] = row[j];
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        if len(bm) != 0 {
+            copy_into(contents(jk.mc)[0..q * st], bm[c0 * st..c1 * st]);
+        }
+    }
+    borrow mut job as &!jk in {
+        let body = work;
+        let th = spawn(jk, body);
+        fan(heap, xs, bm, n, d, nbins, k + 1, te, ged, gbn);
+        join(th);
+    }
+    let Job { xc, mc, ka, kb, cn, ed, ep, bn, pr } = job;
+    borrow ed as &er in {
+        copy_floats(ged[c0 * (nbins - 1)..c1 * (nbins - 1)], contents(er), q * (nbins - 1));
+    }
+    borrow bn as &br in {
+        copy_into(gbn[c0 * n..c1 * n], contents(br)[0..q * n]);
+    }
+    unbox_slice(heap, xc);
+    unbox_slice(heap, mc);
+    unbox_slice(heap, ka);
+    unbox_slice(heap, kb);
+    unbox_slice(heap, cn);
+    unbox_slice(heap, ed);
+    unbox_slice(heap, ep);
+    unbox_slice(heap, bn);
+    unbox_slice(heap, pr);
+    return 0;
+}
+
+// Edges ed[f * (nbins - 1) + k - 1] and bins bn[f * n + i] for all d columns with `threads` threads (at most d are used)
+pub fn run[&h, &x, &b, &e, &o](heap: &!h Heap, xs: &x [float], bm: &b [byte], n: int, d: int, nbins: int, threads: int, ed: &!e [float], bn: &!o [byte]) -> [heap, conc] int {
+    var te = threads;
+    if te > d {
+        te = d;
+    }
+    fan(heap, xs, bm, n, d, nbins, 0, te, ed, bn);
+    return 0;
+}

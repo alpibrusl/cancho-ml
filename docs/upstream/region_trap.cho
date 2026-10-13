@@ -1,0 +1,30 @@
+// GAP 8 (stage M7): a `region` is one 64 KiB arena chunk (heap.md, emitted-checks.md), and an alloc_slice that does not fit is a
+// trap with no message (SIGILL, exit 132; unflushed stdout is lost, so the program prints nothing). tree.forest used regions for
+// the sort scratch of 80,000 values and died at 100,000 rows, while the same code ran at 1,000: the size at which it dies is a
+// property of the data, and the error is silent. Found by bisection with stderr markers. Expected: a located message on stderr for
+// an arena exhaustion (as `cancho check` gives for a type error), or an arena that grows.
+//     cancho build --std region_trap.cho -o rt && ./rt; echo $?     -> 132, no output (alloc_slice[a](60000, 0) is fine)
+edition 5;
+import std.io;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    var total = 0;
+    region a {
+        let xs = alloc_slice[a](80000, 0);
+        xs[79999] = 5;
+        total = xs[79999];
+    }
+    borrow mut io as &!i in {
+        io.print_int(i, total);
+        io.newline(i);
+    }
+    release(io);
+    return 0;
+}

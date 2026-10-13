@@ -1,0 +1,258 @@
+edition 5;
+
+module tree.predict;
+
+import ml.refuse;
+import tree.deny;
+import tree.params;
+import tree.bins;
+import tree.forest;
+
+// Prediction (docs/models-tree.md section 2.6): a row walks each tree from its root (a missing cell follows the node's default
+// side, a present one goes left iff x < threshold); the forest value is the sum of the reached leaf values in tree order 0 .. T-1
+// from +0.0, divided by T. Rows are independent, so cutting them among threads cannot change a bit.
+
+// ---------------------------------------------------------------- the kernel
+
+// rows 0 .. rows - 1 of xs (row-major, d columns; bm with stride ceil(rows / 8), or empty) into out[0 .. rows)
+pub fn kernel[&t, &n, &v, &x, &b, &o](trees: int, d: int, total: int, toff: &t [int], ni: &n [int], nv: &v [float], xs: &x [float], bm: &b [byte], rows: int, out: &!o [float]) -> [] int {
+    let ft = ni[0..total];
+    let dl = ni[2 * total..3 * total];
+    let lc = ni[3 * total..4 * total];
+    let rc = ni[4 * total..5 * total];
+    let st = bins.stride(rows);
+    let ftrees = float_of(trees);
+    var i = 0;
+    if len(bm) == 0 {
+        // no missing cell: the same walk without the bitmap test
+        while i < rows {
+            let row = xs[i * d..i * d + d];
+            var acc = 0.0;
+            var t = 0;
+            while t < trees {
+                let base = toff[t];
+                var g = base;
+                var f = ft[g];
+                while f >= 0 {
+                    if row[f] < nv[g] {
+                        g = base + lc[g];
+                    } else {
+                        g = base + rc[g];
+                    }
+                    f = ft[g];
+                }
+                acc = acc + nv[g];
+                t = t + 1;
+            }
+            out[i] = acc / ftrees;
+            i = i + 1;
+        }
+        return 0;
+    }
+    while i < rows {
+        let row = xs[i * d..i * d + d];
+        var acc = 0.0;
+        var t = 0;
+        while t < trees {
+            let base = toff[t];
+            var g = base;
+            var f = ft[g];
+            while f >= 0 {
+                var left = false;
+                if bins.is_missing(bm, st, f, i) {
+                    left = dl[g] == 1;
+                } else {
+                    left = row[f] < nv[g];
+                }
+                if left {
+                    g = base + lc[g];
+                } else {
+                    g = base + rc[g];
+                }
+                f = ft[g];
+            }
+            acc = acc + nv[g];
+            t = t + 1;
+        }
+        out[i] = acc / ftrees;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- threads
+
+res struct Job {
+    toff: Box[[int]],
+    ni: Box[[int]],
+    nv: Box[[float]],
+    xs: Box[[float]],
+    bm: Box[[byte]],
+    out: Box[[float]],
+    pr: Box[[int]],
+}
+
+fn work[&r](job: &!r Job) -> [] int {
+    let pr = contents(job.pr);
+    kernel(pr[0], pr[1], pr[2], contents(job.toff), contents(job.ni), contents(job.nv), contents(job.xs), contents(job.bm)[0..pr[3]], pr[4], contents(job.out));
+    return 0;
+}
+
+fn copy_ints[&d2, &s](dst: &!d2 [int], src: &s [int], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn copy_floats[&d2, &s](dst: &!d2 [float], src: &s [float], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the first block (of 8 rows) of piece k of te pieces over nblk blocks
+pub fn piece_start(k: int, te: int, nblk: int) -> [] int {
+    return k * nblk / te;
+}
+
+fn fan[&h, &fr, &x, &b, &o](heap: &!h Heap, f: &fr forest.Forest, gx: &x [float], gm: &b [byte], rows: int, nblk: int, k: int, te: int, go: &!o [float]) -> [heap, conc] int {
+    if k >= te {
+        return 0;
+    }
+    let b0 = piece_start(k, te, nblk);
+    let b1 = piece_start(k + 1, te, nblk);
+    var r1 = b1 * 8;
+    if r1 > rows {
+        r1 = rows;
+    }
+    let r0 = b0 * 8;
+    let pn = r1 - r0;
+    let d = f.d;
+    let bytes = b1 - b0;
+    var nbm = 1;
+    if len(gm) != 0 {
+        nbm = d * bytes + 1;
+    }
+    var job = Job { toff: box_slice(heap, f.trees + 1, 0), ni: box_slice(heap, 7 * f.total + 1, 0), nv: box_slice(heap, f.total + 1, 0.0), xs: box_slice(heap, pn * d + 1, 0.0), bm: box_slice(heap, nbm, byte_of(0)), out: box_slice(heap, pn + 1, 0.0), pr: box_slice(heap, 8, 0) };
+    borrow mut job as &!jk in {
+        let pr = contents(jk.pr);
+        pr[0] = f.trees;
+        pr[1] = d;
+        pr[2] = f.total;
+        pr[3] = 0;
+        if len(gm) != 0 {
+            pr[3] = d * bytes;
+        }
+        pr[4] = pn;
+        copy_ints(contents(jk.toff), contents(f.toff), f.trees + 1);
+        copy_ints(contents(jk.ni), contents(f.ni), 7 * f.total);
+        copy_floats(contents(jk.nv), contents(f.nv), f.total);
+        copy_floats(contents(jk.xs), gx[r0 * d..r1 * d], pn * d);
+        if len(gm) != 0 {
+            let st = bins.stride(rows);
+            var c = 0;
+            while c < d {
+                copy_into(contents(jk.bm)[c * bytes..(c + 1) * bytes], gm[c * st + b0..c * st + b1]);
+                c = c + 1;
+            }
+        }
+    }
+    borrow mut job as &!jk in {
+        let body = work;
+        let th = spawn(jk, body);
+        fan(heap, f, gx, gm, rows, nblk, k + 1, te, go);
+        join(th);
+    }
+    let Job { toff, ni, nv, xs, bm, out, pr } = job;
+    borrow out as &or in {
+        copy_floats(go[r0..r1], contents(or), pn);
+    }
+    unbox_slice(heap, toff);
+    unbox_slice(heap, ni);
+    unbox_slice(heap, nv);
+    unbox_slice(heap, xs);
+    unbox_slice(heap, bm);
+    unbox_slice(heap, out);
+    unbox_slice(heap, pr);
+    return 0;
+}
+
+// ---------------------------------------------------------------- entries
+
+// 0, or the refusal: columns that differ from the model's, lengths, the bitmap, a present cell that is not finite
+fn check_input[&fr, &x, &b](f: &fr forest.Forest, xs: &x [float], bm: &b [byte], rows: int, d: int) -> [] int {
+    if d != f.d {
+        return deny.schema_mismatch();
+    }
+    if rows < 1 {
+        return refuse.input_empty();
+    }
+    if d < 1 || rows > 2147483647 || len(xs) / d != rows || len(xs) % d != 0 {
+        return refuse.param_out_of_range();
+    }
+    let c = bins.check_bitmap(bm, rows, d);
+    if c != 0 {
+        return c;
+    }
+    if bins.count_bad_cells(xs, bm, rows, d) != 0 {
+        return deny.non_finite();
+    }
+    return 0;
+}
+
+// The forest value of each row into out[0 .. rows): the probability of class 1 (classification) or the mean (regression), with
+// `threads` threads (1 to 64; the answer does not depend on it). Answers 0 or the code of a refusal.
+pub fn predict[&h, &fr, &x, &b, &o](heap: &!h Heap, f: &fr forest.Forest, xs: &x [float], bm: &b [byte], rows: int, d: int, threads: int, out: &!o [float]) -> [heap, conc] int {
+    if threads < 1 || threads > 64 {
+        return refuse.threads();
+    }
+    let c = check_input(f, xs, bm, rows, d);
+    if c != 0 {
+        return c;
+    }
+    if len(out) != rows || f.trees < 1 {
+        return refuse.param_out_of_range();
+    }
+    let nblk = (rows + 7) / 8;
+    var te = threads;
+    if te > nblk {
+        te = nblk;
+    }
+    if te == 1 {
+        kernel(f.trees, d, f.total, contents(f.toff), contents(f.ni), contents(f.nv), xs, bm, rows, out);
+        return 0;
+    }
+    fan(heap, f, xs, bm, rows, nblk, 0, te, out);
+    return 0;
+}
+
+// predict, then the class: 1.0 where the probability is above 0.5 (a tie goes to class 0), else 0.0. Classification only.
+pub fn predict_class[&h, &fr, &x, &b, &o](heap: &!h Heap, f: &fr forest.Forest, xs: &x [float], bm: &b [byte], rows: int, d: int, threads: int, out: &!o [float]) -> [heap, conc] int {
+    if f.task != 0 {
+        return refuse.param_out_of_range();
+    }
+    let c = predict(heap, f, xs, bm, rows, d, threads, out);
+    if c != 0 {
+        return c;
+    }
+    var i = 0;
+    while i < rows {
+        if out[i] > 0.5 {
+            out[i] = 1.0;
+        } else {
+            out[i] = 0.0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}

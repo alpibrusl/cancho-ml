@@ -1,0 +1,21 @@
+// GAP 4 (stage M7): there is no multiply-high. lib/models/tree/exact.cho compares two Gini scores N1/D1 and N2/D2 exactly, which needs
+// N1 * D2 and N2 * D1 where each product is up to 2^98 (N < 2^58, D <= 2^38 for a node of 2^20 rows): more than an int holds. The
+// product is formed in base 2^30 limbs (mul_hi_lo: 12 lines, and a proof of its bounds). Expected: mul_hi(a, b) -> int, the upper 64
+// bits of the 128-bit product, signed and unsigned variants (every compiler backend has the instruction). Cost today: effort and
+// review, not time (docs/models-tree.md section 10: the exact comparison is not measurable in a fit).
+//     cancho check --std mulhi.cho     -> error: `mul_hi` is not a function in this program
+edition 5;
+
+fn gt(n1: int, d1: int, n2: int, d2: int) -> [] bool {
+    let hi1 = mul_hi(n1, d2);
+    let hi2 = mul_hi(n2, d1);
+    if hi1 != hi2 {
+        return hi1 > hi2;
+    }
+    return wrapping_mul(n1, d2) > wrapping_mul(n2, d1);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

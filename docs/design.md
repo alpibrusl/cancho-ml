@@ -300,3 +300,13 @@ in this document: section 8 gains four tags (`ml.input.non-finite`, `ml.label.si
 tensor record and the model kinds 3 (linear), 4 (logistic) and 5 (k-means), not yet in `tools/ml/mfile.cho`; `docs/rng.md` gains the
 stream kind 3 (k-means). Section 6 is kept: every decisive sum of the three estimators is the fixed block-and-tree order, so the
 thread count changes no byte (the gate compares the raw sums and the loss and inertia lines, not only the coefficients).
+
+## 15. Stage M7: decision trees and random forests (library only)
+
+`docs/models-tree.md` holds the algorithm, the numeric decisions (exact integer Gini; sequential float regression sums in a
+fixed row order), the limits and tags, the missing-value rule (a learned default side per split), the tensor records of the
+`model` section (kind 6; see the kind table in section 4.1), the gates, the timing protocol and the verdicts (its section 10); it was written before the code.
+It is a library under `lib/models/tree/`, driven by `tools/tree-check` for the gates; the command line does not call it yet.
+What it changes in this document: model kind 6 for section 4.1; the tags `ml.limit.depth`, `ml.limit.nodes`, `ml.param.threads`
+(also for the memory the thread copies would take) become reachable from a library call (section 8; none is reachable from `ml`
+until the verbs call the library); the row ceiling of a tree fit is 2^20 (the exact Gini comparison), a figure for section 9.

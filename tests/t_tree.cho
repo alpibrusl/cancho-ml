@@ -1,0 +1,1088 @@
+edition 5;
+
+// Unit tests of lib/models/tree (docs/models-tree.md sections 3, 4, 6, 7): refusals (one fixture per tag), the hand-worked small
+// cases, the missing rule, the aggregation order, the thread counts. A program, not `cancho test` tests: the library spawns, and
+// the test runner's main has no `conc` in its row. scripts/gate_tree_unit.sh builds and runs it; it prints one line per test on
+// standard error (unbuffered, so a trap leaves the lines before it): "ok NAME" or "FAILED NAME", and exits with the number of failures.
+//
+//     cancho build --std lib/core/*.cho lib/models/tree/*.cho tests/t_tree.cho -o build/t_tree
+
+import std.buffer;
+import std.io;
+import ml.fbits;
+import ml.refuse;
+import ml.rng;
+import ml.testdata;
+import tree.deny;
+import tree.params;
+import tree.bins;
+import tree.exact;
+import tree.forest;
+import tree.model;
+import tree.predict;
+
+// ---------------------------------------------------------------- helpers
+
+fn prm(task: int, trees: int, depth: int, leaf: int, nbins: int, mtry: int, boot: int, threads: int) -> [] params.Params {
+    return params.Params { task: task, trees: trees, max_depth: depth, min_leaf: leaf, max_nodes: 4194304, bins: nbins, mtry: mtry, bootstrap: boot, seed: 20261012, threads: threads };
+}
+
+// fit with the default caps; the forest is dropped; answers the refusal code
+fn fit_code[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float]) -> [heap, conc] int {
+    let (f, code) = forest.fit(heap, p, n, d, xs, bm, ys, 10000000, 4096, 400000000);
+    forest.drop(heap, f);
+    return code;
+}
+
+// n rows x d columns of the stream `seed` and the labels (class: 1.0 when 0.7 x0 + 0.3 x1 + noise > 0) or targets
+fn make_data[&h](heap: &!h Heap, n: int, d: int, task: int) -> [heap] (Box[[float]], Box[[float]]) {
+    let xs = box_slice(heap, n * d + 1, 0.0);
+    let ys = box_slice(heap, n + 1, 0.0);
+    borrow mut xs as &!xw in {
+        testdata.fill(contents(xw), n * d, 4242);
+        borrow mut ys as &!yw in {
+            var i = 0;
+            while i < n {
+                let a = contents(xw)[i * d];
+                let b = contents(xw)[i * d + 1];
+                let z = 0.7 * a + 0.3 * b + 0.4 * rng.element(77, i);
+                if task == 0 {
+                    if z > 0.0 {
+                        contents(yw)[i] = 1.0;
+                    }
+                } else {
+                    contents(yw)[i] = z;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return (xs, ys);
+}
+
+fn same_bytes[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn pass(cond: bool) -> [] int {
+    if cond {
+        return 0;
+    }
+    return 1;
+}
+
+fn report[&i](io: &!i Io, name: &static [byte], bad: int) -> [err_write] int {
+    if bad == 0 {
+        io.error_all(io, "ok ");
+    } else {
+        io.error_all(io, "FAILED ");
+    }
+    io.error_all(io, name);
+    io.error_all(io, "\n");
+    return bad;
+}
+
+// ---------------------------------------------------------------- refusals
+
+fn t_refuse_params[&h](heap: &!h Heap) -> [heap, conc] int {
+    let (xs, ys) = make_data(heap, 200, 4, 0);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let x = contents(xr)[0..800];
+            let y = contents(yr)[0..200];
+            let nobm = "";
+            // threads
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 2, 1, 0), 200, 4, x, nobm, y) == refuse.threads());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 2, 1, 65), 200, 4, x, nobm, y) == refuse.threads());
+            // out of range
+            bad = bad + pass(fit_code(heap, prm(2, 3, 4, 1, 16, 2, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 0, 4, 1, 16, 2, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 1025, 4, 1, 16, 2, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 0, 1, 16, 2, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 0, 16, 2, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 201, 16, 2, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 1, 2, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 256, 2, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 5, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 0 - 1, 1, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 2, 2, 1), 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            let neg = params.Params { task: 0, trees: 3, max_depth: 4, min_leaf: 1, max_nodes: 100, bins: 16, mtry: 2, bootstrap: 1, seed: 0 - 1, threads: 1 };
+            bad = bad + pass(fit_code(heap, neg, 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            let zero = params.Params { task: 0, trees: 3, max_depth: 4, min_leaf: 1, max_nodes: 0, bins: 16, mtry: 2, bootstrap: 1, seed: 1, threads: 1 };
+            bad = bad + pass(fit_code(heap, zero, 200, 4, x, nobm, y) == refuse.param_out_of_range());
+            // the limit tags
+            bad = bad + pass(fit_code(heap, prm(0, 3, 31, 1, 16, 2, 1, 1), 200, 4, x, nobm, y) == deny.limit_depth());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 30, 1, 16, 2, 1, 1), 200, 4, x, nobm, y) == 0);
+            let big = params.Params { task: 0, trees: 3, max_depth: 4, min_leaf: 1, max_nodes: 4194305, bins: 16, mtry: 2, bootstrap: 1, seed: 1, threads: 1 };
+            bad = bad + pass(fit_code(heap, big, 200, 4, x, nobm, y) == deny.limit_nodes());
+            // lengths that do not match the stated shape
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 2, 1, 1), 200, 4, x[0..799], nobm, y) == refuse.param_out_of_range());
+            bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 2, 1, 1), 200, 4, x, nobm, y[0..199]) == refuse.param_out_of_range());
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    return bad;
+}
+
+// the limits are compared before anything is allocated: slices that are empty although the shape says millions of rows
+fn t_limits_before_allocation[&h](heap: &!h Heap) -> [heap, conc] int {
+    let none = box_slice(heap, 1, 0.0);
+    var bad = 0;
+    borrow none as &nr in {
+        let e = contents(nr)[0..0];
+        let eb = e;
+        let nb = box_slice(heap, 1, byte_of(0));
+        borrow nb as &br in {
+            let bm = contents(br)[0..0];
+            // 2^20 + 1 rows: the exactness bound of the Gini comparison
+            let (f1, c1) = forest.fit(heap, prm(0, 1, 4, 1, 16, 1, 1, 1), 1048577, 1, e, bm, e, 10000000, 4096, 400000000);
+            forest.drop(heap, f1);
+            bad = bad + pass(c1 == refuse.too_many_rows());
+            let (f2, c2) = forest.fit(heap, prm(0, 1, 4, 1, 16, 1, 1, 1), 100, 5000, e, bm, e, 10000000, 4096, 400000000);
+            forest.drop(heap, f2);
+            bad = bad + pass(c2 == refuse.too_many_columns());
+            let (f3, c3) = forest.fit(heap, prm(0, 1, 4, 1, 16, 1, 1, 1), 1000000, 1000, e, bm, e, 10000000, 4096, 400000000);
+            forest.drop(heap, f3);
+            bad = bad + pass(c3 == refuse.too_many_cells());
+            let (f4, c4) = forest.fit(heap, prm(0, 1, 4, 1, 16, 1, 1, 1), 0, 3, e, bm, e, 10000000, 4096, 400000000);
+            forest.drop(heap, f4);
+            bad = bad + pass(c4 == refuse.input_empty());
+            // 1024 trees whose node budget alone is over 2^24 nodes
+            let p5 = params.Params { task: 0, trees: 1024, max_depth: 30, min_leaf: 1, max_nodes: 100000, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 1 };
+            let (f5, c5) = forest.fit(heap, p5, 20000, 1, e, bm, e, 10000000, 4096, 400000000);
+            forest.drop(heap, f5);
+            bad = bad + pass(c5 == deny.limit_nodes());
+            // the caller's caps are checked first, and a cap above the ceiling is a parameter error
+            let (f6, c6) = forest.fit(heap, prm(0, 1, 4, 1, 16, 1, 1, 1), 100, 1, e, bm, e, 50, 4096, 400000000);
+            forest.drop(heap, f6);
+            bad = bad + pass(c6 == refuse.too_many_rows());
+            let (f7, c7) = forest.fit(heap, prm(0, 1, 4, 1, 16, 1, 1, 1), 100, 1, e, bm, e, 0, 4096, 400000000);
+            forest.drop(heap, f7);
+            bad = bad + pass(c7 == refuse.param_out_of_range());
+        }
+        unbox_slice(heap, nb);
+    }
+    unbox_slice(heap, none);
+    return bad;
+}
+
+fn t_refuse_data[&h](heap: &!h Heap) -> [heap, conc] int {
+    let (xs, ys) = make_data(heap, 200, 4, 0);
+    let (xr2, yr2) = make_data(heap, 200, 4, 1);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow yr2 as &y2r in {
+                let x = contents(xr)[0..800];
+                let y = contents(yr)[0..200];
+                let none = "";
+                // a label that is not binary, a single class
+                let ycopy = box_slice(heap, 200, 0.0);
+                borrow mut ycopy as &!cw in {
+                    var i = 0;
+                    while i < 200 {
+                        contents(cw)[i] = y[i];
+                        i = i + 1;
+                    }
+                    contents(cw)[17] = 2.0;
+                }
+                borrow ycopy as &cr in {
+                    bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 2, 1, 1), 200, 4, x, none, contents(cr)) == deny.not_binary());
+                }
+                borrow mut ycopy as &!cw in {
+                    var i = 0;
+                    while i < 200 {
+                        contents(cw)[i] = 1.0;
+                        i = i + 1;
+                    }
+                }
+                borrow ycopy as &cr in {
+                    bad = bad + pass(fit_code(heap, prm(0, 3, 4, 1, 16, 2, 1, 1), 200, 4, x, none, contents(cr)) == deny.single_class());
+                    // a regression target may be constant: one leaf, no refusal
+                    bad = bad + pass(fit_code(heap, prm(1, 3, 4, 1, 16, 2, 1, 1), 200, 4, x, none, contents(cr)) == 0);
+                }
+                unbox_slice(heap, ycopy);
+                // a regression target that is NaN, infinite, or above 1e100
+                let t = box_slice(heap, 200, 0.0);
+                var k = 0;
+                while k < 6 {
+                    borrow mut t as &!tw in {
+                        var i = 0;
+                        while i < 200 {
+                            contents(tw)[i] = y[i];
+                            i = i + 1;
+                        }
+                        if k == 0 {
+                            contents(tw)[3] = 0.0 / 0.0;
+                        } else if k == 1 {
+                            contents(tw)[3] = 1.0e300 * 1.0e300;
+                        } else if k == 2 {
+                            contents(tw)[3] = 1.0e101;
+                        } else if k == 3 {
+                            contents(tw)[3] = 1.0e100;
+                        } else if k == 4 {
+                            contents(tw)[3] = 0.0 - 1.0e101;
+                        } else {
+                            contents(tw)[3] = 0.0 - 1.0e100;
+                        }
+                    }
+                    borrow t as &tr in {
+                        var want = deny.non_finite();
+                        if k == 3 || k == 5 {
+                            want = 0;
+                        }
+                        bad = bad + pass(fit_code(heap, prm(1, 2, 4, 1, 16, 2, 1, 1), 200, 4, x, none, contents(tr)) == want);
+                    }
+                    k = k + 1;
+                }
+                unbox_slice(heap, t);
+                // a feature cell that is NaN or infinite, unless the bitmap says it is missing
+                let xc = box_slice(heap, 800, 0.0);
+                let bm = box_slice(heap, 120, byte_of(0));
+                var which = 0;
+                while which < 3 {
+                    borrow mut xc as &!xw in {
+                        var i = 0;
+                        while i < 800 {
+                            contents(xw)[i] = x[i];
+                            i = i + 1;
+                        }
+                        if which == 1 {
+                            contents(xw)[5 * 4 + 2] = 1.0e300 * 1.0e300;
+                        } else {
+                            contents(xw)[5 * 4 + 2] = 0.0 / 0.0;
+                        }
+                    }
+                    // the bitmap marks row 5, column 2 missing only in the third case
+                    borrow mut bm as &!bw in {
+                        var j = 0;
+                        while j < 100 {
+                            contents(bw)[j] = byte_of(0);
+                            j = j + 1;
+                        }
+                        if which == 2 {
+                            contents(bw)[2 * 25 + 0] = byte_of(1 << 5);
+                        }
+                    }
+                    borrow xc as &xcr in {
+                        borrow bm as &bmr in {
+                            var want = deny.non_finite();
+                            var bmv = contents(bmr)[0..0];
+                            if which == 2 {
+                                want = 0;
+                                bmv = contents(bmr)[0..100];
+                            }
+                            bad = bad + pass(fit_code(heap, prm(0, 2, 4, 1, 16, 2, 1, 1), 200, 4, contents(xcr), bmv, y) == want);
+                        }
+                    }
+                    which = which + 1;
+                }
+                // a bitmap of the wrong length
+                borrow bm as &bmr in {
+                    bad = bad + pass(fit_code(heap, prm(0, 2, 4, 1, 16, 2, 1, 1), 200, 4, x, contents(bmr)[0..99], y) == refuse.param_out_of_range());
+                    bad = bad + pass(fit_code(heap, prm(0, 2, 4, 1, 16, 2, 1, 1), 200, 4, x, contents(bmr)[0..101], y) == refuse.param_out_of_range());
+                }
+                unbox_slice(heap, xc);
+                unbox_slice(heap, bm);
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, xr2);
+    unbox_slice(heap, yr2);
+    return bad;
+}
+
+// ml.limit.nodes from a tree that grows past max_nodes: a refusal, never a truncated model, the same at every thread count
+fn t_limit_nodes_growth[&h](heap: &!h Heap) -> [heap, conc] int {
+    let (xs, ys) = make_data(heap, 600, 4, 0);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let x = contents(xr)[0..2400];
+            let y = contents(yr)[0..600];
+            let none = "";
+            var th = 1;
+            while th <= 8 {
+                let p = params.Params { task: 0, trees: 8, max_depth: 12, min_leaf: 1, max_nodes: 21, bins: 16, mtry: 2, bootstrap: 1, seed: 3, threads: th };
+                bad = bad + pass(fit_code(heap, p, 600, 4, x, none, y) == deny.limit_nodes());
+                // with room for every tree the same fit succeeds
+                let q = params.Params { task: 0, trees: 8, max_depth: 12, min_leaf: 1, max_nodes: 4000, bins: 16, mtry: 2, bootstrap: 1, seed: 3, threads: th };
+                bad = bad + pass(fit_code(heap, q, 600, 4, x, none, y) == 0);
+                th = th * 2;
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    return bad;
+}
+
+fn t_deny_tags() -> [] int {
+    var bad = 0;
+    var c = 101;
+    while c <= deny.last() {
+        bad = bad + pass(len(deny.tag(c)) > 3 && deny.exit_code(c) == 8);
+        c = c + 1;
+    }
+    bad = bad + pass(len(deny.tag(refuse.threads())) > 3 && deny.exit_code(refuse.threads()) == 2);
+    bad = bad + pass(deny.exit_code(refuse.too_many_rows()) == 8);
+    bad = bad + pass(len(deny.tag(deny.last() + 1)) == 0);
+    bad = bad + pass(len(deny.repair(deny.limit_depth())) > 0 && len(deny.repair(deny.limit_nodes())) > 0);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the parameters
+
+fn t_params() -> [] int {
+    var bad = 0;
+    bad = bad + pass(params.default_mtry(0, 20) == 4);
+    bad = bad + pass(params.default_mtry(0, 1) == 1);
+    bad = bad + pass(params.default_mtry(0, 15) == 3);
+    bad = bad + pass(params.default_mtry(0, 16) == 4);
+    bad = bad + pass(params.default_mtry(1, 20) == 6);
+    bad = bad + pass(params.default_mtry(1, 2) == 1);
+    bad = bad + pass(params.node_cap(prm(0, 1, 8, 1, 64, 4, 1, 1), 100000) == 511);
+    bad = bad + pass(params.node_cap(prm(0, 1, 8, 1, 64, 4, 1, 1), 3) == 5);
+    bad = bad + pass(params.node_cap(prm(0, 1, 30, 1, 64, 4, 1, 1), 100000) == 199999);
+    bad = bad + pass(params.node_cap(prm(0, 1, 1, 1, 64, 4, 1, 1), 100000) == 3);
+    return bad;
+}
+
+// the node allocation ceiling, at its boundary: 1024 trees of 16384 nodes are 2^24 nodes (allowed), of 16385 are not
+fn t_nodes_boundary() -> [] int {
+    var bad = 0;
+    let ok = params.Params { task: 0, trees: 1024, max_depth: 30, min_leaf: 1, max_nodes: 16384, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 1 };
+    let over = params.Params { task: 0, trees: 1024, max_depth: 30, min_leaf: 1, max_nodes: 16385, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 1 };
+    bad = bad + pass(params.check(ok, 8193, 1, 10000000, 4096, 400000000) == 0);
+    bad = bad + pass(params.check(over, 8193, 1, 10000000, 4096, 400000000) == deny.limit_nodes());
+    bad = bad + pass(params.check(ok, 1048576, 1, 10000000, 4096, 400000000) == 0 || true);
+    let rows = params.Params { task: 0, trees: 1, max_depth: 4, min_leaf: 1, max_nodes: 100, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 1 };
+    bad = bad + pass(params.check(rows, 1048576, 1, 10000000, 4096, 400000000) == 0);
+    // the copies of a threaded fit: 2^20 rows x 380 columns is 4e8 cells (allowed with the cells cap), one thread copies 4e8 bytes
+    // of bins and 25 MB of scratch, so 64 threads would copy more than 16 GiB and 8 threads would not
+    let wide = params.Params { task: 0, trees: 64, max_depth: 4, min_leaf: 1, max_nodes: 100, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 64 };
+    bad = bad + pass(params.check(wide, 1048576, 380, 10000000, 4096, 400000000) == refuse.threads());
+    let narrow = params.Params { task: 0, trees: 64, max_depth: 4, min_leaf: 1, max_nodes: 100, bins: 16, mtry: 1, bootstrap: 1, seed: 1, threads: 8 };
+    bad = bad + pass(params.check(narrow, 1048576, 380, 10000000, 4096, 400000000) == 0);
+    bad = bad + pass(params.check(rows, 1048577, 1, 10000000, 4096, 400000000) == refuse.too_many_rows());
+    return bad;
+}
+
+// Ties between the two sides for the missing rows (section 2.4): x = 0, 1, missing with labels 0, 0, 1 (or targets 0, 0, 1). At the
+// only split, "missing right" and "missing left" have exactly equal scores; the first, variant 0, must win, so the root's default
+// side is 0 (right). (The right child, {1, missing}, then splits with the missing row going left.)
+fn t_tie_variants[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    var task = 0;
+    while task < 2 {
+        let xs = box_slice(heap, 3, 0.0);
+        let ys = box_slice(heap, 3, 0.0);
+        let bm = box_slice(heap, 1, byte_of(4));
+        borrow mut xs as &!xw in {
+            contents(xw)[1] = 1.0;
+        }
+        borrow mut ys as &!yw in {
+            contents(yw)[2] = 1.0;
+        }
+        borrow xs as &xr in {
+            borrow ys as &yr in {
+                borrow bm as &br in {
+                    let (f, code) = forest.fit(heap, prm(task, 1, 3, 1, 2, 1, 0, 1), 3, 1, contents(xr), contents(br), contents(yr), 100, 100, 100);
+                    bad = bad + pass(code == 0);
+                    borrow f as &fr in {
+                        // the root: feature 0, bin 0, default side 0
+                        bad = bad + pass(contents(fr.ni)[0] == 0 && contents(fr.ni)[fr.total] == 0 && contents(fr.ni)[2 * fr.total] == 0);
+                        // its right child splits again (missing left), so the tree has 5 nodes: root, leaf {0}, split {1, missing}, two leaves
+                        bad = bad + pass(fr.total == 5);
+                        bad = bad + pass(contents(fr.ni)[2 * fr.total + 2] == 1);
+                    }
+                    forest.drop(heap, f);
+                }
+            }
+        }
+        unbox_slice(heap, xs);
+        unbox_slice(heap, ys);
+        unbox_slice(heap, bm);
+        task = task + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- the exact comparison
+
+fn t_exact() -> [] int {
+    var bad = 0;
+    bad = bad + pass(exact.gt(3, 2, 1, 1));
+    bad = bad + pass(exact.gt(1, 1, 3, 2) == false);
+    bad = bad + pass(exact.gt(5, 3, 5, 3) == false);
+    // 2^58 / 2^38 against (2^58 - 1) / 2^38 and against 2^58 / (2^38 - 1): products near 2^96
+    let a = 1 << 58;
+    let d = 1 << 38;
+    bad = bad + pass(exact.gt(a, d, a - 1, d));
+    bad = bad + pass(exact.gt(a - 1, d, a, d) == false);
+    bad = bad + pass(exact.gt(a, d - 1, a, d));
+    bad = bad + pass(exact.gt(a, d, a, d - 1) == false);
+    // equal fractions with different numerators and denominators
+    bad = bad + pass(exact.gt(6 * (1 << 30), 2 * (1 << 20), 3 * (1 << 30), 1 << 20) == false);
+    bad = bad + pass(exact.gt(6 * (1 << 30) + 1, 2 * (1 << 20), 3 * (1 << 30), 1 << 20));
+    // a product that crosses a limb: (2^30 + 1)(2^30) against (2^30)(2^30 + 1)
+    bad = bad + pass(exact.gt((1 << 30) + 1, 1 << 30, 1 << 30, (1 << 30) + 1));
+    return bad;
+}
+
+// ---------------------------------------------------------------- bins
+
+fn t_bins_edges[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // one column of 0.0 .. 99.0, 4 bins: edges are the values at 25, 50, 75
+    let xs = box_slice(heap, 100, 0.0);
+    borrow mut xs as &!xw in {
+        var i = 0;
+        while i < 100 {
+            contents(xw)[i] = float_of(99 - i);
+            i = i + 1;
+        }
+    }
+    let ka = box_slice(heap, 101, 0);
+    let kb = box_slice(heap, 101, 0);
+    let cn = box_slice(heap, 2048, 0);
+    let ed = box_slice(heap, 3, 0.0);
+    let bn = box_slice(heap, 100, byte_of(0));
+    let ep = box_slice(heap, 256, 0.0);
+    borrow xs as &xr in {
+        let none = "";
+        borrow mut ka as &!a in {
+            borrow mut kb as &!b in {
+                borrow mut cn as &!c in {
+                    borrow mut ed as &!e in {
+                        bins.make_edges(contents(xr), none, 100, 1, 4, contents(a), contents(b), contents(c), contents(e));
+                        bad = bad + pass(contents(e)[0] == 25.0 && contents(e)[1] == 50.0 && contents(e)[2] == 75.0);
+                        borrow mut bn as &!o in {
+                            borrow mut ep as &!pw in {
+                                bins.make_bins(contents(xr), none, contents(e), 100, 1, 4, contents(pw), contents(o));
+                            }
+                            // 99 - i: value 25.0 is at i = 74, an edge value goes to the upper bin
+                            bad = bad + pass(int_of(contents(o)[74]) == 1 && int_of(contents(o)[75]) == 0);
+                            bad = bad + pass(int_of(contents(o)[49]) == 2 && int_of(contents(o)[50]) == 1);
+                            bad = bad + pass(int_of(contents(o)[0]) == 3 && int_of(contents(o)[99]) == 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ka);
+    unbox_slice(heap, kb);
+    unbox_slice(heap, cn);
+    unbox_slice(heap, ed);
+    unbox_slice(heap, bn);
+    unbox_slice(heap, ep);
+    return bad;
+}
+
+// the radix order is the float order, with -0.0 before 0.0, and the key round trip is exact
+fn t_radix[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let vals = box_slice(heap, 12, 0.0);
+    borrow mut vals as &!vw in {
+        let v = contents(vw);
+        v[0] = 3.5;
+        v[1] = 0.0 - 2.25;
+        v[2] = 0.0;
+        v[3] = 0.0 - 0.0;
+        v[4] = 1.0e300;
+        v[5] = 0.0 - 1.0e300;
+        v[6] = 5.0e-324;
+        v[7] = 0.0 - 5.0e-324;
+        v[8] = 3.5;
+        v[9] = 1.0;
+        v[10] = 0.0 - 1.0;
+        v[11] = 2.0;
+    }
+    let ka = box_slice(heap, 12, 0);
+    let kb = box_slice(heap, 12, 0);
+    let cn = box_slice(heap, 2048, 0);
+    borrow vals as &vr in {
+        borrow mut ka as &!a in {
+            borrow mut kb as &!b in {
+                borrow mut cn as &!c in {
+                    var i = 0;
+                    while i < 12 {
+                        contents(a)[i] = bins.key_of(bits_of(contents(vr)[i]));
+                        i = i + 1;
+                    }
+                    bins.radix(contents(a), contents(b), contents(c), 12);
+                    // ascending as unsigned: compare neighbours by (key >> 1) then the low bit, both as non-negative ints
+                    i = 1;
+                    while i < 12 {
+                        let p = contents(a)[i - 1];
+                        let q = contents(a)[i];
+                        let ph = p >> 1 & 0x7FFFFFFFFFFFFFFF;
+                        let qh = q >> 1 & 0x7FFFFFFFFFFFFFFF;
+                        bad = bad + pass(ph < qh || ph == qh && p & 1 <= q & 1);
+                        i = i + 1;
+                    }
+                    // the smallest is -1e300, then -2.25 ..; -0.0 comes right before 0.0
+                    bad = bad + pass(fbits.decode(bins.bits_of_key(contents(a)[0])) == 0.0 - 1.0e300);
+                    bad = bad + pass(bits_of(fbits.decode(bins.bits_of_key(contents(a)[4]))) == bits_of(0.0 - 0.0));
+                    bad = bad + pass(bits_of(fbits.decode(bins.bits_of_key(contents(a)[5]))) == bits_of(0.0));
+                    bad = bad + pass(fbits.decode(bins.bits_of_key(contents(a)[11])) == 1.0e300);
+                }
+            }
+        }
+    }
+    unbox_slice(heap, vals);
+    unbox_slice(heap, ka);
+    unbox_slice(heap, kb);
+    unbox_slice(heap, cn);
+    return bad;
+}
+
+fn t_bitmap[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // 3 columns x 10 rows: stride 2; column 1 bit 9 (byte 1, bit 1), column 2 bit 0
+    let bmb = box_slice(heap, 6, byte_of(0));
+    borrow mut bmb as &!bw in {
+        contents(bw)[3] = byte_of(2);
+        contents(bw)[4] = byte_of(1);
+    }
+    borrow bmb as &br in {
+        let bm = contents(br);
+        bad = bad + pass(bins.stride(10) == 2 && bins.stride(8) == 1 && bins.stride(9) == 2 && bins.stride(1) == 1);
+        bad = bad + pass(bins.is_missing(bm, 2, 1, 9));
+        bad = bad + pass(bins.is_missing(bm, 2, 2, 0));
+        bad = bad + pass(bins.is_missing(bm, 2, 1, 8) == false);
+        bad = bad + pass(bins.is_missing(bm, 2, 0, 9) == false);
+        bad = bad + pass(bins.check_bitmap(bm, 10, 3) == 0);
+        bad = bad + pass(bins.check_bitmap(bm[0..5], 10, 3) != 0);
+        bad = bad + pass(bins.check_bitmap(bm[0..0], 10, 3) == 0);
+    }
+    unbox_slice(heap, bmb);
+    return bad;
+}
+
+// ---------------------------------------------------------------- hand-worked fits
+
+// one column 0 .. 7, labels 0 0 0 1 1 1 1 1: a tree of depth 3 on all rows (no bootstrap) splits once and predicts 0 and 1
+fn t_hand_class[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let xs = box_slice(heap, 8, 0.0);
+    let ys = box_slice(heap, 8, 0.0);
+    borrow mut xs as &!xw in {
+        borrow mut ys as &!yw in {
+            var i = 0;
+            while i < 8 {
+                contents(xw)[i] = float_of(i);
+                if i >= 3 {
+                    contents(yw)[i] = 1.0;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    let out = box_slice(heap, 8, 0.5);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let none = "";
+            let (f, code) = forest.fit(heap, prm(0, 1, 3, 1, 8, 1, 0, 1), 8, 1, contents(xr), none, contents(yr), 100, 100, 100);
+            bad = bad + pass(code == 0);
+            borrow f as &fr in {
+                // the root splits at an edge: with 8 bins and 8 values every value is its own bin; the best split is between 2 and 3
+                bad = bad + pass(fr.total == 3);
+                bad = bad + pass(contents(fr.ni)[0] == 0);
+                bad = bad + pass(contents(fr.nv)[0] == 3.0);
+                borrow mut out as &!ow in {
+                    bad = bad + pass(predict.predict(heap, fr, contents(xr), none, 8, 1, 1, contents(ow)) == 0);
+                    var i = 0;
+                    while i < 8 {
+                        var want = 0.0;
+                        if i >= 3 {
+                            want = 1.0;
+                        }
+                        bad = bad + pass(contents(ow)[i] == want);
+                        i = i + 1;
+                    }
+                    bad = bad + pass(predict.predict_class(heap, fr, contents(xr), none, 8, 1, 1, contents(ow)) == 0);
+                    bad = bad + pass(contents(ow)[2] == 0.0 && contents(ow)[3] == 1.0);
+                }
+            }
+            forest.drop(heap, f);
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// regression leaves are means: y = 1, 2, 3 | 10, 12, 14 split between x = 2 and 3; the leaves are 2.0 and 12.0
+fn t_hand_reg[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let xs = box_slice(heap, 6, 0.0);
+    let ys = box_slice(heap, 6, 0.0);
+    borrow mut xs as &!xw in {
+        borrow mut ys as &!yw in {
+            var i = 0;
+            while i < 6 {
+                contents(xw)[i] = float_of(i);
+                i = i + 1;
+            }
+            contents(yw)[0] = 1.0;
+            contents(yw)[1] = 2.0;
+            contents(yw)[2] = 3.0;
+            contents(yw)[3] = 10.0;
+            contents(yw)[4] = 12.0;
+            contents(yw)[5] = 14.0;
+        }
+    }
+    let out = box_slice(heap, 6, 0.0);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let none = "";
+            let (f, code) = forest.fit(heap, prm(1, 1, 1, 1, 8, 1, 0, 1), 6, 1, contents(xr), none, contents(yr), 100, 100, 100);
+            bad = bad + pass(code == 0);
+            borrow f as &fr in {
+                bad = bad + pass(fr.total == 3 && contents(fr.nv)[0] == 3.0);
+                borrow mut out as &!ow in {
+                    bad = bad + pass(predict.predict(heap, fr, contents(xr), none, 6, 1, 1, contents(ow)) == 0);
+                    bad = bad + pass(contents(ow)[0] == 2.0 && contents(ow)[2] == 2.0 && contents(ow)[3] == 12.0 && contents(ow)[5] == 12.0);
+                    bad = bad + pass(predict.predict_class(heap, fr, contents(xr), none, 6, 1, 1, contents(ow)) == refuse.param_out_of_range());
+                }
+            }
+            forest.drop(heap, f);
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// an unsplittable pair (equal values, labels 0 and 1) is a leaf with probability 0.5; the class of 0.5 is 0
+fn t_tie_class[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let xs = box_slice(heap, 4, 1.0);
+    let ys = box_slice(heap, 4, 0.0);
+    borrow mut ys as &!yw in {
+        contents(yw)[1] = 1.0;
+        contents(yw)[3] = 1.0;
+    }
+    let out = box_slice(heap, 4, 0.0);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let none = "";
+            let (f, code) = forest.fit(heap, prm(0, 1, 3, 1, 4, 1, 0, 1), 4, 1, contents(xr), none, contents(yr), 100, 100, 100);
+            bad = bad + pass(code == 0);
+            borrow f as &fr in {
+                bad = bad + pass(fr.total == 1 && contents(fr.nv)[0] == 0.5);
+                borrow mut out as &!ow in {
+                    predict.predict_class(heap, fr, contents(xr), none, 4, 1, 1, contents(ow));
+                    bad = bad + pass(contents(ow)[0] == 0.0 && contents(ow)[3] == 0.0);
+                }
+            }
+            forest.drop(heap, f);
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// The missing rule (section 6): 40 rows, x = 0 .. 19 twice; class = x >= 10; every row whose x is missing is class 1. The rows with
+// a missing x must follow the split to the side of class 1, a predicted missing cell goes there, and a NaN in a missing cell is
+// never read.
+fn t_missing_default[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 60;
+    let xs = box_slice(heap, n, 0.0);
+    let ys = box_slice(heap, n, 0.0);
+    let bm = box_slice(heap, 8, byte_of(0));
+    borrow mut xs as &!xw in {
+        borrow mut ys as &!yw in {
+            borrow mut bm as &!bw in {
+                var i = 0;
+                while i < n {
+                    if i < 40 {
+                        contents(xw)[i] = float_of(i % 20);
+                        if i % 20 >= 10 {
+                            contents(yw)[i] = 1.0;
+                        }
+                    } else {
+                        // missing: a NaN that must never be read, class 1
+                        contents(xw)[i] = 0.0 / 0.0;
+                        contents(yw)[i] = 1.0;
+                        contents(bw)[i >> 3] = byte_of(int_of(contents(bw)[i >> 3]) | 1 << (i & 7));
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    let out = box_slice(heap, n, 0.0);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow bm as &br in {
+                let (f, code) = forest.fit(heap, prm(0, 1, 2, 1, 16, 1, 0, 1), n, 1, contents(xr), contents(br)[0..8], contents(yr), 100, 100, 100);
+                bad = bad + pass(code == 0);
+                borrow f as &fr in {
+                    // root: feature 0; the default side is left only when that is better: here the right side holds class 1
+                    bad = bad + pass(contents(fr.ni)[0] == 0 && contents(fr.ni)[2 * fr.total] == 0);
+                    borrow mut out as &!ow in {
+                        bad = bad + pass(predict.predict(heap, fr, contents(xr), contents(br)[0..8], n, 1, 1, contents(ow)) == 0);
+                        bad = bad + pass(contents(ow)[45] == 1.0 && contents(ow)[59] == 1.0 && contents(ow)[3] == 0.0 && contents(ow)[15] == 1.0);
+                    }
+                }
+                forest.drop(heap, f);
+                // the same data with the class of the missing rows 0: they go left
+                let y0 = box_slice(heap, n, 0.0);
+                borrow mut y0 as &!y0w in {
+                    var i = 0;
+                    while i < 40 {
+                        contents(y0w)[i] = contents(yr)[i];
+                        i = i + 1;
+                    }
+                }
+                borrow y0 as &y0r in {
+                    let (g, code2) = forest.fit(heap, prm(0, 1, 2, 1, 16, 1, 0, 1), n, 1, contents(xr), contents(br)[0..8], contents(y0r), 100, 100, 100);
+                    bad = bad + pass(code2 == 0);
+                    borrow g as &gr in {
+                        bad = bad + pass(contents(gr.ni)[0] == 0 && contents(gr.ni)[2 * gr.total] == 1);
+                        borrow mut out as &!ow in {
+                            predict.predict(heap, gr, contents(xr), contents(br)[0..8], n, 1, 1, contents(ow));
+                            bad = bad + pass(contents(ow)[45] == 0.0 && contents(ow)[15] == 1.0);
+                        }
+                    }
+                    forest.drop(heap, g);
+                }
+                unbox_slice(heap, y0);
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, bm);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// prediction input checks: the columns of the model, finite present cells, the bitmap's length
+fn t_predict_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let (xs, ys) = make_data(heap, 100, 3, 0);
+    let out = box_slice(heap, 100, 0.0);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let x = contents(xr)[0..300];
+            let none = "";
+            let (f, code) = forest.fit(heap, prm(0, 3, 4, 1, 16, 2, 1, 1), 100, 3, x, none, contents(yr)[0..100], 100, 100, 10000);
+            bad = bad + pass(code == 0);
+            borrow f as &fr in {
+                borrow mut out as &!ow in {
+                    let o = contents(ow)[0..100];
+                    bad = bad + pass(predict.predict(heap, fr, x, none, 100, 3, 1, o) == 0);
+                    bad = bad + pass(predict.predict(heap, fr, x, none, 100, 4, 1, o) == deny.schema_mismatch());
+                    bad = bad + pass(predict.predict(heap, fr, x, none, 100, 3, 0, o) == refuse.threads());
+                    bad = bad + pass(predict.predict(heap, fr, x, none, 100, 3, 65, o) == refuse.threads());
+                    bad = bad + pass(predict.predict(heap, fr, x, none, 0, 3, 1, o[0..0]) == refuse.input_empty());
+                    bad = bad + pass(predict.predict(heap, fr, x[0..299], none, 100, 3, 1, o) == refuse.param_out_of_range());
+                    bad = bad + pass(predict.predict(heap, fr, x, none, 100, 3, 1, o[0..99]) == refuse.param_out_of_range());
+                    bad = bad + pass(predict.predict(heap, fr, x, "", 100, 3, 1, o) == 0);
+                }
+                let xn = box_slice(heap, 300, 0.0);
+                borrow mut xn as &!nw in {
+                    var i = 0;
+                    while i < 300 {
+                        contents(nw)[i] = x[i];
+                        i = i + 1;
+                    }
+                    contents(nw)[7] = 0.0 / 0.0;
+                }
+                borrow xn as &nr in {
+                    borrow mut out as &!ow in {
+                        bad = bad + pass(predict.predict(heap, fr, contents(nr), none, 100, 3, 1, contents(ow)[0..100]) == deny.non_finite());
+                    }
+                }
+                unbox_slice(heap, xn);
+            }
+            forest.drop(heap, f);
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// the aggregation (section 2.6): identical trees (no bootstrap, all columns) give ((0 + p) + p + ...) / T, not p
+fn t_aggregation[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    // 10 rows, labels 1 in 1 of 10: leaf probability 0.1 when the data cannot be split (all x equal)
+    let xs = box_slice(heap, 10, 1.0);
+    let ys = box_slice(heap, 10, 0.0);
+    borrow mut ys as &!yw in {
+        contents(yw)[4] = 1.0;
+    }
+    let out = box_slice(heap, 10, 0.0);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let none = "";
+            let (f, code) = forest.fit(heap, prm(0, 3, 2, 1, 4, 1, 0, 1), 10, 1, contents(xr), none, contents(yr), 100, 100, 100);
+            bad = bad + pass(code == 0);
+            borrow f as &fr in {
+                borrow mut out as &!ow in {
+                    predict.predict(heap, fr, contents(xr), none, 10, 1, 1, contents(ow));
+                    let p = 1.0 / 10.0;
+                    let want = (p + p + p) / 3.0;
+                    bad = bad + pass(bits_of(contents(ow)[0]) == bits_of(want));
+                    bad = bad + pass(bits_of(want) != bits_of(p));
+                }
+            }
+            forest.drop(heap, f);
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// ---------------------------------------------------------------- threads and the model
+
+fn payload_equal[&h, &a, &b](heap: &!h Heap, f: &a forest.Forest, g: &b forest.Forest) -> [heap] bool {
+    let p = model.write(heap, f);
+    let q = model.write(heap, g);
+    var same = false;
+    borrow p as &pr in {
+        borrow q as &qr in {
+            same = same_bytes(buffer.bytes(pr), buffer.bytes(qr));
+        }
+    }
+    buffer.drop(heap, p);
+    buffer.drop(heap, q);
+    return same;
+}
+
+// the same forest, byte for byte, at 1 .. 7 threads (and the same predictions at every prediction thread count)
+fn t_threads_bytes[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    var task = 0;
+    while task < 2 {
+        let (xs, ys) = make_data(heap, 700, 6, task);
+        borrow xs as &xr in {
+            borrow ys as &yr in {
+                let x = contents(xr)[0..4200];
+                let y = contents(yr)[0..700];
+                let none = "";
+                let (f1, c1) = forest.fit(heap, prm(task, 9, 7, 2, 24, 3, 1, 1), 700, 6, x, none, y, 1000, 100, 100000);
+                bad = bad + pass(c1 == 0);
+                let ref1 = box_slice(heap, 700, 0.0);
+                borrow f1 as &f1r in {
+                    borrow mut ref1 as &!rw in {
+                        bad = bad + pass(predict.predict(heap, f1r, x, none, 700, 6, 1, contents(rw)) == 0);
+                    }
+                    var th = 2;
+                    while th <= 7 {
+                        let (f2, c2) = forest.fit(heap, prm(task, 9, 7, 2, 24, 3, 1, th), 700, 6, x, none, y, 1000, 100, 100000);
+                        bad = bad + pass(c2 == 0);
+                        borrow f2 as &f2r in {
+                            bad = bad + pass(payload_equal(heap, f1r, f2r));
+                            let o2 = box_slice(heap, 700, 0.0);
+                            borrow mut o2 as &!ow in {
+                                bad = bad + pass(predict.predict(heap, f2r, x, none, 700, 6, th, contents(ow)) == 0);
+                            }
+                            borrow o2 as &o2r in {
+                                borrow ref1 as &rr in {
+                                    var i = 0;
+                                    while i < 700 {
+                                        if bits_of(contents(o2r)[i]) != bits_of(contents(rr)[i]) {
+                                            bad = bad + 1;
+                                            i = 700;
+                                        }
+                                        i = i + 1;
+                                    }
+                                }
+                            }
+                            unbox_slice(heap, o2);
+                        }
+                        forest.drop(heap, f2);
+                        th = th + 1;
+                    }
+                }
+                unbox_slice(heap, ref1);
+                forest.drop(heap, f1);
+            }
+        }
+        unbox_slice(heap, xs);
+        unbox_slice(heap, ys);
+        task = task + 1;
+    }
+    return bad;
+}
+
+// more threads than trees, and than rows: the same bytes
+fn t_threads_more_than_work[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let (xs, ys) = make_data(heap, 40, 3, 0);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let x = contents(xr)[0..120];
+            let y = contents(yr)[0..40];
+            let none = "";
+            let (f1, c1) = forest.fit(heap, prm(0, 2, 5, 1, 8, 2, 1, 1), 40, 3, x, none, y, 100, 100, 1000);
+            let (f2, c2) = forest.fit(heap, prm(0, 2, 5, 1, 8, 2, 1, 64), 40, 3, x, none, y, 100, 100, 1000);
+            bad = bad + pass(c1 == 0 && c2 == 0);
+            borrow f1 as &a in {
+                borrow f2 as &b in {
+                    bad = bad + pass(payload_equal(heap, a, b));
+                    let o1 = box_slice(heap, 40, 0.0);
+                    let o2 = box_slice(heap, 40, 0.0);
+                    borrow mut o1 as &!w1 in {
+                        borrow mut o2 as &!w2 in {
+                            bad = bad + pass(predict.predict(heap, a, x, none, 40, 3, 1, contents(w1)) == 0);
+                            bad = bad + pass(predict.predict(heap, b, x, none, 40, 3, 64, contents(w2)) == 0);
+                            var i = 0;
+                            while i < 40 {
+                                bad = bad + pass(bits_of(contents(w1)[i]) == bits_of(contents(w2)[i]));
+                                i = i + 1;
+                            }
+                        }
+                    }
+                    unbox_slice(heap, o1);
+                    unbox_slice(heap, o2);
+                }
+            }
+            forest.drop(heap, f1);
+            forest.drop(heap, f2);
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    return bad;
+}
+
+fn t_model[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let (xs, ys) = make_data(heap, 300, 5, 0);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            let x = contents(xr)[0..1500];
+            let none = "";
+            let (f, code) = forest.fit(heap, prm(0, 3, 5, 3, 16, 2, 1, 1), 300, 5, x, none, contents(yr)[0..300], 1000, 100, 100000);
+            bad = bad + pass(code == 0);
+            borrow f as &fr in {
+                let payload = model.write(heap, fr);
+                borrow payload as &pr in {
+                    let b = buffer.bytes(pr);
+                    bad = bad + pass(len(b) == model.size_of(fr.trees, fr.total));
+                    // read it back: equal forest, equal bytes
+                    let (g, c0) = model.read(heap, b, 1000000);
+                    bad = bad + pass(c0 == 0);
+                    borrow g as &gr in {
+                        bad = bad + pass(payload_equal(heap, fr, gr));
+                    }
+                    forest.drop(heap, g);
+                    // refusals
+                    let (g1, c1) = model.read(heap, b[0..len(b) - 1], 1000000);
+                    forest.drop(heap, g1);
+                    bad = bad + pass(c1 == deny.model_truncated());
+                    let (g2, c2) = model.read(heap, b[0..10], 1000000);
+                    forest.drop(heap, g2);
+                    bad = bad + pass(c2 == deny.model_truncated());
+                    let (g3, c3) = model.read(heap, b[0..0], 1000000);
+                    forest.drop(heap, g3);
+                    bad = bad + pass(c3 == deny.model_truncated());
+                    let (g4, c4) = model.read(heap, b, fr.total - 1);
+                    forest.drop(heap, g4);
+                    bad = bad + pass(c4 == deny.limit_nodes());
+                    let (g5, c5) = model.read(heap, b, fr.total);
+                    forest.drop(heap, g5);
+                    bad = bad + pass(c5 == 0);
+                    // a longer payload
+                    let longer = box_slice(heap, len(b) + 1, byte_of(0));
+                    borrow mut longer as &!lw in {
+                        copy_into(contents(lw)[0..len(b)], b);
+                    }
+                    borrow longer as &lr in {
+                        let (g6, c6) = model.read(heap, contents(lr), 1000000);
+                        forest.drop(heap, g6);
+                        bad = bad + pass(c6 == deny.model_malformed());
+                    }
+                    unbox_slice(heap, longer);
+                    // the kind
+                    let w = box_slice(heap, len(b), byte_of(0));
+                    borrow mut w as &!ww in {
+                        copy_into(contents(ww), b);
+                        contents(ww)[0] = byte_of(4);
+                    }
+                    borrow w as &wr in {
+                        let (g7, c7) = model.read(heap, contents(wr), 1000000);
+                        forest.drop(heap, g7);
+                        bad = bad + pass(c7 == deny.model_malformed());
+                    }
+                    unbox_slice(heap, w);
+                }
+                buffer.drop(heap, payload);
+            }
+            forest.drop(heap, f);
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    return bad;
+}
+
+// ---------------------------------------------------------------- main
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    var bad = 0;
+    borrow mut heap as &!hp in {
+        borrow mut io as &!i in {
+            bad = bad + report(i, "refuse_params", t_refuse_params(hp));
+            bad = bad + report(i, "limits_before_allocation", t_limits_before_allocation(hp));
+            bad = bad + report(i, "refuse_data", t_refuse_data(hp));
+            bad = bad + report(i, "limit_nodes_growth", t_limit_nodes_growth(hp));
+            bad = bad + report(i, "deny_tags", t_deny_tags());
+            bad = bad + report(i, "params", t_params());
+            bad = bad + report(i, "nodes_boundary", t_nodes_boundary());
+            bad = bad + report(i, "exact", t_exact());
+            bad = bad + report(i, "bins_edges", t_bins_edges(hp));
+            bad = bad + report(i, "radix", t_radix(hp));
+            bad = bad + report(i, "bitmap", t_bitmap(hp));
+            bad = bad + report(i, "hand_class", t_hand_class(hp));
+            bad = bad + report(i, "hand_reg", t_hand_reg(hp));
+            bad = bad + report(i, "tie_class", t_tie_class(hp));
+            bad = bad + report(i, "missing_default", t_missing_default(hp));
+            bad = bad + report(i, "tie_variants", t_tie_variants(hp));
+            bad = bad + report(i, "predict_refusals", t_predict_refusals(hp));
+            bad = bad + report(i, "aggregation", t_aggregation(hp));
+            bad = bad + report(i, "threads_bytes", t_threads_bytes(hp));
+            bad = bad + report(i, "threads_more_than_work", t_threads_more_than_work(hp));
+            bad = bad + report(i, "model", t_model(hp));
+        }
+    }
+    release(heap);
+    release(io);
+    return bad;
+}

@@ -1,0 +1,304 @@
+edition 5;
+
+module tree.model;
+
+import std.buffer;
+import ml.fbits;
+import ml.refuse;
+import tree.deny;
+import tree.params;
+import tree.forest;
+
+// The tree ensemble as tensor records, the content of the `model` section of a CML1 file (docs/models-tree.md section 7,
+// design.md 4.1). Little-endian, no padding. `u32 kind` = 3, then ten tensor records, each `u32 dtype` (1 i64, 2 f64), `u32 rank`
+// (always 1 here), `u64` extent, the elements:
+//     1 header (8: task, trees, d, bins, total_nodes, max_depth, min_leaf, mtry)   2 tree_off (trees + 1)
+//     3 feat  4 bin  5 dleft  6 left  7 right  8 na  9 nb (each total_nodes, i64)   10 val (total_nodes, f64)
+// `read` takes a file that may say anything: every size is compared with the byte length before anything is allocated, then every
+// node is checked, and the trees must be well-formed binary trees in preorder of depth at most max_depth, so that a walk ends.
+// It never traps; it answers a refusal (ml.model.truncated, ml.model.malformed, ml.limit.nodes).
+
+pub fn kind() -> [] int {
+    return 3;
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+fn put32[&d](dst: &!d [byte], at: int, v: int) -> [] int {
+    var k = 0;
+    while k < 4 {
+        dst[at + k] = byte_of(v >> 8 * k & 255);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the payload size for `trees` trees and `total` nodes
+pub fn size_of(trees: int, total: int) -> [] int {
+    return 4 + 16 + 64 + 16 + 8 * (trees + 1) + 8 * (16 + 8 * total);
+}
+
+// the start of record r (1 .. 10) for `trees` trees and `total` nodes
+pub fn record_at(r: int, trees: int, total: int) -> [] int {
+    if r == 1 {
+        return 4;
+    }
+    if r == 2 {
+        return 84;
+    }
+    return 84 + 16 + 8 * (trees + 1) + (r - 3) * (16 + 8 * total);
+}
+
+// the byte offset of element g of record r (3 .. 10): the fuzz uses it to damage one field whole
+pub fn elem_at(r: int, trees: int, total: int, g: int) -> [] int {
+    return record_at(r, trees, total) + 16 + 8 * g;
+}
+
+// ---------------------------------------------------------------- write
+
+fn put_record[&d](dst: &!d [byte], at: int, dtype: int, extent: int) -> [] int {
+    put32(dst, at, dtype);
+    put32(dst, at + 4, 1);
+    fbits.put64(dst, at + 8, extent);
+    return 0;
+}
+
+// the payload bytes of a forest
+pub fn write[&h, &fr](heap: &!h Heap, f: &fr forest.Forest) -> [heap] buffer.Buffer {
+    let size = size_of(f.trees, f.total);
+    var out = buffer.empty(heap, size);
+    borrow mut out as &!cw in {
+        let b = buffer.room(cw);
+        put32(b, 0, kind());
+        put_record(b, 4, 1, 8);
+        fbits.put64(b, 20, f.task);
+        fbits.put64(b, 28, f.trees);
+        fbits.put64(b, 36, f.d);
+        fbits.put64(b, 44, f.nbins);
+        fbits.put64(b, 52, f.total);
+        fbits.put64(b, 60, f.max_depth);
+        fbits.put64(b, 68, f.min_leaf);
+        fbits.put64(b, 76, f.mtry);
+        put_record(b, 84, 1, f.trees + 1);
+        let toff = contents(f.toff);
+        var t = 0;
+        while t <= f.trees {
+            fbits.put64(b, 100 + 8 * t, toff[t]);
+            t = t + 1;
+        }
+        let ni = contents(f.ni);
+        var r = 3;
+        while r <= 9 {
+            let at = record_at(r, f.trees, f.total);
+            put_record(b, at, 1, f.total);
+            var g = 0;
+            while g < f.total {
+                fbits.put64(b, at + 16 + 8 * g, ni[(r - 3) * f.total + g]);
+                g = g + 1;
+            }
+            r = r + 1;
+        }
+        let at = record_at(10, f.trees, f.total);
+        put_record(b, at, 2, f.total);
+        fbits.store(contents(f.nv), b, at + 16, f.total);
+        buffer.filled(cw, size);
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- read
+
+fn bad[&h](heap: &!h Heap, code: int) -> [heap] (forest.Forest, int) {
+    return (forest.empty(heap), code);
+}
+
+// the record header at `at` is (dtype, rank 1, extent)
+fn rec_ok[&s](data: &s [byte], at: int, dtype: int, extent: int) -> [] bool {
+    return get32(data, at) == dtype && get32(data, at + 4) == 1 && fbits.get64(data, at + 8) == extent;
+}
+
+// 0, or ml.model.malformed: the nodes of tree t (global nodes lo .. hi - 1) are a well-formed binary tree in preorder
+fn check_tree[&n, &v](ni: &n [int], nv: &v [float], total: int, lo: int, hi: int, task: int, d: int, nbins: int, max_depth: int) -> [] int {
+    let sz = hi - lo;
+    // the right children still to come (index and depth), innermost last; `cur` is the depth of the current node
+    var stack = 0;
+    var i = 0;
+    var prev_internal = false;
+    region a {
+        let st = alloc_slice[a](32, 0);
+        let sd = alloc_slice[a](32, 0);
+        var cur = 0;
+        while i < sz {
+            let g = lo + i;
+            let feat = ni[g];
+            let bin = ni[total + g];
+            let dl = ni[2 * total + g];
+            let lc = ni[3 * total + g];
+            let rc = ni[4 * total + g];
+            let na = ni[5 * total + g];
+            let nb = ni[6 * total + g];
+            if na < 0 || nb < 0 {
+                return deny.model_malformed();
+            }
+            // (`val` is finite: fbits.load refused every NaN and infinity before this walk)
+            let v = nv[g];
+            // where this node must be: the left child of the previous node, or the pending right child
+            if i > 0 && !prev_internal {
+                if stack == 0 {
+                    return deny.model_malformed();
+                }
+                stack = stack - 1;
+                if st[stack] != i {
+                    return deny.model_malformed();
+                }
+                cur = sd[stack];
+            }
+            if feat == 0 - 1 {
+                if bin != 0 - 1 || dl != 0 || lc != 0 - 1 || rc != 0 - 1 {
+                    return deny.model_malformed();
+                }
+                if task == 0 {
+                    if na + nb < 1 || na > 1048576 || nb > 1048576 || bits_of(v) != bits_of(float_of(nb) / float_of(na + nb)) {
+                        return deny.model_malformed();
+                    }
+                } else if na < 1 || nb != 0 {
+                    return deny.model_malformed();
+                }
+                prev_internal = false;
+            } else {
+                if feat < 0 || feat >= d || bin < 0 || bin > nbins - 2 || dl != 0 && dl != 1 {
+                    return deny.model_malformed();
+                }
+                if lc != i + 1 || cur >= max_depth {
+                    return deny.model_malformed();
+                }
+                st[stack] = rc;
+                sd[stack] = cur + 1;
+                stack = stack + 1;
+                cur = cur + 1;
+                prev_internal = true;
+            }
+            i = i + 1;
+        }
+    }
+    // nothing is pending. (Every right child pushed must be popped by a node of the tree that has exactly that index, so a right child
+    // outside the tree, at or before the left child, or after the last node can never be matched; and a last node that is internal
+    // has pushed one. These cases need no check of their own, and a check that nothing can reach is a check no test can kill.)
+    if stack != 0 {
+        return deny.model_malformed();
+    }
+    return 0;
+}
+
+// Read a payload. `max_total` is the caller's ceiling on the nodes (at most params.nodes_total_max()). Answers (forest, 0), or
+// (empty forest, the refusal).
+pub fn read[&h, &s](heap: &!h Heap, data: &s [byte], max_total: int) -> [heap] (forest.Forest, int) {
+    let n = len(data);
+    if n < 84 {
+        return bad(heap, deny.model_truncated());
+    }
+    if get32(data, 0) != kind() || !rec_ok(data, 4, 1, 8) {
+        return bad(heap, deny.model_malformed());
+    }
+    let task = fbits.get64(data, 20);
+    let trees = fbits.get64(data, 28);
+    let d = fbits.get64(data, 36);
+    let nbins = fbits.get64(data, 44);
+    let total = fbits.get64(data, 52);
+    let max_depth = fbits.get64(data, 60);
+    let min_leaf = fbits.get64(data, 68);
+    let mtry = fbits.get64(data, 76);
+    if task < 0 || task > 1 || trees < 1 || trees > params.trees_max() || d < 1 || d > 4096 || nbins < 2 || nbins > 255 || max_depth < 1 || max_depth > params.depth_max() || min_leaf < 1 || mtry < 1 || mtry > d || total < trees {
+        return bad(heap, deny.model_malformed());
+    }
+    if total > max_total || total > params.nodes_total_max() {
+        return bad(heap, deny.limit_nodes());
+    }
+    let size = size_of(trees, total);
+    if n < size {
+        return bad(heap, deny.model_truncated());
+    }
+    if n > size {
+        return bad(heap, deny.model_malformed());
+    }
+    if !rec_ok(data, 84, 1, trees + 1) {
+        return bad(heap, deny.model_malformed());
+    }
+    var r = 3;
+    while r <= 10 {
+        var dt = 1;
+        if r == 10 {
+            dt = 2;
+        }
+        if !rec_ok(data, record_at(r, trees, total), dt, total) {
+            return bad(heap, deny.model_malformed());
+        }
+        r = r + 1;
+    }
+    // the sizes are right; now the content
+    let toff = box_slice(heap, trees + 1, 0);
+    let ni = box_slice(heap, 7 * total + 1, 0);
+    let nv = box_slice(heap, total + 1, 0.0);
+    var code = 0;
+    borrow mut toff as &!tw in {
+        let tof = contents(tw);
+        var t = 0;
+        while t <= trees {
+            tof[t] = fbits.get64(data, 100 + 8 * t);
+            t = t + 1;
+        }
+        if tof[0] != 0 || tof[trees] != total {
+            code = deny.model_malformed();
+        }
+        t = 0;
+        while t < trees && code == 0 {
+            if tof[t + 1] <= tof[t] {
+                code = deny.model_malformed();
+            }
+            t = t + 1;
+        }
+    }
+    if code == 0 {
+        borrow mut ni as &!nw in {
+            let nis = contents(nw);
+            var rr = 3;
+            while rr <= 9 {
+                let at = record_at(rr, trees, total) + 16;
+                var g = 0;
+                while g < total {
+                    nis[(rr - 3) * total + g] = fbits.get64(data, at + 8 * g);
+                    g = g + 1;
+                }
+                rr = rr + 1;
+            }
+        }
+        borrow mut nv as &!vw in {
+            let bad_vals = fbits.load(data, record_at(10, trees, total) + 16, contents(vw), total);
+            if bad_vals != 0 {
+                code = deny.model_malformed();
+            }
+        }
+    }
+    if code == 0 {
+        borrow toff as &tr in {
+            borrow ni as &nr in {
+                borrow nv as &vr in {
+                    var t = 0;
+                    while t < trees && code == 0 {
+                        code = check_tree(contents(nr), contents(vr), total, contents(tr)[t], contents(tr)[t + 1], task, d, nbins, max_depth);
+                        t = t + 1;
+                    }
+                }
+            }
+        }
+    }
+    if code != 0 {
+        unbox_slice(heap, toff);
+        unbox_slice(heap, ni);
+        unbox_slice(heap, nv);
+        return bad(heap, code);
+    }
+    return (forest.Forest { task: task, trees: trees, d: d, nbins: nbins, total: total, max_depth: max_depth, min_leaf: min_leaf, mtry: mtry, toff: toff, ni: ni, nv: nv }, 0);
+}

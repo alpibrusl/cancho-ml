@@ -1,0 +1,12 @@
+// GAP 5 (stage M7): there is no sort in `std`, for floats or for ints. lib/models/tree/bins.cho writes an LSD radix sort (about 50 lines:
+// order-preserving key of the float bits, six 11-bit passes) to find the quantile edges of each column; any tabular package needs
+// either a sort or a selection routine. Expected: std.sort with sort(xs: &![float]) / sort(xs: &![int]) (total order on floats,
+// -0.0 before 0.0 or documented) and, if possible, a select(xs, k) for order statistics.
+//     cancho check --std sort_std.cho     -> error: no module `std.sort`
+edition 5;
+import std.sort;
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

@@ -1,0 +1,26 @@
+scikit-learn 1.8.0, numpy 2.4.6; cancho tree-check, 1 thread
+PRE-REGISTERED (docs/models-tree.md section 8, fixed before the first run): tolerance AUC 0.005, RMSE 3% relative, scikit-learn on the raw features
+cfg  rows     metric cancho     sklearn    distance   tol     within | control (depth 1 forest): distance, outside the tolerance?
+C1   100000   AUC    0.826189   0.826105   0.000084   0.005   yes    | 0.0844 outside
+C2   100000   AUC    0.865853   0.866141   0.000288   0.005   yes    | 0.0681 outside
+C3   100000   AUC    0.767285   0.767211   0.000074   0.005   yes    | 0.1324 outside
+R1   100000   RMSE   2.784408   3.029622   0.080939   0.030   NO     | 0.1283 outside
+R2   100000   RMSE   3.045111   3.117527   0.023229   0.030   yes    | 0.0705 outside
+C1   1000     AUC    0.736395   0.719138   0.017257   0.005   NO     | 0.0540 outside  (1,000 rows: reported, not part of the gate)
+R1   1000     RMSE   3.211428   3.184377   0.008495   0.030   yes    | 0.0481 outside  (1,000 rows: reported, not part of the gate)
+C1   1000000  AUC    0.826176   0.827210   0.001033   0.005   yes    | 0.0833 outside
+G-ref (pre-registered) FAILED
+
+DIAGNOSTIC ADDED AFTER THE FIRST RUN (not pre-registered): scikit-learn on the bin indices under the library's own edges (the same
+candidate thresholds), same tolerances. It separates 'different thresholds' from 'something else': the remaining difference is
+the RNG, the redrawn feature subsets and the float criterion.
+cfg  rows     metric cancho     sklearn-bins distance   within
+C1   100000   AUC    0.826189   0.825875     0.000314   yes   
+C2   100000   AUC    0.865853   0.867061     0.001207   yes   
+C3   100000   AUC    0.767285   0.767285     0.000000   yes   
+R1   100000   RMSE   2.784408   2.873714     0.031077   NO    
+R2   100000   RMSE   3.045111   3.049987     0.001599   yes   
+C1   1000     AUC    0.736395   0.742847     0.006453   NO    
+R1   1000     RMSE   3.211428   3.239885     0.008783   yes   
+C1   1000000  AUC    0.826176   0.826113     0.000063   yes   
+G-ref (diagnostic on bin indices) FAILED
