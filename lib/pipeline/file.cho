@@ -73,7 +73,8 @@ fn digest_into[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [
 }
 
 // The file. plan: the canonical text; schema_payload: schema.encode; steps_payload: Fitted.payload; model_payload: u32 kind then the estimator's records;
-// columns: the number of columns of the schema; the meta section is `u64 rows | u64 columns | u64 seed | u32 0 | u32 length | pin`.
+// columns: the number of columns of the schema; the meta section is `u64 rows | u64 columns | u64 seed | u32 0 | u32 length | pin`, and for a model
+// kind of 4 or above (the leading u32 of model_payload) `| u32 sum_order` (kinds.sum_order(), design.md section 4.1); kinds 1 to 3 have the bytes of mfile.cho.
 pub fn encode[&h, &a, &b, &c, &e, &f](heap: &!h Heap, plan_text: &a [byte], schema_payload: &b [byte], steps_payload: &c [byte], model_payload: &e [byte], rows: int, columns: int, seed: int, pin: &f [byte]) -> [heap] buffer.Buffer {
     var me = put64(heap, buffer.empty(heap, 64), rows);
     me = put64(heap, me, columns);
@@ -81,6 +82,9 @@ pub fn encode[&h, &a, &b, &c, &e, &f](heap: &!h Heap, plan_text: &a [byte], sche
     me = put32(heap, me, 0);
     me = put32(heap, me, len(pin));
     me = buffer.append(heap, me, pin);
+    if len(model_payload) >= 4 && get32(model_payload, 0) >= kinds.first_ordered_model() {
+        me = put32(heap, me, kinds.sum_order());
+    }
     var out = buffer.empty(heap, 256);
     out = buffer.append(heap, out, "CML1");
     out = put32(heap, out, 1);
@@ -288,6 +292,21 @@ fn model_family_ok(pk: int, mk: int) -> [] bool {
 // every field of the five sections (the checksum is right). (Fault, features, width, nsteps, rows, seed, model kind)
 fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [heap] (codes.Fault, int, int, int, int, int, int) {
     let none = codes.none();
+    // 0 the sum order of a model of kind 4 or above (design.md 4.1): first, so that a file of another order is not reported as malformed for its parameters
+    let md0 = data[places[6]..places[6] + places[7]];
+    if len(md0) >= 4 && get32(md0, 0) >= kinds.first_ordered_model() && get32(md0, 0) <= kinds.model_count() {
+        // a meta of the shape the rule gives (36 + length bytes) has the field; any other shape is left to the checks below, which refuse it as malformed
+        let me0 = data[places[8]..places[8] + places[9]];
+        if len(me0) >= 36 {
+            let cl0 = get32(me0, 28);
+            if cl0 >= 0 && cl0 <= 255 && len(me0) == 36 + cl0 {
+                let so = get32(me0, 32 + cl0);
+                if so != kinds.sum_order() {
+                    return (codes.fault(codes.bad_version(), so, 1, kinds.sum_order()), 0, 0, 0, 0, 0, 0);
+                }
+            }
+        }
+    }
     // 1 plan: it parses and is its own canonical form
     let pbytes = data[places[0]..places[0] + places[1]];
     let (pl, pf) = plan.parse(heap, pbytes);
@@ -385,7 +404,11 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
     let seed = fbits.get64(me, 16);
     let nh = get32(me, 24);
     let cl = get32(me, 28);
-    if rows < 1 || rows > 1000000000 || mc != feats + 1 || nh != 0 || cl < 0 || cl > 255 || len(me) != 32 + cl {
+    var tail = 0;
+    if mk >= kinds.first_ordered_model() {
+        tail = 4;
+    }
+    if rows < 1 || rows > 1000000000 || mc != feats + 1 || nh != 0 || cl < 0 || cl > 255 || len(me) != 32 + cl + tail {
         return (mal(5, 0), 0, 0, 0, 0, 0, 0);
     }
     return (none, feats, width, nsteps, rows, seed, mk);

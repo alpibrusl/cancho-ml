@@ -66,6 +66,7 @@
     "alphabet",
     "any_nul",
     "authority",
+    "bad_sum_order",
     "base",
     "bit_at",
     "bit_at",
@@ -139,6 +140,7 @@
     "find_in",
     "finish",
     "first",
+    "first_ordered_kind",
     "flag_table",
     "float_of_key",
     "fraction_scaled",
@@ -185,6 +187,7 @@
     "kind",
     "kind",
     "kind_of",
+    "last_kind",
     "ldexp",
     "lead_bits",
     "leaf",
@@ -260,6 +263,7 @@
     "starts_with",
     "stat",
     "stats_sane",
+    "sum_order",
     "summary_in",
     "takes_value",
     "tape_len",
@@ -288,5 +292,5 @@
   ],
   "folded_operators": 66,
   "folded_calls": 0,
-  "functions": 443
+  "functions": 447
 }

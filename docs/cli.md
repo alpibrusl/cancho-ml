@@ -206,6 +206,8 @@ whose lengths fit the bytes that are there, checked before anything is allocated
 before the checksum, a flipped bit in a length field reports `truncated` or `malformed` rather than `checksum`; no damaged file is
 ever accepted (gate M1 flips every byte three ways).
 
+*Added at `v1-post` (rule in `design.md` section 4.1).* A file of a model kind of 4 to 7 (written by the libraries, not by `ml`) has a `u32 sum_order` as the last four bytes of `meta`; `ml` still builds kinds 1 to 3, whose `meta` has no such field and is unchanged. The reader checks that field after the checksum and before the other fields: a kind 4 to 7 file with a sum order other than 2 is `ml.model.version` (detail `sum_order`, `known`); with order 2 it is `ml.model.malformed` in section 4 (kind not built by `ml`).
+
 ## 5. The log
 
 `--log FILE` appends one NDJSON record at the start of the run (`start`), after the read (`read`: rows, columns, bytes of the CSV), after

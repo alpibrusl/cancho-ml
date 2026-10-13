@@ -40,6 +40,16 @@ pub fn model_count() -> [] int {
     return 7;
 }
 
+// ---- the sum order recorded in `meta` (docs/design.md section 4.1, `v1-post`): a model of a kind from first_ordered_model() on has a `u32 sum_order` as the
+// last four bytes of its `meta`, equal to sum_order(); the constant models (kinds 1 to 3) have none. 1 was the order before `v1-lanes` (retired, never written).
+pub fn first_ordered_model() -> [] int {
+    return 4;
+}
+
+pub fn sum_order() -> [] int {
+    return 2;
+}
+
 // ---- stream kinds: derive(derive(seed, kind), index)
 pub fn stream_tree_bootstrap() -> [] int {
     return 1;

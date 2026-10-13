@@ -97,6 +97,16 @@ M = [
     # the one order: the decisive sums follow lib/linalg/order.cho through lib/metrics/sums.cho, so a change there must show in --sums
     ("order-lane-combine-fold", [(O, "return combine(combine(l0, l1), combine(l2, l3));", "return combine(combine(combine(l0, l1), l2), l3);")]),
     ("order-block-length-128", [(O, "    return 256;\n}\n\n// L, the lanes", "    return 128;\n}\n\n// L, the lanes")]),
+    # ---- the sum order in meta of a model of kind 4 and above (design.md 4.1)
+    ("order-field-not-written", [(FI, "if len(model_payload) >= 4 && get32(model_payload, 0) >= kinds.first_ordered_model() {", "if len(model_payload) >= 4 && get32(model_payload, 0) >= 99 {")]),
+    ("order-field-written-for-constants", [(FI, "if len(model_payload) >= 4 && get32(model_payload, 0) >= kinds.first_ordered_model() {", "if len(model_payload) >= 4 && get32(model_payload, 0) >= 1 {")]),
+    ("order-value-written", [(K, "pub fn sum_order() -> [] int {\n    return 2;", "pub fn sum_order() -> [] int {\n    return 3;")]),
+    ("order-check-off", [(FI, "if so != kinds.sum_order() {", "if false {")]),
+    ("order-check-below-only", [(FI, "if so != kinds.sum_order() {", "if so < kinds.sum_order() {")]),
+    ("order-check-for-constants", [(FI, "len(md0) >= 4 && get32(md0, 0) >= kinds.first_ordered_model() &&", "len(md0) >= 4 && get32(md0, 0) >= 1 &&")]),
+    ("order-tail-not-counted", [(FI, "        tail = 4;", "        tail = 0;")]),
+    ("order-fault-detail", [(FI, "codes.fault(codes.bad_version(), so, 1, kinds.sum_order())", "codes.fault(codes.bad_version(), so, 0, kinds.sum_order())")]),
+    ("order-read-at-wrong-offset", [(FI, "let so = get32(me0, 32 + cl0);", "let so = get32(me0, 28 + cl0);")]),
     ("dsum-total-adds-magnitudes", [(D, "return run(heap, sums.kind_val(), vals, 0.0, n);", "return run(heap, sums.kind_abs(), vals, 0.0, n);")]),
     ("dsum-total-in-another-order", [(D, "return run(heap, sums.kind_val(), vals, 0.0, n);", "let junk = box_slice(heap, 1, 0.0);\n    unbox_slice(heap, junk);\n    var s = 0.0;\n    var i = 0;\n    while i < n {\n        s = s + vals[i];\n        i = i + 1;\n    }\n    return s;")]),
     ("sort-descending", [(SO, "if a[root] < a[child] {", "if a[root] > a[child] {")]),

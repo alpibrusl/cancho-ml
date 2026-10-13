@@ -529,3 +529,73 @@ fn test_corrupted_files[&h](heap: &!h Heap) -> [heap] int {
     }
     return 0;
 }
+
+// A file of model kind 4 (written with the sum order in meta, design.md 4.1): every truncation, every byte flipped three ways without a repaired checksum (never
+// accepted) and with one (a code of the band; a flip inside the sum order is always ml.model.version; a flip of the kind byte is a refusal), seeded damage of the
+// tail of the file (the model, the meta and the order), no trap.
+fn test_corrupted_file_of_an_ordered_kind[&h](heap: &!h Heap) -> [heap] int {
+    let est = pt.hex(heap, "04000000 00000000 00000000 00000000 00000000");
+    var bad = 0;
+    var fb = buffer.empty(heap, 1);
+    borrow est as &er in {
+        buffer.drop(heap, fb);
+        fb = pt.make_file_with(heap, "model kind=linear", "a", "1;2", contents(er)[0..20]);
+    }
+    unbox_slice(heap, est);
+    borrow fb as &fr in {
+        let all = buffer.bytes(fr);
+        let n = len(all);
+        let order_at = n - 32 - 4;
+        let (l0, f0) = file.decode(heap, all);
+        if f0.code != 0 {
+            bad = bad + 1;
+        }
+        file.drop(heap, l0);
+        var cut = 0;
+        while cut < n {
+            let (l, f) = file.decode(heap, all[0..cut]);
+            if f.code == 0 || !in_band(f.code) {
+                bad = bad + 1;
+            }
+            file.drop(heap, l);
+            cut = cut + 1;
+        }
+        var at = 0;
+        while at < n {
+            var mask = 1;
+            while mask < 256 {
+                let c = pt.copy_box(heap, all);
+                var cw = c;
+                borrow mut cw as &!w in {
+                    contents(w)[at] = byte_of(int_of(all[at]) ^ mask);
+                }
+                borrow cw as &cr in {
+                    let edited = contents(cr)[0..n];
+                    let (l, f) = file.decode(heap, edited);
+                    if f.code == 0 || !in_band(f.code) {
+                        bad = bad + 1;
+                    }
+                    file.drop(heap, l);
+                    let sealed = file.reseal(heap, edited);
+                    borrow sealed as &sr in {
+                        let (l2, f2) = file.decode(heap, buffer.bytes(sr));
+                        if !in_band(f2.code) {
+                            bad = bad + 1;
+                        }
+                        // a changed sum order is never accepted and is the version refusal
+                        if at >= order_at && at < order_at + 4 && f2.code != codes.bad_version() {
+                            bad = bad + 1;
+                        }
+                        file.drop(heap, l2);
+                    }
+                    buffer.drop(heap, sealed);
+                }
+                unbox_slice(heap, cw);
+                mask = mask * 8;
+            }
+            at = at + 1;
+        }
+    }
+    buffer.drop(heap, fb);
+    return bad;
+}

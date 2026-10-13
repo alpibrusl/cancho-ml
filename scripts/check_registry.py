@@ -67,6 +67,16 @@ if "1 constant regression of an int or dec target, 2 constant classification, 3 
 if not re.search(r"mk < 1 \|\| mk > 3", mf):
     fail("tools/ml/mfile.cho: the accepted kinds are no longer 1 to 3 (update the registry and design.md 4.1 first)")
 
+# the sum order in meta (design.md 4.1): mfile.cho's copies of the three numbers are the registry's
+mfc = consts("tools/ml/mfile.cho")
+for fn, name in (("first_ordered_kind", "first_ordered_model"), ("last_kind", "model_count"), ("sum_order", "sum_order")):
+    if mfc.get(fn) != K.get(name):
+        fail("tools/ml/mfile.cho %s = %s, lib/core/kinds.cho %s = %s" % (fn, mfc.get(fn), name, K.get(name)))
+if K.get("first_ordered_model") != K.get("model_linear"):
+    fail("the first model kind with a sum order is not the first float model (design.md 4.1)")
+if not re.search(r"sum_order. = \*\*2\*\*", design):
+    fail("design.md 4.1 no longer says sum_order = 2")
+
 # ---- step kinds and section tags (docs/design.md 4.1, docs/transforms.md section 4)
 steps_k = [(n, v) for n, v in K.items() if n.startswith("step_") and n != "step_count"]
 unique("step kinds (lib/core/kinds.cho)", steps_k)

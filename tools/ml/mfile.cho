@@ -12,6 +12,7 @@ module ml.mfile;
 //     4 model   u32 kind (1 constant regression of an int or dec target, 2 constant classification, 3 constant regression of a float
 //               target) | tensor record
 //     5 meta    u64 rows | u64 columns | u64 seed (0) | u32 hyperparameters (0) | u32 length | compiler pin, informational
+//               [ | u32 sum_order = 2, only for a model kind of 4 or above, which this tool reads but does not build (design.md 4.1) ]
 //     tensor record = u32 dtype (1 = i64) | u32 rank | rank * u64 shape | elements row-major, i64
 //       regression stats    shape [4]: n, scale, sum of quotients, sum of remainders (the exact sum, as in ml.exact)
 //       classification      shape [6]: n, classes (2), c0, c1, n0, n1
@@ -19,7 +20,8 @@ module ml.mfile;
 // A model of int and dec columns is byte for byte what the CLI slice wrote (docs/reader.md section 4).
 //
 // The reader checks, in this order: the magic (bad-magic), the version (version), the structure -- section count, tags in
-// order, every length against the bytes that are there (truncated) -- the checksum (checksum), and then every field of every
+// order, every length against the bytes that are there (truncated) -- the checksum (checksum), the sum order of a model of kind 4 or
+// above (status 6, reported as ml.model.version), and then every field of every
 // section against the limits (malformed), before anything sized by the file is allocated, and before a number is used in
 // arithmetic that could overflow. A file is input: the checksum says it is the file that was written, not that it is
 // sensible, so a file with a repaired checksum must be refused, not trusted.
@@ -62,6 +64,25 @@ pub fn checksum() -> [] int {
 
 pub fn malformed() -> [] int {
     return 5;
+}
+
+// status 6 of decode: a model of kind 4 to 7 whose sum order (the last four bytes of `meta`) is not the one implemented (aux: the value found)
+pub fn bad_sum_order() -> [] int {
+    return 6;
+}
+
+// the sum order this reader implements (lib/core/kinds.cho sum_order(); scripts/check_registry.py compares the two)
+pub fn sum_order() -> [] int {
+    return 2;
+}
+
+// the first model kind with a sum order in `meta` and the last kind of the registry (kinds.cho first_ordered_model(), model_count())
+pub fn first_ordered_kind() -> [] int {
+    return 4;
+}
+
+pub fn last_kind() -> [] int {
+    return 7;
 }
 
 // model kind: 1 constant regression (int or dec target), 2 constant classification, 3 constant regression of a float target
@@ -325,7 +346,7 @@ fn checksum_ok[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] bool {
 }
 
 // Decode the file in `data`. (model, status, aux): status 0 ok; 1 bad magic; 2 version (aux: the version found); 3 truncated;
-// 4 checksum; 5 malformed (aux: the tag of the section at fault, 0 for the structure). The model is empty unless status is 0.
+// 4 checksum; 5 malformed (aux: the tag of the section at fault, 0 for the structure); 6 sum order (aux: the value found). The model is empty unless status is 0.
 pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Model, int, int) {
     let n = len(data);
     if n < 4 {
@@ -370,6 +391,25 @@ fn bad_model[&h](heap: &!h Heap, tag: int) -> [heap] (Model, int, int) {
 
 // the fields of the five sections; places[2 s] is where section s + 1 starts and places[2 s + 1] how long it is
 fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [heap] (Model, int, int) {
+    // the sum order of a model of kind 4 to 7 comes first: a file made with another order is not reported as malformed because of what it holds
+    let md0 = data[places[6]..places[6] + places[7]];
+    if len(md0) >= 4 {
+        let k0 = get32(md0, 0);
+        if k0 >= first_ordered_kind() && k0 <= last_kind() {
+            // a meta of the shape the rule gives (36 + length bytes) has the field; any other shape is left to the checks below (a kind 4 to 7 file is
+            // refused as not built whatever its meta)
+            let me0 = data[places[8]..places[8] + places[9]];
+            if len(me0) >= 36 {
+                let cl0 = get32(me0, 28);
+                if cl0 >= 0 && cl0 <= 255 && len(me0) == 36 + cl0 {
+                    let so = get32(me0, 32 + cl0);
+                    if so != sum_order() {
+                        return (empty_model(heap), bad_sum_order(), so);
+                    }
+                }
+            }
+        }
+    }
     // 1 plan
     let plan = data[places[0]..places[0] + places[1]];
     var plan_task = 0;

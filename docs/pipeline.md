@@ -107,11 +107,12 @@ The canonical text of section 2, with its final LF. For the constant model the p
 
 ### 5.3 What `decode` checks (in this order, as `mfile.cho`)
 magic, version, section count and tags in order and every length against the bytes there (truncated), the SHA-256 trailer (checksum),
+then, **for a model kind of 4 or above, the sum order** at the end of `meta` (`ml.model.version` unless it is 2; `design.md` section 4.1, added at `v1-post`),
 then every field: the schema (as `mfile.cho`), the plan (parses, and is canonical: its canonical form is itself), the steps (each payload
 by the rules of `docs/transforms.md` section 4, chained: the input width of step `i+1` is the output width of step `i`, and the first is
 the number of feature columns), the **agreement of the plan with the steps** (as many transform lines as steps, and the kind of each
 step is the kind its line asks for), the model payload (its leading `u32 kind` is a registered model kind and its length is at least
-4; **the estimator's own layout is checked by the estimator's reader**), the meta section (as `mfile.cho`, `hyperparameters = 0`).
+4; **the estimator's own layout is checked by the estimator's reader**), the meta section (as `mfile.cho`, `hyperparameters = 0`; for a model kind of 4 or above it is 4 bytes longer: the `u32 sum_order` = 2 after the compiler pin, which `file.encode` writes for such a kind and `decode` requires; kinds 1 to 3 keep the exact bytes of `mfile.cho`).
 Anything else is a code of `transforms.codes` (`ml.model.*`).
 
 ### 5.4 The estimator hook

@@ -222,6 +222,18 @@ pub fn make_schema[&h, &s](heap: &!h Heap, feats: &s [byte]) -> [heap] schema.Sc
 
 // fit `plan_src` on `train` (columns `feats`) and write the file; the empty buffer when anything is refused
 pub fn make_file[&h, &a, &b, &c](heap: &!h Heap, plan_src: &a [byte], feats: &b [byte], train: &c [byte]) -> [heap] buffer.Buffer {
+    let est = estimator(heap);
+    var out = buffer.empty(heap, 1);
+    borrow est as &er in {
+        buffer.drop(heap, out);
+        out = make_file_with(heap, plan_src, feats, train, contents(er)[0..52]);
+    }
+    unbox_slice(heap, est);
+    return out;
+}
+
+// the same with the bytes of the `model` section given: `u32 kind` then whatever the estimator writes (the file only checks the leading kind)
+pub fn make_file_with[&h, &a, &b, &c, &m](heap: &!h Heap, plan_src: &a [byte], feats: &b [byte], train: &c [byte], model_payload: &m [byte]) -> [heap] buffer.Buffer {
     let (pl, pf) = plan.parse(heap, plan_src);
     let nm = names.from_list(heap, feats);
     let x = mat(heap, train);
@@ -238,16 +250,12 @@ pub fn make_file[&h, &a, &b, &c](heap: &!h Heap, plan_src: &a [byte], feats: &b 
                             buffer.drop(heap, sp);
                             sp = schema.encode(heap, scr);
                         }
-                        let est = estimator(heap);
                         borrow fd as &fr in {
                             borrow sp as &spr in {
-                                borrow est as &er in {
-                                    buffer.drop(heap, out);
-                                    out = file.encode(heap, plan.text(pr), buffer.bytes(spr), buffer.bytes(fr.payload), contents(er)[0..52], 6, 1 + names.count(nr), 0, "pin");
-                                }
+                                buffer.drop(heap, out);
+                                out = file.encode(heap, plan.text(pr), buffer.bytes(spr), buffer.bytes(fr.payload), model_payload, 6, 1 + names.count(nr), 0, "pin");
                             }
                         }
-                        unbox_slice(heap, est);
                         buffer.drop(heap, sp);
                         schema.drop(heap, sc);
                     }

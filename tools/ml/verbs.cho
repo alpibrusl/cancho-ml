@@ -695,6 +695,10 @@ fn model_error[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, sh
         rule = "ml.model.version";
         message = "the file has a format version this reader does not know";
         hint = "refit the model with this version of ml";
+    } else if status == 6 {
+        rule = "ml.model.version";
+        message = "the model was made with a summation order this reader does not implement";
+        hint = "refit the model with this version of ml";
     } else if status == 3 {
         rule = "ml.model.truncated";
         message = "the file ends before the end its header and section lengths promise";
@@ -711,6 +715,10 @@ fn model_error[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, sh
     if status == 2 {
         w = fail.detail_int(heap, w, "version", aux);
         w = fail.detail_int(heap, w, "known", mfile.version());
+    }
+    if status == 6 {
+        w = fail.detail_int(heap, w, "sum_order", aux);
+        w = fail.detail_int(heap, w, "known", mfile.sum_order());
     }
     if status == 5 {
         w = fail.detail_int(heap, w, "section", aux);

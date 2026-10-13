@@ -123,6 +123,27 @@ rank 1, `u64` shape, `i64` elements); `meta` = `u64` rows, `u64` columns, `u64` 
 compiler pin. The layout is parsed by an independent reader in `tests/conformance/test_model_file.py`, and a corrupted-file fuzz
 (every truncation, every byte flipped three ways, seeded damage with and without a repaired checksum) never traps.
 
+**The sum order in `meta` (rule written at `v1-post`, before the code; the proposal of section 17).** The arithmetic of a model of kind 4 to 7
+(linear, logistic, k-means, tree or forest) depends on the summation order of `docs/linalg.md` section 2, so the file says which order made it. The
+rule is a function of the model kind, which a reader knows before it reads `meta` (the `model` section comes first):
+
+* **kinds 1 to 3** (constants: exact integer and `facc` arithmetic, no float order): the `meta` payload is exactly what it was, `u64 rows | u64 columns | u64 seed
+  | u32 hyperparameters | u32 length | compiler pin`. **Their bytes do not change**, and a kind 1 to 3 file whose `meta` is longer than `32 + length` is
+  `ml.model.malformed`, as before.
+* **kinds 4 and above** (every kind whose row of the table below says so; today 4 to 7): the payload is that, then **`u32 sum_order`**, the last four bytes of `meta`:
+  `meta` is exactly `36 + length` bytes, else `ml.model.malformed` (a `meta` of any other length is not looked at for the order: the ordinary field checks refuse it). `sum_order` = **2** for the order of `docs/linalg.md` section 2
+  (`K = 256`, `L = 4`, `(l0 + l1) + (l2 + l3)`, the fixed tree, panels of 32). **1** is the order before `v1-lanes` (one chain per block): retired,
+  never written by a model file, refused if found. 0 and 3 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
+  of a kind is fixed by the kind.
+* **A reader refuses a file whose `sum_order` it does not implement with `ml.model.version`** (detail `sum_order` found, `known` 2): it cannot reproduce the
+  parameters' arithmetic, and the same refusal tag as an unknown format version says "refit with this version". The order of the checks is bad-magic, version,
+  truncated, checksum, **sum order (version)**, then malformed: the field is inside a checksummed section, so it is read after the checksum, and before the other fields,
+  so a file of another order is never reported as malformed because its parameters look odd. A reader that does not build a kind (today `ml`, which builds 1 to 3) still reads
+  the sum order of a kind 4 to 7 file first: a wrong order is `ml.model.version`, a right one is `ml.model.malformed` (section 4: "not built").
+* Writers: `lib/pipeline/file.cho` writes the field for the kinds it is given (4 and above); `tools/ml/mfile.cho` writes kinds 1 to 3 only and so never writes it. Tests:
+  `tests/conformance/test_model_file.py` (an independent reader and writer of the field; a file of kind 4 to 7 with order 0, 1, 3 and `0xFFFFFFFF` is `ml.model.version`, a
+  kind 1 to 3 file with the extra four bytes is malformed), `tests/t_pipeline.cho`, `t_pipeline_fuzz.cho`, `oracle_pipe.py --file`.
+
 **Registry of the numbers in the file (added at integration; one table, a number is never reused).** `lib/core/kinds.cho` holds the
 model kinds and `tests/t_registry.cho` and `scripts/check_registry.py` fail if two stages claim one number or a stage's own constant
 differs from this table. Model kinds (the `u32` that opens the payload of the `model` section):
@@ -489,10 +510,11 @@ model file of kinds 1 to 3. Which bytes were measured to be unchanged is in `doc
 **The model file and the order.** There are no shipped models of kinds 4 to 7: `mfile.cho` refuses them and the libraries' `record.cho`
 writes the `model` section payload only. The CML1 `meta` section records the compiler pin; its `u32 hyperparameters` is a count that is 0
 and has no defined entries, and the file `version` covers the layout, not the arithmetic. **So there is no existing place for a "sum order
-version", and none was added.** Proposal [not implemented, needs the maintainer]: when the verbs first write kinds 4 to 7, the `meta` section
-gets a `u32 sum order` after the compiler pin (1 = one chain per block, retired and never written by a model file; **2 = this order**), and a
-reader refuses a file whose value it does not implement (`ml.model.version`). The extension costs nothing in compatibility because no file
-that needs it exists; kinds 1 to 3 do not depend on a float order and keep writing the layout of section 4.1 unchanged.
+version", and none was added.** *Implemented at `v1-post`* (the maintainer's decision was given with the task): the `meta` section of a file of **kind 4 or above** gets a
+`u32 sum order` after the compiler pin (1 = one chain per block, retired and never written by a model file; **2 = this order**), and a
+reader refuses a file whose value it does not implement (`ml.model.version`); the rule, with the encoding (presence by kind, no flag) is section 4.1. The
+extension costs nothing in compatibility because no file that needs it existed; kinds 1 to 3 do not depend on a float order and write the layout of section 4.1
+unchanged, byte for byte (`tests/conformance/test_model_file.py` parses it).
 
 ## 18. Stages M3 and M4: transforms and the pipeline (libraries only)
 

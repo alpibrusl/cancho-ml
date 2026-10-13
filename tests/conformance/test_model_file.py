@@ -69,6 +69,42 @@ def parse(data):
     return out
 
 
+SUM_ORDER = 2  # design.md 4.1: the order of docs/linalg.md section 2; 1 is retired, 0 and 3 and above are unassigned
+
+
+def write_file(secs):
+    """An independent WRITER of CML1 from design.md 4.1: the five payloads (tag 1 to 5) in order, then the SHA-256 trailer."""
+    out = b"CML1" + struct.pack("<II", 1, 5)
+    for tag in range(1, 6):
+        out += struct.pack("<IQ", tag, len(secs[tag])) + secs[tag]
+    return out + hashlib.sha256(out).digest()
+
+
+def payloads(data):
+    """{tag: payload} of a model file"""
+    out = {}
+    pos = 12
+    for _ in range(5):
+        tag = u32(data, pos)
+        n = struct.unpack_from("<Q", data, pos + 4)[0]
+        out[tag] = data[pos + 12:pos + 12 + n]
+        pos += 12 + n
+    return out
+
+
+def ordered_file(base, kind, order, pin=None):
+    """The file `base` (a constant model) turned into one of model kind `kind` (4 to 7) with `order` as the last four bytes of meta, the way design.md 4.1 says
+    a library writes it: meta = rows, columns, seed, hyperparameters 0, pin length, pin, u32 sum_order. The model payload keeps the constant model's
+    record after the kind (the reader of `ml` looks at the kind and the order and says the kind is not built)."""
+    secs = payloads(base)
+    secs[4] = struct.pack("<I", kind) + secs[4][4:]
+    me = secs[5]
+    if pin is not None:
+        me = me[:28] + struct.pack("<I", len(pin)) + pin
+    secs[5] = me + struct.pack("<I", order)
+    return write_file(secs)
+
+
 class ModelFile(unittest.TestCase):
     def setUp(self):
         self.sb = Sandbox()
@@ -113,6 +149,71 @@ class ModelFile(unittest.TestCase):
         self.assertEqual(m["plan"], "model kind=constant task=classification\n")
         self.assertEqual(m["kind"], 2)
         self.assertEqual(m["stats"], [5, 2, 0, 1, 2, 3])
+
+    def test_constant_kinds_have_no_sum_order_in_meta(self):
+        # kinds 1 to 3 do not depend on a float order: their meta is exactly 32 + pin length bytes (parse() asserts it), the bytes the first slice wrote
+        self.sb.write("f.csv", "y\n1.5e0\n2.5\n")
+        self.assertEqual(self.sb.run("fit", "--target", "y", "--output", "f.cml", "f.csv").status, 0)
+        for data, kind in ((self.reg, 1), (self.cls, 2), (self.sb.read("f.cml"), 3)):
+            me = payloads(data)[5]
+            self.assertEqual(u32(payloads(data)[4], 0), kind)
+            self.assertEqual(len(me), 32 + u32(me, 28), "kind %d" % kind)
+        # the writer of this test, applied to the parsed sections, gives the bytes back (the layout is the one parse() reads)
+        self.assertEqual(write_file(payloads(self.reg)), self.reg)
+
+    def test_the_sum_order_of_kinds_4_to_7(self):
+        for kind in (4, 5, 6, 7):
+            for order in (0, 1, 3, 4, 255, 0x10000, 0xFFFFFFFF):
+                data = ordered_file(self.reg, kind, order)
+                self.assertEqual(self.check_refused(data, "kind %d order %d" % (kind, order)), "ml.model.version")
+                err = self.try_model(data).error()
+                self.assertEqual((err["detail"]["sum_order"], err["detail"]["known"]), (order, SUM_ORDER))
+            # order 2 is the one this reader implements; ml builds kinds 1 to 3 only, so it is refused as a model it does not build
+            self.assertEqual(self.check_refused(ordered_file(self.reg, kind, SUM_ORDER), "kind %d order 2" % kind), "ml.model.malformed")
+            # the pin may be any length 0 to 255: the field is always the last four bytes
+            for pin in (b"", b"x", b"a4572ea" * 36):
+                self.assertEqual(self.check_refused(ordered_file(self.reg, kind, 1, pin), "pin %d" % len(pin)), "ml.model.version")
+
+    def test_a_meta_of_the_wrong_length_for_its_kind_is_malformed_never_a_sum_order(self):
+        # a constant model (kinds 1 to 3) with the four extra bytes, whatever they say
+        for kind, base in ((1, self.reg), (2, self.cls)):
+            for order in (1, 2, 3):
+                secs = payloads(base)
+                secs[5] = secs[5] + struct.pack("<I", order)
+                self.assertEqual(self.check_refused(write_file(secs), "kind %d + order %d" % (kind, order)), "ml.model.malformed")
+        # a model of kind 4 to 7 without the field (35 bytes of meta), or with the pin length lying
+        for kind in (4, 7):
+            secs = payloads(self.reg)
+            secs[4] = struct.pack("<I", kind) + secs[4][4:]
+            self.assertEqual(self.check_refused(write_file(secs), "kind %d, no field" % kind), "ml.model.malformed")
+            data = ordered_file(self.reg, kind, 1)
+            me = payloads(data)[5]
+            for lie in (0, 2, 4, 300):
+                secs = payloads(data)
+                secs[5] = me[:28] + struct.pack("<I", lie) + me[32:]
+                self.assertEqual(self.check_refused(write_file(secs), "kind %d, pin length %d" % (kind, lie)), "ml.model.malformed")
+
+    def test_corrupted_files_of_an_ordered_kind(self):
+        data = ordered_file(self.reg, 4, SUM_ORDER)
+        n = len(data)
+        for cut in range(n):
+            self.assertEqual(self.check_refused(data[:cut], "length %d" % cut), "ml.model.truncated")
+        order_at = n - 32 - 4
+        for at in range(n):
+            for mask in (0x01, 0x80, 0xFF):
+                b = bytearray(data)
+                b[at] ^= mask
+                got = self.check_refused(bytes(b), "flip %#x at %d" % (mask, at))
+                self.assertIn(got, MODEL_RULES)
+                # with the checksum repaired: a changed order is the version refusal, whatever else is in the file
+                if order_at <= at < order_at + 4:
+                    self.assertEqual(self.check_refused(fix_checksum(bytes(b)), "order byte %d repaired" % at), "ml.model.version")
+        rng = random.Random(20261013)
+        for i in range(300):
+            b = bytearray(data)
+            for _ in range(rng.randint(1, 6)):
+                b[rng.randrange(n)] = rng.randrange(256)
+            self.check_refused(fix_checksum(bytes(b)), "damage %d" % i, MODEL_RULES | {"ml.schema.mismatch"})
 
     def test_the_file_has_no_timestamp_host_or_path(self):
         data = self.reg
