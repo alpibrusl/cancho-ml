@@ -43,7 +43,7 @@ If D1 cannot be kept for a feature, the feature is refused or the exception is w
   works from the bitmap.
 * **Reading.** Cells go through cancho-table's exact reader (`:int`, `:dec(S)`, `:float`, correctly rounded). *(Corrected in place: this
   bullet said the reader of 15 to 17 digit doubles, `tools/table/flt.cho`, was on a branch and **not merged**. It is merged: cancho-table PR #32,
-  `main` at `7f36608`. What `ml` does with it and how it is pinned (six `[dependencies.*]` at cancho-table `202b214`) is `docs/reader.md`.)*
+  `main` at `7f36608`. What `ml` does with it and how it is pinned (five `[dependencies.*]` at cancho-table `202b214`) is `docs/reader.md`.)*
 * **No `float_of_bits`.** cancho has `bits_of` and no inverse; it is "missing on purpose" (`floating-point.md` §4.1)
   **[read]**. A stored double is therefore rebuilt from integers: mantissa as `float_of`, then `ldexp` from `std/math.cho`,
   which is exact for normal numbers. The cost of that load is **[M0]** (it is outside the timed fit but inside `predict`
@@ -455,7 +455,7 @@ What is shared: the reader (`:int`, `:dec`, `:float`), the typed keys and the ex
 cancho-table exports and cancho-ml depends on at a pinned commit; (b) a small `cancho-numeric` package both depend on.
 Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. *(Done, `docs/reader.md` section 1: option (a) needed
 no change to any source of cancho-table, only that it publish `pow5`, `dec`, `flt`, `query`, `facc` and `reader` as `.cancho-vcs` stores
-at a commit, with a CI check that they match (cancho-table PR #44, merged). `ml` pins them as six `[dependencies.*]`; the proposal is kept in
+at a commit, with a CI check that they match (cancho-table PR #44, merged). `ml` pins five of them as `[dependencies.*]` (`pow5`, `dec`, `flt`, `facc`, `reader`); the proposal is kept in
 `docs/upstream/` as the record.)*
 
 ## 11. What M0 must settle before section 6 and 9 are final

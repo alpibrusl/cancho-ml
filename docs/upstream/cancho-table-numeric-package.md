@@ -1,5 +1,7 @@
 # Proposal for cancho-table: publish the numeric modules as `.cancho-vcs` stores
 
+**Done (cancho-table PR #44). The body is the proposal as drafted; where it says cancho-ml reads or calls `query`, that is not so: cancho-ml pins `pow5`, `dec`, `flt`, `facc` and `reader`.**
+
 **Status: a draft written by cancho-ml's reader stage. NOT filed, NOT pushed, nothing in cancho-table was edited.** The facts below
 were measured on a read-only clone of `alpibrusl/cancho-table` at `7f3660881750f772bfd38de01792263fda930519` (main, after PR #32), with
 the compilers `a4572ea` (cancho-ml's pin) and `e47d647` (cancho-table's pin). The tool that proves it is `publish_numeric.py` beside this file.

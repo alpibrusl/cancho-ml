@@ -10,9 +10,9 @@ copy of cancho-table's code**, and what does cancho-table have to do for that to
 
 ## 1. The dependency
 
-cancho-table's numeric modules are a **pinned package dependency** of `ml`: six `[dependencies.*]` in `cancho.toml` (`pow5`, `dec`, `flt`,
-`query`, `facc`, `reader`), one rev, no copy. Sections 1.1 and 1.2 are how that became possible (what was found, what cancho-table did);
-1.3 is the pin; 1.4 is how to move it.
+cancho-table's numeric modules are a **pinned package dependency** of `ml`: five `[dependencies.*]` in `cancho.toml` (`pow5`, `dec`, `flt`,
+`facc`, `reader`), one rev, no copy. `ml` imports `flt`, `facc` and `reader`; `flt` imports `dec` and `pow5`. Sections 1.1 and 1.2 are how
+that became possible (what was found, what cancho-table did); 1.3 is the pin; 1.4 is how to move it.
 
 ### 1.1 What was found (at cancho-table `7f36608`, before the stores existed)
 
@@ -28,7 +28,7 @@ cancho-table's numeric modules are a **pinned package dependency** of `ml`: six 
 * **cancho-table had no store at any commit [measured].** `git ls-tree -r 7f36608` has no `.cancho-vcs`; cancho-table is a binary
   repository (`[[bin]] table`). The reason was exactly "no store is committed", not "the code cannot be a package".
 * **The code is a package unchanged [measured].** A draft publisher (`docs/upstream/publish_numeric.py`) published the six modules of
-  `7f36608` into one store per module (2, 10, 13, 41, 9 and 4 declarations), each requiring the stores of the modules it imports, into a
+  `7f36608` (the five above and cancho-table's `query`) into one store per module (2, 10, 13, 41, 9 and 4 declarations), each requiring the stores of the modules it imports, into a
   scratch git repository; a scratch project with `[dependencies.flt|query|facc|reader]` ran `cancho install` (1 + 3 + 4 + 1 files: the
   closure through `requires/`), built with compiler `a4572ea` and ran `flt.parse_float` and `query.parse_dec`. The same with stores
   **published by compiler `e47d647`** (the one cancho-table is pinned to) and **consumed by `a4572ea`** (this repository's).
@@ -39,16 +39,15 @@ cancho-table PR #44 ("Publish the numeric modules as .cancho-vcs stores another 
 `.cancho-vcs/{pow5,dec,flt,query,facc,reader}` (published by compiler `e47d647`) and `scripts/publish_numeric.py`, and its
 `docs/numbers.md` section 1.1 lists the 15 public functions a consumer pins against: `flt.parse_float`, `flt.key_of`, `flt.float_of_key`,
 `flt.put_float`, `query.parse_int`, `query.parse_dec`, `query.pow10`, `facc.width`, `facc.add_bits`, `facc.normalize`, `facc.finalize_key`,
-`facc.mean_key`, `reader.scan`, `reader.fields` and `reader.split_header`. A change to one of them is a change to a pinned interface, and the
+`facc.mean_key`, `reader.scan`, `reader.fields` and `reader.split_header`; `ml` calls those of `flt`, `facc` and `reader`. A change to one of them is a change to a pinned interface, and the
 stores are republished in the same commit (its words). The proposal text that asked for this is `docs/upstream/cancho-table-numeric-package.md`
-(kept as the record; it was not filed by this repository). `query` also holds 38 other declarations (the `--where` grammar's values); a
-smaller module with only `parse_int`, `parse_dec` and `pow10` would make the dependency smaller. That is not asked for.
+(kept as the record; it was not filed by this repository).
 
 ### 1.3 The pin
 
 cancho-table rev: `202b214372a03ec6ed8ca841357f3d2ed4de8aa0`
 
-This is the merge commit of cancho-table PR #44. `cancho.toml` has, for each of `pow5`, `dec`, `flt`, `query`, `facc` and `reader`:
+This is the merge commit of cancho-table PR #44. `cancho.toml` has, for each of `pow5`, `dec`, `flt`, `facc` and `reader`:
 
 ```
 [dependencies.flt]
@@ -60,15 +59,15 @@ path = ".cancho-vcs/flt"
 the same form as the `cancho-tools` contract packages. `[[bin]] ml` lists only this repository's sources; `cancho install` fetches the
 stores into `build/deps` (not committed; **it needs the network**), and the scripts that build from a file list (`build_reader.sh`,
 `gate_pipe.sh`, `check.sh`'s registry test, the mutants) pass `build/deps/*.cho`. `scripts/check_table_pin.sh` (gate RD1) checks that
-the six entries agree, that the rev is the one on the line above, that no `sources` entry leaves the tree and that no `.cho` file under `lib/`,
-`tools/` or `tests/` declares one of the six modules; `CHECK_REMOTE=1` also asks GitHub whether the rev has the six stores. Nothing of
-cancho-table is copied here. Local-development arrangement removed: `table.pin`, the clone at `../cancho-table-main` and `$CANCHO_TABLE`.
+the five entries agree, that no other cancho-table store is listed, that the rev is the one on the line above, that the RD1 row of section 5
+names the same five, that no `sources` entry leaves the tree and that no `.cho` file under `lib/`, `tools/` or `tests/` declares one of the five
+modules; `CHECK_REMOTE=1` also asks GitHub whether the rev has the five stores. Nothing of cancho-table is copied here. `build/ml` built with cancho-table's `query` store also listed and built without it (the five above): SHA-256 `6c17f7e89cf8a8b2ae380d0ac3906913a080f794b7af867ec03c4da59eab9ef5` and `6c17f7e89cf8a8b2ae380d0ac3906913a080f794b7af867ec03c4da59eab9ef5`, 811,232 bytes each, and the 12 files of a seeded `fit`, `predict` and `eval` of the three models are byte-identical. Local-development arrangement removed: `table.pin`, the clone at `../cancho-table-main` and `$CANCHO_TABLE`.
 
 ### 1.4 Moving the pin
 
 1. Choose a cancho-table commit that has the stores (`CHECK_REMOTE=1 sh scripts/check_table_pin.sh` after step 2 asks GitHub) and read what changed in
    the fifteen functions of 1.2 (its `docs/numbers.md` section 1.1 and the commit messages).
-2. Change `rev` in the six blocks of `cancho.toml` and the line in 1.3 to the same 40 hex digits.
+2. Change `rev` in the five blocks of `cancho.toml` and the line in 1.3 to the same 40 hex digits.
 3. `rm -rf build && cancho install && cancho build --bin ml`, then `scripts/check.sh` (it runs RD1 to RD8) and `scripts/mutants_reader.py`.
 4. Show that the reader's bytes did not change (or say that they did and why): the dumps of `reader-check --mode dump` and the model files of `ml fit`
    on the same inputs, before and after (section 6 says how this was done for the first pin).
@@ -150,7 +149,7 @@ listed with its reason in section 6.
 
 | id | gate | test | mutants that must be killed |
 |---|---|---|---|
-| RD1 | **Pinned, not copied.** `cancho.toml` has `[dependencies.X]` for the six modules, each `git` = cancho-table, `path` = `.cancho-vcs/X`, one `rev` of 40 hex digits, the same in all six and equal to the one documented in section 1.3; no `sources` entry leaves this tree; no `.cho` file under `lib/`, `tools/` or `tests/` declares one of the six modules; after `cancho install` the six modules are in `build/deps`; with `CHECK_REMOTE=1` the rev has the six stores on GitHub (skipped offline). | `scripts/check_table_pin.sh` | a rev that differs in one module; a rev the docs do not document; a short rev; the path of another module; a missing dependency; a `../cancho-table-main` sources entry; a module declared in `tools/ml` or in `lib/core` |
+| RD1 | **Pinned, not copied.** `cancho.toml` has `[dependencies.X]` for the five modules `pow5`, `dec`, `flt`, `facc` and `reader`, each `git` = cancho-table, `path` = `.cancho-vcs/X`, one `rev` of 40 hex digits, the same in all five and equal to the one documented in section 1.3; no other `[dependencies.X]` has `git` = cancho-table (a sixth store is refused); this row names the five and no other; no `sources` entry leaves this tree; no `.cho` file under `lib/`, `tools/` or `tests/` declares one of the five modules; after `cancho install` the five modules are in `build/deps`; with `CHECK_REMOTE=1` the rev has the five stores on GitHub (skipped offline). | `scripts/check_table_pin.sh` | a rev that differs in one module; a rev the docs do not document; a short rev; the path of another module; a missing dependency; a dropped module; a sixth store added; a document row that names a sixth; a `../cancho-table-main` sources entry; a module declared in `tools/ml` or in `lib/core` |
 | RD2 | **Differential, zero differences.** `reader-check` reads files of generated and adversarial cells and prints every cell's 64 bits; Python's `float()` (and `Fraction` for the halfway cells) gives the expected bits; the number of differences is 0 over at least 2,000,000 cells, which hold: 17-digit and shortest-repr doubles, every power of ten from 1e-330 to 1e310 with the digits 1, 9, 17-digit neighbours, the midpoint between adjacent doubles written exactly (up to 767 digits) and its neighbours one unit of the last digit either side, subnormals (the smallest, half of it, the largest, one below normal), `2^53 + 1`, exponents (`e`, `E`, `+`, `-`, leading zeros, 20-digit exponents, huge ones), signed zeros, `.5`, `5.`, `+5`, leading and trailing zeros, ints and decs with up to 12 digits. Expected refusals (one file each, about 200: `nan`, `inf`, `infinity` in all cases and signs, `1e400`, `1e-400`, `0x10`, `1_0`, ` 1`, `1 `, `1e`, `e5`, `.`, `-`, `+`, `1.2.3`, `--1`, 1,101 bytes, an empty exponent, a NUL) have the tag and reason the spec says. | `scripts/gate_reader.py diff` | Clinger limit 22 to 23; Eisel-Lemire's sticky retry removed; ties not to even in the exact tier; a negative sign dropped; the int/dec path multiplying by the reciprocal; the mantissa digits capped at 11; `-0` kept as a negative zero; the bitmap bit written to the next column; NaN stored; `.5` refused |
 | RD3 | **Matrix and bitmap.** For the same files with empty cells, the missing set printed by `reader-check` equals the set Python computed, per column and in total; a missing cell's data is `0.0`; the kept columns are the non-dropped; types inferred equal Python's (int < dec(S) < float). | `scripts/gate_reader.py matrix` | empty cell treated as 0 with no bit; bit word/shift off by one at row 31/32 and at 1 row; types not widening; `--drop` column kept |
 | RD4 | **Limits, before allocation.** Each cap has a file one over it that is refused with its tag (rows, columns, cells, line, and the 1,100-byte cell), and the refusal is reached with the matrix not built: peak memory of the refusal of a 200 MB file stays under 16 MB. `ml.matrix.make` with `2^31 - 1` rows and 4,096 columns answers a refusal code and allocates nothing (a unit test). | `scripts/gate_reader.py limits`, `tests/matrix.cho` | the row check after the row is stored; the cell cap by a product that overflows; the column cap off by one; the line cap not applied to a record that spans lines |
@@ -172,7 +171,7 @@ benchmark of anything but the binaries named.
 
 | gate | result |
 |---|---|
-| RD1 pin | ok; 8 mutants (a rev that differs in one module, a rev the docs do not document, a short rev, the path of another module, a missing dependency, a `../` sources entry, a module declared in `tools/ml`, one in `lib/core`) all caught |
+| RD1 pin | ok; 11 mutants (a rev that differs in one module, a rev the docs do not document, a short rev, the path of another module, a missing dependency, a dropped dependency, a sixth store added, a document row that names a sixth, one that leaves a module out, a `../` sources entry, a module declared in `tools/ml`, one in `lib/core`) all caught |
 | RD2 differential | **1,966,143 accepted cells compared bit for bit with Python `float()` and 34,380 refusals compared (status, aux): 0 differences** (seed 1) |
 | RD3 matrix | 192 random files (missing cells, `--drop`, `--float`, rows 1 to 200 across the 32-row word edges), 28,518 cells, values, missing bits, kinds, hash; 216 kind/scale checks: 0 differences |
 | RD4 limits | 36 checks, 0 differences. A 200 MB file refused at its 11th row, at the cell cap, and at `matrix.make` peaks at 1.5 MB (16 MB allowed); read whole into the matrix the same file peaks at 414 MB, so an allocation before the check would show |
@@ -181,7 +180,7 @@ benchmark of anything but the binaries named.
 | RD7 CLI oracle | `tests/conformance/test_float.py`, 11 tests (240 seeded datasets, exact ties in the mean and in `sse`, row-order independence): all pass |
 | conformance suite | 101 tests, all pass, 1 skipped (the `--threads` branch of D1). Of the 88 of the CLI slice, **2 were rewritten because they asserted the refusal this stage removes** (`test_float_text_is_refused_not_approximated`, `test_the_hint_names_the_missing_dependency`); the other 86 are untouched |
 
-**Mutants.** `scripts/mutants_reader.py`: 40 on the reader gates + 8 on the pin (4 before the switch), `docs/bench/mutants_reader.log`: **36 killed, 4 survivors, all
+**Mutants.** `scripts/mutants_reader.py`: 40 on the reader gates + 11 on the pin, `docs/bench/mutants_reader.log`: **36 killed, 4 survivors, all
 explained**: `rd2-nan-one-layer` (nan and inf are refused twice, by `ml.csvcell` and by `flt`: equivalent), `rd4-cell-cap-by-product` (every cap is at most
 2^31 - 1 so `rows * cols` cannot overflow: equivalent), `rd5-blank-line-in-quote-skipped` (the text of a quoted field is never read as a number: the only
 observable is the byte length against the cap), `rd6-fields-count-ignored` (`reader.scan` has counted the same fields: equivalent). Mutants of a
@@ -215,8 +214,8 @@ splitting, which table's fused reader does not (docs/readers.md of cancho-table)
 
 * **What changed in the code compiled.** Between the two commits `pow5.cho`, `dec.cho`, `flt.cho`, `facc.cho` and `reader.cho` of cancho-table are
   unchanged (`git diff --stat 7f36608 202b214 -- tools/table/<module>.cho` is empty for each); `query.cho` differs by 34 insertions and 21 deletions, all
-  of them a new field `sort` of the `Query` struct (the `--sort` flag of `table`); `parse_int`, `parse_dec` and `pow10`, the three functions `ml`
-  calls, are not touched. The stores are the re-rendered text of those files (published by compiler `e47d647`), not the files.
+  of them a new field `sort` of the `Query` struct (the `--sort` flag of `table`); `ml` imports nothing from
+  `query`. The stores are the re-rendered text of those files (published by compiler `e47d647`), not the files.
 * **Identical bytes [measured].** Before the switch (clone at `7f36608`, `build/ml` and `build/reader-check` built from it) and after (stores at `202b214`),
   on the same inputs, `shasum -a 256` of 20 files is the same list: `reader-check --mode dump`, `--mode hash` and `--mode shape` (with `--float a,b,y`
   and without) of three seeded files (`mixed`: 20,000 rows, floats of every spelling, subnormals, 2^53 + 1, empty cells; `floaty` and `decs`: 5,000 rows each),
@@ -228,16 +227,15 @@ splitting, which table's fused reader does not (docs/readers.md of cancho-table)
   1 skipped; 17 Cancho test programs ok; every `--check` of the mutant lists applies (`mutants_reader` 40, `mutants_cli` 53, `mutants_paths` 19, `mutants_pipe` 73, ...).
   The RD1 line changed from `6 sources at 7f36608` to `6 dependencies at 202b214`.
 * **Mutant suites run after the switch.** `mutants_reader` 40 reader mutants: 36 killed, 4 survive and are explained (the same four as before), plus the 8 RD1 mutants (4 before) all killed; `mutants_cli` 53 killed of 53; `mutants_paths` 19 killed of 19; `mutants_pipe` 72 killed, 1 survives and is explained. Their lists are the same as before the switch except the RD1 ones.
-* **`cancho install`.** It needs the network: it fetches `cancho-tools` and `cancho-table` at their revs. With the six new dependencies it printed
-  15 `installed` lines and took 1.4 seconds (wall, once, after the cancho-tools stores had been fetched by an earlier call); 17 files in `build/deps`
-  (6,907 lines).
+* **`cancho install`.** It needs the network: it fetches `cancho-tools` and `cancho-table` at their revs. With the six dependencies of that
+  time it printed 15 `installed` lines and took 1.4 seconds (wall, once, after the cancho-tools stores had been fetched by an earlier call); 17 files in `build/deps`
+  (6,907 lines). With the five that `cancho.toml` has now, `build/deps` holds 16 files.
 * **Speed.** RD9 was not re-run: the machine was not quiet (1-minute load 7 to 9 during this work, other agents building). The numbers of
   section 6 predate the switch. They should not move (the reader modules are unchanged), but that is an expectation, not a measurement.
 
 ## 7. Open questions
 
-1. **Whether `query` should be split** so a consumer does not carry its 38 other declarations (section 1.2). **CI**: the file list no longer needs a
-   sibling clone, but this repository has no workflow yet; a CI run would need the network for `cancho install`.
+1. **CI**: the file list no longer needs a sibling clone, but this repository has no workflow yet; a CI run would need the network for `cancho install`.
 2. **The CLI builds no matrix for the constant model** *(answered at W1 for the other models: `linear` and `logistic` read the file with the loader, `tools/ml/csvload.cho` `load_t`; mode 9 of the scan skips a target column that predict does not need)*.
 3. **Missing cells.** The loader records them; the constant model still refuses an empty cell. *(At W1 the pipeline models take it as a missing value that the plan must `impute`; if it is not imputed the fit is refused with `ml.input.missing-value` and a repair.)*
    One consequence of "a blank line is not a record": in a one-column file an empty cell must be written `""`.

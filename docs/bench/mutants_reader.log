@@ -1,11 +1,16 @@
+Tue Oct 13 14:47:40 CEST 2026
 control (unmutated): passes every gate
-rd1-control                                  passes  check_table_pin: ok (6 dependencies at 202b214, none copied)
+rd1-control                                  passes  check_table_pin: ok (5 dependencies at 202b214, none copied)
 rd1-rev-of-one-module-differs                KILLED  check_table_pin: [dependencies.flt]: rev 002b214372a03ec6ed8ca841357f3d2ed4de8aa0 is not t
 rd1-rev-not-the-documented-one               KILLED  check_table_pin: [dependencies.pow5]: rev 202b214372a03ec6ed8ca841357f3d2ed4de8aa0 is not 
 rd1-rev-short                                KILLED  check_table_pin: [dependencies.flt]: rev is not a full commit hash (7 digits)
 rd1-path-of-another-module                   KILLED  check_table_pin: [dependencies.flt]: path is '.cancho-vcs/dec', not .cancho-vcs/flt
-rd1-dependency-missing                       KILLED  check_table_pin: /var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/tmp0fsvjsh2/cancho.toml 
-rd1-local-sources-entry                      KILLED  check_table_pin: a sources entry of /var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/tmp86
+rd1-dependency-missing                       KILLED  check_table_pin: /var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/tmpksx6na6k/cancho.toml 
+rd1-dependency-dropped                       KILLED  check_table_pin: /var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/tmpcmj7_yc3/cancho.toml 
+rd1-sixth-store-added                        KILLED  check_table_pin: [dependencies.query] is a cancho-table store that is not in the documente
+rd1-doc-row-names-a-sixth                    KILLED  check_table_pin: the RD1 row of /var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/tmpo1yu8e
+rd1-doc-row-leaves-one-out                   KILLED  check_table_pin: the RD1 row of /var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/tmp33bmi_
+rd1-local-sources-entry                      KILLED  check_table_pin: a sources entry of /var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/tmp4h
 rd1-vendored-copy                            KILLED  check_table_pin: tools/ml/flt.cho declares module flt, which is cancho-table's
 rd1-vendored-copy-under-lib                  KILLED  check_table_pin: lib/core/reader.cho declares module reader, which is cancho-table's
 rd2-clinger-limit-23                     KILLED   (diff) diff: DIFFERENCE ('file 0 refused: ', None, None)
@@ -38,7 +43,7 @@ rd4-row-cap-off-by-one                   KILLED   (limits) limits: DIFFERENCE ('
 rd4-column-cap-off-by-one                KILLED   (limits) limits: DIFFERENCE ('columns over by one (1)', 'refused 6 ', 'refused-matrix ml.input.too-many-columns')
 rd4-cell-cap-off-by-one                  KILLED   (limits) limits: DIFFERENCE ('cells 10x3 over 29', 'refused 13 ', 'refused-matrix ml.input.too-many-cells')
 rd4-record-cap-removed                   KILLED   (limits) limits: DIFFERENCE ('a record of 3 lines over the cap', 'refused 2 2 0 ', 'rows 1')
-rd4-matrix-before-check                  KILLED   (limits) limits: DIFFERENCE ('matrix.make refuses before allocating', 8, 401.539072, "['refused-matrix ml.param.out-of-
+rd4-matrix-before-check                  KILLED   (limits) limits: DIFFERENCE ('matrix.make refuses before allocating', 8, 401.555456, "['refused-matrix ml.param.out-of-
 rd4-cell-cap-by-product                  SURVIVED, explained: equivalent: every cap is at most 2^31 - 1 (ml.limits.ceiling_dim) so rows * cols stays below 2^62; the division is defen
 rd5-cr-kept                              KILLED   (csv) csv: DIFFERENCE ('refused', 4, 'refused 8 2 4 2\n')
 rd5-bom-kept                             KILLED   (csv) csv: DIFFERENCE ('names', 7, ['ï»¿x0', 'x2', 'x4'])
@@ -49,3 +54,5 @@ rd5-blank-line-in-quote-skipped          SURVIVED, explained: equivalent for eve
 rd6-field-count-not-checked              KILLED   (fuzz) fuzz: TRAP OR BAD OUTPUT ('mutated', -4, '', b'a,e\x9a\xae\xb8b,c\n1')
 rd6-fields-count-ignored                 SURVIVED, explained: equivalent: reader.scan has already counted the same fields and flagged the same quotes of the same record (seps + 1 != 
 36 killed, 4 survived and explained, 0 unexplained or invalid
+EXIT 0
+Tue Oct 13 14:53:47 CEST 2026

@@ -4,13 +4,13 @@
 
 **Classical machine learning on tabular data, as a command line an agent can read.** `ml` fits, applies and scores a model on a CSV with explicit semantics, exact sums where a sum decides the result, bounded resources, structured refusals and a machine-verifiable authority. It is a command line, not a chat box: you (or an agent) give it flags, it gives back one JSON line, or a named refusal with a repair. One small binary, written in [cancho](https://github.com/alpibrusl/cancho), built the way [cancho-table](https://github.com/alpibrusl/cancho-table) is. The [project page](https://alpibrusl.github.io/cancho-ml/) has the same in pages.
 
-**Status: early, alpha, not for production.** The command line builds three models. `--model constant` is the baseline: the training mean for a regression, the majority class for a classification. `--model linear` (least squares, ridge with `--l2`) and `--model logistic` (binary, Newton's method) go through a pipeline of steps (`impute`, `scale`, `encode`, `bucket`) that `--step` or `--plan` describes and that is fitted on the training rows and stored, with the model, in **one** file: `predict` and `eval` apply the stored steps, and no flag can apply another transformation. A float and decimal CSV reader, an empty cell as a missing value that the plan must impute, a seeded `--split`, `--threads` for `fit`, `predict --proba` and the metrics of `eval` (accuracy, precision, recall, F1, ROC-AUC, log-loss, RMSE, MAE, R2) are in. k-means, decision trees and random forests, and text columns, are **not** reachable yet: the first two exist as tested libraries, and text categories are the next stage. A model is a module (a manifest, a fixed adapter, generated glue, an admission script) so that the next one cannot add a float order, a capability or an unregistered refusal: [docs/modules.md](docs/modules.md). One pre-registered gate is red (tree regression against scikit-learn, below). The whole list, with what each item was measured as: [docs/status.md](docs/status.md).
+**Status: early, alpha, not for production.** `ml` builds three models. `--model constant` is the baseline: the training mean for a regression, the majority class for a classification. `--model linear` (least squares, ridge with `--l2`) and `--model logistic` (binary, Newton's method) go through a pipeline of steps (`impute`, `scale`, `encode`, `bucket`) that `--step` or `--plan` describes and that is fitted on the training rows and stored, with the model, in **one** file: `predict` and `eval` apply the stored steps, and no flag can apply another transformation. `ml` reads integer, decimal and float CSV columns, takes an empty cell as a missing value that the plan must impute, holds rows out with a seeded `--split`, threads `fit` with `--threads`, gives probabilities with `predict --proba`, and scores with accuracy, precision, recall, F1, ROC-AUC, log-loss, RMSE, MAE and R2. Text columns declared with `--cat` are read into a bounded dictionary and then refused (`ml.input.categorical-not-encoded`), because no step encodes text. k-means, decision trees and random forests are tested libraries that no verb calls. A model is a module (a manifest, a fixed adapter, generated glue, an admission script) so that the next one cannot add a float order, a capability or an unregistered refusal: [docs/modules.md](docs/modules.md). One pre-registered gate is red (tree regression against scikit-learn, below). The whole list, with what each item was measured as: [docs/status.md](docs/status.md).
 
-There is no CI workflow in this repository yet. `scripts/check.sh` is what one would run, and `scripts/check_docs.sh` checks this README and the project page (see Contributing).
+This repository has no CI workflow. `scripts/check.sh` runs every gate, and `scripts/check_docs.sh` checks this README and the project pages (see Contributing).
 
 ## One complete flow
 
-Fit, predict, score, get refused with a repair, run the repair. The repair is the corrected command, and the output below is what the built program prints, on the small files shown under "What you can do now".
+Fit, predict, score, get refused with a repair, run the repair. The repair is the command with the mistake taken out, and the output below is what the built program prints, on the small files shown under "What you can do".
 
 <!-- gen:flow -->
 ```console
@@ -57,7 +57,7 @@ $ ml eval --model-file shop2.ml shop2.csv
 
 ## Worked examples
 
-Four classic datasets, as bundled with scikit-learn (breast cancer Wisconsin, diabetes progression, iris restricted to two species, wine), solved by the real `ml` binary and compared with scikit-learn on the **same two files** each. What is compared and the tolerances were written before any example was run ([docs/examples.md](docs/examples.md)); the commands and their output are on [the examples page](https://alpibrusl.github.io/cancho-ml/examples.html), with the failures that came first (a penalty-free logistic fit on separable data; a column whose type differs between two files). The `ml` output is regenerated by `scripts/check_docs.sh`; the scikit-learn column is read from `docs/examples/reference.json`, written once by `python3 scripts/examples_data.py` (needs scikit-learn), and **is not re-run by the check**. Nothing here is a claim about speed.
+Four classic datasets, as bundled with scikit-learn (breast cancer Wisconsin, diabetes progression, iris restricted to two species, wine), solved by the real `ml` binary and compared with scikit-learn on the **same two files** each. [docs/examples.md](docs/examples.md) fixes what is compared and the tolerances, and was written before any example was run; the commands and their output are on [the examples page](https://alpibrusl.github.io/cancho-ml/examples.html), with two failures shown (a penalty-free logistic fit on separable data; a column whose type differs between two files). The `ml` output is regenerated by `scripts/check_docs.sh`; the scikit-learn column is read from `docs/examples/reference.json`, written by `python3 scripts/examples_data.py` (needs scikit-learn), and **is not computed by the check**. Nothing here is a claim about speed.
 
 One complete flow, on the committed files `docs/examples/data/iris_train.csv` and `iris_test.csv` (copy them next to where you run it):
 
@@ -107,12 +107,12 @@ The headline numbers of every example, `ml` against scikit-learn on the same tes
 
 ## Why cancho-ml?
 
-Most ML tools optimise for how many models they offer. `ml` is built to be predictable first, and so far offers three models and a pipeline.
+Most ML tools optimise for how many models they offer. `ml` is built to be predictable first, and offers three models and a pipeline.
 
 * **Explicit types.** A column is an integer, a decimal (an exact mantissa and a scale) or a float (the nearest double, ties to even, read by cancho-table's exact reader). `nan`, `inf`, an empty cell and a cell that is not a number are refused, with the line and the column; `--drop` ignores a column. [docs/reader.md](docs/reader.md), [docs/cli.md](docs/cli.md)
 * **Exact where a sum decides.** The mean of an integer or decimal target and the sum of squared errors are exact integers, kept in limbs, not floats; a float target is summed exactly and rounded once. A test compares every digit with Python's `fractions.Fraction`. The one step that is not exact, the `rmse` (three IEEE operations after the exact sum), is said so in the document. [docs/cli.md](docs/cli.md) section 3
 * **The same bytes.** A model file holds no timestamp, host or path. The same data, plan and seed give the same model bytes whatever the working directory, the spelling of the path or the repetition, and at every `--threads` from 1 to 16 (tested on one Mac, for linear and logistic); across machines it is **not tested**. [docs/cli.md](docs/cli.md) section 6, [docs/linalg.md](docs/linalg.md) section 5.4
-* **Bounded resource use.** Rows, columns, cells, line length, model file size and log size each have a flag, a default and a ceiling, checked before anything sized by the input is allocated. No gate measures memory use. `ml introspect` lists the limits. [docs/cli.md](docs/cli.md) section 2.2
+* **Bounded resource use.** Rows, columns, cells, line length, model file size, log size and the categorical dictionary each have a flag, a default and a ceiling, checked before anything sized by the input is allocated. Peak memory is measured for one case, the reader's refusal of a 200 MB file (1.5 MB, `docs/reader.md` section 6); no gate measures the memory of a fit. `ml introspect` lists the limits. [docs/cli.md](docs/cli.md) section 2.2
 * **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, no standard input, and no write by path. `scripts/manifest.py --check` fails if the binary differs from the committed [`manifests/ml.authority.json`](manifests/ml.authority.json). [docs/cli.md](docs/cli.md) section 6
 * **Machine-readable errors.** One JSON line against a schema (`ml.v1`); a refusal is `{code, rule, message, hint, repair, detail}` with a stable `<area>.<name>` rule tag. [docs/design.md](docs/design.md) section 8
 * **Repair hints.** A refusal says how to fix the request, as an argv to run, or why there is none. [docs/cli.md](docs/cli.md)
@@ -121,7 +121,7 @@ Most ML tools optimise for how many models they offer. `ml` is built to be predi
 
 ## Two-minute quick start
 
-You need `git`, Rust, `clang` and `python3`, and the machine needs network access for the clones and for `cancho install`, which fetches the pinned modules into `build/deps`: the `cancho-tools` contract package and cancho-table's six numeric modules (`pow5`, `dec`, `flt`, `query`, `facc`, `reader`, the stores that [cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) committed), all `[dependencies.*]` of `cancho.toml`, each at one commit. The cancho-table rev is `202b214372a0`; nothing of cancho-table is cloned or copied, and `scripts/check_table_pin.sh` checks that the pin agrees with [docs/reader.md](docs/reader.md) section 1.3, which also says how to move it.
+You need `git`, Rust, `clang` and `python3`, and the machine needs network access for the clones and for `cancho install`, which fetches the pinned modules into `build/deps`: the `cancho-tools` contract package and cancho-table's five numeric modules (`pow5`, `dec`, `flt`, `facc`, `reader`, the stores that [cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) committed), all `[dependencies.*]` of `cancho.toml`, each at one commit. The cancho-table rev is `202b214372a0`; nothing of cancho-table is cloned or copied, and `scripts/check_table_pin.sh` checks that the pin agrees with [docs/reader.md](docs/reader.md) section 1.3, which also says how to move it.
 
 ```sh
 git clone https://github.com/alpibrusl/cancho                           # the compiler
@@ -144,7 +144,7 @@ printf 'id,rooms,area\n6,2,52.5\n7,3,80\n' > new.csv
 printf 'id,rooms,area,city\n6,2,52.5,Lyon\n7,3,80,Porto\n' > listings.csv
 ```
 
-On a 16-core Mac, with the compiler already built, `cancho build --bin ml` took 2.9 seconds once, after `cancho install` had fetched the modules (that fetch, from GitHub, took 1.4 seconds once). The compiler build and the clones are extra.
+On a 16-core Mac at a load average of 3 to 5, with the compiler built, `cancho install` took 1.4 seconds (once, from GitHub) and `cancho build --bin ml` 5.0 seconds (once). The compiler build and the clones are extra.
 
 Fit, predict, score, and a refusal:
 
@@ -162,7 +162,7 @@ $ ml predict --model-file houses.ml listings.csv
 ```
 <!-- /gen:qs -->
 
-## What you can do now
+## What you can do
 
 Every example runs on the small files above and the ones shown with it, in this order, and the output is what the program prints. The first examples use the constant model, whose prediction is the same for every row; the last two are the models that go through the pipeline.
 
@@ -229,7 +229,7 @@ $ ml eval --model-file sensor.ml sensor.csv
 
 ### Check before you write
 
-An existing output is refused unless `--overwrite` is given. `--dry-run` reads, checks and fits, runs every check the write would, and answers with the file it would write: exit 9, and nothing created or changed. The file is written to a temporary name beside the final one and renamed over it, so a reader never sees half a model.
+An existing output is refused unless `--overwrite` is given. `--dry-run` reads, checks and fits, runs every check the write would, and answers with the file it would write: exit 9, and nothing created or changed. The file is written to a temporary name beside the final one, synced and renamed over it; that this keeps a reader from seeing half a model, and two writers racing on one output, were not tested.
 
 <!-- gen:t-dry -->
 ```console
@@ -244,7 +244,7 @@ $ ml fit --dry-run --overwrite --target price --output houses.ml houses.csv
 
 ### A damaged model is refused
 
-The model file ends with the SHA-256 of every byte before it. Here one byte of `houses.ml` was changed and the file saved as `damaged.ml`.
+The model file ends with the SHA-256 of every byte before it. `damaged.ml` is `houses.ml` with one byte altered.
 
 <!-- gen:t-damaged -->
 ```console
@@ -332,7 +332,7 @@ authority   args, conc, dir_read, dir_write, err_write, file_read, file_write, f
 | 9 | `DRY_RUN` | a --dry-run completed; planned_actions lists what an apply would do |
 <!-- /gen:exit-codes -->
 
-* **The authority row.** What the compiler says the program can reach. It reads the files named on its command line, creates, appends to, renames and removes only beneath a directory it opened itself, and keeps its working data on the heap. `conc` is in the row since the wiring stage: `fit --threads N` calls the threaded kernels of `lib/linalg`; `tools.toml` states the reason, and the test that no thread count changes a byte is in the same diff ([docs/wiring.md](docs/wiring.md) section 6).
+* **The authority row.** What the compiler says the program can reach. It reads the files named on its command line, creates, appends to, renames and removes only beneath a directory it opened itself, and keeps its working data on the heap. `conc` is in the row because `fit --threads N` calls the threaded kernels of `lib/linalg`; `tools.toml` states the reason, and the test that no thread count changes a byte is in `tests/conformance` ([docs/wiring.md](docs/wiring.md) section 6).
 
 <!-- gen:authority -->
 ```console
@@ -345,22 +345,22 @@ ml    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read
 * **Where the output is the contract package's text, not a measurement for `ml`.** `introspect.guarantees` and parts of `skill` are written by the pinned `cancho-tools` package and are wrong or too narrow for `ml` in six places, for example "read-only: it never writes" although `fit` writes. They are listed in [docs/cli.md](docs/cli.md) section 8 so that nobody reads them as claims.
 * **An MCP server is not built.** `docs/cli.md` section 9 says how it would be derived from `introspect`.
 
-## What it cannot do yet
+## What it cannot do
 
-* **Three models are reachable.** `constant`, `linear` and `logistic`. k-means, decision trees and random forests exist as libraries (`lib/models`, [docs/models-linear.md](docs/models-linear.md), [docs/models-tree.md](docs/models-tree.md)), gated against independent oracles, with a manifest and `wired = false`: a plan naming one is `ml.plan.model-not-built`. Wiring one means writing its adapter and flipping `wired`; the admission script is what checks it ([docs/modules.md](docs/modules.md)).
-* **No text columns yet.** The pipeline has `impute`, `scale`, `encode` (of numbers) and `bucket`. A column of text must be dropped; text categories are the next stage, and the hook for them is in [docs/wiring.md](docs/wiring.md) section 3.
+* **Three models are reachable.** `constant`, `linear` and `logistic`. k-means, decision trees and random forests exist as libraries (`lib/models`, [docs/models-linear.md](docs/models-linear.md), [docs/models-tree.md](docs/models-tree.md)), gated against independent oracles, with a manifest and `wired = false`: a plan naming one is `ml.plan.model-not-built`. Wiring one takes its adapter and `wired = true`; the admission script is what checks it ([docs/modules.md](docs/modules.md)).
+* **Text columns are read and not encoded.** The pipeline has `impute`, `scale`, `encode` (of numbers) and `bucket`. `fit --cat NAMES` reads declared text columns into a dictionary sorted bytewise and an id matrix, with limits and refusals ([docs/categorical.md](docs/categorical.md)), and then refuses with `ml.input.categorical-not-encoded`; a text column that is not declared is `ml.input.non-numeric`, with `--drop` as the repair. No model file holds a text column.
 * **Binary classification only.** More than two labels is `ml.label.not-binary`.
 * **`--threads` is for `fit` only, in effect.** `eval` accepts and checks the flag, and nothing in it is threaded. The scores of `linear` and `logistic` are single-threaded.
-* **One red gate.** The regression forest against scikit-learn's: RMSE 8.1% apart where the tolerance was 3% (`docs/models-tree.md` section 10.8). The algorithms differ (histogram against exact splits) and the stage attributed most of the gap to that; the tolerance was not moved and the maintainer has not decided. [docs/models-tree.md](docs/models-tree.md)
+* **One red gate.** The regression forest against scikit-learn's: RMSE 8.1% apart where the tolerance is 3% (`docs/models-tree.md` section 10.8). The algorithms differ (histogram against exact splits) and most of the gap is attributed to that; the tolerance is kept and the maintainer has not decided. [docs/models-tree.md](docs/models-tree.md)
 * **Not tested across machines.** The bytes are verified on one Mac (arm64), at 1 to 16 threads. A Linux x86-64 run is not done.
-* **No CI workflow yet.** The reader is a pinned dependency on cancho-table's stores ([docs/reader.md](docs/reader.md) section 1), so the build no longer needs a sibling clone, but `cancho install` needs the network and nothing in this repository runs `scripts/check.sh` automatically.
-* **No serving, no MCP server.** `ml-serve` (issue #16) and an MCP server are not started.
+* **No CI workflow.** The reader is a pinned dependency on cancho-table's stores ([docs/reader.md](docs/reader.md) section 1), so the build needs no sibling clone, but `cancho install` needs the network and nothing in this repository runs `scripts/check.sh` automatically.
+* **No serving, no MCP server.** `ml-serve` (issue #16) and an MCP server are not built.
 * **No neural networks and no GPU.** They need matrix kernels, a GPU path and automatic differentiation, which cancho does not have. Inference of small exported models may come later; it is not planned in v1.
 * **Not built, not promised here:** multiclass, boosting, naive Bayes, k-NN, feature importance, out-of-bag scores, a model file for k-means and trees (kinds 6 and 7 are written by the libraries, not by `ml`).
 
 ## How fast
 
-**No speed is claimed for `ml`: the command line has not been timed.** The libraries under it were timed, on one Mac (arm64, 16 cores, macOS 26.2; the documents that name the chip say Apple M4 Max) that other users and other builds were also using. **The load average was 2.4 or more in every table, so every cell is flagged `load >= 2` and none is a quiet-machine number. A serial rerun on a quiet machine is pending; until it is done, read the numbers below as conditions of one afternoon, not as claims.**
+**No speed is claimed for `ml`: the command line has not been timed.** The libraries under it were timed, on one Mac (arm64, 16 cores, macOS 26.2; the documents that name the chip say Apple M4 Max) that other users and other builds were also using. **The load average was 2.4 or more in every table, so every cell is flagged `load >= 2` and none is a quiet-machine number: read the numbers below as the conditions of one afternoon, not as claims. The linear-algebra and model timings were taken with the summation order of one chain per block; the 4-lane order the libraries use today has not been timed.**
 
 Fitting 1,000,000 rows of 20 features on one thread, in milliseconds, minimum of 7 interleaved samples (spread 1.01 to 1.07), load average 2.4 to 3.2 at the start and end of each cell, and 6.6 to 7.1 as the 5- and 15-minute averages ([docs/bench/models-bench.txt](docs/bench/models-bench.txt), [docs/models-linear.md](docs/models-linear.md) section 6.5):
 
@@ -374,7 +374,7 @@ Fitting 1,000,000 rows of 20 features on one thread, in milliseconds, minimum of
 
 **Where it is not.** The triangular solves, and Cholesky at 21 and 64 columns, match; k-means is level with scikit-learn (306 against 330 ms); the AUC over a million scores took 24 ms against 86 ms for a thin numpy version and 147 ms for `sklearn.roc_auc_score`. The libraries are threaded and keep their bytes: logistic regression on 1,000,000 rows takes 240 ms on one thread and 59 ms on sixteen, linear regression gains 1.4 times, because every thread owns a copy of its rows ([docs/bench/models-bench.txt](docs/bench/models-bench.txt)).
 
-**Forests.** A forest of 10 trees on 100,000 rows fit in 0.0516 s on one thread and 0.0100 s on sixteen, where scikit-learn's `RandomForestClassifier` took 1.06 s and 0.132 s. **This is not a speed claim:** scikit-learn's forest looks for exact thresholds on the raw values and this one uses quantile bins (64 in this benchmark), so they are different algorithms making models of the same family. The quality of the classification forests agrees to 0.001 AUC; the regression forest does not (the red gate above).
+**Forests.** A forest of 10 trees on 100,000 rows fit in 0.0516 s on one thread and 0.0100 s on sixteen, where scikit-learn's `RandomForestClassifier` took 1.06 s and 0.132 s. **This is not a speed claim:** scikit-learn's forest looks for exact thresholds on the raw values and this one uses quantile bins (64 in this benchmark), so they are different algorithms making models of the same family. The quality of the classification forests agrees to within 0.0011 AUC; the regression forest does not (the red gate above).
 
 The tables, the load of each cell and how to rerun them: [project page](https://alpibrusl.github.io/cancho-ml/benchmarks.html).
 
@@ -386,25 +386,24 @@ The tables, the load of each cell and how to rerun them: [project page](https://
 | [worked examples](https://alpibrusl.github.io/cancho-ml/examples.html) | four classic datasets solved by `ml` and compared with scikit-learn on the same files |
 | [evidence](https://alpibrusl.github.io/cancho-ml/evidence.html) | the gates, the oracles and the mutants, and what each proves and does not prove |
 | [benchmarks](https://alpibrusl.github.io/cancho-ml/benchmarks.html) | what was timed, with machine, load and minimum of N; not claims |
-| [docs/status.md](docs/status.md) | what is built, what is left, what was measured, with the source document of each |
+| [docs/status.md](docs/status.md) | what is built, what is not, what was measured, with the source document of each |
 | [docs/examples.md](docs/examples.md) | the gate of the worked examples: what is compared, the `--l2` mapping, the tolerances and why |
 | [docs/design.md](docs/design.md) | the plan, the promises in tiers, the model file, the refusals and the registries |
 | [docs/cli.md](docs/cli.md) | the command line: gates, reference, arithmetic of the constant model, model file, log, authority |
 | [docs/wiring.md](docs/wiring.md), [docs/modules.md](docs/modules.md), [docs/models.md](docs/models.md) | linear and logistic through the pipeline; the module contract and the admission script; the table of models |
-| [docs/integration.md](docs/integration.md) | how the six stages were merged, every gate on the merged tree, what is not wired |
 | [docs/linalg.md](docs/linalg.md), [docs/rng.md](docs/rng.md) | the tensor and linear-algebra package and its summation order; the random generator |
 | [docs/reader.md](docs/reader.md) | the float and decimal CSV reader and the dependency on cancho-table |
 | [docs/metrics.md](docs/metrics.md) | metrics and splits |
 | [docs/models-linear.md](docs/models-linear.md), [docs/models-tree.md](docs/models-tree.md) | linear and logistic regression and k-means; trees and forests; the red gate |
-| [docs/upstream/](docs/upstream/) | reproducers for what cancho lacks, and the draft for cancho-table |
+| [docs/upstream/](docs/upstream/) | reproducers for what cancho lacks, and the proposal to cancho-table |
 
 ## Contributing
 
-Design before code, in `docs/design.md`, with claims measured; a claim that turns out false is corrected in place, in the document that made it. Gates are written before the code they judge and must be able to fail: a mutant per gate, all killed or each survivor explained. See [CLAUDE.md](CLAUDE.md).
+Design before code, in `docs/design.md`, with claims measured; a claim found false is edited in the document that made it. Gates are written before the code they judge and must be able to fail: a mutant per gate, all killed or each survivor explained. See [CLAUDE.md](CLAUDE.md).
 
-`scripts/check.sh` runs the format check, the unit tests, every library gate, the registry checks, the command line's conformance tests, the generator's drift check and the admission script on the three wired models, with the mutant modules it must refuse. It needs the compiler at the pinned revision, the network for `cancho install` and the files of the tree stage's spike at `../ml-data`. The mutant runs (`scripts/mutants_*.py`) rebuild the tool many times and run on request.
+`scripts/check.sh` runs the pin check, the format check, the unit tests, every library gate, the registry checks, the command line's conformance tests, the generator's drift check, the admission script on the three wired models with the mutant modules it must refuse, a check that every mutant edit still applies, and `scripts/check_docs.sh`. It needs the compiler at the pinned revision, the network for `cancho install` and the data files of the tree library's gate in `../ml-data`. The mutant runs (`scripts/mutants_*.py`) rebuild the tool many times and run on request.
 
-This README and the project page carry program output between paired `gen` comment markers. `python3 scripts/site.py` rewrites them from the built `build/ml`; `scripts/check_docs.sh` runs `site.py --check`, which fails if either file differs from what the binary prints, and `scripts/check_links.py`, which fails on a link to a file that is not in the repository. The prose, and every benchmark and gate figure, is written by hand next to its source document.
+This README and the project page carry program output between paired `gen` comment markers. `python3 scripts/site.py` rewrites them from the built `build/ml`; `scripts/check_docs.sh` runs `site.py --check`, which fails if either file differs from what the binary prints, and `scripts/check_links.py`, which fails on a link to a file that is not in the repository. `scripts/check_prose.py`, run by the same script, fails when this README, `docs/status.md` or a project page holds a phrase of history (the list is in the script, with a mutant per phrase). The prose, and every benchmark and gate figure, is written by hand next to its source document.
 
 ## Licence
 

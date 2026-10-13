@@ -1,0 +1,24 @@
+Tue Oct 13 14:40:56 CEST 2026
+mutants_paths: control (unmutated) passes
+helper-always-false                      killed
+helper-misses-trailing                   killed
+helper-misses-leading                    killed
+helper-single-dot                        killed
+tag-changed                              killed
+exit-code-changed                        killed
+models-check-check-off                   killed
+models-check-x-unchecked                 killed
+models-check-y-unchecked                 killed
+models-check-refusal-ignored             killed
+tree-check-check-off                     killed
+tree-check-x-unchecked                   killed
+tree-check-y-unchecked                   killed
+tree-check-miss-unchecked                killed
+tree-check-mode-length                   killed
+tree-check-out-length                    killed
+reader-check-check-off                   killed
+reader-check-exit                        killed
+metrics-check-operand-unguarded          killed
+mutants_paths: 19 killed, 0 survived and explained, 0 unexplained
+EXIT 0
+Tue Oct 13 14:43:47 CEST 2026

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds tools/reader-check (docs/reader.md section 5) from an explicit file list: the reader's own sources, the pinned contract
-# modules and cancho-table's six numeric modules, both pinned packages in build/deps (run `cancho install` once; docs/reader.md section 1).
+# modules and cancho-table's five numeric modules, both pinned packages in build/deps (run `cancho install` once; docs/reader.md section 1).
 # ML_DEPS overrides build/deps (the mutants run in a copy with one module edited).
 set -e
 cd "$(dirname "$0")/.."

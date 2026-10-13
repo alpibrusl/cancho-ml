@@ -2,7 +2,7 @@
 """Mutants for the reader gates of docs/reader.md section 5: a gate that cannot fail judges nothing.
 
 Each mutant is a copy of the tree with one change (several edits for the few that need two) to a source of this repository, or to
-the installed text of one of the six cancho-table modules, in the copy's own build/deps (the tree's build/deps is never touched), the reader-check binary rebuilt from the
+the installed text of one of the five cancho-table modules, in the copy's own build/deps (the tree's build/deps is never touched), the reader-check binary rebuilt from the
 copy, and the gate named in the mutant run against it. KILLED: the gate reported differences, a trap or a failed build of a check; SURVIVED:
 it reported none, and the mutant then carries a reason (an equivalent mutant) or is a gap that docs/reader.md section 6 names.
 
@@ -201,7 +201,8 @@ def build_and_gate(m, gates):
 
 def pin_mutants():
     """RD1: the pin check must fail on a rev that differs between modules, a rev the docs do not document, a short rev, a wrong path, a
-    missing dependency, a local sources entry, and a module declared under lib/, tools/ or tests/ (a copy)."""
+    missing dependency, a dependency dropped, a sixth cancho-table store added (not in the documented list), a document row that names a
+    sixth or leaves one out, a local sources entry, and a module declared under lib/, tools/ or tests/ (a copy)."""
     results = []
     script = ROOT / "scripts" / "check_table_pin.sh"
     toml = (ROOT / "cancho.toml").read_text()
@@ -239,6 +240,13 @@ def pin_mutants():
     run("rd1-rev-short", toml.replace('rev = "%s"\npath = ".cancho-vcs/flt"' % good, 'rev = "%s"\npath = ".cancho-vcs/flt"' % good[:7]))
     run("rd1-path-of-another-module", toml.replace('path = ".cancho-vcs/flt"', 'path = ".cancho-vcs/dec"'))
     run("rd1-dependency-missing", toml.replace("[dependencies.reader]", "[dependencies.readerx]"))
+    pow5_blk = '[dependencies.pow5]\ngit = "https://github.com/alpibrusl/cancho-table"\nrev = "%s"\npath = ".cancho-vcs/pow5"\n\n' % good
+    assert pow5_blk in toml, "no [dependencies.pow5] block of the expected form"
+    run("rd1-dependency-dropped", toml.replace(pow5_blk, ""))
+    run("rd1-sixth-store-added", toml.replace(pow5_blk, pow5_blk + pow5_blk.replace("pow5", "query")))
+    row = [l for l in doc.splitlines() if l.startswith("| RD1 ")][0]
+    run("rd1-doc-row-names-a-sixth", None, doc.replace(row, row + " query"))
+    run("rd1-doc-row-leaves-one-out", None, doc.replace(row, re.sub(r"`facc`", "`fac`", row)))
     run("rd1-local-sources-entry", toml.replace('"tools/ml", "generated/ml"', '"tools/ml", "generated/ml", "../cancho-table-main/tools/table/flt.cho"'))
     run("rd1-vendored-copy", files={"tools/ml/flt.cho": "module flt;\n"})
     run("rd1-vendored-copy-under-lib", files={"lib/core/reader.cho": "// edited\nmodule reader;\n"})
