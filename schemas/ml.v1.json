@@ -232,6 +232,9 @@
         "ml.input.invalid-utf8",
         "ml.input.categorical-not-encoded",
         "ml.input.unknown-category",
+        "ml.plan.column-kind",
+        "ml.input.reserved-category",
+        "ml.model.vocabulary-not-stored",
         "ml.plan.syntax",
         "ml.plan.unknown-step",
         "ml.plan.unknown-key",
@@ -1006,6 +1009,448 @@
             "path",
             "bytes",
             "sha256",
+            "written",
+            "summary"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "enum": [
+                "linear",
+                "logistic"
+              ]
+            },
+            "task": {
+              "enum": [
+                "regression",
+                "classification"
+              ]
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "columns": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "target": {
+              "$ref": "#/$defs/text_or_bytes"
+            },
+            "written": {
+              "const": false
+            },
+            "summary": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string"
+                    },
+                    "steps": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "steps_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "categorical": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "kind": {
+                            "enum": [
+                              "onehot",
+                              "label",
+                              "freq",
+                              "hash"
+                            ]
+                          },
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "categories": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "output_columns": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "kind",
+                          "column",
+                          "categories",
+                          "output_columns"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "features": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "coefficients": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "intercept": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "split": {
+                      "type": "object",
+                      "properties": {
+                        "train": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "test": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "seed": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "train",
+                        "test",
+                        "seed"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "holdout": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "rmse": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "mae": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "r2": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "rmse",
+                            "mae",
+                            "r2"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "metrics"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "plan",
+                    "steps",
+                    "steps_sha256",
+                    "categorical",
+                    "features",
+                    "coefficients",
+                    "intercept"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string"
+                    },
+                    "steps": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "steps_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "categorical": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "kind": {
+                            "enum": [
+                              "onehot",
+                              "label",
+                              "freq",
+                              "hash"
+                            ]
+                          },
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "categories": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "output_columns": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "kind",
+                          "column",
+                          "categories",
+                          "output_columns"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "features": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "coefficients": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "intercept": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "classes": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "positive": {
+                      "type": "integer"
+                    },
+                    "split": {
+                      "type": "object",
+                      "properties": {
+                        "train": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "test": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "seed": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "train",
+                        "test",
+                        "seed"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "holdout": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "accuracy": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "precision": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "recall": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "f1": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "roc_auc": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "log_loss": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "accuracy",
+                            "precision",
+                            "recall",
+                            "f1",
+                            "roc_auc",
+                            "log_loss"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "metrics"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "plan",
+                    "steps",
+                    "steps_sha256",
+                    "categorical",
+                    "features",
+                    "coefficients",
+                    "intercept",
+                    "classes",
+                    "positive"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "rows",
+            "columns",
+            "target",
             "written",
             "summary"
           ],

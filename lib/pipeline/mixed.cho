@@ -1,0 +1,566 @@
+module pipeline.mixed;
+
+import std.buffer;
+import std.bytes;
+import ml.catmat;
+import ml.dict;
+import ml.fbits;
+import ml.kinds;
+import ml.matrix;
+import ml.refuse;
+import transforms.apply;
+import transforms.catenc;
+import transforms.codes;
+import transforms.fit;
+import transforms.steps;
+import pipeline.names;
+import pipeline.plan;
+import pipeline.run;
+
+// The pipeline over a table with numeric AND categorical columns (docs/categorical-encoders.md): the same plan, the same steps payload (`u32 n`, then n times
+// `u64 length | step payload`, as pipeline.run), with the categorical steps of transforms.catenc (kinds 7 to 10) beside the numeric ones (kinds 1 to 6).
+// A numeric-only plan on a table with no categorical column is pipeline.run's, not this module's: nothing here is reached by the numeric path.
+//
+// The inputs are the float matrix of the numeric feature columns (it may have NO column), the ids of the categorical columns and the vocabulary they refer
+// to (stage 1, docs/categorical.md). A categorical column is read by one step, which appends its numeric columns after all the columns the step receives;
+// later steps see them as numeric columns. `fit` answers the names of the categorical columns no step read.
+
+// a copy of x with the columns of y after them; x may have no columns (then it is a copy of y)
+pub fn hstack[&h, &a, &b](heap: &!h Heap, x: &a matrix.Matrix, y: &b matrix.Matrix, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int) {
+    let n = matrix.rows(y);
+    let wx = matrix.cols(x);
+    let wy = matrix.cols(y);
+    if wx > 0 && matrix.rows(x) != n {
+        return (matrix.empty(heap), refuse.param_out_of_range());
+    }
+    let (out, code) = matrix.make(heap, n, wx + wy, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (out, code);
+    }
+    let (t, data, miss, rows, cols, wpc) = matrix.parts(out);
+    var d = data;
+    var b2 = miss;
+    borrow mut d as &!dw in {
+        borrow mut b2 as &!bw in {
+            var r = 0;
+            while r < rows {
+                var c = 0;
+                while c < wx {
+                    if matrix.is_missing(x, r, c) {
+                        matrix.mark_missing(contents(bw), wpc, r, c);
+                    } else {
+                        matrix.put(contents(dw), cols, r, c, matrix.value(x, r, c));
+                    }
+                    c = c + 1;
+                }
+                c = 0;
+                while c < wy {
+                    if matrix.is_missing(y, r, c) {
+                        matrix.mark_missing(contents(bw), wpc, r, wx + c);
+                    } else {
+                        matrix.put(contents(dw), cols, r, wx + c, matrix.value(y, r, c));
+                    }
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+        }
+    }
+    return (matrix.assemble(t, d, b2, rows, cols, wpc), 0);
+}
+
+// the most steps a payload may hold (the plan's line limit)
+fn max_steps() -> [] int {
+    return plan.max_lines();
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+// the place of the alive categorical column called `name` in the reader's vocabulary, or -1
+fn find_cat[&v, &a, &s](rv: &v dict.Vocab, alive: &a [int], name: &s [byte]) -> [] int {
+    var c = 0;
+    while c < dict.ncols(rv) {
+        if alive[c] == 1 && bytes.equal(dict.name(rv, c), name) {
+            return c;
+        }
+        c = c + 1;
+    }
+    return 0 - 1;
+}
+
+fn column_kind(step: int, place: int, needs: int) -> [] codes.Fault {
+    return codes.fault(codes.plan_column_kind(), step, place, needs);
+}
+
+// Which columns does step s read? (the class: 1 numeric, 2 categorical, 0 on a Fault; the places, ascending: the indices into `cn` or the places in the reader's
+// vocabulary; a Fault). Section 4.2: the names are looked up first among the numeric columns, then among the categorical ones not yet read; the verb decides
+// the class (impute, scale, bucket: numeric; freq, hash: categorical; encode: the class of its first name, and `*` means the numeric columns).
+fn classify[&h, &p, &n, &v, &a](heap: &!h Heap, pl: &p plan.Plan, s: int, cn: &n names.Names, rv: &v dict.Vocab, alive: &a [int]) -> [heap] (int, Box[[int]], codes.Fault) {
+    let kind = plan.kind_of(pl, s);
+    let step = s + 1;
+    var fixed = 0;
+    if kind == 9 || kind == 10 {
+        fixed = 2;
+    } else if kind != 4 && kind != 5 {
+        fixed = 1;
+    }
+    if plan.all_columns(pl, s) {
+        var want = fixed;
+        if want == 0 {
+            want = 1;
+        }
+        var count = 0;
+        if want == 1 {
+            count = names.count(cn);
+        } else {
+            var c = 0;
+            while c < dict.ncols(rv) {
+                if alive[c] == 1 {
+                    count = count + 1;
+                }
+                c = c + 1;
+            }
+        }
+        if count < 1 {
+            return (0, box_slice(heap, 1, 0), column_kind(step, 1, want));
+        }
+        var sel = box_slice(heap, count, 0);
+        borrow mut sel as &!sw in {
+            if want == 1 {
+                var j = 0;
+                while j < count {
+                    contents(sw)[j] = j;
+                    j = j + 1;
+                }
+            } else {
+                var c = 0;
+                var at = 0;
+                while c < dict.ncols(rv) {
+                    if alive[c] == 1 {
+                        contents(sw)[at] = c;
+                        at = at + 1;
+                    }
+                    c = c + 1;
+                }
+            }
+        }
+        if want == 1 && (kind == 4 || kind == 5) && (plan.min_count_of(pl, s) != 1 || plan.missing_zero(pl, s)) {
+            unbox_slice(heap, sel);
+            return (0, box_slice(heap, 1, 0), column_kind(step, 1, 2));
+        }
+        return (want, sel, codes.none());
+    }
+    let list = plan.columns(pl, s);
+    let k = plan.listed(pl, s);
+    var sel = box_slice(heap, k + 1, 0);
+    var required = fixed;
+    var fault = codes.none();
+    borrow mut sel as &!sw in {
+        var from = 0;
+        var t = 0;
+        var e = 0;
+        while e <= len(list) && fault.code == 0 {
+            if e == len(list) || int_of(list[e]) == ',' {
+                let nm = list[from..e];
+                var cl = 1;
+                var at = names.find(cn, nm);
+                if at < 0 {
+                    cl = 2;
+                    at = find_cat(rv, alive, nm);
+                }
+                if at < 0 || t >= k {
+                    fault = codes.fault(codes.plan_unknown_column(), step, 0, 0);
+                } else {
+                    if required == 0 {
+                        required = cl;
+                    }
+                    if cl != required {
+                        fault = column_kind(step, t + 1, required);
+                    } else {
+                        contents(sw)[t] = at;
+                    }
+                }
+                t = t + 1;
+                from = e + 1;
+            }
+            e = e + 1;
+        }
+        // ascending, by insertion (the extra cell stays last)
+        var a2 = 1;
+        while a2 < k && fault.code == 0 {
+            let key = contents(sw)[a2];
+            var q = a2 - 1;
+            while q >= 0 && contents(sw)[q] > key {
+                contents(sw)[q + 1] = contents(sw)[q];
+                q = q - 1;
+            }
+            contents(sw)[q + 1] = key;
+            a2 = a2 + 1;
+        }
+    }
+    if fault.code != 0 {
+        unbox_slice(heap, sel);
+        return (0, box_slice(heap, 1, 0), fault);
+    }
+    if required == 1 && (kind == 4 || kind == 5) && (plan.min_count_of(pl, s) != 1 || plan.missing_zero(pl, s)) {
+        unbox_slice(heap, sel);
+        return (0, box_slice(heap, 1, 0), column_kind(step, 1, 2));
+    }
+    // the exact size: the numeric fit takes the whole box as its column list
+    let exact = box_slice(heap, k, 0);
+    var ew = exact;
+    borrow sel as &sr in {
+        borrow mut ew as &!x in {
+            var j = 0;
+            while j < k {
+                contents(x)[j] = contents(sr)[j];
+                j = j + 1;
+            }
+        }
+    }
+    unbox_slice(heap, sel);
+    return (required, ew, codes.none());
+}
+
+// the names a categorical step writes, appended to old
+fn add_names[&h, &f](heap: &!h Heap, old: names.Names, st: &f catenc.Fit) -> [heap] names.Names {
+    var out = old;
+    var c = 0;
+    while c < catenc.ncols(st) {
+        let w = catenc.out_width(heap, st, c);
+        let blocked = catenc.kind(st) == kinds.step_cat_onehot() || catenc.kind(st) == kinds.step_hash();
+        var t = 0;
+        while t < w {
+            var nm = buffer.empty(heap, 16);
+            nm = buffer.append(heap, nm, catenc.name(st, c));
+            if blocked {
+                nm = buffer.push(heap, nm, byte_of('#'));
+                nm = buffer.push_nat(heap, nm, t);
+            }
+            borrow nm as &r in {
+                out = names.add(heap, out, buffer.bytes(r));
+            }
+            buffer.drop(heap, nm);
+            t = t + 1;
+        }
+        c = c + 1;
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- fit
+
+// Fit the plan's steps on the training table. `nm` are the names of the columns of `x` (the numeric features, maybe none), `nrows` the training rows, `ids`
+// their categorical ids and `rv` the vocabulary the ids refer to. (Fitted, the transformed matrix, the names of the declared categorical columns no step read,
+// Fault). On a Fault the first three are empty. a = the step (1-based) of a Fault of a step; b of a Fault of a categorical column is -(1 + its place in `rv`).
+pub fn fit[&h, &p, &n, &m, &i, &v](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Names, x: &m matrix.Matrix, nrows: int, ids: &i catmat.Ids, rv: &v dict.Vocab, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (run.Fitted, matrix.Matrix, names.Names, codes.Fault) {
+    var cur = matrix.empty(heap);
+    var fault = codes.none();
+    if matrix.cols(x) > 0 {
+        let (c0, code0) = run.clone(heap, x, rows_cap, cols_cap, cells_cap);
+        matrix.drop(heap, cur);
+        cur = c0;
+        if code0 != 0 {
+            fault = codes.fault(code0, 0, 0, 0);
+        }
+    }
+    var cur_names = names.empty(heap);
+    var q = 0;
+    while q < names.count(nm) {
+        cur_names = names.add(heap, cur_names, names.name(nm, q));
+        q = q + 1;
+    }
+    var alive = box_slice(heap, dict.ncols(rv) + 1, 1);
+    var body = buffer.empty(heap, 64);
+    let ns = plan.steps(pl);
+    var s = 0;
+    while s < ns && fault.code == 0 {
+        var cls = 0;
+        var sel = box_slice(heap, 1, 0);
+        borrow cur_names as &cn in {
+            borrow alive as &al in {
+                let (c2, sel2, f2) = classify(heap, pl, s, cn, rv, contents(al));
+                cls = c2;
+                unbox_slice(heap, sel);
+                sel = sel2;
+                fault = f2;
+            }
+        }
+        if fault.code == 0 && cls == 1 {
+            var ynew = matrix.empty(heap);
+            var have = false;
+            borrow sel as &cr in {
+                borrow cur as &curr in {
+                    let (st, f) = fit.fit(heap, plan.spec_of(pl, s), curr, contents(cr), s + 1);
+                    if f.code != 0 {
+                        fault = f;
+                    } else {
+                        borrow st as &sr in {
+                            let (y, u, f2) = apply.apply(heap, sr, curr, s + 1, rows_cap, cols_cap, cells_cap);
+                            if f2.code != 0 {
+                                fault = f2;
+                                matrix.drop(heap, y);
+                            } else {
+                                body = steps.put64(heap, body, steps.payload_size(sr));
+                                body = steps.encode_payload(heap, body, sr);
+                                var nn = names.empty(heap);
+                                borrow cur_names as &cnr in {
+                                    names.drop(heap, nn);
+                                    nn = run.next_names(heap, cnr, sr);
+                                }
+                                names.drop(heap, cur_names);
+                                cur_names = nn;
+                                matrix.drop(heap, ynew);
+                                ynew = y;
+                                have = true;
+                            }
+                        }
+                    }
+                    steps.drop(heap, st);
+                }
+            }
+            if have {
+                matrix.drop(heap, cur);
+                cur = ynew;
+            } else {
+                matrix.drop(heap, ynew);
+            }
+        } else if fault.code == 0 {
+            // a categorical step
+            let sp = plan.spec_of(pl, s);
+            var kd = sp.kind;
+            if kd == 4 || kd == 5 {
+                kd = kd + 3;
+            }
+            var par = plan.min_count_of(pl, s);
+            var unknown = sp.a;
+            var maxcat = sp.b;
+            if kd == kinds.step_hash() {
+                par = sp.b;
+                unknown = 0;
+                maxcat = 64;
+            }
+            var missing = 0;
+            if plan.missing_zero(pl, s) {
+                missing = 1;
+            }
+            var ynew = matrix.empty(heap);
+            var have = false;
+            borrow sel as &cr in {
+                let (st, f) = catenc.fit(heap, kd, unknown, missing, par, maxcat, s + 1, ids, rv, contents(cr));
+                if f.code != 0 {
+                    fault = f;
+                } else {
+                    borrow st as &sr in {
+                        let (y, u, f2) = catenc.apply(heap, sr, ids, rv, s + 1, rows_cap, cols_cap, cells_cap);
+                        if f2.code != 0 {
+                            fault = f2;
+                            matrix.drop(heap, y);
+                        } else {
+                            body = steps.put64(heap, body, catenc.payload_size(sr));
+                            body = catenc.encode_payload(heap, body, sr);
+                            borrow cur as &curr in {
+                                borrow y as &yr in {
+                                    let (z, zc) = hstack(heap, curr, yr, rows_cap, cols_cap, cells_cap);
+                                    if zc != 0 {
+                                        fault = codes.fault(codes.from_refuse(zc), s + 1, 0, 0);
+                                        matrix.drop(heap, z);
+                                    } else {
+                                        matrix.drop(heap, ynew);
+                                        ynew = z;
+                                        have = true;
+                                    }
+                                }
+                            }
+                            matrix.drop(heap, y);
+                            cur_names = add_names(heap, cur_names, sr);
+                        }
+                    }
+                }
+                catenc.drop(heap, st);
+                borrow mut alive as &!aw in {
+                    var j = 0;
+                    while j < len(contents(cr)) && fault.code == 0 {
+                        contents(aw)[contents(cr)[j]] = 0;
+                        j = j + 1;
+                    }
+                }
+            }
+            if have {
+                matrix.drop(heap, cur);
+                cur = ynew;
+            } else {
+                matrix.drop(heap, ynew);
+            }
+        }
+        unbox_slice(heap, sel);
+        s = s + 1;
+    }
+    var remaining = names.empty(heap);
+    borrow alive as &al in {
+        var c = 0;
+        while c < dict.ncols(rv) {
+            if contents(al)[c] == 1 {
+                remaining = names.add(heap, remaining, dict.name(rv, c));
+            }
+            c = c + 1;
+        }
+    }
+    unbox_slice(heap, alive);
+    if fault.code != 0 {
+        buffer.drop(heap, body);
+        names.drop(heap, cur_names);
+        names.drop(heap, remaining);
+        matrix.drop(heap, cur);
+        return (run.empty_fitted(heap), matrix.empty(heap), names.empty(heap), fault);
+    }
+    var payload = buffer.empty(heap, 64);
+    payload = buffer.push(heap, payload, byte_of(ns & 255));
+    payload = buffer.push(heap, payload, byte_of(ns >> 8 & 255));
+    payload = buffer.push(heap, payload, byte_of(ns >> 16 & 255));
+    payload = buffer.push(heap, payload, byte_of(ns >> 24 & 255));
+    borrow body as &br in {
+        payload = buffer.append(heap, payload, buffer.bytes(br));
+    }
+    buffer.drop(heap, body);
+    return (run.Fitted { payload: payload, n: ns, nm: cur_names }, cur, remaining, codes.none());
+}
+
+// ---------------------------------------------------------------- apply
+
+// the i-th step (0-based) of a steps payload as a categorical step: (the step, 0) or (an empty one, a code: ml.model.malformed, also for a numeric step)
+pub fn cat_step_at[&h, &s](heap: &!h Heap, payload: &s [byte], i: int) -> [heap] (catenc.Fit, int) {
+    if len(payload) < 4 {
+        return (catenc.empty(heap), codes.malformed());
+    }
+    let n = get32(payload, 0);
+    var pos = 4;
+    var k = 0;
+    while k < n && pos + 8 <= len(payload) {
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        if l < 0 || l > len(payload) - pos {
+            return (catenc.empty(heap), codes.malformed());
+        }
+        if k == i {
+            return catenc.decode(heap, payload[pos..pos + l]);
+        }
+        pos = pos + l;
+        k = k + 1;
+    }
+    return (catenc.empty(heap), codes.malformed());
+}
+
+// Apply the stored steps (the payload of `fit`) to a table. `x` holds the numeric feature columns (maybe none), `ids` the categorical ids of the same `nrows` rows
+// and `rv` the vocabulary they refer to. (the matrix, the number of cells met that a step did not know, Fault)
+pub fn apply_steps[&h, &s, &m, &i, &v](heap: &!h Heap, payload: &s [byte], x: &m matrix.Matrix, nrows: int, ids: &i catmat.Ids, rv: &v dict.Vocab, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int, codes.Fault) {
+    let bad = codes.fault(codes.malformed(), 3, 0, 0);
+    if len(payload) < 4 {
+        return (matrix.empty(heap), 0, bad);
+    }
+    let n = get32(payload, 0);
+    if n < 0 || n > max_steps() {
+        return (matrix.empty(heap), 0, bad);
+    }
+    var cur = matrix.empty(heap);
+    var fault = codes.none();
+    if matrix.cols(x) > 0 {
+        let (c0, code0) = run.clone(heap, x, rows_cap, cols_cap, cells_cap);
+        matrix.drop(heap, cur);
+        cur = c0;
+        if code0 != 0 {
+            fault = codes.fault(code0, 0, 0, 0);
+        }
+    }
+    var pos = 4;
+    var unknown = 0;
+    var k = 0;
+    while k < n && fault.code == 0 {
+        if len(payload) - pos < 8 {
+            fault = codes.fault(codes.malformed(), 3, k + 1, 0);
+        } else {
+            let l = fbits.get64(payload, pos);
+            pos = pos + 8;
+            if l < 4 || l > len(payload) - pos {
+                fault = codes.fault(codes.malformed(), 3, k + 1, 0);
+            } else {
+                let kd = get32(payload, pos);
+                var ynew = matrix.empty(heap);
+                var have = false;
+                if kd >= kinds.step_cat_onehot() {
+                    let (st, code) = catenc.decode(heap, payload[pos..pos + l]);
+                    if code != 0 {
+                        fault = codes.fault(codes.malformed(), 3, k + 1, 0);
+                    } else {
+                        borrow st as &sr in {
+                            let (y, u, f2) = catenc.apply(heap, sr, ids, rv, k + 1, rows_cap, cols_cap, cells_cap);
+                            unknown = unknown + u;
+                            if f2.code != 0 {
+                                fault = f2;
+                            } else {
+                                borrow cur as &curr in {
+                                    borrow y as &yr in {
+                                        let (z, zc) = hstack(heap, curr, yr, rows_cap, cols_cap, cells_cap);
+                                        if zc != 0 {
+                                            fault = codes.fault(codes.from_refuse(zc), k + 1, 0, 0);
+                                            matrix.drop(heap, z);
+                                        } else {
+                                            matrix.drop(heap, ynew);
+                                            ynew = z;
+                                            have = true;
+                                        }
+                                    }
+                                }
+                            }
+                            matrix.drop(heap, y);
+                        }
+                    }
+                    catenc.drop(heap, st);
+                } else {
+                    var cw = 0;
+                    borrow cur as &cr in {
+                        cw = matrix.cols(cr);
+                    }
+                    let (st, code, w) = steps.decode(heap, payload[pos..pos + l], cw);
+                    if code != 0 {
+                        fault = codes.fault(codes.malformed(), 3, k + 1, 0);
+                    } else {
+                        borrow st as &sr in {
+                            borrow cur as &curr in {
+                                let (y, u, f2) = apply.apply(heap, sr, curr, k + 1, rows_cap, cols_cap, cells_cap);
+                                unknown = unknown + u;
+                                if f2.code != 0 {
+                                    fault = f2;
+                                    matrix.drop(heap, y);
+                                } else {
+                                    matrix.drop(heap, ynew);
+                                    ynew = y;
+                                    have = true;
+                                }
+                            }
+                        }
+                    }
+                    steps.drop(heap, st);
+                }
+                if have {
+                    matrix.drop(heap, cur);
+                    cur = ynew;
+                } else {
+                    matrix.drop(heap, ynew);
+                }
+                pos = pos + l;
+            }
+        }
+        k = k + 1;
+    }
+    if fault.code == 0 && pos != len(payload) {
+        fault = bad;
+    }
+    if fault.code != 0 {
+        matrix.drop(heap, cur);
+        return (matrix.empty(heap), 0, fault);
+    }
+    return (cur, unknown, codes.none());
+}

@@ -605,7 +605,12 @@ def canon_float(x):
 STEP_TABLE = {
     "impute": [("column", "cols", None, None), ("strategy", "enum:mean,median,constant", None, None), ("value", "float", None, ("strategy", "constant"))],
     "scale": [("column", "cols", None, None), ("kind", "enum:minmax,standard", None, None), ("ddof", "int:0,1", "0", ("kind", "standard"))],
-    "encode": [("column", "cols", None, None), ("kind", "enum:onehot,label", None, None), ("max-categories", "int:1,1024", "64", None), ("unknown", "enum:ignore,refuse", "ignore", None)],
+    # min-count and missing (stage 2 of issue 21) are written only when they are not their defaults: a default that starts with `~` (so a numeric line keeps its text)
+    "encode": [("column", "cols", None, None), ("kind", "enum:onehot,label", None, None), ("max-categories", "int:1,1024", "64", None), ("unknown", "enum:ignore,refuse", "ignore", None),
+               ("min-count", "int:1,1000000", "~1", None), ("missing", "enum:pass,zero", "~pass", None)],
+    "freq": [("column", "cols", None, None), ("max-categories", "int:1,1024", "64", None), ("unknown", "enum:ignore,refuse", "ignore", None), ("min-count", "int:1,1000000", "1", None),
+             ("missing", "enum:pass,zero", "pass", None)],
+    "hash": [("column", "cols", None, None), ("buckets", "int:2,1024", None, None), ("missing", "enum:pass,zero", "pass", None)],
     "bucket": [("column", "cols", None, None), ("kind", "enum:width,quantile", None, None), ("bins", "int:2,256", None, None)],
 }
 MODEL_TABLE = {
@@ -713,6 +718,9 @@ def canon_plan(text):
                 continue
             if not ts and default is None:
                 raise PlanErr("ml.plan.missing-key", ln, verb_col + 1)
+            if not ts and default.startswith("~"):
+                vals[name] = default[1:]
+                continue
             if ts:
                 col, k, v = ts[0]
                 vcol = col + len(name) + 2
@@ -760,6 +768,8 @@ def canon_plan(text):
                     raise PlanErr("ml.plan.bad-value", ln, vcol)
                 cv = canon_float(x)
             vals[name] = cv
+            if default is not None and default.startswith("~") and cv == default[1:]:
+                continue
             parts.append("%s=%s" % (name, cv))
         out.append(" ".join(parts))
         if verb == "model":
@@ -788,8 +798,8 @@ def spell(rng, line):
     # the model line's kind may come anywhere
     for i, kv in enumerate(kvs):
         k, _, v = kv.partition("=")
-        if k in ("bins", "max-categories", "ddof", "iterations", "k", "trees", "max-depth", "min-leaf") and rng.random() < 0.4:
-            kvs[i] = "%s=%s%s" % (k, "0" * rng.randint(1, 3), v)
+        if k in ("bins", "max-categories", "ddof", "iterations", "k", "trees", "max-depth", "min-leaf", "min-count", "buckets") and rng.random() < 0.4:
+            kvs[i] = "%s=%s%s" % (k, "0" * min(rng.randint(1, 3), 9 - len(v)), v)
         elif k in ("value", "l2"):
             x = float(v)
             alt = rng.choice([repr(x), "%.17g" % x, ("%e" % x) if x != 0 else "0", v])
@@ -821,6 +831,14 @@ def plans_gate(n_cases):
                 line = "scale column=%s kind=%s" % (cols, kd) + (" ddof=%d" % rng.randint(0, 1) if kd == "standard" else "")
             elif verb == "encode":
                 line = "encode column=%s kind=%s max-categories=%d unknown=%s" % (cols, rng.choice(["onehot", "label"]), rng.randint(1, 1024), rng.choice(["ignore", "refuse"]))
+                if rng.random() < 0.4:
+                    line += " min-count=%d" % rng.choice([2, 3, 1000000])
+                if rng.random() < 0.4:
+                    line += " missing=zero"
+            elif verb == "freq":
+                line = "freq column=%s max-categories=%d unknown=%s min-count=%d missing=%s" % (cols, rng.randint(1, 1024), rng.choice(["ignore", "refuse"]), rng.choice([1, 2, 77]), rng.choice(["pass", "zero"]))
+            elif verb == "hash":
+                line = "hash column=%s buckets=%d missing=%s" % (cols, rng.randint(2, 1024), rng.choice(["pass", "zero"]))
             else:
                 line = "bucket column=%s kind=%s bins=%d" % (cols, rng.choice(["width", "quantile"]), rng.randint(2, 256))
             lines.append(line)
@@ -873,7 +891,8 @@ def plans_gate(n_cases):
     # random garbage: the reference and the driver must agree on the verdict and the position
     alphabet = list("abcdeimnopqrstuvw=, \t\n#*0123456789.-+e")
     words = ["impute", "scale", "encode", "bucket", "model", "column", "kind", "strategy", "value", "bins", "ddof", "task", "l2", "unknown", "max-categories",
-             "mean", "standard", "onehot", "width", "constant", "regression", "linear", "refuse", "*", "a,b", "a,a", "1", "0", "257", "1e3", "-1", "nan", "="]
+             "mean", "standard", "onehot", "width", "constant", "regression", "linear", "refuse", "*", "a,b", "a,a", "1", "0", "257", "1e3", "-1", "nan", "=",
+             "freq", "hash", "buckets", "min-count", "missing", "zero", "pass", "1000001", "1024", "1025"]
     for i in range(1500):
         t = []
         for _ in range(rng.randint(1, 4)):

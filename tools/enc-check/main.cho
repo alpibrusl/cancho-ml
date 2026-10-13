@@ -1,0 +1,502 @@
+// enc-check: fits a plan with categorical steps on a CSV file and prints the result as bits, so that scripts/oracle_enc.py can compare it with Python
+// (docs/categorical-encoders.md gate E1). Not a product: a driver for gates, the way tools/reader-check is.
+//
+//     enc-check [--target NAME] --cat NAMES [--na-values LIST] [--max-categories N] [--drop NAMES] [--float NAMES] --plan STEPS [--predict FILE2] FILE
+//
+// STEPS are plan lines separated by `;` (a model line is added). The file is read by the loader of categorical columns (the numeric columns but the target are
+// the features), the plan is fitted on ALL its rows by pipeline.mixed, and with --predict FILE2 the stored steps are applied to FILE2 read through the
+// vocabulary of FILE (ids -2 for a string it does not hold; the target of FILE2, if any, is skipped).
+// stdout, one record per line:
+//     payload HEX                   the steps payload (docs/categorical-encoders.md section 5.2)
+//     names N1 N2 ...               the names of the columns left
+//     remaining N1 N2 ...           the categorical columns no step read
+//     train R C / R lines of C cells (the 16 hex digits of a double, or ?)
+//     p-matrix R C / lines, p-unknown N     (with --predict)
+//     refused TAG A B C [/ refused-column NAME]   a refusal of the plan or the fit (exit 8); load-refused STATUS LINE COL AUX for the reader's
+edition 5;
+
+import std.buffer;
+import std.io;
+import ml.catmat;
+import ml.csv;
+import ml.csvload;
+import ml.dict;
+import ml.limits;
+import ml.matrix;
+import ml.refuse;
+import ml.pathcheck;
+import transforms.codes;
+import pipeline.names;
+import pipeline.plan;
+import pipeline.mixed;
+import pipeline.run;
+import linalg.tensor;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 18 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    return bytes_equal(x, y);
+}
+
+fn bytes_equal[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn word[&i](io: &!i Io, s: &static [byte]) -> [io_write] int {
+    io.write_all(io, s);
+    return 0;
+}
+
+fn put_int[&i](io: &!i Io, v: int) -> [io_write] int {
+    io.print_int(io, v);
+    return 0;
+}
+
+fn hex16[&i](io: &!i Io, bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            putchar(io, '0' + nib);
+        } else {
+            putchar(io, 'a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn hexs[&i, &s](io: &!i Io, b: &s [byte]) -> [io_write] int {
+    var k = 0;
+    while k < len(b) {
+        let v = int_of(b[k]);
+        let hi = v >> 4 & 15;
+        let lo = v & 15;
+        if hi < 10 {
+            putchar(io, '0' + hi);
+        } else {
+            putchar(io, 'a' + hi - 10);
+        }
+        if lo < 10 {
+            putchar(io, '0' + lo);
+        } else {
+            putchar(io, 'a' + lo - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn print_matrix[&i, &m](io: &!i Io, label: &static [byte], x: &m matrix.Matrix, rows: int) -> [io_write] int {
+    word(io, label);
+    word(io, " ");
+    put_int(io, rows);
+    word(io, " ");
+    put_int(io, matrix.cols(x));
+    io.newline(io);
+    var r = 0;
+    while r < matrix.rows(x) {
+        var c = 0;
+        while c < matrix.cols(x) {
+            if c > 0 {
+                word(io, " ");
+            }
+            if matrix.is_missing(x, r, c) {
+                word(io, "?");
+            } else {
+                hex16(io, bits_of(matrix.value(x, r, c)));
+            }
+            c = c + 1;
+        }
+        io.newline(io);
+        r = r + 1;
+    }
+    return 0;
+}
+
+fn print_names[&i, &n](io: &!i Io, label: &static [byte], nm: &n names.Names) -> [io_write] int {
+    word(io, label);
+    var k = 0;
+    while k < names.count(nm) {
+        word(io, " ");
+        io.write_all(io, names.name(nm, k));
+        k = k + 1;
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn load_refusal[&i](io: &!i Io, rep: csv.Report, code: int, pre: &static [byte]) -> [io_write] int {
+    word(io, pre);
+    if rep.status == 99 {
+        word(io, "load-refused-open ");
+        put_int(io, rep.aux);
+        io.newline(io);
+        return 3;
+    }
+    if rep.status != 0 {
+        word(io, "load-refused ");
+        put_int(io, rep.status);
+        word(io, " ");
+        put_int(io, rep.line);
+        word(io, " ");
+        put_int(io, rep.col);
+        word(io, " ");
+        put_int(io, rep.aux);
+        io.newline(io);
+        return 8;
+    }
+    word(io, "load-refused-matrix ");
+    io.write_all(io, refuse.tag(code));
+    io.newline(io);
+    return 8;
+}
+
+// the numeric feature columns of a loaded table: every numeric kept column but the target, and their names
+fn features[&h, &m, &s, &t](heap: &!h Heap, mx: &m matrix.Matrix, sh: &s csv.Shape, target: &t [byte]) -> [heap] (matrix.Matrix, names.Names) {
+    var nm = names.empty(heap);
+    let cols = box_slice(heap, csv.cols(sh) + 1, 0);
+    var cw = cols;
+    var nf = 0;
+    borrow mut cw as &!w in {
+        var j = 0;
+        var i = 0;
+        while i < csv.cols(sh) {
+            if !csv.dropped(sh, i) && csv.catplace(sh, i) == 0 {
+                if len(target) == 0 || !same(csv.name(sh, i), target) {
+                    contents(w)[nf] = j;
+                    nm = names.add(heap, nm, csv.name(sh, i));
+                    nf = nf + 1;
+                }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+    }
+    if nf == 0 {
+        unbox_slice(heap, cw);
+        return (matrix.empty(heap), nm);
+    }
+    let (out, code) = matrix.make(heap, matrix.rows(mx), nf, limits.default_rows(), limits.default_cols(), limits.default_cells());
+    let (t2, data, miss, rows, ocols, wpc) = matrix.parts(out);
+    var d = data;
+    var b = miss;
+    borrow cw as &cr in {
+        borrow mut d as &!dw in {
+            borrow mut b as &!bw in {
+                var r = 0;
+                while r < rows {
+                    var c = 0;
+                    while c < nf {
+                        if matrix.is_missing(mx, r, contents(cr)[c]) {
+                            matrix.mark_missing(contents(bw), wpc, r, c);
+                        } else {
+                            matrix.put(contents(dw), ocols, r, c, matrix.value(mx, r, contents(cr)[c]));
+                        }
+                        c = c + 1;
+                    }
+                    r = r + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, cw);
+    return (matrix.assemble(t2, d, b, rows, ocols, wpc), nm);
+}
+
+fn refusal[&i, &p, &v](io: &!i Io, f: codes.Fault, pl: &p plan.Plan, rv: &v dict.Vocab) -> [io_write] int {
+    word(io, "refused ");
+    io.write_all(io, codes.tag(f.code));
+    word(io, " ");
+    put_int(io, f.a);
+    word(io, " ");
+    put_int(io, f.b);
+    word(io, " ");
+    put_int(io, f.c);
+    io.newline(io);
+    if f.b < 0 && f.b > 0 - 100000 && f.code != codes.plan_column_kind() {
+        word(io, "refused-column ");
+        io.write_all(io, dict.name(rv, 0 - 1 - f.b));
+        io.newline(io);
+    }
+    return codes.exit_code(f.code);
+}
+
+fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &static [byte], file2: &static [byte], target: &static [byte], cfg: csv.Cfg, cc: csv.CatCfg, steps_text: &static [byte]) -> [heap, io_write, fs_read(""), dir_read, file_read] int {
+    var text = buffer.empty(heap, 64);
+    var i = 0;
+    while i < len(steps_text) {
+        if int_of(steps_text[i]) == ';' {
+            text = buffer.push(heap, text, byte_of(10));
+        } else {
+            text = buffer.push(heap, text, steps_text[i]);
+        }
+        i = i + 1;
+    }
+    text = buffer.push(heap, text, byte_of(10));
+    text = buffer.append(heap, text, "model kind=constant task=regression\n");
+    var pl = plan.empty(heap);
+    var code = 0;
+    borrow text as &tr in {
+        let (p2, pf) = plan.parse(heap, buffer.bytes(tr));
+        plan.drop(heap, pl);
+        pl = p2;
+        if pf.code != 0 {
+            word(io, "refused ");
+            io.write_all(io, codes.tag(pf.code));
+            word(io, " ");
+            put_int(io, pf.a);
+            word(io, " ");
+            put_int(io, pf.b);
+            word(io, " ");
+            put_int(io, pf.c);
+            io.newline(io);
+            code = codes.exit_code(pf.code);
+        }
+    }
+    buffer.drop(heap, text);
+    if code != 0 {
+        plan.drop(heap, pl);
+        return code;
+    }
+    let l = csvload.load_cat(heap, fs, "", file, file, cfg, cc, target, false, dict.empty_vocab(heap), false);
+    let (mx, ids, voc, sh, rep, lcode) = csvload.cat_load_parts(l);
+    if rep.status != 0 || lcode != 0 {
+        code = load_refusal(io, rep, lcode, "");
+        matrix.drop(heap, mx);
+        catmat.drop(heap, ids);
+        dict.drop_vocab(heap, voc);
+        csv.drop_shape(heap, sh);
+        plan.drop(heap, pl);
+        return code;
+    }
+    var feat = matrix.empty(heap);
+    var fnames = names.empty(heap);
+    borrow mx as &mr in {
+        borrow sh as &sr in {
+            let (f2, n2) = features(heap, mr, sr, target);
+            matrix.drop(heap, feat);
+            names.drop(heap, fnames);
+            feat = f2;
+            fnames = n2;
+        }
+    }
+    var rows = 0;
+    borrow ids as &ir in {
+        rows = catmat.rows(ir);
+    }
+    var payload = buffer.empty(heap, 1);
+    borrow pl as &pr in {
+        borrow feat as &fr in {
+            borrow fnames as &nr in {
+                borrow ids as &ir in {
+                    borrow voc as &vr in {
+                        let (fd, y, rem, flt) = mixed.fit(heap, pr, nr, fr, rows, ir, vr, limits.default_rows(), limits.default_cols(), limits.default_cells());
+                        if flt.code != 0 {
+                            code = refusal(io, flt, pr, vr);
+                        } else {
+                            buffer.drop(heap, payload);
+                            borrow fd as &fdr in {
+                                payload = buffer.append(heap, buffer.empty(heap, 16), buffer.bytes(fdr.payload));
+                                word(io, "payload ");
+                                hexs(io, buffer.bytes(fdr.payload));
+                                io.newline(io);
+                                print_names(io, "names", fdr.nm);
+                            }
+                            borrow rem as &remr in {
+                                print_names(io, "remaining", remr);
+                            }
+                            borrow y as &yr in {
+                                print_matrix(io, "train", yr, rows);
+                            }
+                        }
+                        names.drop(heap, rem);
+                        matrix.drop(heap, y);
+                        run.drop_fitted(heap, fd);
+                    }
+                }
+            }
+        }
+    }
+    matrix.drop(heap, feat);
+    names.drop(heap, fnames);
+    matrix.drop(heap, mx);
+    catmat.drop(heap, ids);
+    csv.drop_shape(heap, sh);
+    if code == 0 && len(file2) > 0 {
+        let l2 = csvload.load_cat(heap, fs, "", file2, file2, cfg, cc, target, len(target) > 0, voc, true);
+        let (mx2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l2);
+        if rep2.status != 0 || code2 != 0 {
+            code = load_refusal(io, rep2, code2, "p-");
+            matrix.drop(heap, mx2);
+        } else {
+            var rows2 = 0;
+            borrow ids2 as &i2 in {
+                rows2 = catmat.rows(i2);
+            }
+            var x2 = matrix.empty(heap);
+            var has_cols = false;
+            borrow mx2 as &m2r in {
+                has_cols = matrix.cols(m2r) > 0;
+            }
+            if has_cols {
+                matrix.drop(heap, x2);
+                x2 = mx2;
+            } else {
+                matrix.drop(heap, mx2);
+            }
+            borrow payload as &pq in {
+                borrow x2 as &xq in {
+                    borrow ids2 as &iq in {
+                        borrow voc2 as &vq in {
+                            let (z, unk, f3) = mixed.apply_steps(heap, buffer.bytes(pq), xq, rows2, iq, vq, limits.default_rows(), limits.default_cols(), limits.default_cells());
+                            if f3.code != 0 {
+                                word(io, "p-refused ");
+                                io.write_all(io, codes.tag(f3.code));
+                                word(io, " ");
+                                put_int(io, f3.a);
+                                word(io, " ");
+                                put_int(io, f3.b);
+                                word(io, " ");
+                                put_int(io, f3.c);
+                                io.newline(io);
+                                code = codes.exit_code(f3.code);
+                            } else {
+                                borrow z as &zr in {
+                                    print_matrix(io, "p-matrix", zr, rows2);
+                                }
+                                word(io, "p-unknown ");
+                                put_int(io, unk);
+                                io.newline(io);
+                            }
+                            matrix.drop(heap, z);
+                        }
+                    }
+                }
+            }
+            matrix.drop(heap, x2);
+        }
+        catmat.drop(heap, ids2);
+        dict.drop_vocab(heap, voc2);
+        csv.drop_shape(heap, sh2);
+    } else {
+        dict.drop_vocab(heap, voc);
+    }
+    buffer.drop(heap, payload);
+    plan.drop(heap, pl);
+    return code;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    var drops: &static [byte] = "";
+    var floats: &static [byte] = "";
+    var cats: &static [byte] = "";
+    var nas: &static [byte] = "";
+    var max_cats = dict.default_categories();
+    var max_str = dict.default_string_bytes();
+    var max_pool = dict.default_pool_bytes();
+    var max_catcols = dict.default_columns();
+    var target: &static [byte] = "";
+    var file2: &static [byte] = "";
+    var steps_text: &static [byte] = "";
+    var file: &static [byte] = "";
+    var bad = false;
+    borrow args as &g in {
+        var i = 1;
+        while i < arg_count(g) {
+            let a = arg(g, i);
+            if same(a, "--drop") && i + 1 < arg_count(g) {
+                drops = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--float") && i + 1 < arg_count(g) {
+                floats = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--cat") && i + 1 < arg_count(g) {
+                cats = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--na-values") && i + 1 < arg_count(g) {
+                nas = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--max-categories") && i + 1 < arg_count(g) {
+                max_cats = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if same(a, "--max-string-bytes") && i + 1 < arg_count(g) {
+                max_str = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if same(a, "--target") && i + 1 < arg_count(g) {
+                target = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--predict") && i + 1 < arg_count(g) {
+                file2 = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--plan") && i + 1 < arg_count(g) {
+                steps_text = arg(g, i + 1);
+                i = i + 2;
+            } else if len(a) > 1 && int_of(a[0]) == '-' && int_of(a[1]) == '-' {
+                bad = true;
+                i = i + 1;
+            } else {
+                file = a;
+                i = i + 1;
+            }
+        }
+    }
+    var code = 0;
+    if !bad && pathcheck.has_double_dot(file) {
+        borrow mut io as &!ip in {
+            word(ip, "refused ");
+            word(ip, pathcheck.tag());
+            io.newline(ip);
+        }
+        code = pathcheck.exit_code();
+    } else if bad || len(file) == 0 || len(steps_text) == 0 {
+        borrow mut io as &!ip in {
+            word(ip, "usage: enc-check [--target NAME] --cat NAMES [--na-values LIST] [--max-categories N] [--max-string-bytes N] [--drop NAMES] [--float NAMES] --plan STEPS [--predict FILE2] FILE\n");
+        }
+        code = 2;
+    } else {
+        let cfg = csv.Cfg { cap: 1048576, max_rows: limits.default_rows(), max_cols: limits.default_cols(), max_cells: limits.default_cells(), mode: 0, tscale: 0, pred: 0, drops: drops, floats: floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+        let cc = csv.CatCfg { cols: cats, na: nas, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols };
+        borrow mut heap as &!hp in {
+            borrow mut io as &!ip in {
+                borrow fs as &fr in {
+                    code = run(hp, ip, fr, file, file2, target, cfg, cc, steps_text);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return code;
+}

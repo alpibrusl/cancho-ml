@@ -1,0 +1,885 @@
+module transforms.catenc;
+
+import std.buffer;
+import std.bytes;
+import std.crypto;
+import ml.catmat;
+import ml.dict;
+import ml.fbits;
+import ml.kinds;
+import ml.matrix;
+import transforms.codes;
+
+// The encoders of categorical columns (docs/categorical-encoders.md): one-hot (kind 7), label (8), frequency (9) and hashing (10) of the columns
+// `--cat` declared. A step is FITTED on the ids of the training rows and the vocabulary of the reader (stage 1: ids 0 .. k-1 in bytewise order, -1 missing,
+// -2 unseen) and its whole state is a `Fit`: the parameters, the NAME of each column and the training vocabulary of each column (the strings that occur in the
+// training rows, bytewise ascending, with their integer training counts). The effective categories of the rare bucket, the label ids and the frequencies are
+// computed from that, never stored beside it, so there is one source of truth.
+//
+// APPLY reads a Fit and ids with the vocabulary THEY refer to (the reader's): the cells are matched to the Fit by the bytes of the string, so the ids may come from a
+// reader vocabulary that also holds held-out strings (a --split) or from the stored vocabulary of a predict (stage 3).
+//
+// The bytes of a step (section 5.2): u32 kind, u32 layout = 1, u32 k, u32 unknown, u32 missing, u32 param, u64 rows, then per column u32 name length, the name,
+// u32 categories, per category u32 length, the bytes, u64 count. `decode` checks every field before it allocates anything sized by the bytes.
+//
+// Faults (transforms.codes): b is -(1 + the place of the column in the reader's vocabulary) for the faults of one categorical column.
+
+pub fn layout() -> [] int {
+    return 1;
+}
+
+pub fn max_columns() -> [] int {
+    return 4096;
+}
+
+pub fn max_categories() -> [] int {
+    return 1024;
+}
+
+pub fn max_string() -> [] int {
+    return 65536;
+}
+
+pub fn max_name() -> [] int {
+    return 255;
+}
+
+pub fn max_min_count() -> [] int {
+    return 1000000;
+}
+
+pub fn min_buckets() -> [] int {
+    return 2;
+}
+
+pub fn max_buckets() -> [] int {
+    return 1024;
+}
+
+pub fn max_rows() -> [] int {
+    return 2147483647;
+}
+
+// the name of the rare-category bucket
+pub fn other() -> [] &static [byte] {
+    return "__other__";
+}
+
+pub res struct Fit {
+    kind: int,
+    unknown: int,
+    missing: int,
+    param: int,
+    rows: int,
+    k: int,
+    total: int,
+    names: Box[[byte]],
+    nends: Box[[int]],
+    counts: Box[[int]],
+    first: Box[[int]],
+    ends: Box[[int]],
+    pool: Box[[byte]],
+    cnt: Box[[int]],
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Fit {
+    return Fit { kind: 0, unknown: 0, missing: 0, param: 0, rows: 0, k: 0, total: 0, names: box_slice(heap, 1, byte_of(0)), nends: box_slice(heap, 1, 0), counts: box_slice(heap, 1, 0), first: box_slice(heap, 2, 0), ends: box_slice(heap, 1, 0), pool: box_slice(heap, 1, byte_of(0)), cnt: box_slice(heap, 1, 0) };
+}
+
+pub fn drop[&h](heap: &!h Heap, f: Fit) -> [heap] int {
+    let Fit { kind, unknown, missing, param, rows, k, total, names, nends, counts, first, ends, pool, cnt } = f;
+    unbox_slice(heap, names);
+    unbox_slice(heap, nends);
+    unbox_slice(heap, counts);
+    unbox_slice(heap, first);
+    unbox_slice(heap, ends);
+    unbox_slice(heap, pool);
+    unbox_slice(heap, cnt);
+    return kind;
+}
+
+pub fn kind[&f](f: &f Fit) -> [] int {
+    return f.kind;
+}
+
+pub fn unknown_mode[&f](f: &f Fit) -> [] int {
+    return f.unknown;
+}
+
+pub fn missing_mode[&f](f: &f Fit) -> [] int {
+    return f.missing;
+}
+
+pub fn param[&f](f: &f Fit) -> [] int {
+    return f.param;
+}
+
+pub fn rows[&f](f: &f Fit) -> [] int {
+    return f.rows;
+}
+
+pub fn ncols[&f](f: &f Fit) -> [] int {
+    return f.k;
+}
+
+pub fn total[&f](f: &f Fit) -> [] int {
+    return f.total;
+}
+
+pub fn name[&f](f: &f Fit, c: int) -> [] &f [byte] {
+    var from = 0;
+    if c > 0 {
+        from = contents(f.nends)[c - 1];
+    }
+    return contents(f.names)[from..contents(f.nends)[c]];
+}
+
+// the number of strings of column c of the step
+pub fn ncat[&f](f: &f Fit, c: int) -> [] int {
+    return contents(f.counts)[c];
+}
+
+// the string of rank i in column c
+pub fn string[&f](f: &f Fit, c: int, i: int) -> [] &f [byte] {
+    let e = contents(f.first)[c] + i;
+    var from = 0;
+    if e > 0 {
+        from = contents(f.ends)[e - 1];
+    }
+    return contents(f.pool)[from..contents(f.ends)[e]];
+}
+
+// the training count of the string of rank i in column c
+pub fn count[&f](f: &f Fit, c: int, i: int) -> [] int {
+    return contents(f.cnt)[contents(f.first)[c] + i];
+}
+
+// ---------------------------------------------------------------- hashing
+
+// the bucket of `text` in 0 .. b-1: SHA-256 of the bytes, the first 8 bytes read big-endian as an unsigned 64-bit integer, modulo b (docs section 3.5).
+// state has sha256_state_len() words and dg 32 bytes. The unsigned modulo is taken from two 32-bit halves, so the sign bit of a 64-bit integer is never read.
+pub fn bucket_of[&a, &d, &s](state: &!a [int], dg: &!d [byte], text: &s [byte], b: int) -> [] int {
+    crypto.sha256_init(state);
+    crypto.sha256_update(state, text);
+    crypto.sha256_final(state, dg);
+    let hi = int_of(dg[0]) << 24 | int_of(dg[1]) << 16 | int_of(dg[2]) << 8 | int_of(dg[3]);
+    let lo = int_of(dg[4]) << 24 | int_of(dg[5]) << 16 | int_of(dg[6]) << 8 | int_of(dg[7]);
+    return (hi % b * (4294967296 % b) + lo % b) % b;
+}
+
+pub fn hash_bucket[&h, &s](heap: &!h Heap, text: &s [byte], b: int) -> [heap] int {
+    let state = box_slice(heap, crypto.sha256_state_len(), 0);
+    let dg = box_slice(heap, 32, byte_of(0));
+    var sw = state;
+    var dw = dg;
+    var out = 0;
+    borrow mut sw as &!s1 in {
+        borrow mut dw as &!d1 in {
+            out = bucket_of(contents(s1), contents(d1), text, b);
+        }
+    }
+    unbox_slice(heap, sw);
+    unbox_slice(heap, dw);
+    return out;
+}
+
+// ---------------------------------------------------------------- the effective categories (section 3.1)
+
+// For column c of a Fit: (the effective index of each string of the column, the effective counts, their number). A string is merged when its training count
+// is below min_count; if one is, the bucket `__other__` joins the kept strings in bytewise place. Both boxes have ncat + 1 cells (the effective counts of the
+// categories are the first `ne` of them).
+fn effective[&h, &f](heap: &!h Heap, st: &f Fit, c: int, min_count: int) -> [heap] (Box[[int]], Box[[int]], int) {
+    let m = ncat(st, c);
+    var merged = 0;
+    var kept = 0;
+    var below = 0;
+    var i = 0;
+    while i < m {
+        let n = count(st, c, i);
+        if n < min_count {
+            merged = merged + n;
+        } else {
+            kept = kept + 1;
+            if bytes.compare(string(st, c, i), other()) < 0 {
+                below = below + 1;
+            }
+        }
+        i = i + 1;
+    }
+    var has_other = false;
+    if merged > 0 {
+        has_other = true;
+    }
+    var ne = kept;
+    if has_other {
+        ne = kept + 1;
+    }
+    var idx = box_slice(heap, m + 1, 0);
+    var ec = box_slice(heap, m + 2, 0);
+    borrow mut idx as &!iw in {
+        borrow mut ec as &!ew in {
+            var rank = 0;
+            i = 0;
+            while i < m {
+                let n = count(st, c, i);
+                if n < min_count {
+                    contents(iw)[i] = below;
+                } else {
+                    var e = rank;
+                    if has_other && rank >= below {
+                        e = rank + 1;
+                    }
+                    contents(iw)[i] = e;
+                    contents(ew)[e] = n;
+                    rank = rank + 1;
+                }
+                i = i + 1;
+            }
+            if has_other {
+                contents(ew)[below] = merged;
+            }
+        }
+    }
+    return (idx, ec, ne);
+}
+
+// ---------------------------------------------------------------- fit
+
+fn bad(code: int, step_no: int, col: int) -> [] codes.Fault {
+    return codes.fault(code, step_no, 0 - 1 - col, 0);
+}
+
+fn out_of_range(step_no: int) -> [] codes.Fault {
+    return codes.fault(codes.out_of_range(), step_no, 0, 0);
+}
+
+// Fit a categorical step. kind 7 to 10; `sel` are the places in the reader's vocabulary (and the columns of `ids`) of the step's columns, strictly ascending;
+// `ids` are the ids of the TRAINING rows. param is min-count (kinds 7 to 9) or the number of buckets (kind 10); maxcat bounds the effective categories (kinds
+// 7 to 9). (the step, Fault); the step is empty on a Fault.
+pub fn fit[&h, &i, &v, &s](heap: &!h Heap, kd: int, unknown: int, missing: int, par: int, maxcat: int, step_no: int, ids: &i catmat.Ids, rv: &v dict.Vocab, sel: &s [int]) -> [heap] (Fit, codes.Fault) {
+    let k = len(sel);
+    let n = catmat.rows(ids);
+    if n < 1 {
+        return (empty(heap), codes.fault(codes.input_empty(), step_no, 0, 0));
+    }
+    if kd < kinds.step_cat_onehot() || kd > kinds.step_hash() || k < 1 || k > max_columns() || unknown < 0 || unknown > 1 || missing < 0 || missing > 1 || n > max_rows() {
+        return (empty(heap), out_of_range(step_no));
+    }
+    if kd == kinds.step_hash() {
+        if par < min_buckets() || par > max_buckets() || unknown != 0 {
+            return (empty(heap), out_of_range(step_no));
+        }
+    } else if par < 1 || par > max_min_count() || maxcat < 1 || maxcat > max_categories() {
+        return (empty(heap), out_of_range(step_no));
+    }
+    var j = 0;
+    var prev = 0 - 1;
+    while j < k {
+        if sel[j] <= prev || sel[j] >= dict.ncols(rv) || sel[j] >= catmat.cols(ids) {
+            return (empty(heap), out_of_range(step_no));
+        }
+        prev = sel[j];
+        j = j + 1;
+    }
+    // the sizes: how many strings of each reader column occur in the training rows, their bytes and the names' bytes
+    var tw = box_slice(heap, k + 1, 0);
+    var names_bytes = 0;
+    var entries = 0;
+    var pool_bytes = 0;
+    var fault = codes.none();
+    // counts of every reader string of every selected column, one after the other
+    var off = 0;
+    j = 0;
+    while j < k {
+        off = off + dict.count(rv, sel[j]);
+        j = j + 1;
+    }
+    var cnts = box_slice(heap, off + 1, 0);
+    borrow mut cnts as &!cw in {
+        borrow mut tw as &!tv in {
+            var base = 0;
+            j = 0;
+            while j < k && fault.code == 0 {
+                let c = sel[j];
+                let vc = dict.count(rv, c);
+                if kd != kinds.step_hash() {
+                    var r = 0;
+                    var seen = 0;
+                    while r < n {
+                        let id = catmat.id(ids, r, c);
+                        if id >= 0 && id < vc {
+                            if contents(cw)[base + id] == 0 {
+                                seen = seen + 1;
+                                pool_bytes = pool_bytes + len(dict.string(rv, c, id));
+                            }
+                            contents(cw)[base + id] = contents(cw)[base + id] + 1;
+                        }
+                        r = r + 1;
+                    }
+                    if seen == 0 {
+                        fault = bad(codes.all_missing(), step_no, c);
+                    } else {
+                        contents(tv)[j] = seen;
+                        entries = entries + seen;
+                    }
+                }
+                names_bytes = names_bytes + len(dict.name(rv, c));
+                base = base + vc;
+                j = j + 1;
+            }
+        }
+    }
+    if fault.code != 0 {
+        unbox_slice(heap, tw);
+        unbox_slice(heap, cnts);
+        return (empty(heap), fault);
+    }
+    // the Fit: names, the strings of each column in the reader's (bytewise ascending) order and the counts
+    var names = box_slice(heap, names_bytes + 1, byte_of(0));
+    var nends = box_slice(heap, k + 1, 0);
+    var counts = box_slice(heap, k + 1, 0);
+    var first = box_slice(heap, k + 2, 0);
+    var ends = box_slice(heap, entries + 1, 0);
+    var pool = box_slice(heap, pool_bytes + 1, byte_of(0));
+    var cnt = box_slice(heap, entries + 1, 0);
+    borrow cnts as &cr in {
+        borrow tw as &tr in {
+            borrow mut names as &!w1 in {
+                borrow mut nends as &!w2 in {
+                    borrow mut counts as &!w3 in {
+                        borrow mut first as &!w4 in {
+                            borrow mut ends as &!w5 in {
+                                borrow mut pool as &!w6 in {
+                                    borrow mut cnt as &!w7 in {
+                                        var nb = 0;
+                                        var e = 0;
+                                        var at = 0;
+                                        var base = 0;
+                                        j = 0;
+                                        while j < k {
+                                            let c = sel[j];
+                                            let nm = dict.name(rv, c);
+                                            var b = 0;
+                                            while b < len(nm) {
+                                                contents(w1)[nb + b] = nm[b];
+                                                b = b + 1;
+                                            }
+                                            nb = nb + len(nm);
+                                            contents(w2)[j] = nb;
+                                            contents(w3)[j] = contents(tr)[j];
+                                            contents(w4)[j] = e;
+                                            let vc = dict.count(rv, c);
+                                            var id = 0;
+                                            while id < vc && kd != kinds.step_hash() {
+                                                let q = contents(cr)[base + id];
+                                                if q > 0 {
+                                                    let s = dict.string(rv, c, id);
+                                                    var t = 0;
+                                                    while t < len(s) {
+                                                        contents(w6)[at + t] = s[t];
+                                                        t = t + 1;
+                                                    }
+                                                    at = at + len(s);
+                                                    contents(w5)[e] = at;
+                                                    contents(w7)[e] = q;
+                                                    e = e + 1;
+                                                }
+                                                id = id + 1;
+                                            }
+                                            base = base + vc;
+                                            j = j + 1;
+                                        }
+                                        contents(w4)[k] = e;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, tw);
+    unbox_slice(heap, cnts);
+    let st = Fit { kind: kd, unknown: unknown, missing: missing, param: par, rows: n, k: k, total: entries, names: names, nends: nends, counts: counts, first: first, ends: ends, pool: pool, cnt: cnt };
+    if kd != kinds.step_hash() {
+        // the reserved name and the bound on the effective categories, column by column
+        var f2 = codes.none();
+        borrow st as &sr in {
+            j = 0;
+            while j < k && f2.code == 0 {
+                if par >= 2 {
+                    var i2 = 0;
+                    while i2 < ncat(sr, j) {
+                        if bytes.equal(string(sr, j, i2), other()) {
+                            f2 = bad(codes.reserved_category(), step_no, sel[j]);
+                        }
+                        i2 = i2 + 1;
+                    }
+                }
+                if f2.code == 0 {
+                    let (ei, ec, ne) = effective(heap, sr, j, par);
+                    unbox_slice(heap, ei);
+                    unbox_slice(heap, ec);
+                    if ne > maxcat {
+                        f2 = bad(codes.categories(), step_no, sel[j]);
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        if f2.code != 0 {
+            drop(heap, st);
+            return (empty(heap), f2);
+        }
+    }
+    return (st, codes.none());
+}
+
+// ---------------------------------------------------------------- apply
+
+// the width of the block a column writes
+fn block_width(kd: int, ne: int, par: int) -> [] int {
+    if kd == kinds.step_cat_onehot() {
+        return ne;
+    }
+    if kd == kinds.step_hash() {
+        return par;
+    }
+    return 1;
+}
+
+// Apply a fitted step. `ids` are the ids of the rows to transform and `rv` the vocabulary they refer to: a column of the step is found in it BY NAME (a
+// missing one is ml.schema.mismatch). The output holds only the columns this step writes: for each column of the step in order, its block (section 3).
+// (the matrix, the number of cells met that the step did not know, Fault). A refusal of unknown=refuse names the first cell in column order then row order.
+pub fn apply[&h, &f, &i, &v](heap: &!h Heap, st: &f Fit, ids: &i catmat.Ids, rv: &v dict.Vocab, step_no: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int, codes.Fault) {
+    let k = st.k;
+    let n = catmat.rows(ids);
+    let kd = st.kind;
+    var rcol = box_slice(heap, k + 1, 0);
+    var widths = box_slice(heap, k + 1, 0);
+    var wtotal = 0;
+    var fault = codes.none();
+    // the reader's column of each step column, and the block widths
+    borrow mut rcol as &!rw in {
+        borrow mut widths as &!ww in {
+            var j = 0;
+            while j < k && fault.code == 0 {
+                let rc = dict.find_column(rv, name(st, j));
+                if rc < 0 || rc >= catmat.cols(ids) {
+                    fault = codes.fault(codes.schema_mismatch(), step_no, 0, 0);
+                } else {
+                    contents(rw)[j] = rc;
+                    var ne = 0;
+                    if kd == kinds.step_cat_onehot() {
+                        let (ei, ec, ne2) = effective(heap, st, j, st.param);
+                        unbox_slice(heap, ei);
+                        unbox_slice(heap, ec);
+                        ne = ne2;
+                    }
+                    contents(ww)[j] = block_width(kd, ne, st.param);
+                    wtotal = wtotal + contents(ww)[j];
+                }
+                j = j + 1;
+            }
+        }
+    }
+    if fault.code != 0 {
+        unbox_slice(heap, rcol);
+        unbox_slice(heap, widths);
+        return (matrix.empty(heap), 0, fault);
+    }
+    let (out, code) = matrix.make(heap, n, wtotal, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        matrix.drop(heap, out);
+        unbox_slice(heap, rcol);
+        unbox_slice(heap, widths);
+        return (matrix.empty(heap), 0, codes.fault(codes.from_refuse(code), step_no, 0, 0));
+    }
+    let (t, data, miss, orows, ocols, wpc) = matrix.parts(out);
+    var dw0 = data;
+    var mw0 = miss;
+    var unknown = 0;
+    let state = box_slice(heap, crypto.sha256_state_len(), 0);
+    let dg = box_slice(heap, 32, byte_of(0));
+    var stw = state;
+    var dgw = dg;
+    borrow rcol as &rr in {
+        borrow widths as &wr in {
+            borrow mut dw0 as &!dw in {
+                borrow mut mw0 as &!mw in {
+                    borrow mut stw as &!sx in {
+                        borrow mut dgw as &!dx in {
+                            var o = 0;
+                            var j = 0;
+                            while j < k && fault.code == 0 {
+                                let rc = contents(rr)[j];
+                                let vc = dict.count(rv, rc);
+                                var tab = box_slice(heap, vc + 1, 0 - 1);
+                                var ei = box_slice(heap, 1, 0);
+                                var ec = box_slice(heap, 1, 0);
+                                var ne = 0;
+                                if kd == kinds.step_hash() {
+                                    borrow mut tab as &!tv in {
+                                        var id = 0;
+                                        while id < vc {
+                                            contents(tv)[id] = bucket_of(contents(sx), contents(dx), dict.string(rv, rc, id), st.param);
+                                            id = id + 1;
+                                        }
+                                    }
+                                } else {
+                                    unbox_slice(heap, ei);
+                                    unbox_slice(heap, ec);
+                                    let (ei2, ec2, ne2) = effective(heap, st, j, st.param);
+                                    ei = ei2;
+                                    ec = ec2;
+                                    ne = ne2;
+                                    // the effective index of each reader string: by binary search of its bytes in the step's strings
+                                    borrow mut tab as &!tv in {
+                                        borrow ei as &er in {
+                                            let m = ncat(st, j);
+                                            var id = 0;
+                                            while id < vc {
+                                                let sv = dict.string(rv, rc, id);
+                                                var lo = 0;
+                                                var hi = m;
+                                                var found = 0 - 1;
+                                                while lo < hi && found < 0 {
+                                                    let mid = (lo + hi) / 2;
+                                                    let cmp = bytes.compare(string(st, j, mid), sv);
+                                                    if cmp == 0 {
+                                                        found = mid;
+                                                    } else if cmp < 0 {
+                                                        lo = mid + 1;
+                                                    } else {
+                                                        hi = mid;
+                                                    }
+                                                }
+                                                if found >= 0 {
+                                                    contents(tv)[id] = contents(er)[found];
+                                                }
+                                                id = id + 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                let width = contents(wr)[j];
+                                borrow tab as &tr in {
+                                    borrow ec as &cr in {
+                                        var r = 0;
+                                        while r < n && fault.code == 0 {
+                                            let id = catmat.id(ids, r, rc);
+                                            if id == 0 - 1 {
+                                                // a missing cell
+                                                if st.missing == 0 {
+                                                    var b = 0;
+                                                    while b < width {
+                                                        matrix.mark_missing(contents(mw), wpc, r, o + b);
+                                                        b = b + 1;
+                                                    }
+                                                } else if kd == kinds.step_cat_label() {
+                                                    matrix.put(contents(dw), ocols, r, o, 0.0 - 1.0);
+                                                }
+                                            } else {
+                                                var e = 0 - 1;
+                                                if id >= 0 && id < vc {
+                                                    e = contents(tr)[id];
+                                                }
+                                                if e < 0 {
+                                                    // not in the step's vocabulary (or no bytes to hash): unseen
+                                                    if st.unknown == 1 {
+                                                        fault = codes.fault(codes.unknown_category(), step_no, 0 - 1 - rc, r);
+                                                    } else {
+                                                        unknown = unknown + 1;
+                                                        if kd == kinds.step_cat_label() {
+                                                            matrix.put(contents(dw), ocols, r, o, 0.0 - 1.0);
+                                                        }
+                                                    }
+                                                } else if kd == kinds.step_cat_onehot() || kd == kinds.step_hash() {
+                                                    matrix.put(contents(dw), ocols, r, o + e, 1.0);
+                                                } else if kd == kinds.step_cat_label() {
+                                                    matrix.put(contents(dw), ocols, r, o, float_of(e));
+                                                } else {
+                                                    matrix.put(contents(dw), ocols, r, o, float_of(contents(cr)[e]) / float_of(st.rows));
+                                                }
+                                            }
+                                            r = r + 1;
+                                        }
+                                    }
+                                }
+                                unbox_slice(heap, tab);
+                                unbox_slice(heap, ei);
+                                unbox_slice(heap, ec);
+                                o = o + width;
+                                j = j + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, stw);
+    unbox_slice(heap, dgw);
+    unbox_slice(heap, rcol);
+    unbox_slice(heap, widths);
+    let made = matrix.assemble(t, dw0, mw0, orows, ocols, wpc);
+    if fault.code != 0 {
+        matrix.drop(heap, made);
+        return (matrix.empty(heap), 0, fault);
+    }
+    return (made, unknown, codes.none());
+}
+
+// ---------------------------------------------------------------- the bytes (section 5.2)
+
+fn put32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+fn put64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < 8 {
+        o = buffer.push(heap, o, byte_of(v >> 8 * k & 255));
+        k = k + 1;
+    }
+    return o;
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+// The payload of a step appended to `out`. The step is assumed well formed (fit built it, or decode checked it).
+pub fn encode_payload[&h, &f](heap: &!h Heap, out: buffer.Buffer, st: &f Fit) -> [heap] buffer.Buffer {
+    var o = put32(heap, out, st.kind);
+    o = put32(heap, o, layout());
+    o = put32(heap, o, st.k);
+    o = put32(heap, o, st.unknown);
+    o = put32(heap, o, st.missing);
+    o = put32(heap, o, st.param);
+    o = put64(heap, o, st.rows);
+    var c = 0;
+    while c < st.k {
+        o = put32(heap, o, len(name(st, c)));
+        o = buffer.append(heap, o, name(st, c));
+        o = put32(heap, o, ncat(st, c));
+        var i = 0;
+        while i < ncat(st, c) {
+            o = put32(heap, o, len(string(st, c, i)));
+            o = buffer.append(heap, o, string(st, c, i));
+            o = put64(heap, o, count(st, c, i));
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    return o;
+}
+
+pub fn payload_size[&f](st: &f Fit) -> [] int {
+    var n = 4 * 6 + 8;
+    var c = 0;
+    while c < st.k {
+        n = n + 4 + len(name(st, c)) + 4;
+        var i = 0;
+        while i < ncat(st, c) {
+            n = n + 4 + len(string(st, c, i)) + 8;
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    return n;
+}
+
+fn malformed() -> [] int {
+    return codes.malformed();
+}
+
+// Decode a payload. (the step, 0) or (an empty step, ml.model.malformed). Nothing is allocated before the sizes the bytes promise have been checked against the
+// bytes that are there; the strings are checked ascending, the counts against the rows, the names distinct, the reserved name against the bucket.
+pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Fit, int) {
+    let n = len(data);
+    let bad = malformed();
+    if n < 32 {
+        return (empty(heap), bad);
+    }
+    let kd = get32(data, 0);
+    let k = get32(data, 8);
+    let unknown = get32(data, 12);
+    let missing = get32(data, 16);
+    let par = get32(data, 20);
+    let rows = fbits.get64(data, 24);
+    if kd < kinds.step_cat_onehot() || kd > kinds.step_hash() || get32(data, 4) != layout() || k < 1 || k > max_columns() || unknown > 1 || unknown < 0 || missing > 1 || missing < 0 || rows < 1 || rows > max_rows() {
+        return (empty(heap), bad);
+    }
+    if kd == kinds.step_hash() {
+        if par < min_buckets() || par > max_buckets() || unknown != 0 {
+            return (empty(heap), bad);
+        }
+    } else if par < 1 || par > max_min_count() {
+        return (empty(heap), bad);
+    }
+    // first pass: the sizes, every bound and the order of the strings, with nothing allocated
+    var pos = 32;
+    var entries = 0;
+    var nbytes = 0;
+    var sbytes = 0;
+    var c = 0;
+    while c < k {
+        if n - pos < 4 {
+            return (empty(heap), bad);
+        }
+        let nl = get32(data, pos);
+        pos = pos + 4;
+        if nl < 1 || nl > max_name() || n - pos < nl + 4 {
+            return (empty(heap), bad);
+        }
+        nbytes = nbytes + nl;
+        // distinct from the names before it (re-read from the bytes: the names are not copied yet)
+        var q = 32;
+        var d2 = 0;
+        while d2 < c {
+            let ql = get32(data, q);
+            if ql == nl && bytes.equal(data[q + 4..q + 4 + ql], data[pos..pos + nl]) {
+                return (empty(heap), bad);
+            }
+            q = q + 4 + ql;
+            // skip the categories of column d2
+            let qc = get32(data, q);
+            q = q + 4;
+            var t2 = 0;
+            while t2 < qc {
+                q = q + 4 + get32(data, q) + 8;
+                t2 = t2 + 1;
+            }
+            d2 = d2 + 1;
+        }
+        pos = pos + nl;
+        let m = get32(data, pos);
+        pos = pos + 4;
+        if m < 0 || kd == kinds.step_hash() && m != 0 || kd != kinds.step_hash() && (m < 1 || m > max_categories()) {
+            return (empty(heap), bad);
+        }
+        var prev_from = 0;
+        var prev_len = 0 - 1;
+        var total = 0;
+        var i = 0;
+        while i < m {
+            if n - pos < 4 {
+                return (empty(heap), bad);
+            }
+            let sl = get32(data, pos);
+            pos = pos + 4;
+            if sl < 1 || sl > max_string() || n - pos < sl + 8 {
+                return (empty(heap), bad);
+            }
+            if prev_len >= 0 && bytes.compare(data[prev_from..prev_from + prev_len], data[pos..pos + sl]) >= 0 {
+                return (empty(heap), bad);
+            }
+            if par >= 2 && bytes.equal(data[pos..pos + sl], other()) {
+                return (empty(heap), bad);
+            }
+            let cn = fbits.get64(data, pos + sl);
+            if cn < 1 || cn > rows {
+                return (empty(heap), bad);
+            }
+            total = total + cn;
+            if total > rows {
+                return (empty(heap), bad);
+            }
+            prev_from = pos;
+            prev_len = sl;
+            sbytes = sbytes + sl;
+            pos = pos + sl + 8;
+            i = i + 1;
+        }
+        entries = entries + m;
+        c = c + 1;
+    }
+    if pos != n {
+        return (empty(heap), bad);
+    }
+    // second pass: the copies
+    var names = box_slice(heap, nbytes + 1, byte_of(0));
+    var nends = box_slice(heap, k + 1, 0);
+    var counts = box_slice(heap, k + 1, 0);
+    var first = box_slice(heap, k + 2, 0);
+    var ends = box_slice(heap, entries + 1, 0);
+    var pool = box_slice(heap, sbytes + 1, byte_of(0));
+    var cnt = box_slice(heap, entries + 1, 0);
+    borrow mut names as &!w1 in {
+        borrow mut nends as &!w2 in {
+            borrow mut counts as &!w3 in {
+                borrow mut first as &!w4 in {
+                    borrow mut ends as &!w5 in {
+                        borrow mut pool as &!w6 in {
+                            borrow mut cnt as &!w7 in {
+                                var at = 32;
+                                var nb = 0;
+                                var e = 0;
+                                var pb = 0;
+                                c = 0;
+                                while c < k {
+                                    let nl = get32(data, at);
+                                    at = at + 4;
+                                    var b = 0;
+                                    while b < nl {
+                                        contents(w1)[nb + b] = data[at + b];
+                                        b = b + 1;
+                                    }
+                                    nb = nb + nl;
+                                    at = at + nl;
+                                    contents(w2)[c] = nb;
+                                    let m = get32(data, at);
+                                    at = at + 4;
+                                    contents(w3)[c] = m;
+                                    contents(w4)[c] = e;
+                                    var i = 0;
+                                    while i < m {
+                                        let sl = get32(data, at);
+                                        at = at + 4;
+                                        b = 0;
+                                        while b < sl {
+                                            contents(w6)[pb + b] = data[at + b];
+                                            b = b + 1;
+                                        }
+                                        pb = pb + sl;
+                                        contents(w5)[e] = pb;
+                                        contents(w7)[e] = fbits.get64(data, at + sl);
+                                        at = at + sl + 8;
+                                        e = e + 1;
+                                        i = i + 1;
+                                    }
+                                    c = c + 1;
+                                }
+                                contents(w4)[k] = e;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return (Fit { kind: kd, unknown: unknown, missing: missing, param: par, rows: rows, k: k, total: entries, names: names, nends: nends, counts: counts, first: first, ends: ends, pool: pool, cnt: cnt }, 0);
+}
+
+// The bytes of a step, alone: the step kind, u32 k and the vocabulary part (what stage 3 stores; the same bytes as the tail of the payload)
+pub fn digest_input[&h, &f](heap: &!h Heap, st: &f Fit) -> [heap] buffer.Buffer {
+    return encode_payload(heap, buffer.empty(heap, payload_size(st)), st);
+}
+
+// the number of columns the block of column c of a fitted step takes in the output (one-hot: the effective categories; hash: the buckets; else 1)
+pub fn out_width[&h, &f](heap: &!h Heap, st: &f Fit, c: int) -> [heap] int {
+    if st.kind == kinds.step_cat_onehot() {
+        let (ei, ec, ne) = effective(heap, st, c, st.param);
+        unbox_slice(heap, ei);
+        unbox_slice(heap, ec);
+        return ne;
+    }
+    return block_width(st.kind, 0, st.param);
+}

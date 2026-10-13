@@ -1,0 +1,30 @@
+tests/enc.cho: test result: ok. 12 passed; 0 failed
+E1/E4/E5: 400 random tables (166 answered, 234 refused by the oracle's verdict), the corner families and the all-unseen predict files, machine arm64, load 6.20
+E1/E4/E5 diff: 515 runs, 0 differences
+E2: 50 tables (35 accepted), 5 seeded permutations each, machine arm64, load 6.20
+E2 row order: 250 runs, 0 differences
+E6: hashing against hashlib at B in {2,3,7,16,1000,1024}, 900+ strings a table, machine arm64, load 6.24
+E6 hash: 72 runs, 0 differences
+E3: 8 answered fits (of 37 tried), 5 thread counts each, machine arm64, load 6.24
+E3 threads: 40 runs, 0 differences
+E11: 3024 runs (enc-check and ml fit --cat with hostile plans and files), machine arm64, load 6.47
+E11 no trap: 3024 runs, 0 differences
+data seed 1  train rows / test rows                 observed 0.000e+00  bound 0e+00  PASS
+data seed 1  coefficients and intercept (max abs)   observed 1.705e-08  bound 1e-05  PASS
+data seed 1  accuracy (difference)                  observed 0.000e+00  bound 0e+00  PASS
+data seed 1  roc_auc (absolute)                     observed 0.000e+00  bound 1e-06  PASS
+data seed 1  log_loss (relative)                    observed 3.142e-10  bound 1e-06  PASS
+data seed 1  held-out: accuracy 0.776 roc_auc 0.8666666666666667 log_loss 0.5070044404776425; sklearn accuracy 0.776 roc_auc 0.8666666666666667 log_loss 0.5070044403183298; 15 coefficients (a,b,c1#0,c1#1 ...)
+data seed 2  train rows / test rows                 observed 0.000e+00  bound 0e+00  PASS
+data seed 2  coefficients and intercept (max abs)   observed 7.373e-08  bound 1e-05  PASS
+data seed 2  accuracy (difference)                  observed 0.000e+00  bound 0e+00  PASS
+data seed 2  roc_auc (absolute)                     observed 0.000e+00  bound 1e-06  PASS
+data seed 2  log_loss (relative)                    observed 1.402e-08  bound 1e-06  PASS
+data seed 2  held-out: accuracy 0.7466666666666667 roc_auc 0.8240746021787486 log_loss 0.5429476070937118; sklearn accuracy 0.7466666666666667 roc_auc 0.8240746021787486 log_loss 0.5429475994836669; 15 coefficients (a,b,c1#0,c1#1 ...)
+data seed 3  train rows / test rows                 observed 0.000e+00  bound 0e+00  PASS
+data seed 3  coefficients and intercept (max abs)   observed 1.462e-08  bound 1e-05  PASS
+data seed 3  accuracy (difference)                  observed 0.000e+00  bound 0e+00  PASS
+data seed 3  roc_auc (absolute)                     observed 0.000e+00  bound 1e-06  PASS
+data seed 3  log_loss (relative)                    observed 2.753e-09  bound 1e-06  PASS
+data seed 3  held-out: accuracy 0.76 roc_auc 0.8618439878669948 log_loss 0.508267189495155; sklearn accuracy 0.76 roc_auc 0.8618439878669948 log_loss 0.508267188096017; 15 coefficients (a,b,c1#0,c1#1 ...)
+E13 scikit-learn 1.8.0, numpy 2.4.6, machine arm64: all PASS

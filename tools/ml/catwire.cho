@@ -1,0 +1,400 @@
+edition 6;
+
+module ml.catwire;
+
+// The pieces of `ml fit --cat` with a planned model that the numeric path does not have (docs/categorical-encoders.md section 6): the rows of the categorical ids that
+// a split selects, the schema and the target's place among the NUMERIC columns, the errors of the categorical faults (with the name of the column), the
+// summary of what the categorical steps learned, and the answer of a fit that writes no file (the vocabulary cannot be stored before stage 3 of issue 21).
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.catmat;
+import ml.csv;
+import ml.dict;
+import ml.mfile;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import ml.kinds;
+import ml.matrix;
+import ml.logrec;
+import pipeline.mixed;
+import pipeline.names;
+import pipeline.plan;
+import pipeline.schema;
+import transforms.catenc;
+import transforms.codes;
+import toolbox.fail;
+import toolbox.text;
+
+// the index among the numeric kept columns of the column called `name`, or -1
+pub fn numeric_index[&s, &n](sh: &s csv.Shape, name: &n [byte]) -> [] int {
+    var at = 0;
+    var i = 0;
+    while i < csv.cols(sh) {
+        if !csv.dropped(sh, i) && csv.catplace(sh, i) == 0 {
+            if bytes.equal(csv.name(sh, i), name) {
+                return at;
+            }
+            at = at + 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// the schema of the NUMERIC kept columns of a shape, the target marked (wiredata.schema_of_shape for a table that also has categorical columns)
+pub fn numeric_schema[&h, &s, &t](heap: &!h Heap, sh: &s csv.Shape, tname: &t [byte]) -> [heap] schema.Schema {
+    var nm = names.empty(heap);
+    var kept = 0;
+    var i = 0;
+    while i < csv.cols(sh) {
+        if !csv.dropped(sh, i) && csv.catplace(sh, i) == 0 {
+            kept = kept + 1;
+        }
+        i = i + 1;
+    }
+    var types = box_slice(heap, 2 * kept + 2, 0);
+    var target = 0;
+    borrow mut types as &!tw in {
+        var at = 0;
+        i = 0;
+        while i < csv.cols(sh) {
+            if !csv.dropped(sh, i) && csv.catplace(sh, i) == 0 {
+                nm = names.add(heap, nm, csv.name(sh, i));
+                let k = csv.kind(sh, i);
+                if k == 1 {
+                    contents(tw)[2 * at] = 0;
+                } else if k == 2 {
+                    contents(tw)[2 * at] = 1;
+                    contents(tw)[2 * at + 1] = csv.scale(sh, i);
+                } else {
+                    contents(tw)[2 * at] = 2;
+                }
+                if bytes.equal(csv.name(sh, i), tname) {
+                    target = at;
+                }
+                at = at + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return schema.make(nm, types, target);
+}
+
+// A copy of the ids of the rows r with sel[r] == want (all rows when want < 0), in order. (ids, 0) or (empty, a code of ml.refuse)
+pub fn take_ids[&h, &m, &s](heap: &!h Heap, ids: &m catmat.Ids, sel: &s [int], want: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (catmat.Ids, int) {
+    var n = 0;
+    var r = 0;
+    while r < catmat.rows(ids) {
+        if want < 0 || sel[r] == want {
+            n = n + 1;
+        }
+        r = r + 1;
+    }
+    let (out, code) = catmat.make(heap, n, catmat.cols(ids), rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (out, code);
+    }
+    let (t, data, miss, unseen, rows, cols, wpc) = catmat.parts(out);
+    var d = data;
+    var b = miss;
+    borrow mut d as &!dw in {
+        borrow mut b as &!bw in {
+            var at = 0;
+            r = 0;
+            while r < catmat.rows(ids) {
+                if want < 0 || sel[r] == want {
+                    var c = 0;
+                    while c < cols {
+                        let v = catmat.id(ids, r, c);
+                        catmat.put(contents(dw), cols, at, c, v);
+                        if v == catmat.missing_id() {
+                            catmat.mark_missing(contents(bw), wpc, at, c);
+                        }
+                        c = c + 1;
+                    }
+                    at = at + 1;
+                }
+                r = r + 1;
+            }
+        }
+    }
+    return (catmat.assemble(t, d, b, unseen, rows, cols, wpc), 0);
+}
+
+// the names of the columns of a vocabulary, in order
+pub fn vocab_names[&h, &v](heap: &!h Heap, voc: &v dict.Vocab) -> [heap] names.Names {
+    var nm = names.empty(heap);
+    var c = 0;
+    while c < dict.ncols(voc) {
+        nm = names.add(heap, nm, dict.name(voc, c));
+        c = c + 1;
+    }
+    return nm;
+}
+
+fn comma_list[&h, &n](heap: &!h Heap, nm: &n names.Names) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 32);
+    var c = 0;
+    while c < names.count(nm) {
+        if c > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = buffer.append(heap, b, names.name(nm, c));
+        c = c + 1;
+    }
+    return b;
+}
+
+// ---------------------------------------------------------------- errors
+
+// ml.input.categorical-not-encoded: the declared columns no step read (docs/categorical-encoders.md section 2); the digest is of the reader's whole vocabulary
+pub fn not_encoded[&h, &v, &n](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab, rem: &n names.Names) -> [heap] fail.Errors {
+    var counts = buffer.empty(heap, 32);
+    var c = 0;
+    while c < names.count(rem) {
+        if c > 0 {
+            counts = buffer.push(heap, counts, byte_of(44));
+        }
+        let at = dict.find_column(voc, names.name(rem, c));
+        counts = buffer.push_nat(heap, counts, dict.count(voc, at));
+        c = c + 1;
+    }
+    var dumped = dict.dump(heap, voc);
+    var hex = buffer.empty(heap, 1);
+    borrow dumped as &dr in {
+        buffer.drop(heap, hex);
+        hex = mfile.sha256_hex(heap, buffer.bytes(dr));
+    }
+    buffer.drop(heap, dumped);
+    var names_list = comma_list(heap, rem);
+    var q = wiredata.open_tag(heap, "ml.input.categorical-not-encoded");
+    q = fail.no_repair(heap, q);
+    q = fail.detail_open(heap, q);
+    borrow names_list as &nr in {
+        q = fail.detail_text(heap, q, "columns", buffer.bytes(nr));
+    }
+    borrow counts as &kr in {
+        q = fail.detail_text(heap, q, "categories", buffer.bytes(kr));
+    }
+    borrow hex as &xr in {
+        q = fail.detail_text(heap, q, "vocabulary_sha256", buffer.bytes(xr));
+    }
+    buffer.drop(heap, names_list);
+    buffer.drop(heap, counts);
+    buffer.drop(heap, hex);
+    return fail.add(heap, errs, q);
+}
+
+// ml.model.vocabulary-not-stored: a fit with categorical steps that would write a model file
+pub fn not_stored[&h, &v](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab) -> [heap] fail.Errors {
+    var nm = vocab_names(heap, voc);
+    var list = buffer.empty(heap, 1);
+    borrow nm as &nr in {
+        buffer.drop(heap, list);
+        list = comma_list(heap, nr);
+    }
+    names.drop(heap, nm);
+    var q = wiredata.open_tag(heap, "ml.model.vocabulary-not-stored");
+    q = fail.no_repair(heap, q);
+    q = fail.detail_open(heap, q);
+    borrow list as &lr in {
+        q = fail.detail_text(heap, q, "columns", buffer.bytes(lr));
+    }
+    buffer.drop(heap, list);
+    return fail.add(heap, errs, q);
+}
+
+fn plain_name[&n](nm: &n [byte]) -> [] bool {
+    return len(nm) > 0 && bytes.count_byte(nm, ' ') == 0 && bytes.count_byte(nm, ',') == 0 && bytes.count_byte(nm, '=') == 0 && bytes.count_byte(nm, '#') == 0 && bytes.count_byte(nm, ';') == 0 && text.is_utf8(nm);
+}
+
+// the name at 1-based place `place` of the comma separated list
+fn nth_name[&l](list: &l [byte], place: int) -> [] &l [byte] {
+    return bytes.field(list, ',', place);
+}
+
+fn column_kind_error[&h, &g, &p, &c](heap: &!h Heap, args: &g Args, errs: fail.Errors, f: codes.Fault, pl: &p plan.Plan, retry_ok: bool, colname: &c [byte]) -> [heap, args] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.plan.column-kind");
+    let kind = plan.kind_of(pl, f.a - 1);
+    let numeric_verb = kind == 1 || kind == 2 || kind == 3 || kind == 6;
+    var has_step = false;
+    var i = 0;
+    while i < arg_count(args) {
+        if bytes.equal(arg(args, i), "--step") && i + 1 < arg_count(args) {
+            has_step = true;
+        }
+        i = i + 1;
+    }
+    if retry_ok && has_step && numeric_verb && f.c == 1 && plain_name(colname) && !plan.all_columns(pl, f.a - 1) {
+        var fix = buffer.empty(heap, 64);
+        fix = buffer.append(heap, fix, "encode column=");
+        fix = buffer.append(heap, fix, colname);
+        fix = buffer.append(heap, fix, " kind=label; ");
+        var rw = fail.retry_open(heap, w);
+        var k = 0;
+        while k < arg_count(args) {
+            if bytes.equal(arg(args, k), "--step") && k + 1 < arg_count(args) {
+                rw = json.put_string(heap, rw, "--step");
+                var joined = buffer.empty(heap, 64);
+                borrow fix as &fr in {
+                    joined = buffer.append(heap, joined, buffer.bytes(fr));
+                }
+                joined = buffer.append(heap, joined, arg(args, k + 1));
+                borrow joined as &jr in {
+                    rw = json.put_string(heap, rw, buffer.bytes(jr));
+                }
+                buffer.drop(heap, joined);
+                k = k + 2;
+            } else {
+                rw = json.put_string(heap, rw, arg(args, k));
+                k = k + 1;
+            }
+        }
+        buffer.drop(heap, fix);
+        w = fail.retry_close(heap, rw);
+    } else {
+        w = fail.repair_none(heap, w, "encode a categorical column first (encode column=NAME kind=label keeps its name, kind=onehot makes the columns NAME#0, NAME#1 ...) before a numeric step, and name only categorical columns in freq and hash");
+    }
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "step", f.a);
+    w = verbs.put_name(heap, w, "column", colname);
+    if f.c == 1 {
+        w = fail.detail_str(heap, w, "needs", "numeric");
+    } else {
+        w = fail.detail_str(heap, w, "needs", "categorical");
+    }
+    return fail.add(heap, errs, w);
+}
+
+// the error of a Fault of the mixed pipeline: the categorical faults name their column; everything else is wiredata.code_error. retry_ok: the plan came from --step
+// (so the repair of a numeric step on a categorical column can put an encode step before it)
+pub fn fault_error[&h, &g, &p, &v](heap: &!h Heap, args: &g Args, errs: fail.Errors, f: codes.Fault, pl: &p plan.Plan, voc: &v dict.Vocab, retry_ok: bool) -> [heap, args] fail.Errors {
+    let code = f.code;
+    if code == codes.plan_column_kind() {
+        var cnb = buffer.empty(heap, 16);
+        if plan.all_columns(pl, f.a - 1) {
+            cnb = buffer.append(heap, cnb, "*");
+        } else {
+            cnb = buffer.append(heap, cnb, nth_name(plan.columns(pl, f.a - 1), f.b));
+        }
+        var out = errs;
+        borrow cnb as &cnr in {
+            out = column_kind_error(heap, args, out, f, pl, retry_ok, buffer.bytes(cnr));
+        }
+        buffer.drop(heap, cnb);
+        return out;
+    }
+    if (code == codes.categories() || code == codes.all_missing() || code == codes.unknown_category() || code == codes.reserved_category()) && f.b < 0 {
+        var w = wiredata.open_tag(heap, codes.tag(code));
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "step", f.a);
+        w = verbs.put_name(heap, w, "column", dict.name(voc, 0 - 1 - f.b));
+        if code == codes.unknown_category() {
+            w = fail.detail_int(heap, w, "row", f.c);
+        }
+        return fail.add(heap, errs, w);
+    }
+    return wiredata.code_error(heap, errs, code, f.a, f.b, f.c);
+}
+
+// ---------------------------------------------------------------- the summary and the answer
+
+fn kind_word(kd: int) -> [] &static [byte] {
+    if kd == kinds.step_cat_onehot() {
+        return "onehot";
+    }
+    if kd == kinds.step_cat_label() {
+        return "label";
+    }
+    if kd == kinds.step_freq() {
+        return "freq";
+    }
+    return "hash";
+}
+
+// "steps_sha256" and "categorical" of the summary of a fit: the digest of the steps payload (so that the fitted vocabularies and counts can be compared) and, for each
+// column of each categorical step, the kind, the name, the number of strings in the training rows and the columns it writes
+pub fn put_categorical[&h, &s](heap: &!h Heap, w0: json.Writer, payload: &s [byte]) -> [heap] json.Writer {
+    var w = w0;
+    w = json.put_key(heap, w, "steps_sha256");
+    let hex = mfile.sha256_hex(heap, payload);
+    borrow hex as &hr in {
+        w = json.put_string(heap, w, buffer.bytes(hr));
+    }
+    buffer.drop(heap, hex);
+    w = json.put_key(heap, w, "categorical");
+    w = json.begin_array(heap, w);
+    var i = 0;
+    var n = 0;
+    if len(payload) >= 4 {
+        n = int_of(payload[0]) | int_of(payload[1]) << 8 | int_of(payload[2]) << 16 | int_of(payload[3]) << 24;
+    }
+    while i < n {
+        let (st, code) = mixed.cat_step_at(heap, payload, i);
+        if code == 0 {
+            borrow st as &sr in {
+                var c = 0;
+                while c < catenc.ncols(sr) {
+                    w = json.begin_object(heap, w);
+                    w = json.put_key(heap, w, "step");
+                    w = json.put_int(heap, w, i + 1);
+                    w = json.put_key(heap, w, "kind");
+                    w = json.put_string(heap, w, kind_word(catenc.kind(sr)));
+                    w = verbs.put_name(heap, w, "column", catenc.name(sr, c));
+                    w = json.put_key(heap, w, "categories");
+                    w = json.put_int(heap, w, catenc.ncat(sr, c));
+                    w = json.put_key(heap, w, "output_columns");
+                    w = json.put_int(heap, w, catenc.out_width(heap, sr, c));
+                    w = json.end_object(heap, w);
+                    c = c + 1;
+                }
+            }
+        }
+        catenc.drop(heap, st);
+        i = i + 1;
+    }
+    w = json.end_array(heap, w);
+    return w;
+}
+
+// The answer of a fit that wrote nothing: the data object, the text line and, for a dry run, the keys of one. `summary` is consumed.
+pub fn answer[&h, &n](heap: &!h Heap, o: verbs.Opts, name: &static [byte], task: &static [byte], rows: int, cols: int, tname: &n [byte], summary: buffer.Buffer, errs: fail.Errors, log: buffer.Buffer) -> [heap] verbs.Out {
+    var w = json.writer(heap, 512);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "model");
+    w = json.put_string(heap, w, name);
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, task);
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, rows);
+    w = json.put_key(heap, w, "columns");
+    w = json.put_int(heap, w, cols);
+    w = verbs.put_name(heap, w, "target", tname);
+    w = json.put_key(heap, w, "written");
+    w = json.put_bool(heap, w, false);
+    w = json.put_key(heap, w, "summary");
+    borrow summary as &sr in {
+        w = json.put_fragment(heap, w, buffer.bytes(sr));
+    }
+    w = json.end_object(heap, w);
+    let payload = json.finish(w);
+    buffer.drop(heap, summary);
+    var plain = buffer.empty(heap, 64);
+    plain = buffer.append(heap, plain, "fit: ");
+    plain = buffer.append(heap, plain, name);
+    plain = buffer.push(heap, plain, byte_of(' '));
+    plain = buffer.append(heap, plain, task);
+    plain = buffer.append(heap, plain, ", ");
+    plain = buffer.push_nat(heap, plain, rows);
+    plain = buffer.append(heap, plain, " rows, fitted with categorical columns and written to no file (the vocabulary cannot be stored before stage 3 of issue 21)\n");
+    var extra = buffer.empty(heap, 1);
+    if o.dry {
+        buffer.drop(heap, extra);
+        extra = buffer.append(heap, buffer.empty(heap, 64), ",\"dry_run\":true,\"planned_actions\":[]");
+    }
+    return wiredata.out_of(payload, plain, extra, errs, log, o.dry);
+}

@@ -397,5 +397,25 @@ def _cat_cases():
 CASES += _cat_cases()
 
 
+# ------------------------------------------------------------------ the encoders of categorical columns (docs/categorical-encoders.md, stage 2 of issue 21)
+ENCT = "id,sex,port,age,y\n1,male,S,20,1\n2,female,C,30,0\n3,male,S,40,1\n4,female,Q,50,0\n5,male,S,31,1\n6,female,C,22,0\n7,__other__,S,35,1\n8,male,C,44,0\n"
+EBASE = BASE + [("write", "enc.csv", ENCT)]
+FIT_ENC = ["fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", "sex,port", "--output", "m.cml"]
+
+
+def _enc_cases():
+    return [
+        case("ml-model-vocabulary-not-stored", FIT_ENC + ["--step", "encode column=sex,port kind=onehot", "enc.csv"], bad("ml.model.vocabulary-not-stored"), setup=EBASE),
+        case("ml-plan-column-kind-numeric-step-on-a-categorical-column", FIT_ENC + ["--step", "scale column=sex kind=standard", "enc.csv"], bad("ml.plan.column-kind"), setup=EBASE),
+        case("ml-plan-column-kind-freq-on-a-numeric-column", FIT_ENC + ["--step", "freq column=age", "enc.csv"], bad("ml.plan.column-kind"), setup=EBASE),
+        case("ml-input-reserved-category", FIT_ENC + ["--step", "encode column=sex,port kind=onehot min-count=2", "--split", "train=0.75", "enc.csv"], bad("ml.input.reserved-category"), setup=EBASE),
+        case("ml-input-categorical-not-encoded-by-a-planned-model", FIT_ENC + ["--step", "encode column=sex kind=onehot", "--split", "train=0.75", "enc.csv"],
+             bad("ml.input.categorical-not-encoded"), setup=EBASE),
+    ]
+
+
+CASES += _enc_cases()
+
+
 def log_cases():
     return [c for c in CASES if c.get("log")]

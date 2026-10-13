@@ -12,8 +12,11 @@ module ml.wire;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.catmat;
+import ml.catwire;
 import ml.csv;
 import ml.csvload;
+import ml.dict;
 import ml.est;
 import ml.fbits;
 import ml.fsio;
@@ -30,6 +33,7 @@ import metrics.splits;
 import models.common;
 import models.record;
 import pipeline.file;
+import pipeline.mixed;
 import pipeline.names;
 import pipeline.plan;
 import pipeline.run;
@@ -276,10 +280,13 @@ res struct Data {
     c0: int,
     c1: int,
     yall: Box[[float]],
+    // whether the file was read with the categorical columns of --cat (docs/categorical-encoders.md): x and sc then hold the NUMERIC columns only, and the ids and
+    // the vocabulary they refer to travel beside the Data (load_data answers them; a field cannot be borrowed by itself)
+    cat: bool,
 }
 
 fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
-    let Data { x, sh, sc, tj, nrows, ncols, c0, c1, yall } = d;
+    let Data { x, sh, sc, tj, nrows, ncols, c0, c1, yall, cat } = d;
     matrix.drop(heap, x);
     csv.drop_shape(heap, sh);
     schema.drop(heap, sc);
@@ -288,14 +295,41 @@ fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
 }
 
 fn empty_data[&h](heap: &!h Heap) -> [heap] Data {
-    return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, yall: box_slice(heap, 2, 0.0) };
+    return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, yall: box_slice(heap, 2, 0.0), cat: false };
 }
 
-fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Data, bool, fail.Errors, buffer.Buffer) {
+fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, mixed_plan: bool, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
-    let (x, sh, rep, code) = csvload.load_t(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), o.target, false);
+    var x = matrix.empty(heap);
+    var sh = csv.empty_shape(heap);
+    var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
+    var code = 0;
+    var ids = catmat.empty(heap);
+    var voc = dict.empty_vocab(heap);
+    if o.cat_given || mixed_plan {
+        let l = csvload.load_cat(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), verbs.cat_config(o), o.target, false, dict.empty_vocab(heap), false);
+        let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
+        matrix.drop(heap, x);
+        csv.drop_shape(heap, sh);
+        catmat.drop(heap, ids);
+        dict.drop_vocab(heap, voc);
+        x = x2;
+        ids = ids2;
+        voc = voc2;
+        sh = sh2;
+        rep = rep2;
+        code = code2;
+    } else {
+        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), o.target, false);
+        matrix.drop(heap, x);
+        csv.drop_shape(heap, sh);
+        x = x2;
+        sh = sh2;
+        rep = rep2;
+        code = code2;
+    }
     var tcol = 0 - 1;
     var tkind = 0;
     borrow sh as &sr in {
@@ -325,7 +359,9 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
     if !go {
         csv.drop_shape(heap, sh);
         matrix.drop(heap, x);
-        return (empty_data(heap), false, e, lg);
+        catmat.drop(heap, ids);
+        dict.drop_vocab(heap, voc);
+        return (empty_data(heap), catmat.empty(heap), dict.empty_vocab(heap), false, e, lg);
     }
     var nrows = 0;
     var ncols = 0;
@@ -336,14 +372,23 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
     var tj = 0 - 1;
     var sc = schema.empty(heap);
     borrow sh as &sr in {
-        tj = wiredata.kept_index(sr, o.target);
         schema.drop(heap, sc);
-        sc = wiredata.schema_of_shape(heap, sr, o.target);
+        if o.cat_given || mixed_plan {
+            tj = catwire.numeric_index(sr, o.target);
+            sc = catwire.numeric_schema(heap, sr, o.target);
+        } else {
+            tj = wiredata.kept_index(sr, o.target);
+            sc = wiredata.schema_of_shape(heap, sr, o.target);
+        }
+    }
+    var ncat = 0;
+    borrow voc as &vcr in {
+        ncat = dict.ncols(vcr);
     }
     if task == 2 && tkind != 1 {
         e = verbs.problem(heap, e, "ml.label.not-integer", "a classification target must be an integer column", "label the classes with integers", "", "");
         go = false;
-    } else if ncols < 2 {
+    } else if ncols + ncat < 2 {
         e = verbs.problem(heap, e, "ml.input.empty", "the file has no feature column besides the target", "give a file with at least one more column", "", "");
         go = false;
     }
@@ -410,7 +455,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
             }
         }
     }
-    return (Data { x: x, sh: sh, sc: sc, tj: tj, nrows: nrows, ncols: ncols, c0: c0, c1: c1, yall: yall }, go, e, lg);
+    return (Data { x: x, sh: sh, sc: sc, tj: tj, nrows: nrows, ncols: ncols, c0: c0, c1: c1, yall: yall, cat: o.cat_given || mixed_plan }, ids, voc, go, e, lg);
 }
 
 fn distinct_labels[&y](yv: &y [float], n: int) -> [] (int, int, int) {
@@ -473,20 +518,22 @@ fn empty_trained[&h](heap: &!h Heap) -> [heap] Trained {
 }
 
 // Fit the steps on the training rows (those of `sel` equal to `want`, all when want < 0), then the estimator on what the steps leave
-fn train[&h, &g, &dd, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
+fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
     var e = errs;
     var go = true;
     let nfeat = ds.ncols - 1;
     let featcols = indices_but(heap, ds.ncols, ds.tj);
     var xtr = matrix.empty(heap);
     var ytr = box_slice(heap, 2, 0.0);
-    borrow featcols as &fr in {
-        let (m2, code) = wiredata.take(heap, ds.x, sel, want, contents(fr), nfeat, o.max_rows, o.max_cols, o.max_cells);
-        matrix.drop(heap, xtr);
-        xtr = m2;
-        if code != 0 {
-            e = wiredata.code_error(heap, e, code, 0, 0, 0);
-            go = false;
+    if nfeat > 0 {
+        borrow featcols as &fr in {
+            let (m2, code) = wiredata.take(heap, ds.x, sel, want, contents(fr), nfeat, o.max_rows, o.max_cols, o.max_cells);
+            matrix.drop(heap, xtr);
+            xtr = m2;
+            if code != 0 {
+                e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                go = false;
+            }
         }
     }
     if go {
@@ -500,7 +547,43 @@ fn train[&h, &g, &dd, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, pls:
     if go {
         names.drop(heap, fnames);
         fnames = wiredata.feature_names(heap, ds.sc);
-        if true {
+        if ds.cat {
+            // categorical columns: the plan is fitted over the numeric features and the ids of the same training rows (docs/categorical-encoders.md section 6)
+            let (idt, icode) = catwire.take_ids(heap, cids, sel, want, o.max_rows, o.max_cols, o.max_cells);
+            if icode != 0 {
+                e = wiredata.code_error(heap, e, icode, 0, 0, 0);
+                go = false;
+            } else {
+                var trows = 0;
+                borrow idt as &itr in {
+                    trows = catmat.rows(itr);
+                }
+                borrow fnames as &nr in {
+                    borrow xtr as &xr in {
+                        borrow idt as &itr in {
+                            let (f2, xt2, rem, flt) = mixed.fit(heap, pls.pl, nr, xr, trows, itr, cvoc, o.max_rows, o.max_cols, o.max_cells);
+                            run.drop_fitted(heap, fitted);
+                            matrix.drop(heap, xt);
+                            fitted = f2;
+                            xt = xt2;
+                            if flt.code != 0 {
+                                e = catwire.fault_error(heap, args, e, flt, pls.pl, cvoc, o.step_given && !o.plan_given);
+                                go = false;
+                            } else {
+                                borrow rem as &remr in {
+                                    if names.count(remr) > 0 {
+                                        e = catwire.not_encoded(heap, e, cvoc, remr);
+                                        go = false;
+                                    }
+                                }
+                            }
+                            names.drop(heap, rem);
+                        }
+                    }
+                }
+            }
+            catmat.drop(heap, idt);
+        } else {
             borrow fnames as &nr in {
                 borrow xtr as &xr in {
                     let (f2, xt2, flt) = run.fit(heap, pls.pl, nr, xr, o.max_rows, o.max_cols, o.max_cells);
@@ -691,13 +774,16 @@ fn answer_fit[&h, &f, &r, &po, &d, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [
 }
 
 // the summary of a fit as JSON: the plan, the coefficients, the labels, the split and the held-out metrics
-fn fit_summary[&h, &pp, &dd, &sp](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.Plan, kind: int, c0: int, c1: int, split: &sp buffer.Buffer, ntest: int, o: verbs.Opts) -> [heap] buffer.Buffer {
+fn fit_summary[&h, &pp, &dd, &sp](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.Plan, kind: int, c0: int, c1: int, split: &sp buffer.Buffer, ntest: int, o: verbs.Opts, cat: bool) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 512);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "plan");
     w = json.put_string(heap, w, plan.text(pl));
     w = json.put_key(heap, w, "steps");
     w = json.put_int(heap, w, tr.fitted.n);
+    if cat {
+        w = catwire.put_categorical(heap, w, buffer.bytes(tr.fitted.payload));
+    }
     w = json.put_key(heap, w, "features");
     w = json.put_int(heap, w, tr.d);
     w = json.put_key(heap, w, "coefficients");
@@ -740,20 +826,40 @@ fn fit_summary[&h, &pp, &dd, &sp](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.
     return json.finish(w);
 }
 
+// the stored steps applied to a table: the numeric pipeline's when the file has no categorical column, else the mixed pipeline's
+fn apply_any[&h, &p, &m, &i, &v](heap: &!h Heap, cat: bool, payload: &p [byte], x: &m matrix.Matrix, nrows: int, ids: &i catmat.Ids, voc: &v dict.Vocab, o: verbs.Opts) -> [heap] (matrix.Matrix, int, codes.Fault) {
+    if cat {
+        return mixed.apply_steps(heap, payload, x, nrows, ids, voc, o.max_rows, o.max_cols, o.max_cells);
+    }
+    return run.apply_steps(heap, payload, x, o.max_rows, o.max_cols, o.max_cells);
+}
+
 // ,"split":{...},"holdout":{...} for the rows --split held out, scored through the STORED steps and the fitted model
-fn holdout[&h, &g, &dd, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, bool, fail.Errors) {
+fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     var go = true;
     var w = json.writer(heap, 256);
     let nfeat = ds.ncols - 1;
     let featcols = indices_but(heap, ds.ncols, ds.tj);
     var xte = matrix.empty(heap);
-    borrow featcols as &fr in {
-        let (m3, code3) = wiredata.take(heap, ds.x, sel, 1, contents(fr), nfeat, o.max_rows, o.max_cols, o.max_cells);
-        matrix.drop(heap, xte);
-        xte = m3;
-        if code3 != 0 {
-            e = wiredata.code_error(heap, e, code3, 0, 0, 0);
+    if nfeat > 0 {
+        borrow featcols as &fr in {
+            let (m3, code3) = wiredata.take(heap, ds.x, sel, 1, contents(fr), nfeat, o.max_rows, o.max_cols, o.max_cells);
+            matrix.drop(heap, xte);
+            xte = m3;
+            if code3 != 0 {
+                e = wiredata.code_error(heap, e, code3, 0, 0, 0);
+                go = false;
+            }
+        }
+    }
+    var idte = catmat.empty(heap);
+    if go && ds.cat {
+        let (idt, icode) = catwire.take_ids(heap, cids, sel, 1, o.max_rows, o.max_cols, o.max_cells);
+        catmat.drop(heap, idte);
+        idte = idt;
+        if icode != 0 {
+            e = wiredata.code_error(heap, e, icode, 0, 0, 0);
             go = false;
         }
     }
@@ -761,44 +867,51 @@ fn holdout[&h, &g, &dd, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Dat
     if go {
         if true {
             borrow xte as &xr in {
-                let (xs, unk, f4) = run.apply_steps(heap, buffer.bytes(tr.fitted.payload), xr, o.max_rows, o.max_cols, o.max_cells);
-                if f4.code != 0 {
-                    e = wiredata.code_error(heap, e, f4.code, f4.a, f4.b, f4.c);
-                    go = false;
-                } else {
-                    borrow xs as &xq in {
-                        let (mc, mlist) = wiredata.missing_columns(heap, xq, tr.fitted.nm);
-                        if mc > 0 {
-                            borrow mlist as &lr in {
-                                e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), false);
-                            }
-                            go = false;
+                borrow idte as &itr in {
+                    let (xs, unk, f4) = apply_any(heap, ds.cat, buffer.bytes(tr.fitted.payload), xr, ntest, itr, cvoc, o);
+                    if f4.code != 0 {
+                        if ds.cat {
+                            e = catwire.fault_error(heap, args, e, f4, pls.pl, cvoc, false);
+                        } else {
+                            e = wiredata.code_error(heap, e, f4.code, f4.a, f4.b, f4.c);
                         }
-                        buffer.drop(heap, mlist);
-                    }
-                }
-                if go {
-                    let (yte, bad) = wiredata.take_col(heap, ds.x, sel, 1, ds.tj);
-                    borrow yte as &yr in {
-                        borrow xs as &xq2 in {
-                            let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, xq2, contents(yr), contents(tr.wv), ds.c0, ds.c1, ds.c1, o.max_rows);
-                            buffer.drop(heap, mobj);
-                            mobj = mo;
-                            buffer.drop(heap, mplain);
-                            buffer.drop(heap, mund);
-                            if fl.code != 0 {
-                                e = wiredata.bad_metric(heap, e, fl);
+                        go = false;
+                    } else {
+                        borrow xs as &xq in {
+                            let (mc, mlist) = wiredata.missing_columns(heap, xq, tr.fitted.nm);
+                            if mc > 0 {
+                                borrow mlist as &lr in {
+                                    e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), false);
+                                }
                                 go = false;
                             }
+                            buffer.drop(heap, mlist);
                         }
                     }
-                    unbox_slice(heap, yte);
+                    if go {
+                        let (yte, bad) = wiredata.take_col(heap, ds.x, sel, 1, ds.tj);
+                        borrow yte as &yr in {
+                            borrow xs as &xq2 in {
+                                let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, xq2, contents(yr), contents(tr.wv), ds.c0, ds.c1, ds.c1, o.max_rows);
+                                buffer.drop(heap, mobj);
+                                mobj = mo;
+                                buffer.drop(heap, mplain);
+                                buffer.drop(heap, mund);
+                                if fl.code != 0 {
+                                    e = wiredata.bad_metric(heap, e, fl);
+                                    go = false;
+                                }
+                            }
+                        }
+                        unbox_slice(heap, yte);
+                    }
+                    matrix.drop(heap, xs);
                 }
-                matrix.drop(heap, xs);
             }
         }
     }
     matrix.drop(heap, xte);
+    catmat.drop(heap, idte);
     unbox_slice(heap, featcols);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "rows");
@@ -818,7 +931,7 @@ fn holdout[&h, &g, &dd, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Dat
 }
 
 // the model file's bytes and the summary of the answer
-fn assemble[&h, &g, &dd, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
+fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     let kind = pls.kind;
     var mp = box_slice(heap, est.payload_size(kind, tr.d) + 8, byte_of(0));
@@ -828,10 +941,13 @@ fn assemble[&h, &g, &dd, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Da
     }
     let sp = schema.encode(heap, ds.sc);
     var fbytes = buffer.empty(heap, 1);
-    borrow sp as &spr in {
-        borrow mp as &mr in {
-            buffer.drop(heap, fbytes);
-            fbytes = file.encode(heap, plan.text(pls.pl), buffer.bytes(spr), buffer.bytes(tr.fitted.payload), contents(mr)[0..end], tr.rows, schema.columns(ds.sc), o.seed, built.compiler());
+    if !ds.cat {
+        // a fit with categorical columns writes no file before stage 3 of issue 21 (docs/categorical-encoders.md section 6): the bytes are not even made
+        borrow sp as &spr in {
+            borrow mp as &mr in {
+                buffer.drop(heap, fbytes);
+                fbytes = file.encode(heap, plan.text(pls.pl), buffer.bytes(spr), buffer.bytes(tr.fitted.payload), contents(mr)[0..end], tr.rows, schema.columns(ds.sc), o.seed, built.compiler());
+            }
         }
     }
     buffer.drop(heap, sp);
@@ -839,7 +955,7 @@ fn assemble[&h, &g, &dd, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Da
     var split = buffer.empty(heap, 1);
     var go = true;
     if o.split_given {
-        let (sp2, ok6, e6) = holdout(heap, args, ds, pls, tr, sel, ntest, o, e);
+        let (sp2, ok6, e6) = holdout(heap, args, ds, cids, cvoc, pls, tr, sel, ntest, o, e);
         buffer.drop(heap, split);
         split = sp2;
         e = e6;
@@ -849,7 +965,7 @@ fn assemble[&h, &g, &dd, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Da
     if go {
         buffer.drop(heap, summary);
         borrow split as &spq in {
-            summary = fit_summary(heap, tr, pls.pl, kind, ds.c0, ds.c1, spq, ntest, o);
+            summary = fit_summary(heap, tr, pls.pl, kind, ds.c0, ds.c1, spq, ntest, o, ds.cat);
         }
     }
     buffer.drop(heap, split);
@@ -867,11 +983,21 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         kind = pq.kind;
     }
     let task = est.task(kind);
+    var mixed_plan = false;
+    borrow pls as &mpq in {
+        mixed_plan = plan.needs_mixed(mpq.pl);
+    }
     var ds = empty_data(heap);
+    var cids = catmat.empty(heap);
+    var cvoc = dict.empty_vocab(heap);
     if go {
-        let (d2, ok2, e2, lg2) = load_data(heap, args, fs, root, file, o, task, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, args, fs, root, file, o, mixed_plan, task, e, lg);
         drop_data(heap, ds);
+        catmat.drop(heap, cids);
+        dict.drop_vocab(heap, cvoc);
         ds = d2;
+        cids = ids2;
+        cvoc = voc2;
         e = e2;
         lg = lg2;
         go = ok2;
@@ -908,13 +1034,17 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         var t2 = empty_trained(heap);
         var ok3 = false;
         borrow ds as &dr in {
-            borrow pls as &pr in {
-                borrow sel as &sr in {
-                    let (t3, ok4, e4) = train(heap, args, dr, pr, contents(sr), want, o, retry_ok, e);
-                    drop_trained(heap, t2);
-                    t2 = t3;
-                    ok3 = ok4;
-                    e = e4;
+            borrow cids as &cir in {
+                borrow cvoc as &cvr in {
+                    borrow pls as &pr in {
+                        borrow sel as &sr in {
+                            let (t3, ok4, e4) = train(heap, args, dr, cir, cvr, pr, contents(sr), want, o, retry_ok, e);
+                            drop_trained(heap, t2);
+                            t2 = t3;
+                            ok3 = ok4;
+                            e = e4;
+                        }
+                    }
                 }
             }
         }
@@ -922,20 +1052,35 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         tr = t2;
         go = ok3;
     }
+    // no model file holds a vocabulary before stage 3 of issue 21: a categorical fit that is neither held out nor a dry run is refused after the data and the plan were checked
+    var ds_cat = false;
+    borrow ds as &dcr in {
+        ds_cat = dcr.cat;
+    }
+    if go && ds_cat && !o.split_given && !o.dry {
+        borrow cvoc as &cvr in {
+            e = catwire.not_stored(heap, e, cvr);
+        }
+        go = false;
+    }
     var fbytes = buffer.empty(heap, 1);
     var summary = buffer.empty(heap, 1);
     if go {
         borrow ds as &dr in {
-            borrow pls as &pr in {
-                borrow tr as &tq in {
-                    borrow sel as &sq in {
-                        let (fb2, sm2, ok7, e7) = assemble(heap, args, dr, pr, tq, contents(sq), ntest, o, e);
-                        buffer.drop(heap, fbytes);
-                        buffer.drop(heap, summary);
-                        fbytes = fb2;
-                        summary = sm2;
-                        e = e7;
-                        go = ok7;
+            borrow cids as &cir in {
+                borrow cvoc as &cvr in {
+                    borrow pls as &pr in {
+                        borrow tr as &tq in {
+                            borrow sel as &sq in {
+                                let (fb2, sm2, ok7, e7) = assemble(heap, args, dr, cir, cvr, pr, tq, contents(sq), ntest, o, e);
+                                buffer.drop(heap, fbytes);
+                                buffer.drop(heap, summary);
+                                fbytes = fb2;
+                                summary = sm2;
+                                e = e7;
+                                go = ok7;
+                            }
+                        }
                     }
                 }
             }
@@ -946,14 +1091,24 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         verbs.drop_out(heap, result);
         var cols = 0;
         var trows = 0;
+        var is_cat = false;
         borrow ds as &dr in {
             cols = schema.columns(dr.sc);
+            is_cat = dr.cat;
         }
         borrow tr as &tq in {
             trows = tq.rows;
         }
-        borrow fbytes as &fb in {
-            result = answer_fit(heap, fs, root, out, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, buffer.bytes(fb), summary, e, lg);
+        if is_cat {
+            // every column of the table, the categorical ones too
+            borrow cvoc as &cvr in {
+                cols = cols + dict.ncols(cvr);
+            }
+            result = catwire.answer(heap, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, summary, e, lg);
+        } else {
+            borrow fbytes as &fb in {
+                result = answer_fit(heap, fs, root, out, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, buffer.bytes(fb), summary, e, lg);
+            }
         }
     } else {
         buffer.drop(heap, summary);
@@ -964,6 +1119,8 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
     unbox_slice(heap, sel);
     drop_trained(heap, tr);
     drop_data(heap, ds);
+    catmat.drop(heap, cids);
+    dict.drop_vocab(heap, cvoc);
     drop_planned(heap, pls);
     return result;
 }

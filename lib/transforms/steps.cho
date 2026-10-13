@@ -89,7 +89,7 @@ pub fn extra_len(kind: int, k: int) -> [] int {
 // the ints of a step are shaped as `kind` says and every number is in its range; cols_in_want < 1 means "any width". 0, or ml.model.malformed.
 pub fn check_ints[&a](kind: int, a: &a [int], cols_in_want: int) -> [] int {
     let bad = codes.malformed();
-    if kind < 1 || kind > kinds.step_count() || len(a) < 3 {
+    if kind < 1 || kind > kinds.step_numeric_count() || len(a) < 3 {
         return bad;
     }
     let k = a[0];
@@ -252,7 +252,7 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte], cols_in: int) -> [heap] (
         return (empty(heap), bad, 0);
     }
     let kind = get32(data, 0);
-    if kind < 1 || kind > kinds.step_count() {
+    if kind < 1 || kind > kinds.step_numeric_count() {
         return (empty(heap), bad, 0);
     }
     if get32(data, 4) != 1 || get32(data, 8) != 1 {

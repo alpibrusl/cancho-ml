@@ -78,7 +78,7 @@ if not re.search(r"sum_order. = \*\*2\*\*", design):
     fail("design.md 4.1 no longer says sum_order = 2")
 
 # ---- step kinds and section tags (docs/design.md 4.1, docs/transforms.md section 4)
-steps_k = [(n, v) for n, v in K.items() if n.startswith("step_") and n != "step_count"]
+steps_k = [(n, v) for n, v in K.items() if n.startswith("step_") and n not in ("step_count", "step_numeric_count")]
 unique("step kinds (lib/core/kinds.cho)", steps_k)
 if K.get("step_count") != len(steps_k) or sorted(v for _, v in steps_k) != list(range(1, len(steps_k) + 1)):
     fail("step kinds are not 1..step_count without gaps")
@@ -92,9 +92,11 @@ if K.get("section_count") != len(secs) or sorted(v for _, v in secs) != list(ran
 if "1 plan, 2 schema, 3 steps, 4 model, 5 meta" not in design:
     fail("design.md 4.1 no longer lists the section tags 1 plan, 2 schema, 3 steps, 4 model, 5 meta")
 tsteps = read("lib/transforms/steps.cho")
-for kind, name in ((1, "impute"), (2, "minmax"), (3, "standard"), (4, "onehot"), (5, "label"), (6, "bucket")):
+for kind, name in ((1, "impute"), (2, "minmax"), (3, "standard"), (4, "onehot"), (5, "label"), (6, "bucket"), (7, "cat_onehot"), (8, "cat_label"), (9, "freq"), (10, "hash")):
     if K.get("step_" + name) != kind:
         fail("lib/core/kinds.cho step_%s is not %d" % (name, kind))
+if K.get("step_numeric_count") != 6:
+    fail("lib/core/kinds.cho step_numeric_count is not 6 (transforms.steps reads kinds 1 to 6 only)")
 
 # ---- column kinds of the reader's shape and the schema type code of a categorical column (docs/categorical.md section 3)
 cols_k = [(n, v) for n, v in K.items() if n.startswith("column_") and n != "column_count"]
