@@ -54,7 +54,7 @@ fn reduce_chunks[&a, &b, &o, &s, &l](kind: int, av: &a [float], bv: &b [float], 
         }
         var sp = 0;
         if kind == 1 {
-            sp = dot.run_blocks(av, bv, rows, c * 8, b1, st, lv, 0, ov[nchunks * w..nchunks * w + 8]);
+            sp = dot.run_blocks(av, bv, rows, c * 8, b1, st, lv, 0);
         }
         if kind == 2 {
             sp = gemv.gemv_t_blocks(av, d, bv, rows, d, c * 8, b1, st, lv, 0);
@@ -129,6 +129,9 @@ fn make_job[&h, &x, &y](heap: &!h Heap, kind: int, xd: &x [float], rs: int, d: i
         on = rows * d;
     }
     var stn = 40 * w;
+    if kind == 2 {
+        stn = gemv.stack_len(w);
+    }
     if kind == 5 {
         stn = 40 * 16;
     }
@@ -303,7 +306,7 @@ pub fn gemv_t_par[&h, &x, &r, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd:
     }
     let te = threads_for(t, nchunks);
     let slots = box_slice(heap, nchunks * d + 8, 0.0);
-    let st = box_slice(heap, 40 * d + 1, 0.0);
+    let st = box_slice(heap, gemv.stack_len(d) + 1, 0.0);
     let lv = box_slice(heap, 41, 0);
     borrow mut slots as &!sw in {
         fan(heap, 2, xd[xt.off..len(xd)], xt.t0, d, rd[rt.off..rt.off + n], 0, d, n, nchunks, 0, te, contents(sw));

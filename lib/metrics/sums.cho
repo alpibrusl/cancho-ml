@@ -2,42 +2,9 @@ module metrics.sums;
 
 import linalg.order;
 
-// The order of every decisive sum of the metrics (docs/metrics.md section 2.4): blocks of K = 256 terms, 4 lanes inside a block
-// (term i of the block goes to lane i mod 4, each lane ascending from +0.0), block partial = (l0 + l1) + (l2 + l3), block
-// partials combined by the fixed tree of linalg.order. `lanes` is this module's own constant: lib/linalg/order.cho has one
-// chain per block.
-
-pub fn lanes() -> [] int {
-    return 4;
-}
-
-// the partial of buf[0 .. m), m <= 256
-pub fn block_partial[&b](buf: &b [float], m: int) -> [] float {
-    var s0 = 0.0;
-    var s1 = 0.0;
-    var s2 = 0.0;
-    var s3 = 0.0;
-    var j = 0;
-    while j + 4 <= m {
-        s0 = s0 + buf[j];
-        s1 = s1 + buf[j + 1];
-        s2 = s2 + buf[j + 2];
-        s3 = s3 + buf[j + 3];
-        j = j + 4;
-    }
-    if j < m {
-        s0 = s0 + buf[j];
-        j = j + 1;
-    }
-    if j < m {
-        s1 = s1 + buf[j];
-        j = j + 1;
-    }
-    if j < m {
-        s2 = s2 + buf[j];
-    }
-    return s0 + s1 + (s2 + s3);
-}
+// The decisive sums of the metrics (docs/metrics.md section 2.4) use the one order of the package, lib/linalg/order.cho
+// (docs/linalg.md section 2): blocks of K = 256 terms, 4 lanes inside a block (`order.block_partial`), the fixed tree over blocks.
+// This module had a lane constant of its own until `v1-lanes`; it has none now.
 
 // term kinds of `terms`
 pub fn kind_sq() -> [] int {
@@ -100,7 +67,7 @@ pub fn reduce[&x, &y, &o, &s, &l](kind: int, a: &x [float], b: &y [float], cente
             m = 256;
         }
         terms(kind, a, b, center, at, m, buf);
-        st[sp] = block_partial(buf, m);
+        st[sp] = order.block_partial(buf, m);
         sp = order.settle(st, lv, sp, 1);
         at = at + m;
     }

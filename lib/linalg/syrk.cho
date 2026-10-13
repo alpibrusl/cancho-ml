@@ -5,99 +5,138 @@ import linalg.tensor;
 import ml.refuse;
 
 // C = X^T X, the entries C[j][k] with j <= k written (the other triangle is not touched). Order: docs/linalg.md section 2.1:
-// each entry is the block rule (blocks of 256 rows, ascending from +0.0) and the tree rule over rows i of X_ij * X_ik.
-// A block's partial is built tile by tile (4 x 4 accumulators held across the whole block); the partials of the blocks are
+// each entry is the block rule (blocks of 256 rows), the lane rule inside a block (row i of the block to lane i mod 4, each lane
+// ascending from +0.0, partial (l0 + l1) + (l2 + l3)) and the tree rule over rows i of X_ij * X_ik. A block's partial is built tile
+// by tile (2 x 2 entries, four lanes each: sixteen accumulators held across the whole block); the partials of the blocks are
 // settled on the order.* stack, a d x d square per slot (only j <= k is meaningful).
 
-// accumulators of a full 4 x 4 tile over rows [r0, r1) of one block; xs positioned at X[0, 0], row stride rs
-fn tile44[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, j0: int, k0: int, slot: &!s [float], d: int) -> [] int {
-    var c00 = 0.0;
-    var c01 = 0.0;
-    var c02 = 0.0;
-    var c03 = 0.0;
-    var c10 = 0.0;
-    var c11 = 0.0;
-    var c12 = 0.0;
-    var c13 = 0.0;
-    var c20 = 0.0;
-    var c21 = 0.0;
-    var c22 = 0.0;
-    var c23 = 0.0;
-    var c30 = 0.0;
-    var c31 = 0.0;
-    var c32 = 0.0;
-    var c33 = 0.0;
+// accumulators of a full 2 x 2 tile over rows [r0, r1) of one block (r0 a multiple of 4); xs positioned at X[0, 0], row stride rs
+fn tile22[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, j0: int, k0: int, slot: &!s [float], d: int) -> [] int {
+    var c000 = 0.0;
+    var c001 = 0.0;
+    var c002 = 0.0;
+    var c003 = 0.0;
+    var c010 = 0.0;
+    var c011 = 0.0;
+    var c012 = 0.0;
+    var c013 = 0.0;
+    var c100 = 0.0;
+    var c101 = 0.0;
+    var c102 = 0.0;
+    var c103 = 0.0;
+    var c110 = 0.0;
+    var c111 = 0.0;
+    var c112 = 0.0;
+    var c113 = 0.0;
     // the offsets of row i are carried (wrapping adds: no multiplication to check in the loop); xs[a..b] still checks the range
     var pj = r0 * rs + j0;
     var qk = r0 * rs + k0;
     var i = r0;
-    while i < r1 {
-        let p = xs[pj..wrapping_add(pj, 4)];
-        let q = xs[qk..wrapping_add(qk, 4)];
+    while i + 4 <= r1 {
+        let p0 = xs[pj..wrapping_add(pj, 2)];
+        let q0 = xs[qk..wrapping_add(qk, 2)];
         pj = wrapping_add(pj, rs);
         qk = wrapping_add(qk, rs);
-        let a0 = p[0];
-        let a1 = p[1];
-        let a2 = p[2];
-        let a3 = p[3];
-        let b0 = q[0];
-        let b1 = q[1];
-        let b2 = q[2];
-        let b3 = q[3];
-        c00 = c00 + a0 * b0;
-        c01 = c01 + a0 * b1;
-        c02 = c02 + a0 * b2;
-        c03 = c03 + a0 * b3;
-        c10 = c10 + a1 * b0;
-        c11 = c11 + a1 * b1;
-        c12 = c12 + a1 * b2;
-        c13 = c13 + a1 * b3;
-        c20 = c20 + a2 * b0;
-        c21 = c21 + a2 * b1;
-        c22 = c22 + a2 * b2;
-        c23 = c23 + a2 * b3;
-        c30 = c30 + a3 * b0;
-        c31 = c31 + a3 * b1;
-        c32 = c32 + a3 * b2;
-        c33 = c33 + a3 * b3;
-        i = i + 1;
+        let p1 = xs[pj..wrapping_add(pj, 2)];
+        let q1 = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        let p2 = xs[pj..wrapping_add(pj, 2)];
+        let q2 = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        let p3 = xs[pj..wrapping_add(pj, 2)];
+        let q3 = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        c000 = c000 + p0[0] * q0[0];
+        c010 = c010 + p0[0] * q0[1];
+        c100 = c100 + p0[1] * q0[0];
+        c110 = c110 + p0[1] * q0[1];
+        c001 = c001 + p1[0] * q1[0];
+        c011 = c011 + p1[0] * q1[1];
+        c101 = c101 + p1[1] * q1[0];
+        c111 = c111 + p1[1] * q1[1];
+        c002 = c002 + p2[0] * q2[0];
+        c012 = c012 + p2[0] * q2[1];
+        c102 = c102 + p2[1] * q2[0];
+        c112 = c112 + p2[1] * q2[1];
+        c003 = c003 + p3[0] * q3[0];
+        c013 = c013 + p3[0] * q3[1];
+        c103 = c103 + p3[1] * q3[0];
+        c113 = c113 + p3[1] * q3[1];
+        i = i + 4;
     }
-    let o0 = slot[(j0 + 0) * d + k0..(j0 + 0) * d + k0 + 4];
-    o0[0] = c00;
-    o0[1] = c01;
-    o0[2] = c02;
-    o0[3] = c03;
-    let o1 = slot[(j0 + 1) * d + k0..(j0 + 1) * d + k0 + 4];
-    o1[0] = c10;
-    o1[1] = c11;
-    o1[2] = c12;
-    o1[3] = c13;
-    let o2 = slot[(j0 + 2) * d + k0..(j0 + 2) * d + k0 + 4];
-    o2[0] = c20;
-    o2[1] = c21;
-    o2[2] = c22;
-    o2[3] = c23;
-    let o3 = slot[(j0 + 3) * d + k0..(j0 + 3) * d + k0 + 4];
-    o3[0] = c30;
-    o3[1] = c31;
-    o3[2] = c32;
-    o3[3] = c33;
+    if i + 0 < r1 {
+        let p = xs[pj..wrapping_add(pj, 2)];
+        let q = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        c000 = c000 + p[0] * q[0];
+        c010 = c010 + p[0] * q[1];
+        c100 = c100 + p[1] * q[0];
+        c110 = c110 + p[1] * q[1];
+    }
+    if i + 1 < r1 {
+        let p = xs[pj..wrapping_add(pj, 2)];
+        let q = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        c001 = c001 + p[0] * q[0];
+        c011 = c011 + p[0] * q[1];
+        c101 = c101 + p[1] * q[0];
+        c111 = c111 + p[1] * q[1];
+    }
+    if i + 2 < r1 {
+        let p = xs[pj..wrapping_add(pj, 2)];
+        let q = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        c002 = c002 + p[0] * q[0];
+        c012 = c012 + p[0] * q[1];
+        c102 = c102 + p[1] * q[0];
+        c112 = c112 + p[1] * q[1];
+    }
+    slot[(j0 + 0) * d + k0 + 0] = order.lane_combine(c000, c001, c002, c003);
+    slot[(j0 + 0) * d + k0 + 1] = order.lane_combine(c010, c011, c012, c013);
+    slot[(j0 + 1) * d + k0 + 0] = order.lane_combine(c100, c101, c102, c103);
+    slot[(j0 + 1) * d + k0 + 1] = order.lane_combine(c110, c111, c112, c113);
     return 0;
 }
 
-// an edge tile (jb x kb entries, each at most 4): one chain per entry
+// one entry, rows [r0, r1) of one block (r0 a multiple of 4): four lanes, lane = (i - r0) mod 4; ja and kb are the two columns
+fn lane_entry[&x](xs: &x [float], rs: int, r0: int, r1: int, ja: int, kb: int) -> [] float {
+    var s0 = 0.0;
+    var s1 = 0.0;
+    var s2 = 0.0;
+    var s3 = 0.0;
+    var i = r0;
+    while i + 4 <= r1 {
+        s0 = s0 + xs[i * rs + ja] * xs[i * rs + kb];
+        s1 = s1 + xs[(i + 1) * rs + ja] * xs[(i + 1) * rs + kb];
+        s2 = s2 + xs[(i + 2) * rs + ja] * xs[(i + 2) * rs + kb];
+        s3 = s3 + xs[(i + 3) * rs + ja] * xs[(i + 3) * rs + kb];
+        i = i + 4;
+    }
+    if i < r1 {
+        s0 = s0 + xs[i * rs + ja] * xs[i * rs + kb];
+    }
+    if i + 1 < r1 {
+        s1 = s1 + xs[(i + 1) * rs + ja] * xs[(i + 1) * rs + kb];
+    }
+    if i + 2 < r1 {
+        s2 = s2 + xs[(i + 2) * rs + ja] * xs[(i + 2) * rs + kb];
+    }
+    return order.lane_combine(s0, s1, s2, s3);
+}
+
+// an edge tile (jb x kb entries, each at most 2): one entry at a time
 fn tile_edge[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, j0: int, jb: int, k0: int, kb: int, slot: &!s [float], d: int) -> [] int {
     var j = 0;
     while j < jb {
         var k = 0;
         while k < kb {
-            var c = 0.0;
-            var i = r0;
-            while i < r1 {
-                c = c + xs[i * rs + j0 + j] * xs[i * rs + k0 + k];
-                i = i + 1;
-            }
-            slot[(j0 + j) * d + k0 + k] = c;
+            slot[(j0 + j) * d + k0 + k] = lane_entry(xs, rs, r0, r1, j0 + j, k0 + k);
             k = k + 1;
         }
         j = j + 1;
@@ -109,24 +148,24 @@ fn tile_edge[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, j0: int, jb: int
 fn block_tiles[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, slot: &!s [float], d: int) -> [] int {
     var j0 = 0;
     while j0 < d {
-        var jb = 4;
-        if j0 + 4 > d {
+        var jb = 2;
+        if j0 + 2 > d {
             jb = d - j0;
         }
         var k0 = j0;
         while k0 < d {
-            var kb = 4;
-            if k0 + 4 > d {
+            var kb = 2;
+            if k0 + 2 > d {
                 kb = d - k0;
             }
-            if jb == 4 && kb == 4 {
-                tile44(xs, rs, r0, r1, j0, k0, slot, d);
+            if jb == 2 && kb == 2 {
+                tile22(xs, rs, r0, r1, j0, k0, slot, d);
             } else {
                 tile_edge(xs, rs, r0, r1, j0, jb, k0, kb, slot, d);
             }
-            k0 = k0 + 4;
+            k0 = k0 + 2;
         }
-        j0 = j0 + 4;
+        j0 = j0 + 2;
     }
     return 0;
 }
@@ -147,19 +186,32 @@ pub fn syrk_blocks[&x, &s, &l](xs: &x [float], rs: int, n: int, d: int, b0: int,
     return sp;
 }
 
-// the same partial through arbitrary strides: one chain per entry, indexed through the descriptor
+// the same partial through arbitrary strides: four lanes per entry (lane = (i - r0) mod 4), indexed through the descriptor
 fn block_generic[&x, &s](xd: &x [float], xo: int, rs: int, cs: int, r0: int, r1: int, slot: &!s [float], d: int) -> [] int {
     var j = 0;
     while j < d {
         var k = j;
         while k < d {
-            var c = 0.0;
+            var s0 = 0.0;
+            var s1 = 0.0;
+            var s2 = 0.0;
+            var s3 = 0.0;
             var i = r0;
             while i < r1 {
-                c = c + xd[xo + i * rs + j * cs] * xd[xo + i * rs + k * cs];
+                let p = xd[xo + i * rs + j * cs] * xd[xo + i * rs + k * cs];
+                let l = (i - r0) % 4;
+                if l == 0 {
+                    s0 = s0 + p;
+                } else if l == 1 {
+                    s1 = s1 + p;
+                } else if l == 2 {
+                    s2 = s2 + p;
+                } else {
+                    s3 = s3 + p;
+                }
                 i = i + 1;
             }
-            slot[j * d + k] = c;
+            slot[j * d + k] = order.lane_combine(s0, s1, s2, s3);
             k = k + 1;
         }
         j = j + 1;

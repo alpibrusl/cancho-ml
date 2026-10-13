@@ -3,11 +3,46 @@ module lref;
 import ml.rng;
 
 // The reference implementations of docs/linalg.md section 2, written directly from the definitions with generic strided
-// indexing and no tuning: block partials stored in an array and reduced level by level (NOT the stack the kernels use).
-// Tests compare the kernels to these bit for bit.
+// indexing and no tuning: four lanes inside a block (term i of the block, counted from its start, to lane i mod 4, each lane
+// ascending from +0.0, the lanes combined as (s0 + s1) + (s2 + s3)), block partials stored in an array and reduced level by
+// level (NOT the stack the kernels use). Tests compare the kernels to these bit for bit.
 
 pub fn k() -> [] int {
     return 256;
+}
+
+// L, the lanes of a block; NB, the panel of the Cholesky order (both written here again, not read from linalg.order: a test of
+// the constants themselves is in the unit tests, and a reference must not share the code it judges)
+pub fn lanes() -> [] int {
+    return 4;
+}
+
+pub fn panel() -> [] int {
+    return 32;
+}
+
+// the lane rule over the terms i0 .. i1 - 1 of x[xo + i*xs] * y[yo + i*ys]; lane = (i - i0) mod 4; empty lanes are +0.0
+pub fn lane_sum[&x, &y](xd: &x [float], xo: int, xs: int, yd: &y [float], yo: int, ys: int, i0: int, i1: int) -> [] float {
+    var s0 = 0.0;
+    var s1 = 0.0;
+    var s2 = 0.0;
+    var s3 = 0.0;
+    var i = i0;
+    while i < i1 {
+        let t = xd[xo + i * xs] * yd[yo + i * ys];
+        let l = (i - i0) % lanes();
+        if l == 0 {
+            s0 = s0 + t;
+        } else if l == 1 {
+            s1 = s1 + t;
+        } else if l == 2 {
+            s2 = s2 + t;
+        } else {
+            s3 = s3 + t;
+        }
+        i = i + 1;
+    }
+    return s0 + s1 + (s2 + s3);
 }
 
 // level-wise tree over parts[0..m), in place; the result is parts[0]; m = 0 answers 0.0
@@ -46,13 +81,11 @@ pub fn dot[&x, &y, &p](xd: &x [float], xo: int, xs: int, yd: &y [float], yo: int
     let nb = nblocks(n);
     var b = 0;
     while b < nb {
-        var s = 0.0;
-        var i = b * k();
-        while i < n && i < (b + 1) * k() {
-            s = s + xd[xo + i * xs] * yd[yo + i * ys];
-            i = i + 1;
+        var hi = (b + 1) * k();
+        if hi > n {
+            hi = n;
         }
-        parts[b] = s;
+        parts[b] = lane_sum(xd, xo, xs, yd, yo, ys, b * k(), hi);
         b = b + 1;
     }
     return tree(parts, nb);
@@ -176,19 +209,20 @@ fn eelem(seed: int, i: int, mode: int) -> [] float {
     return v;
 }
 
-// L from A, entry by entry; returns 0 or 9 (not positive definite). L, A: d x d, element (i, j) at o + i*rs + j*cs
+// L from A, entry by entry, in the panel order of docs/linalg.md 2.1 (NB = 32, the lane rule inside a panel); returns 0 or 9 (not positive definite). L, A: d x d, element (i, j) at o + i*rs + j*cs
 pub fn chol[&a, &l](ad: &a [float], ao: int, ars: int, acs: int, ld: &!l [float], lo: int, lrs: int, lcs: int, d: int) -> [] int {
     var j = 0;
     while j < d {
         var i = j;
         while i < d {
             var s = ad[ao + i * ars + j * acs];
-            var k = 0;
-            while k < j {
-                let p = ld[lo + i * lrs + k * lcs] * ld[lo + j * lrs + k * lcs];
-                s = s - p;
-                k = k + 1;
+            let c0 = j / panel() * panel();
+            var p0 = 0;
+            while p0 < c0 {
+                s = s - lane_sum(ld, lo + i * lrs, lcs, ld, lo + j * lrs, lcs, p0, p0 + panel());
+                p0 = p0 + panel();
             }
+            s = s - lane_sum(ld, lo + i * lrs, lcs, ld, lo + j * lrs, lcs, c0, j);
             if i == j {
                 if !(s > 0.0) {
                     return 9;

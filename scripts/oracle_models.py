@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Order-matched numpy oracles for lib/models (docs/models-linear.md section 2: G-oracle and G-det).
 
-Each oracle performs the SAME floating-point operations in the SAME order as docs/models-linear.md section 3 (the block rule of
-docs/linalg.md with K = 256 and the level-wise binary tree, products rounded before they are added, never fused), vectorised across
+Each oracle performs the SAME floating-point operations in the SAME order as docs/models-linear.md section 3 (the block and lane rule of
+docs/linalg.md section 2: K = 256, four lanes inside a block, the level-wise binary tree, products rounded before they are added, never fused), vectorised across
 the independent parts. It never calls numpy's BLAS, exp, log1p, sum or linalg: `exp` and `log1p` are ports of std/math.cho. The
 compiled driver build/models-check must equal it bit for bit: the parameters, every raw decisive sum of every iteration, every loss
 or inertia line, and the hash of the predictions.
@@ -127,7 +127,7 @@ def log1p_c(x):
 
 # ---------------------------------------------------------------- the block rule over a term matrix
 def block_sums(T):
-    """T: (n, W) terms. The sums per column by the package rule: blocks of 256 rows ascending from +0.0, level-wise tree."""
+    """T: (n, W) terms. The sums per column by the package rule: blocks of 256 rows, four lanes inside a block (row i of the block to lane i mod 4, each lane ascending from +0.0), level-wise tree."""
     n, W = T.shape
     if n == 0:
         return np.zeros(W)
@@ -135,9 +135,7 @@ def block_sums(T):
     P = np.zeros((nb * K, W))
     P[:n] = T
     P3 = P.reshape(nb, K, W)
-    acc = np.zeros((nb, W))
-    for t in range(K):
-        acc = acc + P3[:, t, :]
+    acc = ol.lane_partial(lambda t: P3[:, t, :], K, (nb, W))
     return ol.tree(acc)
 
 
@@ -186,9 +184,7 @@ def logreg(X, y, iters, l2, rows_chunk=16384):
             Pm = np.zeros((nb * K, W))
             Pm[:m] = T
             P3 = Pm.reshape(nb, K, W)
-            acc = np.zeros((nb, W))
-            for t in range(K):
-                acc = acc + P3[:, t, :]
+            acc = ol.lane_partial(lambda t: P3[:, t, :], K, (nb, W))
             parts.append(acc)
         sums = ol.tree(np.concatenate(parts, axis=0))
         q = np.float64(0.0)
@@ -306,9 +302,7 @@ def sums_chunked(n, W, make, rows_chunk=16384):
         Pm = np.zeros((nb * K, W))
         Pm[:m] = T
         P3 = Pm.reshape(nb, K, W)
-        acc = np.zeros((nb, W))
-        for t in range(K):
-            acc = acc + P3[:, t, :]
+        acc = ol.lane_partial(lambda t: P3[:, t, :], K, (nb, W))
         parts.append(acc)
     return ol.tree(np.concatenate(parts, axis=0))
 

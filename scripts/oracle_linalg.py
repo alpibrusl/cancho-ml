@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Order-matched numpy oracle for lib/linalg (docs/linalg.md sections 2 and 4).
 
-Each oracle performs the SAME floating-point operations in the SAME order as the normative rule (block rule with K = 256 and the
-level-wise binary tree; products rounded before they are added; never fused), vectorised across the independent
+Each oracle performs the SAME floating-point operations in the SAME order as the normative rule (docs/linalg.md section 2: blocks of
+K = 256, four lanes inside a block -- term i to lane i mod 4, lanes combined as (s0 + s1) + (s2 + s3) --, the level-wise binary tree
+over blocks, Cholesky in panels of 32; products rounded before they are added; never fused), vectorised across the independent
 parts, so the result must equal the compiled kernel bit for bit. numpy's own BLAS result is NOT used here.
 
     python3 scripts/oracle_linalg.py --tree                    stack == level-wise tree, every m up to 4096 (Python floats)
@@ -84,6 +85,40 @@ def kk():
     return 255 if MUT == "block-255" else K
 
 
+def nlanes():
+    """L, the lanes of a block (docs/linalg.md section 2); the mutants lanes-2 and lanes-8 change it"""
+    return {"lanes-2": 2, "lanes-8": 8}.get(MUT, 4)
+
+
+def lane_of(t):
+    """the lane of term t of a block (counted from the block start); lane-map is a deliberately wrong map"""
+    if MUT == "lane-map":
+        return (t // 2) % nlanes()
+    return t % nlanes()
+
+
+def lane_combine(acc):
+    """the lanes -> the block partial: the level-wise tree (s0 + s1) + (s2 + s3); lane-combine-fold is a left fold"""
+    if MUT == "lane-combine-fold":
+        s = acc[0]
+        for a in acc[1:]:
+            s = s + a
+        return s
+    acc = list(acc)
+    while len(acc) > 1:
+        acc = [acc[2 * i] + acc[2 * i + 1] for i in range(len(acc) // 2)]
+    return acc[0]
+
+
+def lane_partial(term, m, shape):
+    """the lane rule over m terms: term(t) is the array (of `shape`) of the t-th term of every block; each lane starts at +0.0"""
+    acc = [np.zeros(shape) for _ in range(nlanes())]
+    for t in range(m):
+        l = lane_of(t)
+        acc[l] = acc[l] + term(t)
+    return lane_combine(acc)
+
+
 def dot_o(x, y):
     n = x.size
     if n == 0:
@@ -93,11 +128,13 @@ def dot_o(x, y):
     p = np.zeros(nb * k)
     p[:n] = x * y
     P = p.reshape(nb, k)
-    acc = np.zeros(nb)
-    cols = range(k - 1, -1, -1) if MUT == "dot-reverse" else range(k)
-    for j in cols:
-        acc = acc + P[:, j]
-    return tree(acc)
+    ts = range(k - 1, -1, -1) if MUT == "dot-reverse" else range(k)
+    if MUT == "dot-reverse":
+        acc = np.zeros(nb)
+        for j in ts:
+            acc = acc + P[:, j]
+        return tree(acc)
+    return tree(lane_partial(lambda j: P[:, j], k, (nb,)))
 
 
 def gemv_n_o(X, w):
@@ -107,10 +144,8 @@ def gemv_n_o(X, w):
     nb = -(-d // K)
     parts = []
     for b in range(nb):
-        acc = np.zeros(n)
-        for j in range(b * K, min(d, (b + 1) * K)):
-            acc = acc + X[:, j] * w[j]
-        parts.append(acc)
+        m = min(d, (b + 1) * K) - b * K
+        parts.append(lane_partial(lambda j: X[:, b * K + j] * w[b * K + j], m, (n,)))
     return tree(np.array(parts))
 
 
@@ -120,15 +155,20 @@ def gemv_t_o(X, r):
         return np.zeros(d)
     k = kk()
     nb = -(-n // k)
-    acc = np.zeros((nb, d))
     base = np.arange(nb) * k
-    ts = range(k - 1, -1, -1) if MUT == "gemvt-reverse" else range(k)
-    for t in ts:
+
+    def term(t):
         idx = base + t
         ok = idx < n
         ic = np.minimum(idx, n - 1)
-        acc = acc + X[ic] * np.where(ok, r[ic], 0.0)[:, None]
-    return tree(acc)
+        return X[ic] * np.where(ok, r[ic], 0.0)[:, None]
+
+    if MUT == "gemvt-reverse":
+        acc = np.zeros((nb, d))
+        for t in range(k - 1, -1, -1):
+            acc = acc + term(t)
+        return tree(acc)
+    return tree(lane_partial(term, k, (nb, d)))
 
 
 def syrk_o(X):
@@ -142,13 +182,15 @@ def syrk_o(X):
     for g0 in range(0, nb, 8):
         g1 = min(nb, g0 + 8)
         base = np.arange(g0, g1) * K
-        acc = np.zeros((g1 - g0, d, d))
-        for t in range(K):
+
+        def term(t):
             idx = base + t
             ok = idx < n
             ic = np.minimum(idx, n - 1)
             R = X[ic] * ok[:, None]
-            acc = acc + R[:, :, None] * R[:, None, :]
+            return R[:, :, None] * R[:, None, :]
+
+        acc = lane_partial(term, K, (g1 - g0, d, d))
         roots.append(tree(acc))
     C = tree(np.array(roots))
     iu = np.triu_indices(d)
@@ -163,29 +205,29 @@ def gemm_o(A, B):
         return np.zeros((m, n))
     parts = []
     for b0 in range(0, p, K):
-        acc = np.zeros((m, n))
-        for k in range(b0, min(p, b0 + K)):
-            acc = acc + A[:, k:k + 1] * B[k:k + 1, :]
-        parts.append(acc)
+        mm = min(p, b0 + K) - b0
+        parts.append(lane_partial(lambda k: A[:, b0 + k:b0 + k + 1] * B[b0 + k:b0 + k + 1, :], mm, (m, n)))
     return tree(np.array(parts))
 
 
 def chol_o(A):
+    """panels of NB = 32 (docs/linalg.md 2.1): s = A_ij; s = s - P_p for every full panel before the one holding j; s = s - P_c over
+    k = 32c .. j - 1; the lane rule inside a panel (lane = k mod 4). Vectorised over the rows i >= j of column j."""
     d = A.shape[0]
+    nb = 16 if MUT == "chol-panel-16" else 32
     L = np.zeros((d, d))
     for j in range(d):
-        s = A[j, j]
-        for k in range(j):
-            s = s - L[j, k] * L[j, k]
-        if not s > 0.0:
+        s = A[j:, j].copy()
+        c0 = j // nb * nb
+        for p0 in range(0, c0, nb):
+            s = s - lane_partial(lambda t: L[j:, p0 + t] * L[j, p0 + t], nb, (d - j,))
+        s = s - lane_partial(lambda t: L[j:, c0 + t] * L[j, c0 + t], j - c0, (d - j,))
+        if not s[0] > 0.0:
             return None
-        ljj = np.sqrt(s)
+        ljj = np.sqrt(s[0])
         L[j, j] = ljj
         if j + 1 < d:
-            s = A[j + 1:, j].copy()
-            for k in range(j):
-                s = s - L[j + 1:, k] * L[j, k]
-            L[j + 1:, j] = s / ljj
+            L[j + 1:, j] = s[1:] / ljj
     return L
 
 

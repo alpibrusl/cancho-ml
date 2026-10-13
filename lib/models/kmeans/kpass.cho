@@ -1,10 +1,12 @@
 module models.kpass;
 
+import linalg.order;
+
 // One block of the Lloyd pass of k-means (docs/models-linear.md 3.3): the assignment of the rows [r0, r1) (at most 256) to the
 // nearest centroid, and the partial of the W = k*d + k + 1 decisive sums over them: per cluster and feature the sum of the
 // rows of the cluster, per cluster the count (a sum of 1.0), and the inertia (the sum of the smallest squared distances).
-// Each sum is ascending from +0.0 over the rows of the block that contribute (a row that is not in the cluster contributes +0.0,
-// which changes nothing), in row order.
+// Each sum follows the package's block and lane rule (docs/linalg.md section 2): row i of the block to lane i mod 4, each lane ascending
+// from +0.0 over its rows (a row that is not in the cluster contributes +0.0, which changes nothing), the partial (l0 + l1) + (l2 + l3).
 //
 // The squared distances of a row to the centroids are independent left folds over the features, j ascending from +0.0. They are
 // formed four centroids at a time, in registers, from the centroids laid out in groups of four (group g, feature j, member q at
@@ -175,31 +177,42 @@ pub fn assign_rows[&x, &t, &l](xs: &x [float], rs: int, r0: int, r1: int, d: int
     return 0;
 }
 
-// the partial of rows [r0, r1) into slot (W values); lab and xs positioned at the first row of the piece
-pub fn block[&x, &t, &l, &s](xs: &x [float], rs: int, r0: int, r1: int, d: int, k: int, ctg: &t [float], lab: &!l [int], slot: &!s [float]) -> [] int {
+// the scratch of one block: four lane vectors of W sums (docs/linalg.md section 2: row i of the block to lane i mod 4)
+pub fn scratch_len(k: int, d: int) -> [] int {
+    return 4 * (k * d + k + 1);
+}
+
+// the partial of rows [r0, r1) (r0 a multiple of 4) into slot (W values); lab and xs positioned at the first row of the piece. Row i
+// adds to the lane vector (i - r0) mod 4 of the scratch `la` (scratch_len(k, d) floats): each lane ascending from +0.0, then the
+// slot is (l0 + l1) + (l2 + l3) per sum. A row that is not in a cluster adds nothing to that cluster's sums (an absent term is +0.0).
+pub fn block[&x, &t, &l, &z, &s](xs: &x [float], rs: int, r0: int, r1: int, d: int, k: int, ctg: &t [float], lab: &!l [int], la: &!z [float], slot: &!s [float]) -> [] int {
     let ww = k * d + k + 1;
     let kp = padk(k);
-    var z = 0;
-    while z < ww {
-        slot[z] = 0.0;
-        z = z + 1;
+    var q = 0;
+    while q < 4 * ww {
+        la[q] = 0.0;
+        q = q + 1;
     }
-    var inertia = 0.0;
     var i = r0;
     while i < r1 {
+        let base = (i - r0) % 4 * ww;
         let xr = xs[i * rs..i * rs + d];
         let (best, bd) = nearest(xr, ctg, d, kp);
         lab[i] = best;
-        let row = slot[best * d..best * d + d];
+        let row = la[base + best * d..base + best * d + d];
         var j = 0;
         while j < d {
             row[j] = row[j] + xr[j];
             j = j + 1;
         }
-        slot[k * d + best] = slot[k * d + best] + 1.0;
-        inertia = inertia + bd;
+        la[base + k * d + best] = la[base + k * d + best] + 1.0;
+        la[base + ww - 1] = la[base + ww - 1] + bd;
         i = i + 1;
     }
-    slot[ww - 1] = inertia;
+    var z = 0;
+    while z < ww {
+        slot[z] = order.lane_combine(la[z], la[ww + z], la[2 * ww + z], la[3 * ww + z]);
+        z = z + 1;
+    }
     return 0;
 }

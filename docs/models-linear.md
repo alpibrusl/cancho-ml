@@ -96,8 +96,12 @@ Ridge: `G[j][j] = G[j][j] + l2` for `j < d` only (**the intercept is not penalis
 backward with `k` **descending** (`docs/linalg.md` 2.1). The model is `coef = w[0..d)`, `intercept = w[d]`. A non-finite result is
 `ml.fit.non-finite`.
 
-No QR and no SVD: a rank-deficient `X` (with `l2 = 0`) is **refused**, not solved by a minimum-norm fallback
-(`ml.linalg.not-positive-definite`, repair "set l2 > 0 or drop the dependent column"). The normal equations square the condition
+No QR and no SVD: a rank-deficient `X` (with `l2 = 0`) is **refused when the pivot test sees it**, not solved by a minimum-norm fallback
+(`ml.linalg.not-positive-definite`, repair "set l2 > 0 or drop the dependent column"). *(Corrected in place at `v1-lanes`: this sentence said
+"is refused" without condition. The test is `s > 0.0` on a rounded pivot, so it fires on an exactly dependent column only when the rounding
+leaves `s <= 0.0`: an all-zero column always gives exactly `+0.0`, but two equal columns were refused under the old order by rounding luck and
+are fitted, with an ill-conditioned result, under the lane order. `tests/p_models.cho` `linreg_refusals` now asks for the zero column and, for
+the equal columns, only that one and four threads agree. Use `l2 > 0`.)* The normal equations square the condition
 number; this is the cost of the fixed, thread-independent order and is stated in section 6.
 
 ### 3.2 Logistic regression (binary), Newton, fixed iterations

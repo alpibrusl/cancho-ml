@@ -88,7 +88,7 @@ pub fn logloss[&h, &y, &p](heap: &!h Heap, labels: &y [int], prob: &p [float], p
                         m = 256;
                     }
                     fill(labels, prob, pos, at, m, b);
-                    s[sp] = sums.block_partial(b, m);
+                    s[sp] = order.block_partial(b, m);
                     sp = order.settle(s, l, sp, 1);
                     at = at + m;
                 }

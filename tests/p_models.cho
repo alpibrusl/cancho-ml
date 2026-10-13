@@ -468,8 +468,17 @@ fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
     let xs = fill(heap, 60 * 4, 33);
     let ys = fill(heap, 60, 34);
     let xd = fill(heap, 60 * 4, 33);
+    let xz = fill(heap, 60 * 4, 36);
     let big = box_slice(heap, 60 * 3, 1.0e200);
     var bad = 0;
+    borrow mut xz as &!zw in {
+        // column 2 is all zeros
+        var i = 0;
+        while i < 60 {
+            contents(zw)[i * 4 + 2] = 0.0;
+            i = i + 1;
+        }
+    }
     borrow mut xd as &!dw in {
         // column 0 = column 1: singular with l2 = 0
         var i = 0;
@@ -499,9 +508,21 @@ fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
     }
     borrow ys as &yr in {
         borrow xd as &dr in {
-            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.0), refuse.not_positive_definite());
-            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(dr), contents(yr), 0.0), refuse.not_positive_definite());
-            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.01), 0);
+            borrow xz as &zr in {
+                // two equal columns with l2 = 0: the Gram matrix is singular in exact arithmetic, and whether the pivot test `s > 0.0` sees it
+                // is a matter of rounding, so it depends on the summation order (docs/lanes.md section 3: before v1-lanes this data was refused,
+                // with the lane order it is not). The test therefore asks for what does not depend on the order: the answer is the same at one
+                // thread and at four, and it is either the refusal or a fit.
+                let c1 = lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.0);
+                let c4 = lin_fit(heap, 4, 60, 4, contents(dr), contents(yr), 0.0);
+                if c1 != c4 || c1 != 0 && c1 != refuse.not_positive_definite() {
+                    bad = bad + 1 + c1 * 100 + c4;
+                }
+                // an all-zero column is singular whatever the order: its pivot is exactly +0.0
+                bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(zr), contents(yr), 0.0), refuse.not_positive_definite());
+                bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(zr), contents(yr), 0.0), refuse.not_positive_definite());
+                bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.01), 0);
+            }
         }
         borrow big as &gr in {
             bad = bad + expect(lin_fit(heap, 1, 60, 3, contents(gr), contents(yr), 0.0), refuse.fit_non_finite());
@@ -549,6 +570,7 @@ fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
     unbox_slice(heap, xs);
     unbox_slice(heap, ys);
     unbox_slice(heap, xd);
+    unbox_slice(heap, xz);
     unbox_slice(heap, big);
     unbox_slice(heap, out);
     unbox_slice(heap, diag);

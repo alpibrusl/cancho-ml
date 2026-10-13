@@ -1,20 +1,23 @@
 module models.npass;
 
+import linalg.order;
 import models.mexp;
 
 // One block of the Newton pass of logistic regression (docs/models-linear.md 3.2): the partial of the W decisive sums over the
-// rows [r0, r1) of one block (at most 256), each sum ascending from +0.0 over the rows of the block, in the rows' order. The
-// partials of the blocks are combined by the package's tree (linalg.order), by the caller.
+// rows [r0, r1) of one block (at most 256, r0 a multiple of 256), by the package's lane rule (docs/linalg.md section 2): row i of the
+// block to lane i mod 4, each lane ascending from +0.0 in the rows' order, the partial of a sum (l0 + l1) + (l2 + l3). The partials of
+// the blocks are combined by the package's tree (linalg.order), by the caller.
 //
 // The loop is the tuned one of cancho-ml-opt and cancho-ml-armb (docs/spikes.md 8.3) with one change of shape: instead of a
 // rank-1 update of 231 accumulators per row (a load and a store each), the block is staged. Phase 1 reads the rows once, eight at
 // a time (eight independent chains of z, eight independent exps), copies each row into the scratch A (zero padded to pd columns,
 // a multiple of 4), and keeps r, s and the loss term of each row. Phase 2 makes SX = s * A and the gradient and bias-row
-// accumulators. Phase 3 forms the lower triangle of H = SX^T A in 4 x 4 register tiles held across the block's rows (the tiles
-// of linalg.syrk). Every sum receives the same terms, ascending in the row, as the per-row version: the terms are
-// fl(r * a_ia), fl(fl(s * a_ia) * a_ib), fl(s * a_ib) for the bias row, and the loss.
+// accumulators (four lanes each). Phase 3 forms the lower triangle of H = SX^T A in 2 x 2 register tiles of four lanes held across the
+// block's rows (the tiles of linalg.syrk). Every sum receives the same terms, each lane ascending in its rows, as the per-row
+// version: the terms are fl(r * a_ia), fl(fl(s * a_ia) * a_ib), fl(s * a_ib) for the bias row, and the loss (staged in `ll` and
+// summed by order.block_partial).
 //
-// Scratch layout (floats), pd = 4 * ceil(d / 4): A 256*pd, SX 256*pd, hacc pd*pd, gacc pd, hb pd, rr 256, ss 256.
+// Scratch layout (floats), pd = 4 * ceil(d / 4): A 256*pd, SX 256*pd, hacc pd*pd, gacc 4*pd, hb 4*pd, rr 256, ss 256, ll 256, gb 4, hbb 4.
 
 pub fn pad(d: int) -> [] int {
     return (d + 3) / 4 * 4;
@@ -22,7 +25,7 @@ pub fn pad(d: int) -> [] int {
 
 pub fn scratch_len(d: int) -> [] int {
     let pd = pad(d);
-    return 512 * pd + pd * pd + 2 * pd + 512 + 8;
+    return 512 * pd + pd * pd + 8 * pd + 768 + 16;
 }
 
 // number of sums: P + P (P + 1) / 2 + 1, P = d + 1
@@ -52,8 +55,8 @@ fn row_terms(z: float, y: float) -> [] (float, float, float) {
     return (r, s, loss);
 }
 
-// eight rows i0 .. i0 + 7 (local indices into the block, absolute rows r0 + i): the scores, A, r, s, and the loss added in row order
-fn rows8[&x, &y, &w, &a, &q, &u](xs: &x [float], rs: int, ys: &y [float], r0: int, i0: int, d: int, pd: int, wv: &w [float], am: &!a [float], rr: &!q [float], ss: &!u [float], lsum0: float) -> [] float {
+// eight rows i0 .. i0 + 7 (local indices into the block, absolute rows r0 + i): the scores, A, r, s, and the loss term of each row
+fn rows8[&x, &y, &w, &a, &q, &u, &o](xs: &x [float], rs: int, ys: &y [float], r0: int, i0: int, d: int, pd: int, wv: &w [float], am: &!a [float], rr: &!q [float], ss: &!u [float], ll: &!o [float]) -> [] int {
     let x0 = xs[(r0 + i0 + 0) * rs..(r0 + i0 + 0) * rs + d];
     let x1 = xs[(r0 + i0 + 1) * rs..(r0 + i0 + 1) * rs + d];
     let x2 = xs[(r0 + i0 + 2) * rs..(r0 + i0 + 2) * rs + d];
@@ -133,19 +136,18 @@ fn rows8[&x, &y, &w, &a, &q, &u](xs: &x [float], rs: int, ys: &y [float], r0: in
     ss[i0 + 5] = s5t;
     ss[i0 + 6] = s6t;
     ss[i0 + 7] = s7t;
-    var l = lsum0;
-    l = l + l0t;
-    l = l + l1t;
-    l = l + l2t;
-    l = l + l3t;
-    l = l + l4t;
-    l = l + l5t;
-    l = l + l6t;
-    l = l + l7t;
-    return l;
+    ll[i0 + 0] = l0t;
+    ll[i0 + 1] = l1t;
+    ll[i0 + 2] = l2t;
+    ll[i0 + 3] = l3t;
+    ll[i0 + 4] = l4t;
+    ll[i0 + 5] = l5t;
+    ll[i0 + 6] = l6t;
+    ll[i0 + 7] = l7t;
+    return 0;
 }
 
-fn row1[&x, &y, &w, &a, &q, &u](xs: &x [float], rs: int, ys: &y [float], r0: int, i: int, d: int, pd: int, wv: &w [float], am: &!a [float], rr: &!q [float], ss: &!u [float], lsum0: float) -> [] float {
+fn row1[&x, &y, &w, &a, &q, &u, &o](xs: &x [float], rs: int, ys: &y [float], r0: int, i: int, d: int, pd: int, wv: &w [float], am: &!a [float], rr: &!q [float], ss: &!u [float], ll: &!o [float]) -> [] int {
     let x0 = xs[(r0 + i) * rs..(r0 + i) * rs + d];
     let a0 = am[i * pd..i * pd + d];
     let wr = wv[0..d];
@@ -160,81 +162,101 @@ fn row1[&x, &y, &w, &a, &q, &u](xs: &x [float], rs: int, ys: &y [float], r0: int
     let (r0t, s0t, l0t) = row_terms(z0, ys[r0 + i]);
     rr[i] = r0t;
     ss[i] = s0t;
-    return lsum0 + l0t;
+    ll[i] = l0t;
+    return 0;
 }
 
-// the 4 x 4 tile of SX^T A at (a0, b0) over the m rows of the block, into hacc (pd x pd). Offsets carried (wrapping adds).
-fn tile44[&s, &a, &h](sx: &s [float], am: &a [float], pd: int, m: int, a0: int, b0: int, hacc: &!h [float]) -> [] int {
-    var c00 = 0.0;
-    var c01 = 0.0;
-    var c02 = 0.0;
-    var c03 = 0.0;
-    var c10 = 0.0;
-    var c11 = 0.0;
-    var c12 = 0.0;
-    var c13 = 0.0;
-    var c20 = 0.0;
-    var c21 = 0.0;
-    var c22 = 0.0;
-    var c23 = 0.0;
-    var c30 = 0.0;
-    var c31 = 0.0;
-    var c32 = 0.0;
-    var c33 = 0.0;
+// the 2 x 2 tile of SX^T A at (a0, b0) over the m rows of the block, four lanes per entry (row i to lane i mod 4), into hacc
+// (pd x pd) as (l0 + l1) + (l2 + l3). Offsets carried (wrapping adds).
+fn tile22[&s, &a, &h](sx: &s [float], am: &a [float], pd: int, m: int, a0: int, b0: int, hacc: &!h [float]) -> [] int {
+    var c000 = 0.0;
+    var c001 = 0.0;
+    var c002 = 0.0;
+    var c003 = 0.0;
+    var c010 = 0.0;
+    var c011 = 0.0;
+    var c012 = 0.0;
+    var c013 = 0.0;
+    var c100 = 0.0;
+    var c101 = 0.0;
+    var c102 = 0.0;
+    var c103 = 0.0;
+    var c110 = 0.0;
+    var c111 = 0.0;
+    var c112 = 0.0;
+    var c113 = 0.0;
     var po = a0;
     var qo = b0;
     var i = 0;
-    while i < m {
-        let p = sx[po..wrapping_add(po, 4)];
-        let q = am[qo..wrapping_add(qo, 4)];
+    while i + 4 <= m {
+        let p0 = sx[po..wrapping_add(po, 2)];
+        let q0 = am[qo..wrapping_add(qo, 2)];
         po = wrapping_add(po, pd);
         qo = wrapping_add(qo, pd);
-        let u0 = p[0];
-        let u1 = p[1];
-        let u2 = p[2];
-        let u3 = p[3];
-        let v0 = q[0];
-        let v1 = q[1];
-        let v2 = q[2];
-        let v3 = q[3];
-        c00 = c00 + u0 * v0;
-        c01 = c01 + u0 * v1;
-        c02 = c02 + u0 * v2;
-        c03 = c03 + u0 * v3;
-        c10 = c10 + u1 * v0;
-        c11 = c11 + u1 * v1;
-        c12 = c12 + u1 * v2;
-        c13 = c13 + u1 * v3;
-        c20 = c20 + u2 * v0;
-        c21 = c21 + u2 * v1;
-        c22 = c22 + u2 * v2;
-        c23 = c23 + u2 * v3;
-        c30 = c30 + u3 * v0;
-        c31 = c31 + u3 * v1;
-        c32 = c32 + u3 * v2;
-        c33 = c33 + u3 * v3;
-        i = i + 1;
+        let p1 = sx[po..wrapping_add(po, 2)];
+        let q1 = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        let p2 = sx[po..wrapping_add(po, 2)];
+        let q2 = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        let p3 = sx[po..wrapping_add(po, 2)];
+        let q3 = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        c000 = c000 + p0[0] * q0[0];
+        c010 = c010 + p0[0] * q0[1];
+        c100 = c100 + p0[1] * q0[0];
+        c110 = c110 + p0[1] * q0[1];
+        c001 = c001 + p1[0] * q1[0];
+        c011 = c011 + p1[0] * q1[1];
+        c101 = c101 + p1[1] * q1[0];
+        c111 = c111 + p1[1] * q1[1];
+        c002 = c002 + p2[0] * q2[0];
+        c012 = c012 + p2[0] * q2[1];
+        c102 = c102 + p2[1] * q2[0];
+        c112 = c112 + p2[1] * q2[1];
+        c003 = c003 + p3[0] * q3[0];
+        c013 = c013 + p3[0] * q3[1];
+        c103 = c103 + p3[1] * q3[0];
+        c113 = c113 + p3[1] * q3[1];
+        i = i + 4;
     }
-    let o0 = hacc[(a0 + 0) * pd + b0..(a0 + 0) * pd + b0 + 4];
-    o0[0] = c00;
-    o0[1] = c01;
-    o0[2] = c02;
-    o0[3] = c03;
-    let o1 = hacc[(a0 + 1) * pd + b0..(a0 + 1) * pd + b0 + 4];
-    o1[0] = c10;
-    o1[1] = c11;
-    o1[2] = c12;
-    o1[3] = c13;
-    let o2 = hacc[(a0 + 2) * pd + b0..(a0 + 2) * pd + b0 + 4];
-    o2[0] = c20;
-    o2[1] = c21;
-    o2[2] = c22;
-    o2[3] = c23;
-    let o3 = hacc[(a0 + 3) * pd + b0..(a0 + 3) * pd + b0 + 4];
-    o3[0] = c30;
-    o3[1] = c31;
-    o3[2] = c32;
-    o3[3] = c33;
+    if i + 0 < m {
+        let p = sx[po..wrapping_add(po, 2)];
+        let q = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        c000 = c000 + p[0] * q[0];
+        c010 = c010 + p[0] * q[1];
+        c100 = c100 + p[1] * q[0];
+        c110 = c110 + p[1] * q[1];
+    }
+    if i + 1 < m {
+        let p = sx[po..wrapping_add(po, 2)];
+        let q = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        c001 = c001 + p[0] * q[0];
+        c011 = c011 + p[0] * q[1];
+        c101 = c101 + p[1] * q[0];
+        c111 = c111 + p[1] * q[1];
+    }
+    if i + 2 < m {
+        let p = sx[po..wrapping_add(po, 2)];
+        let q = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        c002 = c002 + p[0] * q[0];
+        c012 = c012 + p[0] * q[1];
+        c102 = c102 + p[1] * q[0];
+        c112 = c112 + p[1] * q[1];
+    }
+    hacc[(a0 + 0) * pd + b0 + 0] = order.lane_combine(c000, c001, c002, c003);
+    hacc[(a0 + 0) * pd + b0 + 1] = order.lane_combine(c010, c011, c012, c013);
+    hacc[(a0 + 1) * pd + b0 + 0] = order.lane_combine(c100, c101, c102, c103);
+    hacc[(a0 + 1) * pd + b0 + 1] = order.lane_combine(c110, c111, c112, c113);
     return 0;
 }
 
@@ -247,64 +269,74 @@ pub fn block[&x, &y, &w, &c, &s](xs: &x [float], rs: int, ys: &y [float], r0: in
     let am = sc[0..256 * pd];
     let sx = sc[256 * pd..512 * pd];
     let hacc = sc[512 * pd..512 * pd + pd * pd];
-    let gacc = sc[512 * pd + pd * pd..512 * pd + pd * pd + pd];
-    let hb = sc[512 * pd + pd * pd + pd..512 * pd + pd * pd + 2 * pd];
-    let rr = sc[512 * pd + pd * pd + 2 * pd..512 * pd + pd * pd + 2 * pd + 256];
-    let ss = sc[512 * pd + pd * pd + 2 * pd + 256..512 * pd + pd * pd + 2 * pd + 512];
-    // phase 1: scores, A, r, s, the loss
-    var lsum = 0.0;
+    let gacc = sc[512 * pd + pd * pd..512 * pd + pd * pd + 4 * pd];
+    let hb = sc[512 * pd + pd * pd + 4 * pd..512 * pd + pd * pd + 8 * pd];
+    let tail = 512 * pd + pd * pd + 8 * pd;
+    let rr = sc[tail..tail + 256];
+    let ss = sc[tail + 256..tail + 512];
+    let ll = sc[tail + 512..tail + 768];
+    let gbv = sc[tail + 768..tail + 772];
+    let hbv = sc[tail + 772..tail + 776];
+    // phase 1: scores, A, r, s, the loss term of each row
     var i = 0;
     while i + 8 <= m {
-        lsum = rows8(xs, rs, ys, r0, i, d, pd, wv, am, rr, ss, lsum);
+        rows8(xs, rs, ys, r0, i, d, pd, wv, am, rr, ss, ll);
         i = i + 8;
     }
     while i < m {
-        lsum = row1(xs, rs, ys, r0, i, d, pd, wv, am, rr, ss, lsum);
+        row1(xs, rs, ys, r0, i, d, pd, wv, am, rr, ss, ll);
         i = i + 1;
     }
-    // phase 2: SX = s * A; gradient and bias-row accumulators, ascending in the row
+    // phase 2: SX = s * A; gradient and bias-row accumulators, four lanes (row i to lane i mod 4), ascending in the row
     var j = 0;
-    while j < pd {
+    while j < 4 * pd {
         gacc[j] = 0.0;
         hb[j] = 0.0;
         j = j + 1;
     }
-    var gb = 0.0;
-    var hbb = 0.0;
+    j = 0;
+    while j < 4 {
+        gbv[j] = 0.0;
+        hbv[j] = 0.0;
+        j = j + 1;
+    }
     i = 0;
     while i < m {
+        let lane = i % 4;
         let ar = am[i * pd..i * pd + pd];
         let sr = sx[i * pd..i * pd + pd];
+        let ga = gacc[lane * pd..lane * pd + pd];
+        let hl = hb[lane * pd..lane * pd + pd];
         let ri = rr[i];
         let si = ss[i];
         j = 0;
         while j < pd {
             let v = ar[j];
             let t = si * v;
-            gacc[j] = gacc[j] + ri * v;
-            hb[j] = hb[j] + t;
+            ga[j] = ga[j] + ri * v;
+            hl[j] = hl[j] + t;
             sr[j] = t;
             j = j + 1;
         }
-        gb = gb + ri;
-        hbb = hbb + si;
+        gbv[lane] = gbv[lane] + ri;
+        hbv[lane] = hbv[lane] + si;
         i = i + 1;
     }
-    // phase 3: the lower triangle of H (b <= a) in 4 x 4 tiles
+    // phase 3: the lower triangle of H (b <= a) in 2 x 2 tiles of four lanes
     var a0 = 0;
     while a0 < pd {
         var b0 = 0;
         while b0 <= a0 {
-            tile44(sx, am, pd, m, a0, b0, hacc);
-            b0 = b0 + 4;
+            tile22(sx, am, pd, m, a0, b0, hacc);
+            b0 = b0 + 2;
         }
-        a0 = a0 + 4;
+        a0 = a0 + 2;
     }
     // the slot: g (d + 1), H rows a < d, the bias row, the loss
     let p = d + 1;
     var a = 0;
     while a < d {
-        slot[a] = gacc[a];
+        slot[a] = order.lane_combine(gacc[a], gacc[pd + a], gacc[2 * pd + a], gacc[3 * pd + a]);
         let row = slot[p + a * (a + 1) / 2..p + a * (a + 1) / 2 + a + 1];
         let hr = hacc[a * pd..a * pd + a + 1];
         var b = 0;
@@ -314,14 +346,14 @@ pub fn block[&x, &y, &w, &c, &s](xs: &x [float], rs: int, ys: &y [float], r0: in
         }
         a = a + 1;
     }
-    slot[d] = gb;
+    slot[d] = order.lane_combine(gbv[0], gbv[1], gbv[2], gbv[3]);
     let brow = slot[p + d * (d + 1) / 2..p + d * (d + 1) / 2 + d + 1];
     var b = 0;
     while b < d {
-        brow[b] = hb[b];
+        brow[b] = order.lane_combine(hb[b], hb[pd + b], hb[2 * pd + b], hb[3 * pd + b]);
         b = b + 1;
     }
-    brow[d] = hbb;
-    slot[p + p * (p + 1) / 2] = lsum;
+    brow[d] = order.lane_combine(hbv[0], hbv[1], hbv[2], hbv[3]);
+    slot[p + p * (p + 1) / 2] = order.block_partial(ll, m);
     return 0;
 }

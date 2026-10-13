@@ -106,7 +106,8 @@ fn lloyd[&h, &x, &c, &g, &l](heap: &!h Heap, t: int, xs: &x [float], rs: int, n:
     let ww = k * d + k + 1;
     let depth = common.depth_for(order.blocks(n));
     let ct = box_slice(heap, kpass.padk(k) * d + 1, 0.0);
-    let dist = box_slice(heap, 2, 0.0);
+    let sl = kpass.scratch_len(k, d);
+    let dist = box_slice(heap, sl + 1, 0.0);
     let st = box_slice(heap, depth * ww, 0.0);
     let lv = box_slice(heap, depth + 1, 0);
     let nolab = box_slice(heap, 1, 0.0);
@@ -121,7 +122,7 @@ fn lloyd[&h, &x, &c, &g, &l](heap: &!h Heap, t: int, xs: &x [float], rs: int, n:
                 borrow mut st as &!stw in {
                     borrow mut lv as &!lvw in {
                         borrow nolab as &nlr in {
-                            code = par.pass(heap, t, 2, xs, rs, contents(nlr), contents(cr), n, d, k, ww, 1, contents(dw), contents(stw), contents(lvw), labels);
+                            code = par.pass(heap, t, 2, xs, rs, contents(nlr), contents(cr), n, d, k, ww, sl, contents(dw), contents(stw), contents(lvw), labels);
                         }
                     }
                 }

@@ -1,101 +1,173 @@
 module linalg.chol;
 
+import linalg.order;
 import linalg.tensor;
 import ml.refuse;
 
 // Cholesky A = L L^T and the two triangular solves (docs/linalg.md section 2.1). Only the lower triangle of A is read and only
-// the lower triangle of L is written. Every sum is ONE running value in ascending k (no blocks; a recurrence, not a free
-// reduction):
-//   L_jj = sqrt(A_jj - L_j0 L_j0 - L_j1 L_j1 - ...)      refused (ml.linalg.not-positive-definite) unless the value is > 0.0
-//   L_ij = (A_ij - L_i0 L_j0 - L_i1 L_j1 - ...) / L_jj    for i > j, terms for k = 0..j-1
+// the lower triangle of L is written. The factorisation is in PANELS of NB = 32 columns (order.panel()), the order a blocked
+// right-looking algorithm computes: for the entry (i, j) the value starts at A_ij, and for every panel of k (k = 32p .. 32p + 31,
+// cut at k < j) the panel's sum P of L_ik L_jk is formed by the lane rule (lane = k mod 4, each lane ascending from +0.0, the
+// partial (l0 + l1) + (l2 + l3)) and subtracted once: s = s - P_0; s = s - P_1; ... An empty last panel subtracts +0.0, which
+// changes no bit, so it is not formed.
+//   L_jj = sqrt(s_jj)                  refused (ml.linalg.not-positive-definite) unless s_jj > 0.0
+//   L_ij = s_ij / L_jj                 for i > j
+// The triangular solves keep ONE running value (a recurrence, not a free reduction; they were not part of the lane experiment):
 //   forward  L x = b:   x_i = (b_i - L_i0 x_0 - ... - L_i,i-1 x_i-1) / L_ii               k ascending
 //   backward L^T x = b: x_i = (b_i - L_d-1,i x_d-1 - ... - L_i+1,i x_i+1) / L_ii          k DESCENDING (corrected from the
 //     first draft of the document: ascending k makes each row's first term the x just computed, one serial chain for the
 //     whole solve; descending k lets four columns be summed together)
-// The speed comes from independent chains: a column of L is computed 8 rows at a time (the diagonal chain rides with them),
-// a solve 4 rows (forward) or 4 columns (backward) at a time; each entry's own additions keep the order above.
+// The speed comes from independent chains: a column of L is computed 4 rows at a time (sixteen lane chains), a solve 4 rows
+// (forward) or 4 columns (backward) at a time; each entry's own additions keep the order above.
 
-// the diagonal and eight rows below it for column j, fast path: `lv` is L (positioned at L[0][0], row stride ls), `av` is A
-// (positioned at A[0][0], row stride as_). Rows i0 .. i0 + 8 (all < d). Writes L[i][j] for the 8 rows; answers the diagonal
-// sum s_jj in the value of `diag_sum` (via the returned float): s_jj is computed separately by the caller for j.
-fn rows8[&l, &a](lv: &!l [float], ls: int, av: &a [float], as_: int, j: int, i0: int, ljj: float) -> [] int {
+// the entry sum s_ij of the fast path: `lv` is L (positioned at L[0][0], row stride ls); rows i and j (j <= i, row i has j entries
+// computed); `aij` is A_ij. Panels of 32, four lanes each.
+fn entry_sum[&l](lv: &l [float], ls: int, i: int, j: int, aij: float) -> [] float {
+    let ri = lv[i * ls..i * ls + j];
+    let rj = lv[j * ls..j * ls + j];
+    var s = aij;
+    var p0 = 0;
+    while p0 < j {
+        var e = p0 + 32;
+        if e > j {
+            e = j;
+        }
+        var a0 = 0.0;
+        var a1 = 0.0;
+        var a2 = 0.0;
+        var a3 = 0.0;
+        var k = p0;
+        while k + 4 <= e {
+            a0 = a0 + ri[k] * rj[k];
+            a1 = a1 + ri[k + 1] * rj[k + 1];
+            a2 = a2 + ri[k + 2] * rj[k + 2];
+            a3 = a3 + ri[k + 3] * rj[k + 3];
+            k = k + 4;
+        }
+        if k < e {
+            a0 = a0 + ri[k] * rj[k];
+        }
+        if k + 1 < e {
+            a1 = a1 + ri[k + 1] * rj[k + 1];
+        }
+        if k + 2 < e {
+            a2 = a2 + ri[k + 2] * rj[k + 2];
+        }
+        s = s - order.lane_combine(a0, a1, a2, a3);
+        p0 = p0 + 32;
+    }
+    return s;
+}
+
+// four rows i0 .. i0 + 3 (all < d) of column j, fast path: the sums s_ij by panels and the divisions by L_jj. `lv` is L
+// (positioned at L[0][0], row stride ls), `av` is A (positioned at A[0][0], row stride as_).
+fn rows4[&l, &a](lv: &!l [float], ls: int, av: &a [float], as_: int, j: int, i0: int, ljj: float) -> [] int {
     let rj = lv[j * ls..j * ls + j];
     let r0 = lv[(i0 + 0) * ls..(i0 + 0) * ls + j];
     let r1 = lv[(i0 + 1) * ls..(i0 + 1) * ls + j];
     let r2 = lv[(i0 + 2) * ls..(i0 + 2) * ls + j];
     let r3 = lv[(i0 + 3) * ls..(i0 + 3) * ls + j];
-    let r4 = lv[(i0 + 4) * ls..(i0 + 4) * ls + j];
-    let r5 = lv[(i0 + 5) * ls..(i0 + 5) * ls + j];
-    let r6 = lv[(i0 + 6) * ls..(i0 + 6) * ls + j];
-    let r7 = lv[(i0 + 7) * ls..(i0 + 7) * ls + j];
     var s0 = av[(i0 + 0) * as_ + j];
     var s1 = av[(i0 + 1) * as_ + j];
     var s2 = av[(i0 + 2) * as_ + j];
     var s3 = av[(i0 + 3) * as_ + j];
-    var s4 = av[(i0 + 4) * as_ + j];
-    var s5 = av[(i0 + 5) * as_ + j];
-    var s6 = av[(i0 + 6) * as_ + j];
-    var s7 = av[(i0 + 7) * as_ + j];
-    var k = 0;
-    while k < j {
-        let c = rj[k];
-        s0 = s0 - r0[k] * c;
-        s1 = s1 - r1[k] * c;
-        s2 = s2 - r2[k] * c;
-        s3 = s3 - r3[k] * c;
-        s4 = s4 - r4[k] * c;
-        s5 = s5 - r5[k] * c;
-        s6 = s6 - r6[k] * c;
-        s7 = s7 - r7[k] * c;
-        k = k + 1;
+    var p0 = 0;
+    while p0 < j {
+        var e = p0 + 32;
+        if e > j {
+            e = j;
+        }
+        var a00 = 0.0;
+        var a01 = 0.0;
+        var a02 = 0.0;
+        var a03 = 0.0;
+        var a10 = 0.0;
+        var a11 = 0.0;
+        var a12 = 0.0;
+        var a13 = 0.0;
+        var a20 = 0.0;
+        var a21 = 0.0;
+        var a22 = 0.0;
+        var a23 = 0.0;
+        var a30 = 0.0;
+        var a31 = 0.0;
+        var a32 = 0.0;
+        var a33 = 0.0;
+        var k = p0;
+        while k + 4 <= e {
+            let c0 = rj[k + 0];
+            let c1 = rj[k + 1];
+            let c2 = rj[k + 2];
+            let c3 = rj[k + 3];
+            a00 = a00 + r0[k + 0] * c0;
+            a01 = a01 + r0[k + 1] * c1;
+            a02 = a02 + r0[k + 2] * c2;
+            a03 = a03 + r0[k + 3] * c3;
+            a10 = a10 + r1[k + 0] * c0;
+            a11 = a11 + r1[k + 1] * c1;
+            a12 = a12 + r1[k + 2] * c2;
+            a13 = a13 + r1[k + 3] * c3;
+            a20 = a20 + r2[k + 0] * c0;
+            a21 = a21 + r2[k + 1] * c1;
+            a22 = a22 + r2[k + 2] * c2;
+            a23 = a23 + r2[k + 3] * c3;
+            a30 = a30 + r3[k + 0] * c0;
+            a31 = a31 + r3[k + 1] * c1;
+            a32 = a32 + r3[k + 2] * c2;
+            a33 = a33 + r3[k + 3] * c3;
+            k = k + 4;
+        }
+        if k + 0 < e {
+            let c = rj[k + 0];
+            a00 = a00 + r0[k + 0] * c;
+            a10 = a10 + r1[k + 0] * c;
+            a20 = a20 + r2[k + 0] * c;
+            a30 = a30 + r3[k + 0] * c;
+        }
+        if k + 1 < e {
+            let c = rj[k + 1];
+            a01 = a01 + r0[k + 1] * c;
+            a11 = a11 + r1[k + 1] * c;
+            a21 = a21 + r2[k + 1] * c;
+            a31 = a31 + r3[k + 1] * c;
+        }
+        if k + 2 < e {
+            let c = rj[k + 2];
+            a02 = a02 + r0[k + 2] * c;
+            a12 = a12 + r1[k + 2] * c;
+            a22 = a22 + r2[k + 2] * c;
+            a32 = a32 + r3[k + 2] * c;
+        }
+        s0 = s0 - order.lane_combine(a00, a01, a02, a03);
+        s1 = s1 - order.lane_combine(a10, a11, a12, a13);
+        s2 = s2 - order.lane_combine(a20, a21, a22, a23);
+        s3 = s3 - order.lane_combine(a30, a31, a32, a33);
+        p0 = p0 + 32;
     }
     lv[(i0 + 0) * ls + j] = s0 / ljj;
     lv[(i0 + 1) * ls + j] = s1 / ljj;
     lv[(i0 + 2) * ls + j] = s2 / ljj;
     lv[(i0 + 3) * ls + j] = s3 / ljj;
-    lv[(i0 + 4) * ls + j] = s4 / ljj;
-    lv[(i0 + 5) * ls + j] = s5 / ljj;
-    lv[(i0 + 6) * ls + j] = s6 / ljj;
-    lv[(i0 + 7) * ls + j] = s7 / ljj;
     return 0;
-}
-
-// the diagonal sum of column j: A_jj - L_j0 L_j0 - ..., ascending
-fn diag_sum[&l, &a](lv: &l [float], ls: int, av: &a [float], as_: int, j: int) -> [] float {
-    let rj = lv[j * ls..j * ls + j];
-    var s = av[j * as_ + j];
-    var k = 0;
-    while k < j {
-        s = s - rj[k] * rj[k];
-        k = k + 1;
-    }
-    return s;
 }
 
 // fast path (unit column strides on A and L, non-negative row strides): positioned slices, d x d
 fn chol_fast[&l, &a](lv: &!l [float], ls: int, av: &a [float], as_: int, d: int) -> [] int {
     var j = 0;
     while j < d {
-        let s = diag_sum(lv, ls, av, as_, j);
+        let s = entry_sum(lv, ls, j, j, av[j * as_ + j]);
         if !(s > 0.0) {
             return refuse.not_positive_definite();
         }
         let ljj = sqrt(s);
         lv[j * ls + j] = ljj;
         var i = j + 1;
-        while i + 8 <= d {
-            rows8(lv, ls, av, as_, j, i, ljj);
-            i = i + 8;
+        while i + 4 <= d {
+            rows4(lv, ls, av, as_, j, i, ljj);
+            i = i + 4;
         }
         while i < d {
-            let ri = lv[i * ls..i * ls + j];
-            let rj = lv[j * ls..j * ls + j];
-            var t = av[i * as_ + j];
-            var k = 0;
-            while k < j {
-                t = t - ri[k] * rj[k];
-                k = k + 1;
-            }
+            let t = entry_sum(lv, ls, i, j, av[i * as_ + j]);
             lv[i * ls + j] = t / ljj;
             i = i + 1;
         }
@@ -104,18 +176,47 @@ fn chol_fast[&l, &a](lv: &!l [float], ls: int, av: &a [float], as_: int, d: int)
     return 0;
 }
 
+// the same entry sum through any strides: element (r, k) of L at lt.off + r * lt.t0 + k * lt.t1
+fn entry_sum_generic[&l](lv: &l [float], lt: tensor.Tensor, i: int, j: int, aij: float) -> [] float {
+    var s = aij;
+    var p0 = 0;
+    while p0 < j {
+        var e = p0 + 32;
+        if e > j {
+            e = j;
+        }
+        var a0 = 0.0;
+        var a1 = 0.0;
+        var a2 = 0.0;
+        var a3 = 0.0;
+        var k = p0;
+        while k < e {
+            let p = lv[lt.off + i * lt.t0 + k * lt.t1] * lv[lt.off + j * lt.t0 + k * lt.t1];
+            let ln = (k - p0) % 4;
+            if ln == 0 {
+                a0 = a0 + p;
+            } else if ln == 1 {
+                a1 = a1 + p;
+            } else if ln == 2 {
+                a2 = a2 + p;
+            } else {
+                a3 = a3 + p;
+            }
+            k = k + 1;
+        }
+        s = s - order.lane_combine(a0, a1, a2, a3);
+        p0 = p0 + 32;
+    }
+    return s;
+}
+
 // generic path: any strides, one entry at a time, same sums
 fn chol_generic[&l, &a](lv: &!l [float], lt: tensor.Tensor, av: &a [float], at: tensor.Tensor, d: int) -> [] int {
     var j = 0;
     while j < d {
         var i = j;
         while i < d {
-            var s = av[at.off + i * at.t0 + j * at.t1];
-            var k = 0;
-            while k < j {
-                s = s - lv[lt.off + i * lt.t0 + k * lt.t1] * lv[lt.off + j * lt.t0 + k * lt.t1];
-                k = k + 1;
-            }
+            let s = entry_sum_generic(lv, lt, i, j, av[at.off + i * at.t0 + j * at.t1]);
             if i == j {
                 if !(s > 0.0) {
                     return refuse.not_positive_definite();

@@ -16,7 +16,7 @@ $CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/core.cho
 $CANCHO test --std lib/core/exact.cho tests/exact.cho
 $CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/matrix.cho
 $CANCHO test --std lib/core/fsq.cho tests/fsq.cho
-for T in t_dot t_gemv t_syrk t_chol t_gemm t_fuzz; do
+for T in t_dot t_gemv t_syrk t_chol t_gemm t_fuzz t_order; do
   $CANCHO test --std lib/core/*.cho lib/linalg/*.cho tests/lref.cho tests/$T.cho
 done
 python3 scripts/mutants_core.py --check

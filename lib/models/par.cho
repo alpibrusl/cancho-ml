@@ -61,7 +61,7 @@ fn chunks_of[&x, &y, &w, &c, &o, &s, &l, &q](kind: int, xs: &x [float], rs: int,
             if kind == 1 {
                 npass.block(xs, rs, ys, b * 256, hi, d, wv, sc, st[sp * ww..sp * ww + ww]);
             } else {
-                kpass.block(xs, rs, b * 256, hi, d, k, wv, lab, st[sp * ww..sp * ww + ww]);
+                kpass.block(xs, rs, b * 256, hi, d, k, wv, lab, sc, st[sp * ww..sp * ww + ww]);
             }
             sp = order.settle(st, lv, sp, ww);
             b = b + 1;
@@ -171,7 +171,7 @@ pub fn pass[&h, &x, &y, &w, &c, &s, &l, &q](heap: &!h Heap, t: int, kind: int, x
             if kind == 1 {
                 npass.block(xs, rs, ys, b * 256, hi, d, wv, sc, st[sp * ww..sp * ww + ww]);
             } else {
-                kpass.block(xs, rs, b * 256, hi, d, kc, wv, lab, st[sp * ww..sp * ww + ww]);
+                kpass.block(xs, rs, b * 256, hi, d, kc, wv, lab, sc, st[sp * ww..sp * ww + ww]);
             }
             sp = order.settle(st, lv, sp, ww);
             b = b + 1;

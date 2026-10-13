@@ -5,83 +5,116 @@ import linalg.tensor;
 import ml.refuse;
 
 // C = A B (reference kernel; docs/linalg.md 1.3: not expected to match a vendor BLAS). Order: C[i][j] is the block rule
-// (blocks of 256 along k, ascending from +0.0) and the tree rule over k of A[i][k] * B[k][j]: per entry exactly the dot
-// of a row of A and a column of B. The speed is a 4 x 4 register tile of C, one partial per block settled on a stack of
-// width 16.
+// (blocks of 256 along k), the lane rule inside a block (k of the block to lane k mod 4, each lane ascending from +0.0, partial
+// (l0 + l1) + (l2 + l3)) and the tree rule over k of A[i][k] * B[k][j]: per entry exactly the dot of a row of A and a column of B.
+// The speed is a 2 x 2 register tile of C (four lanes per entry: sixteen accumulators), one partial per block settled on a stack
+// of width 4.
 
-// partial of the 4 x 4 tile at (i0, j0) over k in [k0, k1): av positioned at A[0][0] (row stride ars, unit k stride), bv at
-// B[0][0] (row stride brs, unit column stride); the 16 sums go to out[0..16) in row-major tile order
-fn tile44[&a, &b, &o](av: &a [float], ars: int, bv: &b [float], brs: int, i0: int, j0: int, k0: int, k1: int, out: &!o [float]) -> [] int {
+// partial of the 2 x 2 tile at (i0, j0) over k in [k0, k1) (k0 a multiple of 256): av positioned at A[0][0] (row stride ars, unit
+// k stride), bv at B[0][0] (row stride brs, unit column stride); the 4 sums go to out[0..4) in row-major tile order
+fn tile22[&a, &b, &o](av: &a [float], ars: int, bv: &b [float], brs: int, i0: int, j0: int, k0: int, k1: int, out: &!o [float]) -> [] int {
     let n = k1 - k0;
     let p0 = av[(i0 + 0) * ars + k0..(i0 + 0) * ars + k0 + n];
     let p1 = av[(i0 + 1) * ars + k0..(i0 + 1) * ars + k0 + n];
-    let p2 = av[(i0 + 2) * ars + k0..(i0 + 2) * ars + k0 + n];
-    let p3 = av[(i0 + 3) * ars + k0..(i0 + 3) * ars + k0 + n];
-    var c00 = 0.0;
-    var c01 = 0.0;
-    var c02 = 0.0;
-    var c03 = 0.0;
-    var c10 = 0.0;
-    var c11 = 0.0;
-    var c12 = 0.0;
-    var c13 = 0.0;
-    var c20 = 0.0;
-    var c21 = 0.0;
-    var c22 = 0.0;
-    var c23 = 0.0;
-    var c30 = 0.0;
-    var c31 = 0.0;
-    var c32 = 0.0;
-    var c33 = 0.0;
+    var c000 = 0.0;
+    var c001 = 0.0;
+    var c002 = 0.0;
+    var c003 = 0.0;
+    var c010 = 0.0;
+    var c011 = 0.0;
+    var c012 = 0.0;
+    var c013 = 0.0;
+    var c100 = 0.0;
+    var c101 = 0.0;
+    var c102 = 0.0;
+    var c103 = 0.0;
+    var c110 = 0.0;
+    var c111 = 0.0;
+    var c112 = 0.0;
+    var c113 = 0.0;
     // the offset of B[k0 + k][j0] is carried (wrapping adds: no multiplication to check in the loop); the slice still checks
     var bq = k0 * brs + j0;
     var k = 0;
-    while k < n {
-        let q = bv[bq..wrapping_add(bq, 4)];
+    while k + 4 <= n {
+        let q0 = bv[bq..wrapping_add(bq, 2)];
         bq = wrapping_add(bq, brs);
-        let b0 = q[0];
-        let b1 = q[1];
-        let b2 = q[2];
-        let b3 = q[3];
-        let a0 = p0[k];
-        let a1 = p1[k];
-        let a2 = p2[k];
-        let a3 = p3[k];
-        c00 = c00 + a0 * b0;
-        c01 = c01 + a0 * b1;
-        c02 = c02 + a0 * b2;
-        c03 = c03 + a0 * b3;
-        c10 = c10 + a1 * b0;
-        c11 = c11 + a1 * b1;
-        c12 = c12 + a1 * b2;
-        c13 = c13 + a1 * b3;
-        c20 = c20 + a2 * b0;
-        c21 = c21 + a2 * b1;
-        c22 = c22 + a2 * b2;
-        c23 = c23 + a2 * b3;
-        c30 = c30 + a3 * b0;
-        c31 = c31 + a3 * b1;
-        c32 = c32 + a3 * b2;
-        c33 = c33 + a3 * b3;
+        let q1 = bv[bq..wrapping_add(bq, 2)];
+        bq = wrapping_add(bq, brs);
+        let q2 = bv[bq..wrapping_add(bq, 2)];
+        bq = wrapping_add(bq, brs);
+        let q3 = bv[bq..wrapping_add(bq, 2)];
+        bq = wrapping_add(bq, brs);
+        c000 = c000 + p0[k + 0] * q0[0];
+        c010 = c010 + p0[k + 0] * q0[1];
+        c100 = c100 + p1[k + 0] * q0[0];
+        c110 = c110 + p1[k + 0] * q0[1];
+        c001 = c001 + p0[k + 1] * q1[0];
+        c011 = c011 + p0[k + 1] * q1[1];
+        c101 = c101 + p1[k + 1] * q1[0];
+        c111 = c111 + p1[k + 1] * q1[1];
+        c002 = c002 + p0[k + 2] * q2[0];
+        c012 = c012 + p0[k + 2] * q2[1];
+        c102 = c102 + p1[k + 2] * q2[0];
+        c112 = c112 + p1[k + 2] * q2[1];
+        c003 = c003 + p0[k + 3] * q3[0];
+        c013 = c013 + p0[k + 3] * q3[1];
+        c103 = c103 + p1[k + 3] * q3[0];
+        c113 = c113 + p1[k + 3] * q3[1];
+        k = k + 4;
+    }
+    if k + 0 < n {
+        let q = bv[bq..wrapping_add(bq, 2)];
+        bq = wrapping_add(bq, brs);
+        c000 = c000 + p0[k + 0] * q[0];
+        c010 = c010 + p0[k + 0] * q[1];
+        c100 = c100 + p1[k + 0] * q[0];
+        c110 = c110 + p1[k + 0] * q[1];
+    }
+    if k + 1 < n {
+        let q = bv[bq..wrapping_add(bq, 2)];
+        bq = wrapping_add(bq, brs);
+        c001 = c001 + p0[k + 1] * q[0];
+        c011 = c011 + p0[k + 1] * q[1];
+        c101 = c101 + p1[k + 1] * q[0];
+        c111 = c111 + p1[k + 1] * q[1];
+    }
+    if k + 2 < n {
+        let q = bv[bq..wrapping_add(bq, 2)];
+        bq = wrapping_add(bq, brs);
+        c002 = c002 + p0[k + 2] * q[0];
+        c012 = c012 + p0[k + 2] * q[1];
+        c102 = c102 + p1[k + 2] * q[0];
+        c112 = c112 + p1[k + 2] * q[1];
+    }
+    out[0] = order.lane_combine(c000, c001, c002, c003);
+    out[1] = order.lane_combine(c010, c011, c012, c013);
+    out[2] = order.lane_combine(c100, c101, c102, c103);
+    out[3] = order.lane_combine(c110, c111, c112, c113);
+    return 0;
+}
+
+// the lane rule over k in [k0, k1) of A[i][k] * B[k][j] through any strides: lane = (k - k0) mod 4
+fn lane_run[&a, &b](ad: &a [float], ao: int, aks: int, bd: &b [float], bo: int, bks: int, k0: int, k1: int) -> [] float {
+    var s0 = 0.0;
+    var s1 = 0.0;
+    var s2 = 0.0;
+    var s3 = 0.0;
+    var k = k0;
+    while k < k1 {
+        let p = ad[ao + k * aks] * bd[bo + k * bks];
+        let l = (k - k0) % 4;
+        if l == 0 {
+            s0 = s0 + p;
+        } else if l == 1 {
+            s1 = s1 + p;
+        } else if l == 2 {
+            s2 = s2 + p;
+        } else {
+            s3 = s3 + p;
+        }
         k = k + 1;
     }
-    out[0] = c00;
-    out[1] = c01;
-    out[2] = c02;
-    out[3] = c03;
-    out[4] = c10;
-    out[5] = c11;
-    out[6] = c12;
-    out[7] = c13;
-    out[8] = c20;
-    out[9] = c21;
-    out[10] = c22;
-    out[11] = c23;
-    out[12] = c30;
-    out[13] = c31;
-    out[14] = c32;
-    out[15] = c33;
-    return 0;
+    return order.lane_combine(s0, s1, s2, s3);
 }
 
 // rows [r0, r1) of C by the fast path (positioned slices); st/lv are this call's stack workspace (40 * 16 floats, 40 ints)
@@ -90,7 +123,7 @@ pub fn gemm_rows[&a, &b, &c, &s, &l](av: &a [float], ars: int, bv: &b [float], b
     while i0 < r1 {
         var j0 = 0;
         while j0 < n {
-            if i0 + 4 <= r1 && j0 + 4 <= n {
+            if i0 + 2 <= r1 && j0 + 2 <= n {
                 var sp = 0;
                 var b0 = 0;
                 while b0 < p {
@@ -98,16 +131,16 @@ pub fn gemm_rows[&a, &b, &c, &s, &l](av: &a [float], ars: int, bv: &b [float], b
                     if b1 > p {
                         b1 = p;
                     }
-                    tile44(av, ars, bv, brs, i0, j0, b0, b1, st[sp * 16..sp * 16 + 16]);
-                    sp = order.settle(st, lv, sp, 16);
+                    tile22(av, ars, bv, brs, i0, j0, b0, b1, st[sp * 4..sp * 4 + 4]);
+                    sp = order.settle(st, lv, sp, 4);
                     b0 = b0 + 256;
                 }
-                order.finish(st, sp, 16);
+                order.finish(st, sp, 4);
                 var q = 0;
-                while q < 4 {
+                while q < 2 {
                     var w = 0;
-                    while w < 4 {
-                        cv[(i0 + q) * crs + (j0 + w) * ccs] = st[q * 4 + w];
+                    while w < 2 {
+                        cv[(i0 + q) * crs + (j0 + w) * ccs] = st[q * 2 + w];
                         w = w + 1;
                     }
                     q = q + 1;
@@ -115,9 +148,9 @@ pub fn gemm_rows[&a, &b, &c, &s, &l](av: &a [float], ars: int, bv: &b [float], b
             } else {
                 // edge: the entries of this partial tile one at a time (same sums)
                 var q = i0;
-                while q < r1 && q < i0 + 4 {
+                while q < r1 && q < i0 + 2 {
                     var w = j0;
-                    while w < n && w < j0 + 4 {
+                    while w < n && w < j0 + 2 {
                         var sp = 0;
                         var b0 = 0;
                         while b0 < p {
@@ -125,13 +158,7 @@ pub fn gemm_rows[&a, &b, &c, &s, &l](av: &a [float], ars: int, bv: &b [float], b
                             if b1 > p {
                                 b1 = p;
                             }
-                            var s = 0.0;
-                            var k = b0;
-                            while k < b1 {
-                                s = s + av[q * ars + k] * bv[k * brs + w];
-                                k = k + 1;
-                            }
-                            st[sp] = s;
+                            st[sp] = lane_run(av, q * ars, 1, bv, w, brs, b0, b1);
                             sp = order.settle(st, lv, sp, 1);
                             b0 = b0 + 256;
                         }
@@ -142,9 +169,9 @@ pub fn gemm_rows[&a, &b, &c, &s, &l](av: &a [float], ars: int, bv: &b [float], b
                     q = q + 1;
                 }
             }
-            j0 = j0 + 4;
+            j0 = j0 + 2;
         }
-        i0 = i0 + 4;
+        i0 = i0 + 2;
     }
     return 0;
 }
@@ -198,12 +225,7 @@ pub fn gemm[&h, &a, &b, &c](heap: &!h Heap, at: tensor.Tensor, ad: &a [float], b
                             if b1 > p {
                                 b1 = p;
                             }
-                            var s = 0.0;
-                            var k = b0;
-                            while k < b1 {
-                                s = s + ad[at.off + i * at.t0 + k * at.t1] * bd[bt.off + k * bt.t0 + j * bt.t1];
-                                k = k + 1;
-                            }
+                            let s = lane_run(ad, at.off + i * at.t0, at.t1, bd, bt.off + j * bt.t1, bt.t0, b0, b1);
                             contents(sw)[sp] = s;
                             sp = order.settle(contents(sw), contents(lw), sp, 1);
                             b0 = b0 + 256;
