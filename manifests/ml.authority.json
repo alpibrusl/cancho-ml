@@ -152,6 +152,7 @@
     "has",
     "has_dotdot",
     "has_double_dot",
+    "has_double_dot",
     "help_of",
     "hex4",
     "hex_digit",
@@ -287,5 +288,5 @@
   ],
   "folded_operators": 66,
   "folded_calls": 0,
-  "functions": 442
+  "functions": 443
 }

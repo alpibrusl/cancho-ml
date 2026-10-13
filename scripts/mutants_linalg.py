@@ -166,8 +166,40 @@ ALLOWED = {
     "order-level-eq": "equivalent: the levels on the stack are strictly decreasing from bottom to top, so the top is never greater than the entry below it; >= and == select the same merges",
 }
 
+# Deliberately wrong ORACLES (scripts/oracle_linalg.py, ORACLE_MUTANT): the suite against the unmutated binary must FAIL under each,
+# which shows that the oracle itself would see a kernel that took the other choice (the constants of the lane order among them).
+ORACLE_MUTANTS = ["tree-leftfold", "tree-carry-add", "block-255", "dot-reverse", "gemvt-reverse", "bwd-ascending",
+                  "lanes-2", "lanes-8", "lane-map", "lane-combine-fold", "chol-panel-16"]
+
+
+def oracle_mutants():
+    import os, subprocess, tempfile
+    cancho = mutlib.cancho()
+    d = tempfile.mkdtemp()
+    exe = d + "/linalg-check"
+    files = sorted(str(f) for f in (mutlib.ROOT / "lib/core").glob("*.cho")) + sorted(str(f) for f in (mutlib.ROOT / "lib/linalg").glob("*.cho"))
+    r = subprocess.run([cancho, "build", "--std", *files, str(mutlib.ROOT / "tools/linalg-check/main.cho"), "-o", exe], capture_output=True, text=True)
+    if r.returncode:
+        print("BUILD_ERROR oracle mutants\n" + r.stdout[-500:] + r.stderr[-500:])
+        return 1
+    ok = subprocess.run([sys.executable, str(mutlib.ROOT / "scripts/oracle_linalg.py"), "--suite"], env=dict(os.environ, LINALG_CHECK=exe), capture_output=True, text=True)
+    if ok.returncode != 0:
+        print("mutants_linalg/oracle: the unmutated oracle FAILS the suite; refusing to run its mutants")
+        return 1
+    survivors = []
+    for m in ORACLE_MUTANTS:
+        r = subprocess.run([sys.executable, str(mutlib.ROOT / "scripts/oracle_linalg.py"), "--suite"], env=dict(os.environ, LINALG_CHECK=exe, ORACLE_MUTANT=m), capture_output=True, text=True)
+        print("%-40s %s" % (m, "killed" if r.returncode != 0 else "SURVIVED"), flush=True)
+        if r.returncode == 0:
+            survivors.append(m)
+    print("mutants_linalg/oracle: %d oracle mutants, %d survive" % (len(ORACLE_MUTANTS), len(survivors)))
+    return 1 if survivors else 0
+
+
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if "oracle" in args:
+        sys.exit(oracle_mutants() if "--check" not in sys.argv else 0)
     rc = 0
     whole = [a for a in args if a in GROUPS]
     subs = [a for a in args if a not in GROUPS]
@@ -183,4 +215,6 @@ if __name__ == "__main__":
             pick = [m for m in muts if any(a in m[0] for a in subs)]
         if pick:
             rc |= mutlib.run(pick, cmd, "mutants_linalg/" + g, allowed=ALLOWED)
+    if not args and "--check" not in sys.argv:
+        rc |= oracle_mutants()
     sys.exit(rc)
