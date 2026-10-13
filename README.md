@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/assets/cancho-ml-logo.svg" alt="cancho-ml" width="360"></p>
+<p align="center"><img src="docs/assets/cancho-ml-logo.jpg" alt="cancho-ml" width="220"></p>
 
 # cancho-ml
 
