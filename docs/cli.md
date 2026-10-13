@@ -234,16 +234,19 @@ the same stdout bytes five times.
 
 ## 7. Gate verdicts
 
-Everything below was printed by a script of this repository, on one machine (this Mac, arm64, macOS, the pinned compiler `a4572ea`),
-under a 1-minute load average of 3.8 to 6.0 (other processes on the machine; not a quiet-machine run, and no figure here is a benchmark).
+Everything below was printed by a script of this repository, on one machine (this Mac, arm64, macOS, the pinned compiler `a4572ea`).
+The first version of this section (the CLI slice) ran under a 1-minute load average of 3.8 to 6.0; **the counts below were refreshed at `v1-post`** under a load average of
+about 8 to 10 (other processes on the machine, and the mutant suites running in parallel). It is not a quiet-machine run and no figure here is a benchmark.
 
-**Conformance tests** *(as of the CLI slice; the reader stage's count and verdicts are in `docs/reader.md` section 6)* (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`): 88 tests, all pass, 1 skipped (the
-`--threads` branch of D1, because there is no such flag; the skip says so). The last run took 28.2 s. 90 fixtures
-(`tests/conformance/fixtures.py`) reach all 19 flags, all 48 rules and all 4 log records of the tables. The numeric gates of stage 1
+**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`; the reader stage's verdicts are in `docs/reader.md` section 6): **105 tests, all
+pass, 1 skipped** (the `--threads` branch of D1, because there is no such flag; the skip says so). The run inside `scripts/check.sh` took 49.0 s. 99 fixtures
+(`tests/conformance/fixtures.py`) reach all 20 flags, all 49 rules and all 4 log records of the tables. *(The CLI slice had 88 tests, 90 fixtures, 19 flags and 48 rules; the reader stage (`test_float.py`, the float options) and `v1-post` (four tests of the
+sum order in `test_model_file.py`) account for the difference; the integration run of `docs/integration.md` had 101.)* The numeric gates of stage 1
 and the unit tests of `lib/core/exact.cho` (7) pass in `scripts/check.sh`, which exits 0.
 
-**Mutants** (`python3 scripts/mutants_cli.py`, log `docs/bench/mutants_cli.log`): 34 mutants, each a copy of the tree with one change and
-the binary rebuilt, run against the tests of the gate it targets; **all 34 killed, none survived**, and the unchanged tree passes.
+**Mutants** (`python3 scripts/mutants_cli.py`; the log of the CLI slice's 34 is `docs/bench/mutants_cli.log`, that of the reader stage's 11 more `docs/bench/mutants_cli_reader.log`):
+**53 mutants, each a copy of the tree with one change and the binary rebuilt, run against the tests of the gate it targets; all 53 killed, none survived**, and the unchanged tree
+passes (run at `v1-post`). 34 are the slice's, 11 the reader stage's (RD7), 8 are the sum-order mutants of `v1-post`.
 
 | gate | mutants | killed | survived | the mutants |
 |---|---|---|---|---|
@@ -251,12 +254,13 @@ the binary rebuilt, run against the tests of the gate it targets; **all 34 kille
 | R1 refusals | 3 | 3 | 0 | `r1-exit-code-changed`, `r1-text-in-json-mode`, `r1-missing-operand-not-refused` |
 | N1 no trap | 2 | 2 | 0 | `n1-verb-read-before-counting`, `n1-double-dot-check-removed` |
 | L1 log | 2 | 2 | 0 | `l1-column-name-logged`, `l1-cap-not-checked` |
-| M1 model file | 4 | 4 | 0 | `m1-checksum-not-compared`, `m1-section-length-not-checked`, `m1-version-not-compared`, `m1-trailing-bytes-accepted` |
+| M1 model file | 12 | 12 | 0 | `m1-checksum-not-compared`, `m1-section-length-not-checked`, `m1-version-not-compared`, `m1-trailing-bytes-accepted`, and the eight of the sum order: `m1-sum-order-not-compared`, `-implemented-is-3`, `-from-kind-5`, `-to-kind-6`, `-meta-longer-ok`, `-offset`, `-rule`, `-detail` |
 | S1 schema check | 2 | 2 | 0 | `s1-check-removed`, `s1-repair-names-the-wrong-side` |
 | O1 oracle | 8 | 8 | 0 | `o1-mean-divides-by-n-minus-1`, `o1-tie-goes-to-the-larger-label`, `o1-half-rounds-down`, `o1-mean-truncates`, `o1-carry-dropped`, `o1-sum-in-one-int`, `o1-accuracy-counts-the-wrong-rows`, `o1-eval-ignores-the-cell-scale` |
 | D1 determinism | 2 | 2 | 0 | `d1-model-holds-the-byte-count`, `d1-thread-count-changes-a-byte` |
 | A1 authority | 3 | 3 | 0 | `a1-reads-standard-input`, `a1-reads-the-clock`, `a1-manifest-is-stale` |
 | H1 honesty | 2 | 2 | 0 | `h1-a-model-in-the-table-that-is-not-built`, `h1-an-exponent-is-read-as-a-prefix` |
+| RD7 float oracle | 11 | 11 | 0 | `rd7-mean-divides-by-n-plus-1`, `rd7-sum-is-not-exact`, `rd7-sse-carry`, `rd7-sse-rounds-half-up`, `rd7-sse-ignores-the-sticky-bit`, `rd7-rmse-from-two-roots`, `rd7-sse-against-a-neighbour-of-the-mean`, `rd7-float-column-fits-an-int-model`, `rd7-int-model-bytes-change`, `rd7-float-target-as-class-label`, `rd7-float-model-kind-checked-as-int` |
 
 How the gates were checked to be able to fail, and what they found:
 

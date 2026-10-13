@@ -22,30 +22,33 @@ The command line is `ml fit | predict | eval | introspect | skill`. The only mod
 
 ## What is built as a library and not reachable
 
-Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl.github.io/cancho-ml/evidence.html)). No verb calls any of them. Wiring a verb means a model kind in `tools/ml/mfile.cho` with a parser in the conformance tests, the library's rule tags moved from `pending()` to the tables of `introspect`, schemas and fixtures regenerated, and `conc` in the authority row when `--threads` arrives ([integration.md](integration.md) section 6).
+Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl.github.io/cancho-ml/evidence.html)). No verb calls any of them: the transforms and the pipeline are not wired into `fit`, `predict` or `eval` any more than the models are. Wiring a verb means a model kind in `tools/ml/mfile.cho` with a parser in the conformance tests, the library's rule tags moved from `pending()` to the tables of `introspect`, schemas and fixtures regenerated, and `conc` in the authority row when `--threads` arrives ([integration.md](integration.md) section 6).
 
 | item | what it is | source |
 |---|---|---|
-| tensor and linear algebra | Rank 1 to 4 descriptors; `dot`, `axpy`, `gemv`, `syrk`, `gemm`, Cholesky and triangular solves, with a written summation order that does not depend on the thread count. | [linalg.md](linalg.md) |
+| tensor and linear algebra | Rank 1 to 4 descriptors; `dot`, `axpy`, `gemv`, `syrk`, `gemm`, Cholesky and triangular solves, with one written summation order (blocks of 256 terms, 4 lanes in a block, a fixed tree over blocks, Cholesky panels of 32) that does not depend on the thread count; the metrics and the transforms use the same function. | [linalg.md](linalg.md) section 2, [lanes.md](lanes.md) |
 | random generator | SplitMix64, derived streams, six registered stream kinds. | [rng.md](rng.md) |
 | metrics and splits | Accuracy, precision, recall, F1, ROC-AUC (integers, midranks), RMSE, MAE, R-squared, log-loss; k-fold, train/test, stratified. | [metrics.md](metrics.md) |
-| linear and ridge regression | Normal equations, Cholesky. | [models-linear.md](models-linear.md) |
+| linear and ridge regression | Normal equations, Cholesky. Dependent columns are refused by a relative pivot test (a pivot must exceed 2^-40 of its own diagonal element), not by the sign of a rounded number. | [models-linear.md](models-linear.md) section 3.1 |
 | logistic regression, binary | Newton, a fixed number of iterations, optional l2. | [models-linear.md](models-linear.md) |
 | k-means | Seeded k-means++ or random initialisation, a fixed number of Lloyd iterations. | [models-linear.md](models-linear.md) |
 | decision trees and random forests | Histogram split search, exact integer Gini, a learned default side for missing values, threaded over trees. Binary classification and regression. | [models-tree.md](models-tree.md) |
+| transforms | `impute` (mean, median, constant), `scale` (min-max, standard), `encode` (one-hot, label), `bucket` (width, quantile); fitted on the training rows only, with a record per step; their sums use the package's summation order. | [transforms.md](transforms.md) |
+| pipeline | A plan text with one canonical form, fitting a chain of steps, matching input columns by name, and one `CML1` file that holds the plan, the schema, every fitted step and the estimator payload. | [pipeline.md](pipeline.md) |
+| the path check of the test tools | `models-check`, `tree-check`, `reader-check` and `metrics-check` refuse a path with two dots in a row (`path.dotdot`, exit 2) and no longer trap on a missing operand; they are test drivers, not libraries. | [lanes.md](lanes.md) section 1 |
+| the sum order in a library model file | A file of model kind 4 to 7 ends its `meta` section with a `u32 sum_order` (2 is the current order); a reader refuses another value with `ml.model.version`. Kinds 1 to 3, the constant models `ml` writes, have no such field and keep their bytes. `ml` reads the field but does not build kinds 4 to 7. | [design.md](design.md) section 4.1, [integration.md](integration.md) section 8.3 |
 
 ## What is left
 
 | item | state |
 |---|---|
-| transforms and pipeline (`impute`, `scale`, `encode`) | being built; the plan is a design ([design.md](design.md) sections 4.2, 5) |
-| model wiring (the verbs calling the models above) | next |
+| wiring the transforms, the pipeline and the models into the verbs (a plan flag, model kinds in `mfile.cho`, the tags moved to `introspect`) | next; all are libraries today, see above |
 | `--threads` in `ml` | not built; the libraries are threaded |
 | the MCP server | not started; how it would be derived is [cli.md](cli.md) section 9 |
 | `ml-serve` (issue #16) | not started |
 | multiclass | not built; the format reserves a class count |
 | boosting, naive Bayes, k-NN | in the plan ([design.md](design.md) section 1), not built |
-| imputation of a missing cell | not built; `fit` refuses an empty cell |
+| imputation of a missing cell in `fit` | the `impute` transform exists as a library; `fit` still refuses an empty cell |
 | neural networks, GPU | not planned in v1 |
 | the reader as a package dependency | waits for [alpibrusl/cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) (draft); until then a local clone at `../cancho-table-main` ([reader.md](reader.md) section 1) |
 | a second machine | not done; the bytes are untested across machines |
@@ -53,20 +56,23 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 
 ## What was measured
 
-Correctness, by script, on the merged tree ([integration.md](integration.md) section 3), and the conformance suite rerun on this commit (101 tests, OK, 1 skipped, 38 seconds, Mac):
+Correctness, by script, on the merged tree ([integration.md](integration.md) section 3), and the conformance suite rerun on this commit (105 tests, OK, 1 skipped, 49 seconds, Mac, load average about 8 to 10):
 
 | what | figure | source |
 |---|---|---|
-| mutants | 534 across seven scripts; 510 killed; 24 survive, each explained; 0 unexplained | [integration.md](integration.md) section 3 |
-| command line conformance | 101 tests pass, 1 skipped (the `--threads` branch of the determinism test: there is no such flag) | [integration.md](integration.md) section 3 |
+| mutants | 702 patterns across nine scripts (670 at the merge); 677 killed; 25 survive, each explained; 0 unexplained; plus 11 deliberately wrong oracles of the linear algebra, all caught | [integration.md](integration.md) section 8.4 |
+| command line conformance | 105 tests pass, 1 skipped (the `--threads` branch of the determinism test: there is no such flag) | [cli.md](cli.md) section 7 |
 | reader against Python `float()` | 1,966,143 accepted cells and 34,380 refusals compared: 0 differences | [reader.md](reader.md) section 6 |
-| linear algebra against numpy (same order) | 46 cases, all bits equal; the same bytes at 1, 2, 3, 4, 8 and 16 threads | [linalg.md](linalg.md) section 5.1, 5.4 |
-| linear models and k-means | 55 oracle cases bit for bit; 65 runs at 1 to 16 threads equal; 39 scikit-learn comparisons within the tolerance written beforehand | [models-linear.md](models-linear.md) section 6.2, 6.4 |
+| linear algebra against numpy (the 4-lane order) | 104 shapes, all bits equal; the same bytes at 1, 2, 3, 4, 8 and 16 threads; three implementations of the order (Cancho, numpy, C) agree bit for bit | [lanes.md](lanes.md) sections 2, 5 |
+| linear models and k-means | 70 oracle cases bit for bit (including nearly dependent and badly scaled designs); 65 runs at 1 to 16 threads equal; 39 scikit-learn comparisons within the tolerance written beforehand | [models-linear.md](models-linear.md) section 3.1, 6.2, 6.4 |
+| the relative pivot test | rounding noise of exactly dependent columns, at most 7.9e-16 of the diagonal in 960 fits; a standardised pair with correlation 0.999999 has 2.0e-06; the tolerance is 9.1e-13 | [models-linear.md](models-linear.md) section 3.1, `scripts/pivot_evidence.py` |
+| transforms and pipeline | 29 + 2 unit and fuzz tests of the transforms, 14 + 5 of the pipeline; the Python oracle agrees bit for bit on 2,500 transform cases, 600 chains, 300 schema alignments, 150 files with steps and 186 sums; scikit-learn within stated bounds | [transforms.md](transforms.md) section 6, [pipeline.md](pipeline.md) section 6; the test counts are printed by `scripts/gate_pipe.sh` |
+| the path check | 69 fixtures, 595 sweep vectors and 2,000 fuzz vectors over five test tools: 0 failures | [lanes.md](lanes.md) section 1 |
 | metrics and splits | 2,978 split cases bit equal; 3,066 ratios, 109 AUC and 1,033 sum cases bit equal; log-loss terms 13,407 of 13,896 bit equal, the rest within 1.00 ulp | [metrics.md](metrics.md) section 5.1 |
 | trees and forests | 20 (configuration, size) pairs identical to the oracle; 11 rows by 7 thread counts equal; 21 unit tests | [models-tree.md](models-tree.md) section 10 |
-| registries | 7 model kinds, 6 stream kinds, 34 refusal codes in 3 bands; tables, sources and documents agree | [integration.md](integration.md) section 4 |
+| registries | 7 model kinds, 6 stream kinds, 59 refusal codes in 4 bands; tables, sources and documents agree | [integration.md](integration.md) section 4, `scripts/check_registry.py` |
 
-Speed, every cell at `load >= 2` and none a claim. The tables with their conditions are [the benchmarks page](https://alpibrusl.github.io/cancho-ml/benchmarks.html) and the raw output is in `docs/bench/`:
+Speed, every cell at `load >= 2` and none a claim. **Every figure in this table was measured before the 4-lane summation order replaced the previous one, and was not repeated** ([lanes.md](lanes.md) section 6). The tables with their conditions are [the benchmarks page](https://alpibrusl.github.io/cancho-ml/benchmarks.html) and the raw output is in `docs/bench/`:
 
 | what | figure | source |
 |---|---|---|
@@ -90,12 +96,14 @@ From [integration.md](integration.md) section 7 and the stage documents:
 | `models-check` traps without a message on a path containing `..` | a test driver, not a library; `ml` refuses such paths itself. Cause not investigated. Reproduce: [integration.md](integration.md) section 7 | [integration.md](integration.md) section 7 |
 | `check.sh` needs `../ml-data` | in addition to `../cancho-table-main` | [integration.md](integration.md) section 7 |
 | `rmse` is not exact | three IEEE steps after the exact sum; an exact integer square root is about 60 lines and is not decided | [cli.md](cli.md) section 10 |
-| a different summation order in metrics and linalg | metrics use 4 lanes in a block of 256 terms, linalg one chain; `sums.lanes()` is the metrics' own constant. The lane count is the maintainer's decision, and it would change every dot-shaped reduction | [integration.md](integration.md) section 5, [linalg.md](linalg.md) section 5.7 |
+| **the speed tables predate the 4-lane order** | every timing in this page and in `docs/bench/` was taken with the previous summation order (one chain per block in linalg); what the lane order costs or buys in scalar cancho was not measured. The benchmarks were not rerun | [lanes.md](lanes.md) section 6 |
+| the pivot test is a threshold, not a rank computation | a column explained by the earlier ones to within 2^-40 of its own sum of squares is refused; noise above that was not seen in 960 fits (n up to 20,000) and was not measured for larger n or d in the hundreds | [models-linear.md](models-linear.md) section 3.1 |
+| the sum-order field has one writer | only `lib/pipeline/file.cho` writes it (and a Python writer in the conformance tests); no verb writes a model of kind 4 to 7 yet | [design.md](design.md) section 4.1 |
 | the contract package's text is wrong for `ml` in six places | `introspect.guarantees.concurrency` says "read-only: it never writes", and `integers_only` is true of the output and not of the code, among others; upstream issues not filed | [cli.md](cli.md) section 8, [reader.md](reader.md) section 7 |
 | `dry_run` and atomicity | "no mutating system call" under `--dry-run` was not run under `strace`; two writers racing on one output can fail one of them, and was not tested | [cli.md](cli.md) sections 2, 8 |
 | the tree library is limited to 2^20 rows | the exact Gini comparison; `ml`'s cap is 10,000,000 rows, so a verb needs a sampled-fit repair or a wider comparison | [models-tree.md](models-tree.md) section 10.11 |
 | empty clusters keep their centroid | scikit-learn relocates the farthest point | [models-linear.md](models-linear.md) section 6.8 |
-| Newton has no damping | nearly separable data can fail with `ml.fit.non-finite`; whether the CLI should refuse unscaled input is not decided | [models-linear.md](models-linear.md) section 6.8 |
+| Newton has no damping | nearly separable data can fail with `ml.fit.non-finite` or, now, with a Hessian pivot below the relative tolerance (`ml.linalg.not-positive-definite`); whether the CLI should refuse unscaled input is not decided | [models-linear.md](models-linear.md) section 6.8 |
 | zero division in a metric is a refusal | `ml.metric.undefined`, where scikit-learn returns 0.0 with a warning; a `--zero-division` flag may be wanted | [metrics.md](metrics.md) section 7 |
 | `-0` reads as `0.0` | cancho-table's rule | [reader.md](reader.md) section 7 |
 | two compiler pins | cancho-ml is on `a4572ea`, cancho-table on `e47d647`; the numeric modules build under both | [reader.md](reader.md) section 7 |

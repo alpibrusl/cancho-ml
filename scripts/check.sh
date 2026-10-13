@@ -3,7 +3,7 @@
 # package-mode build of `ml`, the schemas and the authority manifest checked against the sources, the conformance gates, and a
 # check that every edit of the mutant list still applies. The gates of lib/metrics and
 # lib/models/tree and the registry check are run here too. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
-# 45 times and run on request, as the stage 1 mutants do.
+# once per pattern, 53 of them, and run on request, as the stage 1 mutants do.
 set -e
 cd "$(dirname "$0")/.."
 # absolute, because the conformance tests run from tests/conformance
@@ -26,7 +26,7 @@ python3 scripts/oracle_linalg.py --tree
 python3 scripts/oracle_linalg.py --suite
 sh scripts/gate_par.sh
 # lib/models (docs/models-linear.md): the program of unit, refusal, limit, thread and fuzz tests and the oracle gates at 1 to 16 threads
-# (the mutants of the gate, scripts/mutants_models.py, rebuild the driver 59 times and run on request, as the other mutants do)
+# (the mutants of the gate, scripts/mutants_models.py, rebuild the driver once per pattern, 87 of them, and run on request, as the other mutants do)
 python3 scripts/mutants_models.py --check
 sh scripts/gate_models.sh
 # integration (docs/integration.md): the registries of model kinds, stream kinds and refusal codes (two stages must not claim one number), then
