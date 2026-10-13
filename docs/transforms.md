@@ -41,7 +41,7 @@ copy of the tree, the gates run on it, killed if one fails. A survivor is explai
 * **Fit** looks at the non-missing cells of a column only, in ascending row order.
 * **Apply**: *only `impute` removes a missing cell.* Every other transform passes it through: the output cell is missing (value `0.0`,
   bit set), and for `onehot` the whole block of the column is missing. The estimator decides what a missing cell means (the trees
-  take it, the linear models refuse it with `ml.input.non-finite`'s relative, section 8 of `design.md`).
+  take it; the linear models refuse a missing cell, so a plan for them starts with `impute`).
   Alternative considered: a missing cell is an unknown category / a zero. Rejected: it is an invented value.
 
 ### 2.2 Empty, constant, all-missing (each has a fixture)
@@ -131,7 +131,8 @@ All but `onehot` keep the number of columns and rows. Every output cell is a fin
   so up to a few ulps from `(x - lo) / d`.
 * `KBinsDiscretizer` edges come from `np.linspace` / `np.percentile` (different rounding in the interpolation): edges within a few
   ulps; bucket indices equal unless a value lies within those ulps of an edge (the generated data avoids it, and the check says so).
-* `SimpleImputer(mean)` uses `np.ma` sums; `median` and `constant` are exact.
+* `SimpleImputer(mean)` sums in numpy's order; `median` and `constant` are exact.
+* `KBinsDiscretizer` drops a bin whose edges are less than 1e-8 apart (ties in the data) and renumbers the buckets above it; this library keeps every edge, so on such a column the indices are not comparable (X4 counts and skips those columns).
 The bounds are measured, not assumed: X4 prints the maximum observed per transform.
 
 ## 4. The records (the `steps` payload of the model file)

@@ -1,6 +1,6 @@
 # cancho-ml pipeline (`lib/pipeline`, stage M4 of v1)
 
-**Status: sections 1 to 5 (the gates, the grammar, the semantics, the file) were written before any code of `lib/pipeline`. Section 7
+**Status: sections 1 to 5 (the gates, the grammar, the semantics, the file) were written before any code of `lib/pipeline`. Section 6
 holds the results; a number or a verdict is in it only if a script in `scripts/` printed it, with its conditions.** Tags as in
 `design.md`: **[choice]** is a decision the maintainer can overturn, **[open]** is not decided.
 

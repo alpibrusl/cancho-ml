@@ -94,7 +94,7 @@ M = [
     ("onehot-width-forgets-the-replaced-column", [(S, "return a[1] - a[0] + category_total(a);", "return a[1] + category_total(a);")]),
     # ---- decisive sums
     ("dsum-total-adds-magnitudes", [(D, "return run(heap, sums.kind_val(), vals, 0.0, n);", "return run(heap, sums.kind_abs(), vals, 0.0, n);")]),
-    ("dsum-total-in-another-order", [(D, "return run(heap, sums.kind_val(), vals, 0.0, n);", "var s = 0.0;\n    var i = 0;\n    while i < n {\n        s = s + vals[i];\n        i = i + 1;\n    }\n    return s;")]),
+    ("dsum-total-in-another-order", [(D, "return run(heap, sums.kind_val(), vals, 0.0, n);", "let junk = box_slice(heap, 1, 0.0);\n    unbox_slice(heap, junk);\n    var s = 0.0;\n    var i = 0;\n    while i < n {\n        s = s + vals[i];\n        i = i + 1;\n    }\n    return s;")]),
     ("sort-descending", [(SO, "if a[root] < a[child] {", "if a[root] > a[child] {")]),
     # ---- plan
     ("plan-key-order-changed", [(P, "return \"column:cols:req kind:enum=minmax,standard:req ddof:int=0,1:=0@kind=standard\";", "return \"kind:enum=minmax,standard:req column:cols:req ddof:int=0,1:=0@kind=standard\";")]),
