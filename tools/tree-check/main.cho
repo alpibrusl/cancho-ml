@@ -688,7 +688,7 @@ fn field_ok(r: int, v: int, leaf: bool, orig: int, loc: int, task: int, d: int, 
     if task == 1 {
         return a >= 1 && b == 0;
     }
-    return a + b >= 1 && a <= 1048576 && b <= 1048576 && bits_of(float_of(b) / float_of(a + b)) == valbits;
+    return a <= 1048576 && b <= 1048576 && a + b >= 1 && bits_of(float_of(b) / float_of(a + b)) == valbits;
 }
 
 fn fvalue(k: int, ftotal: int) -> [] int {
@@ -713,7 +713,10 @@ fn fvalue(k: int, ftotal: int) -> [] int {
     if k == 6 {
         return 0 - 1;
     }
-    return 1 << 62;
+    if k == 7 {
+        return 1 << 62;
+    }
+    return 9223372036854775807;
 }
 
 // Replace one field of the payload by each of several values and compare the reader's answer with the rules. Answers the number of
@@ -733,9 +736,9 @@ fn structured[&h, &fr, &s, &w2](heap: &!h Heap, f: &fr forest.Forest, src: &s [b
             let leaf = ni[g] == 0 - 1;
             let orig = ni[(rec - 3) * f.total + g];
             var k = 0;
-            while k < 9 {
+            while k < 10 {
                 var v = orig + 1;
-                if k < 8 {
+                if k < 9 {
                     v = fvalue(k, f.total);
                 }
                 let at = model.elem_at(rec, f.trees, f.total, g);

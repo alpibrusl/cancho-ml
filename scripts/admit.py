@@ -32,8 +32,9 @@ import gen_models  # noqa: E402
 CHECKS = ["Q%d" % i for i in range(12)]
 TRAPS = {132, 134, 136, 139}
 
-# the operations of the dispatch, each with the kind argument first (docs/modules.md section 3)
+# the operations of the dispatch, each with the dispatch key argument first (docs/modules.md section 3): the vector models', then the blob models'
 EST_OPS = ["name", "tier", "task", "nints", "nfloats", "takes", "diag_len", "out_len", "payload_size", "fit", "predict", "proba", "encode", "decode", "hparams"]
+EST_OPS_BLOB = ["name", "tier", "task", "nints", "nfloats", "takes", "kind_of", "is_blob", "fit_blob", "predict_blob", "proba_blob", "decode_blob", "hparams"]
 
 # the interface of an adapter (docs/modules.md section 4), types without regions
 ADAPTER = {
@@ -45,6 +46,15 @@ ADAPTER = {
     "payload_size": (["d: int"], "int"),
     "encode": (["dst: &![byte]", "at: int", "d: int", "wv: &[float]", "c0: int", "c1: int"], "int"),
     "decode": (["src: &[byte]", "d: int", "out: &![float]"], "Decoded"),
+}
+
+# the interface of a blob adapter (docs/modules.md section 4b)
+BLOB_ADAPTER = {
+    "fit_blob": (["heap: &!Heap", "threads: int", "xt: Tensor", "xd: &[float]", "miss: &[int]", "wpc: int", "yd: &[float]", "ip: &[int]", "fp: &[float]", "seed: int", "c0: int", "c1: int",
+                  "rows_cap: int", "cols_cap: int", "cells_cap: int"], "(Box[[byte]], int)"),
+    "predict_blob": (["heap: &!Heap", "blob: &[byte]", "xt: Tensor", "xd: &[float]", "miss: &[int]", "wpc: int", "out: &![float]"], "int"),
+    "proba_blob": (["heap: &!Heap", "blob: &[byte]", "xt: Tensor", "xd: &[float]", "miss: &[int]", "wpc: int", "out: &![float]"], "int"),
+    "decode_blob": (["heap: &!Heap", "src: &[byte]", "d: int"], "Decoded"),
 }
 
 
@@ -161,7 +171,7 @@ def norm_params(params):
 
 
 def signature(text, fn):
-    m = re.search(r"pub fn %s(?:\[[^\]]*\])?\((.*?)\) -> \[([^\]]*)\] ([\w.&!\[\] ]+?) \{" % re.escape(fn), text, re.S)
+    m = re.search(r"pub fn %s(?:\[[^\]]*\])?\((.*?)\) -> \[([^\]]*)\] ([\w.&!\[\], ()]+?) \{" % re.escape(fn), text, re.S)
     if not m:
         return None
     ret = m.group(3).replace("record.Decoded", "Decoded")
@@ -206,19 +216,19 @@ def q1(c):
     if not m["wired"] or m.get("adapter") == "builtin":
         return "PASS", "manifest parses, generated files current (%s has no adapter to compare)" % m["name"]
     est = c.read("tools/ml/est.cho")
-    for op in EST_OPS:
+    blob = gen_models.is_blob(m)
+    key = gen_models.keys_of(gen_models.wired(c.models))[m["name"]]
+    for op in (EST_OPS_BLOB if blob else EST_OPS):
         mm = re.search(r"pub fn %s(?:\[[^\]]*\])?\(.*?\n\}\n" % op, est, re.S)
         if not mm:
             return "FAIL", "tools/ml/est.cho has no function %s" % op
-        if "kind == %d" % m["kind"] not in mm.group(0) and op not in ("hparams", "takes", "nints", "nfloats", "name", "tier", "task") and "kind == %d" % m["kind"] not in est:
-            return "FAIL", "est.%s has no branch for kind %d" % (op, m["kind"])
-        if op in ("fit", "predict", "proba", "encode", "decode", "diag_len", "out_len", "payload_size", "hparams") and "kind == %d" % m["kind"] not in mm.group(0):
-            return "FAIL", "est.%s has no branch for kind %d" % (op, m["kind"])
+        if op != "is_blob" and "kind == %d" % key not in mm.group(0):
+            return "FAIL", "est.%s has no branch for the dispatch key %d of %s" % (op, key, m["name"])
     af = adapter_file(c)
     if af is None:
         return "FAIL", "no file of the module declares %s" % m["adapter"]
     text = af.read_text()
-    for fn, (params, ret) in ADAPTER.items():
+    for fn, (params, ret) in (BLOB_ADAPTER if blob else ADAPTER).items():
         sig = signature(text, fn)
         if sig is None:
             return "FAIL", "the adapter has no `pub fn %s`" % fn
@@ -228,7 +238,7 @@ def q1(c):
     d = str(pathlib.PurePosixPath(m["files"][0]).parent)
     if cancho and '"%s"' % d not in cancho:
         return "FAIL", "cancho.toml's sources for `ml` do not name the module's directory %s" % d
-    return "PASS", "manifest parses, generated files current, every operation of est.cho has the branch, the adapter has the %d functions of the contract" % len(ADAPTER)
+    return "PASS", "manifest parses, generated files current, every operation of est.cho has the branch, the adapter has the %d functions of the %s contract" % (len(BLOB_ADAPTER if blob else ADAPTER), "blob" if blob else "vector")
 
 
 def q2(c):
@@ -295,7 +305,13 @@ def float_vars(text):
 def q4(c):
     m = c.model
     scanned = 0
-    for rel in sorted(set(m["files"]) | set(m["sums"]["decisive"])):
+    sequential = set(m["sums"].get("sequential", []))
+    if sequential:
+        # a module that sums sequentially, in an order of its own, says so, and its file records that order instead of the lane order (docs/wiring-trees.md section 4)
+        kinds_text = c.read("lib/core/kinds.cho")
+        if not re.search(r"if kind == %s\(\) \{\s*return sum_order_sequential\(\);" % re.escape(m["kind_fn"]), kinds_text):
+            return "FAIL", "[sums] sequential is declared and lib/core/kinds.cho sum_order_for() does not give %s the sequential order" % m["name"]
+    for rel in sorted(set(m["files"]) | set(m["sums"]["decisive"]) | sequential):
         p = c.root / rel
         if not p.exists():
             continue
@@ -303,9 +319,11 @@ def q4(c):
         scanned += 1
         fv = float_vars(text)
         hits = [v for v in fv if re.search(r"^\s*%s = %s [+-] " % (re.escape(v), re.escape(v)), text, re.M)]
+        if hits and rel in sequential:
+            continue
         if hits and not re.search(r"^import linalg\.(order|dot|gemv|syrk|gemm|axpy|par);", text, re.M) and "linalg" not in text.split("\n\n")[0]:
             return "FAIL", "%s accumulates the float variable(s) %s in its own order and imports no linalg kernel or linalg.order" % (rel, ", ".join(sorted(hits)))
-    return "PASS", "%d files scanned: no float is accumulated outside the package order" % scanned
+    return "PASS", "%d files scanned: no float is accumulated outside the package order%s" % (scanned, " but in the %d files declared sequential, whose file records sum_order 3" % len(sequential) if sequential else "")
 
 
 def q5(c):
@@ -327,16 +345,20 @@ def q5(c):
     return "PASS", "the derived authority equals the committed manifest; %s" % ("this module adds %s (%s)" % (", ".join(sorted(mine)), c.model["authority"]["reason"][:60]) if mine else "this module adds no label")
 
 
-def sample_csv(task, n=1500):
+def sample_csv(task, n=1500, missing=False):
+    """a seeded data set; with `missing`, about one cell in 17 of the last feature is empty (the models that take missing cells, docs/wiring-trees.md section 5)"""
     rng = random.Random(1234)
     rows = []
     for i in range(n):
         x = [rng.uniform(-3, 3) for _ in range(5)]
         z = x[0] * 1.5 - x[1] + 0.5 * x[2] + rng.gauss(0, 0.7)
+        cells = ["%.6f" % v for v in x]
+        if missing and i % 17 == 3:
+            cells[4] = ""
         if task == "regression":
-            rows.append("%s,%.6f" % (",".join("%.6f" % v for v in x), z + 2.0))
+            rows.append("%s,%.6f" % (",".join(cells), z + 2.0))
         else:
-            rows.append("%s,%d" % (",".join("%.6f" % v for v in x), 1 if z + rng.gauss(0, 1.5) > 0 else 0))
+            rows.append("%s,%d" % (",".join(cells), 1 if z + rng.gauss(0, 1.5) > 0 else 0))
     head = "f0,f1,f2,f3,f4," + ("y" if task == "regression" else "lab")
     return head + "\n" + "\n".join(rows) + "\n"
 
@@ -347,9 +369,15 @@ def needs_binary(c):
     return None
 
 
-def fit_args(c, out, extra=()):
-    task = c.model["task"]
-    return ["fit", "--model", c.name, "--target", "y" if task == "regression" else "lab", "--output", out, "--step", "scale column=* kind=standard", *extra, "d.csv"]
+def tasks_of(c):
+    """the tasks an admission fits: the model's, or both for a model that serves both"""
+    return ["regression", "classification"] if c.model["task"] == "both" else [c.model["task"]]
+
+
+def fit_args(c, out, extra=(), task=None):
+    task = task or tasks_of(c)[0]
+    more = ["--task", task] if c.model["task"] == "both" else []
+    return ["fit", "--model", c.name, *more, "--target", "y" if task == "regression" else "lab", "--output", out, "--step", "scale column=* kind=standard", *extra, "d.csv"]
 
 
 def q6(c):
@@ -358,24 +386,37 @@ def q6(c):
     s = needs_binary(c)
     if s:
         return s
+    sizes = []
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        (tmp / "d.csv").write_text(sample_csv(c.model["task"]))
-        files, stdouts = {}, {}
-        for t in c.contract["limits"]["thread_counts"]:
-            rc, out, err = c.ml("--root", tmp, *fit_args(c, "m%d.cml" % t, ["--threads", t, "--overwrite"]))
-            if rc != 0:
-                return "FAIL", "fit --threads %d exited %d: %s" % (t, rc, out[:200].decode(errors="replace"))
-            files[t] = (tmp / ("m%d.cml" % t)).read_bytes()
-            stdouts[t] = out.replace(b"m%d.cml" % t, b"M")
-        ref = files[1]
-        differing = [t for t, b in files.items() if b != ref]
-        if differing:
-            return "FAIL", "the model file at --threads %s differs from the one at --threads 1" % ", ".join(map(str, differing))
-        outs = [t for t, o in stdouts.items() if o != stdouts[1]]
-        if outs:
-            return "FAIL", "the answer at --threads %s differs" % ", ".join(map(str, outs))
-    return "PASS", "fit --threads 1..16 gives one model file (%d bytes) and one answer" % len(ref)
+        for task in tasks_of(c):
+            (tmp / "d.csv").write_text(sample_csv(task, missing=gen_models.is_blob(c.model)))
+            files, stdouts = {}, {}
+            for t in c.contract["limits"]["thread_counts"]:
+                rc, out, err = c.ml("--root", tmp, *fit_args(c, "m%d.cml" % t, ["--threads", t, "--overwrite"], task))
+                if rc != 0:
+                    return "FAIL", "fit --threads %d exited %d: %s" % (t, rc, out[:200].decode(errors="replace"))
+                files[t] = (tmp / ("m%d.cml" % t)).read_bytes()
+                stdouts[t] = out.replace(b"m%d.cml" % t, b"M")
+            ref = files[1]
+            differing = [t for t, b in files.items() if b != ref]
+            if differing:
+                return "FAIL", "the %s model file at --threads %s differs from the one at --threads 1" % (task, ", ".join(map(str, differing)))
+            outs = [t for t, o in stdouts.items() if o != stdouts[1]]
+            if outs:
+                return "FAIL", "the %s answer at --threads %s differs" % (task, ", ".join(map(str, outs)))
+            sizes.append(len(ref))
+    return "PASS", "fit --threads 1..16 gives one model file (%s bytes) and one answer%s" % (" and ".join(map(str, sizes)), " per task" if len(sizes) > 1 else "")
+
+
+def small_model_flags(c):
+    """a small model for the damaged-file check: the files of a forest of 100 trees would take minutes to damage byte by byte"""
+    if not gen_models.is_blob(c.model):
+        return []
+    extra = ["--max-depth", "4"]
+    if any(h["name"] == "trees" for h in c.model["hyperparameter"]):
+        extra += ["--trees", "3"]
+    return extra
 
 
 def q7(c):
@@ -384,46 +425,49 @@ def q7(c):
     s = needs_binary(c)
     if s:
         return s
+    import hashlib
+
+    def seal(b):
+        b = bytes(b[:-32])
+        return b + hashlib.sha256(b).digest()
+
+    total = 0
+    refused = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        (tmp / "d.csv").write_text(sample_csv(c.model["task"], 200))
-        rc, out, err = c.ml("--root", tmp, *fit_args(c, "m.cml"))
-        if rc != 0:
-            return "FAIL", "fit exited %d: %s" % (rc, out[:200].decode(errors="replace"))
-        data = (tmp / "m.cml").read_bytes()
-        import hashlib
-
-        def seal(b):
-            b = bytes(b[:-32])
-            return b + hashlib.sha256(b).digest()
-
-        cases = [(data[:k], False) for k in range(0, len(data), 3)]
-        rng = random.Random(7)
-        for at in range(0, len(data), 2):
-            b = bytearray(data)
-            b[at] ^= 0x01 << rng.randrange(8)
-            cases.append((bytes(b), False))
-        for _ in range(250):
-            b = bytearray(data)
-            for _ in range(rng.randint(1, 4)):
-                b[rng.randrange(len(b))] = rng.randrange(256)
-            cases.append((seal(b), True))
-        bad = 0
-        for i, (blob, repaired) in enumerate(cases):
-            (tmp / "x.cml").write_bytes(blob)
-            rc, out, err = c.ml("--root", tmp, "predict", "--model-file", "x.cml", "--limit", "2", "d.csv")
-            if rc in TRAPS or rc < 0:
-                return "FAIL", "a damaged model file trapped (status %d, case %d)" % (rc, i)
-            try:
-                doc = json.loads(out)
-            except ValueError:
-                return "FAIL", "a damaged model file got no JSON document (status %d, case %d)" % (rc, i)
-            if rc == 0 and not repaired:
-                return "FAIL", "a damaged file with a wrong checksum was accepted (case %d)" % i
-            if rc != 0 and "rule" not in doc.get("error", {}):
-                return "FAIL", "a refusal without a rule tag (case %d)" % i
-            bad += rc != 0
-    return "PASS", "%d damaged files (truncations, flips, repaired-checksum damage): none trapped, none accepted with a wrong checksum, %d refused with a tag" % (len(cases), bad)
+        for task in tasks_of(c):
+            (tmp / "d.csv").write_text(sample_csv(task, 200, missing=gen_models.is_blob(c.model)))
+            rc, out, err = c.ml("--root", tmp, *fit_args(c, "m.cml", small_model_flags(c) + ["--overwrite"], task))
+            if rc != 0:
+                return "FAIL", "fit exited %d: %s" % (rc, out[:200].decode(errors="replace"))
+            data = (tmp / "m.cml").read_bytes()
+            cases = [(data[:k], False) for k in range(0, len(data), 3)]
+            rng = random.Random(7)
+            for at in range(0, len(data), 2):
+                b = bytearray(data)
+                b[at] ^= 0x01 << rng.randrange(8)
+                cases.append((bytes(b), False))
+            for _ in range(250):
+                b = bytearray(data)
+                for _ in range(rng.randint(1, 4)):
+                    b[rng.randrange(len(b))] = rng.randrange(256)
+                cases.append((seal(b), True))
+            for i, (blob, repaired) in enumerate(cases):
+                (tmp / "x.cml").write_bytes(blob)
+                rc, out, err = c.ml("--root", tmp, "predict", "--model-file", "x.cml", "--limit", "2", "d.csv")
+                if rc in TRAPS or rc < 0:
+                    return "FAIL", "a damaged model file trapped (status %d, %s case %d)" % (rc, task, i)
+                try:
+                    doc = json.loads(out)
+                except ValueError:
+                    return "FAIL", "a damaged model file got no JSON document (status %d, %s case %d)" % (rc, task, i)
+                if rc == 0 and not repaired:
+                    return "FAIL", "a damaged file with a wrong checksum was accepted (%s case %d)" % (task, i)
+                if rc != 0 and "rule" not in doc.get("error", {}):
+                    return "FAIL", "a refusal without a rule tag (%s case %d)" % (task, i)
+                refused += rc != 0
+            total += len(cases)
+    return "PASS", "%d damaged files (truncations, flips, repaired-checksum damage%s): none trapped, none accepted with a wrong checksum, %d refused with a tag" % (total, ", both tasks" if len(tasks_of(c)) > 1 else "", refused)
 
 
 def q8(c):

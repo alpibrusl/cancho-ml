@@ -63,8 +63,13 @@ python3 scripts/mutants_cli.py --check
 python3 scripts/admit.py constant --fast
 python3 scripts/admit.py linear --fast
 python3 scripts/admit.py logistic --fast
+# the tree and the forest (docs/wiring-trees.md): the same admission through the blob interface, their wiring mutants (scripts/mutants_wire_trees.py, run on request) and
+# the library payload of a model file against the Python oracle (also run by the conformance tests above, with its own cases)
+python3 scripts/admit.py tree --fast
+python3 scripts/admit.py forest --fast
 python3 tests/modules/run.py
 python3 scripts/mutants_wire.py --check
+python3 scripts/mutants_wire_trees.py --check
 # the check tools open no path that holds two dots in a row and trap on no missing operand (docs/lanes.md section 1)
 python3 scripts/gate_paths.py
 python3 scripts/mutants_paths.py --check

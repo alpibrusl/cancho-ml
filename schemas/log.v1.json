@@ -204,7 +204,9 @@
         "ml.plan.unknown-column",
         "ml.limit.plan",
         "ml.input.missing-value",
-        "ml.plan.model-not-built"
+        "ml.plan.model-not-built",
+        "ml.limit.depth",
+        "ml.limit.nodes"
       ]
     }
   }

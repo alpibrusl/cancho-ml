@@ -114,12 +114,17 @@ def data_defs():
         "plan": {"type": "string"}, "steps": NAT, "features": NAT,
         "coefficients": {"type": "array", "items": obj({"name": TB, "value": FLT})}, "intercept": FLT,
     }
+    # a tree or a forest has no coefficients: what the header of its payload says (docs/wiring-trees.md section 2)
+    forest_keys = {"plan": {"type": "string"}, "steps": NAT, "features": NAT,
+                   "forest": obj({"trees": NAT, "nodes": NAT, "bins": NAT, "max_depth": NAT, "min_leaf": NAT, "mtry": NAT})}
+    classes = {"classes": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "positive": {"type": "integer"}}
     summary_reg = obj({**summary_keys, "split": split, "holdout": holdout_reg}, list(summary_keys))
-    summary_cls = obj({**summary_keys, "classes": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
-                       "positive": {"type": "integer"}, "split": split, "holdout": holdout_cls}, list(summary_keys) + ["classes", "positive"])
+    summary_cls = obj({**summary_keys, **classes, "split": split, "holdout": holdout_cls}, list(summary_keys) + ["classes", "positive"])
+    summary_forest_reg = obj({**forest_keys, "split": split, "holdout": holdout_reg}, list(forest_keys))
+    summary_forest_cls = obj({**forest_keys, **classes, "split": split, "holdout": holdout_cls}, list(forest_keys) + ["classes", "positive"])
     fit_p = obj({
         "model": names, "task": {"enum": ["regression", "classification"]}, "rows": NAT, "columns": NAT, "target": TB, "path": TB,
-        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls]},
+        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls]},
     })
     # a fit with categorical steps writes no file before stage 3 of issue 21 (docs/categorical-encoders.md section 6): no path, bytes or sha256, written false, and the
     # summary says which categorical columns the steps read and the digest of the steps payload
@@ -127,12 +132,14 @@ def data_defs():
     cat_keys = {"steps_sha256": SHA, "categorical": {"type": "array", "items": cat_item}}
     csum_keys = {"plan": {"type": "string"}, "steps": NAT, **cat_keys, "features": NAT,
                  "coefficients": {"type": "array", "items": obj({"name": TB, "value": FLT})}, "intercept": FLT}
+    cforest_keys = {"plan": {"type": "string"}, "steps": NAT, **cat_keys, "features": NAT, "forest": forest_keys["forest"]}
     csummary_reg = obj({**csum_keys, "split": split, "holdout": holdout_reg}, list(csum_keys))
-    csummary_cls = obj({**csum_keys, "classes": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
-                        "positive": {"type": "integer"}, "split": split, "holdout": holdout_cls}, list(csum_keys) + ["classes", "positive"])
+    csummary_cls = obj({**csum_keys, **classes, "split": split, "holdout": holdout_cls}, list(csum_keys) + ["classes", "positive"])
+    csummary_forest_reg = obj({**cforest_keys, "split": split, "holdout": holdout_reg}, list(cforest_keys))
+    csummary_forest_cls = obj({**cforest_keys, **classes, "split": split, "holdout": holdout_cls}, list(cforest_keys) + ["classes", "positive"])
     fit_c = obj({
         "model": names, "task": {"enum": ["regression", "classification"]}, "rows": NAT, "columns": NAT, "target": TB,
-        "written": {"const": False}, "summary": {"oneOf": [csummary_reg, csummary_cls]},
+        "written": {"const": False}, "summary": {"oneOf": [csummary_reg, csummary_cls, csummary_forest_reg, csummary_forest_cls]},
     })
     predict_p = obj({
         "model": names, "task": {"enum": ["regression", "classification"]},

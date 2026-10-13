@@ -190,7 +190,7 @@ fn fan[&h, &fr, &x, &b, &o](heap: &!h Heap, f: &fr forest.Forest, gx: &x [float]
 // ---------------------------------------------------------------- entries
 
 // 0, or the refusal: columns that differ from the model's, lengths, the bitmap, a present cell that is not finite
-fn check_input[&fr, &x, &b](f: &fr forest.Forest, xs: &x [float], bm: &b [byte], rows: int, d: int) -> [] int {
+pub fn check_input[&fr, &x, &b](f: &fr forest.Forest, xs: &x [float], bm: &b [byte], rows: int, d: int) -> [] int {
     if d != f.d {
         return deny.schema_mismatch();
     }

@@ -1,0 +1,211 @@
+edition 5;
+
+module models.adapt_trees;
+
+import std.buffer;
+import ml.fbits;
+import ml.refuse;
+import linalg.tensor;
+import models.record;
+import tree.deny;
+import tree.forest;
+import tree.model;
+import tree.params;
+import tree.predict;
+
+// What the two adapters of the tree and the forest share (docs/wiring-trees.md sections 4 and 5): the matrix bitmap of `ml.matrix` (32 rows to a word) turned into
+// the library's (8 rows to a byte), the fit that returns the payload of the model section, the single-thread prediction from a payload, and the reader of that
+// payload (the library's `model.read` on exactly the bytes the header announces, then the labels record of a classification).
+
+// The bitmap of the library for a matrix of `rows` rows and `d` columns whose missing cells are in `miss` (column c in words c * wpc ..): column c occupies
+// ceil(rows / 8) bytes, row i is bit i & 7 of byte i >> 3. (the bytes, whether any cell is missing). With no missing cell the library wants an empty bitmap, and the
+// caller then passes a slice of length 0 of these bytes.
+pub fn miss_bytes[&h, &m](heap: &!h Heap, miss: &m [int], wpc: int, rows: int, d: int) -> [heap] (Box[[byte]], bool) {
+    let st = (rows + 7) / 8;
+    var out = box_slice(heap, d * st + 1, byte_of(0));
+    var any = false;
+    borrow mut out as &!ow in {
+        let o = contents(ow);
+        var c = 0;
+        while c < d {
+            var b = 0;
+            while b < st {
+                let v = miss[c * wpc + (b >> 2)] >> 8 * (b & 3) & 255;
+                if v != 0 {
+                    any = true;
+                }
+                o[c * st + b] = byte_of(v);
+                b = b + 1;
+            }
+            c = c + 1;
+        }
+    }
+    return (out, any);
+}
+
+fn empty_payload[&h](heap: &!h Heap) -> [heap] Box[[byte]] {
+    return box_slice(heap, 1, byte_of(0));
+}
+
+// The library payload of a fitted forest, then for a classification the labels record (the negative and the positive label). (the payload, 0) or (an empty
+// payload, the refusal of the library)
+pub fn fit[&h, &x, &m, &y](heap: &!h Heap, p: params.Params, xd: &x [float], miss: &m [int], wpc: int, n: int, d: int, yd: &y [float], c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    let (bm, any) = miss_bytes(heap, miss, wpc, n, d);
+    var f = forest.empty(heap);
+    var code = 0;
+    borrow bm as &br in {
+        let st = (n + 7) / 8;
+        if any {
+            let (f2, c2) = forest.fit(heap, p, n, d, xd, contents(br)[0..d * st], yd, rows_cap, cols_cap, cells_cap);
+            forest.drop(heap, f);
+            f = f2;
+            code = c2;
+        } else {
+            let (f2, c2) = forest.fit(heap, p, n, d, xd, contents(br)[0..0], yd, rows_cap, cols_cap, cells_cap);
+            forest.drop(heap, f);
+            f = f2;
+            code = c2;
+        }
+    }
+    unbox_slice(heap, bm);
+    if code != 0 {
+        forest.drop(heap, f);
+        return (empty_payload(heap), code);
+    }
+    var buf = buffer.empty(heap, 1);
+    borrow f as &fr in {
+        buffer.drop(heap, buf);
+        buf = model.write(heap, fr);
+    }
+    forest.drop(heap, f);
+    var size = 0;
+    borrow buf as &bq in {
+        size = buffer.size(bq);
+    }
+    var total = size;
+    if p.task == 0 {
+        total = size + 32;
+    }
+    var out = box_slice(heap, total, byte_of(0));
+    borrow buf as &bq in {
+        borrow mut out as &!ow in {
+            copy_into(contents(ow)[0..size], buffer.bytes(bq));
+            if p.task == 0 {
+                record.encode_labels(contents(ow), size, c0, c1);
+            }
+        }
+    }
+    buffer.drop(heap, buf);
+    return (out, 0);
+}
+
+// The size in bytes that the library payload at the start of `src` has by its own header (task, trees, total nodes), or -1 when the header cannot belong to one.
+// Nothing is allocated; the sizes are compared with the ceilings of the library before the product is made.
+pub fn lib_size[&s](src: &s [byte]) -> [] int {
+    if len(src) < 84 {
+        return 0 - 1;
+    }
+    let task = fbits.get64(src, 20);
+    let trees = fbits.get64(src, 28);
+    let total = fbits.get64(src, 52);
+    if task < 0 || task > 1 || trees < 1 || trees > params.trees_max() || total < trees || total > params.nodes_total_max() {
+        return 0 - 1;
+    }
+    return model.size_of(trees, total);
+}
+
+// The payload `src` read and checked for a model fitted on `d` columns: the library's `model.read` on the first `lib_size` bytes, then, for a classification, the
+// labels record, and nothing after. code 0 or 1 (malformed), the two labels (0 for a regression), and in `end` the task as the wiring numbers it: 1 regression, 2
+// classification. Allocates only after the sizes are known to be right.
+pub fn decode[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] record.Decoded {
+    let ls = lib_size(src);
+    if ls < 0 {
+        return record.decoded(1, 0, 0, 0);
+    }
+    let task = fbits.get64(src, 20);
+    var want = ls;
+    if task == 0 {
+        want = ls + 32;
+    }
+    if len(src) != want {
+        return record.decoded(1, 0, 0, 0);
+    }
+    let (f, code) = model.read(heap, src[0..ls], params.nodes_total_max());
+    var fd = 0;
+    borrow f as &fr in {
+        fd = fr.d;
+    }
+    forest.drop(heap, f);
+    if code != 0 || fd != d {
+        return record.decoded(1, 0, 0, 0);
+    }
+    if task == 1 {
+        return record.decoded(0, 0, 0, 1);
+    }
+    let lab = record.decode_labels(src, ls);
+    if lab.code != 0 || lab.end != len(src) {
+        return record.decoded(1, 0, 0, 0);
+    }
+    return record.decoded(0, lab.c0, lab.c1, 2);
+}
+
+fn walk[&fr, &x, &b, &o](f: &fr forest.Forest, xd: &x [float], bm: &b [byte], rows: int, d: int, out: &!o [float]) -> [] int {
+    let c = predict.check_input(f, xd, bm, rows, d);
+    if c != 0 {
+        return c;
+    }
+    if len(out) < rows {
+        return refuse.param_out_of_range();
+    }
+    return predict.kernel(f.trees, d, f.total, contents(f.toff), contents(f.ni), contents(f.nv), xd, bm, rows, out[0..rows]);
+}
+
+// The value of the forest for each row of the matrix (the probability of the positive class, or the mean for a regression), with one thread. `mode` 0 gives
+// the class (1.0 where the probability is above 0.5, else 0.0; a regression gives its value), 1 the probability (a regression is refused: ml.param.out-of-range).
+pub fn predict_rows[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float], mode: int) -> [heap] int {
+    let ls = lib_size(blob);
+    if ls < 0 || len(blob) < ls {
+        return deny.model_malformed();
+    }
+    let (f, code) = model.read(heap, blob[0..ls], params.nodes_total_max());
+    if code != 0 {
+        forest.drop(heap, f);
+        return code;
+    }
+    let rows = xt.s0;
+    let d = xt.s1;
+    var task = 0;
+    borrow f as &fr in {
+        task = fr.task;
+    }
+    if mode == 1 && task != 0 {
+        forest.drop(heap, f);
+        return refuse.param_out_of_range();
+    }
+    let (bm, any) = miss_bytes(heap, miss, wpc, rows, d);
+    var rc = 0;
+    borrow f as &fr in {
+        borrow bm as &br in {
+            let st = (rows + 7) / 8;
+            if any {
+                rc = walk(fr, xd, contents(br)[0..d * st], rows, d, out);
+            } else {
+                rc = walk(fr, xd, contents(br)[0..0], rows, d, out);
+            }
+        }
+    }
+    unbox_slice(heap, bm);
+    forest.drop(heap, f);
+    if rc == 0 && mode == 0 && task == 0 {
+        var i = 0;
+        while i < rows {
+            if out[i] > 0.5 {
+                out[i] = 1.0;
+            } else {
+                out[i] = 0.0;
+            }
+            i = i + 1;
+        }
+    }
+    return rc;
+}

@@ -7,6 +7,7 @@ Writes the E / N / P lines that `tree-check mode=fit` prints (byte for byte the 
     equal_v = candidates where the variant 1 equals the variant 0 (no missing row), to show the skipped duplicate is harmless.
 Exact integer arithmetic (Python ints) for the Gini comparison; IEEE float64 sequential sums (np.bincount with weights, a Python
 loop over bins, np.add.accumulate) for regression; np.sum is never used (pairwise)."""
+import struct
 import sys
 import numpy as np
 
@@ -195,6 +196,24 @@ def fit(Xtr, mtr, ytr, task, T, maxd, ML, B, mtry, boot, seed, stats):
     return edges, trees
 
 
+def payload(trees, task, d, B, maxd, ML, mtry):
+    """The model payload of docs/models-tree.md section 7, in Python: `u32 kind = 7` then the ten tensor records (u32 dtype, u32 rank = 1, u64 extent, the
+    elements): the header of eight i64, the tree offsets, feat, bin, dleft, left, right, na, nb as i64 and val as f64. `trees` is what `fit` returns."""
+    total = sum(len(t) for t in trees)
+
+    def rec(dtype, vals, fmt):
+        return struct.pack("<IIQ", dtype, 1, len(vals)) + struct.pack("<%d%s" % (len(vals), fmt), *vals)
+
+    offs = [0]
+    for t in trees:
+        offs.append(offs[-1] + len(t))
+    out = struct.pack("<I", 7) + rec(1, [task, len(trees), d, B, total, maxd, ML, mtry], "q") + rec(1, offs, "q")
+    for k in range(7):
+        out += rec(1, [int(nd[k]) for t in trees for nd in t], "q")
+    out += rec(2, [float(nd[7]) for t in trees for nd in t], "d")
+    return out
+
+
 def predict(trees, Xte, mte, T):
     nte = Xte.shape[0]
     acc = np.zeros(nte)
@@ -256,4 +275,5 @@ def main():
     print("oracle ntr=%d nte=%d nodes=%d ties=%d v1=%d equal_v=%d" % (ntr, n - ntr, sum(len(t) for t in trees), stats["ties"], stats["v1"], stats["equal_v"]))
 
 
-main()
+if __name__ == "__main__":
+    main()

@@ -260,8 +260,8 @@ The `--model` list is the list of what is built. There are no stand-in models, a
 
 <!-- gen:t-honest -->
 ```console
-$ ml fit --model forest --target price --output forest.ml houses.csv
-{"rule": "args.bad-value", "detail": {"flag": "--model", "value": "forest", "expected": "constant/linear/logistic"}}
+$ ml fit --model kmeans --target price --output kmeans.ml houses.csv
+{"rule": "args.bad-value", "detail": {"flag": "--model", "value": "kmeans", "expected": "constant/linear/logistic/tree/forest"}}
 # exit status 2; the rule, detail of the JSON line it prints
 $ ml fit --target prize --output typo.ml houses.csv
 {"rule": "ml.input.unknown-column", "hint": "names are compared exactly, byte for byte", "detail": {"flag": "--target", "name": "prize"}}
@@ -318,19 +318,19 @@ $ ml predict --model-file pets.ml pets.csv
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler a4572ea3)
-flags       35, for example
+flags       42, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
   --model-file  path             predict, eval: the model file to read
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
-limits      13, for example
+limits      20, for example
   --max-rows         default 10,000,000   ceiling 1,000,000,000
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       75, for example
+rules       77, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes

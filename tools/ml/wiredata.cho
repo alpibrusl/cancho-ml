@@ -25,6 +25,8 @@ import metrics.rules;
 import pipeline.names;
 import pipeline.schema;
 import transforms.codes;
+import tree.deny;
+import tree.params;
 import toolbox.fail;
 import toolbox.text;
 
@@ -72,10 +74,13 @@ pub fn open_tag[&h](heap: &!h Heap, tag: &static [byte]) -> [heap] json.Writer {
     return fail.open_in(heap, spec.extra(), tag, message_of(tag), hint_of(tag));
 }
 
-// the tag of a code of any of the libraries: ml.refuse 1 to 99, metrics.rules 201 to 211, transforms.codes 301 to 325 (docs/design.md section 8.1)
+// the tag of a code of any of the libraries: ml.refuse 1 to 99, tree.deny 101 to 108, metrics.rules 201 to 211, transforms.codes 301 to 325 (docs/design.md section 8.1)
 pub fn tag_of(code: int) -> [] &static [byte] {
     if code >= 1 && code <= 99 {
         return refuse.tag(code);
+    }
+    if code >= 101 && code <= deny.last() {
+        return deny.tag(code);
     }
     if code >= rules.first() && code <= rules.last() {
         return rules.tag(code);
@@ -572,6 +577,16 @@ pub fn not_built[&h, &n](heap: &!h Heap, errs: fail.Errors, name: &n [byte]) -> 
     return fail.add(heap, errs, w);
 }
 
+// a tree or forest fit on more training rows than the exact comparison of its Gini criterion allows (docs/models-tree.md section 3.1), refused before the rows are copied
+pub fn tree_rows[&h](heap: &!h Heap, errs: fail.Errors, rows: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.input.too-many-rows", "a tree or forest fit takes at most 1048576 training rows (the bound of its exact Gini comparison)", "fit on a sample of the rows, or hold rows out with --split train=F so that the train side has at most 1048576 rows");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "rows", rows);
+    w = fail.detail_int(heap, w, "max", params.rows_max());
+    return fail.add(heap, errs, w);
+}
+
 pub fn too_wide[&h](heap: &!h Heap, errs: fail.Errors, d: int) -> [heap] fail.Errors {
     var w = fail.open_in(heap, spec.extra(), "ml.input.too-many-columns", "the steps leave more feature columns than the model takes", "drop columns, bucket them, or encode fewer categories: the linear models take at most 256 feature columns");
     w = fail.no_repair(heap, w);
@@ -591,9 +606,27 @@ pub fn bad_metric[&h](heap: &!h Heap, errs: fail.Errors, f: Failed) -> [heap] fa
 
 // ---------------------------------------------------------------- the scores of a model on a matrix
 
-// The predictions of the model (weights `wv`, labels c0 and c1) on xs, a matrix the stored steps produced, and the metrics against `yv` (the targets as
-// doubles). (the object of the metrics as JSON, the lines for --format text, the refusal, if any). `pos` is the label precision and the rest are about.
-pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], c0: int, c1: int, pos: int, cap: int) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, Failed) {
+// The class (or the value) of each row of xs for the model of `kind`: the vector models' weights `wv`, or the payload `blob` of a model of the blob interface.
+// xs is a matrix the stored steps produced; its bitmap of missing cells goes to a model that takes missing cells (the tree and the forest). 0, or a refusal code.
+pub fn predict_into[&h, &x, &w, &b, &o](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, wv: &w [float], blob: &b [byte], out: &!o [float]) -> [heap] int {
+    if est.is_blob(kind) {
+        return est.predict_blob(heap, kind, blob, matrix.shape(xs), contents(xs.data), contents(xs.miss), matrix.wpc(xs), out);
+    }
+    return est.predict(kind, matrix.shape(xs), contents(xs.data), wv, out);
+}
+
+// the probability of the positive class of each row (a classification only)
+pub fn proba_into[&h, &x, &w, &b, &o](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, wv: &w [float], blob: &b [byte], out: &!o [float]) -> [heap] int {
+    if est.is_blob(kind) {
+        return est.proba_blob(heap, kind, blob, matrix.shape(xs), contents(xs.data), contents(xs.miss), matrix.wpc(xs), out);
+    }
+    return est.proba(kind, matrix.shape(xs), contents(xs.data), wv, out);
+}
+
+// The predictions of the model (weights `wv` or payload `blob`, labels c0 and c1, task 1 regression or 2 classification) on xs, a matrix the stored steps produced,
+// and the metrics against `yv` (the targets as doubles). (the object of the metrics as JSON, the lines for --format text, the refusal, if any). `pos` is the label
+// precision and the rest are about.
+pub fn metrics_block[&h, &x, &y, &w, &b](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], blob: &b [byte], c0: int, c1: int, pos: int, cap: int) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, Failed) {
     let n = matrix.rows(xs);
     var pred = box_slice(heap, n + 1, 0.0);
     var obj = json.writer(heap, 256);
@@ -603,11 +636,11 @@ pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Ma
     var fl = fine();
     var code = 0;
     borrow mut pred as &!pw in {
-        code = est.predict(kind, matrix.shape(xs), contents(xs.data), wv, contents(pw));
+        code = predict_into(heap, kind, xs, wv, blob, contents(pw));
     }
     if code != 0 {
         fl = Failed { code: code, name: "predict" };
-    } else if est.task(kind) == 1 {
+    } else if task == 1 {
         borrow pred as &pr in {
             let (o2, p2, u2, f2) = regression_metrics(heap, obj, plain, und, yv[0..n], contents(pr)[0..n], cap);
             obj = o2;
@@ -618,7 +651,7 @@ pub fn metrics_block[&h, &x, &y, &w](heap: &!h Heap, kind: int, xs: &x matrix.Ma
     } else {
         var prob = box_slice(heap, n + 1, 0.0);
         borrow mut prob as &!qw in {
-            code = est.proba(kind, matrix.shape(xs), contents(xs.data), wv, contents(qw));
+            code = proba_into(heap, kind, xs, wv, blob, contents(qw));
         }
         if code != 0 {
             fl = Failed { code: code, name: "proba" };

@@ -50,6 +50,20 @@ pub fn sum_order() -> [] int {
     return 2;
 }
 
+// the sum order of a tree or a forest (kind 7, docs/wiring-trees.md section 4): no lane sum is made, every float sum is a sequential left fold in a fixed row
+// (or tree) order, docs/models-tree.md section 3.2. A file of kind 7 records this value instead of sum_order(), and a reader requires it exactly.
+pub fn sum_order_sequential() -> [] int {
+    return 3;
+}
+
+// the sum order a model of `kind` (4 or above) records in its meta
+pub fn sum_order_for(kind: int) -> [] int {
+    if kind == model_tree() {
+        return sum_order_sequential();
+    }
+    return sum_order();
+}
+
 // ---- stream kinds: derive(derive(seed, kind), index)
 pub fn stream_tree_bootstrap() -> [] int {
     return 1;

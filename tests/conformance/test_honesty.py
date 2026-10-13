@@ -15,20 +15,20 @@ class Honesty(unittest.TestCase):
 
     def test_the_models_are_exactly_the_built_ones(self):
         flags = {f["name"]: f for f in introspect()["flags"]}
-        self.assertEqual(flags["--model"]["kind"], "choice:constant/linear/logistic")
+        self.assertEqual(flags["--model"]["kind"], "choice:constant/linear/logistic/tree/forest")
         self.assertEqual(flags["--model"]["default"], "constant")
 
     def test_another_model_name_is_refused(self):
         self.sb.write("reg.csv", "y\n1\n2\n")
-        for name in ("logreg", "tree", "forest", "kmeans", "Linear", "Constant", "constant ", ""):
+        for name in ("logreg", "kmeans", "Tree", "Forest", "Linear", "Constant", "constant ", ""):
             r = self.sb.run("fit", "--model", name, "--target", "y", "--output", "m.cml", "reg.csv")
             self.assertEqual(r.first_rule(), "args.bad-value", (name, r))
             self.assertFalse((self.sb.dir / "m.cml").exists())
 
     def test_a_model_that_is_a_library_only_is_not_offered_and_a_plan_naming_it_is_refused(self):
-        # kmeans, tree and forest have a manifest and wired = false: the plan grammar knows them, the verbs do not build them
+        # kmeans has a manifest and wired = false: the plan grammar knows it, the verbs do not build it (the tree and the forest were wired by docs/wiring-trees.md)
         self.sb.write("reg.csv", "a,y\n1,2\n2,3\n3,5\n")
-        for line in ("model kind=kmeans k=2\n", "model kind=tree task=regression\n", "model kind=forest task=regression\n"):
+        for line in ("model kind=kmeans k=2\n",):
             self.sb.write("p.txt", line)
             r = self.sb.run("fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "reg.csv")
             self.assertEqual(r.first_rule(), "ml.plan.model-not-built", (line, r))

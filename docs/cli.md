@@ -54,7 +54,7 @@ table to drift (gate T1 checks the one table against its projections).
 
 | verb | needs | takes also |
 |---|---|---|
-| `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) |
+| `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) and, for `--model tree|forest`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes` (`docs/wiring-trees.md` section 2) |
 | `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
 | `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
 

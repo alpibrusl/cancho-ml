@@ -20,7 +20,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 NEW_FLAGS = {"--plan", "--step", "--l2", "--iterations", "--positive", "--split", "--seed", "--proba",
              # the categorical columns of stage 1 of issue 21 (docs/categorical.md)
-             "--cat", "--na-values", "--max-categories", "--max-string-bytes", "--max-pool-bytes", "--max-cat-columns"}
+             "--cat", "--na-values", "--max-categories", "--max-string-bytes", "--max-pool-bytes", "--max-cat-columns",
+             # the tree and the forest (docs/wiring-trees.md section 2)
+             "--trees", "--max-depth", "--min-leaf", "--bins", "--mtry", "--bootstrap", "--max-nodes"}
 # the refusal of an unknown model name lists the models: it changes with the list, by design
 LISTS_THE_MODELS = {"args-bad-value-model"}
 
@@ -29,10 +31,10 @@ def uses_new(c):
     argv = [a for a in c["argv"] if isinstance(a, str)]
     if any(a in NEW_FLAGS for a in argv) or "--threads" in argv:
         return True
-    if "linear" in argv or "logistic" in argv:
+    if "linear" in argv or "logistic" in argv or "tree" in argv or "forest" in argv:
         return True
     for s in c["setup"]:
-        if s[0] == "fit" and (any(a in NEW_FLAGS or a in ("linear", "logistic", "--threads") for a in s[1:])):
+        if s[0] == "fit" and (any(a in NEW_FLAGS or a in ("linear", "logistic", "tree", "forest", "--threads") for a in s[1:])):
             return True
     return False
 

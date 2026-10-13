@@ -8,7 +8,7 @@ A model that `ml` can fit is a *module*: a directory under `lib/models/`, a mani
 its gates. Nothing else in the tree names the model by hand: the dispatch, the flags, the plan keys, the schemas and the documentation tables
 are generated from the manifests, and a module cannot add a float order, a capability, an unregistered refusal or a kind number of its own
 without `scripts/admit.py` failing. The five models of the libraries (constant, linear, logistic, k-means, tree and forest) are the first users:
-three are wired in this stage (`docs/wiring.md`), two have a manifest and `wired = false`.
+three are wired in this stage (`docs/wiring.md`), two have a manifest and `wired = false`. *(The tree and the forest were wired afterwards, through a second adapter interface, section 4b: `docs/wiring-trees.md`; k-means is the one library left unwired.)*
 
 ## 1. Function values and traits: tried, and not relied on [read]
 
@@ -32,10 +32,11 @@ One file per model, parsed by `scripts/gen_models.py` with Python's `tomllib`. A
 | `extra_kinds` | list of int, optional | more kinds the model writes (`constant` writes 1, 2 and 3: regression, classification, float regression) |
 | `kind_fn` | string | the function of `kinds.cho` that returns it (`model_linear`); the generator checks the body |
 | `shares_kind_with` | string, optional | `tree` and `forest` share kind 7 (the task is a field of the payload); both name each other, no other pair may |
-| `task` | `regression` or `classification` | what the model predicts (`clustering` for k-means, which is never wired) |
+| `task` | `regression`, `classification` or `both` | what the model predicts (`clustering` for k-means, which is never wired). `both`: the task is the model line's `task` hyperparameter (the existing `--task` flag), which the model must declare as an `enum` (tree, forest) |
 | `tier` | `experimental` or `supported` | section 6 |
 | `wired` | bool | callable from `ml`. `false`: the manifest holds the kind and the plan keys, the dispatch has no branch |
-| `adapter` | string | the module that implements the interface of section 4 (required when `wired`); `builtin` for `constant`, which `tools/ml/verbs.cho` builds exactly and which has no adapter |
+| `shape` | `vector` (default) or `blob` | which adapter interface the module implements: section 4 (a fixed vector of floats) or section 4b (a payload of bytes the adapter builds and reads; needed when the size of the fitted model is known only after the fit). A `blob` model has `task = "both"` |
+| `adapter` | string | the module that implements the interface of section 4 or 4b (required when `wired`); `builtin` for `constant`, which `tools/ml/verbs.cho` builds exactly and which has no adapter |
 | `plan_order` | int | the place of the model in the plan grammar's list (`0 .. n-1`, once each): `constant`, `linear`, `logistic`, `kmeans`, `tree`, `forest` are 0 to 5 |
 | `payload_version` | int | the version of the records after the `u32 kind` (linear 1, logistic 2: it gained the labels record, `docs/wiring.md` section 4) |
 | `doc` | string | the document that holds the model's gates, written before its code (`admit` checks it exists, has a `Gates` section and was committed first) |
@@ -44,7 +45,7 @@ One file per model, parsed by `scripts/gen_models.py` with Python's `tomllib`. A
 | `[[hyperparameter]]` | table list | `name`, `type` (`int`: `min`, `max`; `float`: `nonneg = true`, the only float the plan grammar has; `enum`: `values`), `default` (string, the canonical spelling) or `required = true`, `doc` (one sentence without `;`, `\|` or a quote: it is a cell of the flag table) |
 | `[tags]` | table | `emits`: every rule tag the module can answer; each must be in the tables of `spec.cho` (`extra()` or `pending()`), and each reachable one has a fixture |
 | `[authority]` | table | `adds`: labels the module needs beyond the base row of `lib/models/contract.toml`, `reason`: why (empty when `adds` is empty) |
-| `[sums]` | table | `decisive`: the files that hold decisive float sums; each must route them through `lib/linalg/order.cho` (section 5, Q4) |
+| `[sums]` | table | `decisive`: the files that hold decisive float sums; each must route them through `lib/linalg/order.cho` (section 5, Q4). `sequential`: the files that sum floats in a fixed sequential order of their own (the tree's regression sums, `docs/models-tree.md` 3.2); such a module's file records `sum_order` 3 instead of 2 (`lib/core/kinds.cho` `sum_order_for`, `docs/wiring-trees.md` section 4) and Q4 checks that it does |
 | `[oracle]` | table | `script` and `args`: the Python oracle `admit` runs, `tolerance`: `bits` or a stated number for the comparison with scikit-learn |
 
 `lib/models/contract.toml` holds what is common: the base authority row (`args`, `dir_read`, `dir_write`, `err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, `io_write`),
@@ -86,6 +87,24 @@ pub fn decode(src: &[byte], d: int, out: &![float]) -> Decoded                  
 calls the library (`models.linreg.fit`, `models.logreg.fit`) and nothing else numeric: **every decisive sum is the library's, through `linalg.order`**.
 `seed` is part of the contract so a stochastic model (a forest, k-means) fits through the same door; linear and logistic ignore it.
 
+## 4b. The blob interface (a model whose size is known only after the fit)
+
+The tree and the forest keep their fitted state as a payload of bytes: the library's `docs/models-tree.md` section 7 payload, then, for a classification, the labels record
+(`docs/wiring-trees.md` section 4). The adapter (`shape = "blob"`) exports exactly these four functions, which `scripts/admit.py` compares with the template of `scripts/gen_models.py`:
+
+```
+pub fn fit_blob(heap, threads, xt: Tensor, xd: &[float], miss: &[int], wpc: int, yd: &[float], ip: &[int], fp: &[float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int)
+pub fn predict_blob(heap, blob: &[byte], xt: Tensor, xd: &[float], miss: &[int], wpc: int, out: &![float]) -> [heap] int      // the class (0.0 or 1.0) of a classification, the value of a regression
+pub fn proba_blob(heap, blob: &[byte], xt: Tensor, xd: &[float], miss: &[int], wpc: int, out: &![float]) -> [heap] int        // the probability of the positive class; a regression answers a refusal
+pub fn decode_blob(heap, src: &[byte], d: int) -> [heap] Decoded                                                              // code, c0, c1 and in `end` the task: 1 regression, 2 classification
+```
+
+`miss` and `wpc` are the missing-cell bitmap of `ml.matrix` (a model that takes missing cells reads it; the others are not blob models). `ip` holds the integer hyperparameters
+in manifest order and an enum as the index of its value (`task`: 0 classification, 1 regression, the library's numbers); `c0` and `c1` are the labels of a classification. The row
+is `[heap, conc]` for the fit and `[heap]` for the others: the prediction is made with one thread. **The dispatch key.** A fit must tell `tree` from `forest` (different
+hyperparameters) while a file has only the kind, so the generated `est` dispatches on a key: the kind, plus 100 for the second model of a declared pair that shares a kind
+(`forest` = 107). `est.kind_of(key)` gives the kind of a file; the plan stored in the file names the model, and `predict` prints that name.
+
 ## 5. Admission: `python3 scripts/admit.py <model>`
 
 Each check prints `PASS`, `FAIL` or `SKIP (reason)` and the script exits 1 on any `FAIL`. A module may be `supported` only if all pass. The cheap checks
@@ -95,7 +114,7 @@ must make it fail** (section 7); a check no mutant module can fail is not a gate
 | id | check | fails on |
 |---|---|---|
 | Q0 | **Doc first.** The `doc` file exists, has a `Gates` section, and its first commit is an ancestor of the first commit of every file in `files` (an uncommitted tree is `SKIP`: the real admission runs in a committed tree) | a module with no doc section |
-| Q1 | **Manifest and generated glue.** The manifest parses with no unknown key; `gen_models.py --check` is clean; every wired kind is a branch of every operation of `est.cho` | a stale generated file; a wired model with a missing branch |
+| Q1 | **Manifest and generated glue.** The manifest parses with no unknown key; `gen_models.py --check` is clean; every wired model's key is a branch of every operation of `est.cho` (the blob operations for a blob model); the adapter has the functions of its interface | a stale generated file; a wired model with a missing branch |
 | Q2 | **Registry.** The kind is unique among manifests (except a declared `shares_kind_with` pair), equals the number `kinds.cho` returns for `kind_fn`, and is below `model_count()` | `mutant-kind-reuse` |
 | Q3 | **Tags.** `emits` is a subset of the registered tags (`spec.cho` `extra()` and `pending()`); the module's sources contain no tag-shaped string literal and call no refusal code outside `emits`; each reachable tag has a fixture in `tests/conformance/fixtures.py` | `mutant-unregistered-tag` |
 | Q4 | **Sums.** A file of the module that accumulates floats (`x = x + ...` on a float variable) must import `linalg.order` or a `linalg` kernel, or the sum is outside the package order | `mutant-sum-outside-order` |
