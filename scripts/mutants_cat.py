@@ -176,7 +176,7 @@ MUTANTS = [
        ("tools/ml/catcli.cho", "fn not_encoded[&h, &v](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab)", "fn not_encoded[&h, &v](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab, extra: int)"),
        ("tools/ml/catcli.cho", "out = catwire.not_encoded(heap, out, voc, nr);", "out = catwire.not_encoded(heap, out, voc, nr, extra);"),
        ("tools/ml/catcli.cho", "e = not_encoded(heap, e, vr);", "e = not_encoded(heap, e, vr, o.threads);"),
-       ("tools/ml/wire.cho", "e = catwire.not_encoded(heap, e, cvoc, remr);", "e = catwire.not_encoded(heap, e, cvoc, remr, 1);")]),
+       ("tools/ml/wire.cho", "e = catwire.not_encoded(heap, e, cvoc, remr);", "e = catwire.not_encoded(heap, e, cvoc, remr, o.threads);")]),
     M("c11-invalid-utf8-reported-as-a-length", ["cli"], "the refusal of invalid UTF-8 carries the rule of the byte limit",
       [("tools/ml/verbs.cho", '        rule = "ml.input.invalid-utf8";\n        message', '        rule = "ml.limit.string-bytes";\n        message')]),
     M("c11-target-may-be-categorical", ["cli", "diff"], "--cat on the target is accepted",

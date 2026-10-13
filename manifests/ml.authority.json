@@ -475,6 +475,7 @@
     "nearest",
     "nearest",
     "need",
+    "needs_mixed",
     "no_cats",
     "non_finite",
     "none",
@@ -695,5 +696,5 @@
   ],
   "folded_operators": 140,
   "folded_calls": 2,
-  "functions": 1119
+  "functions": 1120
 }

@@ -836,3 +836,111 @@ fn test_the_mixed_pipeline_fits_stores_and_applies_the_same_matrix[&h](heap: &!h
     plan.drop(heap, pl);
     return bad;
 }
+
+// ---------------------------------------------------------------- bounds of the decoder and of the fit
+
+fn p32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+fn p64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = p32(heap, b, v & 4294967295);
+    return p32(heap, o, v >> 32);
+}
+
+// the payload of a one-hot step with one column whose name is `namelen` bytes of 'n' and which holds `ncat` strings of 4 digits, each counted once
+fn big_payload[&h](heap: &!h Heap, namelen: int, ncat: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 64);
+    b = p32(heap, b, 7);
+    b = p32(heap, b, 1);
+    b = p32(heap, b, 1);
+    b = p32(heap, b, 0);
+    b = p32(heap, b, 0);
+    b = p32(heap, b, 1);
+    b = p64(heap, b, 5000);
+    b = p32(heap, b, namelen);
+    var i = 0;
+    while i < namelen {
+        b = buffer.push(heap, b, byte_of('n'));
+        i = i + 1;
+    }
+    b = p32(heap, b, ncat);
+    i = 0;
+    while i < ncat {
+        b = p32(heap, b, 4);
+        b = buffer.push(heap, b, byte_of('0' + i / 1000 % 10));
+        b = buffer.push(heap, b, byte_of('0' + i / 100 % 10));
+        b = buffer.push(heap, b, byte_of('0' + i / 10 % 10));
+        b = buffer.push(heap, b, byte_of('0' + i % 10));
+        b = p64(heap, b, 1);
+        i = i + 1;
+    }
+    return b;
+}
+
+fn decode_code[&h](heap: &!h Heap, namelen: int, ncat: int) -> [heap] int {
+    let b = big_payload(heap, namelen, ncat);
+    var code = 0;
+    borrow b as &br in {
+        let (s, c) = catenc.decode(heap, buffer.bytes(br));
+        code = c;
+        catenc.drop(heap, s);
+    }
+    buffer.drop(heap, b);
+    return code;
+}
+
+fn test_the_decoder_bounds_names_and_category_counts_exactly[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // a name of 255 bytes and 1,024 categories are the largest; 256 and 1,025 are refused
+    if decode_code(heap, 255, 1) != 0 || decode_code(heap, 256, 1) != codes.malformed() || decode_code(heap, 1, 1024) != 0 || decode_code(heap, 1, 1025) != codes.malformed() {
+        bad = bad + 1;
+    }
+    if decode_code(heap, 0, 1) != codes.malformed() || decode_code(heap, 1, 0) != codes.malformed() {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_fit_refuses_columns_that_are_not_there_or_not_ascending[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ids, voc) = build(heap, "a,b,a", "");
+    borrow ids as &ir in {
+        borrow voc as &vr in {
+            let one = box_slice(heap, 1, 1);
+            let twice = box_slice(heap, 2, 0);
+            let none = box_slice(heap, 0, 0);
+            borrow one as &o1 in {
+                let (s, f) = catenc.fit(heap, 7, 0, 0, 1, 64, 1, ir, vr, contents(o1));
+                if f.code != codes.out_of_range() {
+                    bad = bad + 1;
+                }
+                catenc.drop(heap, s);
+            }
+            borrow twice as &o2 in {
+                let (s, f) = catenc.fit(heap, 7, 0, 0, 1, 64, 1, ir, vr, contents(o2));
+                if f.code != codes.out_of_range() {
+                    bad = bad + 1;
+                }
+                catenc.drop(heap, s);
+            }
+            borrow none as &o3 in {
+                let (s, f) = catenc.fit(heap, 7, 0, 0, 1, 64, 1, ir, vr, contents(o3));
+                if f.code != codes.out_of_range() {
+                    bad = bad + 1;
+                }
+                catenc.drop(heap, s);
+            }
+            unbox_slice(heap, one);
+            unbox_slice(heap, twice);
+            unbox_slice(heap, none);
+        }
+    }
+    catmat.drop(heap, ids);
+    dict.drop_vocab(heap, voc);
+    return bad;
+}

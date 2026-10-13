@@ -399,30 +399,36 @@ def ml_run(args, cwd=None, timeout=120):
 
 
 def gate_threads():
-    """E3: `ml fit --cat ... --split --threads T` for T in 1 2 4 8 16 writes the same standard output"""
+    """E3: `ml fit --cat ... --split --threads T` for T in 1 2 4 8 16 writes the same standard output. A fit that is refused says nothing about threads, so the gate
+    counts the fits that were ANSWERED and fails if there are fewer than it wants."""
     cnt = Count("E3 threads")
     rnd = random.Random(11)
-    made = 0
-    while made < (3 if FAST else 8):
+    want = 3 if FAST else 8
+    made = tries = 0
+    while made < want and tries < 400:
+        tries += 1
         header, rows, cfg, _ = gen_pair(rnd)
         if len(rows) < 40:
             continue
-        made += 1
-        p = WORK / ("t%d.csv" % made)
-        p.write_bytes(G.write_csv(header, rows, random.Random(made)))
+        p = WORK / ("t%d.csv" % tries)
+        p.write_bytes(G.write_csv(header, rows, random.Random(tries)))
         cats = ",".join(cfg.cats)
-        step = "; ".join("encode column=%s kind=onehot unknown=ignore min-count=%d missing=zero" % (c, rnd.choice([1, 2, 3])) for c in cfg.cats)
-        outs = set()
+        step = "impute column=x strategy=constant value=0; " + "; ".join("encode column=%s kind=onehot unknown=ignore min-count=%d missing=zero" % (c, rnd.choice([1, 2, 3])) for c in cfg.cats) + "; scale column=* kind=standard"
+        outs = []
         for t in (1, 2, 4, 8, 16):
-            args = ["fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", cats, "--max-categories", "1024", "--step", step + "; scale column=* kind=standard", "--split", "train=0.7", "--seed", str(made), "--threads", str(t), "--output", str(WORK / "never.cml"), str(p)]
+            args = ["fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", cats, "--max-categories", "1024", "--step", step, "--split", "train=0.7", "--seed", str(tries), "--threads", str(t), "--output", str(WORK / "never.cml"), str(p)]
             if cfg.na:
                 args += ["--na-values", b",".join(cfg.na).decode("latin-1")]
-            code, out = ml_run(args)
-            outs.add((code, out))
-            cnt.runs += 1
-        if len(outs) != 1:
-            cnt.note("the answer depends on the thread count", (made, len(outs)))
-    print("E3: %d tables, 5 thread counts each, machine %s, load %.2f" % (made, os.uname().machine, load_info()))
+            outs.append(ml_run(args))
+        if outs[0][0] != 0:
+            continue
+        made += 1
+        cnt.runs += 5
+        if len(set(outs)) != 1:
+            cnt.note("the answer depends on the thread count", (tries, len(set(outs))))
+    if made < want:
+        cnt.note("too few fits were answered to say anything about threads", (made, want))
+    print("E3: %d answered fits (of %d tried), 5 thread counts each, machine %s, load %.2f" % (made, tries, os.uname().machine, load_info()))
     return cnt.report()
 
 

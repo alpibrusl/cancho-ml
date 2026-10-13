@@ -224,12 +224,16 @@ MUTANTS = [
     # ------------------------------------------------------------------ E11: the bounds
     M("e11-categories-bound-removed-in-decode", ["unit"], "decode accepts more categories than the ceiling",
       [(CAT, "(m < 1 || m > max_categories())", "(m < 1 || m > 100000000)")]),
-    M("e11-name-lookup-unchecked", ["fuzz", "diff"], "a reader column index past the ids is not checked at fit",
+    M("e11-name-lookup-unchecked", ["unit"], "a reader column index past the ids is not checked at fit",
       [(CAT, "        if sel[j] <= prev || sel[j] >= dict.ncols(rv) || sel[j] >= catmat.cols(ids) {", "        if sel[j] <= prev {")]),
 ]
 
 # Equivalent or not detectable by these gates (each with its reason); filled in after the first full run
-WHY = {}
+WHY = {
+    "e8-numeric-first-lookup-reversed": "equivalent: a name is both a numeric column and a not-yet-encoded categorical one only if a step wrote a numeric column with the name of another declared column, and the "
+                                        "encoders write NAME (a column that is then no longer categorical) or NAME#i, and a plan cannot name a column that holds `#` (docs/pipeline.md section 2), so the order of the two "
+                                        "lookups is unobservable",
+}
 for m in MUTANTS:
     m["why"] = m["why"] or WHY.get(m["id"])
 
@@ -250,7 +254,8 @@ def check_pattern(m):
 
 
 def tree_copy(dest):
-    ignore = shutil.ignore_patterns(".git", "build", "__pycache__", "*.pyc", "docs")
+    # the documents the registry gate reads are copied (docs/*.md); the logs and the pages are not
+    ignore = shutil.ignore_patterns(".git", "build", "__pycache__", "*.pyc", "bench", "*.html", "*.png", "*.svg", "*.jsonl")
     shutil.copytree(ROOT, dest, ignore=ignore, symlinks=True)
     (dest / "build").mkdir(exist_ok=True)
     shutil.copytree(ROOT / "build" / "deps", dest / "build" / "deps")
