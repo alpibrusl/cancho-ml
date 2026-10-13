@@ -28,6 +28,7 @@ import metrics.splits;
 import models.record;
 import pipeline.file;
 import pipeline.names;
+import pipeline.plan;
 import pipeline.run;
 import pipeline.schema;
 import transforms.codes;
@@ -35,6 +36,11 @@ import flt;
 import toolbox.fail;
 
 // ---------------------------------------------------------------- the model file's kind
+
+// whether the plan text names a tree or a forest on its model line
+fn names_tree[&p](plan: &p [byte]) -> [] bool {
+    return bytes.find(plan, "model kind=tree") >= 0 || bytes.find(plan, "model kind=forest") >= 0;
+}
 
 // The kind of the model in a CML1 file, from the structure alone (nothing is checked but what is needed to find it); 0 when the structure does not
 // allow it. The old reader gives the real error for such a file.
@@ -46,6 +52,8 @@ pub fn peek_kind[&d](data: &d [byte]) -> [] int {
     let body = n - 32;
     var pos = 12;
     var s = 0;
+    var plan_at = 0;
+    var plan_len = 0;
     while s < 5 {
         if pos + 12 > body {
             return 0;
@@ -54,11 +62,20 @@ pub fn peek_kind[&d](data: &d [byte]) -> [] int {
         if length < 0 || length > body - pos - 12 {
             return 0;
         }
+        if s == 0 {
+            plan_at = pos + 12;
+            plan_len = length;
+        }
         if s == 3 {
             if length < 4 {
                 return 0;
             }
-            return record.get32(data, pos + 12);
+            let kind = record.get32(data, pos + 12);
+            // the payload of a tree or forest (kind 7) is this module's only when the plan names one: a constant plan with a kind 7 payload is the old reader's refusal
+            if kind == 7 && !names_tree(data[plan_at..plan_at + plan_len]) {
+                return 0;
+            }
+            return kind;
         }
         pos = pos + 12 + length;
         s = s + 1;
@@ -78,11 +95,13 @@ res struct Stored {
     c0: int,
     c1: int,
     d: int,
+    // 1 regression, 2 classification: the estimator's for the linear models, the payload's for the tree and the forest
+    task: int,
     view: mfile.Model,
 }
 
 fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
-    let Stored { lo, sc, kind, wv, c0, c1, d, view } = s;
+    let Stored { lo, sc, kind, wv, c0, c1, d, task, view } = s;
     file.drop(heap, lo);
     schema.drop(heap, sc);
     unbox_slice(heap, wv);
@@ -91,7 +110,7 @@ fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
 }
 
 fn empty_stored[&h](heap: &!h Heap) -> [heap] Stored {
-    return Stored { lo: file.empty(heap), sc: schema.empty(heap), kind: 0, wv: box_slice(heap, 2, 0.0), c0: 0, c1: 0, d: 0, view: mfile.empty_model(heap) };
+    return Stored { lo: file.empty(heap), sc: schema.empty(heap), kind: 0, wv: box_slice(heap, 2, 0.0), c0: 0, c1: 0, d: 0, task: 0, view: mfile.empty_model(heap) };
 }
 
 // the schema as an mfile.Model without statistics
@@ -137,6 +156,39 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
         file.drop(heap, lo);
         return (empty_stored(heap), false, wiredata.file_fault(heap, e, bad, shown));
     }
+    // the model the plan names: the dispatch key (the tree and the forest share the kind 7 of their payload, the plan says which was fitted)
+    var key = kind;
+    // the task the plan's model line names (a model of both tasks); 0 for the others
+    var plan_task = 0;
+    borrow lo as &lr in {
+        let (pl, pf) = plan.parse(heap, file.plan_bytes(lr));
+        borrow pl as &pr in {
+            key = est.kind_named(plan.model_name(plan.model_kind(pr)));
+            if est.task(key) == 3 {
+                var ip = box_slice(heap, est.nints(key) + 1, 0);
+                var fp = box_slice(heap, est.nfloats(key) + 1, 0.0);
+                var bad = 1;
+                borrow mut ip as &!iw in {
+                    borrow mut fp as &!fw in {
+                        bad = est.hparams(key, plan.model_line(pr), contents(iw), contents(fw));
+                    }
+                }
+                if bad == 0 {
+                    borrow ip as &ir in {
+                        plan_task = est.task_of(key, contents(ir));
+                    }
+                }
+                unbox_slice(heap, ip);
+                unbox_slice(heap, fp);
+            }
+        }
+        plan.drop(heap, pl);
+    }
+    if est.kind_of(key) != kind {
+        file.drop(heap, lo);
+        return (empty_stored(heap), false, wiredata.file_fault(heap, e, bad, shown));
+    }
+    kind = key;
     var sc = schema.empty(heap);
     var scode = 0;
     borrow lo as &lr in {
@@ -150,17 +202,35 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
         schema.drop(heap, sc);
         return (empty_stored(heap), false, wiredata.file_fault(heap, e, codes.fault(codes.malformed(), 2, 0, 0), shown));
     }
-    var wv = box_slice(heap, est.out_len(kind, width) + 1, 0.0);
+    var nw = 2;
+    if !est.is_blob(kind) {
+        nw = est.out_len(kind, width) + 1;
+    }
+    var wv = box_slice(heap, nw, 0.0);
     var c0 = 0;
     var c1 = 0;
     var dcode = 0;
+    var task = est.task(kind);
     borrow lo as &lr in {
-        borrow mut wv as &!ww in {
-            let dec = est.decode(kind, file.model_bytes(lr), width, contents(ww));
+        if est.is_blob(kind) {
+            // the tree and the forest: the payload is checked whole, and kept in the file (the model section) for predict
+            let dec = est.decode_blob(heap, kind, file.model_bytes(lr), width);
             dcode = dec.code;
             c0 = dec.c0;
             c1 = dec.c1;
+            task = dec.end;
+        } else {
+            borrow mut wv as &!ww in {
+                let dec = est.decode(kind, file.model_bytes(lr), width, contents(ww));
+                dcode = dec.code;
+                c0 = dec.c0;
+                c1 = dec.c1;
+            }
         }
+    }
+    if dcode == 0 && plan_task != 0 && plan_task != task {
+        // the plan says classification and the payload is a regression, or the other way: a file that disagrees with itself
+        dcode = 1;
     }
     if dcode != 0 {
         file.drop(heap, lo);
@@ -173,7 +243,7 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
         mfile.drop_model(heap, view);
         view = view_of(heap, scr, rows);
     }
-    return (Stored { lo: lo, sc: sc, kind: kind, wv: wv, c0: c0, c1: c1, d: width, view: view }, true, e);
+    return (Stored { lo: lo, sc: sc, kind: kind, wv: wv, c0: c0, c1: c1, d: width, task: task, view: view }, true, e);
 }
 
 // ---------------------------------------------------------------- the input of predict and eval
@@ -220,7 +290,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             go = false;
         } else {
             lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
-            let (e2, same) = verbs.schema_check(heap, args, e, st.view, sr, o, need_target);
+            let (e2, same) = verbs.schema_check(heap, args, e, st.view, sr, o, need_target, est.is_blob(st.kind));
             e = e2;
             go = same;
         }
@@ -339,7 +409,7 @@ fn through_steps[&h, &g, &ii, &ss, &s](heap: &!h Heap, args: &g Args, inp: &ii I
             }
         }
         names.drop(heap, onames);
-        if mc > 0 {
+        if mc > 0 && !est.is_blob(st.kind) {
             borrow mlist as &lr in {
                 e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), false);
             }
@@ -378,7 +448,7 @@ fn put_label[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: int) -
 }
 
 // the page of predictions: (the data object, the text, the refusal code of the estimator)
-fn predict_page[&h, &x, &w2](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, wv: &w2 [float], c0: int, c1: int, unknown: int, with_proba: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w2 [float], blob: &bl [byte], c0: int, c1: int, unknown: int, with_proba: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
     let total = matrix.rows(xs);
     var start = o.from;
     if start > total {
@@ -392,11 +462,11 @@ fn predict_page[&h, &x, &w2](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, wv
     var prob = box_slice(heap, total + 1, 0.0);
     var code = 0;
     borrow mut pred as &!pw in {
-        code = est.predict(kind, matrix.shape(xs), contents(xs.data), wv, contents(pw));
+        code = wiredata.predict_into(heap, kind, xs, wv, blob, contents(pw));
     }
-    if code == 0 && est.task(kind) == 2 {
+    if code == 0 && task == 2 {
         borrow mut prob as &!qw in {
-            code = est.proba(kind, matrix.shape(xs), contents(xs.data), wv, contents(qw));
+            code = wiredata.proba_into(heap, kind, xs, wv, blob, contents(qw));
         }
     }
     var w = json.writer(heap, 512);
@@ -408,10 +478,10 @@ fn predict_page[&h, &x, &w2](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, wv
                 w = json.put_key(heap, w, "model");
                 w = json.put_string(heap, w, est.name(kind));
                 w = json.put_key(heap, w, "task");
-                w = json.put_string(heap, w, wiredata.task_word(est.task(kind)));
+                w = json.put_string(heap, w, wiredata.task_word(task));
                 w = json.put_key(heap, w, "columns");
                 w = json.begin_array(heap, w);
-                if est.task(kind) == 1 {
+                if task == 1 {
                     w = json.put_string(heap, w, "prediction");
                 } else {
                     w = json.put_string(heap, w, "label");
@@ -425,7 +495,7 @@ fn predict_page[&h, &x, &w2](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, wv
                 var k = start;
                 while k < end {
                     w = json.begin_array(heap, w);
-                    if est.task(kind) == 1 {
+                    if task == 1 {
                         let (w2, p2) = put_cell(heap, w, plain, contents(pq)[k]);
                         w = w2;
                         plain = p2;
@@ -539,7 +609,7 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
     if go && o.proba {
         var is_reg = false;
         borrow st as &sq0 in {
-            is_reg = est.task(sq0.kind) == 1;
+            is_reg = sq0.task == 1;
         }
         if is_reg {
             e = wiredata.conflict(heap, e, "proba", "a regression has no probability");
@@ -568,7 +638,7 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
                     e = e4;
                     if ok4 {
                         borrow xs as &xq in {
-                            let (p2, t2, code) = predict_page(heap, sr.kind, xq, contents(sr.wv), sr.c0, sr.c1, unk, o.proba, o);
+                            let (p2, t2, code) = predict_page(heap, sr.kind, sr.task, xq, contents(sr.wv), file.model_bytes(sr.lo), sr.c0, sr.c1, unk, o.proba, o);
                             buffer.drop(heap, payload);
                             buffer.drop(heap, plain);
                             payload = p2;
@@ -632,10 +702,12 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
     var plain = buffer.empty(heap, 1);
     if go {
         var kind = 0;
+        var task = 0;
         var c0 = 0;
         var c1 = 0;
         borrow st as &sq0 in {
             kind = sq0.kind;
+            task = sq0.task;
             c0 = sq0.c0;
             c1 = sq0.c1;
         }
@@ -645,7 +717,7 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
         }
         // the labels the model knows
         var pos = c1;
-        if est.task(kind) == 2 && o.positive_given {
+        if task == 2 && o.positive_given {
             let (pok, pv) = wiredata.parse_label(o.positive);
             if pv == c0 || pv == c1 {
                 pos = pv;
@@ -704,7 +776,7 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
             borrow sel as &sq4 in {
                 rows = wiredata.count_rows(contents(sq4), nrows, want);
             }
-            if go && est.task(kind) == 2 {
+            if go && task == 2 {
                 var i = 0;
                 var foreign = 0 - 1;
                 borrow yv as &yq in {
@@ -738,7 +810,7 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                                 if true {
                                     borrow yv as &yr in {
                                         borrow xs as &xq in {
-                                            let (mobj, mplain, mund, fl) = wiredata.metrics_block(heap, kind, xq, contents(yr), contents(sr.wv), c0, c1, pos, o.max_rows);
+                                            let (mobj, mplain, mund, fl) = wiredata.metrics_block(heap, kind, task, xq, contents(yr), contents(sr.wv), file.model_bytes(sr.lo), c0, c1, pos, o.max_rows);
                                             if fl.code != 0 {
                                                 e = wiredata.bad_metric(heap, e, fl);
                                                 buffer.drop(heap, mplain);
@@ -748,10 +820,10 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                                                 w = json.put_key(heap, w, "model");
                                                 w = json.put_string(heap, w, est.name(kind));
                                                 w = json.put_key(heap, w, "task");
-                                                w = json.put_string(heap, w, wiredata.task_word(est.task(kind)));
+                                                w = json.put_string(heap, w, wiredata.task_word(task));
                                                 w = json.put_key(heap, w, "rows");
                                                 w = json.put_int(heap, w, rows);
-                                                if est.task(kind) == 2 {
+                                                if task == 2 {
                                                     w = json.put_key(heap, w, "positive");
                                                     w = json.put_int(heap, w, pos);
                                                 }

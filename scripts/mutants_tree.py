@@ -125,6 +125,7 @@ M = [
  ("reader: counts non-negative", [(M_, "if na < 0 || nb < 0 {", "if na < -5 {")]),
  ("reader: finite values (load)", [(M_, "            if bad_vals != 0 {", "            if bad_vals != 0 && false {")]),
  ("reader: class leaf value equals the counts", [(M_, " || bits_of(v) != bits_of(float_of(nb) / float_of(na + nb)) {", " {")]),
+ ("reader: counts bounded before they are added", [(M_, "if na > 1048576 || nb > 1048576 || na + nb < 1 ||", "if na + nb < 1 || na > 1048576 || nb > 1048576 ||")]),
  ("reader: tree offsets increase", [(M_, "if tof[t + 1] <= tof[t] {", "if tof[t + 1] < tof[t] {")]),
  ("reader: offsets end at total", [(M_, "if tof[0] != 0 || tof[trees] != total {", "if tof[0] != 0 {")]),
  ("reader: length equation (longer)", [(M_, "    if n > size {\n        return bad(heap, deny.model_malformed());\n    }\n", "")]),

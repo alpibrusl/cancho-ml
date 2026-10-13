@@ -18,7 +18,7 @@ FLAGS = ["--" + f["name"] for f in T["flags"]] + ["--", "-", "-x", "---", "--=",
 VALUES = ["1", "0", "-1", "1000", "99999999999999999999", "18446744073709551616", "", "..", "../x", "a/../b", "./x", "a//b", "a/",
           "/etc/passwd", "/dev/null", "/nonexistent", "a" * 5000, "reg.csv", "cls.csv", "m.cml", "c.cml", "bad.cml", "sub", "sub/reg.csv",
           "missing", "y", "lab", "id", "x", "id,x", "y,y", ",", ",,", "\n", "\x01", "\xe9", "\xff", "constant", "regression", "classification",
-          "linear", "logistic", "train=0.8", "train=2", "train=.5", "train=0.123456789", "train=", "0.5", "-0.5", "1e400", "nan", "1e-5", "p.txt", "lin.csv",
+          "linear", "logistic", "tree", "forest", "31", "4194305", "999999999", "4096", "1025", "256", "train=0.8", "train=2", "train=.5", "train=0.123456789", "train=", "0.5", "-0.5", "1e400", "nan", "1e-5", "p.txt", "lin.csv",
           "lcls.csv", "lin.cml", "log.cml", "impute column=* strategy=mean", "scale column=a kind=standard;impute column=b strategy=median",
           "scale column=zzz kind=minmax", "model kind=linear", ";", ";;;", "encode column=a kind=onehot max-categories=0", "bucket column=a kind=quantile bins=300",
           "impute column=a strategy=constant", "scale column= kind=minmax", "a=b=c", "# c", "\n",
@@ -43,6 +43,8 @@ def sandbox():
     assert sb.run("fit", "--model", "linear", "--target", "y", "--output", "lin.cml", "lin.csv").status == 0
     assert sb.run("fit", "--model", "logistic", "--step", "scale column=* kind=standard", "--target", "lab", "--output", "log.cml", "lcls.csv").status == 0
     assert sb.run("fit", "--task", "classification", "--target", "lab", "--output", "c.cml", "cls.csv").status == 0
+    assert sb.run("fit", "--model", "tree", "--target", "y", "--output", "tree.cml", "lin.csv").status == 0
+    assert sb.run("fit", "--model", "forest", "--task", "classification", "--trees", "5", "--target", "lab", "--output", "forest.cml", "lcls.csv").status == 0
     sb.write("bad.cml", sb.read("m.cml")[:100])
     return sb
 
@@ -134,6 +136,42 @@ class Fuzz(unittest.TestCase):
                                        "train=0.01", "p.txt", "..", "impute column=* strategy=mean", "scale column=zzz kind=minmax", ";", "model kind=linear"]:
                     self.check([*base, flag, v])
                     self.check([*base, flag + "=" + v])
+
+    def test_every_flag_of_the_tree_and_the_forest_every_mistake(self):
+        bases = (["fit", "--model", "tree", "--target", "y", "--output", "o.cml", "lin.csv"],
+                 ["fit", "--model", "forest", "--task", "classification", "--target", "lab", "--output", "o.cml", "lcls.csv"],
+                 ["fit", "--model", "forest", "--target", "y", "--output", "o.cml", "lin.csv"],
+                 ["fit", "--plan", "p.txt", "--target", "y", "--output", "o.cml", "lin.csv"],
+                 ["predict", "--model-file", "tree.cml", "lin.csv"], ["predict", "--model-file", "forest.cml", "--proba", "lcls.csv"],
+                 ["eval", "--model-file", "tree.cml", "lin.csv"], ["eval", "--model-file", "forest.cml", "lcls.csv"])
+        values = ("", "0", "1", "2", "-1", "5", "30", "31", "255", "256", "1024", "1025", "4096", "4097", "4194304", "4194305", "999999999", "1000000000", "99999999999999999999",
+                  "0.5", "1e3", "nan", "classification", "regression", "tree", "forest", "..")
+        for base in bases:
+            for flag in ("--trees", "--max-depth", "--min-leaf", "--bins", "--mtry", "--bootstrap", "--max-nodes", "--task", "--model", "--seed", "--threads", "--positive"):
+                self.check([*base, flag])
+                self.check([*base, flag, flag])
+                for v in values:
+                    self.check([*base, flag, v])
+                    self.check([*base, flag + "=" + v])
+
+    def test_seeded_vectors_with_the_tree_and_the_forest(self):
+        rng = random.Random(int(os.environ.get("FUZZ_SEED", "20261012")) + 1)
+        flags = ["--trees", "--max-depth", "--min-leaf", "--bins", "--mtry", "--bootstrap", "--max-nodes", "--threads", "--seed", "--task", "--positive", "--split", "--proba", "--step", "--plan"]
+        values = ["1", "2", "3", "7", "30", "31", "64", "255", "256", "1000", "1025", "4096", "4194305", "0", "-1", "classification", "regression", "train=0.5", "p.txt",
+                  "impute column=* strategy=mean", "scale column=* kind=standard", "bucket column=a kind=width bins=3", "", "..", "99999999999999999999"]
+        for _ in range(int(os.environ.get("FUZZ_N", "2500")) // 2):
+            verb = rng.choice(["fit", "fit", "predict", "eval"])
+            if verb == "fit":
+                argv = ["fit", "--model", rng.choice(["tree", "forest"]), "--target", rng.choice(["y", "lab"]), "--output", "o.cml", rng.choice(["lin.csv", "lcls.csv"])]
+            else:
+                argv = [verb, "--model-file", rng.choice(["tree.cml", "forest.cml"]), rng.choice(["lin.csv", "lcls.csv"])]
+            for _ in range(rng.randint(1, 5)):
+                argv.insert(rng.randrange(1, len(argv)), rng.choice(values) if rng.random() < 0.5 else rng.choice(flags))
+                if rng.random() < 0.7:
+                    i = rng.randrange(1, len(argv))
+                    argv.insert(i, rng.choice(flags))
+                    argv.insert(i + 1, rng.choice(values))
+            self.check(argv, rooted=rng.random() < 0.6)
 
     def test_seeded_vectors(self):
         rng = random.Random(int(os.environ.get("FUZZ_SEED", "20261012")))

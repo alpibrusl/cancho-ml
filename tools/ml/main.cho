@@ -206,6 +206,9 @@ fn check_nats[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, 
         if bytes.equal(name, "from") {
             least = 0;
         }
+        if est.hparam_flag(name) {
+            least = est.hparam_min(name);
+        }
         e = check_nat(heap, args, parsed, e, name, least);
         k = k + 1;
     }

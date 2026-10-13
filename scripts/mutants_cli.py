@@ -46,7 +46,7 @@ MUTANTS = [
     M("t1-flag-missing-from-the-schema", "T1", "the schema's flag enum loses --limit",
       [("schemas/ml.v1.json", '"--limit",', "", 1)], ["test_tables"]),
     M("t1-rule-without-fixture", "T1", "a rule is added to the table (schemas regenerated); no fixture reaches it",
-      [("tools/ml/spec.cho", ";ml.plan.model-not-built\";", ";ml.plan.model-not-built;ml.input.too-wide\";", 1),
+      [("tools/ml/spec.cho", ";ml.limit.nodes\";", ";ml.limit.nodes;ml.input.too-wide\";", 1),
        ("tools/ml/spec.cho", ";limit.log-full|8|never|", ";ml.input.too-wide|8|never|a rule nothing reaches. Hint: none. Repair: none.;limit.log-full|8|never|", 1)],
       ["test_tables"], regen=True),
     M("t1-fixture-reaches-another-rule", "T1", "the two fixtures of ml.model.malformed now claim another rule",
@@ -127,7 +127,7 @@ MUTANTS = [
       [("manifests/ml.authority.json", '"name": "heap",', '"name": "heapx",', 1)], ["test_authority"], kind="manifest"),
     # ------------------------------------------------------------------ H1: honesty
     M("h1-a-model-in-the-table-that-is-not-built", "H1", "logreg is a choice of --model, with no implementation",
-      [("tools/ml/spec.cho", "model||choice:constant/linear/logistic|", "model||choice:constant/linear/logistic/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
+      [("tools/ml/spec.cho", "model||choice:constant/linear/logistic/tree/forest|", "model||choice:constant/linear/logistic/tree/forest/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
     M("h1-an-exponent-is-read-as-a-prefix", "H1", "1e5 is read as 1", [("tools/ml/csvcell.cho", "return (4, 0, 0, 0);", "return (0, 1, 0, 1);", 1)],
       ["test_honesty"]),
     # ------------------------------------------------------------------ RD7: the constant model on floats (docs/reader.md section 5)
@@ -185,7 +185,7 @@ def apply_edits(tree, m, strict=True):
 def build(tree):
     g = lambda pat: sorted(glob.glob(str(tree / pat)))
     files = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
-             g("lib/models/logistic/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(tree / "generated/ml/built.cho")] +
+             g("lib/models/logistic/*.cho") + g("lib/models/tree/*.cho") + g("lib/models/treewire/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(tree / "generated/ml/built.cho")] +
              g("tools/ml/*.cho"))
     out = tree / "build" / "ml"
     p = subprocess.run([compiler(), "build", "--std", *files, "-o", str(out)], capture_output=True, text=True, cwd=tree)

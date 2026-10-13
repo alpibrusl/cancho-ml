@@ -48,10 +48,10 @@ pub fn defs[&s](verb: &s [byte]) -> [] &static [byte] {
         return "k:int=1,1024:req iterations:int=1,1000:=10";
     }
     if bytes.equal(verb, "model:tree") {
-        return "task:enum=classification,regression:req max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
+        return "task:enum=classification,regression:req max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 max-nodes:int=1,999999999:=4194304";
     }
     if bytes.equal(verb, "model:forest") {
-        return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
+        return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 mtry:int=0,4096:=0 bootstrap:int=0,1:=1 max-nodes:int=1,999999999:=4194304";
     }
     return "";
 }
@@ -71,10 +71,10 @@ pub fn model_defs[&s](name: &s [byte]) -> [] &static [byte] {
         return "k:int=1,1024:req iterations:int=1,1000:=10";
     }
     if bytes.equal(name, "tree") {
-        return "task:enum=classification,regression:req max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
+        return "task:enum=classification,regression:req max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 max-nodes:int=1,999999999:=4194304";
     }
     if bytes.equal(name, "forest") {
-        return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
+        return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 mtry:int=0,4096:=0 bootstrap:int=0,1:=1 max-nodes:int=1,999999999:=4194304";
     }
     return "";
 }

@@ -1,18 +1,30 @@
-# A random forest (docs/models-tree.md): a library, not wired into the verbs in this stage. Shares kind 7 with the tree.
+# A random forest (docs/models-tree.md), wired into the verbs by docs/wiring-trees.md. Shares kind 7 with the tree.
 name = "forest"
 kind = 7
 kind_fn = "model_tree"
 shares_kind_with = "tree"
-task = "classification"
-tier = "experimental"
-wired = false
-payload_version = 1
+task = "both"
+tier = "supported"
+wired = true
+shape = "blob"
+adapter = "models.adapter_forest"
+payload_version = 2
 doc = "docs/models-tree.md"
-files = ["lib/models/tree/forest.cho"]
+files = ["lib/models/tree/forest.cho", "lib/models/treewire/adapter_forest.cho"]
 plan_order = 5
 
+[limits]
+max_rows = 1048576
+max_trees = 1024
+max_nodes_per_tree = 4194304
+max_nodes_total = 16777216
+max_depth = 30
+
 [tags]
-emits = ["ml.input.non-finite", "ml.label.not-binary", "ml.label.single-class", "ml.limit.depth", "ml.limit.nodes", "ml.param.threads"]
+emits = [
+  "ml.input.empty", "ml.input.too-many-rows", "ml.input.too-many-columns", "ml.input.too-many-cells", "ml.input.non-finite", "ml.label.not-binary", "ml.label.single-class",
+  "ml.limit.depth", "ml.limit.nodes", "ml.param.out-of-range", "ml.param.threads", "ml.model.truncated", "ml.model.malformed", "ml.schema.mismatch",
+]
 
 [authority]
 adds = []
@@ -20,13 +32,21 @@ reason = ""
 
 [sums]
 decisive = []
+# float sums made in a fixed sequential order, not through linalg.order: the regression sums of the split search and the aggregation over the trees (docs/models-tree.md
+# sections 2.6 and 3.2). A file of kind 7 records sum_order 3 for exactly this reason (docs/wiring-trees.md section 4).
+sequential = ["lib/models/tree/grow.cho", "lib/models/tree/predict.cho"]
+
+[oracle]
+script = "scripts/oracle_wire_tree.py"
+args = "forest"
+tolerance = "bits"
 
 [[hyperparameter]]
 name = "task"
 type = "enum"
 values = ["classification", "regression"]
 required = true
-doc = "classification or regression"
+doc = "classification or regression: set with --task, default regression"
 
 [[hyperparameter]]
 name = "trees"
@@ -40,9 +60,9 @@ doc = "the number of trees"
 name = "max-depth"
 type = "int"
 min = 1
-max = 30
+max = 1000
 default = "8"
-doc = "the deepest tree"
+doc = "the deepest tree: 1 to 1000 are accepted and a depth above 30 is refused with ml.limit.depth"
 
 [[hyperparameter]]
 name = "min-leaf"
@@ -51,3 +71,35 @@ min = 1
 max = 1000000
 default = "1"
 doc = "the fewest rows in a leaf"
+
+[[hyperparameter]]
+name = "bins"
+type = "int"
+min = 2
+max = 255
+default = "64"
+doc = "the quantile bins of the split search"
+
+[[hyperparameter]]
+name = "mtry"
+type = "int"
+min = 0
+max = 4096
+default = "0"
+doc = "the features tried at each node, 0 for floor of the square root of d (classification) or d over 3 (regression): above d is ml.param.out-of-range"
+
+[[hyperparameter]]
+name = "bootstrap"
+type = "int"
+min = 0
+max = 1
+default = "1"
+doc = "1 draws the rows of each tree with replacement, 0 uses every row once"
+
+[[hyperparameter]]
+name = "max-nodes"
+type = "int"
+min = 1
+max = 999999999
+default = "4194304"
+doc = "the most nodes one tree may have: above 4194304, or fewer than the tree needs, is ml.limit.nodes (a tree is never cut)"

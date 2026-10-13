@@ -133,9 +133,9 @@ rule is a function of the model kind, which a reader knows before it reads `meta
 * **kinds 4 and above** (every kind whose row of the table below says so; today 4 to 7): the payload is that, then **`u32 sum_order`**, the last four bytes of `meta`:
   `meta` is exactly `36 + length` bytes, else `ml.model.malformed` (a `meta` of any other length is not looked at for the order: the ordinary field checks refuse it). `sum_order` = **2** for the order of `docs/linalg.md` section 2
   (`K = 256`, `L = 4`, `(l0 + l1) + (l2 + l3)`, the fixed tree, panels of 32). **1** is the order before `v1-lanes` (one chain per block): retired,
-  never written by a model file, refused if found. 0 and 3 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
+  never written by a model file, refused if found. **3 is the order of kind 7** (a tree or a forest: every float sum is a sequential left fold in a fixed row or tree order and no lane sum is made, `docs/models-tree.md` 3.2; `docs/wiring-trees.md` section 4): a reader requires exactly the value of the kind, 2 for kinds 4 to 6 and 3 for kind 7. 0 and 4 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
   of a kind is fixed by the kind.
-* **A reader refuses a file whose `sum_order` it does not implement with `ml.model.version`** (detail `sum_order` found, `known` 2): it cannot reproduce the
+* **A reader refuses a file whose `sum_order` it does not implement with `ml.model.version`** (detail `sum_order` found, `known` the order of the kind: 2, or 3 for kind 7): it cannot reproduce the
   parameters' arithmetic, and the same refusal tag as an unknown format version says "refit with this version". The order of the checks is bad-magic, version,
   truncated, checksum, **sum order (version)**, then malformed: the field is inside a checksummed section, so it is read after the checksum, and before the other fields,
   so a file of another order is never reported as malformed because its parameters look odd. A reader that does not build a kind (today `ml`, which builds 1 to 3) still reads
@@ -322,8 +322,8 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.linalg.singular` | 8 | a zero on the diagonal of a triangular solve | none |
 | `ml.param.threads` | 2 | a thread count outside 1 to 64, or thread copies of a tree fit over the memory ceiling | a thread count of 1 to 64 |
 | `ml.fit.non-finite` | 8 | a coefficient, a loss or a gain became non-finite during a fit | scale the features, add l2, or fewer iterations |
-| `ml.limit.depth` | 8 | a tree over the depth ceiling (30) | a max-depth of at most 30 |
-| `ml.limit.nodes` | 8 | a forest over the node ceiling | raise --max-nodes, lower the depth or the trees, or raise min-samples-leaf |
+| `ml.limit.depth` | 8 | a tree over the depth ceiling (30) *(reachable since W3a: `extra()`, `docs/wiring-trees.md` section 6)* | a max-depth of at most 30 |
+| `ml.limit.nodes` | 8 | a forest over the node ceiling *(reachable since W3a)* | raise --max-nodes, lower the depth or the trees, or raise min-samples-leaf |
 | `ml.metric.length-mismatch` | 8 | two arrays of a metric have different lengths | one prediction per row |
 | `ml.metric.bad-probability` | 8 | a probability outside 0 to 1 | the probability of the positive class |
 | `ml.split.empty-fold` | 8 | k above the number of rows, or a train/test split that leaves a side empty | fewer folds, a smaller test size |
@@ -572,3 +572,12 @@ Text columns are **declared** (`--cat NAMES` of `fit`, never inferred), read int
 tensor beside the float matrix (`lib/core/catmat.cho`), with a missing bitmap, `--na-values`, and five limits each refused before the thing it limits exists (categories 64/1,024, bytes 255/65,536,
 pool 1 MiB/8 MiB, columns 128/4,096, and the id cells in `--max-cells`). Stage 2 (`docs/categorical-encoders.md`) built the steps that read them: `encode` on a categorical column (one-hot or label, with the rare bucket `min-count`, `missing`, `unknown`), `freq` and `hash`, in `lib/transforms/catenc.cho` and `lib/pipeline/mixed.cho`; a declared column that no step reads is refused with `ml.input.categorical-not-encoded`, and a fit that would write a file is refused with `ml.model.vocabulary-not-stored` until stage 3.
 The reader's column kind 4 and the schema type code 3 are registered in `lib/core/kinds.cho`. No model file changes. Stages 2 to 4 of the issue are not built.
+
+## 21. Stage W3a: the tree and the forest in `ml fit | predict | eval` (`docs/wiring-trees.md`)
+
+`--model tree` and `--model forest` are wired through the module contract (a second adapter interface, `docs/modules.md` section 4b). Registries: model kind 7 is written by both (the plan
+names which); its `sum_order` is **3** (section 4.1: sequential sums, no lane order); the payload is the library's with the labels record of a classification after it. Section 8: `ml.limit.depth` and
+`ml.limit.nodes` moved from `pending()` to `extra()` and `rules()` with a fixture each; `ml.input.too-many-rows` has a second cause (a tree fit takes at most 2^20 = 1,048,576 training rows); `ml.param.threads`
+has one more cause that no fixture can reach (the memory ceiling of the thread copies, about 2.3e8 cells). A tree or forest takes missing cells itself (a learned default side per split); the linear models
+keep refusing them. The libraries are otherwise unchanged except for the order of two comparisons in the reader of the payload, which a fuzz of the wiring found to trap on a class count of 2^63 - 1
+(`docs/models-tree.md` 10.6).

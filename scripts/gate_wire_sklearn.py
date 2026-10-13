@@ -106,6 +106,11 @@ def gate(model, seed):
 
 def main():
     models = sys.argv[1:] or ["linear", "logistic"]
+    if models and all(m in ("tree", "forest") for m in models):
+        # the tree and the forest: docs/wiring-trees.md section 9, scripts/gate_wire_sklearn_trees.py
+        sys.argv = [sys.argv[0]] + models
+        import gate_wire_sklearn_trees
+        return gate_wire_sklearn_trees.main()
     ok = True
     for model in models:
         for seed in (1, 2, 3):
