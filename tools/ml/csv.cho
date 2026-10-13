@@ -16,8 +16,11 @@ module ml.csv;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import ml.catmat;
 import ml.csvcell;
+import ml.dict;
 import ml.exact;
+import ml.refuse;
 import ml.fsq;
 import ml.matrix;
 import facc;
@@ -61,12 +64,77 @@ pub struct Cfg {
 // list, from 1), 13 too many cells, 14 the target is dropped, 15 the file is not what the first pass saw (a cell does not fit the
 // scale, or there are more rows than the matrix has), 16 a classification target with a third value, 17 a quote closed and followed
 // by something that is not a comma (line), 18 a quote still open at the end of the file (line: where the record began), 19 --float
-// names a column that is not there (aux: its place in the list)
+// names a column that is not there (aux: its place in the list), 20 a cell of a categorical column is not UTF-8 (aux: the offset of the first bad
+// byte in the cell), 21 a cell of one is longer than the limit (aux: its length), 22 a categorical column has more strings than the limit (aux: the limit),
+// 23 the pool of all the categories would pass its limit (aux: the size it would have), 24 more categorical columns than the limit (aux: how many), 25 --cat
+// names a column that is not there (aux: its place in the list), 26 a categorical column is dropped (col), 27 it is the target (col), 28 it is also in
+// --float (col), 29 a column of the stored vocabulary is not in the file (aux: its place, from 1), 30 the parameters of the dictionary are out of range
+// (aux: the code of ml.refuse). docs/categorical.md section 5
 pub struct Report {
     status: int,
     line: int,
     col: int,
     aux: int,
+}
+
+// The categorical part of a scan (docs/categorical.md): `cols` the names given to --cat (fit; ignored when a vocabulary is given), `na` the
+// markers of --na-values (comma separated, none empty), and the four limits. `no_cats()` is the numeric-only reader.
+pub struct CatCfg {
+    cols: &static [byte],
+    na: &static [byte],
+    max_cats: int,
+    max_str: int,
+    max_pool: int,
+    max_catcols: int,
+}
+
+pub fn no_cats() -> [] CatCfg {
+    return CatCfg { cols: "", na: "", max_cats: dict.default_categories(), max_str: dict.default_string_bytes(), max_pool: dict.default_pool_bytes(), max_catcols: dict.default_columns() };
+}
+
+// What the categorical part of a scan holds. kind: 0 none (the numeric reader), 1 BUILD (pass 1 of a fit: the strings go into `bld`), 2 LOOKUP (pass 2
+// of a fit: the ids are looked up in `voc`, a string not found means the file changed), 3 PREDICT (every pass of a predict: looked up in the stored `voc`,
+// a string it does not hold is -2 and counted in `unseen` by the pass that writes). Pass 2 writes `ids` (crows x ncat) and the bitmap `cmiss` (cwpc words a column).
+pub res struct CatState {
+    kind: int,
+    bld: dict.Dict,
+    voc: dict.Vocab,
+    ids: Box[[int]],
+    cmiss: Box[[int]],
+    unseen: Box[[int]],
+    ncat: int,
+    crows: int,
+    cwpc: int,
+}
+
+pub fn off_state[&h](heap: &!h Heap) -> [heap] CatState {
+    return CatState { kind: 0, bld: dict.empty_dict(heap), voc: dict.empty_vocab(heap), ids: box_slice(heap, 1, 0), cmiss: box_slice(heap, 1, 0), unseen: box_slice(heap, 1, 0), ncat: 0, crows: 0, cwpc: 0 };
+}
+
+// pass 1 of a fit: the strings of the columns named in cfg are interned
+pub fn build_state[&h](heap: &!h Heap) -> [heap] CatState {
+    return CatState { kind: 1, bld: dict.empty_dict(heap), voc: dict.empty_vocab(heap), ids: box_slice(heap, 1, 0), cmiss: box_slice(heap, 1, 0), unseen: box_slice(heap, 1, 0), ncat: 0, crows: 0, cwpc: 0 };
+}
+
+// a lookup state over the vocabulary `v` (consumed). kind 2 or 3. `ids` etc. are those of ml.catmat.parts (empty boxes for a pass that writes nothing)
+pub fn lookup_state[&h](heap: &!h Heap, kind: int, v: dict.Vocab, ids: Box[[int]], cmiss: Box[[int]], unseen: Box[[int]], ncat: int, crows: int, cwpc: int) -> [heap] CatState {
+    return CatState { kind: kind, bld: dict.empty_dict(heap), voc: v, ids: ids, cmiss: cmiss, unseen: unseen, ncat: ncat, crows: crows, cwpc: cwpc };
+}
+
+pub fn drop_state[&h](heap: &!h Heap, k: CatState) -> [heap] int {
+    let CatState { kind, bld, voc, ids, cmiss, unseen, ncat, crows, cwpc } = k;
+    dict.drop(heap, bld);
+    dict.drop_vocab(heap, voc);
+    unbox_slice(heap, ids);
+    unbox_slice(heap, cmiss);
+    unbox_slice(heap, unseen);
+    return kind;
+}
+
+// the pieces: (kind, builder, vocabulary, ids, bitmap, unseen counts)
+pub fn state_parts(k: CatState) -> [] (int, dict.Dict, dict.Vocab, Box[[int]], Box[[int]], Box[[int]]) {
+    let CatState { kind, bld, voc, ids, cmiss, unseen, ncat, crows, cwpc } = k;
+    return (kind, bld, voc, ids, cmiss, unseen);
 }
 
 // What a scan writes into besides the shape: `acc` (8 ints, or `fsq.size()` for mode 7), `fv` (the 73 ints of a facc sum, for mode 6),
@@ -119,8 +187,8 @@ pub fn sink_join(acc: Box[[int]], fv: vec.Vec[int], data: Box[[float]], miss: Bo
     return Sinks { acc: acc, fv: fv, data: data, miss: miss };
 }
 
-// per column i of `cols`: cells[i] kind (0 no cell yet, 1 int, 2 dec, 3 float), cells[cols + i] scale, cells[2 cols + i] the most
-// integer digits, cells[3 cols + i] 1 if dropped
+// per column i of `cols`: cells[i] kind (0 no cell yet, 1 int, 2 dec, 3 float, 4 categorical), cells[cols + i] scale, cells[2 cols + i] the most
+// integer digits, cells[3 cols + i] 1 if dropped, cells[4 cols + i] 0, or 1 + the place of the column among the categorical ones (file order)
 pub res struct Shape {
     names: buffer.Buffer,
     ends: vec.Vec[int],
@@ -183,6 +251,11 @@ pub fn intd[&s](sh: &s Shape, i: int) -> [] int {
 
 pub fn dropped[&s](sh: &s Shape, i: int) -> [] bool {
     return contents(sh.cells)[3 * sh.cols + i] != 0;
+}
+
+// 0 if column i is not categorical, else 1 + its place among the categorical columns
+pub fn catplace[&s](sh: &s Shape, i: int) -> [] int {
+    return contents(sh.cells)[4 * sh.cols + i];
 }
 
 // the index of the column named `want`, -1 if there is none
@@ -351,11 +424,205 @@ fn fold[&a, &v](mode: int, tscale: int, pred: int, kind: int, m: int, frac: int,
     return 0;
 }
 
+// ---------------------------------------------------------------- a cell of a categorical column
+
+// `cell` with each doubled quote written once, into dst; the length written, or -1 if dst is too small. A quoted field's text reaches here with `""` still
+// doubled (reader.fields), so a quote in it is always one of a pair.
+fn unquote[&d, &c](dst: &!d [byte], cell: &c [byte]) -> [] int {
+    if len(cell) > len(dst) {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < len(cell) {
+        dst[n] = cell[i];
+        n = n + 1;
+        if int_of(cell[i]) == 34 && i + 1 < len(cell) && int_of(cell[i + 1]) == 34 {
+            i = i + 2;
+        } else {
+            i = i + 1;
+        }
+    }
+    return n;
+}
+
+// whether the cell is one of the markers of `list` (comma separated; an empty list has none)
+fn is_marker[&c](cell: &c [byte], list: &static [byte]) -> [] bool {
+    if len(list) == 0 {
+        return false;
+    }
+    let count = bytes.count_byte(list, ',') + 1;
+    var k = 1;
+    while k <= count {
+        if bytes.equal(cell, bytes.field(list, ',', k)) {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// One cell of categorical column `cj` (0-based among the categorical columns) of row `row`, its text unquoted (docs/categorical.md section 5.1).
+// (0, 0), or (status, aux) as in Report. `writes`: this is the pass that fills the ids.
+fn cat_cell[&k, &c](cs: &!k CatState, cc: CatCfg, cell: &c [byte], cj: int, row: int, writes: bool) -> [] (int, int) {
+    var id = catmat.missing_id();
+    if len(cell) > 0 && !is_marker(cell, cc.na) {
+        if len(cell) > cc.max_str {
+            return (21, len(cell));
+        }
+        let off = dict.utf8_offset(cell);
+        if off >= 0 {
+            return (20, off);
+        }
+        if cs.kind == 1 {
+            let code = dict.intern(cs.bld, cj, cell);
+            if code == refuse.limit_categories() {
+                return (22, cc.max_cats);
+            }
+            if code == refuse.limit_string_pool() {
+                return (23, dict.dict_pool_used(cs.bld) + len(cell));
+            }
+            if code != 0 {
+                return (30, code);
+            }
+            return (0, 0);
+        }
+        id = dict.find(cs.voc, cj, cell);
+        if id < 0 {
+            if cs.kind == 2 {
+                return (15, 0);
+            }
+            id = catmat.unseen_id();
+            if writes {
+                contents(cs.unseen)[cj] = contents(cs.unseen)[cj] + 1;
+            }
+        }
+    }
+    if writes && cs.kind >= 2 {
+        if row >= cs.crows {
+            return (15, 0);
+        }
+        catmat.put(contents(cs.ids), cs.ncat, row, cj, id);
+        if id == catmat.missing_id() {
+            catmat.mark_missing(contents(cs.cmiss), cs.cwpc, row, cj);
+        }
+    }
+    return (0, 0);
+}
+
+// The header part of the categorical columns (docs/categorical.md section 5): which columns are categorical, in file order. cells plane 4 gets 1 + the
+// place, plane 0 the kind 4. Consumes the state and answers it again with (status, column, aux) as in Report. Fit (kind 1): the columns named in cc.cols, each
+// checked against --drop, the target and --float, their number against the limit, and only then the dictionary is allocated. Predict (kind 2 or 3): the columns of
+// the stored vocabulary, found by name.
+fn cat_header[&h, &s, &n, &e](heap: &!h Heap, flags: &!s [int], names: &n [byte], ends: &e vec.Vec[int], cols: int, tcol: int, cc: CatCfg, cs: CatState) -> [heap] (CatState, int, int, int) {
+    var kind = 0;
+    borrow cs as &cr in {
+        kind = cr.kind;
+    }
+    if kind == 0 {
+        return (cs, 0, 0, 0);
+    }
+    if kind == 1 {
+        let (st, k) = apply_list(flags, names, ends, cols, cc.cols, 4, 1, 25);
+        if st != 0 {
+            return (cs, st, 0, k);
+        }
+        var count = 0;
+        var j = 0;
+        while j < cols {
+            if flags[4 * cols + j] == 1 {
+                if flags[3 * cols + j] != 0 {
+                    return (cs, 26, j, 0);
+                }
+                if j == tcol {
+                    return (cs, 27, j, 0);
+                }
+                if flags[j] == 3 {
+                    return (cs, 28, j, 0);
+                }
+                count = count + 1;
+                flags[4 * cols + j] = count;
+                flags[j] = 4;
+            }
+            j = j + 1;
+        }
+        if count > cc.max_catcols {
+            return (cs, 24, 0, count);
+        }
+        // the names of the categorical columns, one after another
+        var nm = buffer.empty(heap, 16);
+        let ne = box_slice(heap, count + 1, 0);
+        var nee = ne;
+        borrow mut nee as &!ew in {
+            var at = 0;
+            j = 0;
+            while j < cols {
+                if flags[4 * cols + j] > 0 {
+                    var from = 0;
+                    if j > 0 {
+                        from = vec.get(ends, j - 1);
+                    }
+                    nm = buffer.append(heap, nm, names[from..vec.get(ends, j)]);
+                    var sz = 0;
+                    borrow nm as &nb in {
+                        sz = buffer.size(nb);
+                    }
+                    contents(ew)[at] = sz;
+                    at = at + 1;
+                }
+                j = j + 1;
+            }
+        }
+        var made = cs;
+        var code = 0;
+        borrow nm as &nr in {
+            borrow nee as &er in {
+                let (d, c) = dict.make(heap, count, cc.max_catcols, cc.max_cats, cc.max_str, cc.max_pool, buffer.bytes(nr), contents(er));
+                let (k2, b2, v2, i2, m2, u2) = state_parts(made);
+                dict.drop(heap, b2);
+                made = CatState { kind: k2, bld: d, voc: v2, ids: i2, cmiss: m2, unseen: u2, ncat: count, crows: 0, cwpc: 0 };
+                code = c;
+            }
+        }
+        buffer.drop(heap, nm);
+        unbox_slice(heap, nee);
+        if code == refuse.limit_categorical_columns() {
+            return (made, 24, 0, count);
+        }
+        if code != 0 {
+            return (made, 30, 0, code);
+        }
+        return (made, 0, 0, 0);
+    }
+    // a stored vocabulary
+    var nv = 0;
+    borrow cs as &cr in {
+        nv = dict.ncols(cr.voc);
+    }
+    var c = 0;
+    while c < nv {
+        var j = 0 - 1;
+        borrow cs as &cr in {
+            j = column_of(names, ends, cols, dict.name(cr.voc, c));
+        }
+        if j < 0 || flags[3 * cols + j] != 0 {
+            return (cs, 29, 0, c + 1);
+        }
+        if j == tcol {
+            return (cs, 27, j, 0);
+        }
+        flags[4 * cols + j] = c + 1;
+        flags[j] = 4;
+        c = c + 1;
+    }
+    return (cs, 0, 0, 0);
+}
+
 // ---------------------------------------------------------------- a data row
 
 // (status, column, aux) as in Report. `row` is the 0-based row of the file, `quoted` whether the record holds a quote (then `fb` has
 // the offsets of its fields, from reader.fields)
-fn read_row[&l, &s, &a, &v, &d, &b, &f](line: &l [byte], cols: int, tcol: int, cfg: Cfg, row: int, quoted: bool, flags: &!s [int], acc: &!a [int], fv: &!v vec.Vec[int], data: &!d [float], miss: &!b [int], fb: &!f [int]) -> [] (int, int, int) {
+fn read_row[&l, &s, &a, &v, &d, &b, &f, &k, &z](line: &l [byte], cols: int, tcol: int, cfg: Cfg, row: int, quoted: bool, flags: &!s [int], acc: &!a [int], fv: &!v vec.Vec[int], data: &!d [float], miss: &!b [int], fb: &!f [int], cc: CatCfg, cs: &!k CatState, sc: &!z [byte]) -> [] (int, int, int) {
     if quoted {
         let (n, inside, bad) = reader.fields(line, 44, fb, cols);
         if inside || bad || n != cols {
@@ -381,7 +648,32 @@ fn read_row[&l, &s, &a, &v, &d, &b, &f](line: &l [byte], cols: int, tcol: int, c
         }
         let dropped = flags[3 * cols + i] != 0;
         let skipped = (cfg.mode == 5 || cfg.mode == 9) && i == tcol;
-        if !dropped && !skipped {
+        let place = flags[4 * cols + i];
+        if !dropped && !skipped && place > 0 {
+            // a categorical column: its cell is a string (docs/categorical.md section 5.1)
+            let raw = line[first..last];
+            var cst = 0;
+            var caux = 0;
+            let writes = cfg.mode == 8 || cfg.mode == 9;
+            if quoted && fb[3 * i + 2] == 1 && index_of_byte(raw, byte_of(34)) >= 0 {
+                let n = unquote(sc, raw);
+                if n < 0 {
+                    cst = 21;
+                    caux = len(raw);
+                } else {
+                    let (s2, a2) = cat_cell(cs, cc, sc[0..n], place - 1, row, writes);
+                    cst = s2;
+                    caux = a2;
+                }
+            } else {
+                let (s2, a2) = cat_cell(cs, cc, raw, place - 1, row, writes);
+                cst = s2;
+                caux = a2;
+            }
+            if cst != 0 {
+                return (cst, i, caux);
+            }
+        } else if !dropped && !skipped {
             let (st, kind, m, frac, idig, key) = csvcell.read(line[first..last]);
             if st == 1 && cfg.missing {
                 if cfg.mode == 8 || cfg.mode == 9 {
@@ -436,7 +728,7 @@ fn read_row[&l, &s, &a, &v, &d, &b, &f](line: &l [byte], cols: int, tcol: int, c
                 }
             }
         }
-        if !dropped && !skipped {
+        if !dropped && !skipped && place == 0 {
             mj = mj + 1;
         }
         i = i + 1;
@@ -454,6 +746,24 @@ fn report(status: int, line: int, col: int, aux: int) -> [] Report {
 // record's fields and four ints a column. Stops at the first problem (a cell that is not a number is not followed by more cells that
 // are not). The sinks come back with what the mode wrote into them.
 pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [byte], sk: Sinks) -> [heap, file_read] (Shape, Report, Sinks) {
+    let (sh, rep, k2, cs) = scan_cat(heap, file, cfg, no_cats(), target, sk, off_state(heap));
+    drop_state(heap, cs);
+    return (sh, rep, k2);
+}
+
+// the number of categorical columns the state holds
+fn cat_columns[&k](cs: &k CatState) -> [] int {
+    if cs.kind == 1 {
+        return dict.dict_columns(cs.bld);
+    }
+    return dict.ncols(cs.voc);
+}
+
+// `scan` with categorical columns (docs/categorical.md): the state says what is done with them (CatState), `cc` how. With the state off and `no_cats()` this is
+// the numeric scan, the same steps in the same order.
+pub fn scan_cat[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, cc: CatCfg, target: &t [byte], sk: Sinks, cs0: CatState) -> [heap, file_read] (Shape, Report, Sinks, CatState) {
+    var cs = cs0;
+    var sc = box_slice(heap, 1, byte_of(0));
     let (acc0, fv0, data0, miss0) = sink_parts(sk);
     var acc = acc0;
     var fv = fv0;
@@ -593,7 +903,7 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
                     } else {
                         cols = c;
                         unbox_slice(heap, cells);
-                        cells = box_slice(heap, 4 * cols + 1, 0);
+                        cells = box_slice(heap, 5 * cols + 1, 0);
                         unbox_slice(heap, fb);
                         fb = box_slice(heap, 3 * cols + 3, 0);
                         borrow mut cells as &!cw in {
@@ -616,9 +926,25 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
                                         rep = report(14, rec_line, tcol, 0);
                                         going = false;
                                     }
+                                    if going {
+                                        let (c2, hs, hcol, haux) = cat_header(heap, contents(cw), buffer.bytes(nr), er, cols, tcol, cc, cs);
+                                        cs = c2;
+                                        if hs != 0 {
+                                            rep = report(hs, rec_line, hcol, haux);
+                                            going = false;
+                                        }
+                                    }
                                 }
                             }
                         }
+                    }
+                    var ncat = 0;
+                    borrow cs as &cr in {
+                        ncat = cat_columns(cr);
+                    }
+                    if going && ncat > 0 {
+                        unbox_slice(heap, sc);
+                        sc = box_slice(heap, cfg.cap + 1, byte_of(0));
                     }
                 }
             } else {
@@ -642,10 +968,14 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
                                     borrow mut fv as &!vw in {
                                         borrow mut data as &!dw in {
                                             borrow mut miss as &!mw in {
-                                                let (st, col, aux) = read_row(record, cols, tcol, cfg, rows - 1, quoted, contents(cw), contents(aw), vw, contents(dw), contents(mw), contents(fw));
-                                                if st != 0 {
-                                                    rep = report(st, rec_line, col, aux);
-                                                    going = false;
+                                                borrow mut cs as &!kw in {
+                                                    borrow mut sc as &!sw in {
+                                                        let (st, col, aux) = read_row(record, cols, tcol, cfg, rows - 1, quoted, contents(cw), contents(aw), vw, contents(dw), contents(mw), contents(fw), cc, kw, contents(sw));
+                                                        if st != 0 {
+                                                            rep = report(st, rec_line, col, aux);
+                                                            going = false;
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -661,8 +991,9 @@ pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [by
     lines.drop(heap, r);
     buffer.drop(heap, rec);
     unbox_slice(heap, fb);
+    unbox_slice(heap, sc);
     if rep.status == 0 && !have_header {
         rep = report(1, 0, 0, 0);
     }
-    return (Shape { names: names, ends: ends, cells: cells, cols: cols, rows: rows, tcol: tcol, bytes: total }, rep, sink_join(acc, fv, data, miss));
+    return (Shape { names: names, ends: ends, cells: cells, cols: cols, rows: rows, tcol: tcol, bytes: total }, rep, sink_join(acc, fv, data, miss), cs);
 }

@@ -96,6 +96,19 @@ for kind, name in ((1, "impute"), (2, "minmax"), (3, "standard"), (4, "onehot"),
     if K.get("step_" + name) != kind:
         fail("lib/core/kinds.cho step_%s is not %d" % (name, kind))
 
+# ---- column kinds of the reader's shape and the schema type code of a categorical column (docs/categorical.md section 3)
+cols_k = [(n, v) for n, v in K.items() if n.startswith("column_") and n != "column_count"]
+unique("column kinds (lib/core/kinds.cho)", cols_k)
+if K.get("column_count") != len(cols_k) - 1 or sorted(v for _, v in cols_k) != list(range(0, len(cols_k))):
+    fail("column kinds are not 0..column_count without gaps")
+if "4 categorical" not in read("tools/ml/csv.cho"):
+    fail("tools/ml/csv.cho no longer documents the column kind 4 as categorical")
+if K.get("schema_type_categorical") != 3 or "3 is reserved" not in " ".join(read("docs/wiring.md").split()):
+    fail("the schema type code of a categorical column is not the 3 that docs/wiring.md section 3 reserves")
+cat_doc = " ".join(read("docs/categorical.md").split())
+if "kind of a categorical column is **4**" not in cat_doc or "schema type code 3" not in cat_doc:
+    fail("docs/categorical.md section 3 no longer says kind 4 and schema type code 3")
+
 # ---- stream kinds
 streams = [(n, v) for n, v in K.items() if n.startswith("stream_") and n != "stream_count"]
 unique("stream kinds (lib/core/kinds.cho)", streams)

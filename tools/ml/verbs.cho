@@ -56,6 +56,14 @@ pub struct Opts {
     threads_given: bool,
     proba: bool,
     task_given: bool,
+    // the categorical columns of fit (docs/categorical.md section 2)
+    cats: &static [byte],
+    cat_given: bool,
+    na: &static [byte],
+    max_cats: int,
+    max_str: int,
+    max_pool: int,
+    max_catcols: int,
 }
 
 // What a verb hands back. `payload` is the `data` object, `plain` the text of --format text, `extra` the keys of a dry run
@@ -115,6 +123,91 @@ pub fn drop_retry[&h, &g, &n](heap: &!h Heap, w: json.Writer, args: &g Args, nam
 
 fn can_drop[&n](o: Opts, col: int, tcol: int, name: &n [byte]) -> [] bool {
     return !o.drop_given && col != tcol && bytes.count_byte(name, ',') == 0 && len(name) > 0 && text.is_utf8(name);
+}
+
+// the errors for what stopped a scan of a categorical column (statuses 20 to 30 of ml.csv.Report, docs/categorical.md section 5)
+fn explain_cat[&h, &s](heap: &!h Heap, errs: fail.Errors, rep: csv.Report, sh: &s csv.Shape, o: Opts) -> [heap] fail.Errors {
+    let st = rep.status;
+    if st == 24 {
+        var q = fail.open_in(heap, spec.extra(), "ml.limit.categorical-columns", "more columns are named by --cat than --max-cat-columns", "raise --max-cat-columns up to its ceiling, or name fewer columns");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "columns", rep.aux);
+        q = fail.detail_int(heap, q, "max", o.max_catcols);
+        return fail.add(heap, errs, q);
+    }
+    if st == 25 {
+        var q = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--cat names a column that is not in the header", "names are compared exactly, byte for byte");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_str(heap, q, "flag", "--cat");
+        q = fail.detail_int(heap, q, "position", rep.aux);
+        q = fail.detail_text(heap, q, "name", bytes.field(o.cats, ',', rep.aux));
+        return fail.add(heap, errs, q);
+    }
+    if st == 26 || st == 27 || st == 28 {
+        var q = fail.open_in(heap, spec.extra(), "args.conflict", "--cat names a column that cannot be categorical", "a categorical column is read, so it is not dropped, not the target and not a --float column");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        if st == 26 {
+            q = fail.detail_str(heap, q, "flags", "--cat, --drop");
+        } else if st == 27 {
+            q = fail.detail_str(heap, q, "flags", "--cat, --target");
+        } else {
+            q = fail.detail_str(heap, q, "flags", "--cat, --float");
+        }
+        q = fail.detail_text(heap, q, "name", csv.name(sh, rep.col));
+        return fail.add(heap, errs, q);
+    }
+    if st == 29 {
+        var q = fail.open_in(heap, spec.extra(), "ml.schema.mismatch", "a categorical column of the stored vocabulary is not in the file", "the file needs the columns the model was fitted on");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "position", rep.aux);
+        return fail.add(heap, errs, q);
+    }
+    if st == 30 {
+        var q = fail.open_in(heap, spec.extra(), "ml.param.out-of-range", "a limit of the categorical columns is outside its range", "see the ranges in introspect limits");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_int(heap, q, "code", rep.aux);
+        return fail.add(heap, errs, q);
+    }
+    // 20 to 23: a cell, with its line, column and name
+    var rule: &static [byte] = "ml.limit.categories";
+    var message: &static [byte] = "a categorical column has more distinct values than --max-categories";
+    var hint: &static [byte] = "raise --max-categories up to its ceiling, or bucket or drop the column";
+    if st == 20 {
+        rule = "ml.input.invalid-utf8";
+        message = "a cell of a categorical column is not well-formed UTF-8";
+        hint = "re-encode the file as UTF-8, or remove the column from --cat and drop it";
+    } else if st == 21 {
+        rule = "ml.limit.string-bytes";
+        message = "a cell of a categorical column is longer than --max-string-bytes";
+        hint = "raise --max-string-bytes up to its ceiling, or drop the column";
+    } else if st == 23 {
+        rule = "ml.limit.string-pool";
+        message = "the categories of all the categorical columns together are more than --max-pool-bytes";
+        hint = "raise --max-pool-bytes up to its ceiling, or drop a column with long or many categories";
+    }
+    var q = fail.open_in(heap, spec.extra(), rule, message, hint);
+    q = fail.no_repair(heap, q);
+    q = fail.detail_open(heap, q);
+    q = fail.detail_int(heap, q, "line", rep.line);
+    q = fail.detail_int(heap, q, "column", rep.col + 1);
+    q = fail.detail_text(heap, q, "name", csv.name(sh, rep.col));
+    if st == 20 {
+        q = fail.detail_int(heap, q, "offset", rep.aux);
+    } else if st == 21 {
+        q = fail.detail_int(heap, q, "length", rep.aux);
+        q = fail.detail_int(heap, q, "max", o.max_str);
+    } else if st == 22 {
+        q = fail.detail_int(heap, q, "max", rep.aux);
+    } else {
+        q = fail.detail_int(heap, q, "size", rep.aux);
+        q = fail.detail_int(heap, q, "max", o.max_pool);
+    }
+    return fail.add(heap, errs, q);
 }
 
 // the errors for what stopped a scan
@@ -252,6 +345,9 @@ pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors,
         q = fail.detail_text(heap, q, "name", bytes.field(o.floats, ',', rep.aux));
         return fail.add(heap, e, q);
     }
+    if st >= 20 && st <= 30 {
+        return explain_cat(heap, e, rep, sh, o);
+    }
     if st == 15 {
         return problem(heap, e, "io.read-failed", "the file changed while it was being read", "run the command again on a file that is not being written", "", "");
     }
@@ -287,6 +383,10 @@ fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte]
             return (sh, rep, e, sink);
         }
     }
+}
+
+pub fn cat_config(o: Opts) -> [] csv.CatCfg {
+    return csv.CatCfg { cols: o.cats, na: o.na, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols };
 }
 
 pub fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {

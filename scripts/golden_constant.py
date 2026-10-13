@@ -18,7 +18,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "conformance"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-NEW_FLAGS = {"--plan", "--step", "--l2", "--iterations", "--positive", "--split", "--seed", "--proba"}
+NEW_FLAGS = {"--plan", "--step", "--l2", "--iterations", "--positive", "--split", "--seed", "--proba",
+             # the categorical columns of stage 1 of issue 21 (docs/categorical.md)
+             "--cat", "--na-values", "--max-categories", "--max-string-bytes", "--max-pool-bytes", "--max-cat-columns"}
 # the refusal of an unknown model name lists the models: it changes with the list, by design
 LISTS_THE_MODELS = {"args-bad-value-model"}
 
