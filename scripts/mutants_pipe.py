@@ -152,7 +152,7 @@ def problems():
 
 
 def tree(tmp):
-    for d in ("lib", "tests", "tools", "scripts"):
+    for d in ("lib", "tests", "tools", "scripts", "docs"):
         if (ROOT / d).exists():
             shutil.copytree(ROOT / d, pathlib.Path(tmp) / d)
 
