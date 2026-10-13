@@ -308,3 +308,30 @@ fn test_pipeline_codes_follow_the_registry() -> [] int {
     }
     return bad;
 }
+
+// the column kinds of the reader's shape: 0 to column_count, distinct, in the order the reader documents; the schema type code of a categorical column is
+// the 3 that the schema reserved (int 0, dec 1, float 2 are the numeric ones) and is not a column kind by accident
+fn test_column_kinds_are_distinct_and_the_schema_code_is_reserved() -> [] int {
+    var bad = 0;
+    var i = 0;
+    while i <= kinds.column_count() {
+        if kinds.column_at(i) != i {
+            bad = bad + 1;
+        }
+        var j = i + 1;
+        while j <= kinds.column_count() {
+            if kinds.column_at(i) == kinds.column_at(j) {
+                bad = bad + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if kinds.column_at(kinds.column_count() + 1) != 0 - 1 || kinds.column_count() != 4 {
+        bad = bad + 1;
+    }
+    if kinds.column_categorical() != 4 || kinds.schema_type_categorical() != 3 {
+        bad = bad + 1;
+    }
+    return bad;
+}

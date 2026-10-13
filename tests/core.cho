@@ -304,6 +304,23 @@ fn test_refusal_tags_are_unique_and_complete() -> [] int {
     if same(refuse.tag(refuse.fit_non_finite()), "ml.fit.non-finite") == false {
         bad = bad + 1;
     }
+    // 16 to 20: the dictionary of a categorical column (docs/categorical.md section 5)
+    if same(refuse.tag(refuse.limit_categories()), "ml.limit.categories") == false || same(refuse.tag(refuse.limit_string_bytes()), "ml.limit.string-bytes") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.limit_string_pool()), "ml.limit.string-pool") == false || same(refuse.tag(refuse.limit_categorical_columns()), "ml.limit.categorical-columns") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.input_invalid_utf8()), "ml.input.invalid-utf8") == false || refuse.count() != 20 {
+        bad = bad + 1;
+    }
+    var k = refuse.limit_categories();
+    while k <= refuse.input_invalid_utf8() {
+        if refuse.exit_code(k) != 8 || len(refuse.repair(k)) == 0 {
+            bad = bad + 1;
+        }
+        k = k + 1;
+    }
     if refuse.exit_code(refuse.fit_non_finite()) != 8 || refuse.exit_code(refuse.threads()) != 2 {
         bad = bad + 1;
     }

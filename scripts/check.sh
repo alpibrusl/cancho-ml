@@ -16,6 +16,8 @@ $CANCHO install
 $CANCHO fmt --check lib tests tools
 $CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/core.cho
 $CANCHO test --std lib/core/exact.cho tests/exact.cho
+# the categorical columns (docs/categorical.md): the dictionary, the frozen vocabulary and the id matrix
+$CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/cat.cho
 $CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/matrix.cho
 $CANCHO test --std lib/core/fsq.cho tests/fsq.cho
 for T in t_dot t_gemv t_syrk t_chol t_gemm t_fuzz t_order; do
@@ -47,6 +49,9 @@ $CANCHO build --bin ml
 sh scripts/build_reader.sh
 python3 scripts/gate_reader.py all
 python3 scripts/mutants_reader.py --check
+# the categorical columns of the reader against their oracle (docs/categorical.md section 1: C1 to C8; the mutants, scripts/mutants_cat.py, 42 patterns, run on request)
+python3 scripts/mutants_cat.py --check
+python3 scripts/gate_cat.py all
 python3 scripts/gen_models.py --check
 python3 scripts/schemas.py --check
 python3 scripts/manifest.py --check

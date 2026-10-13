@@ -9,6 +9,7 @@ edition 5;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.catcli;
 import ml.est;
 import ml.fsio;
 import ml.logrec;
@@ -107,7 +108,55 @@ fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
     } else if !cli.has(parsed, table, "model-file") {
         e = flag_problem(heap, e, "args.required-flag", "this verb needs --model-file, the model to read", "ml predict --model-file MODEL FILE", "flag", "--model-file");
     }
+    if verb == 1 {
+        e = cat_flags(heap, args, parsed, e);
+    }
     return wire.check_flags(heap, args, parsed, e, verb);
+}
+
+// the flags of the categorical columns that fit takes (docs/categorical.md section 2): the limits and --na-values mean something only with --cat, --cat names a column,
+// and a marker list holds 1 to 64 markers of 1 to 255 bytes
+fn cat_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors) -> [heap, args] fail.Errors {
+    var e = errs;
+    let table = spec.flag_table();
+    if cli.has(parsed, table, "cat") {
+        if len(cli.text(args, parsed, table, "cat")) == 0 {
+            e = flag_problem(heap, e, "args.bad-value", "--cat names no column", "give the header names of the text columns, separated by commas", "flag", "--cat");
+        }
+        if cli.has(parsed, table, "na-values") {
+            let list = cli.text(args, parsed, table, "na-values");
+            let count = bytes.count_byte(list, ',') + 1;
+            var k = 1;
+            var bad = len(list) == 0 || count > 64;
+            while k <= count && !bad {
+                let m = bytes.field(list, ',', k);
+                if len(m) == 0 || len(m) > 255 {
+                    bad = true;
+                }
+                k = k + 1;
+            }
+            if bad {
+                e = flag_problem(heap, e, "args.bad-value", "--na-values is a list of 1 to 64 markers of 1 to 255 bytes, separated by commas", "a marker holds no comma and is not empty", "flag", "--na-values");
+            }
+        }
+        return e;
+    }
+    if cli.has(parsed, table, "na-values") {
+        e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--na-values");
+    }
+    if cli.has(parsed, table, "max-categories") {
+        e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-categories");
+    }
+    if cli.has(parsed, table, "max-string-bytes") {
+        e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-string-bytes");
+    }
+    if cli.has(parsed, table, "max-pool-bytes") {
+        e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-pool-bytes");
+    }
+    if cli.has(parsed, table, "max-cat-columns") {
+        e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-cat-columns");
+    }
+    return e;
 }
 
 // the value of limit `name` in spec.limits(): field 2 is the ceiling's place
@@ -233,7 +282,7 @@ fn options[&g, &p](args: &g Args, parsed: &p cli.Parsed) -> [args] verbs.Opts {
     if bytes.equal(cli.text(args, parsed, table, "task"), "classification") {
         task = 2;
     }
-    return verbs.Opts { cap: cli.nat(args, parsed, table, "max-line-bytes"), max_rows: cli.nat(args, parsed, table, "max-rows"), max_cols: cli.nat(args, parsed, table, "max-columns"), max_cells: cli.nat(args, parsed, table, "max-cells"), max_bytes: cli.nat(args, parsed, table, "max-bytes"), limit: cli.nat(args, parsed, table, "limit"), from: cli.nat(args, parsed, table, "from"), overwrite: cli.has(parsed, table, "overwrite"), dry: cli.has(parsed, table, "dry-run"), drop_given: cli.has(parsed, table, "drop"), task: task, drops: cli.text(args, parsed, table, "drop"), floats: cli.text(args, parsed, table, "float"), target: cli.text(args, parsed, table, "target"), model: cli.text(args, parsed, table, "model"), plan_given: cli.has(parsed, table, "plan"), step: cli.text(args, parsed, table, "step"), step_given: cli.has(parsed, table, "step"), positive: cli.text(args, parsed, table, "positive"), positive_given: cli.has(parsed, table, "positive"), split: cli.text(args, parsed, table, "split"), split_given: cli.has(parsed, table, "split"), seed: cli.nat(args, parsed, table, "seed"), threads: cli.nat(args, parsed, table, "threads"), threads_given: cli.has(parsed, table, "threads"), proba: cli.has(parsed, table, "proba"), task_given: cli.has(parsed, table, "task") };
+    return verbs.Opts { cap: cli.nat(args, parsed, table, "max-line-bytes"), max_rows: cli.nat(args, parsed, table, "max-rows"), max_cols: cli.nat(args, parsed, table, "max-columns"), max_cells: cli.nat(args, parsed, table, "max-cells"), max_bytes: cli.nat(args, parsed, table, "max-bytes"), limit: cli.nat(args, parsed, table, "limit"), from: cli.nat(args, parsed, table, "from"), overwrite: cli.has(parsed, table, "overwrite"), dry: cli.has(parsed, table, "dry-run"), drop_given: cli.has(parsed, table, "drop"), task: task, drops: cli.text(args, parsed, table, "drop"), floats: cli.text(args, parsed, table, "float"), target: cli.text(args, parsed, table, "target"), model: cli.text(args, parsed, table, "model"), plan_given: cli.has(parsed, table, "plan"), step: cli.text(args, parsed, table, "step"), step_given: cli.has(parsed, table, "step"), positive: cli.text(args, parsed, table, "positive"), positive_given: cli.has(parsed, table, "positive"), split: cli.text(args, parsed, table, "split"), split_given: cli.has(parsed, table, "split"), seed: cli.nat(args, parsed, table, "seed"), threads: cli.nat(args, parsed, table, "threads"), threads_given: cli.has(parsed, table, "threads"), proba: cli.has(parsed, table, "proba"), task_given: cli.has(parsed, table, "task"), cats: cli.text(args, parsed, table, "cat"), cat_given: cli.has(parsed, table, "cat"), na: cli.text(args, parsed, table, "na-values"), max_cats: cli.nat(args, parsed, table, "max-categories"), max_str: cli.nat(args, parsed, table, "max-string-bytes"), max_pool: cli.nat(args, parsed, table, "max-pool-bytes"), max_catcols: cli.nat(args, parsed, table, "max-cat-columns") };
 }
 
 // the errors, and whether there are none
@@ -297,6 +346,9 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
     }
     let o = options(args, parsed);
     if verb == 1 {
+        if o.cat_given {
+            return (catcli.fit(heap, args, fs, root, ps.file, o, e3, lg), log_ok);
+        }
         if wire.planned(o.plan_given, o.model) {
             let tokens = wire.model_tokens(heap, args, parsed, est.kind_named(o.model));
             var answer = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));

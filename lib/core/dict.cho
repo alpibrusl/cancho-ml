@@ -1,0 +1,458 @@
+module ml.dict;
+
+import std.buffer;
+import std.bytes;
+import std.utf8;
+import ml.refuse;
+
+// The dictionary of the categorical columns of a CSV (docs/categorical.md sections 3 to 5): per column, the distinct non-missing strings,
+// bounded, and then frozen into a vocabulary sorted BYTEWISE.
+//
+// `Dict` is the builder of pass 1. A column's strings are a sorted array of at most `maxc` entries, each the offset and the length of the bytes in one
+// pool (offset * 131072 + length: a length is at most 65,536, an offset at most 8,388,608), found by binary search with `bytes.compare` and inserted by
+// a shift. There is no hash and no iteration over anything whose order could matter. The pool and the slots are allocated once, in `make`, after the
+// parameters and the number of columns were compared with their ceilings; `intern` never allocates, so every limit is refused before the thing it limits
+// is stored, and a refusal leaves the dictionary as it was.
+//
+// `Vocab` is the frozen result: per column the strings in ascending byte order, the pool rewritten in that order (so no byte of it records the order the
+// strings were met in), the column names beside it. The id of a string is its rank in its column.
+//
+// A cell is never empty here: the reader decides what is missing before it calls `intern` (docs/categorical.md section 5.1).
+
+pub fn default_categories() -> [] int {
+    return 64;
+}
+
+pub fn ceiling_categories() -> [] int {
+    return 1024;
+}
+
+pub fn default_string_bytes() -> [] int {
+    return 255;
+}
+
+pub fn ceiling_string_bytes() -> [] int {
+    return 65536;
+}
+
+pub fn default_pool_bytes() -> [] int {
+    return 1048576;
+}
+
+pub fn ceiling_pool_bytes() -> [] int {
+    return 8388608;
+}
+
+pub fn default_columns() -> [] int {
+    return 128;
+}
+
+pub fn ceiling_columns() -> [] int {
+    return 4096;
+}
+
+// an entry packs the offset and the length of a string in the pool; 2^17 > the longest string (65,536)
+fn width() -> [] int {
+    return 131072;
+}
+
+pub res struct Dict {
+    ncols: int,
+    maxc: int,
+    maxs: int,
+    maxp: int,
+    // per column: the number of strings so far
+    cnt: Box[[int]],
+    // ncols * maxc entries; column c uses the first cnt[c] of its maxc, ascending by the bytes of the string
+    ent: Box[[int]],
+    pool: Box[[byte]],
+    // used[0]: bytes of the pool in use
+    used: Box[[int]],
+    names: Box[[byte]],
+    nends: Box[[int]],
+}
+
+pub res struct Vocab {
+    ncols: int,
+    total: int,
+    names: Box[[byte]],
+    nends: Box[[int]],
+    counts: Box[[int]],
+    // ncols + 1: the first entry of each column, then the total
+    first: Box[[int]],
+    // total entries: where each string ends in the pool (it starts where the one before ends)
+    ends: Box[[int]],
+    pool: Box[[byte]],
+}
+
+// ---------------------------------------------------------------- UTF-8
+
+// -1 if `cell` is well-formed UTF-8 (std.utf8: no overlong forms, no surrogates, nothing past U+10FFFF), else the offset of the first byte that is not
+pub fn utf8_offset[&c](cell: &c [byte]) -> [] int {
+    var at = 0;
+    while at < len(cell) {
+        if int_of(cell[at]) < 128 {
+            at = at + 1;
+        } else {
+            match utf8.decode(cell, at) {
+                utf8.Step::Code(_, w) => {
+                    at = at + w;
+                }
+                utf8.Step::Invalid(_) => {
+                    return at;
+                }
+            }
+        }
+    }
+    return 0 - 1;
+}
+
+// ---------------------------------------------------------------- the builder
+
+pub fn empty_dict[&h](heap: &!h Heap) -> [heap] Dict {
+    return Dict { ncols: 0, maxc: 1, maxs: 1, maxp: 1, cnt: box_slice(heap, 1, 0), ent: box_slice(heap, 1, 0), pool: box_slice(heap, 1, byte_of(0)), used: box_slice(heap, 1, 0), names: box_slice(heap, 1, byte_of(0)), nends: box_slice(heap, 1, 0) };
+}
+
+// (the dictionary, 0) or (an empty one, the refusal). `names` are the column names one after another and `nends[c]` where the name of column c ends.
+// 8 (ml.param.out-of-range) for a limit outside its range, a negative count, or names that do not fit their ends; 19 for more columns than `max_cols`.
+// The slots (`ncols * maxc` words) and the pool (`maxp` bytes) are allocated only after both checks.
+pub fn make[&h, &n, &e](heap: &!h Heap, ncols: int, max_cols: int, maxc: int, maxs: int, maxp: int, names: &n [byte], nends: &e [int]) -> [heap] (Dict, int) {
+    if max_cols < 1 || max_cols > ceiling_columns() || maxc < 1 || maxc > ceiling_categories() || maxs < 1 || maxs > ceiling_string_bytes() || maxp < 1 || maxp > ceiling_pool_bytes() || ncols < 0 || len(nends) < ncols {
+        return (empty_dict(heap), refuse.param_out_of_range());
+    }
+    if ncols > max_cols {
+        return (empty_dict(heap), refuse.limit_categorical_columns());
+    }
+    var prev = 0;
+    var c = 0;
+    while c < ncols {
+        if nends[c] < prev || nends[c] > len(names) {
+            return (empty_dict(heap), refuse.param_out_of_range());
+        }
+        prev = nends[c];
+        c = c + 1;
+    }
+    let nm = box_slice(heap, prev + 1, byte_of(0));
+    let ne = box_slice(heap, ncols + 1, 0);
+    var nmm = nm;
+    var nem = ne;
+    borrow mut nmm as &!nw in {
+        borrow mut nem as &!ew in {
+            var i = 0;
+            while i < prev {
+                contents(nw)[i] = names[i];
+                i = i + 1;
+            }
+            i = 0;
+            while i < ncols {
+                contents(ew)[i] = nends[i];
+                i = i + 1;
+            }
+        }
+    }
+    return (Dict { ncols: ncols, maxc: maxc, maxs: maxs, maxp: maxp, cnt: box_slice(heap, ncols + 1, 0), ent: box_slice(heap, ncols * maxc + 1, 0), pool: box_slice(heap, maxp, byte_of(0)), used: box_slice(heap, 1, 0), names: nmm, nends: nem }, 0);
+}
+
+pub fn drop[&h](heap: &!h Heap, d: Dict) -> [heap] int {
+    let Dict { ncols, maxc, maxs, maxp, cnt, ent, pool, used, names, nends } = d;
+    unbox_slice(heap, cnt);
+    unbox_slice(heap, ent);
+    unbox_slice(heap, pool);
+    unbox_slice(heap, used);
+    unbox_slice(heap, names);
+    unbox_slice(heap, nends);
+    return ncols;
+}
+
+pub fn dict_columns[&d](d: &d Dict) -> [] int {
+    return d.ncols;
+}
+
+// the strings of column c so far
+pub fn dict_count[&d](d: &d Dict, c: int) -> [] int {
+    return contents(d.cnt)[c];
+}
+
+pub fn dict_pool_used[&d](d: &d Dict) -> [] int {
+    return contents(d.used)[0];
+}
+
+fn text_of[&d](d: &d Dict, e: int) -> [] &d [byte] {
+    let o = e / width();
+    return contents(d.pool)[o..o + e % width()];
+}
+
+// 2 * (the place `cell` is or would go in column col) + 1 if it is there. The entries are strictly ascending, so the place is the number of strings below it.
+fn locate[&d, &c](d: &d Dict, col: int, cell: &c [byte]) -> [] int {
+    var lo = 0;
+    var hi = contents(d.cnt)[col];
+    let base = col * d.maxc;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let r = bytes.compare(text_of(d, contents(d.ent)[base + mid]), cell);
+        if r == 0 {
+            return mid * 2 + 1;
+        }
+        if r < 0 {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo * 2;
+}
+
+// Add a non-empty cell to column `col`. 0, or the refusal, with the dictionary unchanged: 17 a cell longer than `maxs`; 20 not well-formed UTF-8;
+// then, for a string the column does not hold yet, 16 the column already has `maxc` strings, 18 the pool would pass `maxp`. 8 for a column out of range or an empty cell.
+pub fn intern[&d, &c](d: &!d Dict, col: int, cell: &c [byte]) -> [] int {
+    if col < 0 || col >= d.ncols || len(cell) == 0 {
+        return refuse.param_out_of_range();
+    }
+    if len(cell) > d.maxs {
+        return refuse.limit_string_bytes();
+    }
+    if utf8_offset(cell) >= 0 {
+        return refuse.input_invalid_utf8();
+    }
+    let at = locate(d, col, cell);
+    if at % 2 == 1 {
+        return 0;
+    }
+    let pos = at / 2;
+    let n = contents(d.cnt)[col];
+    if n >= d.maxc {
+        return refuse.limit_categories();
+    }
+    let used = contents(d.used)[0];
+    if len(cell) > d.maxp - used {
+        return refuse.limit_string_pool();
+    }
+    let base = col * d.maxc;
+    var i = n;
+    while i > pos {
+        contents(d.ent)[base + i] = contents(d.ent)[base + i - 1];
+        i = i - 1;
+    }
+    contents(d.ent)[base + pos] = used * width() + len(cell);
+    var k = 0;
+    while k < len(cell) {
+        contents(d.pool)[used + k] = cell[k];
+        k = k + 1;
+    }
+    contents(d.used)[0] = used + len(cell);
+    contents(d.cnt)[col] = n + 1;
+    return 0;
+}
+
+// ---------------------------------------------------------------- the vocabulary
+
+pub fn empty_vocab[&h](heap: &!h Heap) -> [heap] Vocab {
+    return Vocab { ncols: 0, total: 0, names: box_slice(heap, 1, byte_of(0)), nends: box_slice(heap, 1, 0), counts: box_slice(heap, 1, 0), first: box_slice(heap, 1, 0), ends: box_slice(heap, 1, 0), pool: box_slice(heap, 1, byte_of(0)) };
+}
+
+pub fn drop_vocab[&h](heap: &!h Heap, v: Vocab) -> [heap] int {
+    let Vocab { ncols, total, names, nends, counts, first, ends, pool } = v;
+    unbox_slice(heap, names);
+    unbox_slice(heap, nends);
+    unbox_slice(heap, counts);
+    unbox_slice(heap, first);
+    unbox_slice(heap, ends);
+    unbox_slice(heap, pool);
+    return ncols;
+}
+
+// The vocabulary of a dictionary: the strings of each column in ascending byte order, the pool written in that order. Consumes the dictionary.
+pub fn freeze[&h](heap: &!h Heap, d: Dict) -> [heap] Vocab {
+    var v = empty_vocab(heap);
+    borrow d as &dr in {
+        var total = 0;
+        var c = 0;
+        while c < dr.ncols {
+            total = total + contents(dr.cnt)[c];
+            c = c + 1;
+        }
+        let used = contents(dr.used)[0];
+        var nl = 0;
+        if dr.ncols > 0 {
+            nl = contents(dr.nends)[dr.ncols - 1];
+        }
+        var names = box_slice(heap, nl + 1, byte_of(0));
+        var nends = box_slice(heap, dr.ncols + 1, 0);
+        var counts = box_slice(heap, dr.ncols + 1, 0);
+        var first = box_slice(heap, dr.ncols + 2, 0);
+        var ends = box_slice(heap, total + 1, 0);
+        var pool = box_slice(heap, used + 1, byte_of(0));
+        borrow mut names as &!w1 in {
+            borrow mut nends as &!w2 in {
+                borrow mut counts as &!w3 in {
+                    borrow mut first as &!w4 in {
+                        borrow mut ends as &!w5 in {
+                            borrow mut pool as &!w6 in {
+                                var i = 0;
+                                while i < nl {
+                                    contents(w1)[i] = contents(dr.names)[i];
+                                    i = i + 1;
+                                }
+                                var e = 0;
+                                var at = 0;
+                                c = 0;
+                                while c < dr.ncols {
+                                    contents(w2)[c] = contents(dr.nends)[c];
+                                    let n = contents(dr.cnt)[c];
+                                    contents(w3)[c] = n;
+                                    contents(w4)[c] = e;
+                                    var k = 0;
+                                    while k < n {
+                                        let s = text_of(dr, contents(dr.ent)[c * dr.maxc + k]);
+                                        var b = 0;
+                                        while b < len(s) {
+                                            contents(w6)[at + b] = s[b];
+                                            b = b + 1;
+                                        }
+                                        at = at + len(s);
+                                        contents(w5)[e] = at;
+                                        e = e + 1;
+                                        k = k + 1;
+                                    }
+                                    c = c + 1;
+                                }
+                                contents(w4)[dr.ncols] = e;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        drop_vocab(heap, v);
+        v = Vocab { ncols: dr.ncols, total: total, names: names, nends: nends, counts: counts, first: first, ends: ends, pool: pool };
+    }
+    drop(heap, d);
+    return v;
+}
+
+pub fn ncols[&v](v: &v Vocab) -> [] int {
+    return v.ncols;
+}
+
+pub fn total[&v](v: &v Vocab) -> [] int {
+    return v.total;
+}
+
+pub fn count[&v](v: &v Vocab, c: int) -> [] int {
+    return contents(v.counts)[c];
+}
+
+pub fn name[&v](v: &v Vocab, c: int) -> [] &v [byte] {
+    var from = 0;
+    if c > 0 {
+        from = contents(v.nends)[c - 1];
+    }
+    return contents(v.names)[from..contents(v.nends)[c]];
+}
+
+// the string of rank i in column c (0 <= i < count)
+pub fn string[&v](v: &v Vocab, c: int, i: int) -> [] &v [byte] {
+    let e = contents(v.first)[c] + i;
+    var from = 0;
+    if e > 0 {
+        from = contents(v.ends)[e - 1];
+    }
+    return contents(v.pool)[from..contents(v.ends)[e]];
+}
+
+// the column named `want`, -1 if there is none
+pub fn find_column[&v, &w](v: &v Vocab, want: &w [byte]) -> [] int {
+    var c = 0;
+    while c < v.ncols {
+        if bytes.equal(name(v, c), want) {
+            return c;
+        }
+        c = c + 1;
+    }
+    return 0 - 1;
+}
+
+// the id of `cell` in column c: its rank, or -1 if the column does not hold it
+pub fn find[&v, &w](v: &v Vocab, c: int, cell: &w [byte]) -> [] int {
+    var lo = 0;
+    var hi = contents(v.counts)[c];
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let r = bytes.compare(string(v, c, mid), cell);
+        if r == 0 {
+            return mid;
+        }
+        if r < 0 {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return 0 - 1;
+}
+
+// Whether the pieces are what `freeze` writes: counts non-negative and adding up, ends non-decreasing inside the pool, names inside theirs, every column
+// strictly ascending and with no empty string. A vocabulary read from a file (stage 3) is checked with this before it is used.
+pub fn valid[&v](v: &v Vocab) -> [] bool {
+    var c = 0;
+    var e = 0;
+    var prev = 0;
+    var nprev = 0;
+    while c < v.ncols {
+        if contents(v.nends)[c] < nprev {
+            return false;
+        }
+        nprev = contents(v.nends)[c];
+        let n = contents(v.counts)[c];
+        if n < 0 || contents(v.first)[c] != e {
+            return false;
+        }
+        var k = 0;
+        while k < n {
+            let end = contents(v.ends)[e];
+            if end <= prev {
+                return false;
+            }
+            if k > 0 && bytes.compare(string(v, c, k - 1), string(v, c, k)) >= 0 {
+                return false;
+            }
+            prev = end;
+            e = e + 1;
+            k = k + 1;
+        }
+        c = c + 1;
+    }
+    return contents(v.first)[v.ncols] == e && e == v.total;
+}
+
+// ---------------------------------------------------------------- the canonical dump
+
+fn put_u32[&h](heap: &!h Heap, b: buffer.Buffer, x: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(x & 255));
+    o = buffer.push(heap, o, byte_of(x >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(x >> 16 & 255));
+    o = buffer.push(heap, o, byte_of(x >> 24 & 255));
+    return o;
+}
+
+// The bytes the gates hash and compare (docs/categorical.md section 7): u32 columns; per column u32 name length, the name, u32 categories, then per category
+// u32 length and the bytes; little endian. NOT the model file format.
+pub fn dump[&h, &v](heap: &!h Heap, v: &v Vocab) -> [heap] buffer.Buffer {
+    var o = put_u32(heap, buffer.empty(heap, 64), v.ncols);
+    var c = 0;
+    while c < v.ncols {
+        o = put_u32(heap, o, len(name(v, c)));
+        o = buffer.append(heap, o, name(v, c));
+        let n = count(v, c);
+        o = put_u32(heap, o, n);
+        var i = 0;
+        while i < n {
+            o = put_u32(heap, o, len(string(v, c, i)));
+            o = buffer.append(heap, o, string(v, c, i));
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    return o;
+}
