@@ -164,4 +164,46 @@ constant-column divisor, median even-count average, a decisive sum added outside
 
 ## 6. Results
 
-*(filled in by the stage after the gates ran; see `docs/pipeline.md` section 7 for the pipeline gates)*
+Machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python 3.14.5, numpy 2.4.6, scikit-learn 1.8.0; one thread; no timing is claimed.
+Every figure below was printed by the script named, in this session; benchmarks were not run.
+
+| gate | command | result |
+|---|---|---|
+| X1, X2, X5 fixtures | `cancho test` of `tests/t_transforms.cho` (`scripts/gate_pipe.sh`) | 29 passed, 0 failed (hand-computed outputs of every transform, the rules of section 2.2, the bytes of a step by hand, every field check of the decoder reached by an edited record, 40 edits, with a control) |
+| X6 no trap, limits | `tests/t_transforms_fuzz.cho` | 2 passed: 3,000 random fits (hostile values, NaN, infinities, invalid parameters and columns, caps), their records encoded, decoded, damaged 12 ways each and applied; the fuzz fails if fewer than 800 fits, 800 refusals, 300 applies, 100 accepted damaged records or 1,000 refused ones happen |
+| X3 differential, bit for bit | `oracle_pipe.py --transforms` (2,500 cases), `--pipeline` (600 chains, 300 schema alignments), `--file` (150 files with steps, 2 zero-step files), `--sums` (186 vectors) | all agree: parameters (the records, parsed by an independent decoder) and the transformed train and test matrices equal the Python reference bit for bit, refusals equal in tag, step and column; generated data has constant, all-missing, one-row, tied and wide-magnitude columns and unseen categories |
+| X4 scikit-learn | `oracle_pipe.py --sklearn` (120 cases, 96,024 values) | all within the bounds; table below |
+
+The observed maximum error of each comparison in units of eps * M (M the largest magnitude in the training column; the reason for this unit and the
+bounds are in the docstring of `sklearn_gate`: two libraries add the same numbers in different orders, so the error is absolute and of the size of the terms):
+
+```
+  KBinsDiscretizer columns with merged bins (not compared) max     0.00   bound    0   n=200    bit-equal 0
+  KBinsDiscretizer quantile edges                  max    22.67   bound   32   n=2822   bit-equal 1514
+  KBinsDiscretizer quantile index (exact away from an edge) max     0.00   bound    0   n=13820  bit-equal 13820
+  KBinsDiscretizer uniform edges                   max     1.72   bound   32   n=2912   bit-equal 2353
+  KBinsDiscretizer uniform index (exact away from an edge) max     0.00   bound    0   n=14020  bit-equal 14020
+  MinMaxScaler transform                           max     1.08   bound   64   n=4786   bit-equal 2384
+  OneHotEncoder (exact)                            max     0.00   bound    0   n=28160  bit-equal 28160
+  OrdinalEncoder (exact)                           max     0.00   bound    0   n=5980   bit-equal 5980
+  SimpleImputer constant                           max     0.00   bound    0   n=5980   bit-equal 5980
+  SimpleImputer mean                               max     3.01   bound   32   n=5980   bit-equal 5454
+  SimpleImputer median                             max     0.00   bound    0   n=5980   bit-equal 5980
+  StandardScaler mean_                             max     3.01   bound   32   n=299    bit-equal 160
+  StandardScaler scale_ (relative)                 max     8.39   bound   16   n=299    bit-equal 159
+  StandardScaler transform                         max     2.96   bound   64   n=4786   bit-equal 2033
+```
+Exact (bit-equal) in every case: `OneHotEncoder(handle_unknown="ignore")`, `OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)`,
+`SimpleImputer` median and constant, bucket indices away from an edge. Not compared: columns where scikit-learn merged bins (200 column-cases).
+
+**Mutants** (`python3 scripts/mutants_pipe.py`, 62 edits, the unmutated control passing first): **61 killed, 1 survived and explained, 0 unexplained.**
+The explained survivor is `quantile-edge-clamp-removed`: the clamp that makes the edges non-decreasing also runs over the whole edge row after the loop
+(the width edges need it), so the clamp inside the quantile loop is redundant by construction. The first run of the list had 4 unexplained
+survivors (the section-order check, the model-family check and the canonical-plan check of `file.decode` had no input that reached them, and one
+mutant did not compile); the tests `test_structure_and_section_checks_are_reached` were added and the mutant fixed; the three re-run killed.
+The mutants cover: parameter sign, `ddof`, the constant-column rule, median parity and average, quantile position, interpolation and fraction, width edges,
+unknown-category rule and code and count, category order, bucket edge rule, missing handling (impute, pass-through, block of one-hot), all-missing,
+the bound on categories, non-finite input and overflow, fit on the test rows, a decisive sum in another order or of magnitudes, the sort direction, the
+records (order checks, divisor, dtype tag, width), the plan (key order, default, number spelling, column, sort, duplicate and unknown keys), the schema
+(position, type, repair side), the file (checksum, agreement, section order, family, canonical) and the registries.
+

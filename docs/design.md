@@ -468,3 +468,12 @@ registered what it adds: its rule tags in section 8 and 8.1 (codes 201 to 211, `
 of its sums, which is **not** the one of `docs/linalg.md` section 2 (4 lanes in a block of 256 terms against one chain): section 3.1 says every
 reduction has *a* normative order, each kernel's document names its own, and `docs/integration.md` says where the constant lives. The library
 is not called by the command line yet.
+
+## 17. Stages M3 and M4: transforms and the pipeline (libraries only)
+
+`docs/transforms.md` and `docs/pipeline.md` hold the gates (written before the code), the rules for empty, constant, all-missing and missing columns, the
+plan grammar, the records of the `steps` section and the verdicts. They are `lib/transforms` and `lib/pipeline`, driven by `tools/pipe-check`; the command
+line does not call them yet. What they change here: section 4.1 gains the step kinds and the section tags as registries, section 8 and 8.1 the tags and
+the band 301 to 325 (`lib/transforms/codes.cho`), `tools/ml/spec.cho` `pending()` twelve tags. Section 4.2 is made precise by `docs/pipeline.md` section 2
+(the model line's keys are provisional); section 5 is built (`pipeline.run`, `pipeline.schema`, `pipeline.file`).
+

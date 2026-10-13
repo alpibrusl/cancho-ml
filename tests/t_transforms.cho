@@ -651,3 +651,8 @@ fn test_standard_variance_that_underflows_is_a_zero_variance[&h](heap: &!h Heap)
     // 1e-200 and 2e-200: mean 1.5e-200, deviations 5e-201 whose squares (2.5e-401) are 0.0 in a double
     return go(heap, spec(3, 0, 0, 0.0), "1e-200;2e-200", "0", "1.5e-200;2e-200", "0;5e-201", 0);
 }
+
+// a constant column has one category
+fn test_constant_column_has_one_category[&h](heap: &!h Heap) -> [heap] int {
+    return go(heap, spec(4, 0, 64, 0.0), "5;5;5", "0", "5;6", "1;0", 1) + go(heap, spec(5, 0, 64, 0.0), "5;5;5", "0", "5;6", "0;-1", 1);
+}

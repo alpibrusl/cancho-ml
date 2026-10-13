@@ -122,8 +122,29 @@ readers there and teaching `mfile.cho` the section; nothing in this library name
 
 ## 6. Results
 
-*(filled in after the gates ran)*
+The gates P1 to P9 are run by `sh scripts/gate_pipe.sh` (all green in this session; `PIPE_FAST=1` is what the mutants run) and the numbers of the
+oracle and the mutants are in `docs/transforms.md` section 6, which judges the same code.
+
+| gate | evidence |
+|---|---|
+| P1 plan | `tests/t_pipeline.cho` (canonical forms by hand, floats `1e-1` `.10` `-0` `0.30000000000000004`, fixed point, 45 refusals with code, line and column); `oracle_pipe.py --plans`: 1,500 respelled plans (key order, blanks, tabs, CRLF, comments, leading zeros, equivalent floats), 1,500 fixed points, 1,188 float spellings against a Python canonicaliser, and 1,500 garbage plans whose verdict and position equal a second implementation of the grammar written in Python |
+| P2, P3 | `test_fit_uses_the_training_rows_only`, `test_each_step_feeds_the_next`; chains in `oracle_pipe.py --pipeline` (600); mutants `fit-on-the-test-rows`, `step-two-fitted-on-the-raw-matrix` killed |
+| P4 | `file.encode`/`decode` round trip; a file with no steps is accepted by the independent reader of `tests/conformance/test_model_file.py` and equals the layout of `mfile.cho` written again in Python, byte for byte (2 files); 150 files with steps read by an independent Python reader that applies the stored parameters and equals the driver's predict bit for bit. **Not compared with a file written by the `ml` binary**: it needs `cancho install`, which was not allowed here (the hash printed in `docs/cli.md` section 3 for the sales example is not reproduced by this layout with any of the pins and scales tried; the size, 316 bytes, is) |
+| P5 | `scripts/check_pipeline_api.py` (no `pub fn` that applies takes a plan or a spec or mentions a fit; `Loaded` is built by `file.decode` only; every matrix-returning `pub fn` is classified); `test_editing_a_stored_parameter_changes_the_prediction` (divisor 10.0 -> 20.0 with the trailer repaired: the output halves; without repair `ml.model.checksum`; 0.0 and -10.0: `ml.model.malformed`); `test_the_plan_must_agree_with_the_steps` |
+| P6 | `test_columns_are_matched_by_name`, `test_a_reordered_input_gives_the_same_output`; `oracle_pipe.py --pipeline`: 300 alignments (missing, extra, mistyped, duplicate, reordered) against a Python reference, text of the repair included |
+| P7, P8 | `tests/t_pipeline_fuzz.cho` 4 passed: 4,000 mutated plans, the limits at both sides of 64 KiB, 64 lines, 4,096 names, 255 bytes; 1,500 fits through the pipeline with hostile plans and caps; every truncation, every byte flipped three ways with and without a repaired trailer, and 600 seeded multi-byte damages of a 3-step file |
+| P9 | `tests/t_registry.cho` (7), `scripts/check_registry.py`: 7 model kinds, 6 stream kinds, 6 step kinds, 5 section tags, 59 refusal codes in 4 bands |
 
 ## 7. Open questions
 
-*(filled in after the gates ran)*
+1. **The `model` line's keys are provisional** (`lib/pipeline/plan.cho` `defs_of`): constant, linear, logistic, kmeans, tree and forest with the keys the libraries
+   have today. The design example `rate=0.1` for logistic regression is not accepted because the Newton fit has no rate; the wiring stage owns this table.
+2. **Names with a blank, `,`, `=` or `#`** cannot be addressed in a plan (only by `*`). Quoting is not designed.
+3. **Text categories** are not supported (the reader gives numbers). A text column must be dropped.
+4. **`unknown=ignore` for `label` gives -1.0**, a value no category has; a downstream estimator sees it as a number.
+5. The summation order is the package's, through `transforms.dsum`. When the lane-order change lands, `oracle_pipe.py --sums` fails until `ordered_sum`
+   there is updated (one function), and the stored step bytes of standard scalers and mean imputers change with it: model files fitted before the change are
+   not byte-identical to files fitted after it, though they still apply (the stored parameters are read, not recomputed).
+6. The O(n^2) name matching (`names.find`, `first_bad`, `schema.align`) is bounded by 8,192 columns; it was not timed.
+7. `mfile.cho` still reads only `steps = u32 0`; the wiring stage extends it (or switches to `pipeline.file`).
+8. D2 (the same bytes on another machine) is untested, as in every stage.
