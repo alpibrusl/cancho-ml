@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="t">
+  <title id="t">cancho-ml</title>
+  <rect width="64" height="64" rx="12" fill="#17406b"/>
+  <g fill="#ffffff">
+    <rect x="12" y="38" width="8" height="14" rx="1.5"/>
+    <rect x="24" y="28" width="8" height="24" rx="1.5"/>
+    <rect x="36" y="20" width="8" height="32" rx="1.5"/>
+  </g>
+  <path d="M10 44 L26 34 L40 24 L54 14" fill="none" stroke="#8fc2ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="54" cy="14" r="3.5" fill="#8fc2ff"/>
+</svg>

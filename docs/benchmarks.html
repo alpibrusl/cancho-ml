@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<!--
+  Hand-written. Every figure is copied from the raw output in docs/bench/ named next to it; the linear-algebra table was
+  written from docs/bench/gate-1thread.jsonl by a one-off script and pasted. Nothing here was measured by the page, and
+  nothing was timed while writing it.
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cancho-ml benchmarks: what was timed, and under what load</title>
+<meta name="description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. A serial rerun is pending.">
+<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/benchmarks.html">
+<meta name="robots" content="index, follow">
+<meta property="og:site_name" content="cancho-ml">
+<meta property="og:locale" content="en">
+<meta property="og:type" content="website">
+<meta property="og:title" content="cancho-ml benchmarks: what was timed, and under what load">
+<meta property="og:description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. A serial rerun is pending.">
+<meta property="og:url" content="https://alpibrusl.github.io/cancho-ml/benchmarks.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="cancho-ml benchmarks: what was timed, and under what load">
+<meta name="twitter:description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. A serial rerun is pending.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/svg+xml" href="assets/cancho-ml-icon.svg">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top"><div class="wrap">
+  <a class="brand" href="./"><img class="mark" src="assets/cancho-ml-icon.svg" alt="" width="28" height="28">cancho-ml</a>
+  <nav aria-label="Site">
+    <a href="./" class="opt">Overview</a><a href="evidence.html">Evidence</a><a href="benchmarks.html" aria-current="page">Benchmarks</a><a href="./#start" class="opt">Quick start</a>
+    <a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
+  </nav>
+</div></header>
+
+<main id="main" class="wrap">
+<div class="pagehead">
+  <h1>Benchmarks</h1>
+  <p class="lead">What was timed, on what, and under what load. None of it is a claim yet.</p>
+  <div class="notice">
+    <p><b>Read this first.</b> Every table on this page was taken on one Mac (arm64, 16 cores, macOS 26.2; the documents that name the chip say Apple M4 Max) that other users and other agents&rsquo; builds and benchmarks were also using. The load average (1 minute) was 2.4 or more in every cell, and up to 10 in the linear-algebra table: every cell is flagged <code>load &gt;= 2</code>, and none is a quiet-machine number. <b>A serial rerun on a quiet machine is pending.</b> Until it is done, these are the conditions of one stretch of time, not measurements to quote.</p>
+    <p><b>The command line has not been timed.</b> All of this is the libraries under <code>ml</code>, and no verb calls most of them yet. There is no timing of <code>ml fit</code>, <code>predict</code> or <code>eval</code> in this repository.</p>
+  </div>
+  <ul class="toc">
+    <li><a href="#models">Models against numpy and scikit-learn</a></li><li><a href="#threads">Threads</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#metrics">Metrics</a></li><li><a href="#trees">Forests</a></li><li><a href="#reader">The reader</a></li><li><a href="#not">What was not measured</a></li>
+  </ul>
+</div>
+
+<section id="models">
+  <h2>Models against numpy and scikit-learn</h2>
+  <p class="sub">Fit only, one thread, all <code>n</code> rows, 20 features, minimum of 7 interleaved samples. Times in milliseconds. &ldquo;The same algorithm in numpy&rdquo; is the same method written with numpy and Accelerate BLAS (Newton with 6 passes and the loss; normal equations with Cholesky; Lloyd with 10 iterations), and does not reproduce cancho&rsquo;s bits. The ratio is cancho&rsquo;s time over the other: <strong>above 1, cancho is slower.</strong> Source: <code>docs/bench/models-bench.txt</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> section 6.5. numpy 2.4.6, scikit-learn 1.8.0, Python 3.14.5; BLAS threads set to 1.</p>
+  <div class="fitwrap"><table class="fit bench">
+    <thead><tr><th>model</th><th class="num">rows</th><th class="num">cancho</th><th class="num">numpy, same algorithm</th><th class="num">cancho / numpy</th><th class="num">scikit-learn</th><th class="num">cancho / scikit-learn</th><th class="num">load, start / end</th></tr></thead>
+    <tbody>
+      <tr><th>logistic, Newton K = 6, loss each iteration</th><td class="num">100,000</td><td class="num">22.8</td><td class="num">15.0</td><td class="num slow">1.52</td><td class="num">10.4 (lbfgs, defaults); 16.3 (<code>tol=1e-12</code>)</td><td class="num slow">2.19; 1.40</td><td class="num">2.42 / 2.39</td></tr>
+      <tr><th>logistic</th><td class="num">1,000,000</td><td class="num">236</td><td class="num">170</td><td class="num slow">1.39</td><td class="num">126 (defaults); 223 (<code>tol=1e-12</code>)</td><td class="num slow">1.87; 1.06</td><td class="num">2.44 / 2.74</td></tr>
+      <tr><th>linear, normal equations</th><td class="num">100,000</td><td class="num">2.85</td><td class="num">1.29</td><td class="num slow">2.21</td><td class="num">13.2 (<code>LinearRegression</code>)</td><td class="num">0.22</td><td class="num">2.39 / 2.39</td></tr>
+      <tr><th>linear</th><td class="num">1,000,000</td><td class="num">32.0</td><td class="num">16.1</td><td class="num slow">1.99</td><td class="num">182</td><td class="num">0.18</td><td class="num">2.74 / 2.74</td></tr>
+      <tr><th>k-means, k = 8, 10 iterations and the final pass</th><td class="num">100,000</td><td class="num">33.8</td><td class="num">62.4</td><td class="num">0.54</td><td class="num">32.7 (same init)</td><td class="num level">1.03</td><td class="num">2.39 / 2.44</td></tr>
+      <tr><th>k-means</th><td class="num">1,000,000</td><td class="num">306</td><td class="num">1,148</td><td class="num">0.27</td><td class="num">330 (same init)</td><td class="num level">0.93</td><td class="num">2.68 / 3.16</td></tr>
+    </tbody>
+  </table></div>
+  <p class="fn">Cancho&rsquo;s spread (maximum over minimum of the 7 samples) is 1.02 to 1.05. The 5- and 15-minute load averages printed with the cells were 6.6 to 7.3. <strong>What the table says.</strong> Cancho is slower than numpy&rsquo;s same algorithm on logistic and linear regression (1.4 to 2.2 times) and slower than scikit-learn&rsquo;s default logistic call (1.9 to 2.2 times); it is level with scikit-learn on k-means. Against scikit-learn&rsquo;s <code>LinearRegression</code> it is 4.6 to 5.7 times faster, but that solver is an SVD-based least squares with centring, a slower algorithm: numpy&rsquo;s same-algorithm column is the fair one. The linear-regression gap to numpy follows from the <code>syrk</code> kernel being 3.4 times behind <code>dsyrk</code> at 100,000 by 20 (below). Logistic regression runs 6 Newton passes; scikit-learn&rsquo;s default needs 6 iterations and 7 or 8 evaluations, each of which reads <code>X</code> twice.</p>
+</section>
+
+<section id="threads">
+  <h2>Threads</h2>
+  <p class="sub">The same models at 1, 2, 4, 8 and 16 threads, in milliseconds, one run each; every output of every run is identical to the one-thread run. Source: <code>docs/bench/models-bench.txt</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> section 6.7. Load average 3.2 to 3.6 for these cells (2.96 for the rerun). The script rounds to whole milliseconds.</p>
+  <div class="fitwrap"><table class="fit bench">
+    <thead><tr><th>model</th><th class="num">rows</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16 threads</th><th class="num">speed-up at 16</th></tr></thead>
+    <tbody>
+      <tr><th>logistic</th><td class="num">100,000</td><td class="num">23</td><td class="num">15</td><td class="num">10</td><td class="num">7</td><td class="num">6</td><td class="num">3.71</td></tr>
+      <tr><th>logistic</th><td class="num">1,000,000</td><td class="num">240</td><td class="num">158</td><td class="num">102</td><td class="num">72</td><td class="num">59</td><td class="num">4.07</td></tr>
+      <tr><th>linear</th><td class="num">100,000</td><td class="num">3</td><td class="num">3</td><td class="num">3</td><td class="num">2</td><td class="num">3</td><td class="num">1.10</td></tr>
+      <tr><th>linear</th><td class="num">1,000,000</td><td class="num">34</td><td class="num">34</td><td class="num">28</td><td class="num">25</td><td class="num">24</td><td class="num">1.40</td></tr>
+      <tr><th>k-means</th><td class="num">100,000</td><td class="num">34</td><td class="num">25</td><td class="num">19</td><td class="num">17</td><td class="num">16</td><td class="num">2.17</td></tr>
+      <tr><th>k-means</th><td class="num">1,000,000 (rerun)</td><td class="num">319</td><td class="num">227</td><td class="num">161</td><td class="num">129</td><td class="num">113</td><td class="num">2.82</td></tr>
+    </tbody>
+  </table></div>
+  <p class="fn">The first run of the million-row k-means printed 515 ms at one thread; the cause was not found, the rerun above agrees with the 306 to 320 ms of every other measurement of that cell, and the first line is kept in the raw log. Every thread owns a copy of its rows, made at every pass, because cancho cannot hand a thread a shared read-only slice (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/linalg.md">docs/linalg.md</a> section 5.6, U2); the copy is in the time, which is why the speed-up is far from linear and linear regression, one pass, hardly gains. For the linear-algebra kernels, <code>dot</code>, <code>gemv_t</code> and <code>gemv_n</code> get <em>slower</em> with threads (0.38 to 0.65 of the one-thread speed) for the same reason; <code>syrk</code> at 100,000 by 64 takes 17.5 ms on one thread and 3.75 ms on sixteen, and <code>gemm</code> at 512 takes 10.8 ms and 2.25 ms (<code>docs/bench/threads.txt</code>, load 4.2, minimum of 5).</p>
+</section>
+
+<section id="linalg">
+  <h2>Linear algebra against numpy and scipy</h2>
+  <p class="sub">The 29 cells of the gate, one thread, against the calls a user writes (<code>np.dot</code>, <code>scipy.linalg.cholesky</code>, <code>solve_triangular</code>), and three <code>gemm</code> shapes for reference. Minimum of 7 interleaved samples; numpy side single-threaded (<code>VECLIB_MAXIMUM_THREADS</code>, <code>OPENBLAS_NUM_THREADS</code> and <code>OMP_NUM_THREADS</code> set to 1, and honoured: <code>cpu seconds / wall seconds</code> of a 1024 gemm is 0.999); Accelerate BLAS, scipy 1.17.1. A cell is &ldquo;match&rdquo; when cancho&rsquo;s time is not above numpy&rsquo;s. Source: <code>docs/bench/gate-1thread.jsonl</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/linalg.md">docs/linalg.md</a> section 5.2. <strong>The load average was 5.3 to 10.0 at the start of the cells.</strong></p>
+  <div class="fitwrap"><table class="fit bench">
+    <thead><tr><th>kernel</th><th>shape</th><th class="num">cancho</th><th class="num">numpy / scipy</th><th class="num">cancho / numpy</th><th>verdict</th><th class="num">load, start / end</th></tr></thead>
+    <tbody>
+<tr><th>dot</th><td>n=1,000,000</td><td class="num">278.00 us</td><td class="num">76.75 us</td><td class="num slow">3.62</td><td>does not match</td><td class="num">8.3 / 8.5</td></tr>
+<tr><th>axpy</th><td>n=1,000,000</td><td class="num">187.10 us</td><td class="num">97.59 us</td><td class="num slow">1.92</td><td>does not match</td><td class="num">8.5 / 8.5</td></tr>
+<tr><th>gemv_n</th><td>n=100,000, d=20</td><td class="num">313.73 us</td><td class="num">295.16 us</td><td class="num slow">1.06</td><td>does not match</td><td class="num">8.5 / 8.5</td></tr>
+<tr><th>gemv_t</th><td>n=100,000, d=20</td><td class="num">296.52 us</td><td class="num">221.57 us</td><td class="num slow">1.34</td><td>does not match</td><td class="num">8.5 / 8.5</td></tr>
+<tr><th>syrk</th><td>n=100,000, d=20</td><td class="num">1.880 ms</td><td class="num">547.88 us</td><td class="num slow">3.43</td><td>does not match</td><td class="num">8.5 / 8.7</td></tr>
+<tr><th>gemv_n</th><td>n=100,000, d=64</td><td class="num">1.067 ms</td><td class="num">556.15 us</td><td class="num slow">1.92</td><td>does not match</td><td class="num">8.7 / 9.1</td></tr>
+<tr><th>gemv_t</th><td>n=100,000, d=64</td><td class="num">900.00 us</td><td class="num">494.48 us</td><td class="num slow">1.82</td><td>does not match (spread above 1.25)</td><td class="num">9.2 / 9.3</td></tr>
+<tr><th>syrk</th><td>n=100,000, d=64</td><td class="num">17.375 ms</td><td class="num">1.721 ms</td><td class="num slow">10.10</td><td>does not match</td><td class="num">9.3 / 9.3</td></tr>
+<tr><th>gemv_n</th><td>n=100,000, d=256</td><td class="num">5.400 ms</td><td class="num">2.350 ms</td><td class="num slow">2.30</td><td>does not match</td><td class="num">9.3 / 9.4</td></tr>
+<tr><th>gemv_t</th><td>n=100,000, d=256</td><td class="num">4.520 ms</td><td class="num">1.684 ms</td><td class="num slow">2.68</td><td>does not match</td><td class="num">9.4 / 9.4</td></tr>
+<tr><th>syrk</th><td>n=100,000, d=256</td><td class="num">290.000 ms</td><td class="num">19.515 ms</td><td class="num slow">14.86</td><td>does not match</td><td class="num">9.4 / 9.3</td></tr>
+<tr><th>gemv_n</th><td>n=1,000,000, d=20</td><td class="num">3.643 ms</td><td class="num">3.485 ms</td><td class="num slow">1.05</td><td>does not match</td><td class="num">9.5 / 9.7</td></tr>
+<tr><th>gemv_t</th><td>n=1,000,000, d=20</td><td class="num">3.143 ms</td><td class="num">2.382 ms</td><td class="num slow">1.32</td><td>does not match</td><td class="num">9.7 / 9.8</td></tr>
+<tr><th>syrk</th><td>n=1,000,000, d=20</td><td class="num">22.333 ms</td><td class="num">6.114 ms</td><td class="num slow">3.65</td><td>does not match</td><td class="num">9.8 / 10.0</td></tr>
+<tr><th>gemv_n</th><td>n=1,000,000, d=64</td><td class="num">13.000 ms</td><td class="num">6.022 ms</td><td class="num slow">2.16</td><td>does not match</td><td class="num">10.0 / 9.9</td></tr>
+<tr><th>gemv_t</th><td>n=1,000,000, d=64</td><td class="num">11.667 ms</td><td class="num">4.750 ms</td><td class="num slow">2.46</td><td>does not match</td><td class="num">9.9 / 9.5</td></tr>
+<tr><th>syrk</th><td>n=1,000,000, d=64</td><td class="num">180.000 ms</td><td class="num">16.902 ms</td><td class="num slow">10.65</td><td>does not match</td><td class="num">9.5 / 9.1</td></tr>
+<tr><th>gemv_n</th><td>n=1,000,000, d=256</td><td class="num">131.000 ms</td><td class="num">23.562 ms</td><td class="num slow">5.56</td><td>does not match (spread above 1.25)</td><td class="num">8.7 / 8.8</td></tr>
+<tr><th>gemv_t</th><td>n=1,000,000, d=256</td><td class="num">95.000 ms</td><td class="num">14.417 ms</td><td class="num slow">6.59</td><td>does not match (spread above 1.25)</td><td class="num">8.6 / 8.6</td></tr>
+<tr><th>syrk</th><td>n=1,000,000, d=256</td><td class="num">2.734 s</td><td class="num">189.494 ms</td><td class="num slow">14.43</td><td>does not match</td><td class="num">7.9 / 5.3</td></tr>
+<tr><th>chol</th><td>d=21</td><td class="num">0.58 us</td><td class="num">2.55 us</td><td class="num level">0.23</td><td>match</td><td class="num">5.3 / 5.3</td></tr>
+<tr><th>fwd</th><td>d=21</td><td class="num">0.13 us</td><td class="num">3.68 us</td><td class="num level">0.04</td><td>match</td><td class="num">5.3 / 5.3</td></tr>
+<tr><th>bwd</th><td>d=21</td><td class="num">0.14 us</td><td class="num">3.56 us</td><td class="num level">0.04</td><td>match</td><td class="num">5.3 / 5.3</td></tr>
+<tr><th>chol</th><td>d=64</td><td class="num">8.76 us</td><td class="num">8.93 us</td><td class="num level">0.98</td><td>match</td><td class="num">5.3 / 5.3</td></tr>
+<tr><th>fwd</th><td>d=64</td><td class="num">0.45 us</td><td class="num">5.10 us</td><td class="num level">0.09</td><td>match</td><td class="num">5.3 / 5.3</td></tr>
+<tr><th>bwd</th><td>d=64</td><td class="num">0.64 us</td><td class="num">5.22 us</td><td class="num level">0.12</td><td>match</td><td class="num">5.3 / 5.3</td></tr>
+<tr><th>chol</th><td>d=256</td><td class="num">490.26 us</td><td class="num">151.82 us</td><td class="num slow">3.23</td><td>does not match</td><td class="num">5.3 / 5.4</td></tr>
+<tr><th>fwd</th><td>d=256</td><td class="num">5.91 us</td><td class="num">16.45 us</td><td class="num level">0.36</td><td>match</td><td class="num">5.4 / 5.4</td></tr>
+<tr><th>bwd</th><td>d=256</td><td class="num">8.84 us</td><td class="num">16.97 us</td><td class="num level">0.52</td><td>match</td><td class="num">5.4 / 5.4</td></tr>
+<tr><th>gemm</th><td>256<sup>3</sup></td><td class="num">1.320 ms</td><td class="num">80.90 us</td><td class="num">16.32</td><td>reference only</td><td class="num">5.4 / 5.3</td></tr>
+<tr><th>gemm</th><td>512<sup>3</sup></td><td class="num">10.846 ms</td><td class="num">656.16 us</td><td class="num">16.53</td><td>reference only</td><td class="num">5.3 / 5.3</td></tr>
+<tr><th>gemm</th><td>1024<sup>3</sup></td><td class="num">90.000 ms</td><td class="num">6.528 ms</td><td class="num">13.79</td><td>reference only</td><td class="num">5.3 / 5.3</td></tr>
+    </tbody>
+  </table></div>
+  <p class="fn"><strong>The verdict:</strong> 8 of the 29 cells match and 21 do not, by factors from 1.05 to 14.86. Square <code>gemm</code> is 13.8 to 16.5 times slower than Accelerate. Against the thinnest scipy call (<code>dpotrf</code> and <code>dtrtrs</code> through f2py, load 3.8 to 4.0, <code>docs/bench/gate-lapack.jsonl</code>) the solves still match and Cholesky does not at any size (1.09, 1.64 and 10.67 times at d = 21, 64 and 256): 6 of 29 cells match on the strictest reading. Numpy&rsquo;s time on the gemv_n cell at 100,000 by 20 moved by 2.4 times between sessions with cancho&rsquo;s unchanged, so the ratio of 1.06 on that cell should not be read either way. <strong>Why the misses are misses</strong> (found by ablation, <code>docs/linalg.md</code> section 5.3): the same algorithm in C, with no fused multiply-add, takes 0.95 to 1.16 times as long as cancho on dot, axpy, gemv, syrk and Cholesky at 256 columns, so the gap is the vendor library (hand-written kernels, the AMX unit) and the language, which has no SIMD vector type, and not cancho&rsquo;s code generation. The fixed summation order costs the dot product 1.7 times: 200 to 250 us for the block rule against 140 us for 8 adjacent lanes, a decision for the maintainer that would change every dot-shaped reduction.</p>
+</section>
+
+<section id="metrics">
+  <h2>Metrics</h2>
+  <p class="sub">One thread, 1,000,000 rows, minimum of 7 interleaved samples (a cancho sample times 3 calls with a 1 ms clock). Source: <code>docs/bench/metrics-1thread.txt</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/metrics.md">docs/metrics.md</a> section 5.4. <strong>Load 4.5 to 4.6.</strong> Every pair of results was equal to the last bit.</p>
+  <div class="fitwrap"><table class="fit bench">
+    <thead><tr><th>cell</th><th class="num">reference, ms</th><th class="num">cancho, ms</th><th class="num">cancho / reference</th></tr></thead>
+    <tbody>
+      <tr><th>AUC, uniform scores, <code>sklearn.roc_auc_score</code></th><td class="num">146.59</td><td class="num">24.00</td><td class="num level">0.16</td></tr>
+      <tr><th>AUC, uniform scores, thin numpy (argsort and cumsum)</th><td class="num">86.21</td><td class="num">24.33</td><td class="num level">0.28</td></tr>
+      <tr><th>AUC, 16 distinct scores, <code>sklearn.roc_auc_score</code></th><td class="num">78.54</td><td class="num">22.67</td><td class="num level">0.29</td></tr>
+      <tr><th>AUC, 16 distinct scores, thin numpy</th><td class="num">32.16</td><td class="num">23.00</td><td class="num level">0.72</td></tr>
+      <tr><th>log-loss, uniform probabilities, <code>sklearn.log_loss</code></th><td class="num">51.88</td><td class="num">16.00</td><td class="num level">0.31</td></tr>
+      <tr><th>log-loss, uniform probabilities, thin numpy (clip, log, sum)</th><td class="num">5.15</td><td class="num">15.67</td><td class="num slow">3.04</td></tr>
+      <tr><th>log-loss, 16 distinct values, <code>sklearn.log_loss</code></th><td class="num">56.69</td><td class="num">16.33</td><td class="num level">0.29</td></tr>
+      <tr><th>log-loss, 16 distinct values, thin numpy</th><td class="num">5.43</td><td class="num">16.00</td><td class="num slow">2.95</td></tr>
+    </tbody>
+  </table></div>
+  <p class="fn">The log-loss is 3 times slower than a thin numpy version and 3 times faster than the scikit-learn call; which one a user compares with is theirs to say. The same terms summed by one left fold take 14.2 ms of the 16.0, so about 14 ns a row is the clip and cancho&rsquo;s <code>log</code>; why the thin numpy version does the same work in 5 ms was not investigated. The fixed summation tree costs 1.13 times the left fold (16.00 against 14.20 ms) and has the order that does not depend on the thread count; the left fold is 413 ulp from the exact sum of the terms on this input and the tree 0.0 (<code>docs/bench/metrics-sum-cost.txt</code>, load 4.8 to 4.9, one input). The AUC sorts the two classes apart with a radix sort; why <code>argsort</code> is slower here was not investigated. The metrics have no threaded variant.</p>
+</section>
+
+<section id="trees">
+  <h2>Forests</h2>
+  <p class="sub">Classification, depth 8, 64 bins, 4 candidate features per node (<code>mtry</code>), bootstrap, 20 columns, train on the first 80% of the rows, test on the last 20%. Minimum of 7 interleaved rounds. Seconds. Source: <code>docs/bench/tree_100000.txt</code> and <code>tree_1000000_b.txt</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-tree.md">docs/models-tree.md</a> section 10.9. Load average over the rounds: 3.3 to 4.9 (100,000 rows) and 2.6 to 5.0 (1,000,000 rows). <strong>Both are the lower-load session of two; the other session is in the document and the raw files.</strong></p>
+  <div class="notice"><p><b>These are not speed comparisons with scikit-learn.</b> scikit-learn&rsquo;s <code>RandomForestClassifier</code> is an exact-split forest: it looks for thresholds on the raw values. This library bins the values into quantiles first. The two make models of the same family by different algorithms, so the scikit-learn rows are the time to produce such a model, not the speed of the same algorithm, and no ratio is given. No histogram random forest was installed to compare with, and nothing was installed. scikit-learn ran with <code>n_jobs = 1</code>; that it ran on one thread was not checked with a counter. <code>HistGradientBoosting</code> with one iteration builds one tree with leaf-wise growth and second-order leaf values, so its row is context only.</p></div>
+  <div class="fitwrap"><table class="fit bench">
+    <thead><tr><th>entry</th><th class="num">trees</th><th class="num">threads</th><th class="num">fit, 100,000 rows</th><th class="num">predict, 20,000</th><th class="num">fit, 1,000,000 rows</th><th class="num">predict, 200,000</th></tr></thead>
+    <tbody>
+      <tr><th>cancho</th><td class="num">10</td><td class="num">1</td><td class="num">0.0516</td><td class="num">0.0092</td><td class="num">0.583</td><td class="num">0.0863</td></tr>
+      <tr><th>cancho</th><td class="num">10</td><td class="num">4</td><td class="num">0.0158</td><td class="num">0.0027</td><td class="num">0.233</td><td class="num">0.0263</td></tr>
+      <tr><th>cancho</th><td class="num">10</td><td class="num">16</td><td class="num">0.0100</td><td class="num">0.0013</td><td class="num">0.221</td><td class="num">0.0103</td></tr>
+      <tr><th>cancho</th><td class="num">32</td><td class="num">1</td><td class="num">0.1197</td><td class="num">0.0362</td><td class="num">1.289</td><td class="num">0.3563</td></tr>
+      <tr><th>cancho</th><td class="num">32</td><td class="num">4</td><td class="num">0.0312</td><td class="num">0.0104</td><td class="num">0.571</td><td class="num">0.1020</td></tr>
+      <tr><th>cancho</th><td class="num">32</td><td class="num">16</td><td class="num">0.0181</td><td class="num">0.0039</td><td class="num">0.381</td><td class="num">0.0337</td></tr>
+      <tr><th>scikit-learn <code>RandomForestClassifier</code>, exact splits</th><td class="num">10</td><td class="num">1</td><td class="num">1.060</td><td class="num">0.0092</td><td class="num">12.62</td><td class="num">0.0845</td></tr>
+      <tr><th>scikit-learn <code>RandomForestClassifier</code>, exact splits</th><td class="num">10</td><td class="num">16</td><td class="num">0.1316</td><td class="num">0.0134</td><td class="num">1.862</td><td class="num">0.0139</td></tr>
+      <tr><th>scikit-learn <code>HistGradientBoosting</code>, 1 iteration (context only)</th><td class="num">1</td><td class="num">1</td><td class="num">0.1055</td><td class="num">0.0007</td><td class="num">0.602</td><td class="num">0.0058</td></tr>
+    </tbody>
+  </table></div>
+  <p class="fn">Spreads (maximum over minimum) of the cancho cells are 1.01 to 1.12, except the 16-thread predictions (1.25 to 1.33), which are at or above the protocol&rsquo;s limit of 1.25; the cells above it were not rerun. <strong>Scaling.</strong> Fit speed-up at 16 threads, against the same configuration on one thread, for 32 trees: 6.61 times at 100,000 rows and 3.38 at 1,000,000; predict 9.28 and 10.58 times. The 10-tree fits do not divide by 4, 8 or 16 and use at most 10 threads. The explanation, by elimination and not measured: the parent builds a copy of the bin matrix and the labels for each thread, one after another, because a thread cannot be given a shared read-only slice. At 16 threads on a machine with 12 performance cores and a load of 3 or more, read the cells as &ldquo;no worse than&rdquo;. The forest&rsquo;s bytes are identical at every thread count. <strong>Quality is not the same as speed:</strong> the classification forests agree with scikit-learn&rsquo;s to 0.001 AUC, and the regression forest does not (<a href="evidence.html#red">the red gate</a>).</p>
+</section>
+
+<section id="reader">
+  <h2>The reader</h2>
+  <p class="sub">Cells read per second, 500,000 rows by 8 columns (4.0 million cells), one thread, minimum of 7 interleaved rounds. <code>reader-check</code> is the test driver built on the reader library, not <code>ml</code>; <code>table</code> is cancho-table&rsquo;s binary built by its own pin. Source: <code>docs/bench/bench_reader.log</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/reader.md">docs/reader.md</a> section 6. <strong>Load 3.6 to 4.8.</strong></p>
+  <div class="fitwrap"><table class="fit bench">
+    <thead><tr><th>file</th><th class="num"><code>reader-check</code>, pass 1 (every cell read, none kept)</th><th class="num"><code>reader-check</code>, whole load (2 passes and the matrix)</th><th class="num"><code>table</code>, max of 8 float columns</th><th class="num"><code>table</code>, count</th></tr></thead>
+    <tbody>
+      <tr><th>float17, 94 MB, <code>%.16e</code></th><td class="num">17.1 M/s</td><td class="num">7.6 M/s</td><td class="num">19.6 M/s</td><td class="num">67.3 M/s</td></tr>
+      <tr><th>short, 29.6 MB, <code>%.2f</code> (the integer and decimal path)</th><td class="num">41.8 M/s</td><td class="num">19.9 M/s</td><td class="num">40.7 M/s</td><td class="num">104.7 M/s</td></tr>
+      <tr><th>mixed, 61.8 MB</th><td class="num">22.2 M/s</td><td class="num">9.9 M/s</td><td class="num">23.4 M/s</td><td class="num">71.5 M/s</td></tr>
+    </tbody>
+  </table></div>
+  <p class="fn">On the float file, reading every cell in pass 1 is 13% slower than cancho-table&rsquo;s own reader (17.1 against 19.6 M/s) and on short decimals it is level. The whole load is about 2.3 times a pass: it reads every cell twice by design, because the shape must be known before the matrix is allocated. Where the 13% goes was not profiled; a copy of each record into a buffer before splitting is a hypothesis, not a measurement.</p>
+</section>
+
+<section id="not">
+  <h2>What was not measured</h2>
+  <ul class="plain">
+    <li><strong>The command line.</strong> <code>ml fit</code>, <code>predict</code> and <code>eval</code> have no benchmark, and the constant model needs no matrix.</li>
+    <li><strong>A quiet machine.</strong> The serial rerun is pending, and so are the quiet-machine versions of every table above.</li>
+    <li><strong>Another machine.</strong> Everything is one Mac, arm64. A Linux x86-64 box has not been used.</li>
+    <li><strong>Memory.</strong> No gate measures it. The reader&rsquo;s refusal of a 200 MB file peaked at 1.5 MB, and the tree fit holds about 16 times 35 MB of thread copies at 16 threads for 800,000 rows (<code>docs/models-tree.md</code> section 10.9); there is no measurement of a model fit.</li>
+    <li><strong>Rows above a million</strong> for the linear models, and 10,000,000 for anything. The tree fit is limited to 2<sup>20</sup> rows in the library.</li>
+    <li><strong>How to rerun:</strong> <code>python3 scripts/bench_models.py</code>, <code>bench_models_threads.py</code>, <code>bench_linalg.py --gate --c</code>, <code>bench_metrics.py</code>, <code>bench_tree.py</code> and <code>bench_reader.py</code>. They were not run for this page.</li>
+  </ul>
+</section>
+</main>
+
+<footer><div class="wrap">
+  <a href="https://github.com/alpibrusl/cancho-ml">Repository</a><a href="./" class="opt">Overview</a><a href="evidence.html">Evidence</a>
+  <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">Status</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/linalg.md">Linear algebra</a>
+  <span>Built on <a href="https://github.com/alpibrusl/cancho">cancho</a> · EUPL-1.2</span>
+</div></footer>
+</body>
+</html>
