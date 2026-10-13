@@ -4,7 +4,7 @@ module ml.csvcell;
 
 // One CSV cell as a number (docs/reader.md section 2.1). The grammar of the CLI slice is kept for what it reads exactly: a cell
 // `[+-]digits[.digits]` with at most 12 significant digits is an int or a dec(S), kept as an integer mantissa and S. Everything else
-// goes to cancho-table's exact reader, `flt.parse_float` (pinned by table.pin, not copied: docs/reader.md section 1): a cell with an
+// goes to cancho-table's exact reader, `flt.parse_float` (a pinned package dependency, not copied: docs/reader.md section 1): a cell with an
 // exponent, a leading or trailing point, or more than 12 digits is a float, the nearest double, ties to even.
 //
 // read answers (status, kind, mantissa, fractional digits, integer digits without leading zeros, key):

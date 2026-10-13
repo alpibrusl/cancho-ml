@@ -13,7 +13,7 @@ carries a dotdot path must end in exactly the refusal. Exit 1 on any failure.
     python3 scripts/gate_paths.py --tool models-check
 
 scripts/mutants_paths.py removes each check in turn and requires this script to fail. Environment: CANCHO, ML_DEPS (the installed
-contract modules, default build/deps) and CANCHO_TABLE as in scripts/build_reader.sh."""
+packages, default build/deps), as in scripts/build_reader.sh."""
 import json
 import os
 import random

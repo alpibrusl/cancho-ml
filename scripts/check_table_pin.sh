@@ -30,7 +30,7 @@ for m in $MODS; do
   [ ${#rev} -eq 40 ] || fail "[dependencies.$m]: rev is not a full commit hash (${#rev} digits)"
   [ "$rev" = "$want" ] || fail "[dependencies.$m]: rev $rev is not the documented $want ($DOC)"
 done
-if grep -n '^sources *=.*\.\./' "$TOML" >&2; then fail "a sources entry reaches outside this tree"; fi
+if grep -q '^sources *=.*\.\./' "$TOML"; then fail "a sources entry of $TOML reaches outside this tree"; fi
 for f in $(find lib tools tests -name '*.cho' 2>/dev/null); do
   for m in $MODS; do
     if grep -q "^module $m;" "$f"; then fail "$f declares module $m, which is cancho-table's"; fi

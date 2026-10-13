@@ -13,9 +13,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import mutlib
 
 ROOT = mutlib.ROOT
-# the mutated copy has no build/deps and no sibling clone of cancho-table: name them absolutely
+# the mutated copy has no build/deps: name them absolutely
 os.environ.setdefault("ML_DEPS", str(ROOT / "build" / "deps"))
-os.environ.setdefault("CANCHO_TABLE", str(ROOT.parent / "cancho-table-main"))
 
 H = "lib/core/pathcheck.cho"
 MC = "tools/models-check/main.cho"

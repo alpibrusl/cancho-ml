@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Mutants for the reader gates of docs/reader.md section 5: a gate that cannot fail judges nothing.
 
-Each mutant is a copy of the tree with one change (several edits for the few that need two) to a source of this repository, or to a
-SCRATCH COPY of one of the six cancho-table modules (the clone is read-only and never touched), the reader-check binary rebuilt from the
+Each mutant is a copy of the tree with one change (several edits for the few that need two) to a source of this repository, or to
+the installed text of one of the six cancho-table modules, in the copy's own build/deps (the tree's build/deps is never touched), the reader-check binary rebuilt from the
 copy, and the gate named in the mutant run against it. KILLED: the gate reported differences, a trap or a failed build of a check; SURVIVED:
 it reported none, and the mutant then carries a reason (an equivalent mutant) or is a gap that docs/reader.md section 6 names.
 
@@ -23,7 +23,13 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-TABLE = pathlib.Path(os.environ.get("CANCHO_TABLE", str(ROOT.parent / "cancho-table-main")))
+
+
+def dep_file(deps, name):
+    """The file of `deps` (a build/deps directory) that declares cancho-table's module `name`: the installed text of the pinned store."""
+    hits = [f for f in sorted(pathlib.Path(deps).glob("*.cho")) if re.search(r"^module %s;" % name, f.read_text(), re.M)]
+    assert len(hits) == 1, "module %s is in %d files of %s" % (name, len(hits), deps)
+    return hits[0]
 PY = sys.executable
 
 
@@ -33,7 +39,7 @@ def compiler():
 
 
 # id, gate, what, edits [(file, old, new)], reason (for an expected survivor)
-# `file` is a path in this repository, or table:NAME.cho for the scratch copy of a cancho-table module
+# `file` is a path in this repository, or table:NAME.cho for the installed text of a cancho-table module (in the copy's build/deps)
 def M(id, gate, what, edits, why=None):
     return dict(id=id, gate=gate, what=what, edits=edits, why=why)
 
@@ -145,7 +151,7 @@ def check_pattern(m):
     problems = []
     for file, old, new in m["edits"]:
         if file.startswith("table:"):
-            p = TABLE / "tools" / "table" / file[6:]
+            p = dep_file(ROOT / "build" / "deps", file[6:-4])
         else:
             p = ROOT / file
         if not p.exists():
@@ -172,18 +178,14 @@ def build_and_gate(m, gates):
         td = pathlib.Path(td)
         tree = td / "tree"
         tree_copy(tree)
-        scratch = td / "table"
-        scratch.mkdir()
-        for name in ("pow5", "dec", "flt", "query", "facc", "reader"):
-            shutil.copy(TABLE / "tools" / "table" / (name + ".cho"), scratch / (name + ".cho"))
         if m:
             for file, old, new in m["edits"]:
-                path = scratch / file[6:] if file.startswith("table:") else tree / file
+                path = dep_file(tree / "build" / "deps", file[6:-4]) if file.startswith("table:") else tree / file
                 text = path.read_text()
                 if text.count(old) != 1:
                     return "INVALID", "pattern does not apply to the copy"
                 path.write_text(text.replace(old, new, 1))
-        env = dict(os.environ, CANCHO=compiler(), TABLE_SRC=str(scratch))
+        env = dict(os.environ, CANCHO=compiler())
         b = subprocess.run(["sh", str(tree / "scripts" / "build_reader.sh"), str(tree / "build" / "reader-check")], capture_output=True, text=True, env=env, cwd=tree)
         if b.returncode != 0:
             return "INVALID", "build failed: " + (b.stdout + b.stderr)[:300]

@@ -160,11 +160,6 @@ MUTANTS = [
 def copy_tree(dest):
     ignore = shutil.ignore_patterns(".git", "build", "__pycache__", "*.pyc")
     shutil.copytree(ROOT, dest, ignore=ignore, symlinks=True)
-    # the numeric modules of cancho-table sit beside the tree, where cancho.toml's LOCAL-DEV sources name them
-    table = pathlib.Path(os.environ.get("CANCHO_TABLE", str(ROOT.parent / "cancho-table-main")))
-    link = dest.parent / "cancho-table-main"
-    if not link.exists():
-        link.symlink_to(table)
     deps = ROOT / "build" / "deps"
     if deps.is_dir():
         (dest / "build").mkdir(exist_ok=True)
@@ -188,14 +183,9 @@ def apply_edits(tree, m, strict=True):
     return problems
 
 
-def table_sources():
-    t = pathlib.Path(os.environ.get("CANCHO_TABLE", str(ROOT.parent / "cancho-table-main"))) / "tools" / "table"
-    return [str(t / (m + ".cho")) for m in ("pow5", "dec", "flt", "query", "facc", "reader")]
-
-
 def build(tree):
     files = (sorted(glob.glob(str(tree / "lib/core/*.cho"))) + [str(tree / "lib/linalg/tensor.cho")] + sorted(glob.glob(str(tree / "build/deps/*.cho"))) +
-             [str(tree / "generated/ml/built.cho")] + sorted(glob.glob(str(tree / "tools/ml/*.cho"))) + table_sources())
+             [str(tree / "generated/ml/built.cho")] + sorted(glob.glob(str(tree / "tools/ml/*.cho"))))
     out = tree / "build" / "ml"
     p = subprocess.run([compiler(), "build", "--std", *files, "-o", str(out)], capture_output=True, text=True, cwd=tree)
     return out if p.returncode == 0 else None, p.stdout + p.stderr
