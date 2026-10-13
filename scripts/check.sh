@@ -48,3 +48,7 @@ python3 scripts/schemas.py --check
 python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
+# stage M3/M4: lib/transforms and lib/pipeline (docs/transforms.md, docs/pipeline.md): unit, fixture and fuzz programs, the driver, the API scan, the
+# registries and the Python oracles (scripts/oracle_pipe.py --sklearn and scripts/mutants_pipe.py run on request, as the other mutants do)
+python3 scripts/mutants_pipe.py --check
+sh scripts/gate_pipe.sh
