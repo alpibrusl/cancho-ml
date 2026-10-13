@@ -479,6 +479,8 @@
     "nearest",
     "nearest",
     "need",
+    "nfloats",
+    "nints",
     "no_cats",
     "node_cap",
     "nodes_max",
@@ -708,5 +710,5 @@
   ],
   "folded_operators": 145,
   "folded_calls": 2,
-  "functions": 1164
+  "functions": 1166
 }

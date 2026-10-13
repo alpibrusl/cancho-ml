@@ -1019,7 +1019,7 @@ pub fn schema_check[&h, &g, &m, &s](heap: &!h Heap, args: &g Args, errs: fail.Er
             var first = true;
             while i < mc {
                 let jj = input_column(mo, i, sh);
-                if !(i == mfile.target(mo) && !need_target) && (jj < 0 || (csv.kind(sh, jj) == 0 && !allow_empty)) {
+                if !(i == mfile.target(mo) && !need_target) && (jj < 0 || csv.kind(sh, jj) == 0 && !allow_empty) {
                     reason = name_list(heap, reason, mfile.name(mo, i), first);
                     first = false;
                 }
@@ -1063,7 +1063,7 @@ pub fn schema_check[&h, &g, &m, &s](heap: &!h Heap, args: &g Args, errs: fail.Er
     i = 0;
     while i < mc {
         let jj = input_column(mo, i, sh);
-        if !(i == mfile.target(mo) && !need_target) && (jj < 0 || (csv.kind(sh, jj) == 0 && !allow_empty)) {
+        if !(i == mfile.target(mo) && !need_target) && (jj < 0 || csv.kind(sh, jj) == 0 && !allow_empty) {
             w = text.put(heap, w, mfile.name(mo, i));
         }
         i = i + 1;
