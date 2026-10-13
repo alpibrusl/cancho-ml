@@ -28,7 +28,7 @@
   "@type": "SoftwareApplication",
   "name": "cancho-ml",
   "url": "https://alpibrusl.github.io/cancho-ml/",
-  "description": "A command line that fits, applies and scores a model on a CSV, with exact sums, bounded resources, structured refusals and a machine-verifiable authority. Early: three models are built (constant, linear, logistic).",
+  "description": "A command line that fits, applies and scores a model on a CSV, with exact sums, bounded resources, structured refusals and a machine-verifiable authority. Early: five models are built (constant, linear, logistic, tree, forest).",
   "applicationCategory": "DeveloperApplication",
   "applicationSubCategory": "Command-line tool",
   "programmingLanguage": "cancho",
@@ -56,10 +56,10 @@
 
 <div class="hero" id="top">
   <div>
-    <a class="badge" href="#status"><i></i>Early, alpha · three models are built</a>
+    <a class="badge" href="#status"><i></i>Early, alpha · five models are built</a>
     <h1>Classical ML as a command line an agent can read.</h1>
     <p class="lead">Fit, apply and score a model on a CSV, with exact sums, bounded resources, structured refusals and a machine-verifiable authority.</p>
-    <p class="sub">A command line and flags, not a chat box. The same tool for a person and for an agent. Today it builds three models: the constant one (the training mean or the majority class, a baseline with the whole path around it), linear regression and logistic regression, the last two through a pipeline of steps that is fitted on the training rows and stored with the model in one file. k-means, trees and forests are tested libraries that no verb calls.</p>
+    <p class="sub">A command line and flags, not a chat box. The same tool for a person and for an agent. It builds five models: the constant one (the training mean or the majority class, a baseline with the whole path around it), linear regression, logistic regression, a decision tree and a random forest, the last four through a pipeline of steps that is fitted on the training rows and stored with the model in one file. k-means is a tested library that no verb calls.</p>
     <div class="cta"><a class="btn primary" href="#flow">See a complete flow</a><a class="btn ghost" href="#start">Quick start</a></div>
   </div>
 <!-- gen:hero -->
@@ -114,7 +114,7 @@
 
 <section id="why">
   <h2>Why cancho-ml?</h2>
-  <p class="big">Most ML tools optimise for how many models they offer. <code>ml</code> is built to be predictable first, and offers three models and a pipeline.</p>
+  <p class="big">Most ML tools optimise for how many models they offer. <code>ml</code> is built to be predictable first, and offers five models and a pipeline.</p>
   <ul class="why">
 <li><b>Explicit types</b><span>A column is an integer, a decimal or a float, read to the nearest double by cancho-table&rsquo;s exact reader. <code>nan</code>, <code>inf</code>, an empty cell and a cell that is not a number are refused with the line and the column. <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/reader.md">docs/reader.md</a></span></li>
 <li><b>Exact where a sum decides</b><span>The mean of an integer or decimal target and the sum of squared errors are exact integers, not floats; a float target is summed exactly and rounded once. A test compares every digit with Python&rsquo;s <code>fractions.Fraction</code>. The <code>rmse</code> is three IEEE steps after the exact sum, and says so. <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">docs/cli.md</a></span></li>
@@ -130,24 +130,23 @@
 <figure class="figure diagram" style="max-width:38rem">
   <svg viewBox="0 0 560 300" role="img" aria-labelledby="dg-t dg-d">
     <title id="dg-t">What the command line calls today</title>
-    <desc id="dg-d">The command line ml, with the verbs fit, predict, eval, introspect and skill, reads a CSV into a matrix, runs the steps of the pipeline (impute, scale, encode and bucket for numbers; encode, freq and hash for declared text columns, a fit with which writes no model file) and calls the constant, linear and logistic models, and the metrics and splits, which are wired. The libraries for k-means, trees and forests exist and are gated, but no verb calls them. The MCP server is not built.</desc>
+    <desc id="dg-d">The command line ml, with the verbs fit, predict, eval, introspect and skill, reads a CSV into a matrix, runs the steps of the pipeline (impute, scale, encode and bucket for numbers; encode, freq and hash for declared text columns, a fit with which writes no model file) and calls the constant, linear, logistic, tree and forest models, and the metrics and splits, which are wired. The library for k-means exists and is gated, but no verb calls it. The MCP server is not built.</desc>
     <rect class="hot" x="8" y="8" width="170" height="64" rx="10"/><text class="tt" x="93" y="34" text-anchor="middle">ml</text><text class="ss" x="93" y="54" text-anchor="middle">fit, predict, eval</text>
     <rect class="box" x="210" y="8" width="150" height="64" rx="10"/><text class="tt" x="285" y="34" text-anchor="middle">CSV reader</text><text class="ss" x="285" y="54" text-anchor="middle">int, decimal, float, empty</text>
     <rect class="box" x="392" y="8" width="160" height="64" rx="10"/><text class="tt" x="472" y="34" text-anchor="middle">pipeline</text><text class="ss" x="472" y="54" text-anchor="middle">impute, scale, encode, bucket</text>
     <path class="ar" d="M178 40H208" marker-end="url(#ah)"/><path class="ar" d="M360 40H390" marker-end="url(#ah)"/>
     <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker></defs>
     <rect class="box" x="8" y="90" width="170" height="52" rx="10"/><text class="tt" x="93" y="112" text-anchor="middle">constant model</text><text class="ss" x="93" y="130" text-anchor="middle">mean, or majority class</text>
-    <rect class="box" x="195" y="90" width="170" height="52" rx="10"/><text class="tt" x="280" y="112" text-anchor="middle">linear, logistic</text><text class="ss" x="280" y="130" text-anchor="middle">ridge, Newton, --threads</text>
+    <rect class="box" x="195" y="90" width="170" height="52" rx="10"/><text class="tt" x="280" y="112" text-anchor="middle">linear, logistic</text><text class="ss" x="280" y="130" text-anchor="middle">and tree, forest; --threads</text>
     <rect class="box" x="382" y="90" width="170" height="52" rx="10"/><text class="tt" x="467" y="112" text-anchor="middle">metrics, splits</text><text class="ss" x="467" y="130" text-anchor="middle">AUC, RMSE, --split</text>
-    <text class="ss" x="8" y="172">Tested libraries that no verb calls:</text>
+    <text class="ss" x="8" y="172">A tested library that no verb calls:</text>
     <g stroke-dasharray="5 4">
     <rect class="box" x="8" y="184" width="170" height="52" rx="10"/><text class="tt" x="93" y="206" text-anchor="middle">k-means</text><text class="ss" x="93" y="224" text-anchor="middle">seeded, Lloyd</text>
-    <rect class="box" x="195" y="184" width="170" height="52" rx="10"/><text class="tt" x="280" y="206" text-anchor="middle">trees, forests</text><text class="ss" x="280" y="224" text-anchor="middle">one gate is red</text>
     </g>
     <text class="ss" x="8" y="262">Text columns (--cat): encode, freq, hash; such a fit writes no model file.</text>
     <text class="ss" x="8" y="280">Not built: the MCP server, ml-serve.</text>
   </svg>
-  <figcaption>Solid: reachable from <code>ml</code>. Dashed: a library with its own gates and tests, not called by any verb. <a href="evidence.html">What the gates prove</a>.</figcaption>
+  <figcaption>Solid: reachable from <code>ml</code>. Dashed: a library with its own gates and tests, not called by any verb. The tree and forest are solid; their library has one red gate. <a href="evidence.html">What the gates prove</a>.</figcaption>
 </figure>
 </section>
 
@@ -334,8 +333,8 @@ An error is `{code, rule, message, hint, repair, detail}`. Match on `rule`, not 
 <section id="cannot">
   <h2>What it cannot do</h2>
   <ul class="plain">
-    <li><strong>Three models are reachable:</strong> constant, linear and logistic. k-means, decision trees and random forests exist as libraries with independent oracles and a manifest with <code>wired = false</code>; a plan naming one is <code>ml.plan.model-not-built</code> (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/modules.md">docs/modules.md</a>).</li>
-    <li><strong>A model with a categorical step has no file.</strong> <code>fit --cat NAMES</code> reads declared text columns into a bytewise-sorted dictionary and an id matrix, with limits (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/categorical.md">docs/categorical.md</a>), and <code>encode</code>, <code>freq</code> and <code>hash</code> turn them into numbers (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/categorical-encoders.md">docs/categorical-encoders.md</a>). The string table is not in the model file, so such a fit is <code>ml.model.vocabulary-not-stored</code> unless it has <code>--split</code> (it scores the held-out rows and writes nothing) or <code>--dry-run</code>, and <code>predict</code> and <code>eval</code> take no categorical model from a file. A declared column that no step reads is <code>ml.input.categorical-not-encoded</code>; a text column that is not declared is <code>ml.input.non-numeric</code>, with <code>--drop</code> as the repair. Target encoding, categorical splits in trees and free text are not built.</li>
+    <li><strong>Five models are reachable:</strong> constant, linear, logistic, tree and forest (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/wiring-trees.md">docs/wiring-trees.md</a>). k-means exists as a library with an independent oracle and a manifest with <code>wired = false</code>; a plan naming it is <code>ml.plan.model-not-built</code> (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/modules.md">docs/modules.md</a>). A tree or forest fit takes at most 1,048,576 training rows (<code>ml.input.too-many-rows</code>), the bound of the library&rsquo;s exact Gini comparison; a cell that is missing is accepted by a tree or forest, which learns a side for it at each split, and refused by linear and logistic without an <code>impute</code> step (<code>ml.input.missing-value</code>). A tree or forest file is model kind 7 with the summation order 3 (sequential sums). <code>--seed</code> is one flag: the seed of <code>--split</code> and of a forest&rsquo;s bootstrap. <code>fit</code> refuses to write a model file longer than <code>--max-bytes</code> (<code>limit.input-too-large</code>), because <code>predict</code> could not read it.</li>
+    <li><strong>A model with a categorical step has no file.</strong> <code>fit --cat NAMES</code> reads declared text columns into a bytewise-sorted dictionary and an id matrix, with limits (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/categorical.md">docs/categorical.md</a>), and <code>encode</code>, <code>freq</code> and <code>hash</code> turn them into numbers (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/categorical-encoders.md">docs/categorical-encoders.md</a>). The string table is not in the model file, so such a fit, with linear, logistic, tree or forest, is <code>ml.model.vocabulary-not-stored</code> unless it has <code>--split</code> (it scores the held-out rows and writes nothing) or <code>--dry-run</code>, and <code>predict</code> and <code>eval</code> take no categorical model from a file. A declared column that no step reads is <code>ml.input.categorical-not-encoded</code>; a text column that is not declared is <code>ml.input.non-numeric</code>, with <code>--drop</code> as the repair. Target encoding, native categorical splits in trees and free text are not built.</li>
     <li><strong>Binary classification only,</strong> and <code>--threads</code> only does something in <code>fit</code>: <code>eval</code> accepts and checks it, and nothing in it is threaded.</li>
     <li><strong class="red">One gate is red.</strong> The regression forest against scikit-learn&rsquo;s: RMSE 8.1% apart where the tolerance is 3%. The algorithms differ (histogram against exact splits) and most of the gap is attributed to that; the tolerance is kept and the decision is the maintainer&rsquo;s (<a href="evidence.html#red">evidence</a>).</li>
     <li><strong>Not tested across machines.</strong> The bytes are verified on one Mac, arm64. A Linux x86-64 run is not done.</li>
@@ -404,7 +403,7 @@ ml    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read
 <aside class="status" id="status">
   <h2>Status: early, alpha</h2>
   <ul>
-    <li>What is listed above works and is tested. The command line builds three models. Nothing here is for production.</li>
+    <li>What is listed above works and is tested. The command line builds five models. Nothing here is for production.</li>
     <li>One pre-registered gate is red, and the speed figures are from a loaded machine. <a href="evidence.html">Evidence</a> and <a href="benchmarks.html">benchmarks</a> say exactly what each shows.</li>
     <li>The program is built with one pinned compiler revision, <code>a4572ea</code>, and no other is used.</li>
   </ul>

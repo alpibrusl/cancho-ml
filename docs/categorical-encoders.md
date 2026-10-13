@@ -192,7 +192,7 @@ else is `ml.model.malformed`.
 
 ## 6. The command line, and what `fit` does about files
 
-`--cat NAMES` and its flags are stage 1's. With `--cat`, a planned model (`--model linear|logistic`, `--plan`, `--step`) reads the file with the categorical loader, fits the plan on the **training rows** (all, or
+`--cat NAMES` and its flags are stage 1's. With `--cat`, a planned model (`--model linear|logistic|tree|forest`, `--plan`, `--step`) reads the file with the categorical loader, fits the plan on the **training rows** (all, or
 the `--split` train side) with the categorical steps, and fits the estimator on the numeric matrix the steps leave. `--model constant` has no steps: it is refused as before
 (`ml.input.categorical-not-encoded`).
 
@@ -204,6 +204,8 @@ the `--split` train side) with the categorical steps, and fits the estimator on 
 | a categorical step and `--split train=F [--seed N]` | the fit on the train rows, the held-out metrics from the **fitted steps** applied to the test rows (the same `apply` that stage 3's predict will use), `written: false` in the answer, no `path`, `bytes` or `sha256`, the summary with `steps_sha256` (SHA-256 of the steps payload, so the fitted vocabulary and counts can be compared) and the categorical columns' sizes. `--output` is still required by the command line (the flag table is unchanged) and is **not** touched: an existing file stays, a missing one is not created |
 | a categorical step and `--dry-run` | as above without a split; exit 9 as every dry run |
 | a plan with no categorical step (and no `--cat`) | unchanged: `pipeline.run`, the model file and every byte as before (E10); a declared column that no step reads is `ml.input.categorical-not-encoded` |
+
+**A tree or a forest follows the same table.** The steps leave a numeric matrix, and the estimator of the blob interface (`docs/wiring-trees.md` section 13) is fitted on it: with no `--split` and no `--dry-run` the answer is `ml.model.vocabulary-not-stored`, nothing is written; with `--split train=F` the held-out rows go through the stored steps and the fitted payload, and the answer has `written: false`, the `categorical` list and the `forest` header (`trees`, `nodes`, `bins`, `max_depth`, `min_leaf`, `mtry`) in place of the coefficients. A missing numeric cell is accepted by the tree and forest as in a numeric plan (the encoders handle a missing text cell by their own `missing` rule). The five fixtures `ml-model-vocabulary-not-stored-tree`, `-forest`, `fit-forest-categorical-split-scores-held-out-rows`, `fit-tree-categorical-split-takes-a-missing-cell` and `fit-tree-categorical-dry-run` hold it.
 
 The held-out metrics path is `fit`'s own (`wiring.md` W7): the test side is `ceil(n * (1 - F))` rows, the same split as `eval --split`. `predict` and `eval` take no categorical column
 before stage 3 (`ml.input.non-numeric` as before).

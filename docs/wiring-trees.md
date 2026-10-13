@@ -9,8 +9,8 @@ corrected in place and marked.
 Until this stage `--model` offered `constant`, `linear` and `logistic`. The decision tree and the random forest of `docs/models-tree.md` were
 a library with a manifest and `wired = false`. This stage wires them **through the same door as linear and logistic** (`docs/modules.md` is the
 contract, `docs/wiring.md` the flow): the manifests gain the flags, `scripts/gen_models.py` writes the dispatch, the plan keys, the flag table and the
-schemas, and `fit` stores steps and model in one `CML1` file. Categorical (text) columns stay out of scope: `--cat` is refused as today
-(`ml.input.categorical-not-encoded`), stage 2 and 4 of issue 21 own them.
+schemas, and `fit` stores steps and model in one `CML1` file. Categorical (text) columns reach a tree or forest through the encoder steps, with the rules of linear and logistic (section 13); a declared `--cat` column that no step reads is
+`ml.input.categorical-not-encoded`, and native categorical splits in a tree are not built.
 
 ## 1. The gates (fixed before the code; each can fail, section 11 shows it failing)
 
@@ -222,9 +222,36 @@ $ ml fit --model tree --target progression --output d.cml diabetes_train.csv ; m
 
 ## 12. Open questions
 
-1. **`ml.plan.model-not-built` still lists `tree` and `forest`** in its summary (introspect, skill, the rule table). Correcting it changes the stdout of the existing fixture `ml-plan-model-not-built`, which the golden record of `golden_numeric.json` pins byte for byte; the golden was kept, the text was not changed. The same for the message of `args.conflict` for a flag that needs a model other than constant ("--model linear or --model logistic"). The maintainer decides whether to re-record those two entries.
-2. **README.md, docs/index.html and docs/status.md prose** still say "three models are reachable" and "a plan naming a tree is `ml.plan.model-not-built`"; only their generated blocks were regenerated (flags 42, limits 20, rules 74, and the `honest` demo, which now refuses `kmeans` because `forest` is built).
-3. A column of a linear or logistic model's prediction file with no cell at all is reported as a missing column of the schema (`verbs.schema_check`); it is accepted for the tree and forest by a flag of that function. Whether the linear models should answer `ml.input.missing-value` instead is a change of an existing behaviour, left.
-4. `--cat` is still refused for the tree and forest (`ml.input.categorical-not-encoded`): stages 2 and 4 of issue 21.
-5. The seed of a forest and the seed of `--split` are one flag. A user who wants another bootstrap on the same split changes the split too.
-6. The 2^20 row bound is the library's exactness bound; a three-limb comparison would raise it.
+1. The 2^20 row bound is the library's exactness bound; a three-limb comparison would raise it.
+
+## 13. Categorical steps, the seed, the size of the file, the missing column [choice]
+
+**Categorical steps with a tree or forest.** A plan whose steps read declared text columns (`--cat`, then `encode`, `freq` or `hash`: `docs/categorical-encoders.md`) is fitted over the numeric
+features and the ids of the same training rows; the steps leave a numeric matrix and the blob estimator is fitted on it exactly as in a numeric plan. The behaviour is the one of
+linear and logistic, and `docs/categorical-encoders.md` section 6 holds the table:
+
+* no `--split`, no `--dry-run`: `ml.model.vocabulary-not-stored` (exit 8, no repair), nothing is written, after the plan and the data were checked;
+* `--split train=F`: the held-out rows go through the stored steps and the fitted payload; the answer has `written: false`, no `path`, `bytes` or `sha256`, the `categorical` list, the
+  `forest` header in place of coefficients, and the held-out metrics of the task;
+* `--dry-run`: reported, exit 9, nothing written.
+
+The model file of a tree or forest holds no string table, so a categorical fit has no file; `predict` and `eval` of a tree or forest take a numeric file only. The combination
+needed no new code in the library: the wiring takes the categorical path of `fit` (`load_data` with the ids, `mixed.fit`, `apply_any`) and the blob path of the estimator, and the missing-cell
+rule of section 5 applies to the numeric matrix the steps leave. Fixtures: `ml-model-vocabulary-not-stored-tree`, `ml-model-vocabulary-not-stored-forest`,
+`fit-forest-categorical-split-scores-held-out-rows`, `fit-tree-categorical-split-takes-a-missing-cell`, `fit-tree-categorical-dry-run`. A declared `--cat` column that no step reads is
+`ml.input.categorical-not-encoded`, as for the other models.
+
+**The seed.** `--seed` is one flag. It is the seed of `--split` (stream kind 4) and of the bootstrap and feature draws of a forest (kinds 1 and 2), stored in `meta`. A forest fitted with
+`--split` draws its bootstrap from the seed that chose the split; another bootstrap on the same split is not available. The help of the flag says so.
+
+**A model file that `predict` cannot read is not written.** `predict` and `eval` read at most `--max-bytes` (default 16,777,216, ceiling 268,435,456). `fit` takes the same flag and
+compares the length of the file with it before writing: a longer file is `limit.input-too-large` (the shared tag, with a message and a hint that name the writing side), nothing
+is written, also with `--dry-run`, for every model. A forest of 1,024 trees on a large file can exceed the default; `--max-bytes` raises it on both sides, or `--trees`, `--max-depth` and
+`--max-nodes` make the model smaller. Fixtures: `limit-input-too-large-fit-forest-file-over-max-bytes` and the linear, constant and dry-run cases that follow it.
+
+**A prediction column whose every cell is empty.** The reader types a column with no cell at all as absent. For a tree or forest it is the fitted column with every cell missing (section 5), and
+the prediction is made. For linear and logistic it is reported as a missing column of the schema (`ml.schema.mismatch`, `verbs.schema_check`, the missing column in `detail`), a behaviour of the
+reader that the oracle found and that is kept: the linear models need every column of the schema. A column that is absent from the header is `ml.schema.mismatch` for every model.
+
+**The texts that name the models.** The summary of `ml.plan.model-not-built` (kmeans, a library with no wiring, or constant, which takes no plan) and the message of `args.conflict` for a flag
+that needs a model other than constant name the five models.
