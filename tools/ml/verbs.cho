@@ -605,6 +605,16 @@ pub fn write_failure[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: i
     return fail.io_error(heap, e, aux, true, shown);
 }
 
+// a model file longer than --max-bytes is not written: predict and eval read at most that many bytes, so a file longer than the limit would be one they refuse
+pub fn model_too_large[&h](heap: &!h Heap, errs: fail.Errors, size: int, max: int) -> [heap] fail.Errors {
+    var w = fail.open(heap, "limit.input-too-large", "the model file to write is longer than --max-bytes, which predict and eval apply when they read it, so nothing is written", "raise --max-bytes, up to the ceiling introspect names, or fit a smaller model (for a forest: fewer trees, --max-depth, --max-nodes)");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "size", size);
+    w = fail.detail_int(heap, w, "max", max);
+    return fail.add(heap, errs, w);
+}
+
 // the file bytes of a fitted model are written (or planned) and the answer built
 fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, o: Opts, mo: mfile.Model, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] Out {
     var e = errs;
@@ -617,8 +627,19 @@ fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], o
         borrow file_bytes as &br in {
             let data = buffer.bytes(br);
             let hex = mfile.sha256_hex(heap, data);
-            let (ws, wa) = fsio.write_atomic(heap, fs, root, paths.shown(out), paths.full(out), data, o.overwrite, o.dry);
-            if ws != 0 {
+            let big = len(data) > o.max_bytes;
+            var ws = 0;
+            var wa = 0;
+            if big {
+                e = model_too_large(heap, e, len(data), o.max_bytes);
+            } else {
+                let (ws2, wa2) = fsio.write_atomic(heap, fs, root, paths.shown(out), paths.full(out), data, o.overwrite, o.dry);
+                ws = ws2;
+                wa = wa2;
+            }
+            if big {
+                ws = 0;
+            } else if ws != 0 {
                 e = write_failure(heap, e, ws, wa, paths.shown(out));
             } else {
                 borrow hex as &hr in {

@@ -514,5 +514,24 @@ def _enc_tree_cases():
 CASES += _enc_tree_cases()
 
 
+# ------------------------------------------------------------------ a model file that predict could not read is not written (docs/wiring-trees.md section 10)
+def _max_bytes_cases():
+    return [
+        case("limit-input-too-large-fit-forest-file-over-max-bytes", ["fit", "--model", "forest", "--task", "classification", "--trees", "7", "--seed", "3", "--max-bytes", "1000",
+                                                                      "--target", "lab", "--output", "f.cml", "lcls.csv"], bad("limit.input-too-large"), setup=LBASE),
+        case("limit-input-too-large-fit-linear-file-over-max-bytes", ["fit", "--model", "linear", "--max-bytes", "100", "--target", "y", "--output", "m.cml", "lin.csv"],
+             bad("limit.input-too-large"), setup=LBASE),
+        case("limit-input-too-large-fit-constant-file-over-max-bytes", ["fit", "--max-bytes", "10", "--target", "y", "--output", "m.cml", "reg.csv"],
+             bad("limit.input-too-large"), setup=BASE),
+        case("limit-input-too-large-fit-dry-run-refuses-too", ["fit", "--model", "tree", "--max-bytes", "100", "--dry-run", "--target", "y", "--output", "t.cml", "lin.csv"],
+             bad("limit.input-too-large"), setup=LBASE),
+        case("fit-forest-max-bytes-at-the-size-of-the-file", ["fit", "--model", "tree", "--max-bytes", "100000", "--target", "y", "--output", "t.cml", "lin.csv"],
+             ok({"model": "tree", "written": True}), setup=LBASE),
+    ]
+
+
+CASES += _max_bytes_cases()
+
+
 def log_cases():
     return [c for c in CASES if c.get("log")]

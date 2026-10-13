@@ -741,8 +741,19 @@ fn answer_fit[&h, &f, &r, &po, &d, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [
     var plain = buffer.empty(heap, 1);
     var extra = buffer.empty(heap, 1);
     let hex = mfile.sha256_hex(heap, data);
-    let (ws, wa) = fsio.write_atomic(heap, fs, root, paths.shown(out), paths.full(out), data, o.overwrite, o.dry);
-    if ws != 0 {
+    let big = len(data) > o.max_bytes;
+    var ws = 0;
+    var wa = 0;
+    if big {
+        e = verbs.model_too_large(heap, e, len(data), o.max_bytes);
+    } else {
+        let (ws2, wa2) = fsio.write_atomic(heap, fs, root, paths.shown(out), paths.full(out), data, o.overwrite, o.dry);
+        ws = ws2;
+        wa = wa2;
+    }
+    if big {
+        ws = 0;
+    } else if ws != 0 {
         e = verbs.write_failure(heap, e, ws, wa, paths.shown(out));
     } else {
         borrow hex as &hr in {
