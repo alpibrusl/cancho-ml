@@ -42,7 +42,7 @@
   <p class="lead">What each gate checks, against what, how it was shown able to fail, and what it does not prove.</p>
   <p class="sub">A gate is written before the code it judges. To show a gate can fail there is a <em>mutant</em>: a one-line change to the source (or to a table, a schema or the fixtures) that the gate must catch. A mutant that survives is explained or it is a gap. The oracles are programs written for the purpose, mostly in Python; they check the code against the document, not the document against anything outside it, and the page says where that matters.</p>
   <ul class="toc">
-    <li><a href="#conditions">Conditions</a></li><li><a href="#mutants">The mutants</a></li><li><a href="#cli">The command line</a></li><li><a href="#reader">The reader</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#models">Linear models, k-means</a></li><li><a href="#wiring">The wired models</a></li><li><a href="#pipeline">Transforms and pipeline</a></li><li><a href="#categorical">Categorical columns</a></li><li><a href="#metrics">Metrics and splits</a></li><li><a href="#trees">Trees and forests</a></li><li><a href="#red">The red gate</a></li><li><a href="#determinism">Determinism</a></li><li><a href="#registries">The registries</a></li><li><a href="#notprove">What this does not prove</a></li>
+    <li><a href="#conditions">Conditions</a></li><li><a href="#mutants">The mutants</a></li><li><a href="#cli">The command line</a></li><li><a href="#reader">The reader</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#models">Linear models, k-means</a></li><li><a href="#wiring">The wired models</a></li><li><a href="#pipeline">Transforms and pipeline</a></li><li><a href="#categorical">Categorical columns</a></li><li><a href="#encoders">Encoders of text columns</a></li><li><a href="#metrics">Metrics and splits</a></li><li><a href="#trees">Trees and forests</a></li><li><a href="#red">The red gate</a></li><li><a href="#determinism">Determinism</a></li><li><a href="#registries">The registries</a></li><li><a href="#notprove">What this does not prove</a></li>
   </ul>
 </div>
 
@@ -65,10 +65,11 @@
       <tr><th><code>mutants_tree.py</code></th><td class="num">100</td><td class="num">94</td><td class="num">6</td><td class="num">0</td></tr>
       <tr><th><code>mutants_reader.py</code></th><td class="num">40</td><td class="num">36</td><td class="num">4</td><td class="num">0</td></tr>
       <tr><th><code>mutants_cat.py</code></th><td class="num">42</td><td class="num">40</td><td class="num">2</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_enc.py</code></th><td class="num">57</td><td class="num">56</td><td class="num">1</td><td class="num">0</td></tr>
       <tr><th><code>mutants_cli.py</code></th><td class="num">53</td><td class="num">53</td><td class="num">0</td><td class="num">0</td></tr>
       <tr><th><code>mutants_wire.py</code></th><td class="num">40</td><td class="num">39</td><td class="num">1</td><td class="num">0</td></tr>
       <tr><th><code>mutants_pipe.py</code></th><td class="num">73</td><td class="num">72</td><td class="num">1</td><td class="num">0</td></tr>
-      <tr class="us"><th>total</th><td class="num">790</td><td class="num">762</td><td class="num">28</td><td class="num">0</td></tr>
+      <tr class="us"><th>total</th><td class="num">847</td><td class="num">818</td><td class="num">29</td><td class="num">0</td></tr>
     </tbody>
   </table></div>
   <p class="note">The total is the sum of the rows. Beside them: 11 pin mutants of RD1 (in <code>mutants_reader.py</code>), 11 deliberately wrong oracles of the linear algebra (in <code>mutants_linalg.py</code>), 6 mutant modules of the admission script and 27 mutants of the prose lint (<code>scripts/check_prose.py --mutants</code>), all caught. A survivor is usually an equivalent mutant: the change cannot alter a result (an addition is commutative, a clamp removes only all-zero partials). The argument for each is in the script that holds it.</p>
@@ -76,7 +77,7 @@
 
 <section id="cli">
   <h2>The command line</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">docs/cli.md</a> sections 1 and 7. The conformance suite is <code>tests/conformance</code>: 156 tests pass, none is skipped, over 183 fixtures that reach all 35 flags, 72 rules and 4 log records.</p>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">docs/cli.md</a> sections 1 and 7. The conformance suite is <code>tests/conformance</code>: 177 tests pass, none is skipped, over 188 fixtures that reach all 35 flags, 75 rules and 4 log records.</p>
   <div class="fitwrap"><table class="fit wide">
     <thead><tr><th>gate</th><th>what it checks, against what</th><th>what it does not show</th></tr></thead>
     <tbody>
@@ -168,8 +169,8 @@
   <div class="fitwrap"><table class="fit wide">
     <thead><tr><th>gate</th><th>result</th></tr></thead>
     <tbody>
-      <tr><th>unit and fuzz tests</th><td>29 + 2 tests of the transforms, 14 + 5 of the pipeline. All pass.</td></tr>
-      <tr><th>Python oracle</th><td>Bit for bit on 2,500 transform cases (fitted or refused with a tag), 600 chains, 300 schema alignments, 150 files with steps, 186 sums, 1,188 float spellings, and 1,500 plans each for the garbage verdict, the fixed point and the spelling.</td></tr>
+      <tr><th>unit and fuzz tests</th><td>29 + 2 tests of the transforms, 16 + 5 of the pipeline. All pass.</td></tr>
+      <tr><th>Python oracle</th><td>Bit for bit on 2,500 transform cases (fitted or refused with a tag), 600 chains, 300 schema alignments, 150 files with steps, 186 sums, 1,194 float spellings, and 1,500 plans each for the garbage verdict, the fixed point and the spelling.</td></tr>
       <tr><th>API scan</th><td>No <code>apply</code> takes a plan or fits; a loaded pipeline is built only by <code>file.decode</code>; every function that returns a matrix is classified (<code>scripts/check_pipeline_api.py</code>).</td></tr>
       <tr><th>mutants</th><td>73: 72 killed, 1 survives and is explained (a clamp that runs again after the loop).</td></tr>
     </tbody>
@@ -179,7 +180,7 @@
 
 <section id="categorical">
   <h2>Categorical columns</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/categorical.md">docs/categorical.md</a> sections 1 and 9; <code>python3 scripts/gate_cat.py all</code>. The reader, the dictionary and the id matrix are judged; no step encodes a text column.</p>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/categorical.md">docs/categorical.md</a> sections 1 and 9; <code>python3 scripts/gate_cat.py all</code>. The reader, the dictionary and the id matrix are judged here; the steps that read them are <a href="#encoders">below</a>.</p>
   <div class="fitwrap"><table class="fit wide">
     <thead><tr><th>gate</th><th>result</th></tr></thead>
     <tbody>
@@ -190,11 +191,33 @@
       <tr><th>C5 UTF-8</th><td>387 valid and 4,445 invalid strings, alone and after ASCII, against Python&rsquo;s decoder, with the offset of the first bad byte. 0 differences in 8,901 runs.</td></tr>
       <tr><th>C7 round trip</th><td>150 tables read again through the stored vocabulary, with unseen strings, markers and missing columns. 0 differences in 459 runs.</td></tr>
       <tr><th>C8 no trap</th><td>3,618 runs of random, damaged, truncated and oversized inputs through <code>reader-check --mode cat</code> and <code>ml fit --cat</code>: none ends in a trap, each answers one valid JSON line.</td></tr>
-      <tr><th>unit tests, numeric inputs</th><td>12 tests of the dictionary, the frozen vocabulary and the id matrix. For 161 numeric fixtures the exit status and the SHA-256 of the output and of every written file equal <code>tests/conformance/golden_numeric.json</code>.</td></tr>
+      <tr><th>unit tests, numeric inputs</th><td>12 tests of the dictionary, the frozen vocabulary and the id matrix. For 160 of the 161 numeric fixtures the exit status and the SHA-256 of the output and of every written file equal <code>tests/conformance/golden_numeric.json</code>; the 161st is explained under E10 of <a href="#encoders">the encoders</a>.</td></tr>
       <tr><th>mutants</th><td>42: 40 killed, 2 survive and are explained.</td></tr>
     </tbody>
   </table></div>
-  <p class="note"><strong>Not shown:</strong> encoding, the string table in the model file and categorical splits are not built, so no gate judges them.</p>
+  <p class="note"><strong>Not shown:</strong> the string table in the model file and categorical splits are not built, so no gate judges them.</p>
+</section>
+
+<section id="encoders">
+  <h2>Encoders of text columns</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/categorical-encoders.md">docs/categorical-encoders.md</a> sections 1 and 9; <code>sh scripts/gate_enc.sh</code>. <code>encode</code> (one-hot, label), <code>freq</code>, <code>hash</code>, the rare-category bucket (<code>min-count</code>, <code>__other__</code>) and the <code>unknown</code> and <code>missing</code> rules, judged against <code>scripts/oracle_enc.py</code>, which counts from the cells, sorts bytewise, hashes with <code>hashlib</code> and writes the payload with <code>struct</code>.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>E1, E4, E5 oracle, bit for bit</th><td>The transformed matrix as the bits of its doubles, the column names, the payload bytes, the unknown count and every refusal (tag, step, column, row) agree in 515 runs: 0 differences. 400 seeded random tables (166 answered, 234 refused by the oracle&rsquo;s own verdict) with random plans over the four encoders, <code>min-count</code> 1 to 50, both unknown rules, both missing rules, and a second file read through the first one&rsquo;s vocabulary; and the corner families: counts N&minus;1, N and N+1 at the threshold, <code>__other__</code> as a real category, one category, all cells missing, NFC against NFD, Latin against Cyrillic <code>a</code>, a NUL and quotes in a cell, 1,024 and 1,025 distinct strings, all-unseen predict files.</td></tr>
+      <tr><th>E2 row order</th><td>50 tables (35 accepted), 5 seeded permutations each: the same payload bytes, and every row of the matrix follows its row. 250 runs, 0 differences.</td></tr>
+      <tr><th>E3 thread count</th><td>8 fits that were answered (of 37 tried; a refused fit says nothing about threads), <code>--threads</code> 1, 2, 4, 8 and 16: one standard output each. 40 runs, 0 differences.</td></tr>
+      <tr><th>E6 hash</th><td>6 values of B, 36 tables of 900 or more strings each (random UTF-8, strings that differ in one byte, emoji): the matrix equals the oracle&rsquo;s and the position of the 1 equals <code>int.from_bytes(sha256(s)[:8], "big") % B</code> read by hand. 72 runs, 0 differences; the known answers of SHA-256 are in <code>tests/enc.cho</code>.</td></tr>
+      <tr><th>E7 payload</th><td>12 tests in <code>tests/enc.cho</code>: hand-computed matrices, the rare bucket, the bytes of a step written by hand and decoded again, 40 fields edited out of their bound, every truncation, every flipped byte three ways and 3,000 seeded damages: each is refused or encodes back to the same bytes.</td></tr>
+      <tr><th>E8 plan</th><td>The plan grammar against Python on 1,500 respelled plans, 1,500 fixed points, 1,194 float spellings and 1,500 garbage plans with the same verdict and position (<code>oracle_pipe.py</code>); 16 tests of the pipeline; 20 conformance tests of the command line (<code>test_enc.py</code>).</td></tr>
+      <tr><th>E9 no model file</th><td>A fit with a categorical step and no <code>--split</code> is <code>ml.model.vocabulary-not-stored</code> and writes nothing; with <code>--split</code> it scores the held-out rows and reports <code>written: false</code>; <code>--dry-run</code> exits 9. An existing output file is untouched, with and without <code>--overwrite</code>.</td></tr>
+      <tr><th>E10 numeric inputs</th><td>160 of the 161 numeric fixtures of <code>golden_numeric.json</code> give the recorded status, output and files. The 161st, <code>ml-plan-unknown-step</code>, prints the list of plan verbs, which holds <code>freq</code> and <code>hash</code>; the SHA-256 of its output is pinned beside the record, with the reason.</td></tr>
+      <tr><th>E11 no trap</th><td>3,024 runs of hostile plans and files through <code>enc-check</code> and <code>ml fit --cat</code> (4,097 categorical columns, a 70,000-byte cell, 2<sup>20</sup> distinct values, invalid UTF-8): 0 traps, 0 malformed answers; plus the damage tests of E7.</td></tr>
+      <tr><th>E13 scikit-learn</th><td>3 generated datasets (1,500 rows, 3 categorical columns of 4, 6 and 3 values, 2 numeric ones), the library&rsquo;s seeded split, <code>--l2 0.1</code> against <code>LogisticRegression</code> on <code>StandardScaler</code> and <code>OneHotEncoder</code> of the same rows. Bounds fixed before the run, all met: held-out accuracy equal, ROC-AUC equal to the digits shown, log-loss relative difference at most 1.4e-8 against 1e-6, 15 coefficients and intercept at most 7.4e-8 apart against 1e-5.</td></tr>
+      <tr><th>mutants</th><td>57: 56 killed, 1 survives and is explained (<code>e8-numeric-first-lookup-reversed</code> changes the order of two lookups that no plan can tell apart: a name is both a numeric column and an unencoded categorical one only if an encoder wrote a numeric column with another declared column&rsquo;s name, and the encoders write <code>NAME</code> or <code>NAME#i</code>). The mutant the gates were written to kill, a vocabulary in the order the rows meet the strings, is killed by the row-order gate alone (<code>docs/bench/mutants_enc.log</code>).</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note"><strong>Not shown:</strong> the oracle is written from the same document, so it checks the code against the document; scikit-learn is the outside check for one-hot encoding with a penalty only (it has no equivalent of the rare bucket, the frequency or this hash). The hash is checked against Python&rsquo;s <code>hashlib</code>, not a second SHA-256 in this repository. No model file with a categorical column exists, so the damaged-file fuzz of a string table has nothing to judge. No timing was taken; one machine.</p>
 </section>
 
 <section id="metrics">
@@ -268,7 +291,7 @@
     <tbody>
       <tr><th>model kind</th><td>Kinds 1 to 7 (constant regression of an integer or decimal target, constant classification, constant regression of a float target, linear, logistic, k-means, tree or forest); the next number is 8.</td><td><code>lib/core/kinds.cho</code>, <code>docs/design.md</code> section 4.1</td></tr>
       <tr><th>stream kind</th><td>Six kinds: the tree and k-means streams use 1, 2 and 3, the splits 4, 5 and 6.</td><td><code>lib/core/kinds.cho</code>, <code>docs/rng.md</code></td></tr>
-      <tr><th>refusal code</th><td>64 codes in four bands, one per library: 1 to 99, 101 to 199, 201 to 299 and 301 to 325. A code means a tag only inside its band; one tag has one exit code.</td><td><code>docs/design.md</code> section 8.1</td></tr>
+      <tr><th>refusal code</th><td>66 codes in four bands, one per library: 1 to 99, 101 to 199, 201 to 299 and 301 to 327. A code means a tag only inside its band; one tag has one exit code.</td><td><code>docs/design.md</code> section 8.1</td></tr>
       <tr><th>rule tag</th><td>The tags the verbs reach are in <code>tools/ml/spec.cho</code> and in <code>introspect</code>, each with a fixture. Nine tags of the libraries (tensor rank, shape and bounds, a singular solve, the tree depth and node limits, two metric lengths and probabilities, a stratum smaller than k) are registered in <code>pending()</code> because no input can reach them through a verb.</td><td><code>tools/ml/spec.cho</code>, <code>docs/design.md</code> sections 8 and 8.1</td></tr>
     </tbody>
   </table></div>
@@ -285,7 +308,7 @@
     <li><strong>Not run by these gates:</strong> the benchmarks, and the 1,000,000-row identity and timing runs of the tree library beyond the defaults.</li>
     <li><strong>Open items:</strong> the red gate above, and <code>check.sh</code>, which needs <code>../ml-data</code> and the network for <code>cancho install</code> (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">docs/status.md</a>).</li>
   </ul>
-  <p class="note">To run them: <code>sh scripts/check.sh</code> runs the gates; the mutant runs are <code>python3 scripts/mutants_NAME.py</code> for core, paths, linalg, models, metrics, tree, reader, cat, cli, wire and pipe, each with <code>--check</code> to see that every edit still applies without building anything.</p>
+  <p class="note">To run them: <code>sh scripts/check.sh</code> runs the gates; the mutant runs are <code>python3 scripts/mutants_NAME.py</code> for core, paths, linalg, models, metrics, tree, reader, cat, enc, cli, wire and pipe, each with <code>--check</code> to see that every edit still applies without building anything.</p>
 </section>
 </main>
 

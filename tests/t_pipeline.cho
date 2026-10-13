@@ -862,3 +862,72 @@ fn test_the_sum_order_is_written_for_kinds_4_to_7_and_checked[&h](heap: &!h Heap
     }
     return bad;
 }
+
+// ---------------------------------------------------------------- the categorical verbs and keys (docs/categorical-encoders.md section 4.1)
+
+fn test_categorical_keys_are_written_only_when_they_are_not_their_defaults[&h](heap: &!h Heap) -> [heap] int {
+    // a numeric encode line is the text it always was, whichever way min-count and missing are spelled when they are the defaults
+    var bad = canon_is(heap, "encode column=c kind=onehot min-count=1 missing=pass\nmodel kind=constant task=regression", "encode column=c kind=onehot max-categories=64 unknown=ignore\nmodel kind=constant task=regression\n");
+    bad = bad + canon_is(heap, "encode missing=pass column=c kind=label min-count=0001\nmodel kind=constant task=regression", "encode column=c kind=label max-categories=64 unknown=ignore\nmodel kind=constant task=regression\n");
+    bad = bad + canon_is(heap, "encode column=c,a kind=onehot missing=zero min-count=003 unknown=refuse\nmodel kind=constant task=regression", "encode column=a,c kind=onehot max-categories=64 unknown=refuse min-count=3 missing=zero\nmodel kind=constant task=regression\n");
+    // the new verbs write every key
+    bad = bad + canon_is(heap, "freq column=z,a\nmodel kind=constant task=regression", "freq column=a,z max-categories=64 unknown=ignore min-count=1 missing=pass\nmodel kind=constant task=regression\n");
+    bad = bad + canon_is(heap, "hash buckets=08 column=a\nmodel kind=constant task=regression", "hash column=a buckets=8 missing=pass\nmodel kind=constant task=regression\n");
+    bad = bad + canon_is(heap, "hash column=* buckets=1024 missing=zero\nmodel kind=constant task=regression", "hash column=* buckets=1024 missing=zero\nmodel kind=constant task=regression\n");
+    // refusals, with the line and column of the value
+    bad = bad + refused(heap, "hash column=a\nmodel kind=constant task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "hash column=a buckets=1\nmodel kind=constant task=regression", codes.out_of_range(), 1, 23);
+    bad = bad + refused(heap, "hash column=a buckets=1025\nmodel kind=constant task=regression", codes.out_of_range(), 1, 23);
+    bad = bad + refused(heap, "hash column=a buckets=4 unknown=refuse\nmodel kind=constant task=regression", codes.plan_unknown_key(), 1, 25);
+    bad = bad + refused(heap, "freq column=a min-count=0\nmodel kind=constant task=regression", codes.out_of_range(), 1, 25);
+    bad = bad + refused(heap, "freq column=a min-count=1000001\nmodel kind=constant task=regression", codes.out_of_range(), 1, 25);
+    bad = bad + refused(heap, "freq column=a missing=maybe\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 23);
+    bad = bad + refused(heap, "encode column=a kind=onehot min-count=2 min-count=3\nmodel kind=constant task=regression", codes.plan_duplicate_key(), 1, 41);
+    bad = bad + refused(heap, "encode column=a kind=onehot missing=null\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 37);
+    return bad;
+}
+
+fn test_the_specs_of_the_categorical_steps_are_read_back[&h](heap: &!h Heap) -> [heap] int {
+    let (p, f) = plan.parse(heap, "encode column=a kind=label min-count=7 missing=zero unknown=refuse\nfreq column=b max-categories=9 min-count=2\nhash column=* buckets=11 missing=zero\nencode column=c kind=onehot\nscale column=x kind=minmax\nmodel kind=constant task=regression");
+    var bad = 0;
+    if f.code != 0 {
+        bad = 100;
+    }
+    borrow p as &pr in {
+        let s0 = plan.spec_of(pr, 0);
+        if s0.kind != 5 || s0.a != 1 || plan.min_count_of(pr, 0) != 7 || !plan.missing_zero(pr, 0) {
+            bad = bad + 1;
+        }
+        let s1 = plan.spec_of(pr, 1);
+        if s1.kind != 9 || s1.a != 0 || s1.b != 9 || plan.min_count_of(pr, 1) != 2 || plan.missing_zero(pr, 1) {
+            bad = bad + 1;
+        }
+        let s2 = plan.spec_of(pr, 2);
+        if s2.kind != 10 || s2.b != 11 || !plan.missing_zero(pr, 2) || !plan.all_columns(pr, 2) {
+            bad = bad + 1;
+        }
+        if plan.min_count_of(pr, 3) != 1 || plan.missing_zero(pr, 3) || plan.min_count_of(pr, 4) != 1 || plan.missing_zero(pr, 4) {
+            bad = bad + 1;
+        }
+        if !plan.needs_mixed(pr) {
+            bad = bad + 1;
+        }
+    }
+    plan.drop(heap, p);
+    // a plan of the numeric steps alone does not need the mixed pipeline; an encode with a default min-count does not either
+    let (q, g) = plan.parse(heap, "encode column=c kind=onehot min-count=1\nscale column=x kind=minmax\nmodel kind=constant task=regression");
+    borrow q as &qr in {
+        if g.code != 0 || plan.needs_mixed(qr) {
+            bad = bad + 1;
+        }
+    }
+    plan.drop(heap, q);
+    let (r, h2) = plan.parse(heap, "encode column=c kind=onehot min-count=2\nmodel kind=constant task=regression");
+    borrow r as &rr in {
+        if h2.code != 0 || !plan.needs_mixed(rr) {
+            bad = bad + 1;
+        }
+    }
+    plan.drop(heap, r);
+    return bad;
+}

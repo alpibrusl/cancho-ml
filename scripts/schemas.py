@@ -121,6 +121,19 @@ def data_defs():
         "model": names, "task": {"enum": ["regression", "classification"]}, "rows": NAT, "columns": NAT, "target": TB, "path": TB,
         "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls]},
     })
+    # a fit with categorical steps writes no file before stage 3 of issue 21 (docs/categorical-encoders.md section 6): no path, bytes or sha256, written false, and the
+    # summary says which categorical columns the steps read and the digest of the steps payload
+    cat_item = obj({"step": NAT, "kind": {"enum": ["onehot", "label", "freq", "hash"]}, "column": TB, "categories": NAT, "output_columns": NAT})
+    cat_keys = {"steps_sha256": SHA, "categorical": {"type": "array", "items": cat_item}}
+    csum_keys = {"plan": {"type": "string"}, "steps": NAT, **cat_keys, "features": NAT,
+                 "coefficients": {"type": "array", "items": obj({"name": TB, "value": FLT})}, "intercept": FLT}
+    csummary_reg = obj({**csum_keys, "split": split, "holdout": holdout_reg}, list(csum_keys))
+    csummary_cls = obj({**csum_keys, "classes": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+                        "positive": {"type": "integer"}, "split": split, "holdout": holdout_cls}, list(csum_keys) + ["classes", "positive"])
+    fit_c = obj({
+        "model": names, "task": {"enum": ["regression", "classification"]}, "rows": NAT, "columns": NAT, "target": TB,
+        "written": {"const": False}, "summary": {"oneOf": [csummary_reg, csummary_cls]},
+    })
     predict_p = obj({
         "model": names, "task": {"enum": ["regression", "classification"]},
         "columns": {"type": "array", "items": {"type": "string"}},
@@ -132,7 +145,7 @@ def data_defs():
                      ["model", "task", "rows", "metrics", "unknown_categories"])
     eval_cls_p = obj({"model": names, "task": {"const": "classification"}, "rows": NAT, "positive": {"type": "integer"}, "metrics": mcls,
                       "unknown_categories": NAT, "split": split}, ["model", "task", "rows", "positive", "metrics", "unknown_categories"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p]}
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, fit_c, predict_p, eval_reg_p, eval_cls_p]}
 
 
 def planned():

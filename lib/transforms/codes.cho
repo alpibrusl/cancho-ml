@@ -9,10 +9,10 @@ module transforms.codes;
 // DETAIL (what the integers of a Fault mean, by tag): ml.plan.* (not unknown-column): a = line, b = column (1-based); ml.plan.unknown-column,
 // ml.input.too-many-columns, ml.fit.*, ml.limit.categories, ml.param.out-of-range of a step: a = step (1-based, in plan order), b = column index
 // of the matrix the step receives (0 when none), c = 0; ml.input.unknown-category: a = step, b = column, c = row; ml.model.malformed: a = section
-// tag (1 to 5), b = step (1-based) when a is 3, else 0; ml.limit.plan: a = which limit (1 bytes, 2 lines, 3 listed names, 4 name length); ml.model.version: a = the value found, b = 0 for the format version (c = 0) or 1 for the sum order of a model of kind 4 or above (c = the sum order implemented).
+// tag (1 to 5), b = step (1-based) when a is 3, else 0; ml.limit.plan: a = which limit (1 bytes, 2 lines, 3 listed names, 4 name length); ml.plan.column-kind: a = step, b = the 1-based place of the offending name in the step's list, c = 1 when the step needs numeric columns and 2 when it needs categorical ones; ml.input.reserved-category, and ml.limit.categories, ml.fit.all-missing, ml.input.unknown-category of a CATEGORICAL step: a = step, b = -(1 + the place of the column in the vocabulary of the reader) (a negative b says the column is categorical), c = 0 (the row, 0-based, for ml.input.unknown-category); ml.model.version: a = the value found, b = 0 for the format version (c = 0) or 1 for the sum order of a model of kind 4 or above (c = the sum order implemented).
 
 pub fn count() -> [] int {
-    return 25;
+    return 27;
 }
 
 // the band of this library's codes: first() .. last()
@@ -21,7 +21,7 @@ pub fn first() -> [] int {
 }
 
 pub fn last() -> [] int {
-    return 325;
+    return 327;
 }
 
 pub fn input_empty() -> [] int {
@@ -124,6 +124,15 @@ pub fn input_non_finite() -> [] int {
     return 325;
 }
 
+// stage 2 of issue 21 (docs/categorical-encoders.md): a step that reads the other kind of column than the one it was given, and the reserved bucket name
+pub fn plan_column_kind() -> [] int {
+    return 326;
+}
+
+pub fn reserved_category() -> [] int {
+    return 327;
+}
+
 pub fn tag(code: int) -> [] &static [byte] {
     if code == 301 {
         return "ml.input.empty";
@@ -200,6 +209,12 @@ pub fn tag(code: int) -> [] &static [byte] {
     if code == 325 {
         return "ml.input.non-finite";
     }
+    if code == 326 {
+        return "ml.plan.column-kind";
+    }
+    if code == 327 {
+        return "ml.input.reserved-category";
+    }
     return "";
 }
 
@@ -208,7 +223,7 @@ pub fn exit_code(code: int) -> [] int {
     if code == 303 {
         return 2;
     }
-    if code >= 301 && code <= 325 {
+    if code >= 301 && code <= 327 {
         return 8;
     }
     return 0;
@@ -216,7 +231,7 @@ pub fn exit_code(code: int) -> [] int {
 
 // tag|exit|repairable|summary, in the convention of tools/ml/spec.cho extra(); the order is the order of the codes
 pub fn table() -> [] &static [byte] {
-    return "ml.input.empty|8|never|a transform was asked to fit a matrix of no rows (or no columns). Hint: give at least one training row. Repair: none.;ml.input.too-many-columns|8|never|a transform would make a matrix wider than the column cap, or a matrix is wider than the cap. Hint: raise the cap, or encode fewer columns or fewer categories. Repair: none.;ml.param.out-of-range|2|never|a step parameter outside its range: bins, max-categories, ddof, a column index. Hint: the range is in detail. Repair: none.;ml.fit.non-finite|8|never|a fitted parameter (a sum, a range, an edge) is not finite. Hint: scale the column down, or drop it. Repair: none.;ml.fit.all-missing|8|never|a selected column has no non-missing cell in the training rows (step and column in detail). Hint: drop the column, or use impute strategy=constant. Repair: none.;ml.limit.categories|8|never|a column has more distinct values than max-categories (step and column in detail). Hint: raise max-categories up to 1024, or bucket the column instead. Repair: none.;ml.input.unknown-category|8|never|a value that no training row had, in an encode step with unknown=refuse (step, column and row in detail). Hint: refit with the value in the training rows, or use unknown=ignore. Repair: none.;ml.schema.mismatch|8|never|the input columns differ from the fitted features: missing, extra or of another type. Hint: add the missing columns; drop the extra ones. Repair: none.;ml.model.bad-magic|8|never|the file does not start with CML1. Hint: this is not a cancho-ml model file. Repair: none.;ml.model.version|8|never|the file has a format version this reader does not know, or a model of kind 4 or above made with a summation order this reader does not implement. Hint: refit with this version. Repair: none.;ml.model.truncated|8|never|the file ends before the end its header and section lengths promise. Hint: copy the file again. Repair: none.;ml.model.checksum|8|never|the SHA-256 at the end of the file is not the hash of the bytes before it. Hint: the file changed after it was written. Repair: none.;ml.model.malformed|8|never|the checksum is right and a field is not (the section or step is in detail). Hint: refit. Repair: none.;ml.plan.syntax|8|never|a plan line is not verb key=value ... (line and column in detail). Hint: write one step per line as verb key=value. Repair: none.;ml.plan.unknown-step|8|never|the verb of a plan line is not impute, scale, encode, bucket or model (line and column in detail). Hint: use one of the five verbs. Repair: none.;ml.plan.unknown-key|8|never|a key that the verb does not take (line and column in detail). Hint: see the keys of the verb in docs/pipeline.md. Repair: none.;ml.plan.missing-key|8|never|a required key of the verb is absent (line in detail). Hint: add the key. Repair: none.;ml.plan.bad-value|8|never|a value that is not in the key's list or not a number of the key's kind (line and column in detail). Hint: see the values of the key in docs/pipeline.md. Repair: none.;ml.plan.duplicate-key|8|never|the same key twice on one line (line and column in detail). Hint: write each key once. Repair: none.;ml.plan.model-line|8|never|the plan has no model line, has two, or has a step after it (line in detail). Hint: end the plan with exactly one model line. Repair: none.;ml.plan.unknown-column|8|never|a column named by a step is not a column of the matrix the step receives (step in detail). Hint: names are compared byte for byte. Repair: none.;ml.limit.plan|8|never|the plan has more bytes, lines or listed columns than the limits (limit in detail). Hint: shorten the plan: at most 64 KiB, 64 lines, 4096 names in a list. Repair: none.;ml.input.too-many-rows|8|never|more rows than the row cap. Hint: raise the cap up to its ceiling, or use a sample. Repair: none.;ml.input.too-many-cells|8|never|rows times columns is more than the cell cap. Hint: raise the cap, or use fewer rows or columns. Repair: none.;ml.input.non-finite|8|never|a cell of the matrix is nan or an infinity, or a transformed value overflowed to one (step, column and row in detail). Hint: remove the row or the column, or scale the column. Repair: none.";
+    return "ml.input.empty|8|never|a transform was asked to fit a matrix of no rows (or no columns). Hint: give at least one training row. Repair: none.;ml.input.too-many-columns|8|never|a transform would make a matrix wider than the column cap, or a matrix is wider than the cap. Hint: raise the cap, or encode fewer columns or fewer categories. Repair: none.;ml.param.out-of-range|2|never|a step parameter outside its range: bins, max-categories, ddof, a column index. Hint: the range is in detail. Repair: none.;ml.fit.non-finite|8|never|a fitted parameter (a sum, a range, an edge) is not finite. Hint: scale the column down, or drop it. Repair: none.;ml.fit.all-missing|8|never|a selected column has no non-missing cell in the training rows (step and column in detail). Hint: drop the column, or use impute strategy=constant. Repair: none.;ml.limit.categories|8|never|a column has more distinct values than max-categories (step and column in detail). Hint: raise max-categories up to 1024, or bucket the column instead. Repair: none.;ml.input.unknown-category|8|never|a value that no training row had, in an encode step with unknown=refuse (step, column and row in detail). Hint: refit with the value in the training rows, or use unknown=ignore. Repair: none.;ml.schema.mismatch|8|never|the input columns differ from the fitted features: missing, extra or of another type. Hint: add the missing columns; drop the extra ones. Repair: none.;ml.model.bad-magic|8|never|the file does not start with CML1. Hint: this is not a cancho-ml model file. Repair: none.;ml.model.version|8|never|the file has a format version this reader does not know, or a model of kind 4 or above made with a summation order this reader does not implement. Hint: refit with this version. Repair: none.;ml.model.truncated|8|never|the file ends before the end its header and section lengths promise. Hint: copy the file again. Repair: none.;ml.model.checksum|8|never|the SHA-256 at the end of the file is not the hash of the bytes before it. Hint: the file changed after it was written. Repair: none.;ml.model.malformed|8|never|the checksum is right and a field is not (the section or step is in detail). Hint: refit. Repair: none.;ml.plan.syntax|8|never|a plan line is not verb key=value ... (line and column in detail). Hint: write one step per line as verb key=value. Repair: none.;ml.plan.unknown-step|8|never|the verb of a plan line is not impute, scale, encode, bucket or model (line and column in detail). Hint: use one of the five verbs. Repair: none.;ml.plan.unknown-key|8|never|a key that the verb does not take (line and column in detail). Hint: see the keys of the verb in docs/pipeline.md. Repair: none.;ml.plan.missing-key|8|never|a required key of the verb is absent (line in detail). Hint: add the key. Repair: none.;ml.plan.bad-value|8|never|a value that is not in the key's list or not a number of the key's kind (line and column in detail). Hint: see the values of the key in docs/pipeline.md. Repair: none.;ml.plan.duplicate-key|8|never|the same key twice on one line (line and column in detail). Hint: write each key once. Repair: none.;ml.plan.model-line|8|never|the plan has no model line, has two, or has a step after it (line in detail). Hint: end the plan with exactly one model line. Repair: none.;ml.plan.unknown-column|8|never|a column named by a step is not a column of the matrix the step receives (step in detail). Hint: names are compared byte for byte. Repair: none.;ml.limit.plan|8|never|the plan has more bytes, lines or listed columns than the limits (limit in detail). Hint: shorten the plan: at most 64 KiB, 64 lines, 4096 names in a list. Repair: none.;ml.input.too-many-rows|8|never|more rows than the row cap. Hint: raise the cap up to its ceiling, or use a sample. Repair: none.;ml.input.too-many-cells|8|never|rows times columns is more than the cell cap. Hint: raise the cap, or use fewer rows or columns. Repair: none.;ml.input.non-finite|8|never|a cell of the matrix is nan or an infinity, or a transformed value overflowed to one (step, column and row in detail). Hint: remove the row or the column, or scale the column. Repair: none.;ml.plan.column-kind|8|never|a step reads the other kind of column than the one it names: a numeric step on a categorical column, freq or hash on a numeric column, a list that mixes the two (step, column and what the step needs in detail). Hint: encode the categorical column first (encode column=NAME kind=onehot), or name numeric columns. Repair: none.;ml.input.reserved-category|8|never|min-count is 2 or more and a categorical column holds the value __other__, the name of the rare-category bucket (step and column in detail). Hint: rename that value in the file, or use min-count=1. Repair: none.";
 }
 
 // a refusal with its detail (the meaning of a, b and c is by tag: see the header)

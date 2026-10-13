@@ -129,8 +129,29 @@ pub fn step_bucket() -> [] int {
     return 6;
 }
 
-pub fn step_count() -> [] int {
+// the numeric steps (kinds 1 to 6) are the only ones transforms.steps reads; the categorical steps (docs/categorical-encoders.md section 5.2) are transforms.catenc's
+pub fn step_numeric_count() -> [] int {
     return 6;
+}
+
+pub fn step_cat_onehot() -> [] int {
+    return 7;
+}
+
+pub fn step_cat_label() -> [] int {
+    return 8;
+}
+
+pub fn step_freq() -> [] int {
+    return 9;
+}
+
+pub fn step_hash() -> [] int {
+    return 10;
+}
+
+pub fn step_count() -> [] int {
+    return 10;
 }
 
 // ---- column kinds of the reader's shape (tools/ml/csv.cho `kind`; docs/categorical.md section 3) and the schema type code of a categorical column
@@ -268,6 +289,18 @@ pub fn step_at(i: int) -> [] int {
     }
     if i == 6 {
         return step_bucket();
+    }
+    if i == 7 {
+        return step_cat_onehot();
+    }
+    if i == 8 {
+        return step_cat_label();
+    }
+    if i == 9 {
+        return step_freq();
+    }
+    if i == 10 {
+        return step_hash();
     }
     return 0;
 }

@@ -168,8 +168,12 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 4 | one-hot encoding | `encode kind=onehot` |
 | 5 | label encoding | `encode kind=label` |
 | 6 | bucket (width or quantile edges) | `bucket` |
+| 7 | one-hot encoding of a categorical column | `encode kind=onehot` on a categorical column |
+| 8 | label encoding of a categorical column | `encode kind=label` on a categorical column |
+| 9 | frequency encoding of a categorical column | `freq` |
+| 10 | hashing of a categorical column | `hash` |
 
-**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta. The next step kind is 7.
+**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta. The next step kind is 11. Kinds 7 to 10 are the categorical steps of stage 2 of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them and no model file holds one before stage 3.
 
 Kinds 4 and 5 are built by `ml` since W1 (`tools/ml/wire.cho`, through `lib/pipeline/file.cho` and the adapters of `lib/models`; the logistic payload gained a labels record, `docs/wiring.md` section 4); kinds 6 and 7 are written by libraries only, and `mfile.cho` (the reader of the constant kinds)
 refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
@@ -333,7 +337,7 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.limit.categories` | 8 | a column has more distinct values than `max-categories` | raise `max-categories` up to 1024, or `bucket` the column |
 | `ml.input.unknown-category` | 8 | an `encode ... unknown=refuse` step meets a value no training row had; step, column and row in `detail` (this is the tag of the first list, now built) | refit with the value in the training rows, or `unknown=ignore` |
 | `ml.plan.syntax` | 8 | a plan line is not `verb key=value ...`; line and column in `detail` | one step per line, `verb key=value` |
-| `ml.plan.unknown-step` | 8 | the verb is not `impute`, `scale`, `encode`, `bucket` or `model` | one of the five verbs |
+| `ml.plan.unknown-step` | 8 | the verb is not `impute`, `scale`, `encode`, `bucket`, `freq`, `hash` or `model` | one of the seven verbs |
 | `ml.plan.unknown-key` | 8 | a key the verb does not take | the keys of the verb (`docs/pipeline.md` section 2) |
 | `ml.plan.missing-key` | 8 | a required key is absent | add the key |
 | `ml.plan.bad-value` | 8 | a value not in the key's list or not a number of its kind | the values of the key |
@@ -341,6 +345,8 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.plan.model-line` | 8 | no `model` line, two, or a step after it | end the plan with one `model` line |
 | `ml.plan.unknown-column` | 8 | a column a step names is not a column of the matrix it receives | names are compared byte for byte |
 | `ml.limit.plan` | 8 | a plan over 64 KiB, 64 lines or 4,096 listed names, or a name over 255 bytes | shorten the plan |
+| `ml.plan.column-kind` | 8 | a step reads the other kind of column than the one it names: a numeric step on a categorical column, `freq` or `hash` on a numeric one, a mixed list (stage 2 of issue 21, `docs/categorical-encoders.md` section 4.2); step, column and what the step needs in `detail` | `retry` with an `encode` step put before, when the plan came from `--step` |
+| `ml.input.reserved-category` | 8 | `min-count` is 2 or more and a categorical column holds the value `__other__`, the name of the rare bucket (step and column in `detail`) | none: rename the value or use `min-count=1` |
 
 The library also answers, with its own codes in its band, tags that exist above: `ml.input.empty`, `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.too-many-cells`, `ml.param.out-of-range`,
 `ml.input.non-finite` (a cell of a matrix given to a transform, or a transformed value that overflowed), `ml.fit.non-finite`, `ml.schema.mismatch` and `ml.model.bad-magic`, `version`, `truncated`, `checksum`, `malformed`.
@@ -360,7 +366,8 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.limit.string-pool` | 8 | the distinct categories of all the categorical columns together would take more than `--max-pool-bytes` (default 1 MiB, ceiling 8 MiB) | none |
 | `ml.limit.categorical-columns` | 8 | `--cat` names more columns than `--max-cat-columns` (default 128, ceiling 4,096), seen at the header | none |
 | `ml.input.invalid-utf8` | 8 | a cell of a categorical column is not well-formed UTF-8; line, column, name and byte offset in `detail` | none: re-encode the file, or remove the column from `--cat` and drop it |
-| `ml.input.categorical-not-encoded` | 8 | a column named by `--cat` was read and no step reads text columns yet (stage 2); names, category counts and the SHA-256 of the canonical vocabulary dump in `detail` | none: an `encode` step (stage 2), or `--drop` |
+| `ml.input.categorical-not-encoded` | 8 | a column named by `--cat` is read by no step of the plan (since stage 2; at stage 1 no step could); names, category counts and the SHA-256 of the canonical vocabulary dump in `detail` | none: an `encode`, `freq` or `hash` step, or `--drop` |
+| `ml.model.vocabulary-not-stored` | 8 | a fit with a categorical step would write a model file and the file cannot hold the vocabulary (stage 3 of issue 21); nothing is written; the columns in `detail` | none: `--split train=F` fits and scores without a file, or `--dry-run` |
 
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
 
@@ -441,6 +448,8 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 323 | `ml.input.too-many-rows` | 8 | `transforms.codes` |
 | 324 | `ml.input.too-many-cells` | 8 | `transforms.codes` |
 | 325 | `ml.input.non-finite` | 8 | `transforms.codes` |
+| 326 | `ml.plan.column-kind` | 8 | `transforms.codes` |
+| 327 | `ml.input.reserved-category` | 8 | `transforms.codes` |
 
 ## 9. Limits and sizes — waits for M0
 
@@ -561,5 +570,5 @@ generated from the manifests). The summation order, the registry of kinds and th
 
 Text columns are **declared** (`--cat NAMES` of `fit`, never inferred), read into a dictionary sorted bytewise (`lib/core/dict.cho`: a sorted array with binary search, no hash) and an `i64` id
 tensor beside the float matrix (`lib/core/catmat.cho`), with a missing bitmap, `--na-values`, and five limits each refused before the thing it limits exists (categories 64/1,024, bytes 255/65,536,
-pool 1 MiB/8 MiB, columns 128/4,096, and the id cells in `--max-cells`). Until stage 2's encode steps read text columns, a fit that declares one is refused with `ml.input.categorical-not-encoded`.
+pool 1 MiB/8 MiB, columns 128/4,096, and the id cells in `--max-cells`). Stage 2 (`docs/categorical-encoders.md`) built the steps that read them: `encode` on a categorical column (one-hot or label, with the rare bucket `min-count`, `missing`, `unknown`), `freq` and `hash`, in `lib/transforms/catenc.cho` and `lib/pipeline/mixed.cho`; a declared column that no step reads is refused with `ml.input.categorical-not-encoded`, and a fit that would write a file is refused with `ml.model.vocabulary-not-stored` until stage 3.
 The reader's column kind 4 and the schema type code 3 are registered in `lib/core/kinds.cho`. No model file changes. Stages 2 to 4 of the issue are not built.

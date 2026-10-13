@@ -1,0 +1,946 @@
+import std.test;
+import std.buffer;
+import std.bytes;
+import ml.catmat;
+import ml.dict;
+import ml.matrix;
+import ml.rng;
+import transforms.catenc;
+import transforms.codes;
+import pipeline.mixed;
+import pipeline.names;
+import pipeline.plan;
+import pipeline.run;
+import pt;
+
+// Unit tests of lib/transforms/catenc.cho (docs/categorical-encoders.md gates E5, E6, E7 and the unit half of E1 and E4): hand-computed matrices, the rare
+// bucket, the known answers of the hash, the bytes of a step written by hand, the decoder against every truncation and every field.
+// `sh scripts/gate_enc.sh` runs it with the library (scripts/check.sh). A test answers the number of things that were wrong (0 to pass).
+
+fn hexval(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    return c - 'a' + 10;
+}
+
+fn unhex[&h](heap: &!h Heap, s: &static [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, len(s) / 2 + 1);
+    var i = 0;
+    while i + 1 < len(s) {
+        b = buffer.push(heap, b, byte_of(hexval(int_of(s[i])) * 16 + hexval(int_of(s[i + 1]))));
+        i = i + 1 + 1;
+    }
+    return b;
+}
+
+// One categorical column "c" read from a comma separated list of cells; an empty cell is missing. `given` is the vocabulary the ids refer to: "" builds it from
+// the cells (a fit); else it is the list of strings of the reader's vocabulary (so a cell outside it is id -2, as a predict reads it).
+fn build[&h](heap: &!h Heap, cells: &static [byte], given: &static [byte]) -> [heap] (catmat.Ids, dict.Vocab) {
+    let names = box_slice(heap, 2, byte_of(99));
+    let ends = box_slice(heap, 2, 1);
+    var d = dict.empty_dict(heap);
+    var code = 0;
+    borrow names as &nr in {
+        borrow ends as &er in {
+            let (d2, c2) = dict.make(heap, 1, 4096, 1024, 255, 1048576, contents(nr), contents(er));
+            dict.drop(heap, d);
+            d = d2;
+            code = c2;
+        }
+    }
+    unbox_slice(heap, names);
+    unbox_slice(heap, ends);
+    var src = cells;
+    if len(given) > 0 {
+        src = given;
+    }
+    borrow mut d as &!dm in {
+        var from = 0;
+        var i = 0;
+        while i <= len(src) {
+            if i == len(src) || int_of(src[i]) == ',' {
+                if i > from {
+                    dict.intern(dm, 0, src[from..i]);
+                }
+                from = i + 1;
+            }
+            i = i + 1;
+        }
+    }
+    let voc = dict.freeze(heap, d);
+    var n = pt.count_byte(cells, ',') + 1;
+    let (ids, ic) = catmat.make(heap, n, 1, 1000000, 4096, 100000000);
+    let (t, data, miss, unseen, rows, cols, wpc) = catmat.parts(ids);
+    var dw = data;
+    var mw = miss;
+    borrow voc as &vr in {
+        borrow mut dw as &!x in {
+            borrow mut mw as &!y in {
+                var from = 0;
+                var r = 0;
+                var i = 0;
+                while i <= len(cells) {
+                    if i == len(cells) || int_of(cells[i]) == ',' {
+                        if i == from {
+                            catmat.put(contents(x), cols, r, 0, 0 - 1);
+                            catmat.mark_missing(contents(y), wpc, r, 0);
+                        } else {
+                            let id = dict.find(vr, 0, cells[from..i]);
+                            if id < 0 {
+                                catmat.put(contents(x), cols, r, 0, 0 - 2);
+                            } else {
+                                catmat.put(contents(x), cols, r, 0, id);
+                            }
+                        }
+                        r = r + 1;
+                        from = i + 1;
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    return (catmat.assemble(t, dw, mw, unseen, rows, cols, wpc), voc);
+}
+
+fn one_col[&h](heap: &!h Heap) -> [heap] Box[[int]] {
+    return box_slice(heap, 1, 0);
+}
+
+// fit kind on the cells of one column; (the step, the code of the Fault)
+fn fit_cells[&h](heap: &!h Heap, kd: int, cells: &static [byte], unknown: int, missing: int, par: int, maxcat: int) -> [heap] (catenc.Fit, int) {
+    let (ids, voc) = build(heap, cells, "");
+    let sel = one_col(heap);
+    var st = catenc.empty(heap);
+    var code = 0;
+    borrow ids as &ir in {
+        borrow voc as &vr in {
+            borrow sel as &sr in {
+                let (s2, f2) = catenc.fit(heap, kd, unknown, missing, par, maxcat, 1, ir, vr, contents(sr));
+                catenc.drop(heap, st);
+                st = s2;
+                code = f2.code;
+            }
+        }
+    }
+    catmat.drop(heap, ids);
+    dict.drop_vocab(heap, voc);
+    unbox_slice(heap, sel);
+    return (st, code);
+}
+
+// apply a fitted step to cells read through the vocabulary `given` ("" = the cells' own); the number of cells of the matrix that differ from `want` (a pt matrix
+// text), plus 1000 for a Fault other than `fault`, and 100 for an unknown count other than `unk`
+fn check_apply[&h, &f](heap: &!h Heap, st: &f catenc.Fit, cells: &static [byte], given: &static [byte], want: &static [byte], unk: int, fault: int) -> [heap] int {
+    let (ids, voc) = build(heap, cells, given);
+    var bad = 0;
+    borrow ids as &ir in {
+        borrow voc as &vr in {
+            let (m, u, fl) = catenc.apply(heap, st, ir, vr, 1, 1000, 100, 100000);
+            if fl.code != fault {
+                bad = bad + 1000;
+            } else if fault == 0 {
+                borrow m as &mr in {
+                    bad = bad + pt.diff(mr, want);
+                }
+                if u != unk {
+                    bad = bad + 100;
+                }
+            }
+            matrix.drop(heap, m);
+        }
+    }
+    catmat.drop(heap, ids);
+    dict.drop_vocab(heap, voc);
+    return bad;
+}
+
+// fit kind on `fitcells` and apply to `cells` (read through `given`): the number of things wrong, 1000 if the fit is refused
+fn rc[&h](heap: &!h Heap, kd: int, fitcells: &static [byte], unknown: int, missing: int, par: int, maxcat: int, cells: &static [byte], given: &static [byte], want: &static [byte], unk: int, fault: int) -> [heap] int {
+    let (st, code) = fit_cells(heap, kd, fitcells, unknown, missing, par, maxcat);
+    var bad = 0;
+    if code != 0 {
+        bad = 1000;
+    } else {
+        borrow st as &sr in {
+            bad = check_apply(heap, sr, cells, given, want, unk, fault);
+        }
+    }
+    catenc.drop(heap, st);
+    return bad;
+}
+
+// ---------------------------------------------------------------- one-hot, label, frequency by hand
+
+fn test_onehot_label_and_freq_by_hand[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // b a b c _ a : the vocabulary a b c with counts 2 2 1, one missing cell; N = 6
+    let cells = "b,a,b,c,,a";
+    bad = bad + rc(heap, 7, cells, 0, 0, 1, 64, cells, "", "0,1,0;1,0,0;0,1,0;0,0,1;?,?,?;1,0,0", 0, 0);
+    bad = bad + rc(heap, 7, cells, 0, 1, 1, 64, cells, "", "0,1,0;1,0,0;0,1,0;0,0,1;0,0,0;1,0,0", 0, 0);
+    bad = bad + rc(heap, 8, cells, 0, 0, 1, 64, cells, "", "1;0;1;2;?;0", 0, 0);
+    bad = bad + rc(heap, 8, cells, 0, 1, 1, 64, cells, "", "1;0;1;2;-1;0", 0, 0);
+    // frequency: count / 6, one correctly rounded division (2/6 = 0.3333333333333333, 1/6 = 0.16666666666666666)
+    bad = bad + rc(heap, 9, cells, 0, 0, 1, 64, cells, "", "0.3333333333333333;0.3333333333333333;0.3333333333333333;0.16666666666666666;?;0.3333333333333333", 0, 0);
+    bad = bad + rc(heap, 9, cells, 0, 1, 1, 64, cells, "", "0.3333333333333333;0.3333333333333333;0.3333333333333333;0.16666666666666666;0;0.3333333333333333", 0, 0);
+    return bad;
+}
+
+// ---------------------------------------------------------------- unseen and missing at apply
+
+fn test_unseen_cells_are_counted_or_refused[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // fitted on b a b c a ; applied to cells read through a reader vocabulary that holds a b c d (d is in the file, not in the fit) and e (id -2)
+    bad = bad + rc(heap, 7, "b,a,b,c,a", 0, 0, 1, 64, "d,a,e,c,", "a,b,c,d", "0,0,0;1,0,0;0,0,0;0,0,1;?,?,?", 2, 0);
+    bad = bad + rc(heap, 8, "b,a,b,c,a", 0, 0, 1, 64, "d,a,e,c,", "a,b,c,d", "-1;0;-1;2;?", 2, 0);
+    bad = bad + rc(heap, 9, "b,a,b,c,a", 0, 0, 1, 64, "d,a,e,c,", "a,b,c,d", "0;0.4;0;0.2;?", 2, 0);
+    // unknown=refuse: the first unseen cell is the refusal
+    bad = bad + rc(heap, 7, "b,a,b,c,a", 1, 0, 1, 64, "a,d,c", "a,b,c,d", "", 0, codes.unknown_category());
+    bad = bad + rc(heap, 7, "b,a,b,c,a", 1, 0, 1, 64, "a,b,c", "", "1,0,0;0,1,0;0,0,1", 0, 0);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the rare bucket
+
+fn test_rare_bucket_threshold_and_place[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // counts: x 3, y 2, z 1 (N = 6)
+    let cells = "x,y,x,z,y,x";
+    // min-count 1 merges nothing
+    bad = bad + rc(heap, 7, cells, 0, 0, 1, 64, cells, "", "1,0,0;0,1,0;1,0,0;0,0,1;0,1,0;1,0,0", 0, 0);
+    // min-count 2: z (1 < 2) is merged, y (2 = 2) is kept: the tie keeps. The effective categories sorted bytewise: __other__ x y ('_' is 0x5F, 'x' is 0x78)
+    bad = bad + rc(heap, 7, cells, 0, 0, 2, 64, cells, "", "0,1,0;0,0,1;0,1,0;1,0,0;0,0,1;0,1,0", 0, 0);
+    // min-count 3: y and z merged (the bucket holds 3), x kept: __other__ x
+    bad = bad + rc(heap, 8, cells, 0, 0, 3, 64, cells, "", "1;0;1;0;0;1", 0, 0);
+    // frequency with min-count 3: x 3/6, the bucket 3/6 (y and z share it)
+    bad = bad + rc(heap, 9, cells, 0, 0, 3, 64, cells, "", "0.5;0.5;0.5;0.5;0.5;0.5", 0, 0);
+    // min-count 4: everything is merged: the effective categories are __other__ alone
+    bad = bad + rc(heap, 7, cells, 0, 0, 4, 64, cells, "", "1;1;1;1;1;1", 0, 0);
+    // a string that sorts before '_' (an upper case letter) comes before the bucket; one after it comes after: A, b, c with counts 2, 1, 1 and min-count 2
+    bad = bad + rc(heap, 7, "A,A,b,c", 0, 0, 2, 64, "A,A,b,c", "", "1,0;1,0;0,1;0,1", 0, 0);
+    // an unseen string is never the bucket
+    bad = bad + rc(heap, 7, cells, 0, 0, 2, 64, "z,w", "w,x,y,z", "1,0,0;0,0,0", 1, 0);
+    return bad;
+}
+
+fn test_reserved_name_and_the_category_bound[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // __other__ is an ordinary category at min-count 1 and refused from 2
+    let cells = "__other__,a,a,b";
+    let (r1, c1) = fit_cells(heap, 7, cells, 0, 0, 1, 64);
+    if c1 != 0 {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, r1);
+    let (r2, c2) = fit_cells(heap, 7, cells, 0, 0, 2, 64);
+    if c2 != codes.reserved_category() {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, r2);
+    // the bound is on the effective categories: 3 strings, bound 2 is refused, bound 3 is not, and min-count 2 brings 3 strings (counts 2 1 1) to 2
+    let (b1, d1) = fit_cells(heap, 7, "a,b,c,a", 0, 0, 1, 2);
+    if d1 != codes.categories() {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, b1);
+    let (b2, d2) = fit_cells(heap, 7, "a,b,c,a", 0, 0, 1, 3);
+    if d2 != 0 {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, b2);
+    let (b3, d3) = fit_cells(heap, 7, "a,b,c,a", 0, 0, 2, 2);
+    if d3 != 0 {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, b3);
+    // every cell missing: ml.fit.all-missing for a step that learns, none for hash
+    let (e1, f1) = fit_cells(heap, 7, ",,", 0, 0, 1, 64);
+    if f1 != codes.all_missing() {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, e1);
+    let (e2, f2) = fit_cells(heap, 10, ",,", 0, 0, 4, 64);
+    if f2 != 0 {
+        bad = bad + 1;
+    }
+    borrow e2 as &e2r in {
+        bad = bad + check_apply(heap, e2r, ",,", "", "?,?,?,?;?,?,?,?;?,?,?,?", 0, 0);
+    }
+    catenc.drop(heap, e2);
+    // parameters out of range
+    let (p1, g1) = fit_cells(heap, 7, "a", 0, 0, 0, 64);
+    if g1 != codes.out_of_range() {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, p1);
+    let (p2, g2) = fit_cells(heap, 10, "a", 0, 0, 1, 64);
+    if g2 != codes.out_of_range() {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, p2);
+    let (p3, g3) = fit_cells(heap, 11, "a", 0, 0, 1, 64);
+    if g3 != codes.out_of_range() {
+        bad = bad + 1;
+    }
+    catenc.drop(heap, p3);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the hash
+
+fn test_hash_known_answers[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // SHA-256("abc") starts ba7816bf8f01cfea (even), SHA-256("") starts e3b0c44298fc1c14, SHA-256("a") starts ca978112ca1bbdca
+    // (the buckets below are Python's int.from_bytes(hashlib.sha256(s).digest()[:8], "big") % B)
+    if catenc.hash_bucket(heap, "abc", 2) != 0 || catenc.hash_bucket(heap, "abc", 7) != 2 || catenc.hash_bucket(heap, "abc", 1024) != 1002 {
+        bad = bad + 1;
+    }
+    if catenc.hash_bucket(heap, "", 2) != 0 || catenc.hash_bucket(heap, "", 7) != 1 || catenc.hash_bucket(heap, "", 1024) != 20 {
+        bad = bad + 1;
+    }
+    // the top bit of "abc" and "" is set (0xba, 0xe3): a signed modulo would differ for B = 7
+    if catenc.hash_bucket(heap, "a", 2) != 0 || catenc.hash_bucket(heap, "a", 7) != 4 || catenc.hash_bucket(heap, "a", 1000) != 250 {
+        bad = bad + 1;
+    }
+    // a hash step: the block of a cell is its bucket, the same for the same string wherever it is, in any vocabulary
+    let (hs, c1) = fit_cells(heap, 10, "abc,a,abc", 0, 0, 7, 64);
+    bad = bad + c1;
+    borrow hs as &hsr in {
+        bad = bad + check_apply(heap, hsr, "abc,a,abc,", "", "0,0,1,0,0,0,0;0,0,0,0,1,0,0;0,0,1,0,0,0,0;?,?,?,?,?,?,?", 0, 0);
+        // and through a reader vocabulary the fit never saw: the bucket of a string depends on its bytes alone
+        bad = bad + check_apply(heap, hsr, "a,zz", "a,abc,zz", "0,0,0,0,1,0,0;0,1,0,0,0,0,0", 0, 0);
+    }
+    catenc.drop(heap, hs);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the bytes
+
+fn test_the_payload_by_hand_and_its_round_trip[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (oh, c1) = fit_cells(heap, 7, "b,a,b,c,,a", 0, 0, 1, 64);
+    bad = bad + c1;
+    let want = unhex(heap, "0700000001000000010000000000000000000000010000000600000000000000010000006303000000010000006102000000000000000100000062020000000000000001000000630100000000000000");
+    var got = buffer.empty(heap, 16);
+    var psize = 0;
+    borrow oh as &ohr in {
+        got = catenc.encode_payload(heap, got, ohr);
+        psize = catenc.payload_size(ohr);
+    }
+    borrow got as &gr in {
+        borrow want as &wr in {
+            if !bytes.equal(buffer.bytes(gr), buffer.bytes(wr)) {
+                bad = bad + 1;
+            }
+            if buffer.size(gr) != psize {
+                bad = bad + 1;
+            }
+            // decode returns the same step: its bytes again, and the same matrix
+            let (back, code) = catenc.decode(heap, buffer.bytes(wr));
+            if code != 0 {
+                bad = bad + 1;
+            }
+            var again = buffer.empty(heap, 16);
+            borrow back as &bk in {
+                again = catenc.encode_payload(heap, again, bk);
+                bad = bad + check_apply(heap, bk, "b,a,b,c,,a", "", "0,1,0;1,0,0;0,1,0;0,0,1;?,?,?;1,0,0", 0, 0);
+                if catenc.ncols(bk) != 1 || catenc.ncat(bk, 0) != 3 || catenc.count(bk, 0, 0) != 2 || catenc.count(bk, 0, 2) != 1 || catenc.rows(bk) != 6 {
+                    bad = bad + 1;
+                }
+            }
+            borrow again as &ar in {
+                if !bytes.equal(buffer.bytes(ar), buffer.bytes(wr)) {
+                    bad = bad + 1;
+                }
+            }
+            buffer.drop(heap, again);
+            catenc.drop(heap, back);
+        }
+    }
+    // every truncation is refused
+    borrow want as &wr in {
+        let full = buffer.bytes(wr);
+        var cut = 0;
+        while cut < len(full) {
+            let (s, code) = catenc.decode(heap, full[0..cut]);
+            if code != codes.malformed() {
+                bad = bad + 1;
+            }
+            catenc.drop(heap, s);
+            cut = cut + 1;
+        }
+        // trailing byte
+        var longer = buffer.empty(heap, 16);
+        longer = buffer.append(heap, longer, full);
+        longer = buffer.push(heap, longer, byte_of(0));
+        borrow longer as &lr in {
+            let (s2, code2) = catenc.decode(heap, buffer.bytes(lr));
+            if code2 != codes.malformed() {
+                bad = bad + 1;
+            }
+            catenc.drop(heap, s2);
+        }
+        buffer.drop(heap, longer);
+    }
+    buffer.drop(heap, got);
+    buffer.drop(heap, want);
+    catenc.drop(heap, oh);
+    return bad;
+}
+
+// the payload of a hand-written step with one byte replaced (position, value) is refused (or, for the marked harmless ones, accepted)
+fn edit_code[&h](heap: &!h Heap, base: &static [byte], at: int, v: int) -> [heap] int {
+    let b = unhex(heap, base);
+    var w = b;
+    var code = 0;
+    borrow w as &wr in {
+        var copy = buffer.empty(heap, 16);
+        copy = buffer.append(heap, copy, buffer.bytes(wr));
+        var out = buffer.empty(heap, 16);
+        var i = 0;
+        borrow copy as &cr in {
+            while i < len(buffer.bytes(cr)) {
+                if i == at {
+                    out = buffer.push(heap, out, byte_of(v));
+                } else {
+                    out = buffer.push(heap, out, buffer.bytes(cr)[i]);
+                }
+                i = i + 1;
+            }
+        }
+        buffer.drop(heap, copy);
+        borrow out as &outr in {
+            let (s, c) = catenc.decode(heap, buffer.bytes(outr));
+            code = c;
+            catenc.drop(heap, s);
+        }
+        buffer.drop(heap, out);
+    }
+    buffer.drop(heap, w);
+    return code;
+}
+
+fn test_decode_refuses_every_field_out_of_bounds[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // the step of the test above: kind(0) layout(4) k(8) unknown(12) missing(16) param(20) rows(24..32) name_len(32) 'c'(36) ncat(37) then a: len(41) 'a'(45) count(46..54)
+    // b: len(54) 'b'(58) count(59..67) c: len(67) 'c'(71) count(72..80)
+    let base = "0700000001000000010000000000000000000000010000000600000000000000010000006303000000010000006102000000000000000100000062020000000000000001000000630100000000000000";
+    let m = codes.malformed();
+    if edit_code(heap, base, 0, 6) != m || edit_code(heap, base, 0, 11) != m || edit_code(heap, base, 0, 0) != m {
+        bad = bad + 1;
+    }
+    if edit_code(heap, base, 4, 2) != m || edit_code(heap, base, 8, 0) != m || edit_code(heap, base, 8, 2) != m {
+        bad = bad + 1;
+    }
+    if edit_code(heap, base, 12, 2) != m || edit_code(heap, base, 16, 2) != m || edit_code(heap, base, 20, 0) != m {
+        bad = bad + 1;
+    }
+    // rows 0, or below the sum of the counts (5): 4
+    if edit_code(heap, base, 24, 0) != m || edit_code(heap, base, 24, 4) != m {
+        bad = bad + 1;
+    }
+    // the name empty / too long
+    if edit_code(heap, base, 32, 0) != m {
+        bad = bad + 1;
+    }
+    // ncat 0 or 2000
+    if edit_code(heap, base, 37, 0) != m {
+        bad = bad + 1;
+    }
+    // strings not ascending: 'a' -> 'z', 'b' -> 'a'
+    if edit_code(heap, base, 45, 122) != m || edit_code(heap, base, 58, 97) != m {
+        bad = bad + 1;
+    }
+    // a count of 0, and a count above the rows
+    if edit_code(heap, base, 46, 0) != m || edit_code(heap, base, 46, 7) != m {
+        bad = bad + 1;
+    }
+    // an empty string
+    if edit_code(heap, base, 41, 0) != m {
+        bad = bad + 1;
+    }
+    // harmless: the first byte of a name changed ('c' -> 'd'), a string byte that keeps the order ('c' -> 'd' for the last string)
+    if edit_code(heap, base, 36, 100) != 0 || edit_code(heap, base, 71, 100) != 0 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_decode_refuses_reserved_name_and_hash_strings[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // a hash step carries no strings: the payload of "hash c buckets=4" is 36 + 4 bytes; a hash step with a string is refused
+    let (hs, c1) = fit_cells(heap, 10, "a,b", 0, 0, 4, 64);
+    bad = bad + c1;
+    var b = buffer.empty(heap, 16);
+    borrow hs as &hsr in {
+        b = catenc.encode_payload(heap, b, hsr);
+    }
+    borrow b as &br in {
+        if buffer.size(br) != 32 + 4 + 1 + 4 {
+            bad = bad + 1;
+        }
+        let (back, code) = catenc.decode(heap, buffer.bytes(br));
+        borrow back as &bk in {
+            if code != 0 || catenc.param(bk) != 4 || catenc.kind(bk) != 10 {
+                bad = bad + 1;
+            }
+        }
+        catenc.drop(heap, back);
+    }
+    buffer.drop(heap, b);
+    catenc.drop(heap, hs);
+    // a one-hot payload that holds __other__ with min-count 2 is refused; with min-count 1 it is not
+    let two = unhex(heap, "0700000001000000010000000000000000000000020000000500000000000000010000006302000000090000005f5f6f746865725f5f020000000000000001000000700300000000000000");
+    borrow two as &tr in {
+        let (s, code) = catenc.decode(heap, buffer.bytes(tr));
+        if code != codes.malformed() {
+            bad = bad + 1;
+        }
+        catenc.drop(heap, s);
+    }
+    buffer.drop(heap, two);
+    return bad;
+}
+
+// ---------------------------------------------------------------- damage
+
+// decode of `bytes`: 0 when it is refused or when it is accepted and encodes back to the same bytes (the decoder accepts only what the encoder writes), else 1
+fn decode_roundtrip_bad[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] int {
+    let (st, code) = catenc.decode(heap, data);
+    var bad = 0;
+    if code == 0 {
+        var again = buffer.empty(heap, 16);
+        borrow st as &sr in {
+            again = catenc.encode_payload(heap, again, sr);
+        }
+        borrow again as &ar in {
+            if !bytes.equal(buffer.bytes(ar), data) {
+                bad = 1;
+            }
+        }
+        buffer.drop(heap, again);
+    } else if code != codes.malformed() {
+        bad = 1;
+    }
+    catenc.drop(heap, st);
+    return bad;
+}
+
+// the state after one step of SplitMix64, and a draw in 0 .. m-1 from it
+fn next_rand(x: int) -> [] int {
+    return rng.advance(x);
+}
+
+fn draw(state: int, m: int) -> [] int {
+    return rng.uniform(rng.output(state), m);
+}
+
+// a payload with several columns, a multi-byte string and a rare bucket
+fn sample_payload[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    let (st, c) = fit_cells(heap, 7, "café,x,,café,y,x,café,z", 0, 1, 2, 64);
+    var b = buffer.empty(heap, 16);
+    borrow st as &sr in {
+        b = catenc.encode_payload(heap, b, sr);
+    }
+    catenc.drop(heap, st);
+    return b;
+}
+
+fn test_every_flipped_byte_and_seeded_damage_never_traps_and_accepts_only_what_encode_writes[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let base = sample_payload(heap);
+    var accepted = 0;
+    var refused = 0;
+    borrow base as &br in {
+        let full = buffer.bytes(br);
+        // the base itself
+        bad = bad + decode_roundtrip_bad(heap, full);
+        // every byte flipped three ways
+        var i = 0;
+        while i < len(full) {
+            var m = 0;
+            while m < 3 {
+                var cp = buffer.empty(heap, 16);
+                var j = 0;
+                while j < len(full) {
+                    if j == i {
+                        var v = int_of(full[j]);
+                        if m == 0 {
+                            v = v ^ 1;
+                        } else if m == 1 {
+                            v = v ^ 128;
+                        } else {
+                            v = 255 - v;
+                        }
+                        cp = buffer.push(heap, cp, byte_of(v & 255));
+                    } else {
+                        cp = buffer.push(heap, cp, full[j]);
+                    }
+                    j = j + 1;
+                }
+                borrow cp as &cr in {
+                    bad = bad + decode_roundtrip_bad(heap, buffer.bytes(cr));
+                    let (st, code) = catenc.decode(heap, buffer.bytes(cr));
+                    if code == 0 {
+                        accepted = accepted + 1;
+                    } else {
+                        refused = refused + 1;
+                    }
+                    catenc.drop(heap, st);
+                }
+                buffer.drop(heap, cp);
+                m = m + 1;
+            }
+            i = i + 1;
+        }
+        // 3,000 seeded damages of 1 to 6 bytes, a cut, and an inserted run
+        var seed = 88172645463325252;
+        var k = 0;
+        while k < 3000 {
+            seed = next_rand(seed);
+            var cp = buffer.empty(heap, 16);
+            var cutlen = len(full);
+            if draw(seed, 7) == 0 {
+                seed = next_rand(seed);
+                cutlen = draw(seed, len(full) + 1);
+            }
+            var j = 0;
+            while j < cutlen {
+                cp = buffer.push(heap, cp, full[j]);
+                j = j + 1;
+            }
+            seed = next_rand(seed);
+            var n = 1 + draw(seed, 6);
+            var q = 0;
+            while q < n && cutlen > 0 {
+                seed = next_rand(seed);
+                let at = draw(seed, cutlen);
+                seed = next_rand(seed);
+                var damaged = buffer.empty(heap, 16);
+                var t = 0;
+                borrow cp as &cr in {
+                    while t < cutlen {
+                        if t == at {
+                            damaged = buffer.push(heap, damaged, byte_of(draw(seed, 256)));
+                        } else {
+                            damaged = buffer.push(heap, damaged, buffer.bytes(cr)[t]);
+                        }
+                        t = t + 1;
+                    }
+                }
+                buffer.drop(heap, cp);
+                cp = damaged;
+                q = q + 1;
+            }
+            borrow cp as &cr in {
+                bad = bad + decode_roundtrip_bad(heap, buffer.bytes(cr));
+            }
+            buffer.drop(heap, cp);
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, base);
+    // the damage must have been mostly refused (a vacuous test would accept everything) and sometimes accepted (a decoder that refuses everything would pass too)
+    if refused < 200 || accepted < 5 {
+        bad = bad + 1000;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- the mixed pipeline in memory
+
+// columns "c", "d", ... from texts separated by `|`, each a comma separated list of cells (empty = missing)
+fn build_multi[&h](heap: &!h Heap, texts: &static [byte]) -> [heap] (catmat.Ids, dict.Vocab) {
+    let ncols = pt.count_byte(texts, '|') + 1;
+    let names = box_slice(heap, ncols + 1, byte_of(99));
+    let ends = box_slice(heap, ncols + 1, 1);
+    var nw = names;
+    var ew = ends;
+    borrow mut nw as &!x in {
+        borrow mut ew as &!y in {
+            var i = 0;
+            while i < ncols {
+                contents(x)[i] = byte_of(99 + i);
+                contents(y)[i] = i + 1;
+                i = i + 1;
+            }
+        }
+    }
+    var d = dict.empty_dict(heap);
+    borrow nw as &nr in {
+        borrow ew as &er in {
+            let (d2, c2) = dict.make(heap, ncols, 4096, 1024, 255, 1048576, contents(nr), contents(er));
+            dict.drop(heap, d);
+            d = d2;
+        }
+    }
+    unbox_slice(heap, nw);
+    unbox_slice(heap, ew);
+    var rows = 0;
+    borrow mut d as &!dm in {
+        var col = 0;
+        var from = 0;
+        var cellstart = 0;
+        var i = 0;
+        var rcount = 0;
+        while i <= len(texts) {
+            if i == len(texts) || int_of(texts[i]) == '|' || int_of(texts[i]) == ',' {
+                if i > cellstart {
+                    dict.intern(dm, col, texts[cellstart..i]);
+                }
+                rcount = rcount + 1;
+                cellstart = i + 1;
+                if i == len(texts) || int_of(texts[i]) == '|' {
+                    if rows == 0 {
+                        rows = rcount;
+                    }
+                    col = col + 1;
+                    rcount = 0;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    let voc = dict.freeze(heap, d);
+    let (ids, ic) = catmat.make(heap, rows, ncols, 1000000, 4096, 100000000);
+    let (t, data, miss, unseen, orows, ocols, wpc) = catmat.parts(ids);
+    var dw = data;
+    var mw = miss;
+    borrow voc as &vr in {
+        borrow mut dw as &!x in {
+            borrow mut mw as &!y in {
+                var col = 0;
+                var cellstart = 0;
+                var r = 0;
+                var i = 0;
+                while i <= len(texts) {
+                    if i == len(texts) || int_of(texts[i]) == '|' || int_of(texts[i]) == ',' {
+                        if i == cellstart {
+                            catmat.put(contents(x), ocols, r, col, 0 - 1);
+                            catmat.mark_missing(contents(y), wpc, r, col);
+                        } else {
+                            catmat.put(contents(x), ocols, r, col, dict.find(vr, col, texts[cellstart..i]));
+                        }
+                        r = r + 1;
+                        cellstart = i + 1;
+                        if i == len(texts) || int_of(texts[i]) == '|' {
+                            col = col + 1;
+                            r = 0;
+                        }
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    return (catmat.assemble(t, dw, mw, unseen, orows, ocols, wpc), voc);
+}
+
+fn same_matrix[&a, &b](x: &a matrix.Matrix, y: &b matrix.Matrix) -> [] bool {
+    if matrix.rows(x) != matrix.rows(y) || matrix.cols(x) != matrix.cols(y) {
+        return false;
+    }
+    var r = 0;
+    while r < matrix.rows(x) {
+        var c = 0;
+        while c < matrix.cols(x) {
+            if matrix.is_missing(x, r, c) != matrix.is_missing(y, r, c) {
+                return false;
+            }
+            if !matrix.is_missing(x, r, c) && bits_of(matrix.value(x, r, c)) != bits_of(matrix.value(y, r, c)) {
+                return false;
+            }
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return true;
+}
+
+fn test_the_mixed_pipeline_fits_stores_and_applies_the_same_matrix[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let plan_text = "scale column=a kind=minmax\nencode column=c kind=onehot min-count=2 missing=zero\nfreq column=d\nmodel kind=linear\n";
+    let (pl, pf) = plan.parse(heap, plan_text);
+    if pf.code != 0 {
+        bad = bad + 1;
+    }
+    let x = pt.mat(heap, "1;3;5;2;4");
+    let nm = names.from_list(heap, "a");
+    // c: b a b c "" ; d: x y x y x    (a: 1 3 5 2 4)
+    let (ids, voc) = build_multi(heap, "b,a,b,c,|x,y,x,y,x");
+    borrow pl as &pr in {
+        borrow x as &xr in {
+            borrow nm as &nr in {
+                borrow ids as &ir in {
+                    borrow voc as &vr in {
+                        let (fd, y, rem, flt) = mixed.fit(heap, pr, nr, xr, 5, ir, vr, 1000, 100, 100000);
+                        if flt.code != 0 {
+                            bad = bad + 1;
+                        } else {
+                            // min-count 2: a (1) and c (1) are merged; b (2) is kept: the effective categories are __other__ b ('_' before 'b'); the missing cell is all zero
+                            // then freq of d: x 3/5, y 2/5. The numeric column is min-max scaled: (a - 1) / 4
+                            borrow y as &yd in {
+                                bad = bad + pt.diff(yd, "0,0,1,0.6;0.5,1,0,0.4;1,0,1,0.6;0.25,1,0,0.4;0.75,0,0,0.6");
+                            }
+                            borrow fd as &fdr in {
+                                if names.count(fdr.nm) != 4 || !bytes.equal(names.name(fdr.nm, 0), "a") || !bytes.equal(names.name(fdr.nm, 1), "c#0") || !bytes.equal(names.name(fdr.nm, 3), "d") {
+                                    bad = bad + 1;
+                                }
+                                borrow rem as &remr in {
+                                    if names.count(remr) != 0 {
+                                        bad = bad + 1;
+                                    }
+                                }
+                                // the stored steps applied to the same table give the same matrix, bit for bit
+                                let (z, unk, f2) = mixed.apply_steps(heap, buffer.bytes(fdr.payload), xr, 5, ir, vr, 1000, 100, 100000);
+                                if f2.code != 0 || unk != 0 {
+                                    bad = bad + 1;
+                                } else {
+                                    borrow y as &yr in {
+                                        borrow z as &zr in {
+                                            if !same_matrix(yr, zr) {
+                                                bad = bad + 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                matrix.drop(heap, z);
+                                // the fitted vocabulary of each categorical step, decoded from the payload
+                                let (s2, c2) = mixed.cat_step_at(heap, buffer.bytes(fdr.payload), 1);
+                                borrow s2 as &s2r in {
+                                    if c2 != 0 || catenc.kind(s2r) != 7 || catenc.ncat(s2r, 0) != 3 || catenc.rows(s2r) != 5 || catenc.count(s2r, 0, 1) != 2 {
+                                        bad = bad + 1;
+                                    }
+                                }
+                                catenc.drop(heap, s2);
+                                let (s3, c3) = mixed.cat_step_at(heap, buffer.bytes(fdr.payload), 0);
+                                if c3 == 0 {
+                                    bad = bad + 1;
+                                }
+                                catenc.drop(heap, s3);
+                            }
+                        }
+                        names.drop(heap, rem);
+                        matrix.drop(heap, y);
+                        run.drop_fitted(heap, fd);
+                    }
+                }
+            }
+        }
+    }
+    catmat.drop(heap, ids);
+    dict.drop_vocab(heap, voc);
+    names.drop(heap, nm);
+    matrix.drop(heap, x);
+    plan.drop(heap, pl);
+    return bad;
+}
+
+// ---------------------------------------------------------------- bounds of the decoder and of the fit
+
+fn p32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+fn p64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = p32(heap, b, v & 4294967295);
+    return p32(heap, o, v >> 32);
+}
+
+// the payload of a one-hot step with one column whose name is `namelen` bytes of 'n' and which holds `ncat` strings of 4 digits, each counted once
+fn big_payload[&h](heap: &!h Heap, namelen: int, ncat: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 64);
+    b = p32(heap, b, 7);
+    b = p32(heap, b, 1);
+    b = p32(heap, b, 1);
+    b = p32(heap, b, 0);
+    b = p32(heap, b, 0);
+    b = p32(heap, b, 1);
+    b = p64(heap, b, 5000);
+    b = p32(heap, b, namelen);
+    var i = 0;
+    while i < namelen {
+        b = buffer.push(heap, b, byte_of('n'));
+        i = i + 1;
+    }
+    b = p32(heap, b, ncat);
+    i = 0;
+    while i < ncat {
+        b = p32(heap, b, 4);
+        b = buffer.push(heap, b, byte_of('0' + i / 1000 % 10));
+        b = buffer.push(heap, b, byte_of('0' + i / 100 % 10));
+        b = buffer.push(heap, b, byte_of('0' + i / 10 % 10));
+        b = buffer.push(heap, b, byte_of('0' + i % 10));
+        b = p64(heap, b, 1);
+        i = i + 1;
+    }
+    return b;
+}
+
+fn decode_code[&h](heap: &!h Heap, namelen: int, ncat: int) -> [heap] int {
+    let b = big_payload(heap, namelen, ncat);
+    var code = 0;
+    borrow b as &br in {
+        let (s, c) = catenc.decode(heap, buffer.bytes(br));
+        code = c;
+        catenc.drop(heap, s);
+    }
+    buffer.drop(heap, b);
+    return code;
+}
+
+fn test_the_decoder_bounds_names_and_category_counts_exactly[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // a name of 255 bytes and 1,024 categories are the largest; 256 and 1,025 are refused
+    if decode_code(heap, 255, 1) != 0 || decode_code(heap, 256, 1) != codes.malformed() || decode_code(heap, 1, 1024) != 0 || decode_code(heap, 1, 1025) != codes.malformed() {
+        bad = bad + 1;
+    }
+    if decode_code(heap, 0, 1) != codes.malformed() || decode_code(heap, 1, 0) != codes.malformed() {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_fit_refuses_columns_that_are_not_there_or_not_ascending[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ids, voc) = build(heap, "a,b,a", "");
+    borrow ids as &ir in {
+        borrow voc as &vr in {
+            let one = box_slice(heap, 1, 1);
+            let twice = box_slice(heap, 2, 0);
+            let none = box_slice(heap, 0, 0);
+            borrow one as &o1 in {
+                let (s, f) = catenc.fit(heap, 7, 0, 0, 1, 64, 1, ir, vr, contents(o1));
+                if f.code != codes.out_of_range() {
+                    bad = bad + 1;
+                }
+                catenc.drop(heap, s);
+            }
+            borrow twice as &o2 in {
+                let (s, f) = catenc.fit(heap, 7, 0, 0, 1, 64, 1, ir, vr, contents(o2));
+                if f.code != codes.out_of_range() {
+                    bad = bad + 1;
+                }
+                catenc.drop(heap, s);
+            }
+            borrow none as &o3 in {
+                let (s, f) = catenc.fit(heap, 7, 0, 0, 1, 64, 1, ir, vr, contents(o3));
+                if f.code != codes.out_of_range() {
+                    bad = bad + 1;
+                }
+                catenc.drop(heap, s);
+            }
+            unbox_slice(heap, one);
+            unbox_slice(heap, twice);
+            unbox_slice(heap, none);
+        }
+    }
+    catmat.drop(heap, ids);
+    dict.drop_vocab(heap, voc);
+    return bad;
+}

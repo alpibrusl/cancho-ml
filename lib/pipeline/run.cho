@@ -111,7 +111,7 @@ pub fn empty_fitted[&h](heap: &!h Heap) -> [heap] Fitted {
 }
 
 // the names after a step: a one-hot column `c` of k categories is `c#0 .. c#k-1`, every other name is kept
-fn next_names[&h, &n, &s](heap: &!h Heap, old: &n names.Names, st: &s steps.Step) -> [heap] names.Names {
+pub fn next_names[&h, &n, &s](heap: &!h Heap, old: &n names.Names, st: &s steps.Step) -> [heap] names.Names {
     var out = names.empty(heap);
     let kind = steps.kind(st);
     let k = steps.int_at(st, 0);
@@ -146,7 +146,7 @@ fn next_names[&h, &n, &s](heap: &!h Heap, old: &n names.Names, st: &s steps.Step
 }
 
 // the column indices step i selects in a matrix whose columns are `nm`: all of them for `*`, else the listed names; ascending
-fn resolve[&h, &p, &n](heap: &!h Heap, pl: &p plan.Plan, i: int, nm: &n names.Names) -> [heap] (Box[[int]], int) {
+pub fn resolve[&h, &p, &n](heap: &!h Heap, pl: &p plan.Plan, i: int, nm: &n names.Names) -> [heap] (Box[[int]], int) {
     let c = names.count(nm);
     if plan.all_columns(pl, i) {
         let b = box_slice(heap, c, 0);

@@ -15,7 +15,8 @@ import pipeline.modeldefs;
 // Every refusal is a Fault of transforms.codes with the line and column (1-based; for ml.limit.plan: a = which limit).
 //
 // THE GRAMMAR IS A TABLE: defs_of() below. A def is `name:type:rule` or `name:type:rule@cond`: type `cols`, `enum=a,b,c`, `int=lo,hi`, `float`,
-// `fnn` (a finite float >= 0); rule `req` (required), `opt` (omitted when absent) or `=text` (the default); `@key=value` makes the key legal only when
+// `fnn` (a finite float >= 0); rule `req` (required), `opt` (omitted when absent), `=text` (the default, always written) or `~text` (the default, written only when
+// the value differs from it: a key added after the plan text of a verb was fixed, so that the canonical text of the old lines does not change); `@key=value` makes the key legal only when
 // the earlier key has that value (it is then required or defaulted as the rule says; otherwise a present key is ml.plan.bad-value). The keys of the model
 // lines come from modeldefs (generated from the manifests of lib/models); the four step verbs are final.
 
@@ -47,7 +48,13 @@ fn defs_of[&s](verb: &s [byte]) -> [] &static [byte] {
         return "column:cols:req kind:enum=minmax,standard:req ddof:int=0,1:=0@kind=standard";
     }
     if bytes.equal(verb, "encode") {
-        return "column:cols:req kind:enum=onehot,label:req max-categories:int=1,1024:=64 unknown:enum=ignore,refuse:=ignore";
+        return "column:cols:req kind:enum=onehot,label:req max-categories:int=1,1024:=64 unknown:enum=ignore,refuse:=ignore min-count:int=1,1000000:~1 missing:enum=pass,zero:~pass";
+    }
+    if bytes.equal(verb, "freq") {
+        return "column:cols:req max-categories:int=1,1024:=64 unknown:enum=ignore,refuse:=ignore min-count:int=1,1000000:=1 missing:enum=pass,zero:=pass";
+    }
+    if bytes.equal(verb, "hash") {
+        return "column:cols:req buckets:int=2,1024:req missing:enum=pass,zero:=pass";
     }
     if bytes.equal(verb, "bucket") {
         return "column:cols:req kind:enum=width,quantile:req bins:int=2,256:req";
@@ -58,7 +65,7 @@ fn defs_of[&s](verb: &s [byte]) -> [] &static [byte] {
 
 // ---------------------------------------------------------------- the plan
 
-// the parsed plan: the canonical text, and per step line 8 ints [kind, a, b, column text from, to, line from, line to, names listed (-1 for *)]
+// the parsed plan: the canonical text, and per step line 8 ints [kind, a, b, column text from, to, line from, min-count and missing (slot 6; 0 for a verb without them), names listed (-1 for *)]
 // (see transforms.fit.Spec) and its value
 pub res struct Plan {
     text: buffer.Buffer,
@@ -140,6 +147,33 @@ pub fn line_of[&p](p: &p Plan, i: int) -> [] int {
 pub fn spec_of[&p](p: &p Plan, i: int) -> [] fit.Spec {
     let s = contents(p.specs);
     return fit.Spec { kind: s[8 * i], a: s[8 * i + 1], b: s[8 * i + 2], value: contents(p.vals)[i] };
+}
+
+// min-count of step i: 1 for a step that has none (impute, scale, bucket) or does not state it
+pub fn min_count_of[&p](p: &p Plan, i: int) -> [] int {
+    let e = contents(p.specs)[8 * i + 6] & 16777215;
+    if e < 1 {
+        return 1;
+    }
+    return e;
+}
+
+// whether step i says missing=zero (docs/categorical-encoders.md section 3.2); false for a step that has no such key
+pub fn missing_zero[&p](p: &p Plan, i: int) -> [] bool {
+    return contents(p.specs)[8 * i + 6] >> 24 & 1 == 1;
+}
+
+// whether the plan needs the pipeline that also reads categorical columns (pipeline.mixed): a step of a verb that reads them only (freq, hash), or an encode that states
+// a min-count above 1 or missing=zero (a plan of the numeric steps alone is pipeline.run's and keeps its bytes)
+pub fn needs_mixed[&p](p: &p Plan) -> [] bool {
+    var i = 0;
+    while i < p.nsteps {
+        if contents(p.specs)[8 * i] >= 9 || contents(p.specs)[8 * i + 6] > 1 {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // the step kind (kinds.cho) of step i
@@ -453,6 +487,35 @@ fn emit[&h, &s, &k, &w, &f](heap: &!h Heap, src: &s [byte], line_no: int, ls: in
             }
         } else if t == 0 && bytes.equal(rule, "req") {
             return (o, codes.fault(codes.plan_missing_key(), line_no, tk[0] - ls + 1, 0));
+        } else if int_of(rule[0]) == '~' {
+            // the value is written only when it is not the default
+            if t > 0 {
+                let (s2, c, i2, f2, a2) = norm_value(heap, ty, src[tk[4 * t + 2]..tk[4 * t + 3]], buffer.empty(heap, 16));
+                if c == codes.plan_limit() {
+                    buffer.drop(heap, s2);
+                    return (o, codes.fault(c, a2, 0, 0));
+                }
+                if c != 0 {
+                    buffer.drop(heap, s2);
+                    return (o, codes.fault(c, line_no, tk[4 * t + 2] - ls + 1 + a2, 0));
+                }
+                var differs = true;
+                borrow s2 as &s2r in {
+                    differs = !bytes.equal(buffer.bytes(s2r), rule[1..len(rule)]);
+                    if differs {
+                        o = buffer.push(heap, o, byte_of(' '));
+                        o = buffer.append(heap, o, name);
+                        o = buffer.push(heap, o, byte_of('='));
+                        o = buffer.append(heap, o, buffer.bytes(s2r));
+                    }
+                }
+                buffer.drop(heap, s2);
+                if differs {
+                    ws[4 * (d0 + i)] = i2;
+                    ws[4 * (d0 + i) + 3] = 1;
+                    fv[d0 + i] = f2;
+                }
+            }
         } else if t > 0 || int_of(rule[0]) == '=' {
             o = buffer.push(heap, o, byte_of(' '));
             o = buffer.append(heap, o, name);
@@ -577,6 +640,7 @@ fn do_line[&h, &s, &k, &w, &f, &sp, &v](heap: &!h Heap, src: &s [byte], ls: int,
     var kind = 0;
     var a = 0;
     var b = 0;
+    var extra = 0;
     var value = 0.0;
     if bytes.equal(verb, "impute") {
         kind = 1;
@@ -591,6 +655,29 @@ fn do_line[&h, &s, &k, &w, &f, &sp, &v](heap: &!h Heap, src: &s [byte], ls: int,
         kind = 4 + ws[4];
         a = ws[12];
         b = ws[8];
+        // the keys of the categorical columns, packed into the unused slot 6: min-count, and 1 << 24 for missing=zero (1 and pass when absent)
+        extra = 1;
+        if ws[19] == 1 {
+            extra = ws[16];
+        }
+        if ws[23] == 1 && ws[20] == 1 {
+            extra = extra + 16777216;
+        }
+    } else if bytes.equal(verb, "freq") {
+        kind = 9;
+        a = ws[8];
+        b = ws[4];
+        extra = ws[12];
+        if ws[16] == 1 {
+            extra = extra + 16777216;
+        }
+    } else if bytes.equal(verb, "hash") {
+        kind = 10;
+        b = ws[4];
+        extra = 1;
+        if ws[8] == 1 {
+            extra = extra + 16777216;
+        }
     } else {
         kind = 6;
         a = ws[4];
@@ -602,7 +689,7 @@ fn do_line[&h, &s, &k, &w, &f, &sp, &v](heap: &!h Heap, src: &s [byte], ls: int,
     specs[8 * nsteps + 3] = ws[1];
     specs[8 * nsteps + 4] = ws[2];
     specs[8 * nsteps + 5] = line_no;
-    specs[8 * nsteps + 6] = 0;
+    specs[8 * nsteps + 6] = extra;
     specs[8 * nsteps + 7] = ws[0];
     vals[nsteps] = value;
     return (o, codes.none(), 0);
