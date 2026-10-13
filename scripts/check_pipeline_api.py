@@ -31,10 +31,12 @@ def pub_fns(path):
     return out
 
 
-files = {"transforms/apply.cho": "apply", "transforms/fit.cho": "fit", "transforms/steps.cho": "steps", "pipeline/run.cho": "run", "pipeline/file.cho": "file", "pipeline/plan.cho": "plan", "pipeline/schema.cho": "schema", "pipeline/names.cho": "names"}
-ALLOW_PLAN_PARAM = {("run", "fit"), ("run", "agrees")}
+files = {"transforms/apply.cho": "apply", "transforms/fit.cho": "fit", "transforms/steps.cho": "steps", "pipeline/run.cho": "run", "pipeline/file.cho": "file", "pipeline/plan.cho": "plan", "pipeline/schema.cho": "schema", "pipeline/names.cho": "names", "pipeline/mixed.cho": "mixed", "transforms/catenc.cho": "catenc"}
+# the mixed pipeline (docs/categorical-encoders.md) has its own fit, and the numeric fit's column resolver is shared with it
+ALLOW_PLAN_PARAM = {("run", "fit"), ("run", "agrees"), ("run", "resolve"), ("mixed", "fit")}
 # result holds a matrix: (module, function) -> kind
-MATRIX_FNS = {("apply", "apply"): "apply", ("run", "apply_steps"): "apply", ("run", "fit"): "fit", ("run", "clone"): "copy", ("run", "permute"): "copy"}
+MATRIX_FNS = {("apply", "apply"): "apply", ("run", "apply_steps"): "apply", ("run", "fit"): "fit", ("run", "clone"): "copy", ("run", "permute"): "copy",
+             ("mixed", "fit"): "fit", ("mixed", "apply_steps"): "apply", ("mixed", "hstack"): "copy", ("catenc", "apply"): "apply"}
 
 for rel, mod in files.items():
     for name, params, ret, body in pub_fns("lib/" + rel):

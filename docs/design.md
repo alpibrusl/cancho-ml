@@ -337,7 +337,7 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.limit.categories` | 8 | a column has more distinct values than `max-categories` | raise `max-categories` up to 1024, or `bucket` the column |
 | `ml.input.unknown-category` | 8 | an `encode ... unknown=refuse` step meets a value no training row had; step, column and row in `detail` (this is the tag of the first list, now built) | refit with the value in the training rows, or `unknown=ignore` |
 | `ml.plan.syntax` | 8 | a plan line is not `verb key=value ...`; line and column in `detail` | one step per line, `verb key=value` |
-| `ml.plan.unknown-step` | 8 | the verb is not `impute`, `scale`, `encode`, `bucket` or `model` | one of the five verbs |
+| `ml.plan.unknown-step` | 8 | the verb is not `impute`, `scale`, `encode`, `bucket`, `freq`, `hash` or `model` | one of the seven verbs |
 | `ml.plan.unknown-key` | 8 | a key the verb does not take | the keys of the verb (`docs/pipeline.md` section 2) |
 | `ml.plan.missing-key` | 8 | a required key is absent | add the key |
 | `ml.plan.bad-value` | 8 | a value not in the key's list or not a number of its kind | the values of the key |
@@ -345,6 +345,8 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.plan.model-line` | 8 | no `model` line, two, or a step after it | end the plan with one `model` line |
 | `ml.plan.unknown-column` | 8 | a column a step names is not a column of the matrix it receives | names are compared byte for byte |
 | `ml.limit.plan` | 8 | a plan over 64 KiB, 64 lines or 4,096 listed names, or a name over 255 bytes | shorten the plan |
+| `ml.plan.column-kind` | 8 | a step reads the other kind of column than the one it names: a numeric step on a categorical column, `freq` or `hash` on a numeric one, a mixed list (stage 2 of issue 21, `docs/categorical-encoders.md` section 4.2); step, column and what the step needs in `detail` | `retry` with an `encode` step put before, when the plan came from `--step` |
+| `ml.input.reserved-category` | 8 | `min-count` is 2 or more and a categorical column holds the value `__other__`, the name of the rare bucket (step and column in `detail`) | none: rename the value or use `min-count=1` |
 
 The library also answers, with its own codes in its band, tags that exist above: `ml.input.empty`, `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.too-many-cells`, `ml.param.out-of-range`,
 `ml.input.non-finite` (a cell of a matrix given to a transform, or a transformed value that overflowed), `ml.fit.non-finite`, `ml.schema.mismatch` and `ml.model.bad-magic`, `version`, `truncated`, `checksum`, `malformed`.
@@ -445,6 +447,8 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 323 | `ml.input.too-many-rows` | 8 | `transforms.codes` |
 | 324 | `ml.input.too-many-cells` | 8 | `transforms.codes` |
 | 325 | `ml.input.non-finite` | 8 | `transforms.codes` |
+| 326 | `ml.plan.column-kind` | 8 | `transforms.codes` |
+| 327 | `ml.input.reserved-category` | 8 | `transforms.codes` |
 
 ## 9. Limits and sizes — waits for M0
 

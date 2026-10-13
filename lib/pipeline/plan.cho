@@ -163,11 +163,12 @@ pub fn missing_zero[&p](p: &p Plan, i: int) -> [] bool {
     return contents(p.specs)[8 * i + 6] >> 24 & 1 == 1;
 }
 
-// whether a step is of a verb that reads categorical columns only (freq, hash)
-pub fn has_categorical_verbs[&p](p: &p Plan) -> [] bool {
+// whether the plan needs the pipeline that also reads categorical columns (pipeline.mixed): a step of a verb that reads them only (freq, hash), or an encode that states
+// a min-count above 1 or missing=zero (a plan of the numeric steps alone is pipeline.run's and keeps its bytes)
+pub fn needs_mixed[&p](p: &p Plan) -> [] bool {
     var i = 0;
     while i < p.nsteps {
-        if contents(p.specs)[8 * i] >= 9 {
+        if contents(p.specs)[8 * i] >= 9 || contents(p.specs)[8 * i + 6] > 1 {
             return true;
         }
         i = i + 1;

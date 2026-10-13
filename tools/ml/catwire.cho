@@ -232,7 +232,7 @@ fn column_kind_error[&h, &g, &p, &c](heap: &!h Heap, args: &g Args, errs: fail.E
         var fix = buffer.empty(heap, 64);
         fix = buffer.append(heap, fix, "encode column=");
         fix = buffer.append(heap, fix, colname);
-        fix = buffer.append(heap, fix, " kind=onehot; ");
+        fix = buffer.append(heap, fix, " kind=label; ");
         var rw = fail.retry_open(heap, w);
         var k = 0;
         while k < arg_count(args) {
@@ -256,7 +256,7 @@ fn column_kind_error[&h, &g, &p, &c](heap: &!h Heap, args: &g Args, errs: fail.E
         buffer.drop(heap, fix);
         w = fail.retry_close(heap, rw);
     } else {
-        w = fail.repair_none(heap, w, "encode a categorical column first (encode column=NAME kind=onehot) before a numeric step, and name only categorical columns in freq and hash");
+        w = fail.repair_none(heap, w, "encode a categorical column first (encode column=NAME kind=label keeps its name, kind=onehot makes the columns NAME#0, NAME#1 ...) before a numeric step, and name only categorical columns in freq and hash");
     }
     w = fail.detail_open(heap, w);
     w = fail.detail_int(heap, w, "step", f.a);

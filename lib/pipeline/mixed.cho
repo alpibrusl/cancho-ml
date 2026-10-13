@@ -69,6 +69,11 @@ pub fn hstack[&h, &a, &b](heap: &!h Heap, x: &a matrix.Matrix, y: &b matrix.Matr
     return (matrix.assemble(t, d, b2, rows, cols, wpc), 0);
 }
 
+// the most steps a payload may hold (the plan's line limit)
+fn max_steps() -> [] int {
+    return plan.max_lines();
+}
+
 fn get32[&s](src: &s [byte], at: int) -> [] int {
     return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
 }
@@ -456,7 +461,7 @@ pub fn apply_steps[&h, &s, &m, &i, &v](heap: &!h Heap, payload: &s [byte], x: &m
         return (matrix.empty(heap), 0, bad);
     }
     let n = get32(payload, 0);
-    if n < 0 || n > plan.max_lines() {
+    if n < 0 || n > max_steps() {
         return (matrix.empty(heap), 0, bad);
     }
     var cur = matrix.empty(heap);

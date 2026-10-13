@@ -164,7 +164,7 @@ pub fn bucket_of[&a, &d, &s](state: &!a [int], dg: &!d [byte], text: &s [byte], 
     crypto.sha256_final(state, dg);
     let hi = int_of(dg[0]) << 24 | int_of(dg[1]) << 16 | int_of(dg[2]) << 8 | int_of(dg[3]);
     let lo = int_of(dg[4]) << 24 | int_of(dg[5]) << 16 | int_of(dg[6]) << 8 | int_of(dg[7]);
-    return ((hi % b) * (4294967296 % b) + lo % b) % b;
+    return (hi % b * (4294967296 % b) + lo % b) % b;
 }
 
 pub fn hash_bucket[&h, &s](heap: &!h Heap, text: &s [byte], b: int) -> [heap] int {
