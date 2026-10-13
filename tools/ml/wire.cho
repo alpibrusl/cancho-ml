@@ -65,7 +65,7 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             while k <= 5 {
                 let f = bytes.field(needing, ',', k);
                 if cli.has(parsed, table, f) {
-                    e = wiredata.conflict(heap, e, f, "this flag needs a model other than constant: --model linear or --model logistic, or --plan");
+                    e = wiredata.conflict(heap, e, f, "this flag needs a model other than constant: --model linear, logistic, tree or forest, or --plan");
                 }
                 k = k + 1;
             }
