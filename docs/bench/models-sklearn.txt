@@ -1,0 +1,43 @@
+== n1000: n=1000, fit on 800 rows, test on 200
+linreg coefficients (max |dw| / max(1,|w|))       2.546e-15  tol 1.0e-08   PASS 
+linreg test RMSE (relative)                       1.053e-15  tol 1.0e-09   PASS rmse cancho 0.474324877 sklearn 0.474324877
+ridge coefficients (max |dw| / max(1,|w|))        6.031e-16  tol 1.0e-08   PASS 
+ridge test RMSE (relative)                        8.852e-16  tol 1.0e-09   PASS rmse cancho 0.501695633 sklearn 0.501695633
+logreg coefficients (max |dw|)                    5.742e-09  tol 1.0e-06   PASS K=8 vs K=12 max |dw| 2.22e-16
+logreg train objective |df|                       5.551e-17  tol 1.0e-09   PASS f cancho 0.407134910212 sklearn 0.407134910212 (cancho - sklearn -5.55e-17)
+logreg test AUC |dAUC|                            0.000e+00  tol 1.0e-04   PASS AUC 0.840836 / 0.840836
+logreg-l2 coefficients (max |dw|)                 5.217e-09  tol 1.0e-06   PASS K=8 vs K=12 max |dw| 1.11e-16
+logreg-l2 train objective |df|                    0.000e+00  tol 1.0e-09   PASS f cancho 0.430625724003 sklearn 0.430625724003 (cancho - sklearn +0.00e+00)
+logreg-l2 test AUC |dAUC|                         0.000e+00  tol 1.0e-04   PASS AUC 0.840736 / 0.840736
+kmeans centroids (max |dc| / max(1,|c|))          4.015e-16  tol 1.0e-09   PASS 
+kmeans inertia (relative)                         5.346e-16  tol 1.0e-09   PASS inertia cancho 13610.005114 sklearn 13610.005114
+kmeans labels differing (rows)                    0.000e+00  tol 8.0e-03   PASS 0 of 800 rows; empty clusters: 0
+== n100000: n=100000, fit on 80000 rows, test on 20000
+linreg coefficients (max |dw| / max(1,|w|))       1.518e-15  tol 1.0e-08   PASS 
+linreg test RMSE (relative)                       0.000e+00  tol 1.0e-09   PASS rmse cancho 0.497115339 sklearn 0.497115339
+ridge coefficients (max |dw| / max(1,|w|))        1.192e-14  tol 1.0e-08   PASS 
+ridge test RMSE (relative)                        1.228e-15  tol 1.0e-09   PASS rmse cancho 0.497129783 sklearn 0.497129783
+logreg coefficients (max |dw|)                    4.752e-10  tol 1.0e-06   PASS K=8 vs K=12 max |dw| 5.55e-17
+logreg train objective |df|                       0.000e+00  tol 1.0e-09   PASS f cancho 0.424204301400 sklearn 0.424204301400 (cancho - sklearn +0.00e+00)
+logreg test AUC |dAUC|                            0.000e+00  tol 1.0e-05   PASS AUC 0.885568 / 0.885568
+logreg-l2 coefficients (max |dw|)                 5.849e-09  tol 1.0e-06   PASS K=8 vs K=12 max |dw| 0.00e+00
+logreg-l2 train objective |df|                    1.110e-16  tol 1.0e-09   PASS f cancho 0.446569674483 sklearn 0.446569674483 (cancho - sklearn +1.11e-16)
+logreg-l2 test AUC |dAUC|                         0.000e+00  tol 1.0e-05   PASS AUC 0.885559 / 0.885559
+kmeans centroids (max |dc| / max(1,|c|))          2.220e-16  tol 1.0e-09   PASS 
+kmeans inertia (relative)                         3.629e-15  tol 1.0e-09   PASS inertia cancho 1411332.538035 sklearn 1411332.538035
+kmeans labels differing (rows)                    0.000e+00  tol 8.0e-01   PASS 0 of 80000 rows; empty clusters: 0
+== n1000000: n=1000000, fit on 800000 rows, test on 200000
+linreg coefficients (max |dw| / max(1,|w|))       5.181e-15  tol 1.0e-08   PASS 
+linreg test RMSE (relative)                       0.000e+00  tol 1.0e-09   PASS rmse cancho 0.500500130 sklearn 0.500500130
+ridge coefficients (max |dw| / max(1,|w|))        9.325e-15  tol 1.0e-08   PASS 
+ridge test RMSE (relative)                        0.000e+00  tol 1.0e-09   PASS rmse cancho 0.500500335 sklearn 0.500500335
+logreg coefficients (max |dw|)                    4.316e-10  tol 1.0e-06   PASS K=8 vs K=12 max |dw| 0.00e+00
+logreg train objective |df|                       5.551e-17  tol 1.0e-09   PASS f cancho 0.418730567102 sklearn 0.418730567102 (cancho - sklearn +5.55e-17)
+logreg test AUC |dAUC|                            0.000e+00  tol 1.0e-05   PASS AUC 0.886683 / 0.886683
+logreg-l2 coefficients (max |dw|)                 1.184e-07  tol 1.0e-06   PASS K=8 vs K=12 max |dw| 1.39e-17
+logreg-l2 train objective |df|                    4.441e-15  tol 1.0e-09   PASS f cancho 0.441981076288 sklearn 0.441981076288 (cancho - sklearn -4.44e-15)
+logreg-l2 test AUC |dAUC|                         1.912e-09  tol 1.0e-05   PASS AUC 0.886683 / 0.886683
+kmeans centroids (max |dc| / max(1,|c|))          1.110e-15  tol 1.0e-09   PASS 
+kmeans inertia (relative)                         2.569e-14  tol 1.0e-09   PASS inertia cancho 14140823.641505 sklearn 14140823.641504
+kmeans labels differing (rows)                    0.000e+00  tol 8.0e+00   PASS 0 of 800000 rows; empty clusters: 0
+sklearn gate: all PASS

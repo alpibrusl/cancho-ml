@@ -1,0 +1,601 @@
+// models-check: runs one estimator of lib/models on generated data or on binary files, prints the bits of everything the oracle
+// compares (docs/models-linear.md section 2) and the time of `reps` fits (clock_ms, 1 ms resolution).
+//
+//     models-check MODEL XFILE YFILE key=value ...
+//
+// MODEL   linreg logreg kmeans
+// XFILE   path of a row-major float64 file, or `-` to generate the data from SEED (section 6.1 of the doc says how)
+// YFILE   path of float64 targets (ignored for kmeans), or `-`
+// keys    n (rows generated, or rows of the files that are read), d (columns), seed, l2m (l2 in thousandths), iters, k, init
+//         (0 random, 1 plusplus), threads, reps, ntr (rows used for the fit; default n), dup (generated data: copy column 1 into column 0)
+//
+// stdout, one `key value...` per line:
+//     params H...        the fitted parameters, bits as 16 hex digits
+//     diag H...          the raw decisive sums, per iteration in order, then the loss or inertia lines
+//     pred HASH          hash of predict / predict_proba / labels on the first `n` rows, or `transform`
+//     labels HASH        (kmeans) hash of the labels
+//     ms T               milliseconds for REPS fits
+//     refused TAG        (instead of the above) the rule tag of a refusal
+edition 5;
+
+import std.io;
+import std.buffer;
+import ml.refuse;
+import ml.rng;
+import ml.fbits;
+import ml.limits;
+import linalg.tensor;
+import models.common;
+import models.score;
+import models.linreg;
+import models.logreg;
+import models.npass;
+import models.kmeans;
+
+fn number_at[&s](text: &s [byte], from: int) -> [] int {
+    if from >= len(text) || len(text) - from > 18 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = from;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// does `text` start with `key` (e.g. "n=")?
+fn starts[&a, &b](text: &a [byte], key: &b [byte]) -> [] bool {
+    if len(text) < len(key) {
+        return false;
+    }
+    var i = 0;
+    while i < len(key) {
+        if text[i] != key[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn hex16[&i](io: &!i Io, bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            putchar(io, '0' + nib);
+        } else {
+            putchar(io, 'a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn print_floats[&i, &v](io: &!i Io, key: &static [byte], vals: &v [float], count: int) -> [io_write] int {
+    io.write_all(io, key);
+    var k = 0;
+    while k < count {
+        io.write_all(io, " ");
+        hex16(io, bits_of(vals[k]));
+        k = k + 1;
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn print_kv[&i](io: &!i Io, key: &static [byte], v: int) -> [io_write] int {
+    io.write_all(io, key);
+    io.write_all(io, " ");
+    io.print_int(io, v);
+    io.newline(io);
+    return 0;
+}
+
+fn print_hash[&i](io: &!i Io, key: &static [byte], v: int) -> [io_write] int {
+    io.write_all(io, key);
+    io.write_all(io, " ");
+    hex16(io, v);
+    io.newline(io);
+    return 0;
+}
+
+fn refused_line[&i](io: &!i Io, code: int) -> [io_write] int {
+    io.write_all(io, "refused ");
+    io.write_all(io, refuse.tag(code));
+    io.newline(io);
+    return 0;
+}
+
+// hash of a float result: a wrapping sum over i of mix(bits_i ^ mix(i)) (ml.testdata.hash)
+fn hash_ints[&v](vals: &v [int], n: int) -> [] int {
+    var h = 0;
+    var i = 0;
+    while i < n {
+        h = wrapping_add(h, rng.mix(vals[i] ^ rng.mix(i)));
+        i = i + 1;
+    }
+    return h;
+}
+
+fn hash_floats[&v](vals: &v [float], n: int) -> [] int {
+    var h = 0;
+    var i = 0;
+    while i < n {
+        h = wrapping_add(h, rng.mix(bits_of(vals[i]) ^ rng.mix(i)));
+        i = i + 1;
+    }
+    return h;
+}
+
+// ---------------------------------------------------------------- the data
+// Generated data (docs/models-linear.md 6.1). s1, s2, s3 = derive(seed, 1..3). X[i][j] = element(s1, i*d + j); wt[j] = element(s3, j);
+// e_i = element(s2, i). z_i = 0.0 + sum_j X[i][j]*wt[j] ascending.
+//   linreg: y_i = (z_i + 0.5*e_i) + 2.0         logreg: y_i = 1.0 if ((z_i + 6.0*e_i) + 0.25) > 0.0 else 0.0
+//   kmeans: g_i = trunc((e_i + 1.0) * 2.5) in 0..4, X[i][j] += float(((g_i*7 + j*3) % 11) - 5) * 1.5
+// dup=1 copies column 1 into column 0 after the features are made (a collinear design for the refusal of the normal equations);
+// dup=2 makes every row a copy of row 0 (identical points: ties everywhere and empty clusters for k-means);
+// dup=3 makes row i a copy of row i mod 2 (two distinct points: the k-means++ weights vanish after two centers).
+fn gen_data[&x, &y](model: int, n: int, d: int, seed: int, dup: int, xs: &!x [float], ys: &!y [float]) -> [] int {
+    let s1 = rng.derive(seed, 1);
+    let s2 = rng.derive(seed, 2);
+    let s3 = rng.derive(seed, 3);
+    var i = 0;
+    while i < n {
+        let row = xs[i * d..i * d + d];
+        var j = 0;
+        while j < d {
+            row[j] = rng.element(s1, i * d + j);
+            j = j + 1;
+        }
+        let e = rng.element(s2, i);
+        if model == 3 {
+            let g = truncate((e + 1.0) * 2.5);
+            j = 0;
+            while j < d {
+                row[j] = row[j] + float_of((g * 7 + j * 3) % 11 - 5) * 1.5;
+                j = j + 1;
+            }
+        } else {
+            var z = 0.0;
+            j = 0;
+            while j < d {
+                z = z + row[j] * rng.element(s3, j);
+                j = j + 1;
+            }
+            if model == 1 {
+                ys[i] = z + 0.5 * e + 2.0;
+            } else {
+                var lab = 0.0;
+                if z + 6.0 * e + 0.25 > 0.0 {
+                    lab = 1.0;
+                }
+                ys[i] = lab;
+            }
+        }
+        if dup == 1 && d >= 2 {
+            row[0] = row[1];
+        }
+        if dup == 2 && i > 0 {
+            var q = 0;
+            while q < d {
+                row[q] = xs[q];
+                q = q + 1;
+            }
+        }
+        if dup == 3 && i > 1 {
+            var q = 0;
+            while q < d {
+                row[q] = xs[i % 2 * d + q];
+                q = q + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn read_all[&h, &f](heap: &!h Heap, file: &!f File, text: buffer.Buffer) -> [heap, file_read] buffer.Buffer {
+    var out = text;
+    var chunk = buffer.empty(heap, 4194304);
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            match file_read(file, buffer.room(cw)) {
+                Read::Got(n) => {
+                    buffer.filled(cw, n);
+                    got = n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        if got > 0 {
+            borrow chunk as &cr in {
+                out = buffer.append(heap, out, buffer.bytes(cr));
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return out;
+}
+
+// load `count` doubles from the file `path` into out (bit-exact, every value checked); answers the number of bad values, or -1 when
+// the file is missing or too short. `bytes` is the file's contents, read by main (the file system handle stays in main).
+fn load_bytes[&h, &b, &o](heap: &!h Heap, bytes: &b [byte], out: &!o [float], count: int) -> [] int {
+    if len(bytes) < count * 8 {
+        return 0 - 1;
+    }
+    return fbits.load(bytes, 0, out, count);
+}
+
+// ---------------------------------------------------------------- linreg
+fn run_linreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], n: int, ntr: int, d: int, l2: float, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
+    let p = d + 1;
+    let out = box_slice(heap, p, 0.0);
+    let diag = box_slice(heap, p * p + p, 0.0);
+    let pred = box_slice(heap, n, 0.0);
+    var code = 0;
+    var t0 = 0;
+    var t1 = 0;
+    borrow mut out as &!ow in {
+        borrow mut diag as &!dw in {
+            var r = 0;
+            t0 = clock_ms(clock);
+            while r < reps {
+                code = linreg.fit(heap, threads, common.mat(ntr, d), xv, yv, l2, contents(ow), contents(dw));
+                r = r + 1;
+            }
+            t1 = clock_ms(clock);
+        }
+    }
+    if code != 0 {
+        refused_line(io, code);
+    } else {
+        borrow out as &ow in {
+            print_floats(io, "params", contents(ow), p);
+            borrow mut pred as &!pw in {
+                code = linreg.predict(common.mat(n, d), xv, contents(ow), contents(pw));
+            }
+        }
+        borrow diag as &dr in {
+            print_floats(io, "diag", contents(dr), p * p + p);
+        }
+        borrow pred as &pr in {
+            print_hash(io, "pred", hash_floats(contents(pr), n));
+        }
+        print_kv(io, "ms", t1 - t0);
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, pred);
+    return refuse.exit_code(code);
+}
+
+// ---------------------------------------------------------------- logreg
+fn run_logreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], n: int, ntr: int, d: int, l2: float, iters: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
+    let p = d + 1;
+    let ww = npass.width(d);
+    let out = box_slice(heap, p, 0.0);
+    let diag = box_slice(heap, iters * (ww + 1) + 1, 0.0);
+    let pred = box_slice(heap, n, 0.0);
+    let prob = box_slice(heap, n, 0.0);
+    var code = 0;
+    var t0 = 0;
+    var t1 = 0;
+    borrow mut out as &!ow in {
+        borrow mut diag as &!dw in {
+            var r = 0;
+            t0 = clock_ms(clock);
+            while r < reps {
+                code = logreg.fit(heap, threads, common.mat(ntr, d), xv, yv, iters, l2, contents(ow), contents(dw));
+                r = r + 1;
+            }
+            t1 = clock_ms(clock);
+        }
+    }
+    if code != 0 {
+        refused_line(io, code);
+    } else {
+        borrow out as &ow in {
+            print_floats(io, "params", contents(ow), p);
+            borrow mut pred as &!pw in {
+                code = logreg.predict(common.mat(n, d), xv, contents(ow), contents(pw));
+            }
+            borrow mut prob as &!qw in {
+                code = logreg.predict_proba(common.mat(n, d), xv, contents(ow), contents(qw));
+            }
+        }
+        borrow diag as &dr in {
+            print_floats(io, "diag", contents(dr), iters * (ww + 1));
+        }
+        borrow pred as &pr in {
+            print_hash(io, "pred", hash_floats(contents(pr), n));
+        }
+        borrow prob as &qr in {
+            print_hash(io, "proba", hash_floats(contents(qr), n));
+        }
+        print_kv(io, "ms", t1 - t0);
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, pred);
+    unbox_slice(heap, prob);
+    return refuse.exit_code(code);
+}
+
+// ---------------------------------------------------------------- kmeans
+fn run_kmeans[&h, &i, &c, &x](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], n: int, ntr: int, d: int, k: int, iters: int, seed: int, init: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
+    let ww = k * d + k + 1;
+    let out = box_slice(heap, k * d + 1, 0.0);
+    let diag = box_slice(heap, (iters + 1) * ww + 1, 0.0);
+    let labels = box_slice(heap, n + 1, 0);
+    let plabels = box_slice(heap, n + 1, 0);
+    let tr = box_slice(heap, n * k + 1, 0.0);
+    var code = 0;
+    var t0 = 0;
+    var t1 = 0;
+    borrow mut out as &!ow in {
+        borrow mut diag as &!dw in {
+            borrow mut labels as &!lw in {
+                var r = 0;
+                t0 = clock_ms(clock);
+                while r < reps {
+                    code = kmeans.fit(heap, threads, common.mat(ntr, d), xv, k, iters, seed, init, contents(ow), contents(dw), contents(lw));
+                    r = r + 1;
+                }
+                t1 = clock_ms(clock);
+            }
+        }
+    }
+    if code != 0 {
+        refused_line(io, code);
+    } else {
+        borrow out as &ow in {
+            print_floats(io, "params", contents(ow), k * d);
+            borrow mut plabels as &!pw in {
+                code = kmeans.predict(heap, common.mat(n, d), xv, k, contents(ow), contents(pw));
+            }
+            borrow mut tr as &!tw in {
+                code = kmeans.transform(common.mat(n, d), xv, k, contents(ow), contents(tw));
+            }
+        }
+        borrow diag as &dr in {
+            print_floats(io, "diag", contents(dr), (iters + 1) * ww);
+        }
+        borrow labels as &lr in {
+            print_hash(io, "labels", hash_ints(contents(lr), ntr));
+        }
+        borrow plabels as &pr in {
+            print_hash(io, "pred", hash_ints(contents(pr), n));
+        }
+        borrow tr as &tq in {
+            print_hash(io, "transform", hash_floats(contents(tq), n * k));
+        }
+        print_kv(io, "ms", t1 - t0);
+    }
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, labels);
+    unbox_slice(heap, plabels);
+    unbox_slice(heap, tr);
+    return refuse.exit_code(code);
+}
+
+// ---------------------------------------------------------------- the run
+fn run[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], model: int, n: int, ntr: int, d: int, l2m: int, iters: int, k: int, init: int, seed: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
+    let l2 = float_of(l2m) / 1000.0;
+    if model == 1 {
+        return run_linreg(heap, io, clock, xv, yv, n, ntr, d, l2, threads, reps);
+    }
+    if model == 3 {
+        return run_kmeans(heap, io, clock, xv, n, ntr, d, k, iters, seed, init, threads, reps);
+    }
+    if model == 2 {
+        return run_logreg(heap, io, clock, xv, yv, n, ntr, d, l2, iters, threads, reps);
+    }
+    return 0;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    var model = 0;
+    var gen = 0;
+    var n = 1000;
+    var d = 20;
+    var seed = 1;
+    var l2m = 0;
+    var iters = 8;
+    var k = 3;
+    var init = 1;
+    var threads = 1;
+    var reps = 1;
+    var ntr = 0 - 1;
+    var dup = 0;
+    var bad_arg = 0;
+    borrow args as &g in {
+        if arg_count(g) < 4 {
+            bad_arg = 1;
+        } else {
+            if same(arg(g, 1), "linreg") {
+                model = 1;
+            } else if same(arg(g, 1), "logreg") {
+                model = 2;
+            } else if same(arg(g, 1), "kmeans") {
+                model = 3;
+            } else {
+                bad_arg = 1;
+            }
+            if same(arg(g, 2), "-") {
+                gen = 1;
+            }
+            var a = 4;
+            while a < arg_count(g) {
+                let t = arg(g, a);
+                var v = 0 - 1;
+                if starts(t, "n=") {
+                    v = number_at(t, 2);
+                    n = v;
+                } else if starts(t, "d=") {
+                    v = number_at(t, 2);
+                    d = v;
+                } else if starts(t, "seed=") {
+                    v = number_at(t, 5);
+                    seed = v;
+                } else if starts(t, "l2m=") {
+                    v = number_at(t, 4);
+                    l2m = v;
+                } else if starts(t, "iters=") {
+                    v = number_at(t, 6);
+                    iters = v;
+                } else if starts(t, "k=") {
+                    v = number_at(t, 2);
+                    k = v;
+                } else if starts(t, "init=") {
+                    v = number_at(t, 5);
+                    init = v;
+                } else if starts(t, "threads=") {
+                    v = number_at(t, 8);
+                    threads = v;
+                } else if starts(t, "reps=") {
+                    v = number_at(t, 5);
+                    reps = v;
+                } else if starts(t, "ntr=") {
+                    v = number_at(t, 4);
+                    ntr = v;
+                } else if starts(t, "dup=") {
+                    v = number_at(t, 4);
+                    dup = v;
+                }
+                if v < 0 {
+                    bad_arg = 1;
+                }
+                a = a + 1;
+            }
+        }
+    }
+    if ntr < 0 {
+        ntr = n;
+    }
+    var code = 0;
+    var refused = 0;
+    if bad_arg != 0 || n < 1 || d < 1 || reps < 1 || ntr > n || ntr < 1 {
+        refused = refuse.param_out_of_range();
+    } else {
+        refused = limits.check_matrix(n, d, limits.default_rows(), limits.default_cols(), limits.default_cells());
+    }
+    if refused != 0 {
+        borrow mut io as &!ip in {
+            refused_line(ip, refused);
+        }
+        code = refuse.exit_code(refused);
+    } else {
+        borrow mut heap as &!hp in {
+            let xs = box_slice(hp, n * d + 1, 0.0);
+            let ys = box_slice(hp, n + 1, 0.0);
+            var bad = 0;
+            if gen == 1 {
+                borrow mut xs as &!xw in {
+                    borrow mut ys as &!yw in {
+                        gen_data(model, n, d, seed, dup, contents(xw), contents(yw));
+                    }
+                }
+            } else {
+                var xbytes = buffer.empty(hp, 1048576);
+                var ybytes = buffer.empty(hp, 1048576);
+                borrow fs as &f in {
+                    borrow args as &g in {
+                        match open_read(f, arg(g, 2)) {
+                            Opened::Ok(file) => {
+                                var fl = file;
+                                borrow mut fl as &!fw in {
+                                    xbytes = read_all(hp, fw, xbytes);
+                                }
+                                file_close(fl);
+                            }
+                            Opened::Failed(reason) => {
+                            }
+                        }
+                        if model != 3 {
+                            match open_read(f, arg(g, 3)) {
+                                Opened::Ok(file) => {
+                                    var fl = file;
+                                    borrow mut fl as &!fw in {
+                                        ybytes = read_all(hp, fw, ybytes);
+                                    }
+                                    file_close(fl);
+                                }
+                                Opened::Failed(reason) => {
+                                }
+                            }
+                        }
+                    }
+                }
+                borrow xbytes as &xb in {
+                    borrow mut xs as &!xw in {
+                        bad = bad + load_bytes(hp, buffer.bytes(xb), contents(xw), n * d);
+                    }
+                }
+                if model != 3 {
+                    borrow ybytes as &yb in {
+                        borrow mut ys as &!yw in {
+                            bad = bad + load_bytes(hp, buffer.bytes(yb), contents(yw), n);
+                        }
+                    }
+                }
+                buffer.drop(hp, xbytes);
+                buffer.drop(hp, ybytes);
+            }
+            borrow mut io as &!ip in {
+                if bad != 0 {
+                    io.write_all(ip, "error: bad or missing file\n");
+                    code = 1;
+                } else {
+                    borrow clock as &kc in {
+                        borrow xs as &xr in {
+                            borrow ys as &yr in {
+                                code = run(hp, ip, kc, contents(xr), contents(yr), model, n, ntr, d, l2m, iters, k, init, seed, threads, reps);
+                            }
+                        }
+                    }
+                }
+            }
+            unbox_slice(hp, xs);
+            unbox_slice(hp, ys);
+        }
+    }
+    release(args);
+    release(fs);
+    release(clock);
+    release(heap);
+    release(io);
+    return code;
+}

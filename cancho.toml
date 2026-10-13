@@ -63,6 +63,14 @@ sources = ["lib/core", "lib/linalg", "tools/linalg-check"]
 std = true
 out = "build/linalg-check"
 
+# the driver of the numeric gates of lib/models (scripts/gate_models.sh builds it from an explicit file list; this entry was not built in
+# package mode, which needs `cancho install`)
+[[bin]]
+name = "models-check"
+sources = ["lib/core", "lib/linalg", "lib/models", "lib/models/linear", "lib/models/kmeans", "tools/models-check"]
+std = true
+out = "build/models-check"
+
 [[bin]]
 name = "ml"
 sources = ["lib/core", "lib/linalg/tensor.cho", "tools/ml", "generated/ml", "../cancho-table-main/tools/table/pow5.cho", "../cancho-table-main/tools/table/dec.cho", "../cancho-table-main/tools/table/flt.cho", "../cancho-table-main/tools/table/query.cho", "../cancho-table-main/tools/table/facc.cho", "../cancho-table-main/tools/table/reader.cho"]  # LOCAL-DEV: the last six

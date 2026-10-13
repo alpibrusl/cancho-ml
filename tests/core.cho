@@ -292,6 +292,21 @@ fn test_refusal_tags_are_unique_and_complete() -> [] int {
     if same(refuse.tag(refuse.too_many_rows()), "ml.input.too-many-rows") == false {
         bad = bad + 1;
     }
+    if same(refuse.tag(refuse.input_non_finite()), "ml.input.non-finite") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.label_single_class()), "ml.label.single-class") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.label_not_binary()), "ml.label.not-binary") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.fit_non_finite()), "ml.fit.non-finite") == false {
+        bad = bad + 1;
+    }
+    if refuse.exit_code(refuse.fit_non_finite()) != 8 || refuse.exit_code(refuse.threads()) != 2 {
+        bad = bad + 1;
+    }
     return bad;
 }
 

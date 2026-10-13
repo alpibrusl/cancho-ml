@@ -64,6 +64,10 @@ def run(mutants, command, label, timeout=1800, allowed=None):
             f.write_text(f.read_text().replace(old, new, 1))
             argv = [a.replace("{cancho}", cancho()) for a in command]
             r = subprocess.run(argv, cwd=tmp, capture_output=True, text=True, env=env, timeout=timeout)
+        if "BUILD_ERROR" in r.stdout:
+            # a mutant that does not compile is not a kill: the edit is wrong, not the gate right
+            survivors.append(name); print("%-40s INVALID (does not compile)\n%s" % (name, r.stdout[-600:]), flush=True)
+            continue
         ok = r.returncode != 0 or "FAILED" in r.stdout
         if ok:
             killed += 1; print("%-40s killed" % name, flush=True)

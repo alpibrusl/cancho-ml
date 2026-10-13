@@ -1,0 +1,71 @@
+module models.score;
+
+import linalg.tensor;
+import ml.refuse;
+import models.common;
+
+// The score of a row (docs/models-linear.md 3): z = w[d]; z = z + x[j] * w[j] for j ascending. A left fold over the features,
+// from the intercept; one row's score is never split among threads. Four rows at a time (four independent chains), each chain
+// ascending in j, so the bits are those of one row at a time.
+
+// rows [i0, i1) of out; xs positioned at X[0, 0], row stride rs; wv holds d + 1 values
+pub fn rows[&x, &w, &o](xs: &x [float], rs: int, d: int, wv: &w [float], out: &!o [float], i0: int, i1: int) -> [] int {
+    let wr = wv[0..d];
+    let b = wv[d];
+    var i = i0;
+    while i + 4 <= i1 {
+        let r0 = xs[(i + 0) * rs..(i + 0) * rs + d];
+        let r1 = xs[(i + 1) * rs..(i + 1) * rs + d];
+        let r2 = xs[(i + 2) * rs..(i + 2) * rs + d];
+        let r3 = xs[(i + 3) * rs..(i + 3) * rs + d];
+        var z0 = b;
+        var z1 = b;
+        var z2 = b;
+        var z3 = b;
+        var j = 0;
+        while j < d {
+            let wj = wr[j];
+            z0 = z0 + r0[j] * wj;
+            z1 = z1 + r1[j] * wj;
+            z2 = z2 + r2[j] * wj;
+            z3 = z3 + r3[j] * wj;
+            j = j + 1;
+        }
+        out[i + 0] = z0;
+        out[i + 1] = z1;
+        out[i + 2] = z2;
+        out[i + 3] = z3;
+        i = i + 4;
+    }
+    while i < i1 {
+        let r = xs[i * rs..i * rs + d];
+        var z = b;
+        var j = 0;
+        while j < d {
+            z = z + r[j] * wr[j];
+            j = j + 1;
+        }
+        out[i] = z;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// the scores of every row of X (n x d); w holds d + 1 values (the intercept last); out holds n values
+pub fn scores[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
+    var c = common.check_x(xt, len(xd), common.max_features());
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    c = common.check_len(d + 1, len(wv));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(n, len(out));
+    if c != 0 {
+        return c;
+    }
+    return rows(xd[xt.off..len(xd)], xt.t0, d, wv, out, 0, n);
+}

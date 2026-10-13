@@ -1,0 +1,205 @@
+module models.kpass;
+
+// One block of the Lloyd pass of k-means (docs/models-linear.md 3.3): the assignment of the rows [r0, r1) (at most 256) to the
+// nearest centroid, and the partial of the W = k*d + k + 1 decisive sums over them: per cluster and feature the sum of the
+// rows of the cluster, per cluster the count (a sum of 1.0), and the inertia (the sum of the smallest squared distances).
+// Each sum is ascending from +0.0 over the rows of the block that contribute (a row that is not in the cluster contributes +0.0,
+// which changes nothing), in row order.
+//
+// The squared distances of a row to the centroids are independent left folds over the features, j ascending from +0.0. They are
+// formed four centroids at a time, in registers, from the centroids laid out in groups of four (group g, feature j, member q at
+// (g * d + j) * 4 + q) so that one load serves the four chains. The number of centroids is padded to a multiple of 4 with centroids
+// whose every coordinate is +inf: a finite row has distance +inf to them, and a strict < never selects +inf, so they are never the
+// nearest. The nearest is the lowest index among equal distances (centroids ascending, strict <).
+
+// the number of centroids after padding
+pub fn padk(k: int) -> [] int {
+    return (k + 3) / 4 * 4;
+}
+
+// does one row against one centroid row: the squared distance, j ascending from +0.0
+pub fn dist2[&x, &c](xr: &x [float], cr: &c [float], d: int) -> [] float {
+    var s = 0.0;
+    var j = 0;
+    while j < d {
+        let t = xr[j] - cr[j];
+        s = s + t * t;
+        j = j + 1;
+    }
+    return s;
+}
+
+// the grouped, padded layout of cen (k x d, row-major) into out (padk(k) * d values)
+pub fn group[&c, &o](cen: &c [float], k: int, d: int, out: &!o [float]) -> [] int {
+    let kp = padk(k);
+    var c = 0;
+    while c < kp {
+        var j = 0;
+        while j < d {
+            var v = 1.0 / 0.0;
+            if c < k {
+                v = cen[c * d + j];
+            }
+            out[(c / 4 * d + j) * 4 + c % 4] = v;
+            j = j + 1;
+        }
+        c = c + 1;
+    }
+    return 0;
+}
+
+// the label and the squared distance of the nearest centroid for the row xr; ctg is the grouped layout of padk(k) centroids.
+// Groups go two at a time (eight chains in flight: one group alone is bound by the latency of its two vector adds), then a last
+// group alone when the number of groups is odd.
+fn nearest[&x, &t](xr: &x [float], ctg: &t [float], d: int, kp: int) -> [] (int, float) {
+    var best = 0;
+    var bd = 1.0 / 0.0;
+    var g = 0;
+    while g + 2 <= kp / 4 {
+        let g0 = ctg[g * d * 4..g * d * 4 + d * 4];
+        let g1 = ctg[(g + 1) * d * 4..(g + 1) * d * 4 + d * 4];
+        var a0 = 0.0;
+        var a1 = 0.0;
+        var a2 = 0.0;
+        var a3 = 0.0;
+        var a4 = 0.0;
+        var a5 = 0.0;
+        var a6 = 0.0;
+        var a7 = 0.0;
+        var j = 0;
+        while j < d {
+            let xj = xr[j];
+            let q = g0[j * 4..j * 4 + 4];
+            let r = g1[j * 4..j * 4 + 4];
+            let u0 = xj - q[0];
+            let u1 = xj - q[1];
+            let u2 = xj - q[2];
+            let u3 = xj - q[3];
+            let u4 = xj - r[0];
+            let u5 = xj - r[1];
+            let u6 = xj - r[2];
+            let u7 = xj - r[3];
+            a0 = a0 + u0 * u0;
+            a1 = a1 + u1 * u1;
+            a2 = a2 + u2 * u2;
+            a3 = a3 + u3 * u3;
+            a4 = a4 + u4 * u4;
+            a5 = a5 + u5 * u5;
+            a6 = a6 + u6 * u6;
+            a7 = a7 + u7 * u7;
+            j = j + 1;
+        }
+        if a0 < bd {
+            bd = a0;
+            best = g * 4;
+        }
+        if a1 < bd {
+            bd = a1;
+            best = g * 4 + 1;
+        }
+        if a2 < bd {
+            bd = a2;
+            best = g * 4 + 2;
+        }
+        if a3 < bd {
+            bd = a3;
+            best = g * 4 + 3;
+        }
+        if a4 < bd {
+            bd = a4;
+            best = g * 4 + 4;
+        }
+        if a5 < bd {
+            bd = a5;
+            best = g * 4 + 5;
+        }
+        if a6 < bd {
+            bd = a6;
+            best = g * 4 + 6;
+        }
+        if a7 < bd {
+            bd = a7;
+            best = g * 4 + 7;
+        }
+        g = g + 2;
+    }
+    if g < kp / 4 {
+        let grp = ctg[g * d * 4..g * d * 4 + d * 4];
+        var a0 = 0.0;
+        var a1 = 0.0;
+        var a2 = 0.0;
+        var a3 = 0.0;
+        var j = 0;
+        while j < d {
+            let xj = xr[j];
+            let q = grp[j * 4..j * 4 + 4];
+            let u0 = xj - q[0];
+            let u1 = xj - q[1];
+            let u2 = xj - q[2];
+            let u3 = xj - q[3];
+            a0 = a0 + u0 * u0;
+            a1 = a1 + u1 * u1;
+            a2 = a2 + u2 * u2;
+            a3 = a3 + u3 * u3;
+            j = j + 1;
+        }
+        if a0 < bd {
+            bd = a0;
+            best = g * 4;
+        }
+        if a1 < bd {
+            bd = a1;
+            best = g * 4 + 1;
+        }
+        if a2 < bd {
+            bd = a2;
+            best = g * 4 + 2;
+        }
+        if a3 < bd {
+            bd = a3;
+            best = g * 4 + 3;
+        }
+    }
+    return (best, bd);
+}
+
+// labels of the rows [r0, r1); lab and xs positioned at the first row; used by predict
+pub fn assign_rows[&x, &t, &l](xs: &x [float], rs: int, r0: int, r1: int, d: int, k: int, ctg: &t [float], lab: &!l [int]) -> [] int {
+    let kp = padk(k);
+    var i = r0;
+    while i < r1 {
+        let (best, bd) = nearest(xs[i * rs..i * rs + d], ctg, d, kp);
+        lab[i] = best;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// the partial of rows [r0, r1) into slot (W values); lab and xs positioned at the first row of the piece
+pub fn block[&x, &t, &l, &s](xs: &x [float], rs: int, r0: int, r1: int, d: int, k: int, ctg: &t [float], lab: &!l [int], slot: &!s [float]) -> [] int {
+    let ww = k * d + k + 1;
+    let kp = padk(k);
+    var z = 0;
+    while z < ww {
+        slot[z] = 0.0;
+        z = z + 1;
+    }
+    var inertia = 0.0;
+    var i = r0;
+    while i < r1 {
+        let xr = xs[i * rs..i * rs + d];
+        let (best, bd) = nearest(xr, ctg, d, kp);
+        lab[i] = best;
+        let row = slot[best * d..best * d + d];
+        var j = 0;
+        while j < d {
+            row[j] = row[j] + xr[j];
+            j = j + 1;
+        }
+        slot[k * d + best] = slot[k * d + best] + 1.0;
+        inertia = inertia + bd;
+        i = i + 1;
+    }
+    slot[ww - 1] = inertia;
+    return 0;
+}
