@@ -121,6 +121,27 @@ rank 1, `u64` shape, `i64` elements); `meta` = `u64` rows, `u64` columns, `u64` 
 compiler pin. The layout is parsed by an independent reader in `tests/conformance/test_model_file.py`, and a corrupted-file fuzz
 (every truncation, every byte flipped three ways, seeded damage with and without a repaired checksum) never traps.
 
+**Registry of the numbers in the file (added at integration; one table, a number is never reused).** `lib/core/kinds.cho` holds the
+model kinds and `tests/t_registry.cho` and `scripts/check_registry.py` fail if two stages claim one number or a stage's own constant
+differs from this table. Model kinds (the `u32` that opens the payload of the `model` section):
+
+| kind | model | records after the kind | owner | in `mfile.cho`? |
+|---|---|---|---|---|
+| 1 | constant regression of an int or dec target | one i64 record, shape [4] | CLI slice | yes |
+| 2 | constant classification | one i64 record, shape [6] | CLI slice | yes |
+| 3 | constant regression of a float target | one i64 record, shape [2] | reader stage | yes |
+| 4 | linear regression | `coef` f64 rank 1 `d`; `intercept` f64 rank 1 `1` | `lib/models/record.cho` | no |
+| 5 | logistic regression | the same two records | `lib/models/record.cho` | no |
+| 6 | k-means | `centroids` f64 rank 2 `k x d` | `lib/models/record.cho` | no |
+| 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
+
+Kinds 4 to 7 are written by libraries only: `mfile.cho` refuses them as `ml.model.malformed` until the verbs call the libraries
+(`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
+dtypes: 1 = i64, 2 = f64 (one table for every record, the same in `mfile.cho`, `record.cho` and `tree/model.cho`). Section tags of the
+file: 1 plan, 2 schema, 3 steps, 4 model, 5 meta, in that order. The column types in `schema` (0 int, 1 dec, 2 float) are not dtypes.
+The stream kinds of the random generator have their own registry in `docs/rng.md`; the numeric refusal codes of the libraries are in
+section 8.1.
+
 Alternative considered: a text format (shortest round-trip decimals, as `std.fmt.float_into` prints). It is readable and avoids
 the `float_of_bits` workaround, but a decimal parse is a correctly-rounded parse, which is the hard part cancho-table's float
 reader spent a design on; the bit-pattern load is a few integer operations. Whether binary is also **fast** to load is **[M0]**.
@@ -247,6 +268,54 @@ that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot 
 `ml.linalg.singular` (exit 8: a zero diagonal entry in a triangular solve); `ml.param.threads` (exit 2: a thread count outside
 1..64). The default caps (10,000,000 rows, 4,096 columns, 400,000,000 cells) are provisional and wait for section 9.
 
+## 8.1 The numeric codes of the libraries (added at integration)
+
+The libraries answer a refusal as an `int` code (0 is none) and each has a function from code to tag, exit code and repair. Three
+stages numbered theirs alone (the metrics stage 1 to 11, which were `ml.refuse`'s 1 to 11 with other meanings; the tree stage 101 to
+108), so the numbers are now **bands, one per library, and no number is in two bands**. A code means a tag only inside its band; the same
+tag may have a code in several bands (it is the same rule, and the wiring stage translates by tag, never by number). Bands: 1 to 99
+`ml.refuse` (the core; the linear stage's codes 12 to 15 are here; linalg, models, reader and splits call it), 101 to 199 `tree.deny`,
+201 to 299 `metrics.rules`, 301 and above free for the next library. `tests/t_registry.cho` fails if a number is claimed by two bands,
+if a band has a gap or a duplicate tag, or if one tag has two exit codes; `scripts/check_registry.py` checks this table against the
+sources and against the tables of section 8 and `tools/ml/spec.cho`.
+
+| code | tag | exit | library |
+|---|---|---|---|
+| 1 | `ml.tensor.rank` | 8 | `ml.refuse` |
+| 2 | `ml.tensor.shape` | 8 | `ml.refuse` |
+| 3 | `ml.tensor.bounds` | 8 | `ml.refuse` |
+| 4 | `ml.input.empty` | 8 | `ml.refuse` |
+| 5 | `ml.input.too-many-rows` | 8 | `ml.refuse` |
+| 6 | `ml.input.too-many-columns` | 8 | `ml.refuse` |
+| 7 | `ml.input.too-many-cells` | 8 | `ml.refuse` |
+| 8 | `ml.param.out-of-range` | 2 | `ml.refuse` |
+| 9 | `ml.linalg.not-positive-definite` | 8 | `ml.refuse` |
+| 10 | `ml.linalg.singular` | 8 | `ml.refuse` |
+| 11 | `ml.param.threads` | 2 | `ml.refuse` |
+| 12 | `ml.input.non-finite` | 8 | `ml.refuse` |
+| 13 | `ml.label.single-class` | 8 | `ml.refuse` |
+| 14 | `ml.label.not-binary` | 8 | `ml.refuse` |
+| 15 | `ml.fit.non-finite` | 8 | `ml.refuse` |
+| 101 | `ml.input.non-finite` | 8 | `tree.deny` |
+| 102 | `ml.label.not-binary` | 8 | `tree.deny` |
+| 103 | `ml.label.single-class` | 8 | `tree.deny` |
+| 104 | `ml.limit.depth` | 8 | `tree.deny` |
+| 105 | `ml.limit.nodes` | 8 | `tree.deny` |
+| 106 | `ml.model.truncated` | 8 | `tree.deny` |
+| 107 | `ml.model.malformed` | 8 | `tree.deny` |
+| 108 | `ml.schema.mismatch` | 8 | `tree.deny` |
+| 201 | `ml.input.empty` | 8 | `metrics.rules` |
+| 202 | `ml.input.too-many-rows` | 8 | `metrics.rules` |
+| 203 | `ml.input.non-finite` | 8 | `metrics.rules` |
+| 204 | `ml.label.single-class` | 8 | `metrics.rules` |
+| 205 | `ml.label.not-binary` | 8 | `metrics.rules` |
+| 206 | `ml.metric.undefined` | 8 | `metrics.rules` |
+| 207 | `ml.param.out-of-range` | 2 | `metrics.rules` |
+| 208 | `ml.metric.length-mismatch` | 8 | `metrics.rules` |
+| 209 | `ml.metric.bad-probability` | 8 | `metrics.rules` |
+| 210 | `ml.split.empty-fold` | 8 | `metrics.rules` |
+| 211 | `ml.split.stratum-too-small` | 8 | `metrics.rules` |
+
 ## 9. Limits and sizes — waits for M0
 
 The ceilings for rows, columns, tree nodes, forest size and search fits are **[M0]**: the row ceiling depends on the speed
@@ -297,7 +366,7 @@ file list until cancho-table publishes stores; `docs/reader.md`.)*
 of `docs/linalg.md` section 2), the tensor records of the model file, the refusals, the mutants and the measurements. What it changes
 in this document: section 8 gains four tags (`ml.input.non-finite`, `ml.label.single-class`, `ml.label.not-binary` and `ml.fit.non-finite`,
 `lib/core/refuse.cho` codes 12 to 15, all exit 8, each with a fixture in `tests/p_models.cho`); section 4.1 gains `dtype 2 = f64` for a
-tensor record and the model kinds 3 (linear), 4 (logistic) and 5 (k-means), not yet in `tools/ml/mfile.cho`; `docs/rng.md` gains the
+tensor record and the model kinds 4 (linear), 5 (logistic) and 6 (k-means) *(as renumbered at integration; the stage wrote 3, 4, 5, and 3 was taken)*, not yet in `tools/ml/mfile.cho`; `docs/rng.md` gains the
 stream kind 3 (k-means). Section 6 is kept: every decisive sum of the three estimators is the fixed block-and-tree order, so the
 thread count changes no byte (the gate compares the raw sums and the loss and inertia lines, not only the coefficients).
 
@@ -305,8 +374,8 @@ thread count changes no byte (the gate compares the raw sums and the loss and in
 
 `docs/models-tree.md` holds the algorithm, the numeric decisions (exact integer Gini; sequential float regression sums in a
 fixed row order), the limits and tags, the missing-value rule (a learned default side per split), the tensor records of the
-`model` section (kind 6; see the kind table in section 4.1), the gates, the timing protocol and the verdicts (its section 10); it was written before the code.
+`model` section (kind 7; see the kind table in section 4.1), the gates, the timing protocol and the verdicts (its section 10); it was written before the code.
 It is a library under `lib/models/tree/`, driven by `tools/tree-check` for the gates; the command line does not call it yet.
-What it changes in this document: model kind 6 for section 4.1; the tags `ml.limit.depth`, `ml.limit.nodes`, `ml.param.threads`
+What it changes in this document: model kind 7 for section 4.1 *(the stage wrote 6 here and 3 in its own document; integration fixed 7)*; the tags `ml.limit.depth`, `ml.limit.nodes`, `ml.param.threads`
 (also for the memory the thread copies would take) become reachable from a library call (section 8; none is reachable from `ml`
 until the verbs call the library); the row ceiling of a tree fit is 2^20 (the exact Gini comparison), a figure for section 9.

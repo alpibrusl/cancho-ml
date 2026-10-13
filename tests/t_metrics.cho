@@ -390,13 +390,13 @@ fn code_is(got: int, code: int) -> [] int {
 // the registry: every code has its own tag, the exit code of design.md section 8
 fn test_rule_registry() -> [] int {
     var bad = 0;
-    var a = 1;
-    while a <= rules.count() {
+    var a = rules.first();
+    while a <= rules.last() {
         if len(rules.tag(a)) == 0 {
             bad = bad + 1;
         }
         var b = a + 1;
-        while b <= rules.count() {
+        while b <= rules.last() {
             if same(rules.tag(a), rules.tag(b)) {
                 bad = bad + 1;
             }
@@ -411,7 +411,7 @@ fn test_rule_registry() -> [] int {
         }
         a = a + 1;
     }
-    if len(rules.tag(0)) != 0 || len(rules.tag(rules.count() + 1)) != 0 || rules.exit_code(0) != 0 {
+    if len(rules.tag(0)) != 0 || len(rules.tag(rules.last() + 1)) != 0 || len(rules.tag(rules.first() - 1)) != 0 || rules.last() - rules.first() + 1 != rules.count() || rules.exit_code(0) != 0 {
         bad = bad + 1;
     }
     return bad;

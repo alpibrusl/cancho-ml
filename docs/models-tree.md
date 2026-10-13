@@ -191,7 +191,7 @@ valid split.
 ## 7. The model: tensor records for the CML1 `model` section (design.md 4.1)
 
 The payload (the content of one section; the envelope, the plan, the schema and the checksum belong to the command line) is
-little-endian with no padding: `u32 kind` = 3 (tree ensemble), then **tensor records** as design.md 4.1 says: `u32 dtype`
+little-endian with no padding: `u32 kind` = 7 (tree ensemble; the registry is design.md 4.1: 3 was claimed by the float constant model of the CLI), then **tensor records** as design.md 4.1 says: `u32 dtype`
 (1 = i64, 2 = f64), `u32 rank`, `rank` `u64` extents, then the elements row-major. The records, in this order:
 
 | # | dtype | rank | shape | content |

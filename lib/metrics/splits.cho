@@ -8,16 +8,17 @@ import metrics.rules;
 // assignment vector: out[i] is the group of row i. Nothing here spawns a thread or reads a clock; a split is a pure function of
 // (n, k or n_test, seed, repeat). The caps are compared before any allocation.
 
+// the stream kinds 4, 5 and 6 (docs/rng.md is the registry; 1 to 3 belong to the tree and k-means streams)
 pub fn kind_train_test() -> [] int {
-    return 1;
+    return 4;
 }
 
 pub fn kind_kfold() -> [] int {
-    return 2;
+    return 5;
 }
 
 pub fn kind_stratified() -> [] int {
-    return 3;
+    return 6;
 }
 
 // the largest row cap a caller may ask for (2^30): keeps every product of two counts below 2^60

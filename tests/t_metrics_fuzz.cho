@@ -12,7 +12,7 @@ import mt;
 // answer that is a value is finite and in its range. A trap ends the test binary, so "passes" means no trap. A test answers 0 to pass.
 
 fn valid(r: rules.Scored, lo: float, hi: float) -> [] int {
-    if r.code < 0 || r.code > rules.count() {
+    if r.code != 0 && (r.code < rules.first() || r.code > rules.last()) {
         return 1;
     }
     if r.code == 0 {
@@ -129,7 +129,7 @@ fn test_fuzz_metrics[&h](heap: &!h Heap) -> [heap] int {
 }
 
 fn code_ok(c: int) -> [] int {
-    if c < 0 || c > rules.count() {
+    if c != 0 && (c < rules.first() || c > rules.last()) {
         return 1;
     }
     return 0;

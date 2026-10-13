@@ -19,8 +19,8 @@ M = [
     ("seed-derive-index", SP, "return rng.derive(rng.derive(seed, kind), index);", "return rng.derive(rng.derive(seed, kind), index + 1);"),
     ("seed-derive-swap", SP, "return rng.derive(rng.derive(seed, kind), index);", "return rng.derive(rng.derive(seed, index), kind);"),
     ("seed-derive-single", SP, "return rng.derive(rng.derive(seed, kind), index);", "return rng.derive(seed, kind + index);"),
-    ("kind-kfold-collides", SP, "pub fn kind_kfold() -> [] int {\n    return 2;", "pub fn kind_kfold() -> [] int {\n    return 1;"),
-    ("kind-stratified", SP, "pub fn kind_stratified() -> [] int {\n    return 3;", "pub fn kind_stratified() -> [] int {\n    return 4;"),
+    ("kind-kfold-collides", SP, "pub fn kind_kfold() -> [] int {\n    return 5;", "pub fn kind_kfold() -> [] int {\n    return 4;"),
+    ("kind-stratified", SP, "pub fn kind_stratified() -> [] int {\n    return 6;", "pub fn kind_stratified() -> [] int {\n    return 7;"),
     ("strat-class1-stream", SP, "stream(seed, kind_stratified(), 2 * rep + 1)", "stream(seed, kind_stratified(), 2 * rep)"),
     ("strat-class0-stream", SP, "stream(seed, kind_stratified(), 2 * rep));", "stream(seed, kind_stratified(), rep));"),
     ("draw-plain-modulus", SP, "return top - r;\n}", "return top;\n}"),
@@ -163,13 +163,13 @@ M = [
     ("ll-label-pos", LL, "buf[j] = term(labels[at + j] == pos, prob[at + j]);", "buf[j] = term(labels[at + j] != pos, prob[at + j]);"),
     ("ll-fill-offset", LL, "buf[j] = term(labels[at + j] == pos, prob[at + j]);", "buf[j] = term(labels[at + j] == pos, prob[j]);"),
     # ---- the registry
-    ("rules-exit-param", RU, "if code == 7 {\n        return 2;", "if code == 8 {\n        return 2;"),
-    ("rules-exit-range", RU, "if code >= 1 && code <= 11 {\n        return 8;", "if code >= 1 && code <= 10 {\n        return 8;"),
+    ("rules-exit-param", RU, "if code == 207 {\n        return 2;", "if code == 208 {\n        return 2;"),
+    ("rules-exit-range", RU, "if code >= 201 && code <= 211 {\n        return 8;", "if code >= 201 && code <= 210 {\n        return 8;"),
     ("rules-dup-tag", RU, "return \"ml.split.stratum-too-small\";", "return \"ml.split.empty-fold\";"),
     ("rules-tag-rename", RU, "return \"ml.metric.undefined\";", "return \"ml.metric.undefine\";"),
     ("rules-table-exit", RU, "ml.metric.length-mismatch|8|never", "ml.metric.length-mismatch|2|never"),
     ("rules-table-drop", RU, "ml.metric.bad-probability|8|never|a probability outside 0 to 1. Hint: log-loss needs the probability of the positive class. Repair: none.;", ""),
-    ("rules-code-swap", RU, "pub fn undefined() -> [] int {\n    return 6;", "pub fn undefined() -> [] int {\n    return 5;"),
+    ("rules-code-swap", RU, "pub fn undefined() -> [] int {\n    return 206;", "pub fn undefined() -> [] int {\n    return 205;"),
 ]
 
 ALLOWED = {

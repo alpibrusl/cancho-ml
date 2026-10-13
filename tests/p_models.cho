@@ -246,8 +246,8 @@ fn test_record_bytes_and_round_trip[&h](heap: &!h Heap) -> [heap] int {
         }
         borrow bytes as &br in {
             let b = contents(br);
-            // kind 3, then dtype 2, rank 1, shape 3 as u64: the hand-written layout
-            if record.get32(b, 0) != 3 || record.get32(b, 4) != 2 || record.get32(b, 8) != 1 || fbits.get64(b, 12) != 3 {
+            // kind 4 (linear), then dtype 2, rank 1, shape 3 as u64: the hand-written layout
+            if record.get32(b, 0) != 4 || record.get32(b, 4) != 2 || record.get32(b, 8) != 1 || fbits.get64(b, 12) != 3 {
                 bad = bad + 1;
             }
             // the first element's 8 bytes are its bits, little endian
@@ -332,7 +332,7 @@ fn test_record_kmeans_rank2[&h](heap: &!h Heap) -> [heap] int {
         borrow bytes as &br in {
             borrow mut back as &!kw in {
                 let r = record.decode_f64(contents(br), 4, 12, contents(kw));
-                if record.get32(contents(br), 0) != 5 || r.code != 0 || r.rank != 2 || r.s0 != 4 || r.s1 != 3 || r.end != record.kmeans_size(4, 3) {
+                if record.get32(contents(br), 0) != 6 || r.code != 0 || r.rank != 2 || r.s0 != 4 || r.s1 != 3 || r.end != record.kmeans_size(4, 3) {
                     bad = bad + 1;
                 }
                 bad = bad + same_bits(contents(kw), contents(cr), 12);

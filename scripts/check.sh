@@ -1,8 +1,9 @@
 #!/bin/sh
 # What CI runs: fmt check, unit tests, the numeric gates of stage 1, then the command line (stage 2, docs/cli.md section 1):
 # package-mode build of `ml`, the schemas and the authority manifest checked against the sources, the conformance gates, and a
-# check that every edit of the mutant list still applies. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
-# 30 times and run on request, as the stage 1 mutants do.
+# check that every edit of the mutant list still applies. The gates of lib/metrics and
+# lib/models/tree and the registry check are run here too. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
+# 45 times and run on request, as the stage 1 mutants do.
 set -e
 cd "$(dirname "$0")/.."
 # absolute, because the conformance tests run from tests/conformance
@@ -28,6 +29,14 @@ sh scripts/gate_par.sh
 # (the mutants of the gate, scripts/mutants_models.py, rebuild the driver 59 times and run on request, as the other mutants do)
 python3 scripts/mutants_models.py --check
 sh scripts/gate_models.sh
+# integration (docs/integration.md): the registries of model kinds, stream kinds and refusal codes (two stages must not claim one number), then
+# the gates of the stages that were merged after the first two: lib/metrics (docs/metrics.md section 1) and lib/models/tree
+# (docs/models-tree.md section 8; needs ../ml-data, the files of spike F; its mutants and the scikit-learn comparison run on request)
+$CANCHO test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho tests/t_registry.cho
+python3 scripts/check_registry.py
+python3 scripts/mutants_metrics.py --check
+sh scripts/gate_metrics.sh
+sh scripts/check_tree.sh
 # stage 2: the command line. Package mode: `cancho install` fetches the pinned contract modules into build/deps (not committed).
 $CANCHO build --bin ml
 # the reader's gates (docs/reader.md section 5): reader-check against Python on millions of cells, the matrix and bitmap, the limits,

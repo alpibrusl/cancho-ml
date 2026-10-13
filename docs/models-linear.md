@@ -158,9 +158,9 @@ number; this is the cost of the fixed, thread-independent order and is stated in
 
 A parameter block is a **tensor record**: `u32` dtype, `u32` rank, `rank` x `u64` shape, then the elements row-major, all
 little-endian. `dtype 1 = i64` (already used by `tools/ml/mfile.cho`), **`dtype 2 = f64` (new)**. The estimator payload of the `model` section is `u32 kind`
-then records: `kind 3` linear: `coef` (rank 1, `d`), `intercept` (rank 1, `1`); `kind 4` logistic: the same two; `kind 5` k-means:
+then records: `kind 4` linear: `coef` (rank 1, `d`), `intercept` (rank 1, `1`); `kind 5` logistic: the same two; `kind 6` k-means:
 `centroids` (rank 2, `k x d`). Hyperparameters (`l2`, iterations, `k`, init, seed) belong to `meta`'s hyperparameter field. `record.cho` encodes and
-decodes (a decoder refuses a dtype, rank, shape or length that does not fit, before allocating). Adding these kinds to `mfile.cho` is
+decodes (a decoder refuses a dtype, rank, shape or length that does not fit, before allocating). *(Renumbered at integration: this section first said 3, 4, 5, and `tools/ml/mfile.cho` already used 3 for the constant float regression; the registry is `design.md` section 4.1.)* Adding these kinds to `mfile.cho` is
 the CLI's next step, not this one's.
 
 ### 3.5 Limits and refusals

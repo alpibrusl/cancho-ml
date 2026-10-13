@@ -4,7 +4,7 @@ import ml.fbits;
 
 // Tensor records of the model file (docs/design.md 4.1, docs/models-linear.md 3.4): u32 dtype | u32 rank | rank x u64 shape | the
 // elements row-major, all little-endian. dtype 1 = i64 (tools/ml/mfile.cho), dtype 2 = f64 (new here). The estimator payload of the
-// `model` section is u32 kind then records: kind 3 linear (coef: rank 1, d; intercept: rank 1, 1), kind 4 logistic (the same), kind 5
+// `model` section is u32 kind then records: kind 4 linear (coef: rank 1, d; intercept: rank 1, 1), kind 5 logistic (the same), kind 6
 // k-means (centroids: rank 2, k x d). Nothing here is wired into tools/ml/mfile.cho yet.
 
 pub fn dtype_f64() -> [] int {
@@ -12,15 +12,15 @@ pub fn dtype_f64() -> [] int {
 }
 
 pub fn kind_linear() -> [] int {
-    return 3;
-}
-
-pub fn kind_logistic() -> [] int {
     return 4;
 }
 
-pub fn kind_kmeans() -> [] int {
+pub fn kind_logistic() -> [] int {
     return 5;
+}
+
+pub fn kind_kmeans() -> [] int {
+    return 6;
 }
 
 // the statuses of a decode

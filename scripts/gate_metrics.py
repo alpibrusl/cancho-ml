@@ -91,7 +91,7 @@ def tags_gate():
     rows, src = table()
     # 1. the table and the code agree: same tags, same order as tag(code), exit codes as exit_code(code)
     tag_fn = re.findall(r"if code == (\d+) \{\s*return \"([a-z.\-]+)\";", src.split("pub fn tag")[1].split("pub fn exit_code")[0])
-    if [t for _, t in tag_fn] != [r[0] for r in rows] or [int(c) for c, _ in tag_fn] != list(range(1, len(rows) + 1)):
+    if [t for _, t in tag_fn] != [r[0] for r in rows] or [int(c) for c, _ in tag_fn] != list(range(201, 201 + len(rows))):   # the band of metrics.rules (design.md section 8.1)
         fail("table() and tag() disagree")
     if len(set(r[0] for r in rows)) != len(rows):
         fail("a tag is registered twice")

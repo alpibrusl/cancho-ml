@@ -10,7 +10,7 @@ import tree.params;
 import tree.forest;
 
 // The tree ensemble as tensor records, the content of the `model` section of a CML1 file (docs/models-tree.md section 7,
-// design.md 4.1). Little-endian, no padding. `u32 kind` = 3, then ten tensor records, each `u32 dtype` (1 i64, 2 f64), `u32 rank`
+// design.md 4.1). Little-endian, no padding. `u32 kind` = 7 (the registry of design.md 4.1), then ten tensor records, each `u32 dtype` (1 i64, 2 f64), `u32 rank`
 // (always 1 here), `u64` extent, the elements:
 //     1 header (8: task, trees, d, bins, total_nodes, max_depth, min_leaf, mtry)   2 tree_off (trees + 1)
 //     3 feat  4 bin  5 dleft  6 left  7 right  8 na  9 nb (each total_nodes, i64)   10 val (total_nodes, f64)
@@ -19,7 +19,7 @@ import tree.forest;
 // It never traps; it answers a refusal (ml.model.truncated, ml.model.malformed, ml.limit.nodes).
 
 pub fn kind() -> [] int {
-    return 3;
+    return 7;
 }
 
 fn get32[&s](src: &s [byte], at: int) -> [] int {

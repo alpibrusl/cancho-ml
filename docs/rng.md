@@ -33,8 +33,27 @@ The test inputs of the kernels (scripts/oracle_linalg.py) use the same generator
 `unit(output(s + (i + 1) * 0x9E3779B97F4A7C15))` (a stream whose state is advanced `i + 1` times), so numpy can generate a whole
 array with vectorised uint64 arithmetic.
 
-## Stream kinds (`derive(seed, kind)`)
+## Stream kinds (`derive(seed, kind)`): the registry
 
-Kind 3 is k-means (`docs/models-linear.md` 3.3): `derive(derive(seed, 3), j)` is the draw of center `j`. Kinds 1 and 2 are the
-test-input streams of `scripts/oracle_linalg.py`; kind 3 of those scripts is a separate use inside `linalg-check` (a scalar), not a model stream.
-Later models take new numbers; a number is never reused.
+A stream is `derive(derive(seed, kind), index)`. **Two uses of one kind would give two components the same numbers for the same seed**
+(a k-fold and a forest started from one seed would shuffle with the draws of the bootstrap), so the kinds of the library are one table
+and a number is never reused. `lib/core/kinds.cho` has it, `tests/t_registry.cho` fails on a duplicate or on a stage whose own
+constant differs, and `scripts/check_registry.py` compares it with this table and with the two places that still write the number.
+
+| kind | stream | index | owner |
+|---|---|---|---|
+| 1 | bootstrap of tree `t` | `t` | `lib/models/tree/grow.cho` (fixed: spike F's streams, the tree gate compares with them) |
+| 2 | features of node `id` of tree `t` | `t`, then `id` (the heap number) | `lib/models/tree/grow.cho` (fixed, as kind 1) |
+| 3 | k-means: root of the seeds of the centers | center `j`, then the attempt | `lib/models/kmeans/kmeans.cho` (`docs/models-linear.md` 3.3) |
+| 4 | train/test split | the repeat | `lib/metrics/splits.cho` (`docs/metrics.md` 2.1) |
+| 5 | k-fold | the repeat | `lib/metrics/splits.cho` |
+| 6 | stratified k-fold | `2 * repeat + class` | `lib/metrics/splits.cho` |
+
+The next stream takes 7. *(Renumbered at integration: the metrics stage had 1, 2, 3 for its three splits, which met the tree's 1 and 2
+and k-means' 3, and this file had said "kinds 1 and 2 are the test-input streams". The splits' assignment vectors changed with the
+numbers; the reference vectors of `docs/metrics.md` were recomputed by its Python oracle, and the oracle and the library agree on all
+2,978 cases. The tree's and k-means' numbers did not move, because spike F's identity and the oracle of the models depend on them.)*
+
+**Test inputs are not model streams.** `scripts/oracle_linalg.py`, `tools/linalg-check` and `tools/models-check` build their data with
+`derive(seed, 1 .. 3)` where the seed is the generator's own (docs/linalg.md, docs/models-linear.md 6.1); they run in the gate drivers
+and never in a library path, so they are outside the table. A library never derives from a test seed.

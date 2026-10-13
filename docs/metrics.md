@@ -35,9 +35,9 @@ is `z_t = mix(s_0 + t * 0x9E3779B97F4A7C15)` (wrapping): the SplitMix64 output, 
 
 | kind | used for | index |
 |---|---|---|
-| 1 | train/test split | the repeat `r >= 0` |
-| 2 | k-fold | the repeat `r >= 0` |
-| 3 | stratified k-fold | `2 * r + c`, `c` the class ordinal (0 for the smaller label, 1 for the larger) |
+| 4 | train/test split | the repeat `r >= 0` |
+| 5 | k-fold | the repeat `r >= 0` |
+| 6 | stratified k-fold | `2 * r + c`, `c` the class ordinal (0 for the smaller label, 1 for the larger) |
 
 `seed`, `r` are non-negative ints; `seed` is an arbitrary int (it is only XORed). Streams are never shared: nothing about a split
 depends on another split, on a thread, or on an order of calls.
@@ -59,16 +59,16 @@ probability 1, and for a fixed stream it ends after a number of draws that is th
 ### 2.3 Splits (all return an assignment vector: element `i` is the group of row `i`)
 
 * **Train/test** `(n, n_test, seed, r)`: needs `n >= 2` and `1 <= n_test <= n - 1`. `perm` = `[0, 1, ..., n-1]` shuffled with
-  `stream(seed, 1, r)`. Row `perm[p]` is test for `p < n_test`, train otherwise. Group 1 = test, 0 = train. A test size from a
+  `stream(seed, 4, r)`. Row `perm[p]` is test for `p < n_test`, train otherwise. Group 1 = test, 0 = train. A test size from a
   fraction `num/den` (`1 <= num < den <= 10^6`) is `n_test = ceil(n * num / den)` in integers (`(n*num + den - 1) / den`), as
   scikit-learn does.
-* **K-fold** `(n, k, seed, r)`: needs `2 <= k <= n`. `perm` as above with `stream(seed, 2, r)`. Fold `f` (`0 <= f < k`) holds the
+* **K-fold** `(n, k, seed, r)`: needs `2 <= k <= n`. `perm` as above with `stream(seed, 5, r)`. Fold `f` (`0 <= f < k`) holds the
   `size(f) = n div k + (1 if f < n mod k else 0)` entries of `perm` that start at `start(f) = f * (n div k) + min(f, n mod k)`.
   Row `perm[p]` is in fold `f` for `start(f) <= p < start(f) + size(f)`.
 * **Stratified k-fold** `(labels, k, seed, r)`: labels are ints with exactly two distinct values (one value is
   `ml.label.single-class`, three or more `ml.label.not-binary`); class ordinal 0 is the smaller value. Needs `2 <= k` and every class
   to have at least `k` rows (else `ml.split.stratum-too-small`; this implies `k <= n`). For each class `c` in ordinal order, `members_c`
-  = the rows of that class in ascending row order, shuffled (2.2) with `stream(seed, 3, 2 r + c)`. Let `L` = `members_0` followed by `members_1`.
+  = the rows of that class in ascending row order, shuffled (2.2) with `stream(seed, 6, 2 r + c)`. Let `L` = `members_0` followed by `members_1`.
   **The element at position `t` of `L` is in fold `t mod k`.** Consequences, checked by S2: fold sizes are `floor` or `ceil` of
   `n / k`, and for each class the fold counts are `floor` or `ceil` of `n_c / k` (class 0 starts at fold 0, class 1 at fold `n_0 mod k`). The rule has
   no rounding of fractions, by design.
@@ -212,13 +212,13 @@ Every number below was printed by a script of `scripts/` in this session; `docs/
 | T1 tags | `gate_metrics.py --tags`: 11 tags registered, `table()` equal to `tag()`, exit codes equal to `design.md` section 8 where the tag is there, the others marked new here | 11 of 11 reached by 45 fixtures through the driver |
 | F1 fuzz | in-language: 4,000 rounds over the nine metric entries (rmse succeeded in at least 1,000, AUC and log-loss in at least 100), 6,000 rounds over the three splits, 20 huge-`n` calls; driver: 400 random invocations | no trap; 85 driver runs succeeded, 315 were refused with a tag; no exit code outside 0, 2, 8 |
 
-**Reference vectors** (also in `oracle_metrics.py`; `stream(42, 1, 0) = d8005cdd08a0d146`, which is `derive(derive(42, 1), 0)` of `docs/rng.md`):
+**Reference vectors** (also in `oracle_metrics.py`; `stream(42, 4, 0) = f94f852667e9fcae`, which is `derive(derive(42, 4), 0)` with `derive` of `docs/rng.md`):
 
 | call | assignment (element `i` = group of row `i`) |
 |---|---|
-| k-fold `n = 10, k = 3, seed = 42, repeat = 0` | `2 2 0 1 2 1 0 1 0 0` |
-| train/test `n = 10, n_test = 3, seed = 42, repeat = 0` | `0 0 0 0 0 1 1 0 1 0` |
-| stratified `labels = 0 0 0 0 0 0 1 1 1 1, k = 3, seed = 7, repeat = 0` | `2 0 2 0 1 1 0 0 2 1` |
+| k-fold `n = 10, k = 3, seed = 42, repeat = 0` | `0 0 2 2 0 2 1 1 0 1` |
+| train/test `n = 10, n_test = 3, seed = 42, repeat = 0` | `0 0 1 0 0 0 0 1 1 0` |
+| stratified `labels = 0 0 0 0 0 0 1 1 1 1, k = 3, seed = 7, repeat = 0` | `1 2 0 2 1 0 0 2 1 0` |
 
 ### 5.2 Against sklearn (`oracle_metrics.py --sklearn`; the gate bound is `130 u`, section 3)
 

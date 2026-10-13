@@ -329,18 +329,18 @@ fn test_bounded_stays_in_range() -> [] int {
 // S1 part: the stream name is derive(derive(seed, kind), index); three vectors written in docs/metrics.md
 fn test_stream_names() -> [] int {
     var bad = 0;
-    if splits.stream(42, 2, 0) != rng.derive(rng.derive(42, 2), 0) {
+    if splits.stream(42, 5, 0) != rng.derive(rng.derive(42, 5), 0) {
         bad = bad + 1;
     }
-    if splits.stream(42, 2, 0) == splits.stream(42, 1, 0) || splits.stream(42, 2, 0) == splits.stream(42, 2, 1) || splits.stream(42, 2, 0) == splits.stream(43, 2, 0) {
+    if splits.stream(42, 5, 0) == splits.stream(42, 4, 0) || splits.stream(42, 5, 0) == splits.stream(42, 5, 1) || splits.stream(42, 5, 0) == splits.stream(43, 5, 0) {
         bad = bad + 1;
     }
-    // derive(derive(42, 1), 0) is a vector of docs/rng.md: d8005cdd08a0d146
-    let s = splits.stream(42, 1, 0);
-    if s >> 32 & 0xFFFFFFFF != 0xd8005cdd || s & 0xFFFFFFFF != 0x08a0d146 {
+    // derive(derive(42, 4), 0) = f94f852667e9fcae (computed by scripts/oracle_metrics.py's derive; the kinds are the registry of docs/rng.md)
+    let s = splits.stream(42, 4, 0);
+    if s >> 32 & 0xFFFFFFFF != 0xf94f8526 || s & 0xFFFFFFFF != 0x67e9fcae {
         bad = bad + 1;
     }
-    if splits.kind_train_test() != 1 || splits.kind_kfold() != 2 || splits.kind_stratified() != 3 {
+    if splits.kind_train_test() != 4 || splits.kind_kfold() != 5 || splits.kind_stratified() != 6 {
         bad = bad + 1;
     }
     return bad;
