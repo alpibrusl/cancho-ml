@@ -40,7 +40,7 @@ import oracle_wire as ow  # noqa: E402
 SUM_ORDER_SEQUENTIAL = 3
 DEFAULTS = {"trees": 100, "max-depth": 8, "min-leaf": 1, "bins": 64, "mtry": 0, "bootstrap": 1, "max-nodes": 4194304}
 UNJUDGED = []
-COVER = {"cases": 0, "with_missing": 0, "missing_cells": 0, "v1_splits": 0, "nodes": 0, "split": 0, "steps": 0}
+COVER = {"cases": 0, "with_missing": 0, "missing_cells": 0, "v1_splits": 0, "nodes": 0, "split": 0, "steps": 0, "empty_columns": 0}
 
 
 class TCase:
@@ -169,6 +169,7 @@ def fit_oracle(case):
     COVER["nodes"] += sum(len(tr_) for tr_ in trees)
     COVER["split"] += 1 if mask is not None else 0
     COVER["steps"] += 1 if stored else 0
+    COVER["empty_columns"] += 1 if any(all(r[j] == "" for r in rows) for j in range(len(names))) else 0
     return data, ctx
 
 
@@ -360,11 +361,6 @@ def run_case(case, tmp, threads=1):
                 why += ", first difference at byte %d" % i
                 break
         return [why]
-    if any(all(r[j] == "" for r in case.rows) for j in range(len(case.names))):
-        # a column with no cell at all is refused by predict and eval as a missing column of the schema, for every model (found by this oracle; docs/wiring-trees.md
-        # section 11, open question 2): the fit is compared, the verbs are not
-        UNJUDGED.append(1)
-        return problems
     proba = case.task == "classification"
     base = ["--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000"] + (["--proba"] if proba else [])
     rc, out = ow.ml(*base, "d.csv")
@@ -472,7 +468,7 @@ def main():
                     if pr:
                         bad += 1
                         print("MISMATCH %s %s seed %d: %s" % (model, task, seed, "; ".join(pr)))
-    print("oracle_wire_tree covered: %s; %d cases with a column that has no cell: file compared, verbs not" % (", ".join("%s %d" % (k, v) for k, v in COVER.items()), len(UNJUDGED)))
+    print("oracle_wire_tree covered: %s" % ", ".join("%s %d" % (k, v) for k, v in COVER.items()))
     print("oracle_wire_tree: %d cases (%s, both tasks, %s rows), %s" % (cases, " and ".join(models), "100,000" if large else "30 to 700", "all agree byte for byte" if not bad else "%d mismatches" % bad))
     return 1 if bad else 0
 

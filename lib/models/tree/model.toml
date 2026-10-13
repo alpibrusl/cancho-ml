@@ -11,7 +11,7 @@ shape = "blob"
 adapter = "models.adapter_tree"
 payload_version = 2
 doc = "docs/models-tree.md"
-files = ["lib/models/tree/model.cho", "lib/models/tree/grow.cho", "lib/models/tree/adapter.cho", "lib/models/tree/adapt.cho"]
+files = ["lib/models/tree/model.cho", "lib/models/tree/grow.cho", "lib/models/treewire/adapter_tree.cho", "lib/models/treewire/adapt.cho"]
 plan_order = 4
 
 [limits]

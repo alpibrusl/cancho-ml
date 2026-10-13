@@ -10,7 +10,7 @@ shape = "blob"
 adapter = "models.adapter_forest"
 payload_version = 2
 doc = "docs/models-tree.md"
-files = ["lib/models/tree/forest.cho", "lib/models/forest/adapter.cho"]
+files = ["lib/models/tree/forest.cho", "lib/models/treewire/adapter_forest.cho"]
 plan_order = 5
 
 [limits]

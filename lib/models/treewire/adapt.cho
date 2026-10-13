@@ -1,6 +1,6 @@
 edition 5;
 
-module tree.adapt;
+module models.adapt_trees;
 
 import std.buffer;
 import ml.fbits;

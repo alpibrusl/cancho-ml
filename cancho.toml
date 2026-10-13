@@ -101,6 +101,6 @@ out = "build/models-check"
 
 [[bin]]
 name = "ml"
-sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/forest", "lib/transforms", "lib/pipeline", "tools/ml", "generated/ml"]
+sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml", "generated/ml"]
 std = true
 out = "build/ml"

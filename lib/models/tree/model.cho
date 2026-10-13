@@ -160,7 +160,8 @@ fn check_tree[&n, &v](ni: &n [int], nv: &v [float], total: int, lo: int, hi: int
                     return deny.model_malformed();
                 }
                 if task == 0 {
-                    if na + nb < 1 || na > 1048576 || nb > 1048576 || bits_of(v) != bits_of(float_of(nb) / float_of(na + nb)) {
+                    // (the bounds first: a count near 2^63 must not reach the sum)
+                    if na > 1048576 || nb > 1048576 || na + nb < 1 || bits_of(v) != bits_of(float_of(nb) / float_of(na + nb)) {
                         return deny.model_malformed();
                     }
                 } else if na < 1 || nb != 0 {

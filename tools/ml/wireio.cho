@@ -158,10 +158,29 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
     }
     // the model the plan names: the dispatch key (the tree and the forest share the kind 7 of their payload, the plan says which was fitted)
     var key = kind;
+    // the task the plan's model line names (a model of both tasks); 0 for the others
+    var plan_task = 0;
     borrow lo as &lr in {
         let (pl, pf) = plan.parse(heap, file.plan_bytes(lr));
         borrow pl as &pr in {
             key = est.kind_named(plan.model_name(plan.model_kind(pr)));
+            if est.task(key) == 3 {
+                var ip = box_slice(heap, est.nints(key) + 1, 0);
+                var fp = box_slice(heap, est.nfloats(key) + 1, 0.0);
+                var bad = 1;
+                borrow mut ip as &!iw in {
+                    borrow mut fp as &!fw in {
+                        bad = est.hparams(key, plan.model_line(pr), contents(iw), contents(fw));
+                    }
+                }
+                if bad == 0 {
+                    borrow ip as &ir in {
+                        plan_task = est.task_of(key, contents(ir));
+                    }
+                }
+                unbox_slice(heap, ip);
+                unbox_slice(heap, fp);
+            }
         }
         plan.drop(heap, pl);
     }
@@ -208,6 +227,10 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
                 c1 = dec.c1;
             }
         }
+    }
+    if dcode == 0 && plan_task != 0 && plan_task != task {
+        // the plan says classification and the payload is a regression, or the other way: a file that disagrees with itself
+        dcode = 1;
     }
     if dcode != 0 {
         file.drop(heap, lo);
@@ -267,7 +290,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             go = false;
         } else {
             lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
-            let (e2, same) = verbs.schema_check(heap, args, e, st.view, sr, o, need_target);
+            let (e2, same) = verbs.schema_check(heap, args, e, st.view, sr, o, need_target, est.is_blob(st.kind));
             e = e2;
             go = same;
         }
