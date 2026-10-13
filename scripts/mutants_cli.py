@@ -185,7 +185,7 @@ def apply_edits(tree, m, strict=True):
 def build(tree):
     g = lambda pat: sorted(glob.glob(str(tree / pat)))
     files = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
-             g("lib/models/logistic/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(tree / "generated/ml/built.cho")] +
+             g("lib/models/logistic/*.cho") + g("lib/models/tree/*.cho") + g("lib/models/treewire/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(tree / "generated/ml/built.cho")] +
              g("tools/ml/*.cho"))
     out = tree / "build" / "ml"
     p = subprocess.run([compiler(), "build", "--std", *files, "-o", str(out)], capture_output=True, text=True, cwd=tree)

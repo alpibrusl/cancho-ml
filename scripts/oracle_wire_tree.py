@@ -339,7 +339,7 @@ def fit_args(case, out, sparse=True):
     return a
 
 
-def run_case(case, tmp, threads=1):
+def run_case(case, tmp, threads=1, all_threads=False):
     """Compare the real `ml` with the oracle on one case. A list of problems."""
     problems = []
     (tmp / "m.cml").unlink(missing_ok=True)
@@ -361,6 +361,13 @@ def run_case(case, tmp, threads=1):
                 why += ", first difference at byte %d" % i
                 break
         return [why]
+    if all_threads:
+        # the same file at every thread count of docs/wiring-trees.md WT7 (the oracle's file is the reference for all of them)
+        for t in (1, 2, 4, 8, 16):
+            (tmp / "th.cml").unlink(missing_ok=True)
+            rc, out = ow.ml("--root", tmp, *fit_args(case, "th.cml"), "--threads", t, "d.csv")
+            if rc != 0 or (tmp / "th.cml").read_bytes() != expect:
+                problems.append("the file at --threads %d differs from the oracle's" % t)
     proba = case.task == "classification"
     base = ["--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000"] + (["--proba"] if proba else [])
     rc, out = ow.ml(*base, "d.csv")
@@ -462,7 +469,7 @@ def main():
                     case = gen_case(seed * 7919 + (101 if task == "regression" else 0) + (31 if model == "forest" else 0), model, task, rows=rows)
                     if large and model == "forest":
                         case.hp["trees"] = min(case.hp.get("trees", 3), 3)
-                    pr = run_case(case, tmp, threads=1 + seed % 4)
+                    pr = run_case(case, tmp, threads=1 + seed % 4, all_threads=large)
                     cases += 1
                     (tmp / "m.cml").unlink(missing_ok=True)
                     if pr:

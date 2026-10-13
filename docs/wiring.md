@@ -7,7 +7,7 @@ maintainer can overturn, **[read]** read from a document or the code, **[open]**
 Before this stage `ml` built one model, `constant`, and no library was called by a verb (`docs/integration.md` section 6). Now `ml` also fits **`linear`**
 (ordinary least squares and ridge, `models.linreg`) and **`logistic`** (binary, Newton, `models.logreg`), **through the pipeline** (`docs/pipeline.md`): a plan of
 `impute`, `scale`, `encode` and `bucket` steps fitted on the training rows, and the estimator, stored together in **one** `CML1` file that `predict` and
-`eval` read. `--model constant` is untouched, byte for byte. k-means and the trees are libraries with a manifest and are not wired.
+`eval` read. `--model constant` is untouched, byte for byte. k-means and the trees are libraries with a manifest and are not wired. *(Corrected in place: the tree and the forest were wired afterwards, `docs/wiring-trees.md`; k-means is the one that is not.)*
 
 ## 1. The gates (fixed before the code; each can fail, section 8 shows it failing)
 
@@ -102,13 +102,13 @@ Every tag of the libraries that can be reached from a command line moves from `p
 | tag | when | repair |
 |---|---|---|
 | `ml.input.missing-value` | a feature cell is empty and the plan has no `impute` step for its column; `detail`: the columns | `retry` with `--step "impute column=a,b strategy=mean"` appended when no `--step` or `--plan` was given (and the names are plain); otherwise `none` with the step to add as the reason |
-| `ml.plan.model-not-built` | the plan's `model` line names a model `ml` does not build (`kmeans`, `tree`, `forest`, or `constant`: use `--model constant`) | none |
+| `ml.plan.model-not-built` | the plan's `model` line names a model `ml` does not build (`kmeans`, or `constant`: use `--model constant`; `tree` and `forest` are built since `docs/wiring-trees.md`, whose summary in the rule table still lists them, left as it was so that the fixture of this rule keeps its bytes) | none |
 
 **Reachable now, with a fixture:** `ml.linalg.not-positive-definite` (equal columns, `l2 = 0`), `ml.fit.non-finite` (logistic, diverging data), `ml.param.threads` (`--threads 0`), `ml.split.empty-fold`
 (`--split` on too few rows), `ml.fit.all-missing`, `ml.limit.categories`, `ml.input.unknown-category`, the eight `ml.plan.*` tags of the parser and the column resolution, `ml.limit.plan`, and the metric refusals that remain in `eval`
 (`ml.label.single-class` for a ROC-AUC with one class, `ml.label.not-binary` for a label the model never saw). **A metric with no value** (a precision with no predicted positive, R2 of a constant target, a non-finite result) is **`null`** in `metrics`, not a refusal: `ml.metric.undefined` stays reachable from the constant model only. **Not reachable, and staying in `pending()` with the reason:** `ml.tensor.rank`, `ml.tensor.shape`, `ml.tensor.bounds` (descriptors are built
 inside the wiring from a validated shape), `ml.linalg.singular` (a zero on the diagonal of a triangular solve; the relative pivot test refuses it earlier), `ml.metric.length-mismatch`,
-`ml.metric.bad-probability` (the wiring hands the metrics arrays of one length and probabilities in [0, 1] by construction), `ml.limit.depth`, `ml.limit.nodes` (trees are not wired),
+`ml.metric.bad-probability` (the wiring hands the metrics arrays of one length and probabilities in [0, 1] by construction), `ml.limit.depth`, `ml.limit.nodes` *(reachable since the trees were wired: `docs/wiring-trees.md` section 6)*,
 `ml.split.stratum-too-small` (only the stratified split raises it; the verbs use the train/test split). `docs/design.md` section 8 says which.
 
 ## 6. Authority

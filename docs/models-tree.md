@@ -437,6 +437,10 @@ header, the offsets, the record headers) and the crafted payloads; **no trap, no
 (`unexpected 0`)**. Many accepted payloads are legitimate: a threshold or a count changed to another valid value; the file checksum of
 the envelope is what catches those, not the reader. The reader accepts what it can walk safely. The undamaged payload is accepted and
 writes back the same bytes, and every prefix is `ml.model.truncated`.
+*(Corrected in place at W3a, the stage that wired the tree into `ml`. The sentence "no trap" above was false: the structured set never set a field to 2^63 - 1, and a class leaf whose count `nb` was
+2^63 - 1 made the reader compute `na + nb` before it compared the counts with their bound of 2^20; cancho traps on an overflow, so a damaged payload ended the process (exit -4). It was found by the
+seeded damage by whole words of `tests/conformance/test_wire_trees_file.py`. The bounds are compared first now (`check_tree` in `lib/models/tree/model.cho`), the structured set also tries 2^63 - 1, and
+the mutant "reader: counts bounded before they are added" is killed by the fuzz. Nothing else of the library changed, and the payload bytes did not.)*
 
 
 ### 10.7 Unit tests and refusals (`tests/t_tree.cho`, `scripts/gate_tree.py --unit`)
@@ -614,7 +618,8 @@ section 5 (2^34 bytes) refuses what would exceed it.
 * Quality against scikit-learn: the regression tolerance fixed in advance is not met on R1 (10.8); nothing was run on real data beyond the
   synthetic `ml-data`.
 * A tree fit is limited to 2^20 rows (the exact comparison); the cap that `ml` uses (10,000,000 rows) is above it, so the verbs will need
-  the sampled-fit repair or a wider comparison before they call the library.
+  the sampled-fit repair or a wider comparison before they call the library. *(W3a: `ml` counts the training rows before it copies them and refuses a tree or forest fit above 2^20 with
+  `ml.input.too-many-rows` and a hint to sample or to hold rows out with `--split`; `docs/wiring-trees.md` section 6. The wider comparison is still not built.)*
 * The memory ceiling of the thread copies (2^34 bytes) and the node ceilings (2^22 per tree, 2^24 per forest) are provisional.
 * Not built: the command line verbs, multiclass, a model-file envelope around the payload (the checksum, the plan, the schema), feature
   importance, out-of-bag scores.

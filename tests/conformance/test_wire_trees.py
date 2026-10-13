@@ -289,6 +289,23 @@ class TreeWire(unittest.TestCase):
         r = self.ml("fit", "--model", "linear", "--target", "y", "--output", "big.cml", "--overwrite", "big.csv")
         self.assertEqual(r.status, 0, r)
 
+    def test_exactly_2_to_the_20_rows_are_fitted(self):
+        n = 1 << 20
+        self.sb.write("edge.csv", "x,y\n" + "".join("%d,%d\n" % (i % 1000, i % 7) for i in range(n)))
+        r = self.ml("fit", "--model", "tree", "--max-depth", "1", "--target", "y", "--output", "edge.cml", "--overwrite", "edge.csv")
+        self.assertEqual((r.status, r.data()["rows"]), (0, n), r)
+
+    def test_an_input_column_with_no_cell_is_a_missing_column_for_the_linear_models_and_every_cell_missing_for_the_trees(self):
+        self.sb.write("one.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (i, i % 5, 3 * i + i % 5) for i in range(1, 41)))
+        self.sb.write("empty.csv", "a,b\n1,\n2,\n3,\n")
+        self.fit("tree", "y", "one.csv", "t.cml")
+        r = self.ml("predict", "--model-file", "t.cml", "empty.csv")
+        self.assertEqual((r.status, r.data()["row_count"]), (0, 3), r)
+        self.fit("linear", "y", "one.csv", "lin.cml")
+        r = self.ml("predict", "--model-file", "lin.cml", "empty.csv")
+        self.assertEqual(r.first_rule(), "ml.schema.mismatch", r)
+        self.assertEqual(r.error()["detail"]["missing"], ["b"])
+
     def test_the_limit_tags_of_the_library_have_their_exit_codes(self):
         for argv, rule in ((["--max-depth", "31"], "ml.limit.depth"), (["--max-nodes", "1"], "ml.limit.nodes"), (["--max-nodes", "4194305"], "ml.limit.nodes"),
                            (["--mtry", "9"], "ml.param.out-of-range"), (["--min-leaf", "1000"], "ml.param.out-of-range"), (["--threads", "0"], "ml.param.threads")):

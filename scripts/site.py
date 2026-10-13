@@ -95,7 +95,7 @@ DEMOS = [
     ("exists", "ml fit --target price --output houses.ml houses.csv"),
     ("dry", "ml fit --dry-run --overwrite --target price --output houses.ml houses.csv"),
     ("damaged", "ml eval --model-file damaged.ml houses.csv"),
-    ("other_model", "ml fit --model forest --target price --output forest.ml houses.csv"),
+    ("other_model", "ml fit --model kmeans --target price --output kmeans.ml houses.csv"),
     ("typo", "ml fit --target prize --output typo.ml houses.csv"),
     # the models that go through the pipeline (docs/wiring.md): a refusal with its repair first, then the plan written out
     ("p_bad", "ml fit --model logistic --target bought --output shop2.ml shop2.csv"),

@@ -73,10 +73,14 @@ With `--plan` the task is the plan's.
 2 of the wired layout; the library's own payload is version 1, and a regression payload is exactly the library's). The CSV target's labels have no place in the
 library payload, which knows only 0.0 and 1.0.
 
-The reader of the file (`models.adapter_tree.decode_blob`) reads the header, computes the size the library payload must have **before it allocates**, hands
-the library reader (`tree.model.read`, which checks every record, every node, the preorder and the depth) exactly that many bytes, and then reads the labels
-record (a classification: exactly 32 more bytes with two different labels; a regression: nothing more). Any other length is `ml.model.truncated`
-(shorter than the header asks) or `ml.model.malformed` (longer, a wrong dtype, rank or extent, equal labels). Its fuzz is WT11.
+The reader of the file (`decode_blob` of the adapters, in `lib/models/treewire/`) reads the header, computes the size the library payload must have **before it allocates**,
+hands the library reader (`tree.model.read`, which checks every record, every node, the preorder and the depth) exactly that many bytes, and then reads the labels
+record (a classification: exactly 32 more bytes with two different labels; a regression: nothing more). **Every failure of the model section is `ml.model.malformed`** with
+`section` 4, whatever tag the library gave (a payload shorter than its header asks, longer, a wrong dtype, rank or extent, equal labels, a node ceiling, a column count
+that is not the schema's), as for linear and logistic: the file's own structure (a section that runs past the end) was refused as `ml.model.truncated` before the payload is
+looked at. Two further rules, both about a file that disagrees with itself: the `task` of the plan's model line must be the payload's (a plan that says classification over
+a regression payload is malformed; the other hyperparameters of the plan are a description, as `l2` is for linear), and the plan must name a model whose kind is the payload's
+(already refused by `pipeline.file`). A constant plan with a kind 7 payload is not this module's: the old reader refuses it, byte for byte as before. Its fuzz is WT11.
 
 **The summation order field [choice].** `lib/pipeline/file.cho` writes `u32 sum_order = 2` at the end of `meta` for every kind from 4 on, meaning the 4-lane order of
 `docs/linalg.md` section 2. **A tree or a forest uses no lane sum.** `docs/models-tree.md` 3.2: the Gini decision is exact integer arithmetic; a regression sum is
@@ -113,7 +117,7 @@ linear models (WT5).
 |---|---|---|---|
 | `ml.limit.depth` | 8 | `--max-depth 31` (or a plan key) | `tree.params.check`, before any allocation sized by the data |
 | `ml.limit.nodes` | 8 | `--max-nodes 4194305`; `--trees 1024 --max-depth 30` on enough rows that `trees * cap` passes 2^24; a tree that needs more nodes than `--max-nodes` | `tree.params.check` (the first two), the growing tree (the third: the lowest tree's, at every thread count) |
-| `ml.input.too-many-rows` | 8 | a tree or forest fit with more than 1,048,576 training rows (2^20: `docs/models-tree.md` 3.1, the exactness bound of the Gini comparison) | **before the rows are copied** (the training rows are counted; without `--split` the reader itself stops at the 2^20+1st row, so the matrix is not even allocated), with its own message and hint; the repair is none: fit on a sample or take `--split train=F` so that the train side is within the bound |
+| `ml.input.too-many-rows` | 8 | a tree or forest fit with more than 1,048,576 training rows (2^20: `docs/models-tree.md` 3.1, the exactness bound of the Gini comparison) | **after the file is read and the split chosen, before any copy of the rows** (the training rows are counted: the matrix of the reader exists, bounded by `--max-rows` as for every model, but the copies the steps and the library make, and everything the tree allocates, do not), with its own message and hint; the repair is none: fit on a sample or take `--split train=F` so that the train side is within the bound. The bound is on the training rows: 1,048,576 are fitted and a split of a larger file whose train side is within the bound is too |
 | `ml.param.threads` | 2 | `--threads 0`, `--threads 65` (already), and the copies of a threaded fit above 2^34 bytes | the flag check; the copy ceiling is a formula of `n`, `d` and the threads: the smallest input that exceeds it is about 2.3e8 cells, so **it has no fixture** (a CSV of more than 400 MB); it stays covered by `tests/t_tree.cho` at the library level and is listed as such |
 | `ml.param.out-of-range` | 2 | `--mtry` above d, `--min-leaf` above n | `tree.params.check` |
 | `ml.label.single-class`, `ml.label.not-binary`, `ml.label.not-integer` | 8 | as for logistic | the wiring |
@@ -175,6 +179,10 @@ different rule on different data and does not replace it.** If a bound here is e
 * `tree` and `forest` share kind 7 (a declared pair). Their dispatch key in the generated `est` is the kind, plus 100 for the second of the pair
   (`forest` = 107), because a fit must tell them apart (different hyperparameters) while a file only has the kind; `est.kind_of(key)` maps back, and the stored plan
   names the model that predict prints.
+* The glue of the two adapters is `lib/models/treewire/` (not `lib/models/tree/`, which stays the library that `tree-check` builds alone): `adapt.cho` (module `models.adapt_trees`: the
+  bitmap, the fit that returns the payload, the single-thread prediction, the reader), `adapter_tree.cho` and `adapter_forest.cho`. The manifests list them in `files`.
+* The generic check of the integer flags of the command line is 1 to the ceiling of `spec.limits()`; `--mtry 0` and `--bootstrap 0` need a lower bound of 0, which the manifest says
+  (`min = 0`) and the generated `est.hparam_min` gives to `check_nats` in `tools/ml/main.cho` (the one line of `main.cho` this stage changes).
 * `admit.py` is adapted to the second interface: Q1 compares the four functions of the blob adapter with the template (the same way it compares the eight), Q6 and Q7
   fit with a task of the manifest (`tree` and `forest` serve both; the admission samples use a classification and a regression), Q9 runs the oracle with
   `scripts/oracle_wire_tree.py`. `tier = "supported"` only if all twelve pass; otherwise the manifest stays `experimental` and section 11 names the failing checks.
