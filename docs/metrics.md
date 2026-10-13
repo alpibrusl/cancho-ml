@@ -176,8 +176,9 @@ is reported as such and not used to tighten the bound.
 ## 4. Rule tags (T1)
 
 Registered in `lib/metrics/rules.cho` in the table convention of `tools/ml/spec.cho` (`tag|exit|repairable|summary`, entries separated by `;`), the
-exit codes of `design.md` section 8 (arguments 2, a limit or a parse failure 8). `design.md` is **not** edited by this stage (other stages edit it
-in parallel); the wiring stage appends these rows to its section 8 and to `spec.cho`'s `extra()`.
+exit codes of `design.md` section 8 (arguments 2, a limit or a parse failure 8). `design.md` was **not** edited by this stage (other stages edited it
+in parallel); the integration registered the four new rows in its section 8 and in `spec.cho`'s `pending()` (not `extra()`: no verb calls the
+library, so no fixture reaches them); the wiring stage moves them to `extra()` and `rules()` with a fixture each. The numeric codes are 201 to 211 (design.md 8.1).
 
 | tag | exit | when | in design.md section 8? |
 |---|---|---|---|
@@ -188,10 +189,10 @@ in parallel); the wiring stage appends these rows to its section 8 and to `spec.
 | `ml.label.not-binary` | 8 | more than two distinct labels where two are needed | yes |
 | `ml.metric.undefined` | 8 | empty input, a constant target for R-squared, a ratio with a zero denominator, a non-finite result | yes |
 | `ml.param.out-of-range` | 2 | `k < 2`, `n_test` or a fraction out of range, a cap below 1 or above its ceiling, a negative repeat | yes |
-| `ml.metric.length-mismatch` | 8 | two arrays of different lengths | **new** |
-| `ml.metric.bad-probability` | 8 | a probability outside `[0, 1]` | **new** |
-| `ml.split.empty-fold` | 8 | `k > n`, or a train/test split that would leave a side empty | **new** |
-| `ml.split.stratum-too-small` | 8 | a class with fewer than `k` rows | **new** |
+| `ml.metric.length-mismatch` | 8 | two arrays of different lengths | yes (registered at integration) |
+| `ml.metric.bad-probability` | 8 | a probability outside `[0, 1]` | yes (registered at integration) |
+| `ml.split.empty-fold` | 8 | `k > n`, or a train/test split that would leave a side empty | yes (registered at integration) |
+| `ml.split.stratum-too-small` | 8 | a class with fewer than `k` rows | yes (registered at integration) |
 
 ## 5. Results
 

@@ -157,8 +157,21 @@ if m:
             fail("spec.cho pending(): %s is a tag no library has" % t)
     # design.md section 8: every library tag has a row with the same exit code, outside code blocks
     sec8 = design.split("## 8. Refusals")[1].split("## 8.1")[0]
+    def row_for(t):
+        """the rows of section 8 that carry the tag: `area.name` in the first cell, or the grouped spelling `area.x` / `name`"""
+        area, name = t.rsplit(".", 1)
+        out = []
+        for l in sec8.splitlines():
+            cells = l.split("|")
+            if not l.startswith("|") or len(cells) < 4:
+                continue
+            first = cells[1]
+            if "`%s`" % t in first or ("`%s`" % name in first and re.search(r"`%s\.[a-z\-]+`" % re.escape(area), first)):
+                out.append(l)
+        return out
+
     for t in sorted(lib_tags):
-        rows = [l for l in sec8.splitlines() if l.startswith("|") and "`%s`" % t in l.split("|")[1:2][0] if len(l.split("|")) > 2]
+        rows = row_for(t)
         exits = {int(l.split("|")[2].strip()) for l in rows if l.split("|")[2].strip().isdigit()}
         if not rows:
             fail("design.md section 8 has no row for the library tag %s" % t)

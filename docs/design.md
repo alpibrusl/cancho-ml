@@ -268,6 +268,27 @@ that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot 
 `ml.linalg.singular` (exit 8: a zero diagonal entry in a triangular solve); `ml.param.threads` (exit 2: a thread count outside
 1..64). The default caps (10,000,000 rows, 4,096 columns, 400,000,000 cells) are provisional and wait for section 9.
 
+*Registered at integration: the tags of the libraries that `ml` does not call yet (`tools/ml/spec.cho` `pending()`; not in `introspect`, the
+schemas or the fixtures until a verb reaches them, when each moves to `extra()` and `rules()` with a fixture). The tags of the libraries
+that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.truncated` and `malformed`, `ml.metric.undefined`,
+`ml.param.out-of-range`) are in the tables above. `ml.limit.fits` of the first list is built by no stage and stays unlisted.*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.tensor.rank` | 8 | a kernel was given a tensor of rank 0 or above 4 | use a tensor of rank 1 to 4 |
+| `ml.tensor.shape` | 8 | an extent below 1, or a reshape of a tensor that is not contiguous | extents of at least 1; reshape only a contiguous tensor to the same element count |
+| `ml.tensor.bounds` | 8 | the offset, shape and strides of a descriptor reach outside the data beside it | keep them inside the data |
+| `ml.linalg.not-positive-definite` | 8 | a Cholesky pivot that is not above 0.0, NaN included | a ridge on the diagonal, or scaling the columns |
+| `ml.linalg.singular` | 8 | a zero on the diagonal of a triangular solve | none |
+| `ml.param.threads` | 2 | a thread count outside 1 to 64, or thread copies of a tree fit over the memory ceiling | a thread count of 1 to 64 |
+| `ml.fit.non-finite` | 8 | a coefficient, a loss or a gain became non-finite during a fit | scale the features, add l2, or fewer iterations |
+| `ml.limit.depth` | 8 | a tree over the depth ceiling (30) | a max-depth of at most 30 |
+| `ml.limit.nodes` | 8 | a forest over the node ceiling | raise --max-nodes, lower the depth or the trees, or raise min-samples-leaf |
+| `ml.metric.length-mismatch` | 8 | two arrays of a metric have different lengths | one prediction per row |
+| `ml.metric.bad-probability` | 8 | a probability outside 0 to 1 | the probability of the positive class |
+| `ml.split.empty-fold` | 8 | k above the number of rows, or a train/test split that leaves a side empty | fewer folds, a smaller test size |
+| `ml.split.stratum-too-small` | 8 | a class with fewer rows than k | fewer folds |
+
 ## 8.1 The numeric codes of the libraries (added at integration)
 
 The libraries answer a refusal as an `int` code (0 is none) and each has a function from code to tag, exit code and repair. Three
