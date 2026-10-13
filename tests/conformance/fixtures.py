@@ -486,7 +486,7 @@ def _tree_cases():
 CASES += _tree_cases()
 
 
-# ------------------------------------------------------------------ categorical steps with a tree or forest (docs/wiring-trees.md section 9, docs/categorical-encoders.md section 6)
+# ------------------------------------------------------------------ categorical steps with a tree or forest (docs/wiring-trees.md section 13, docs/categorical-encoders.md section 6)
 ENCC = ("id,sex,port,age,y\n1,male,S,20,1\n2,female,C,30,0\n3,male,S,40,1\n4,female,Q,50,0\n5,male,S,31,1\n6,female,C,22,0\n"
         "7,male,S,35,1\n8,female,C,44,0\n9,male,Q,28,1\n10,female,S,33,0\n11,male,C,26,1\n12,female,Q,38,0\n")
 ENCM = "id,sex,port,age,y\n1,male,S,,1\n2,female,C,30,0\n3,male,S,40,1\n4,female,Q,50,0\n5,male,S,31,1\n6,female,C,22,0\n7,male,S,35,1\n8,female,C,44,0\n"
@@ -514,7 +514,7 @@ def _enc_tree_cases():
 CASES += _enc_tree_cases()
 
 
-# ------------------------------------------------------------------ a model file that predict could not read is not written (docs/wiring-trees.md section 10)
+# ------------------------------------------------------------------ a model file that predict could not read is not written (docs/wiring-trees.md section 13)
 def _max_bytes_cases():
     return [
         case("limit-input-too-large-fit-forest-file-over-max-bytes", ["fit", "--model", "forest", "--task", "classification", "--trees", "7", "--seed", "3", "--max-bytes", "1000",
