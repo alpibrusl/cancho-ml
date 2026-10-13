@@ -270,7 +270,8 @@ only)**.
    2 KB apart and cannot share a vector register); even with a free order cancho would be 1.8x to 2.0x from numpy. gemv_t, syrk
    and gemm vectorise across independent columns or entries and pay nothing for the rule; in gemv_n the row sum is one chain
    either way. (An alternative order that is SIMD-friendly, lanes inside the block, is a decision for the maintainer: it would
-   change every dot-shaped reduction; see the open questions.)
+   change every dot-shaped reduction; see the open questions.) *(This was written for the previous order. The lane order of section 2
+   was adopted at `v1-lanes`; what it costs in scalar cancho was not measured.)*
 3. **fma is not the reason.** `scripts/c_parity/fma.sh`: the same C allowed to fuse runs between 0.85x and 1.05x of the time
    without (syrk 0.91 and 0.95, gemv_n 0.86, gemv_t 1.05, Cholesky 1.04, dot 0.96).
 4. **The large-d gemv cells are about streaming.** gemv_n at n = 1e6: d = 64 moves 512 MB in 13.0 ms (39 GB/s) against numpy's
@@ -349,7 +350,8 @@ Not a gap (measured): a 2-D slice. Row sub-slices (`xs[i * rs .. i * rs + d]`) d
 
 1. **The reduction order.** The block rule costs the dot product 1.7x (5.3 item 2). An order with lanes inside the block (say 8
    accumulators over adjacent elements, then the block tree) would be SIMD-friendly and equally thread-independent; it changes
-   `dot`, `gemv_n` (rows) and the leaf of `gemm`. Not done, because the rule is the maintainer's.
+   `dot`, `gemv_n` (rows) and the leaf of `gemm`. Not done, because the rule is the maintainer's. **Decided and done at `v1-lanes`:** four
+   lanes (term `i` of a block to lane `i mod 4`), not eight adjacent; section 2 and `docs/lanes.md`. The cost in scalar cancho is unmeasured.
 2. **Which numpy call is "the reference"?** `scipy.linalg.cholesky` (what is written) or the raw wrapper (the library): the
    Cholesky verdict flips at d = 21 and d = 64 (5.2).
 3. **Is MATCH reachable at all?** Not with the current language for dot, axpy, gemv, syrk (5.3); it is for the triangular solves.

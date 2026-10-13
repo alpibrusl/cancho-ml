@@ -409,8 +409,9 @@ until the verbs call the library); the row ceiling of a tree fit is 2^20 (the ex
 the order of every decisive sum, the metrics), the rule tags and the results. The stage did not edit this document; the integration
 registered what it adds: its rule tags in section 8 and 8.1 (codes 201 to 211, `lib/metrics/rules.cho`), its stream kinds in `docs/rng.md`
 (they are 4, 5 and 6 since the integration; the stage had 1, 2 and 3, which the tree and k-means streams also used), and the summation order
-of its sums, which is **not** the one of `docs/linalg.md` section 2 (4 lanes in a block of 256 terms against one chain): section 3.1 says every
-reduction has *a* normative order, each kernel's document names its own, and `docs/integration.md` says where the constant lives. The library
+of its sums, which was **not** the one of `docs/linalg.md` section 2 at the time (4 lanes in a block of 256 terms against one chain): section 3.1 says every
+reduction has *a* normative order, each kernel's document names its own, and `docs/integration.md` says where the constant lives.
+*(Corrected in place at `v1-lanes`, section 17: the two orders are now one, the metrics' rule; `docs/lanes.md`.)* The library
 is not called by the command line yet.
 
 ## 17. `v1-lanes`: one summation order with four lanes (and what it does to bytes)

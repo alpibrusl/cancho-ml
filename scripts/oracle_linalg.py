@@ -320,6 +320,14 @@ SUITE = [
     ("chol", 1, 0), ("chol", 21, 0), ("chol", 64, 0), ("chol", 100, 0), ("chol", 256, 0),
     ("fwd", 21, 0), ("fwd", 64, 0), ("fwd", 256, 0), ("bwd", 21, 0), ("bwd", 64, 0), ("bwd", 256, 0),
     ("gemm", 4, 0), ("gemm", 33, 0), ("gemm", 64, 0), ("gemm", 256, 0), ("gemm", 300, 0),
+    # every residue of the tails: terms mod 4 inside a block and past one (dot), rows n mod 4 with d mod 4 (gemv, syrk), the panel edges 32 and 64 (chol), odd tiles (gemm)
+    ("dot", 3, 0), ("dot", 5, 0), ("dot", 6, 0), ("dot", 7, 0), ("dot", 258, 0), ("dot", 259, 0), ("dot", 1027, 0), ("dot", 512, 0), ("dot", 515, 0),
+    ("gemv_n", 13, 3), ("gemv_n", 14, 5), ("gemv_n", 15, 6), ("gemv_n", 17, 7), ("gemv_n", 9, 255), ("gemv_n", 10, 258), ("gemv_n", 6, 1), ("gemv_n", 15, 3), ("gemv_n", 19, 7), ("gemv_n", 1003, 11), ("gemv_n", 4003, 3), ("gemv_n", 4003, 7),
+    ("gemv_t", 5, 3), ("gemv_t", 6, 5), ("gemv_t", 7, 6), ("gemv_t", 1, 7), ("gemv_t", 258, 3), ("gemv_t", 259, 5), ("gemv_t", 1030, 6),
+    ("syrk", 5, 3), ("syrk", 6, 5), ("syrk", 7, 6), ("syrk", 257, 3), ("syrk", 258, 5), ("syrk", 259, 7), ("syrk", 3, 3), ("syrk", 9, 1),
+    ("chol", 2, 0), ("chol", 3, 0), ("chol", 4, 0), ("chol", 5, 0), ("chol", 6, 0), ("chol", 7, 0), ("chol", 31, 0), ("chol", 32, 0), ("chol", 33, 0),
+    ("chol", 34, 0), ("chol", 35, 0), ("chol", 63, 0), ("chol", 65, 0), ("chol", 129, 0),
+    ("gemm", 2, 0), ("gemm", 3, 0), ("gemm", 5, 0), ("gemm", 6, 0), ("gemm", 7, 0), ("gemm", 9, 0), ("gemm", 31, 0), ("gemm", 65, 0),
 ]
 
 
