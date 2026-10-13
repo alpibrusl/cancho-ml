@@ -54,7 +54,7 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 | boosting, naive Bayes, k-NN | in the plan ([design.md](design.md) section 1), not built |
 | imputation of a missing cell in the constant model | `--model constant` still refuses an empty cell; the pipeline models take it as a missing value |
 | neural networks, GPU | not planned in v1 |
-| the reader as a package dependency | done: six `[dependencies.*]` on the stores of [alpibrusl/cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) (merged), pinned to `202b214` ([reader.md](reader.md) section 1) |
+| the reader as a package dependency | done: five `[dependencies.*]` (`pow5`, `dec`, `flt`, `facc`, `reader`) on the stores of [alpibrusl/cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) (merged), pinned to `202b214` ([reader.md](reader.md) section 1) |
 | a second machine | not done; the bytes are untested across machines |
 | CI | there is no workflow in this repository; `scripts/check.sh` is what one would run and it needs the network for `cancho install` and the sibling clone `../ml-data` |
 

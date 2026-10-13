@@ -112,7 +112,7 @@ blank lines. `nan` and `inf` are `ml.input.non-finite`, and so is a number past 
 reads as zero though it is not zero, or is longer than 1,100 bytes is `ml.input.non-numeric` with the reason in `detail`. A quote closed and
 followed by anything but a comma is `parse.csv-bad-quote`, a quote open at the end `parse.csv-unterminated-quote`.
 
-The modules of cancho-table are **not copied**: they are six `[dependencies.*]` of `cancho.toml` on cancho-table's `.cancho-vcs` stores, pinned to
+The modules of cancho-table are **not copied**: they are five `[dependencies.*]` of `cancho.toml` on cancho-table's `.cancho-vcs` stores, pinned to
 one commit (`docs/reader.md` section 1), fetched by `cancho install` into `build/deps`.
 
 One function, `csv.scan`, reads the file once in bounded memory (one 64 KiB chunk, the record being read up to `--max-line-bytes`, the header,

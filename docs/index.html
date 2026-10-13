@@ -323,7 +323,7 @@ An error is `{code, rule, message, hint, repair, detail}`. Match on `rule`, not 
 
 <section id="start">
   <h2>Quick start</h2>
-  <p class="sub">You need <code>git</code>, Rust, <code>clang</code> and Python 3, and network access for the clones and for <code>cancho install</code>, which fetches the pinned <code>cancho-tools</code> modules and cancho-table&rsquo;s six numeric modules (the stores of <a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a>) into <code>build/deps</code>. Both are <code>[dependencies.*]</code> of <code>cancho.toml</code>, pinned to one commit each (cancho-table: <code>202b214372a0</code>); nothing is cloned or copied. On a 16-core Mac with the compiler already built, <code>cancho build --bin ml</code> took 2.9 seconds once; the compiler build and the clones are extra.</p>
+  <p class="sub">You need <code>git</code>, Rust, <code>clang</code> and Python 3, and network access for the clones and for <code>cancho install</code>, which fetches the pinned <code>cancho-tools</code> modules and cancho-table&rsquo;s five numeric modules (the stores of <a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a>) into <code>build/deps</code>. Both are <code>[dependencies.*]</code> of <code>cancho.toml</code>, pinned to one commit each (cancho-table: <code>202b214372a0</code>); nothing is cloned or copied. On a 16-core Mac with the compiler already built, <code>cancho build --bin ml</code> took 2.9 seconds once; the compiler build and the clones are extra.</p>
   <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/cancho
 git clone https://github.com/alpibrusl/cancho-ml &amp;&amp; cd cancho-ml
 REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
