@@ -1,0 +1,730 @@
+module pipeline.plan;
+
+import std.buffer;
+import std.bytes;
+import ml.csvcell;
+import flt;
+import transforms.rules;
+import transforms.fit;
+
+// The plan text (docs/pipeline.md section 2): parse, check and write the canonical form. One step per line, `verb key=value ...`, then one
+// `model` line. Input may have blanks, CRLF, blank lines, `#` comments and the keys in any order; the canonical form has one space between
+// tokens, an LF after every line, the keys in the order of the tables below, every default written, numbers in one spelling and the column
+// list sorted. Floats are read by ml.csvcell (cancho-table's reader, pinned) and written by flt.put_float: there is no float parser here.
+// Every refusal is a Fault of transforms.rules with the line and column (1-based; for ml.limit.plan: a = which limit).
+//
+// THE GRAMMAR IS A TABLE: defs_of() below. A def is `name:type:rule` or `name:type:rule@cond`: type `cols`, `enum=a,b,c`, `int=lo,hi`, `float`,
+// `fnn` (a finite float >= 0); rule `req` (required), `opt` (omitted when absent) or `=text` (the default); `@key=value` makes the key legal only when
+// the earlier key has that value (it is then required or defaulted as the rule says; otherwise a present key is ml.plan.bad-value). The model
+// lines' keys are PROVISIONAL (the wiring stage owns them when it plugs the estimators); the four step verbs are final.
+
+pub fn max_bytes() -> [] int {
+    return 65536;
+}
+
+pub fn max_lines() -> [] int {
+    return 64;
+}
+
+pub fn max_names() -> [] int {
+    return 4096;
+}
+
+pub fn max_name_bytes() -> [] int {
+    return 255;
+}
+
+pub fn max_tokens() -> [] int {
+    return 17;
+}
+
+fn defs_of[&s](verb: &s [byte]) -> [] &static [byte] {
+    if bytes.equal(verb, "impute") {
+        return "column:cols:req strategy:enum=mean,median,constant:req value:float:req@strategy=constant";
+    }
+    if bytes.equal(verb, "scale") {
+        return "column:cols:req kind:enum=minmax,standard:req ddof:int=0,1:=0@kind=standard";
+    }
+    if bytes.equal(verb, "encode") {
+        return "column:cols:req kind:enum=onehot,label:req max-categories:int=1,1024:=64 unknown:enum=ignore,refuse:=ignore";
+    }
+    if bytes.equal(verb, "bucket") {
+        return "column:cols:req kind:enum=width,quantile:req bins:int=2,256:req";
+    }
+    if bytes.equal(verb, "model") {
+        return "kind:enum=constant,linear,logistic,kmeans,tree,forest:req";
+    }
+    if bytes.equal(verb, "model:constant") {
+        return "task:enum=regression,classification:req";
+    }
+    if bytes.equal(verb, "model:linear") {
+        return "l2:fnn:=0.0";
+    }
+    if bytes.equal(verb, "model:logistic") {
+        return "iterations:int=1,1000:=100 l2:fnn:=0.0";
+    }
+    if bytes.equal(verb, "model:kmeans") {
+        return "k:int=1,1024:req iterations:int=1,1000:=10";
+    }
+    if bytes.equal(verb, "model:tree") {
+        return "task:enum=classification,regression:req max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
+    }
+    if bytes.equal(verb, "model:forest") {
+        return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
+    }
+    return "";
+}
+
+// ---------------------------------------------------------------- the plan
+
+// the parsed plan: the canonical text, and per step line 8 ints [kind, a, b, column text from, to, line from, line to, names listed (-1 for *)]
+// (see transforms.fit.Spec) and its value
+pub res struct Plan {
+    text: buffer.Buffer,
+    specs: Box[[int]],
+    vals: Box[[float]],
+    nsteps: int,
+    model_from: int,
+    model_to: int,
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Plan {
+    return Plan { text: buffer.empty(heap, 1), specs: box_slice(heap, 8, 0), vals: box_slice(heap, 1, 0.0), nsteps: 0, model_from: 0, model_to: 0 };
+}
+
+pub fn drop[&h](heap: &!h Heap, p: Plan) -> [heap] int {
+    let Plan { text, specs, vals, nsteps, model_from, model_to } = p;
+    buffer.drop(heap, text);
+    unbox_slice(heap, specs);
+    unbox_slice(heap, vals);
+    return nsteps;
+}
+
+pub fn steps[&p](p: &p Plan) -> [] int {
+    return p.nsteps;
+}
+
+pub fn text[&p](p: &p Plan) -> [] &p [byte] {
+    return buffer.bytes(p.text);
+}
+
+// the model line without its LF
+pub fn model_line[&p](p: &p Plan) -> [] &p [byte] {
+    return buffer.bytes(p.text)[p.model_from..p.model_to];
+}
+
+// the column selector of step i (0-based) as written in the canonical text: `*` or the sorted names
+pub fn columns[&p](p: &p Plan, i: int) -> [] &p [byte] {
+    let s = contents(p.specs);
+    return buffer.bytes(p.text)[s[8 * i + 3]..s[8 * i + 4]];
+}
+
+pub fn all_columns[&p](p: &p Plan, i: int) -> [] bool {
+    return contents(p.specs)[8 * i + 7] < 0;
+}
+
+// the line (1-based, of the input) that step i came from
+pub fn line_of[&p](p: &p Plan, i: int) -> [] int {
+    return contents(p.specs)[8 * i + 5];
+}
+
+pub fn spec_of[&p](p: &p Plan, i: int) -> [] fit.Spec {
+    let s = contents(p.specs);
+    return fit.Spec { kind: s[8 * i], a: s[8 * i + 1], b: s[8 * i + 2], value: contents(p.vals)[i] };
+}
+
+// the step kind (kinds.cho) of step i
+pub fn kind_of[&p](p: &p Plan, i: int) -> [] int {
+    return contents(p.specs)[8 * i];
+}
+
+// ---------------------------------------------------------------- the def strings
+
+// the end of the piece of d[from .. end) that stops at the first `ch`, or end
+fn until[&d](d: &d [byte], from: int, end: int, ch: int) -> [] int {
+    var i = from;
+    while i < end && int_of(d[i]) != ch {
+        i = i + 1;
+    }
+    return i;
+}
+
+// the start and end of def number i of a def string, or (len, len) when there are fewer
+fn def_range[&d](d: &d [byte], i: int) -> [] (int, int) {
+    var s = 0;
+    var k = 0;
+    while s < len(d) {
+        let e = until(d, s, len(d), ' ');
+        if k == i {
+            return (s, e);
+        }
+        k = k + 1;
+        s = e + 1;
+    }
+    return (len(d), len(d));
+}
+
+fn def_count[&d](d: &d [byte]) -> [] int {
+    if len(d) == 0 {
+        return 0;
+    }
+    return bytes.count_byte(d, ' ') + 1;
+}
+
+// ---------------------------------------------------------------- values
+
+fn is_print(c: int) -> [] bool {
+    return c >= 33 && c <= 126;
+}
+
+fn is_blank(c: int) -> [] bool {
+    return c == ' ' || c == '\t';
+}
+
+// (out, code, which limit or offset of the fault inside the value, number of names)
+fn norm_cols[&h, &v](heap: &!h Heap, v: &v [byte], out: buffer.Buffer) -> [heap] (buffer.Buffer, int, int, int) {
+    if len(v) == 1 && int_of(v[0]) == '*' {
+        return (buffer.append(heap, out, "*"), 0, 0, 0 - 1);
+    }
+    let n = bytes.count_byte(v, ',') + 1;
+    if n > max_names() {
+        return (out, rules.plan_limit(), 3, 0);
+    }
+    let st = box_slice(heap, 2 * n, 0);
+    let ix = box_slice(heap, n, 0);
+    var code = 0;
+    var at = 0;
+    var sw = st;
+    var iw = ix;
+    borrow mut sw as &!s in {
+        borrow mut iw as &!x in {
+            var k = 0;
+            var ps = 0;
+            var i = 0;
+            while i <= len(v) && code == 0 {
+                if i == len(v) || int_of(v[i]) == ',' {
+                    if i == ps {
+                        code = rules.plan_bad_value();
+                        at = ps;
+                    } else if i - ps > max_name_bytes() {
+                        code = rules.plan_limit();
+                        at = 4;
+                    }
+                    contents(s)[2 * k] = ps;
+                    contents(s)[2 * k + 1] = i;
+                    contents(x)[k] = k;
+                    k = k + 1;
+                    ps = i + 1;
+                } else {
+                    let c = int_of(v[i]);
+                    if !is_print(c) || c == '=' || c == '#' || c == '*' {
+                        code = rules.plan_bad_value();
+                        at = i;
+                    }
+                }
+                i = i + 1;
+            }
+            // insertion sort of the pieces, bytewise ascending
+            if code == 0 {
+                var a = 1;
+                while a < n {
+                    let key = contents(x)[a];
+                    var b = a - 1;
+                    while b >= 0 && bytes.compare(v[contents(s)[2 * contents(x)[b]]..contents(s)[2 * contents(x)[b] + 1]], v[contents(s)[2 * key]..contents(s)[2 * key + 1]]) > 0 {
+                        contents(x)[b + 1] = contents(x)[b];
+                        b = b - 1;
+                    }
+                    contents(x)[b + 1] = key;
+                    a = a + 1;
+                }
+                a = 1;
+                while a < n && code == 0 {
+                    let p = contents(x)[a - 1];
+                    let q = contents(x)[a];
+                    if bytes.equal(v[contents(s)[2 * p]..contents(s)[2 * p + 1]], v[contents(s)[2 * q]..contents(s)[2 * q + 1]]) {
+                        code = rules.plan_bad_value();
+                        at = contents(s)[2 * q];
+                        if contents(s)[2 * p] > at {
+                            at = contents(s)[2 * p];
+                        }
+                    }
+                    a = a + 1;
+                }
+            }
+        }
+    }
+    var o = out;
+    if code == 0 {
+        borrow sw as &s in {
+            borrow iw as &x in {
+                var a = 0;
+                while a < n {
+                    if a > 0 {
+                        o = buffer.push(heap, o, byte_of(','));
+                    }
+                    let p = contents(x)[a];
+                    o = buffer.append(heap, o, v[contents(s)[2 * p]..contents(s)[2 * p + 1]]);
+                    a = a + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, sw);
+    unbox_slice(heap, iw);
+    return (o, code, at, n);
+}
+
+// the options of `enum=a,b,c` against v: the index or -1
+fn enum_index[&t, &v](ty: &t [byte], v: &v [byte]) -> [] int {
+    var s = 5;
+    var k = 0;
+    while s <= len(ty) {
+        let e = until(ty, s, len(ty), ',');
+        if bytes.equal(ty[s..e], v) {
+            return k;
+        }
+        k = k + 1;
+        s = e + 1;
+    }
+    return 0 - 1;
+}
+
+// (out, code, int value, float value, offset of the fault in v)
+fn norm_value[&h, &t, &v](heap: &!h Heap, ty: &t [byte], v: &v [byte], out: buffer.Buffer) -> [heap] (buffer.Buffer, int, int, float, int) {
+    if bytes.starts_with(ty, "enum=") {
+        let ix = enum_index(ty, v);
+        if ix < 0 {
+            return (out, rules.plan_bad_value(), 0, 0.0, 0);
+        }
+        return (buffer.append(heap, out, v), 0, ix, 0.0, 0);
+    }
+    if bytes.starts_with(ty, "int=") {
+        if len(v) < 1 || len(v) > 9 {
+            return (out, rules.plan_bad_value(), 0, 0.0, 0);
+        }
+        var n = 0;
+        var i = 0;
+        while i < len(v) {
+            let c = int_of(v[i]);
+            if c < '0' || c > '9' {
+                return (out, rules.plan_bad_value(), 0, 0.0, i);
+            }
+            n = n * 10 + (c - '0');
+            i = i + 1;
+        }
+        let comma = until(ty, 4, len(ty), ',');
+        var lo = 0;
+        var hi = 0;
+        i = 4;
+        while i < comma {
+            lo = lo * 10 + (int_of(ty[i]) - '0');
+            i = i + 1;
+        }
+        i = comma + 1;
+        while i < len(ty) {
+            hi = hi * 10 + (int_of(ty[i]) - '0');
+            i = i + 1;
+        }
+        if n < lo || n > hi {
+            return (out, rules.out_of_range(), n, 0.0, 0);
+        }
+        return (buffer.push_nat(heap, out, n), 0, n, 0.0, 0);
+    }
+    // float or fnn
+    let (st, kind, m, frac, idig, key) = csvcell.read(v);
+    if st != 0 {
+        return (out, rules.plan_bad_value(), 0, 0.0, 0);
+    }
+    let x = csvcell.double(kind, m, frac, key);
+    if bytes.equal(ty, "fnn") && x < 0.0 {
+        return (out, rules.plan_bad_value(), 0, 0.0, 0);
+    }
+    return (flt.put_float(heap, out, csvcell.key_of(kind, m, frac, key)), 0, 0, x, 0);
+}
+
+// ---------------------------------------------------------------- one line
+
+// tokens of src[ls .. le) into tk (token t at 4t: key start, key end, value start, value end; token 0 is the verb); (count, Fault)
+fn tokenize[&s, &k](src: &s [byte], ls: int, le: int, line_no: int, tk: &!k [int]) -> [] (int, rules.Fault) {
+    var n = 0;
+    var i = ls;
+    while i < le {
+        if is_blank(int_of(src[i])) {
+            i = i + 1;
+        } else {
+            let ts = i;
+            while i < le && !is_blank(int_of(src[i])) {
+                if !is_print(int_of(src[i])) {
+                    return (0, rules.fault(rules.plan_syntax(), line_no, i - ls + 1, 0));
+                }
+                i = i + 1;
+            }
+            if n >= max_tokens() {
+                return (0, rules.fault(rules.plan_syntax(), line_no, ts - ls + 1, 0));
+            }
+            let eq = until(src, ts, i, '=');
+            if n == 0 {
+                if eq < i {
+                    return (0, rules.fault(rules.plan_syntax(), line_no, eq - ls + 1, 0));
+                }
+                tk[0] = ts;
+                tk[1] = i;
+                tk[2] = i;
+                tk[3] = i;
+            } else {
+                if eq == i || eq == ts || eq + 1 == i || until(src, eq + 1, i, '=') < i {
+                    return (0, rules.fault(rules.plan_syntax(), line_no, ts - ls + 1, 0));
+                }
+                tk[4 * n] = ts;
+                tk[4 * n + 1] = eq;
+                tk[4 * n + 2] = eq + 1;
+                tk[4 * n + 3] = i;
+            }
+            n = n + 1;
+        }
+    }
+    return (n, rules.none());
+}
+
+// the token (1 ..< ntok) whose key is `name`, searching from token `from`; 0 if none
+fn find_token[&s, &k, &n](src: &s [byte], tk: &k [int], ntok: int, from: int, name: &n [byte]) -> [] int {
+    var t = from;
+    while t < ntok {
+        if bytes.equal(src[tk[4 * t]..tk[4 * t + 1]], name) {
+            return t;
+        }
+        t = t + 1;
+    }
+    return 0;
+}
+
+// Write the canonical keys of one def string. d0 is the index of its first def in ws (4 ints a def: int value, canonical value start, end, present)
+// and fv. Every key of the line must belong to one of the line's def strings (checked before).
+fn emit[&h, &s, &k, &w, &f](heap: &!h Heap, src: &s [byte], line_no: int, ls: int, defs: &static [byte], tk: &k [int], ntok: int, ws: &!w [int], fv: &!f [float], d0: int, text: buffer.Buffer) -> [heap] (buffer.Buffer, rules.Fault) {
+    var o = text;
+    let nd = def_count(defs);
+    var i = 0;
+    while i < nd {
+        let (ds, de) = def_range(defs, i);
+        let c1 = until(defs, ds, de, ':');
+        let c2 = until(defs, c1 + 1, de, ':');
+        let name = defs[ds..c1];
+        let ty = defs[c1 + 1..c2];
+        let at = until(defs, c2 + 1, de, '@');
+        let rule = defs[c2 + 1..at];
+        let t = find_token(src, tk, ntok, 1, name);
+        if t > 0 {
+            let t2 = find_token(src, tk, ntok, t + 1, name);
+            if t2 > 0 {
+                return (o, rules.fault(rules.plan_duplicate_key(), line_no, tk[4 * t2] - ls + 1, 0));
+            }
+        }
+        var allowed = true;
+        if at < de {
+            let eq = until(defs, at + 1, de, '=');
+            let cname = defs[at + 1..eq];
+            let cval = defs[eq + 1..de];
+            allowed = false;
+            var j = 0;
+            while j < i {
+                let (js, je) = def_range(defs, j);
+                let jc = until(defs, js, je, ':');
+                if bytes.equal(defs[js..jc], cname) && ws[4 * (d0 + j) + 3] == 1 {
+                    borrow o as &orr in {
+                        allowed = bytes.equal(buffer.bytes(orr)[ws[4 * (d0 + j) + 1]..ws[4 * (d0 + j) + 2]], cval);
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        ws[4 * (d0 + i) + 3] = 0;
+        if !allowed {
+            if t > 0 {
+                return (o, rules.fault(rules.plan_bad_value(), line_no, tk[4 * t + 2] - ls + 1, 0));
+            }
+        } else if t == 0 && bytes.equal(rule, "req") {
+            return (o, rules.fault(rules.plan_missing_key(), line_no, tk[0] - ls + 1, 0));
+        } else if t > 0 || int_of(rule[0]) == '=' {
+            o = buffer.push(heap, o, byte_of(' '));
+            o = buffer.append(heap, o, name);
+            o = buffer.push(heap, o, byte_of('='));
+            var vs0 = 0;
+            borrow o as &orr in {
+                vs0 = buffer.size(orr);
+            }
+            var code = 0;
+            var iv = 0;
+            var fx = 0.0;
+            var off = 0;
+            if t > 0 && bytes.equal(ty, "cols") {
+                let (o2, c, a2, n) = norm_cols(heap, src[tk[4 * t + 2]..tk[4 * t + 3]], o);
+                o = o2;
+                code = c;
+                off = a2;
+                iv = n;
+            } else if t > 0 {
+                let (o2, c, i2, f2, a2) = norm_value(heap, ty, src[tk[4 * t + 2]..tk[4 * t + 3]], o);
+                o = o2;
+                code = c;
+                iv = i2;
+                fx = f2;
+                off = a2;
+            } else {
+                let (o2, c, i2, f2, a2) = norm_value(heap, ty, defs[c2 + 2..at], o);
+                o = o2;
+                code = c;
+                iv = i2;
+                fx = f2;
+            }
+            if code == rules.plan_limit() {
+                return (o, rules.fault(code, off, 0, 0));
+            }
+            if code != 0 {
+                return (o, rules.fault(code, line_no, tk[4 * t + 2] - ls + 1 + off, 0));
+            }
+            var ve0 = 0;
+            borrow o as &orr in {
+                ve0 = buffer.size(orr);
+            }
+            ws[4 * (d0 + i)] = iv;
+            ws[4 * (d0 + i) + 1] = vs0;
+            ws[4 * (d0 + i) + 2] = ve0;
+            ws[4 * (d0 + i) + 3] = 1;
+            fv[d0 + i] = fx;
+        }
+        i = i + 1;
+    }
+    return (o, rules.none());
+}
+
+// the defs of a model kind by its name in v, or "" when there is no such kind
+fn model_defs[&v](v: &v [byte]) -> [] &static [byte] {
+    if bytes.equal(v, "constant") {
+        return defs_of("model:constant");
+    }
+    if bytes.equal(v, "linear") {
+        return defs_of("model:linear");
+    }
+    if bytes.equal(v, "logistic") {
+        return defs_of("model:logistic");
+    }
+    if bytes.equal(v, "kmeans") {
+        return defs_of("model:kmeans");
+    }
+    if bytes.equal(v, "tree") {
+        return defs_of("model:tree");
+    }
+    if bytes.equal(v, "forest") {
+        return defs_of("model:forest");
+    }
+    return "";
+}
+
+// is `key` a key of the def string
+fn has_key[&n](defs: &static [byte], key: &n [byte]) -> [] bool {
+    let nd = def_count(defs);
+    var i = 0;
+    while i < nd {
+        let (ds, de) = def_range(defs, i);
+        if bytes.equal(defs[ds..until(defs, ds, de, ':')], key) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// one content line src[ls .. le): (text with the canonical line added, Fault, 1 for the model line else 0). A step line also fills
+// specs[8 n ..] and vals[n] (n = nsteps).
+fn do_line[&h, &s, &k, &w, &f, &sp, &v](heap: &!h Heap, src: &s [byte], ls: int, le: int, line_no: int, tk: &!k [int], ws: &!w [int], fv: &!f [float], text: buffer.Buffer, specs: &!sp [int], vals: &!v [float], nsteps: int) -> [heap] (buffer.Buffer, rules.Fault, int) {
+    let (ntok, tf) = tokenize(src, ls, le, line_no, tk);
+    if tf.code != 0 {
+        return (text, tf, 0);
+    }
+    let verb = src[tk[0]..tk[1]];
+    let vcol = tk[0] - ls + 1;
+    let defs1 = defs_of(verb);
+    if len(defs1) == 0 || bytes.count_byte(verb, ':') > 0 {
+        return (text, rules.fault(rules.plan_unknown_step(), line_no, vcol, 0), 0);
+    }
+    let is_model = bytes.equal(verb, "model");
+    var defs2 = "";
+    if is_model {
+        let kt = find_token(src, tk, ntok, 1, "kind");
+        if kt == 0 {
+            return (text, rules.fault(rules.plan_missing_key(), line_no, vcol, 0), 1);
+        }
+        defs2 = model_defs(src[tk[4 * kt + 2]..tk[4 * kt + 3]]);
+        if len(defs2) == 0 {
+            return (text, rules.fault(rules.plan_bad_value(), line_no, tk[4 * kt + 2] - ls + 1, 0), 1);
+        }
+    }
+    var t = 1;
+    while t < ntok {
+        let key = src[tk[4 * t]..tk[4 * t + 1]];
+        if !has_key(defs1, key) && !has_key(defs2, key) {
+            return (text, rules.fault(rules.plan_unknown_key(), line_no, tk[4 * t] - ls + 1, 0), is_model_flag(is_model));
+        }
+        t = t + 1;
+    }
+    var o = buffer.append(heap, text, verb);
+    let (o1, f1) = emit(heap, src, line_no, ls, defs1, tk, ntok, ws, fv, 0, o);
+    o = o1;
+    if f1.code != 0 {
+        return (o, f1, is_model_flag(is_model));
+    }
+    if is_model {
+        let (o2, f2) = emit(heap, src, line_no, ls, defs2, tk, ntok, ws, fv, def_count(defs1), o);
+        o = o2;
+        if f2.code != 0 {
+            return (o, f2, 1);
+        }
+        return (buffer.push(heap, o, byte_of('\n')), rules.none(), 1);
+    }
+    o = buffer.push(heap, o, byte_of('\n'));
+    // the spec of the step
+    var kind = 0;
+    var a = 0;
+    var b = 0;
+    var value = 0.0;
+    if bytes.equal(verb, "impute") {
+        kind = 1;
+        a = ws[4];
+        value = fv[2];
+    } else if bytes.equal(verb, "scale") {
+        kind = 2 + ws[4];
+        if kind == 3 {
+            a = ws[8];
+        }
+    } else if bytes.equal(verb, "encode") {
+        kind = 4 + ws[4];
+        a = ws[12];
+        b = ws[8];
+    } else {
+        kind = 6;
+        a = ws[4];
+        b = ws[8];
+    }
+    specs[8 * nsteps] = kind;
+    specs[8 * nsteps + 1] = a;
+    specs[8 * nsteps + 2] = b;
+    specs[8 * nsteps + 3] = ws[1];
+    specs[8 * nsteps + 4] = ws[2];
+    specs[8 * nsteps + 5] = line_no;
+    specs[8 * nsteps + 6] = 0;
+    specs[8 * nsteps + 7] = ws[0];
+    vals[nsteps] = value;
+    return (o, rules.none(), 0);
+}
+
+fn is_model_flag(b: bool) -> [] int {
+    if b {
+        return 1;
+    }
+    return 0;
+}
+
+// the lines of src: (text, number of steps, model line from, to, Fault)
+fn parse_lines[&h, &s, &k, &w, &f, &sp, &v](heap: &!h Heap, src: &s [byte], tk: &!k [int], ws: &!w [int], fv: &!f [float], specs: &!sp [int], vals: &!v [float]) -> [heap] (buffer.Buffer, int, int, int, rules.Fault) {
+    var text = buffer.empty(heap, len(src) + 64);
+    var nsteps = 0;
+    var mfrom = 0;
+    var mto = 0;
+    var model_seen = false;
+    var lines = 0;
+    var line_no = 0;
+    var pos = 0;
+    while pos < len(src) {
+        let e = until(src, pos, len(src), '\n');
+        var le = e;
+        if le > pos && int_of(src[le - 1]) == '\r' {
+            le = le - 1;
+        }
+        line_no = line_no + 1;
+        var first = pos;
+        while first < le && is_blank(int_of(src[first])) {
+            first = first + 1;
+        }
+        if first < le && int_of(src[first]) != '#' {
+            lines = lines + 1;
+            if lines > max_lines() {
+                return (text, nsteps, mfrom, mto, rules.fault(rules.plan_limit(), 2, line_no, 0));
+            }
+            if model_seen {
+                return (text, nsteps, mfrom, mto, rules.fault(rules.plan_model_line(), line_no, first - pos + 1, 0));
+            }
+            var before = 0;
+            borrow text as &tr in {
+                before = buffer.size(tr);
+            }
+            let (t2, f2, ism) = do_line(heap, src, pos, le, line_no, tk, ws, fv, text, specs, vals, nsteps);
+            text = t2;
+            if f2.code != 0 {
+                return (text, nsteps, mfrom, mto, f2);
+            }
+            if ism == 1 {
+                model_seen = true;
+                mfrom = before;
+                borrow text as &tr in {
+                    mto = buffer.size(tr) - 1;
+                }
+            } else {
+                nsteps = nsteps + 1;
+            }
+        }
+        pos = e + 1;
+    }
+    if !model_seen {
+        return (text, nsteps, mfrom, mto, rules.fault(rules.plan_model_line(), line_no + 1, 1, 0));
+    }
+    return (text, nsteps, mfrom, mto, rules.none());
+}
+
+// Parse and canonicalise a plan. (Plan, Fault); the Plan is empty when the Fault is not.
+pub fn parse[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] (Plan, rules.Fault) {
+    if len(src) > max_bytes() {
+        return (empty(heap), rules.fault(rules.plan_limit(), 1, 0, 0));
+    }
+    let tk = box_slice(heap, 4 * max_tokens(), 0);
+    let ws = box_slice(heap, 64, 0);
+    let fv = box_slice(heap, 16, 0.0);
+    let specs = box_slice(heap, 8 * max_lines(), 0);
+    let vals = box_slice(heap, max_lines(), 0.0);
+    var tkw = tk;
+    var wsw = ws;
+    var fvw = fv;
+    var spw = specs;
+    var vaw = vals;
+    var text = buffer.empty(heap, 1);
+    var nsteps = 0;
+    var mfrom = 0;
+    var mto = 0;
+    var fault = rules.none();
+    borrow mut tkw as &!a in {
+        borrow mut wsw as &!b in {
+            borrow mut fvw as &!c in {
+                borrow mut spw as &!d in {
+                    borrow mut vaw as &!e in {
+                        buffer.drop(heap, text);
+                        let (t2, n2, f2, t3, fl) = parse_lines(heap, src, contents(a), contents(b), contents(c), contents(d), contents(e));
+                        text = t2;
+                        nsteps = n2;
+                        mfrom = f2;
+                        mto = t3;
+                        fault = fl;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, tkw);
+    unbox_slice(heap, wsw);
+    unbox_slice(heap, fvw);
+    if fault.code != 0 {
+        buffer.drop(heap, text);
+        unbox_slice(heap, spw);
+        unbox_slice(heap, vaw);
+        return (empty(heap), fault);
+    }
+    return (Plan { text: text, specs: spw, vals: vaw, nsteps: nsteps, model_from: mfrom, model_to: mto }, rules.none());
+}
