@@ -1,0 +1,437 @@
+// pipe-check: runs the transforms and the pipeline on data given on the command line and prints the result as bits (docs/transforms.md, docs/pipeline.md).
+// The gates (scripts/oracle_pipe.py, scripts/gate_pipe.py) call it; nothing here is the product.
+//
+//   pipe-check plan TEXT                         the canonical plan, or `refused TAG LINE COL`
+//   pipe-check sums CENTER V1,V2,...             `total HEX` and `sqdev HEX`: transforms.dsum on the values (the order of the package)
+//   pipe-check run PLAN NAMES TRAIN TEST         fit on TRAIN, apply to TEST: steps hex, names, both matrices as bits, the unknown count
+//   pipe-check file PLAN NAMES TRAIN             fit on TRAIN and write the model file (a stand-in estimator: kind 1), hex
+//   pipe-check predict HEXFILE TEST              decode the file, apply its stored steps to TEST
+//   pipe-check align NAMES TYPES GIVEN GTYPES    the schema `y,NAMES` (floats unless TYPES, one digit a column) against an input
+//
+// A matrix is `r0c0,r0c1;r1c0,r1c1` (rows by `;`, cells by `,`, `?` missing; numbers are read by ml.csvcell). A cell is printed as 16 hex digits of
+// its bits, `?` when missing. stdout, one record per line; `refused TAG A B C` ends a run with the toolbox exit code of the tag.
+edition 5;
+
+import std.io;
+import std.buffer;
+import std.bytes;
+import ml.matrix;
+import transforms.codes;
+import transforms.dsum;
+import pipeline.plan;
+import pipeline.names;
+import pipeline.schema;
+import pipeline.run;
+import pipeline.file;
+import pt;
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    return bytes.equal(x, y);
+}
+
+fn hex16[&i](io: &!i Io, bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            putchar(io, '0' + nib);
+        } else {
+            putchar(io, 'a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn hex_bytes[&i, &s](io: &!i Io, b: &s [byte]) -> [io_write] int {
+    var k = 0;
+    while k < len(b) {
+        let v = int_of(b[k]);
+        let hi = v >> 4 & 15;
+        let lo = v & 15;
+        if hi < 10 {
+            putchar(io, '0' + hi);
+        } else {
+            putchar(io, 'a' + hi - 10);
+        }
+        if lo < 10 {
+            putchar(io, '0' + lo);
+        } else {
+            putchar(io, 'a' + lo - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn refuse_line[&i](io: &!i Io, f: codes.Fault) -> [io_write] int {
+    io.write_all(io, "refused ");
+    io.write_all(io, codes.tag(f.code));
+    io.write_all(io, " ");
+    io.print_int(io, f.a);
+    io.write_all(io, " ");
+    io.print_int(io, f.b);
+    io.write_all(io, " ");
+    io.print_int(io, f.c);
+    io.newline(io);
+    return codes.exit_code(f.code);
+}
+
+fn print_matrix[&i, &m](io: &!i Io, label: &static [byte], x: &m matrix.Matrix) -> [io_write] int {
+    io.write_all(io, label);
+    io.write_all(io, " ");
+    io.print_int(io, matrix.rows(x));
+    io.write_all(io, " ");
+    io.print_int(io, matrix.cols(x));
+    io.newline(io);
+    var r = 0;
+    while r < matrix.rows(x) {
+        var c = 0;
+        while c < matrix.cols(x) {
+            if c > 0 {
+                io.write_all(io, " ");
+            }
+            if matrix.is_missing(x, r, c) {
+                io.write_all(io, "?");
+            } else {
+                hex16(io, bits_of(matrix.value(x, r, c)));
+            }
+            c = c + 1;
+        }
+        io.newline(io);
+        r = r + 1;
+    }
+    return 0;
+}
+
+fn print_names[&i, &n](io: &!i Io, nm: &n names.Names) -> [io_write] int {
+    io.write_all(io, "names");
+    var k = 0;
+    while k < names.count(nm) {
+        io.write_all(io, " ");
+        io.write_all(io, names.name(nm, k));
+        k = k + 1;
+    }
+    io.newline(io);
+    return 0;
+}
+
+// the values of a comma separated list of numbers
+fn floats_of[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[float]], int) {
+    let n = pt.count_byte(t, ',') + 1;
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!w in {
+        var from = 0;
+        var k = 0;
+        var i = 0;
+        while i <= len(t) {
+            if i == len(t) || int_of(t[i]) == ',' {
+                contents(w)[k] = pt.num(t[from..i]);
+                k = k + 1;
+                from = i + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return (o, n);
+}
+
+fn run_sums[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let center = pt.num(arg(g, 2));
+    let (v, n) = floats_of(heap, arg(g, 3));
+    borrow v as &vr in {
+        io.write_all(io, "total ");
+        hex16(io, bits_of(dsum.total(heap, contents(vr), n)));
+        io.newline(io);
+        io.write_all(io, "sqdev ");
+        hex16(io, bits_of(dsum.sq_dev(heap, contents(vr), center, n)));
+        io.newline(io);
+    }
+    unbox_slice(heap, v);
+    return 0;
+}
+
+fn run_plan[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (p, f) = plan.parse(heap, arg(g, 2));
+    var code = 0;
+    if f.code != 0 {
+        code = refuse_line(io, f);
+    } else {
+        borrow p as &pr in {
+            io.write_all(io, "plan\n");
+            io.write_all(io, plan.text(pr));
+            io.write_all(io, "end\n");
+        }
+    }
+    plan.drop(heap, p);
+    return code;
+}
+
+fn run_run[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (p, pf) = plan.parse(heap, arg(g, 2));
+    if pf.code != 0 {
+        plan.drop(heap, p);
+        return refuse_line(io, pf);
+    }
+    let nm = names.from_list(heap, arg(g, 3));
+    let x = pt.mat(heap, arg(g, 4));
+    let t = pt.mat(heap, arg(g, 5));
+    var code = 0;
+    borrow p as &pr in {
+        borrow nm as &nr in {
+            borrow x as &xr in {
+                let (fd, y, f) = run.fit(heap, pr, nr, xr, 1000000, 8192, 400000000);
+                if f.code != 0 {
+                    code = refuse_line(io, f);
+                } else {
+                    borrow fd as &fr in {
+                        io.write_all(io, "steps ");
+                        hex_bytes(io, buffer.bytes(fr.payload));
+                        io.newline(io);
+                        print_names(io, fr.nm);
+                        borrow y as &yr in {
+                            print_matrix(io, "train", yr);
+                        }
+                        borrow t as &tr in {
+                            let (z, u, f2) = run.apply_steps(heap, buffer.bytes(fr.payload), tr, 1000000, 8192, 400000000);
+                            if f2.code != 0 {
+                                io.write_all(io, "test ");
+                                code = refuse_line(io, f2);
+                            } else {
+                                borrow z as &zr in {
+                                    print_matrix(io, "test", zr);
+                                }
+                                io.write_all(io, "unknown ");
+                                io.print_int(io, u);
+                                io.newline(io);
+                            }
+                            matrix.drop(heap, z);
+                        }
+                    }
+                }
+                run.drop_fitted(heap, fd);
+                matrix.drop(heap, y);
+            }
+        }
+    }
+    matrix.drop(heap, x);
+    matrix.drop(heap, t);
+    names.drop(heap, nm);
+    plan.drop(heap, p);
+    return code;
+}
+
+// the schema of target y and the features nm (floats unless `types` says another digit a column)
+fn schema_of[&h, &n, &s](heap: &!h Heap, nm: &n names.Names, types: &s [byte]) -> [heap] schema.Schema {
+    var all = names.from_list(heap, "y");
+    var i = 0;
+    while i < names.count(nm) {
+        all = names.add(heap, all, names.name(nm, i));
+        i = i + 1;
+    }
+    let ty = box_slice(heap, 2 * (names.count(nm) + 1), 0);
+    var tw = ty;
+    borrow mut tw as &!w in {
+        contents(w)[0] = 2;
+        var j = 0;
+        while j < names.count(nm) {
+            var t = 2;
+            if j < len(types) {
+                t = int_of(types[j]) - '0';
+            }
+            contents(w)[2 * (j + 1)] = t;
+            j = j + 1;
+        }
+    }
+    return schema.make(all, tw, 0);
+}
+
+fn run_file[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (p, pf) = plan.parse(heap, arg(g, 2));
+    if pf.code != 0 {
+        plan.drop(heap, p);
+        return refuse_line(io, pf);
+    }
+    let nm = names.from_list(heap, arg(g, 3));
+    let x = pt.mat(heap, arg(g, 4));
+    var code = 0;
+    borrow p as &pr in {
+        borrow nm as &nr in {
+            borrow x as &xr in {
+                let (fd, y, f) = run.fit(heap, pr, nr, xr, 1000000, 8192, 400000000);
+                if f.code != 0 {
+                    code = refuse_line(io, f);
+                } else {
+                    let sc = schema_of(heap, nr, "");
+                    var sp = buffer.empty(heap, 1);
+                    borrow sc as &scr in {
+                        buffer.drop(heap, sp);
+                        sp = schema.encode(heap, scr);
+                    }
+                    let est = pt.hex(heap, "01000000 01000000 01000000 0400000000000000 0100000000000000 0000000000000000 0000000000000000 0000000000000000");
+                    borrow fd as &fr in {
+                        borrow sp as &spr in {
+                            borrow est as &er in {
+                                let fb = file.encode(heap, plan.text(pr), buffer.bytes(spr), buffer.bytes(fr.payload), contents(er)[0..52], matrix.rows(xr), 1 + names.count(nr), 7, "pin");
+                                borrow fb as &fbr in {
+                                    io.write_all(io, "file ");
+                                    hex_bytes(io, buffer.bytes(fbr));
+                                    io.newline(io);
+                                }
+                                buffer.drop(heap, fb);
+                            }
+                        }
+                    }
+                    unbox_slice(heap, est);
+                    buffer.drop(heap, sp);
+                    schema.drop(heap, sc);
+                }
+                run.drop_fitted(heap, fd);
+                matrix.drop(heap, y);
+            }
+        }
+    }
+    matrix.drop(heap, x);
+    names.drop(heap, nm);
+    plan.drop(heap, p);
+    return code;
+}
+
+fn run_predict[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let fb = pt.hex(heap, arg(g, 2));
+    let t = pt.mat(heap, arg(g, 3));
+    var code = 0;
+    borrow fb as &fr in {
+        // pt.hex allocates one byte more than the file (the box is never empty)
+        let n = (len(arg(g, 2)) - pt.count_byte(arg(g, 2), ' ')) / 2;
+        let (l, lf) = file.decode(heap, contents(fr)[0..n]);
+        if lf.code != 0 {
+            code = refuse_line(io, lf);
+        } else {
+            borrow l as &lr in {
+                borrow t as &tr in {
+                    let (z, u, f2) = run.apply_steps(heap, file.steps_bytes(lr), tr, 1000000, 8192, 400000000);
+                    if f2.code != 0 {
+                        code = refuse_line(io, f2);
+                    } else {
+                        borrow z as &zr in {
+                            print_matrix(io, "test", zr);
+                        }
+                        io.write_all(io, "unknown ");
+                        io.print_int(io, u);
+                        io.newline(io);
+                    }
+                    matrix.drop(heap, z);
+                }
+            }
+        }
+        file.drop(heap, l);
+    }
+    unbox_slice(heap, fb);
+    matrix.drop(heap, t);
+    return code;
+}
+
+fn run_align[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let nm = names.from_list(heap, arg(g, 2));
+    var sc = schema.empty(heap);
+    borrow nm as &nr in {
+        schema.drop(heap, sc);
+        sc = schema_of(heap, nr, arg(g, 3));
+    }
+    let given = names.from_list(heap, arg(g, 4));
+    var ng = 0;
+    borrow given as &gnr in {
+        ng = names.count(gnr);
+    }
+    let gt = box_slice(heap, 2 * ng + 1, 0);
+    var gw = gt;
+    borrow mut gw as &!w in {
+        var j = 0;
+        while j < ng {
+            var t = 2;
+            if j < len(arg(g, 5)) {
+                t = int_of(arg(g, 5)[j]) - '0';
+            }
+            contents(w)[2 * j] = t;
+            j = j + 1;
+        }
+    }
+    var nfeat = 0;
+    borrow nm as &nmr in {
+        nfeat = names.count(nmr);
+    }
+    var code = 0;
+    borrow sc as &scr in {
+        borrow given as &gr in {
+            borrow gw as &tr in {
+                let (perm, detail, c) = schema.align(heap, scr, gr, contents(tr));
+                if c != 0 {
+                    io.write_all(io, "refused ");
+                    io.write_all(io, codes.tag(c));
+                    io.write_all(io, " ");
+                    borrow detail as &dr in {
+                        io.write_all(io, buffer.bytes(dr));
+                    }
+                    io.newline(io);
+                    code = codes.exit_code(c);
+                } else {
+                    io.write_all(io, "perm");
+                    borrow perm as &pr in {
+                        var j = 0;
+                        while j < nfeat {
+                            io.write_all(io, " ");
+                            io.print_int(io, contents(pr)[j]);
+                            j = j + 1;
+                        }
+                    }
+                    io.newline(io);
+                }
+                buffer.drop(heap, detail);
+                unbox_slice(heap, perm);
+            }
+        }
+    }
+    unbox_slice(heap, gw);
+    names.drop(heap, given);
+    schema.drop(heap, sc);
+    names.drop(heap, nm);
+    return code;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(clock);
+    var code = 0;
+    borrow mut heap as &!hp in {
+        borrow mut io as &!ip in {
+            borrow args as &g in {
+                if arg_count(g) < 2 {
+                    code = 2;
+                } else if same(arg(g, 1), "plan") && arg_count(g) == 3 {
+                    code = run_plan(hp, ip, g);
+                } else if same(arg(g, 1), "sums") && arg_count(g) == 4 {
+                    code = run_sums(hp, ip, g);
+                } else if same(arg(g, 1), "run") && arg_count(g) == 6 {
+                    code = run_run(hp, ip, g);
+                } else if same(arg(g, 1), "file") && arg_count(g) == 5 {
+                    code = run_file(hp, ip, g);
+                } else if same(arg(g, 1), "predict") && arg_count(g) == 4 {
+                    code = run_predict(hp, ip, g);
+                } else if same(arg(g, 1), "align") && arg_count(g) == 6 {
+                    code = run_align(hp, ip, g);
+                } else {
+                    code = 2;
+                }
+            }
+        }
+    }
+    release(args);
+    release(heap);
+    release(io);
+    return code;
+}

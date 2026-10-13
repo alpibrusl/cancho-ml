@@ -67,6 +67,25 @@ if "1 constant regression of an int or dec target, 2 constant classification, 3 
 if not re.search(r"mk < 1 \|\| mk > 3", mf):
     fail("tools/ml/mfile.cho: the accepted kinds are no longer 1 to 3 (update the registry and design.md 4.1 first)")
 
+# ---- step kinds and section tags (docs/design.md 4.1, docs/transforms.md section 4)
+steps_k = [(n, v) for n, v in K.items() if n.startswith("step_") and n != "step_count"]
+unique("step kinds (lib/core/kinds.cho)", steps_k)
+if K.get("step_count") != len(steps_k) or sorted(v for _, v in steps_k) != list(range(1, len(steps_k) + 1)):
+    fail("step kinds are not 1..step_count without gaps")
+doc_steps = [int(r[0]) for r in table_rows(design, "| step kind | transform |")]
+if doc_steps != sorted(v for _, v in steps_k):
+    fail("design.md 4.1 step kind table %s differs from lib/core/kinds.cho %s" % (doc_steps, sorted(v for _, v in steps_k)))
+secs = [(n, v) for n, v in K.items() if n.startswith("section_") and n != "section_count"]
+unique("section tags (lib/core/kinds.cho)", secs)
+if K.get("section_count") != len(secs) or sorted(v for _, v in secs) != list(range(1, len(secs) + 1)):
+    fail("section tags are not 1..section_count without gaps")
+if "1 plan, 2 schema, 3 steps, 4 model, 5 meta" not in design:
+    fail("design.md 4.1 no longer lists the section tags 1 plan, 2 schema, 3 steps, 4 model, 5 meta")
+tsteps = read("lib/transforms/steps.cho")
+for kind, name in ((1, "impute"), (2, "minmax"), (3, "standard"), (4, "onehot"), (5, "label"), (6, "bucket")):
+    if K.get("step_" + name) != kind:
+        fail("lib/core/kinds.cho step_%s is not %d" % (name, kind))
+
 # ---- stream kinds
 streams = [(n, v) for n, v in K.items() if n.startswith("stream_") and n != "stream_count"]
 unique("stream kinds (lib/core/kinds.cho)", streams)
@@ -100,7 +119,7 @@ def exit_fn(tag):
     return 2 if tag in ("ml.param.out-of-range", "ml.param.threads") else 8
 
 
-libs = {"ml.refuse": ("lib/core/refuse.cho", 1, 99), "tree.deny": ("lib/models/tree/deny.cho", 101, 199), "metrics.rules": ("lib/metrics/rules.cho", 201, 299)}
+libs = {"ml.refuse": ("lib/core/refuse.cho", 1, 99), "tree.deny": ("lib/models/tree/deny.cho", 101, 199), "metrics.rules": ("lib/metrics/rules.cho", 201, 299), "transforms.codes": ("lib/transforms/codes.cho", 301, 399)}
 code_tag = {}
 for lib, (path, lo, hi) in libs.items():
     for c, t in tag_fn(path).items():

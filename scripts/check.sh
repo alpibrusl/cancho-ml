@@ -51,3 +51,7 @@ python3 scripts/mutants_cli.py --check
 # the check tools open no path that holds two dots in a row and trap on no missing operand (docs/lanes.md section 1)
 python3 scripts/gate_paths.py
 python3 scripts/mutants_paths.py --check
+# stage M3/M4: lib/transforms and lib/pipeline (docs/transforms.md, docs/pipeline.md): unit, fixture and fuzz programs, the driver, the API scan, the
+# registries and the Python oracles (scripts/oracle_pipe.py --sklearn and scripts/mutants_pipe.py run on request, as the other mutants do)
+python3 scripts/mutants_pipe.py --check
+sh scripts/gate_pipe.sh

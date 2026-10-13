@@ -6,7 +6,8 @@ introspect | skill` with one real model, `--model constant` (the training mean, 
 as data with rule tags, a bounded log and a checked authority manifest. The libraries of the other stages (the CSV reader, metrics and splits, linear and logistic regression, k-means, decision trees and
 forests) are merged and gated but **no verb calls them yet**: see `docs/integration.md` for what is wired, the registries of model
 kinds, stream kinds and refusal codes, and the result of every gate on the merged tree; `docs/cli.md` section 1 has the gates of the
-command line and section 7 their verdicts.
+command line and section 7 their verdicts. The transforms (impute, scale, encode, bucket) and the pipeline (plan text, fitted steps in the model file,
+schema by name) are libraries too, not wired yet: `docs/transforms.md`, `docs/pipeline.md`.
 
 A machine-learning library and command line written in [cancho](https://github.com/alpibrusl/cancho), for classical ML on
 tabular data: transformations, pipelines, training, prediction and evaluation. It follows the shape of

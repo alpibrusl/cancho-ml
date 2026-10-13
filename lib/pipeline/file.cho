@@ -1,0 +1,451 @@
+module pipeline.file;
+
+import std.buffer;
+import std.bytes;
+import std.crypto;
+import ml.fbits;
+import ml.kinds;
+import transforms.codes;
+import pipeline.plan;
+import pipeline.names;
+import pipeline.schema;
+import pipeline.run;
+
+// The model file with its steps (docs/pipeline.md section 5): `CML1 | u32 version = 1 | u32 sections = 5 | section * 5 | SHA-256 of every byte before it`,
+// a section being `u32 tag | u64 length | payload`, tags 1 plan, 2 schema, 3 steps, 4 model, 5 meta (lib/core/kinds.cho). The layout is the one of
+// tools/ml/mfile.cho: a file with no steps is the same bytes (a test). `decode` is the ONLY way to a Loaded, and it checks, in the order of
+// mfile.cho: magic, version, structure (truncated), the checksum, then every field (malformed); `run.apply_steps` takes the steps bytes of a Loaded.
+// The estimator is a hook: `encode` takes the bytes of the `model` section (u32 kind then the records) and `decode` hands them back; only the
+// leading kind is checked here (the estimator's own reader checks the rest).
+
+pub fn version() -> [] int {
+    return 1;
+}
+
+fn put32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+fn put64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < 8 {
+        o = buffer.push(heap, o, byte_of(v >> 8 * k & 255));
+        k = k + 1;
+    }
+    return o;
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+fn section[&h, &p](heap: &!h Heap, out: buffer.Buffer, tag: int, payload: &p [byte]) -> [heap] buffer.Buffer {
+    var o = put32(heap, out, tag);
+    o = put64(heap, o, len(payload));
+    return buffer.append(heap, o, payload);
+}
+
+// the SHA-256 of data as 32 bytes appended to out
+fn digest_into[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [heap] buffer.Buffer {
+    let state = box_slice(heap, crypto.sha256_state_len(), 0);
+    let dg = box_slice(heap, 32, byte_of(0));
+    var sw = state;
+    var dw = dg;
+    var o = out;
+    borrow mut sw as &!s in {
+        crypto.sha256_init(contents(s));
+        crypto.sha256_update(contents(s), data);
+        borrow mut dw as &!x in {
+            crypto.sha256_final(contents(s), contents(x));
+        }
+    }
+    borrow dw as &r in {
+        o = buffer.append(heap, o, contents(r));
+    }
+    unbox_slice(heap, sw);
+    unbox_slice(heap, dw);
+    return o;
+}
+
+// The file. plan: the canonical text; schema_payload: schema.encode; steps_payload: Fitted.payload; model_payload: u32 kind then the estimator's records;
+// columns: the number of columns of the schema; the meta section is `u64 rows | u64 columns | u64 seed | u32 0 | u32 length | pin`.
+pub fn encode[&h, &a, &b, &c, &e, &f](heap: &!h Heap, plan_text: &a [byte], schema_payload: &b [byte], steps_payload: &c [byte], model_payload: &e [byte], rows: int, columns: int, seed: int, pin: &f [byte]) -> [heap] buffer.Buffer {
+    var me = put64(heap, buffer.empty(heap, 64), rows);
+    me = put64(heap, me, columns);
+    me = put64(heap, me, seed);
+    me = put32(heap, me, 0);
+    me = put32(heap, me, len(pin));
+    me = buffer.append(heap, me, pin);
+    var out = buffer.empty(heap, 256);
+    out = buffer.append(heap, out, "CML1");
+    out = put32(heap, out, 1);
+    out = put32(heap, out, 5);
+    out = section(heap, out, kinds.section_plan(), plan_text);
+    out = section(heap, out, kinds.section_schema(), schema_payload);
+    out = section(heap, out, kinds.section_steps(), steps_payload);
+    out = section(heap, out, kinds.section_model(), model_payload);
+    borrow me as &r in {
+        out = section(heap, out, kinds.section_meta(), buffer.bytes(r));
+    }
+    buffer.drop(heap, me);
+    var sum = buffer.empty(heap, 40);
+    borrow out as &r in {
+        sum = digest_into(heap, sum, buffer.bytes(r));
+    }
+    borrow sum as &w in {
+        out = buffer.append(heap, out, buffer.bytes(w));
+    }
+    buffer.drop(heap, sum);
+    return out;
+}
+
+// The same file with the SHA-256 trailer recomputed over the bytes before it (a repaired checksum: what a test, or an attacker, does after editing
+// a field). Not used by the product; the edit-and-repair tests and the fuzz need it.
+pub fn reseal[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(data) + 32);
+    if len(data) < 32 {
+        return buffer.append(heap, out, data);
+    }
+    out = buffer.append(heap, out, data[0..len(data) - 32]);
+    var sum = buffer.empty(heap, 40);
+    borrow out as &r in {
+        sum = digest_into(heap, sum, buffer.bytes(r));
+    }
+    borrow sum as &w in {
+        out = buffer.append(heap, out, buffer.bytes(w));
+    }
+    buffer.drop(heap, sum);
+    return out;
+}
+
+// ---------------------------------------------------------------- decode
+
+// A file that passed every check. The file is kept as it is; the sections are views into it.
+pub res struct Loaded {
+    data: buffer.Buffer,
+    // payload start and length of sections 1 to 5
+    places: Box[[int]],
+    nsteps: int,
+    features: int,
+    width: int,
+    columns: int,
+    rows: int,
+    seed: int,
+    model_kind: int,
+}
+
+pub fn drop[&h](heap: &!h Heap, l: Loaded) -> [heap] int {
+    let Loaded { data, places, nsteps, features, width, columns, rows, seed, model_kind } = l;
+    buffer.drop(heap, data);
+    unbox_slice(heap, places);
+    return rows;
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Loaded {
+    return Loaded { data: buffer.empty(heap, 1), places: box_slice(heap, 10, 0), nsteps: 0, features: 0, width: 0, columns: 0, rows: 0, seed: 0, model_kind: 0 };
+}
+
+fn sec[&l](l: &l Loaded, i: int) -> [] &l [byte] {
+    let p = contents(l.places);
+    return buffer.bytes(l.data)[p[2 * i]..p[2 * i] + p[2 * i + 1]];
+}
+
+pub fn plan_bytes[&l](l: &l Loaded) -> [] &l [byte] {
+    return sec(l, 0);
+}
+
+pub fn schema_bytes[&l](l: &l Loaded) -> [] &l [byte] {
+    return sec(l, 1);
+}
+
+// the steps payload: the argument of run.apply_steps
+pub fn steps_bytes[&l](l: &l Loaded) -> [] &l [byte] {
+    return sec(l, 2);
+}
+
+// the model section: u32 kind then the estimator's records
+pub fn model_bytes[&l](l: &l Loaded) -> [] &l [byte] {
+    return sec(l, 3);
+}
+
+pub fn meta_bytes[&l](l: &l Loaded) -> [] &l [byte] {
+    return sec(l, 4);
+}
+
+pub fn bytes_of[&l](l: &l Loaded) -> [] &l [byte] {
+    return buffer.bytes(l.data);
+}
+
+pub fn features[&l](l: &l Loaded) -> [] int {
+    return l.features;
+}
+
+// the columns the steps leave (the width the estimator is given)
+pub fn width[&l](l: &l Loaded) -> [] int {
+    return l.width;
+}
+
+pub fn nsteps[&l](l: &l Loaded) -> [] int {
+    return l.nsteps;
+}
+
+pub fn rows[&l](l: &l Loaded) -> [] int {
+    return l.rows;
+}
+
+pub fn seed[&l](l: &l Loaded) -> [] int {
+    return l.seed;
+}
+
+pub fn model_kind[&l](l: &l Loaded) -> [] int {
+    return l.model_kind;
+}
+
+fn mal(sec_tag: int, step: int) -> [] codes.Fault {
+    return codes.fault(codes.malformed(), sec_tag, step, 0);
+}
+
+// the checksum matches the 32 bytes at the end
+fn checksum_ok[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] bool {
+    let n = len(data);
+    let state = box_slice(heap, crypto.sha256_state_len(), 0);
+    let dg = box_slice(heap, 32, byte_of(0));
+    var sw = state;
+    var dw = dg;
+    var same = false;
+    borrow mut sw as &!s in {
+        crypto.sha256_init(contents(s));
+        crypto.sha256_update(contents(s), data[0..n - 32]);
+        borrow mut dw as &!x in {
+            crypto.sha256_final(contents(s), contents(x));
+        }
+    }
+    borrow dw as &r in {
+        same = bytes.equal(contents(r), data[n - 32..n]);
+    }
+    unbox_slice(heap, sw);
+    unbox_slice(heap, dw);
+    return same;
+}
+
+// the structure: where each of the five payloads is. (code, a): 0, or truncated, or malformed with a = the tag at fault
+fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
+    let n = len(data);
+    let body = n - 32;
+    if body < 12 {
+        return (codes.truncated(), 0);
+    }
+    if get32(data, 8) != 5 {
+        return (codes.malformed(), 0);
+    }
+    var pos = 12;
+    var s = 0;
+    while s < 5 {
+        if pos + 12 > body {
+            return (codes.truncated(), 0);
+        }
+        let tag = get32(data, pos);
+        let length = fbits.get64(data, pos + 4);
+        if length < 0 || length > body - pos - 12 {
+            return (codes.truncated(), 0);
+        }
+        if tag != kinds.section_at(s + 1) {
+            return (codes.malformed(), tag);
+        }
+        places[2 * s] = pos + 12;
+        places[2 * s + 1] = length;
+        pos = pos + 12 + length;
+        s = s + 1;
+    }
+    if pos != body {
+        return (codes.malformed(), 0);
+    }
+    return (0, 0);
+}
+
+// the model families a plan's `model kind` may have as the leading u32 of the model section
+fn model_family_ok(pk: int, mk: int) -> [] bool {
+    if pk == 0 {
+        return mk >= kinds.model_const_regression() && mk <= kinds.model_const_float_regression();
+    }
+    if pk == 1 {
+        return mk == kinds.model_linear();
+    }
+    if pk == 2 {
+        return mk == kinds.model_logistic();
+    }
+    if pk == 3 {
+        return mk == kinds.model_kmeans();
+    }
+    return mk == kinds.model_tree();
+}
+
+// every field of the five sections (the checksum is right). (Fault, features, width, nsteps, rows, seed, model kind)
+fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [heap] (codes.Fault, int, int, int, int, int, int) {
+    let none = codes.none();
+    // 1 plan: it parses and is its own canonical form
+    let pbytes = data[places[0]..places[0] + places[1]];
+    let (pl, pf) = plan.parse(heap, pbytes);
+    if pf.code != 0 {
+        plan.drop(heap, pl);
+        return (mal(1, 0), 0, 0, 0, 0, 0, 0);
+    }
+    var canon = false;
+    var nplan = 0;
+    var pkind = 0;
+    borrow pl as &pr in {
+        canon = bytes.equal(plan.text(pr), pbytes);
+        nplan = plan.steps(pr);
+        pkind = plan.model_kind(pr);
+    }
+    if !canon {
+        plan.drop(heap, pl);
+        return (mal(1, 0), 0, 0, 0, 0, 0, 0);
+    }
+    // 2 schema
+    let (sc, sf) = schema.decode(heap, data[places[2]..places[2] + places[3]]);
+    if sf != 0 {
+        schema.drop(heap, sc);
+        plan.drop(heap, pl);
+        return (mal(2, 0), 0, 0, 0, 0, 0, 0);
+    }
+    var feats = 0;
+    borrow sc as &sr in {
+        feats = schema.columns(sr) - 1;
+    }
+    schema.drop(heap, sc);
+    // 3 steps, chained from the number of features; their kinds are the ones the plan lines ask for
+    let stb = data[places[4]..places[4] + places[5]];
+    var nsteps = 0;
+    var width = 0;
+    var failed = mal(0, 0);
+    if feats < 1 {
+        failed = mal(3, 0);
+    } else {
+        let (n, w, f) = run.check_steps(heap, stb, feats);
+        nsteps = n;
+        width = w;
+        failed = f;
+    }
+    if failed.code != 0 {
+        plan.drop(heap, pl);
+        return (failed, 0, 0, 0, 0, 0, 0);
+    }
+    if nsteps != nplan {
+        plan.drop(heap, pl);
+        return (mal(3, 0), 0, 0, 0, 0, 0, 0);
+    }
+    let (sc2, sf2) = schema.decode(heap, data[places[2]..places[2] + places[3]]);
+    var fnames = names.empty(heap);
+    borrow sc2 as &sr in {
+        var j = 0;
+        while j < schema.columns(sr) {
+            if j != schema.target(sr) {
+                fnames = names.add(heap, fnames, schema.name(sr, j));
+            }
+            j = j + 1;
+        }
+    }
+    schema.drop(heap, sc2);
+    var agree = false;
+    var at = 0;
+    borrow pl as &pr in {
+        borrow fnames as &fr in {
+            let (a2, s2) = run.agrees(heap, pr, fr, stb);
+            agree = a2;
+            at = s2;
+        }
+    }
+    names.drop(heap, fnames);
+    plan.drop(heap, pl);
+    if !agree {
+        return (mal(3, at), 0, 0, 0, 0, 0, 0);
+    }
+    // 4 model
+    let md = data[places[6]..places[6] + places[7]];
+    if len(md) < 4 {
+        return (mal(4, 0), 0, 0, 0, 0, 0, 0);
+    }
+    let mk = get32(md, 0);
+    if mk < 1 || mk > kinds.model_count() || !model_family_ok(pkind, mk) {
+        return (mal(4, 0), 0, 0, 0, 0, 0, 0);
+    }
+    // 5 meta
+    let me = data[places[8]..places[8] + places[9]];
+    if len(me) < 32 {
+        return (mal(5, 0), 0, 0, 0, 0, 0, 0);
+    }
+    let rows = fbits.get64(me, 0);
+    let mc = fbits.get64(me, 8);
+    let seed = fbits.get64(me, 16);
+    let nh = get32(me, 24);
+    let cl = get32(me, 28);
+    if rows < 1 || rows > 1000000000 || mc != feats + 1 || nh != 0 || cl < 0 || cl > 255 || len(me) != 32 + cl {
+        return (mal(5, 0), 0, 0, 0, 0, 0, 0);
+    }
+    return (none, feats, width, nsteps, rows, seed, mk);
+}
+
+// Decode the file in `data`. (Loaded, Fault): the Loaded is empty unless the Fault is none. A file is input: a right checksum says it is the file
+// that was written, not that it is sensible.
+pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Loaded, codes.Fault) {
+    let n = len(data);
+    if n < 4 {
+        return (empty(heap), codes.fault(codes.truncated(), 0, 0, 0));
+    }
+    if !bytes.equal(data[0..4], "CML1") {
+        return (empty(heap), codes.fault(codes.bad_magic(), 0, 0, 0));
+    }
+    if n < 8 {
+        return (empty(heap), codes.fault(codes.truncated(), 0, 0, 0));
+    }
+    let v = get32(data, 4);
+    if v != 1 {
+        return (empty(heap), codes.fault(codes.bad_version(), v, 0, 0));
+    }
+    let places = box_slice(heap, 10, 0);
+    var pw = places;
+    var code = 0;
+    var tag = 0;
+    borrow mut pw as &!p in {
+        let (c, t) = structure(data, contents(p));
+        code = c;
+        tag = t;
+    }
+    if code != 0 {
+        unbox_slice(heap, pw);
+        return (empty(heap), codes.fault(code, tag, 0, 0));
+    }
+    if !checksum_ok(heap, data) {
+        unbox_slice(heap, pw);
+        return (empty(heap), codes.fault(codes.checksum(), 0, 0, 0));
+    }
+    var fault = codes.none();
+    var feats = 0;
+    var width = 0;
+    var nsteps = 0;
+    var rows = 0;
+    var seed = 0;
+    var mk = 0;
+    borrow pw as &pr in {
+        let (f, a, b, c, d2, e, g) = content(heap, data, contents(pr));
+        fault = f;
+        feats = a;
+        width = b;
+        nsteps = c;
+        rows = d2;
+        seed = e;
+        mk = g;
+    }
+    if fault.code != 0 {
+        unbox_slice(heap, pw);
+        return (empty(heap), fault);
+    }
+    let keep = buffer.append(heap, buffer.empty(heap, n), data);
+    return (Loaded { data: keep, places: pw, nsteps: nsteps, features: feats, width: width, columns: feats + 1, rows: rows, seed: seed, model_kind: mk }, codes.none());
+}

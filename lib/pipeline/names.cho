@@ -1,0 +1,100 @@
+module pipeline.names;
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+
+// A list of column names: the bytes one after the other and the end of each. A name is any non-empty bytes; the list is "distinct" when no two
+// are equal (checked by `distinct`, not assumed). The same shape as the header of tools/ml/csv.cho and of the schema section.
+
+pub res struct Names {
+    text: buffer.Buffer,
+    ends: vec.Vec[int],
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Names {
+    return Names { text: buffer.empty(heap, 16), ends: vec.empty(heap, 8, 0) };
+}
+
+pub fn drop[&h](heap: &!h Heap, n: Names) -> [heap] int {
+    let Names { text, ends } = n;
+    buffer.drop(heap, text);
+    vec.drop(heap, ends);
+    return 0;
+}
+
+pub fn count[&n](nm: &n Names) -> [] int {
+    return vec.size(nm.ends);
+}
+
+pub fn name[&n](nm: &n Names, i: int) -> [] &n [byte] {
+    var from = 0;
+    if i > 0 {
+        from = vec.get(nm.ends, i - 1);
+    }
+    return buffer.bytes(nm.text)[from..vec.get(nm.ends, i)];
+}
+
+pub fn add[&h, &s](heap: &!h Heap, nm: Names, s: &s [byte]) -> [heap] Names {
+    let Names { text, ends } = nm;
+    let t2 = buffer.append(heap, text, s);
+    var size = 0;
+    borrow t2 as &tr in {
+        size = buffer.size(tr);
+    }
+    return Names { text: t2, ends: vec.push(heap, ends, size) };
+}
+
+// a list `a,b,c` of names (for tests and drivers); the empty text is no names
+pub fn from_list[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] Names {
+    var nm = empty(heap);
+    if len(t) == 0 {
+        return nm;
+    }
+    var from = 0;
+    var i = 0;
+    while i <= len(t) {
+        if i == len(t) || int_of(t[i]) == ',' {
+            nm = add(heap, nm, t[from..i]);
+            from = i + 1;
+        }
+        i = i + 1;
+    }
+    return nm;
+}
+
+// the index of the name equal to `s`, or -1
+pub fn find[&n, &s](nm: &n Names, s: &s [byte]) -> [] int {
+    let c = count(nm);
+    var i = 0;
+    while i < c {
+        let b = name(nm, i);
+        if len(b) == len(s) && bytes.equal(b, s) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// the first index that is empty or equal to an earlier name, or -1 when the names are non-empty and distinct
+pub fn first_bad[&n](nm: &n Names) -> [] int {
+    let c = count(nm);
+    var i = 0;
+    while i < c {
+        let b = name(nm, i);
+        if len(b) == 0 {
+            return i;
+        }
+        var j = 0;
+        while j < i {
+            let o = name(nm, j);
+            if len(o) == len(b) && bytes.equal(o, b) {
+                return i;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}

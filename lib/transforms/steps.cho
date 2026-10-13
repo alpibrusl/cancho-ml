@@ -1,0 +1,386 @@
+module transforms.steps;
+
+import std.buffer;
+import ml.fbits;
+import ml.kinds;
+import transforms.codes;
+
+// One fitted step and its bytes (docs/transforms.md section 4): `u32 kind | ints record | floats record`, a record being
+// `u32 dtype | u32 rank | rank x u64 shape | elements` (dtype 1 = i64, 2 = f64; design.md 4.1), all little-endian.
+//
+//   ints   = [k, cols_in, c_0 .. c_{k-1}, extra...]       the columns are strictly ascending and below cols_in
+//   floats = rank 1 [k] (impute fills), rank 2 [k, 2] (minmax: lo, d; standard: mean, d), rank 1 [sum n] (the categories), rank 2 [k, bins-1] (edges)
+//   extra  = impute: strategy | minmax: none | standard: ddof | onehot, label: unknown, n_0 .. n_{k-1} | bucket: bins, method
+//
+// `decode` is the only way to a Step from bytes, and it checks every field against its bound BEFORE it allocates anything sized by the
+// file, so a file (a hostile one, or one whose checksum was repaired) is refused with ml.model.malformed and never traps.
+
+pub fn max_columns() -> [] int {
+    return 8192;
+}
+
+pub fn max_categories() -> [] int {
+    return 1024;
+}
+
+pub fn max_category_total() -> [] int {
+    return 1048576;
+}
+
+pub fn max_bins() -> [] int {
+    return 256;
+}
+
+pub res struct Step {
+    kind: int,
+    ints: Box[[int]],
+    floats: Box[[float]],
+}
+
+pub fn make(kind: int, ints: Box[[int]], floats: Box[[float]]) -> [] Step {
+    return Step { kind: kind, ints: ints, floats: floats };
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Step {
+    return Step { kind: 0, ints: box_slice(heap, 1, 0), floats: box_slice(heap, 1, 0.0) };
+}
+
+pub fn drop[&h](heap: &!h Heap, st: Step) -> [heap] int {
+    let Step { kind, ints, floats } = st;
+    unbox_slice(heap, ints);
+    unbox_slice(heap, floats);
+    return kind;
+}
+
+pub fn kind[&s](st: &s Step) -> [] int {
+    return st.kind;
+}
+
+pub fn int_at[&s](st: &s Step, i: int) -> [] int {
+    return contents(st.ints)[i];
+}
+
+pub fn float_at[&s](st: &s Step, i: int) -> [] float {
+    return contents(st.floats)[i];
+}
+
+pub fn ints_len[&s](st: &s Step) -> [] int {
+    return len(contents(st.ints));
+}
+
+pub fn floats_len[&s](st: &s Step) -> [] int {
+    return len(contents(st.floats));
+}
+
+// the length of the part of the ints after the columns
+pub fn extra_len(kind: int, k: int) -> [] int {
+    if kind == 1 || kind == 3 {
+        return 1;
+    }
+    if kind == 2 {
+        return 0;
+    }
+    if kind == 4 || kind == 5 {
+        return 1 + k;
+    }
+    return 2;
+}
+
+// the ints of a step are shaped as `kind` says and every number is in its range; cols_in_want < 1 means "any width". 0, or ml.model.malformed.
+pub fn check_ints[&a](kind: int, a: &a [int], cols_in_want: int) -> [] int {
+    let bad = codes.malformed();
+    if kind < 1 || kind > kinds.step_count() || len(a) < 3 {
+        return bad;
+    }
+    let k = a[0];
+    let cin = a[1];
+    if cin < 1 || cin > max_columns() || k < 1 || k > cin {
+        return bad;
+    }
+    if cols_in_want > 0 && cin != cols_in_want {
+        return bad;
+    }
+    if len(a) != 2 + k + extra_len(kind, k) {
+        return bad;
+    }
+    var j = 0;
+    var prev = 0 - 1;
+    while j < k {
+        let c = a[2 + j];
+        if c <= prev || c >= cin {
+            return bad;
+        }
+        prev = c;
+        j = j + 1;
+    }
+    let base = 2 + k;
+    if kind == 1 && (a[base] < 0 || a[base] > 2) {
+        return bad;
+    }
+    if kind == 3 && (a[base] < 0 || a[base] > 1) {
+        return bad;
+    }
+    if kind == 4 || kind == 5 {
+        if a[base] < 0 || a[base] > 1 {
+            return bad;
+        }
+        var total = 0;
+        j = 0;
+        while j < k {
+            let n = a[base + 1 + j];
+            if n < 1 || n > max_categories() {
+                return bad;
+            }
+            total = total + n;
+            j = j + 1;
+        }
+        if total > max_category_total() {
+            return bad;
+        }
+    }
+    if kind == 6 {
+        if a[base] < 2 || a[base] > max_bins() || a[base + 1] < 0 || a[base + 1] > 1 {
+            return bad;
+        }
+    }
+    return 0;
+}
+
+// the number of categories of a onehot or label step (ints already checked)
+pub fn category_total[&a](a: &a [int]) -> [] int {
+    let k = a[0];
+    var total = 0;
+    var j = 0;
+    while j < k {
+        total = total + a[3 + k + j];
+        j = j + 1;
+    }
+    return total;
+}
+
+// (rank, extent 0, extent 1) of the floats record the ints imply (ints already checked)
+pub fn floats_shape[&a](kind: int, a: &a [int]) -> [] (int, int, int) {
+    let k = a[0];
+    if kind == 1 {
+        return (1, k, 0);
+    }
+    if kind == 2 || kind == 3 {
+        return (2, k, 2);
+    }
+    if kind == 4 || kind == 5 {
+        return (1, category_total(a), 0);
+    }
+    return (2, k, a[2 + k] - 1);
+}
+
+// the columns the step gives (ints already checked); a one-hot step widens, nothing else changes the width
+pub fn width_out[&a](kind: int, a: &a [int]) -> [] int {
+    if kind == 4 {
+        return a[1] - a[0] + category_total(a);
+    }
+    return a[1];
+}
+
+// ---------------------------------------------------------------- bytes
+
+fn put32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+pub fn put64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < 8 {
+        o = buffer.push(heap, o, byte_of(v >> 8 * k & 255));
+        k = k + 1;
+    }
+    return o;
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+// The payload of a step (no length prefix), appended to `out`. The step is assumed well formed (fit built it, or decode checked it).
+pub fn encode_payload[&h, &s](heap: &!h Heap, out: buffer.Buffer, st: &s Step) -> [heap] buffer.Buffer {
+    var o = put32(heap, out, st.kind);
+    let a = contents(st.ints);
+    o = put32(heap, o, 1);
+    o = put32(heap, o, 1);
+    o = put64(heap, o, len(a));
+    var i = 0;
+    while i < len(a) {
+        o = put64(heap, o, a[i]);
+        i = i + 1;
+    }
+    let (rank, s0, s1) = floats_shape(st.kind, a);
+    let f = contents(st.floats);
+    o = put32(heap, o, 2);
+    o = put32(heap, o, rank);
+    o = put64(heap, o, s0);
+    if rank == 2 {
+        o = put64(heap, o, s1);
+    }
+    i = 0;
+    while i < len(f) {
+        o = put64(heap, o, bits_of(f[i]));
+        i = i + 1;
+    }
+    return o;
+}
+
+// the size of that payload in bytes
+pub fn payload_size[&s](st: &s Step) -> [] int {
+    let a = contents(st.ints);
+    let (rank, s0, s1) = floats_shape(st.kind, a);
+    return 4 + 16 + 8 * len(a) + 8 + 8 * rank + 8 * len(contents(st.floats));
+}
+
+// ---------------------------------------------------------------- decode
+
+// Decode the payload `data` of one step that receives `cols_in` columns (cols_in < 1: any). (step, code, width out): code 0, or
+// ml.model.malformed (the step is empty then). Everything sized by the bytes is bounded by a limit and by the bytes that are there before it
+// is allocated.
+pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte], cols_in: int) -> [heap] (Step, int, int) {
+    let bad = codes.malformed();
+    let n = len(data);
+    if n < 4 + 16 {
+        return (empty(heap), bad, 0);
+    }
+    let kind = get32(data, 0);
+    if kind < 1 || kind > kinds.step_count() {
+        return (empty(heap), bad, 0);
+    }
+    if get32(data, 4) != 1 || get32(data, 8) != 1 {
+        return (empty(heap), bad, 0);
+    }
+    let ni = fbits.get64(data, 12);
+    // at most 2 + k + 1 + k ints with k <= max_columns
+    if ni < 3 || ni > 2 * max_columns() + 3 || ni > (n - 20) / 8 {
+        return (empty(heap), bad, 0);
+    }
+    let ints = box_slice(heap, ni, 0);
+    var iw = ints;
+    borrow mut iw as &!w in {
+        var i = 0;
+        while i < ni {
+            contents(w)[i] = fbits.get64(data, 20 + 8 * i);
+            i = i + 1;
+        }
+    }
+    var code = 0;
+    var rank = 0;
+    var s0 = 0;
+    var s1 = 0;
+    var width = 0;
+    var at = 20 + 8 * ni;
+    borrow iw as &ir in {
+        code = check_ints(kind, contents(ir), cols_in);
+        if code == 0 {
+            let (r, a0, a1) = floats_shape(kind, contents(ir));
+            rank = r;
+            s0 = a0;
+            s1 = a1;
+            width = width_out(kind, contents(ir));
+            if width > max_columns() {
+                code = bad;
+            }
+        }
+    }
+    if code == 0 {
+        // the floats record: header, shape against what the ints imply, then the elements
+        if n - at < 8 + 8 * rank || get32(data, at) != 2 || get32(data, at + 4) != rank {
+            code = bad;
+        } else if fbits.get64(data, at + 8) != s0 || rank == 2 && fbits.get64(data, at + 16) != s1 {
+            code = bad;
+        }
+    }
+    var count = 0;
+    if code == 0 {
+        count = s0;
+        if rank == 2 {
+            count = s0 * s1;
+        }
+        at = at + 8 + 8 * rank;
+        if n - at != 8 * count {
+            code = bad;
+        }
+    }
+    if code != 0 {
+        unbox_slice(heap, iw);
+        return (empty(heap), bad, 0);
+    }
+    let fl = box_slice(heap, count, 0.0);
+    var fw = fl;
+    var nonfinite = 0;
+    borrow mut fw as &!w in {
+        nonfinite = fbits.load(data, at, contents(w), count);
+    }
+    if nonfinite != 0 {
+        code = bad;
+    } else {
+        borrow iw as &ir in {
+            borrow fw as &fr in {
+                if !values_ok(kind, contents(ir), contents(fr)) {
+                    code = bad;
+                }
+            }
+        }
+    }
+    if code != 0 {
+        unbox_slice(heap, iw);
+        unbox_slice(heap, fw);
+        return (empty(heap), bad, 0);
+    }
+    return (Step { kind: kind, ints: iw, floats: fw }, 0, width);
+}
+
+// the doubles of a decoded step (finite already) are what apply can use: divisors above zero, categories strictly ascending in each column,
+// edges non-decreasing in each column
+fn values_ok[&a, &f](kind: int, a: &a [int], f: &f [float]) -> [] bool {
+    let k = a[0];
+    var j = 0;
+    if kind == 2 || kind == 3 {
+        while j < k {
+            if !(f[2 * j + 1] > 0.0) {
+                return false;
+            }
+            j = j + 1;
+        }
+        return true;
+    }
+    if kind == 4 || kind == 5 {
+        var at = 0;
+        while j < k {
+            let c = a[3 + k + j];
+            var t = 1;
+            while t < c {
+                if !(f[at + t - 1] < f[at + t]) {
+                    return false;
+                }
+                t = t + 1;
+            }
+            at = at + c;
+            j = j + 1;
+        }
+        return true;
+    }
+    if kind == 6 {
+        let w = a[2 + k] - 1;
+        while j < k {
+            var t = 1;
+            while t < w {
+                if f[j * w + t] < f[j * w + t - 1] {
+                    return false;
+                }
+                t = t + 1;
+            }
+            j = j + 1;
+        }
+    }
+    return true;
+}

@@ -137,6 +137,19 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 6 | k-means | `centroids` f64 rank 2 `k x d` | `lib/models/record.cho` | no |
 | 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
 
+**Step kinds** (the `u32` that opens one step in the `steps` section; `lib/core/kinds.cho` `step_*`, `docs/transforms.md` section 4; the `steps` payload is `u32 n` then `n` times `u64 length | step`, and `n = 0` is the four bytes `mfile.cho` writes):
+
+| step kind | transform | plan line |
+|---|---|---|
+| 1 | impute (mean, median, constant) | `impute` |
+| 2 | scale, min-max | `scale kind=minmax` |
+| 3 | scale, standard (mean and std, `ddof` 0 or 1) | `scale kind=standard` |
+| 4 | one-hot encoding | `encode kind=onehot` |
+| 5 | label encoding | `encode kind=label` |
+| 6 | bucket (width or quantile edges) | `bucket` |
+
+**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta. The next step kind is 7.
+
 Kinds 4 to 7 are written by libraries only: `mfile.cho` refuses them as `ml.model.malformed` until the verbs call the libraries
 (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
 dtypes: 1 = i64, 2 = f64 (one table for every record, the same in `mfile.cho`, `record.cho` and `tree/model.cho`). Section tags of the
@@ -291,6 +304,26 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.split.empty-fold` | 8 | k above the number of rows, or a train/test split that leaves a side empty | fewer folds, a smaller test size |
 | `ml.split.stratum-too-small` | 8 | a class with fewer rows than k | fewer folds |
 
+*Registered by the transforms and the pipeline stage (library only: `lib/transforms/codes.cho`, `docs/transforms.md` section 1 X7, `docs/pipeline.md` section 2.1; `tools/ml/spec.cho` `pending()`; none is reachable from `ml` yet):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.fit.all-missing` | 8 | a selected column has no non-missing cell in the training rows (all transforms but `impute strategy=constant`); the step and the column are in `detail` | drop the column, or `impute strategy=constant` |
+| `ml.limit.categories` | 8 | a column has more distinct values than `max-categories` | raise `max-categories` up to 1024, or `bucket` the column |
+| `ml.input.unknown-category` | 8 | an `encode ... unknown=refuse` step meets a value no training row had; step, column and row in `detail` (this is the tag of the first list, now built) | refit with the value in the training rows, or `unknown=ignore` |
+| `ml.plan.syntax` | 8 | a plan line is not `verb key=value ...`; line and column in `detail` | one step per line, `verb key=value` |
+| `ml.plan.unknown-step` | 8 | the verb is not `impute`, `scale`, `encode`, `bucket` or `model` | one of the five verbs |
+| `ml.plan.unknown-key` | 8 | a key the verb does not take | the keys of the verb (`docs/pipeline.md` section 2) |
+| `ml.plan.missing-key` | 8 | a required key is absent | add the key |
+| `ml.plan.bad-value` | 8 | a value not in the key's list or not a number of its kind | the values of the key |
+| `ml.plan.duplicate-key` | 8 | a key twice on one line | write each key once |
+| `ml.plan.model-line` | 8 | no `model` line, two, or a step after it | end the plan with one `model` line |
+| `ml.plan.unknown-column` | 8 | a column a step names is not a column of the matrix it receives | names are compared byte for byte |
+| `ml.limit.plan` | 8 | a plan over 64 KiB, 64 lines or 4,096 listed names, or a name over 255 bytes | shorten the plan |
+
+The library also answers, with its own codes in its band, tags that exist above: `ml.input.empty`, `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.too-many-cells`, `ml.param.out-of-range`,
+`ml.input.non-finite` (a cell of a matrix given to a transform, or a transformed value that overflowed), `ml.fit.non-finite`, `ml.schema.mismatch` and `ml.model.bad-magic`, `version`, `truncated`, `checksum`, `malformed`.
+
 ## 8.1 The numeric codes of the libraries (added at integration)
 
 The libraries answer a refusal as an `int` code (0 is none) and each has a function from code to tag, exit code and repair. Three
@@ -298,7 +331,7 @@ stages numbered theirs alone (the metrics stage 1 to 11, which were `ml.refuse`'
 108), so the numbers are now **bands, one per library, and no number is in two bands**. A code means a tag only inside its band; the same
 tag may have a code in several bands (it is the same rule, and the wiring stage translates by tag, never by number). Bands: 1 to 99
 `ml.refuse` (the core; the linear stage's codes 12 to 15 are here; linalg, models, reader and splits call it), 101 to 199 `tree.deny`,
-201 to 299 `metrics.rules`, 301 and above free for the next library. `tests/t_registry.cho` fails if a number is claimed by two bands,
+201 to 299 `metrics.rules`,  `tests/t_registry.cho` fails if a number is claimed by two bands,
 if a band has a gap or a duplicate tag, or if one tag has two exit codes; `scripts/check_registry.py` checks this table against the
 sources and against the tables of section 8 and `tools/ml/spec.cho`.
 
@@ -338,6 +371,31 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 209 | `ml.metric.bad-probability` | 8 | `metrics.rules` |
 | 210 | `ml.split.empty-fold` | 8 | `metrics.rules` |
 | 211 | `ml.split.stratum-too-small` | 8 | `metrics.rules` |
+| 301 | `ml.input.empty` | 8 | `transforms.codes` |
+| 302 | `ml.input.too-many-columns` | 8 | `transforms.codes` |
+| 303 | `ml.param.out-of-range` | 2 | `transforms.codes` |
+| 304 | `ml.fit.non-finite` | 8 | `transforms.codes` |
+| 305 | `ml.fit.all-missing` | 8 | `transforms.codes` |
+| 306 | `ml.limit.categories` | 8 | `transforms.codes` |
+| 307 | `ml.input.unknown-category` | 8 | `transforms.codes` |
+| 308 | `ml.schema.mismatch` | 8 | `transforms.codes` |
+| 309 | `ml.model.bad-magic` | 8 | `transforms.codes` |
+| 310 | `ml.model.version` | 8 | `transforms.codes` |
+| 311 | `ml.model.truncated` | 8 | `transforms.codes` |
+| 312 | `ml.model.checksum` | 8 | `transforms.codes` |
+| 313 | `ml.model.malformed` | 8 | `transforms.codes` |
+| 314 | `ml.plan.syntax` | 8 | `transforms.codes` |
+| 315 | `ml.plan.unknown-step` | 8 | `transforms.codes` |
+| 316 | `ml.plan.unknown-key` | 8 | `transforms.codes` |
+| 317 | `ml.plan.missing-key` | 8 | `transforms.codes` |
+| 318 | `ml.plan.bad-value` | 8 | `transforms.codes` |
+| 319 | `ml.plan.duplicate-key` | 8 | `transforms.codes` |
+| 320 | `ml.plan.model-line` | 8 | `transforms.codes` |
+| 321 | `ml.plan.unknown-column` | 8 | `transforms.codes` |
+| 322 | `ml.limit.plan` | 8 | `transforms.codes` |
+| 323 | `ml.input.too-many-rows` | 8 | `transforms.codes` |
+| 324 | `ml.input.too-many-cells` | 8 | `transforms.codes` |
+| 325 | `ml.input.non-finite` | 8 | `transforms.codes` |
 
 ## 9. Limits and sizes — waits for M0
 
@@ -435,4 +493,12 @@ version", and none was added.** Proposal [not implemented, needs the maintainer]
 gets a `u32 sum order` after the compiler pin (1 = one chain per block, retired and never written by a model file; **2 = this order**), and a
 reader refuses a file whose value it does not implement (`ml.model.version`). The extension costs nothing in compatibility because no file
 that needs it exists; kinds 1 to 3 do not depend on a float order and keep writing the layout of section 4.1 unchanged.
+
+## 18. Stages M3 and M4: transforms and the pipeline (libraries only)
+
+`docs/transforms.md` and `docs/pipeline.md` hold the gates (written before the code), the rules for empty, constant, all-missing and missing columns, the
+plan grammar, the records of the `steps` section and the verdicts. They are `lib/transforms` and `lib/pipeline`, driven by `tools/pipe-check`; the command
+line does not call them yet. What they change here: section 4.1 gains the step kinds and the section tags as registries, section 8 and 8.1 the tags and
+the band 301 to 325 (`lib/transforms/codes.cho`), `tools/ml/spec.cho` `pending()` twelve tags. Section 4.2 is made precise by `docs/pipeline.md` section 2
+(the model line's keys are provisional); section 5 is built (`pipeline.run`, `pipeline.schema`, `pipeline.file`).
 
