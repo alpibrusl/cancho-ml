@@ -39,5 +39,4 @@ the cell parsers does not carry the 38 other declarations of `query`.
 > cancho-ml reads CSV columns with `flt.parse_float`, `query.parse_dec`, `facc` and `reader`. It cannot depend on them as a package because
 > cancho-table commits no `.cancho-vcs` store. The modules need no change: `vcs publish` of the six files works on `e47d647` and `a4572ea`
 > (500 KB, deterministic), and a consumer's `cancho install` resolves them through `requires/`. Please add `scripts/publish_numeric.py` (draft
-> attached), commit the stores, and check them in CI with `--check`. Names a consumer will pin: ... (the list above). Until then cancho-ml compiles
-> the files of a clone of this repository at a pinned commit, marked as a local-dev arrangement (`docs/reader.md` 1.3).
+> attached), commit the stores, and check them in CI with `--check`. Names a consumer will pin: ... (the list above). *(Done: cancho-table PR #44, merged; cancho-ml now pins the stores, `docs/reader.md` section 1.)*

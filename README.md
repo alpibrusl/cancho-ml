@@ -49,18 +49,16 @@ Most ML tools optimise for how many models they offer. `ml` is built to be predi
 
 ## Two-minute quick start
 
-You need `git`, Rust, `clang` and `python3`, and the machine needs network access for the clones and for `cancho install`, which fetches the pinned `cancho-tools` modules into `build/deps`. **Until [alpibrusl/cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) (a draft) merges, the reader depends on cancho-table through a local-development arrangement:** `cancho.toml` names the six numeric files of a read-only clone at `../cancho-table-main`, pinned by `table.pin` and checked by `scripts/check_table_pin.sh`. Nothing of cancho-table is copied here. When #44 merges, those lines become `cancho add` and the clone goes away ([docs/reader.md](docs/reader.md) section 1).
+You need `git`, Rust, `clang` and `python3`, and the machine needs network access for the clones and for `cancho install`, which fetches the pinned modules into `build/deps`: the `cancho-tools` contract package and cancho-table's six numeric modules (`pow5`, `dec`, `flt`, `query`, `facc`, `reader`, the stores that [cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) committed), all `[dependencies.*]` of `cancho.toml`, each at one commit. The cancho-table rev is `202b214372a0`; nothing of cancho-table is cloned or copied, and `scripts/check_table_pin.sh` checks that the pin agrees with [docs/reader.md](docs/reader.md) section 1.3, which also says how to move it.
 
 ```sh
 git clone https://github.com/alpibrusl/cancho                           # the compiler
-git clone https://github.com/alpibrusl/cancho-table cancho-table-main   # LOCAL-DEV: its numeric modules
 git clone https://github.com/alpibrusl/cancho-ml && cd cancho-ml
 REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
 (cd ../cancho && git fetch -q origin && git checkout "$REV" && cargo build --release -p cancho)
-(cd ../cancho-table-main && git checkout -q "$(sed -n 's/^rev //p' ../cancho-ml/table.pin)")
-sh scripts/check_table_pin.sh                                           # the clone is the pinned one
+sh scripts/check_table_pin.sh                                           # the pin agrees with docs/reader.md
 export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
-cancho install && cancho build --bin ml                                 # builds build/ml
+cancho install && cancho build --bin ml                                 # install fetches the pins (network); builds build/ml
 
 cat > houses.csv <<'EOF'
 id,rooms,area,price
@@ -74,7 +72,7 @@ printf 'id,rooms,area\n6,2,52.5\n7,3,80\n' > new.csv
 printf 'id,rooms,area,city\n6,2,52.5,Lyon\n7,3,80,Porto\n' > listings.csv
 ```
 
-On a 16-core Mac, with the compiler already built, `cancho build --bin ml` took 2.9 seconds once, after `cancho install` had fetched the modules. The compiler build and the clones are extra.
+On a 16-core Mac, with the compiler already built, `cancho build --bin ml` took 2.9 seconds once, after `cancho install` had fetched the modules (that fetch, from GitHub, took 1.4 seconds once). The compiler build and the clones are extra.
 
 Fit, predict, score, and a refusal:
 
@@ -272,7 +270,7 @@ ml    args, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), 
 * **No `--threads` in `ml`.** The libraries are threaded and keep their bytes at 1 to 16 threads; the command line runs on one thread.
 * **One red gate.** The regression forest against scikit-learn's: RMSE 8.1% apart where the tolerance was 3% (`docs/models-tree.md` section 10.8). The algorithms differ (histogram against exact splits) and the stage attributed most of the gap to that; the tolerance was not moved and the maintainer has not decided. [docs/models-tree.md](docs/models-tree.md)
 * **Not tested across machines.** The bytes are verified on one Mac (arm64), at 1 to 16 threads. A Linux x86-64 run is not done.
-* **The reader's home is temporary.** It compiles cancho-table's files through a local clone until [cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) merges, so the package build cannot run in CI as it stands ([docs/reader.md](docs/reader.md) section 1).
+* **No CI workflow yet.** The reader is a pinned dependency on cancho-table's stores ([docs/reader.md](docs/reader.md) section 1), so the build no longer needs a sibling clone, but `cancho install` needs the network and nothing in this repository runs `scripts/check.sh` automatically.
 * **No serving, no MCP server.** `ml-serve` (issue #16) and an MCP server are not started.
 * **No neural networks and no GPU.** They need matrix kernels, a GPU path and automatic differentiation, which cancho does not have. Inference of small exported models may come later; it is not planned in v1.
 * **Not built, not promised here:** multiclass, boosting, naive Bayes, k-NN, feature importance, out-of-bag scores, a model file for the library models (the writers and readers of kinds 4 to 7 are in the libraries, not in `ml`).
@@ -318,7 +316,7 @@ The tables, the load of each cell and how to rerun them: [project page](https://
 
 Design before code, in `docs/design.md`, with claims measured; a claim that turns out false is corrected in place, in the document that made it. Gates are written before the code they judge and must be able to fail: a mutant per gate, all killed or each survivor explained. See [CLAUDE.md](CLAUDE.md).
 
-`scripts/check.sh` runs the format check, the unit tests, every library gate, the registry checks and the command line's conformance tests. It needs the compiler at the pinned revision, a clone of cancho-table at `../cancho-table-main` and the files of the tree stage's spike at `../ml-data`. The mutant runs (`scripts/mutants_*.py`) rebuild the tool many times and run on request.
+`scripts/check.sh` runs the format check, the unit tests, every library gate, the registry checks and the command line's conformance tests. It needs the compiler at the pinned revision, the network for `cancho install` and the files of the tree stage's spike at `../ml-data`. The mutant runs (`scripts/mutants_*.py`) rebuild the tool many times and run on request.
 
 This README and the project page carry program output between paired `gen` comment markers. `python3 scripts/site.py` rewrites them from the built `build/ml`; `scripts/check_docs.sh` runs `site.py --check`, which fails if either file differs from what the binary prints, and `scripts/check_links.py`, which fails on a link to a file that is not in the repository. The prose, and every benchmark and gate figure, is written by hand next to its source document.
 

@@ -112,9 +112,8 @@ blank lines. `nan` and `inf` are `ml.input.non-finite`, and so is a number past 
 reads as zero though it is not zero, or is longer than 1,100 bytes is `ml.input.non-numeric` with the reason in `detail`. A quote closed and
 followed by anything but a comma is `parse.csv-bad-quote`, a quote open at the end `parse.csv-unterminated-quote`.
 
-The modules of cancho-table are **not copied** and, today, **not a `[dependencies.*]`** either: cancho-table commits no `.cancho-vcs` store
-(`docs/reader.md` section 1). The binaries compile the files of a read-only clone pinned by `table.pin` (LOCAL-DEV), and
-`docs/upstream/cancho-table-numeric-package.md` is the proposal that ends it.
+The modules of cancho-table are **not copied**: they are six `[dependencies.*]` of `cancho.toml` on cancho-table's `.cancho-vcs` stores, pinned to
+one commit (`docs/reader.md` section 1), fetched by `cancho install` into `build/deps`.
 
 One function, `csv.scan`, reads the file once in bounded memory (one 64 KiB chunk, the record being read up to `--max-line-bytes`, the header,
 the offsets of one record's fields, four ints a column). `fit` scans twice: pass 1 for the shape, pass 2 for the target folded into exact
@@ -323,7 +322,7 @@ description of its own. From the flag table:
 1. **`--threads` and `conc`.** When the first threaded kernel is wired in, does `fit` get `--threads` (as table does) or does the
    thread count stay internal? Section 6 of `design.md` says the block size must not depend on it; gate D1 is ready either way.
 2. **Quoted CSV and the shared reader.** *(Answered by the reader stage: quoted CSV is read through cancho-table's `reader` module; the
-   shared code is a pinned dependency in intent and a pinned local file list in fact, until cancho-table commits its stores: `docs/reader.md`
+   shared code is a pinned dependency on cancho-table's committed stores: `docs/reader.md`
    section 1.)*
 3. **Twelve digits.** *(Answered by the reader stage: the 12-digit cap keeps the exact int/dec path; a column that needs more is a float,
    read by cancho-table's reader and summed by `facc`. See `docs/reader.md`.)*

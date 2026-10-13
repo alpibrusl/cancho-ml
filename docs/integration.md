@@ -28,7 +28,7 @@ stage test programs and `lib/core` compile in one program: `tests/t_registry.cho
 one); `cancho.toml` (`linalg-check`, `models-check`, `ml`: distinct names, `lib/core` shared; the drivers `metrics-check`, `tree-check` and
 `reader-check` have no `[[bin]]` entry and are built by their gate scripts from explicit lists, as `models-check` is); `tools.toml` (one tool, `ml`,
 whose derived authority is unchanged: `manifest.py --check`); `schemas/` and `generated/ml` (not changed by any stage but the CLI's; `schemas.py
---check`); `table.pin` (`check_table_pin.sh`). The mutant harnesses of the stages each copy their own file lists and do not interact.
+--check`); `check_table_pin.sh` (reads `cancho.toml` and `docs/reader.md`). The mutant harnesses of the stages each copy their own file lists and do not interact.
 
 ## 2. What was changed (one commit each)
 
@@ -167,7 +167,7 @@ disagreement. Summary:
    prints 132 (SIGILL) and nothing, where a missing file prints `error: bad or missing file` and exits 1, and an absolute path without `..`
    works. It is a test driver, not a library, and `ml` checks paths itself (`path.dotdot`); not fixed here because the cause (the runtime's
    `open_read` on such a path) was not investigated. **Fixed afterwards: `docs/lanes.md` section 1** (the cause is `docs/upstream/dotdot_path.cho`).
-3. `check.sh` now needs `../ml-data` (the files of spike F) for the tree gate, in addition to `../cancho-table-main`.
+3. `check.sh` now needs `../ml-data` (the files of spike F) for the tree gate, (`../cancho-table-main` is no longer needed: cancho-table is a pinned dependency, `docs/reader.md` section 1).
 
 ## 8. Post-merge (`v1-post`: the tree after `v1-lanes`, `v1-pipe` and `v1-docs` were merged into `v1-int`)
 

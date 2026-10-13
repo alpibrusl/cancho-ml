@@ -11,7 +11,7 @@ The command line is `ml fit | predict | eval | introspect | skill`. The only mod
 | item | what it is | source |
 |---|---|---|
 | `fit`, `predict`, `eval` with `--model constant` | A regression of an integer, decimal or float target (the exact mean; for `eval`, the exact sum of squared errors and an `rmse`), or a binary classification (the majority class, the smaller label on a tie, the probability to six digits; `eval` gives the accuracy). | [cli.md](cli.md) sections 2, 3 |
-| the CSV reader | Integer, decimal and float columns, RFC 4180 quoting, a byte order mark, CRLF. A float is the nearest double, by cancho-table's exact reader (a pinned clone, not a copy). `nan`, `inf`, an empty cell and a non-number are refused with line and column. | [reader.md](reader.md) |
+| the CSV reader | Integer, decimal and float columns, RFC 4180 quoting, a byte order mark, CRLF. A float is the nearest double, by cancho-table's exact reader (a pinned package dependency, not a copy). `nan`, `inf`, an empty cell and a non-number are refused with line and column. | [reader.md](reader.md) |
 | the model file `CML1` | Five sections, tensor records, a SHA-256 trailer. No timestamp, host or path. Written to a temporary name, synced and renamed. | [cli.md](cli.md) section 4, [design.md](design.md) section 4.1 |
 | refusals | 49 rule tags in `introspect`, each with an exit code and whether a repair can exist; one JSON line against `ml.v1`. | [cli.md](cli.md), [design.md](design.md) section 8 |
 | `--dry-run`, `--overwrite` | `fit --dry-run` answers what it would write and exits 9. Not run under `strace`. | [cli.md](cli.md) section 2 |
@@ -50,9 +50,9 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 | boosting, naive Bayes, k-NN | in the plan ([design.md](design.md) section 1), not built |
 | imputation of a missing cell in `fit` | the `impute` transform exists as a library; `fit` still refuses an empty cell |
 | neural networks, GPU | not planned in v1 |
-| the reader as a package dependency | waits for [alpibrusl/cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) (draft); until then a local clone at `../cancho-table-main` ([reader.md](reader.md) section 1) |
+| the reader as a package dependency | done: six `[dependencies.*]` on the stores of [alpibrusl/cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) (merged), pinned to `202b214` ([reader.md](reader.md) section 1) |
 | a second machine | not done; the bytes are untested across machines |
-| CI | there is no workflow in this repository; `scripts/check.sh` is what one would run and it needs the sibling clones `../cancho-table-main` and `../ml-data` |
+| CI | there is no workflow in this repository; `scripts/check.sh` is what one would run and it needs the network for `cancho install` and the sibling clone `../ml-data` |
 
 ## What was measured
 
@@ -94,7 +94,7 @@ From [integration.md](integration.md) section 7 and the stage documents:
 |---|---|---|
 | **G-ref, regression forest R1** | **red.** RMSE 2.784408 against scikit-learn's 3.029622, 8.1% apart; the tolerance was 3%. The stage attributed most of the gap to the algorithms (quantile bins against exact thresholds) and 3.1% (with missing cells) to nothing. The tolerance was not moved. The maintainer decides: keep the rule, compare on bin indices, or drop the regression comparison. Reproduce: `python3 scripts/gate_sklearn.py --big; echo $?` prints the R1 row and 1. | [models-tree.md](models-tree.md) section 10.8 |
 | `models-check` traps without a message on a path containing `..` | a test driver, not a library; `ml` refuses such paths itself. Cause not investigated. Reproduce: [integration.md](integration.md) section 7 | [integration.md](integration.md) section 7 |
-| `check.sh` needs `../ml-data` | in addition to `../cancho-table-main` | [integration.md](integration.md) section 7 |
+| `check.sh` needs `../ml-data` | and the network for `cancho install` | [integration.md](integration.md) section 7 |
 | `rmse` is not exact | three IEEE steps after the exact sum; an exact integer square root is about 60 lines and is not decided | [cli.md](cli.md) section 10 |
 | **the speed tables predate the 4-lane order** | every timing in this page and in `docs/bench/` was taken with the previous summation order (one chain per block in linalg); what the lane order costs or buys in scalar cancho was not measured. The benchmarks were not rerun | [lanes.md](lanes.md) section 6 |
 | the pivot test is a threshold, not a rank computation | a column explained by the earlier ones to within 2^-40 of its own sum of squares is refused; noise above that was not seen in 960 fits (n up to 20,000) and was not measured for larger n or d in the hundreds | [models-linear.md](models-linear.md) section 3.1 |

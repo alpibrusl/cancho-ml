@@ -287,7 +287,7 @@ An error is `{code, rule, message, hint, repair, detail}`. Match on `rule`, not 
     <li><strong>Binary classification only,</strong> and no <code>--threads</code> in <code>ml</code>: the libraries are threaded and keep their bytes, the command line runs on one thread.</li>
     <li><strong class="red">One gate is red.</strong> The regression forest against scikit-learn&rsquo;s: RMSE 8.1% apart where the tolerance was 3%. The algorithms differ (histogram against exact splits), the stage attributed most of the gap to that, the tolerance was not moved, and the decision is the maintainer&rsquo;s (<a href="evidence.html#red">evidence</a>).</li>
     <li><strong>Not tested across machines.</strong> The bytes are verified on one Mac, arm64. A Linux x86-64 run is not done.</li>
-    <li><strong>The reader&rsquo;s home is temporary.</strong> It compiles cancho-table&rsquo;s numeric files through a local clone until <a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a> (a draft) merges.</li>
+    <li><strong>No CI workflow yet.</strong> The reader is a pinned dependency on cancho-table&rsquo;s stores (<a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a>, merged), so no sibling clone is needed, but <code>cancho install</code> needs the network and nothing here runs <code>scripts/check.sh</code> automatically.</li>
     <li><strong>Not started:</strong> the MCP server and <code>ml-serve</code> (issue #16).</li>
     <li><strong>Not planned in v1:</strong> neural networks and a GPU path. Boosting, naive Bayes, k-NN and multiclass are in the plan and not built.</li>
   </ul>
@@ -296,16 +296,14 @@ An error is `{code, rule, message, hint, repair, detail}`. Match on `rule`, not 
 
 <section id="start">
   <h2>Quick start</h2>
-  <p class="sub">You need <code>git</code>, Rust, <code>clang</code> and Python 3, and network access for the clones and for <code>cancho install</code>, which fetches the pinned <code>cancho-tools</code> modules. <strong>Until <a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a> merges, the reader depends on cancho-table through a local-development arrangement:</strong> <code>cancho.toml</code> names the six numeric files of a read-only clone at <code>../cancho-table-main</code>, pinned by <code>table.pin</code> and checked by <code>scripts/check_table_pin.sh</code>. Nothing is copied. On a 16-core Mac with the compiler already built, <code>cancho build --bin ml</code> took 2.9 seconds once; the compiler build and the clones are extra.</p>
+  <p class="sub">You need <code>git</code>, Rust, <code>clang</code> and Python 3, and network access for the clones and for <code>cancho install</code>, which fetches the pinned <code>cancho-tools</code> modules and cancho-table&rsquo;s six numeric modules (the stores of <a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a>) into <code>build/deps</code>. Both are <code>[dependencies.*]</code> of <code>cancho.toml</code>, pinned to one commit each (cancho-table: <code>202b214372a0</code>); nothing is cloned or copied. On a 16-core Mac with the compiler already built, <code>cancho build --bin ml</code> took 2.9 seconds once; the compiler build and the clones are extra.</p>
   <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/cancho
-git clone https://github.com/alpibrusl/cancho-table cancho-table-main   # LOCAL-DEV: its numeric modules
 git clone https://github.com/alpibrusl/cancho-ml &amp;&amp; cd cancho-ml
 REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
 (cd ../cancho &amp;&amp; git fetch -q origin &amp;&amp; git checkout "$REV" &amp;&amp; cargo build --release -p cancho)
-(cd ../cancho-table-main &amp;&amp; git checkout -q "$(sed -n 's/^rev //p' ../cancho-ml/table.pin)")
 sh scripts/check_table_pin.sh
 export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
-cancho install &amp;&amp; cancho build --bin ml      # builds build/ml
+cancho install &amp;&amp; cancho build --bin ml      # install fetches the pins (network); builds build/ml
 
 cat &gt; houses.csv &lt;&lt;'EOF'
 id,rooms,area,price
