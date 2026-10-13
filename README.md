@@ -3,8 +3,10 @@
 **Status: early.** The repository holds the plan (one epic and the issues under it, `docs/design.md`), the linear algebra of stage 1
 (`lib/linalg`, `docs/linalg.md`) and a vertical slice of the command line (`tools/ml`, `docs/cli.md`): `ml fit | predict | eval |
 introspect | skill` with one real model, `--model constant` (the training mean, or the majority class), a versioned model file, refusals
-as data with rule tags, a bounded log and a checked authority manifest. Nothing else is built: see `docs/cli.md` section 1 for the gates
-and section 7 for their verdicts.
+as data with rule tags, a bounded log and a checked authority manifest. The libraries of the other stages (the CSV reader, metrics and splits, linear and logistic regression, k-means, decision trees and
+forests) are merged and gated but **no verb calls them yet**: see `docs/integration.md` for what is wired, the registries of model
+kinds, stream kinds and refusal codes, and the result of every gate on the merged tree; `docs/cli.md` section 1 has the gates of the
+command line and section 7 their verdicts.
 
 A machine-learning library and command line written in [cancho](https://github.com/alpibrusl/cancho), for classical ML on
 tabular data: transformations, pipelines, training, prediction and evaluation. It follows the shape of

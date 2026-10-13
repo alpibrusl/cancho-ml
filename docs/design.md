@@ -400,3 +400,13 @@ It is a library under `lib/models/tree/`, driven by `tools/tree-check` for the g
 What it changes in this document: model kind 7 for section 4.1 *(the stage wrote 6 here and 3 in its own document; integration fixed 7)*; the tags `ml.limit.depth`, `ml.limit.nodes`, `ml.param.threads`
 (also for the memory the thread copies would take) become reachable from a library call (section 8; none is reachable from `ml`
 until the verbs call the library); the row ceiling of a tree fit is 2^20 (the exact Gini comparison), a figure for section 9.
+
+## 16. Stage M5: metrics and splits (library only; added at integration)
+
+`docs/metrics.md` holds the gates (written before the code), the specification (a bounded draw by rejection, Fisher-Yates, the splits,
+the order of every decisive sum, the metrics), the rule tags and the results. The stage did not edit this document; the integration
+registered what it adds: its rule tags in section 8 and 8.1 (codes 201 to 211, `lib/metrics/rules.cho`), its stream kinds in `docs/rng.md`
+(they are 4, 5 and 6 since the integration; the stage had 1, 2 and 3, which the tree and k-means streams also used), and the summation order
+of its sums, which is **not** the one of `docs/linalg.md` section 2 (4 lanes in a block of 256 terms against one chain): section 3.1 says every
+reduction has *a* normative order, each kernel's document names its own, and `docs/integration.md` says where the constant lives. The library
+is not called by the command line yet.

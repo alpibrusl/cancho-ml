@@ -1,0 +1,170 @@
+# Integration of the six v1 stage branches (`v1-int`)
+
+**Status: what was done when core + linalg, the CLI slice, the reader, metrics + splits, linear/logistic/k-means and trees + forests
+were merged into one tree, and what every gate says about the merged tree.** No feature was added and no gate was loosened. Every number
+below was printed by the script named next to it, in this session, on one machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python
+3.14.5, numpy 2.4.6, scikit-learn 1.8.0; the machine was loaded by the mutant runs (up to a load average of 36) when the mutants ran, which
+changes no verdict but is the reason no time is quoted. Benchmarks were not run.
+
+## 1. What conflicted
+
+**Text.** Git merged the six branches with one text conflict, in `docs/design.md` (the linear stage and the tree stage both appended a
+section at the end: kept both, now sections 14 and 15). Nothing else conflicted in text.
+
+**Meaning, found by reading the stages against each other.** These merged without a conflict marker and were wrong:
+
+| what | the collision | resolved |
+|---|---|---|
+| model kind | 3 was `tools/ml/mfile.cho`'s constant regression of a float target, the linear stage's linear regression (`lib/models/record.cho`, `tests/p_models.cho`, `docs/models-linear.md`) and the tree stage's forest (`docs/models-tree.md`); `design.md` section 15 said the tree was 6 | one table, section 4: 1, 2, 3 as shipped; linear 4, logistic 5, k-means 6, tree 7 |
+| refusal code | the metrics library numbered its tags 1 to 11, `ml.refuse` has 1 to 15 with other meanings (metrics 4 = `single-class`, refuse 4 = `input-empty`); the tree library has 101 to 108 | bands, one per library: 1-99 `ml.refuse`, 101-199 `tree.deny`, 201-299 `metrics.rules` (metrics now 201 to 211) |
+| RNG stream kind | metrics used kinds 1, 2, 3 for its three splits; the tree uses 1 (bootstrap) and 2 (node features); k-means uses 3. The same seed in a split and in a forest or in k-means would give the two the same draws | tree 1, 2 and k-means 3 kept; the splits are 4, 5, 6 |
+| build lists | `lib/core/matrix.cho` (reader stage) imports `linalg.tensor`; the metrics gate and the tree gate build `lib/core/*.cho` with explicit lists that had no `tensor.cho` | `lib/linalg/tensor.cho` added to the lists (`scripts/gate_metrics.sh`, `scripts/gate_tree.py` twice) |
+| not in CI | `scripts/check.sh` ran neither the metrics gate nor the tree gate nor any registry check | added (section 3) |
+| rule tags | the libraries' tags that `ml` cannot reach were in no table of `tools/ml/spec.cho`, and `design.md` section 8 had rows for few of them | `spec.cho` `pending()`, `design.md` section 8 and 8.1 |
+
+**Looked at and found without a collision:** tensor dtypes (1 = i64, 2 = f64 in `mfile.cho`, `record.cho`, `tree/model.cho`; the schema column
+types 0, 1, 2 are a different field); section tags of the file (1 to 5, only `mfile.cho` writes them); module names (all libraries, the three
+stage test programs and `lib/core` compile in one program: `tests/t_registry.cho`); the import graph (no cycle, the compiler would refuse
+one); `cancho.toml` (`linalg-check`, `models-check`, `ml`: distinct names, `lib/core` shared; the drivers `metrics-check`, `tree-check` and
+`reader-check` have no `[[bin]]` entry and are built by their gate scripts from explicit lists, as `models-check` is); `tools.toml` (one tool, `ml`,
+whose derived authority is unchanged: `manifest.py --check`); `schemas/` and `generated/ml` (not changed by any stage but the CLI's; `schemas.py
+--check`); `table.pin` (`check_table_pin.sh`). The mutant harnesses of the stages each copy their own file lists and do not interact.
+
+## 2. What was changed (one commit each)
+
+1. `integration: lib/core/matrix.cho imports linalg.tensor...` : the three build lists above.
+2. `Fix the cross-stage collisions...` : `lib/core/kinds.cho` (the registry in code), `tests/t_registry.cho` (5 tests: the model kinds, the stream
+   kinds, the stages' own constants against the table, no two stages sharing a model kind, no two libraries sharing a refusal code and one
+   exit code per tag), `scripts/check_registry.py` (the documents and the sources that still write a bare number), the renumbering below, and
+   `scripts/check.sh`. The new tests can fail: with the tree's kind set back to 3, `test_stages_use_the_registry` and
+   `test_no_two_stages_share_a_model_kind` fail (run, then restored).
+3. `Register the tags...` : `tools/ml/spec.cho` `pending()` (13 tags, not in `rules()`, so not in `introspect`, the schemas or the fixtures),
+   `design.md` section 8 (a table of the 13), `docs/metrics.md` (its four tags are no longer "new").
+4. This document, `design.md` section 16 (the metrics stage had none), the README line.
+
+**Files that exist keep their bytes.** `tools/ml/mfile.cho` was not touched, and every model file the CLI writes (kinds 1, 2, 3) is what it was:
+the 101 conformance tests, among them `test_model_file.py` (an independent parser, 20 tests) and the oracle tests, pass unchanged but for the
+one case below.
+
+**Edits to tests, scripts and oracles that the renumbering forced** (each one keeps what the gate checks or makes it stricter; none was made to
+pass a failing gate, and no gate failed because of the merge but for the file lists of the first commit):
+
+* `tests/p_models.cho`: the hand-written layout bytes, kind 3 to 4 (linear) and 5 to 6 (k-means).
+* `tests/conformance/test_model_file.py`: the refused case "kind 7" (7 was "unassigned") is now "kind 99", and kinds 4, 5, 6, 7 are cases of their
+  own (`ml` does not build them: `ml.model.malformed`).
+* metrics: `lib/metrics/rules.cho` (codes 201 to 211, `first()`, `last()`), `lib/metrics/splits.cho` (kinds 4, 5, 6),
+  `tests/t_metrics.cho` (the registry test loops from `first()` to `last()`, and also asks that the code before the band and the one after it
+  have no tag and that `last - first + 1 = count`), `tests/t_metrics_fuzz.cho` (a code must be 0 or inside the band; before: between 0 and 11),
+  `tests/t_metrics_split.cho` (the stream vector is now `stream(42, 4, 0) = f94f852667e9fcae`, the kinds are 4, 5, 6), `scripts/gate_metrics.py`
+  (the tag list must be 201, 202, ...), `scripts/oracle_metrics.py` (the three kinds; the three reference vectors recomputed with its own
+  Python implementation: k-fold `0 0 2 2 0 2 1 1 0 1`, train/test `0 0 1 0 0 0 0 1 1 0`, stratified `1 2 0 2 1 0 0 2 1 0`; the 2,978 cases
+  of the splits gate still agree bit for bit), `scripts/mutants_metrics.py` (five patterns re-aimed at the new numbers), `docs/metrics.md`.
+  **A consequence to know:** the assignment vectors of the splits for a given seed changed, because the stream kinds changed. Nothing stored
+  depends on them yet.
+* `docs/models-linear.md`, `docs/models-tree.md`, `docs/design.md` sections 14 and 15: the numbers, each with a note saying it was renumbered.
+
+**A gate that is wrong:** none found. The tree gate G-ref against scikit-learn fails for the regression forest R1 (section 3): that is the
+stage's own recorded verdict (`docs/models-tree.md` 10.8, `docs/bench/gate_sklearn.txt`); the rerun here prints the same rows byte for byte
+(`diff` empty), so it is not an integration breakage and its tolerance was not moved.
+
+## 3. The gates on the merged tree
+
+All commands from the repository root, `CANCHO=../cancho-compiler-a4572ea/target/release/cancho`.
+
+| gate | command | result |
+|---|---|---|
+| everything CI runs | `sh scripts/check.sh` (exit 0) | green; contents below |
+| format | `cancho fmt --check lib tests tools` | clean |
+| core, exact, matrix, fsq unit tests | `cancho test` of `tests/core.cho`, `exact.cho`, `matrix.cho`, `fsq.cho` | 20, 7, 2 (matrix) and 3 passed, 0 failed (as printed) |
+| linalg unit tests | `t_dot t_gemv t_syrk t_chol t_gemm t_fuzz` | 8, 4, 2, 5, 2, 8 passed |
+| linalg against numpy | `oracle_linalg.py --tree`, `--suite`, `gate_par.sh` (thread suite 1,2,3,4,8,16) | tree for 1..4096 blocks ok; 46 cases all bits equal; thread suite no mismatch |
+| linalg per kernel | `gate_linalg.sh` for dot, axpy, gemv, syrk, chol, fuzz, gemm (run one by one) | 7 of 7 exit 0, "all bits equal" |
+| models | `sh scripts/gate_models.sh` | 23 unit tests ok; oracle suite 120 configuration lines (single thread and 2, 4, 8, 16 threads) all bits equal |
+| models against scikit-learn | `sklearn_models.py` (data `ml-data`, absolute path) | all 39 comparisons PASS ("sklearn gate: all PASS") |
+| metrics | `sh scripts/gate_metrics.sh` | 3 test programs ok; ratio 3,066 pairs, counts 68, AUC 109, sums 1,033, log-loss terms 13,407 of 13,896 bit equal (worst 1.00 ulp), splits 2,978 cases, sklearn table, tags: 11 registered, 11 reached by 45 fixtures, fuzz 400 driver runs (85 ok, 315 refused with a tag, none outside exits 0/2/8) |
+| trees | `sh scripts/check_tree.sh` (`gate_tree.py` default, `mutants_tree.py --check`) | 21 unit tests; exact comparison 2,006 pairs 0 wrong; identity with the Python oracle IDENTICAL on 20 (configuration, size) pairs; thread gate EQUAL on 11 cases at 1, 2, 3, 4, 5, 8, 16 threads; fuzz of the model reader 0 unexpected; identical to spike F (C1 at 1,000 and 100,000 rows); "GATE passed" |
+| trees against scikit-learn (G-ref) | `gate_sklearn.py --big` | **exit 1, as the stage recorded**: "G-ref (pre-registered) FAILED": R1 (regression, missing values, 100,000 rows) RMSE 2.784408 against 3.029622, 8.1% apart with the tolerance 3%; the other pre-registered rows are within (C1, C2, C3, R2, and C1 at 1,000,000 rows). The output equals `docs/bench/gate_sklearn.txt` byte for byte (`diff` empty); the cause is attributed in `docs/models-tree.md` 10.8 |
+| registries | `tests/t_registry.cho`, `scripts/check_registry.py` | 5 passed; 7 model kinds, 6 stream kinds, 34 refusal codes in 3 bands: tables, sources and documents agree |
+| reader | `build_reader.sh`, `gate_reader.py all`, `mutants_reader.py --check` | RD2 1,966,143 accepted cells and 34,380 refusals compared, 0 differences; RD3 192 files, 28,518 cells, 0; RD4 36 limit checks, 0; RD5 277 files, 11,331 cells, 17 refusal cases, 0; RD6 5,014 + 5,115 runs, 0 traps |
+| CLI | `schemas.py --check`, `manifest.py --check`, `python3 -m unittest discover` in `tests/conformance`, `mutants_cli.py --check` | schemas and authority manifest agree; **101 tests OK (1 skipped: the determinism test across `--threads`, which `ml` does not have)**; 45 mutant edits apply |
+| the stages' mutant lists apply | `mutants_{core,linalg,metrics,models,reader,tree,cli}.py --check` | 50, 86, 146, 67, 40, 100, 45 patterns apply once |
+
+**The mutant runs (the long ones; all were run, each with its control passing first):**
+
+| script | mutants | killed | survived, each explained in the script | unexplained |
+|---|---|---|---|---|
+| `mutants_core.py` | 50 | 48 | 2 | 0 |
+| `mutants_linalg.py` | 86 (dot 13, axpy 7, gemv 16, syrk 12, chol 17, fuzz 2, par 9, gemm 10) | 84 | 2 (both in dot) | 0 |
+| `mutants_models.py` | 67 | 65 | 2 | 0 |
+| `mutants_metrics.py` | 146 | 138 | 8 | 0 |
+| `mutants_tree.py` | 100 | 94 | 6 | 0 (and 0 that did not build) |
+| `mutants_reader.py` | 40 | 36 | 4 | 0 |
+| `mutants_cli.py` | 45 | 45 | 0 | 0 |
+
+The counts equal the ones each stage recorded for itself (metrics 138 and 8, tree 94 and 6, models 65 and 2, reader 36 and 4, cli 45).
+
+**Not run:** the benchmarks (`bench_*.py`, `blas_thread_variance.py`, `scripts/ablate`, `scripts/c_parity`), as instructed; a second machine
+(D2, Mac against Linux x86-64: the bytes across platforms are untested here as in each stage's document); a package-mode build of
+`models-check` (`cancho build --bin models-check`; its entry exists and was never built in package mode by its stage); the 1,000,000-row
+timing and identity runs of the tree stage (`gate_tree.py --sizes` beyond the defaults).
+
+## 4. The final registries
+
+The tables themselves are in `design.md` (4.1 model kinds, 8 and 8.1 refusals) and `docs/rng.md`; `lib/core/kinds.cho`, `lib/core/refuse.cho`,
+`lib/metrics/rules.cho` and `lib/models/tree/deny.cho` are the code; `tests/t_registry.cho` and `scripts/check_registry.py` fail on any
+disagreement. Summary:
+
+* **Model kinds** (`u32` opening the `model` section): 1 constant regression (int, dec), 2 constant classification, 3 constant regression of a
+  float target, 4 linear, 5 logistic, 6 k-means, 7 tree or forest (the task is a field of its first record). The next is 8. `mfile.cho` writes
+  and reads 1 to 3 only.
+* **Tensor dtypes:** 1 = i64, 2 = f64. **Section tags:** 1 plan, 2 schema, 3 steps, 4 model, 5 meta.
+* **Refusal codes:** `ml.refuse` 1 to 15 (tensor.rank, tensor.shape, tensor.bounds, input.empty, input.too-many-rows, input.too-many-columns,
+  input.too-many-cells, param.out-of-range, linalg.not-positive-definite, linalg.singular, param.threads, input.non-finite,
+  label.single-class, label.not-binary, fit.non-finite); `tree.deny` 101 to 108 (input.non-finite, label.not-binary, label.single-class,
+  limit.depth, limit.nodes, model.truncated, model.malformed, schema.mismatch; for a code below 101 it answers as `ml.refuse`); `metrics.rules`
+  201 to 211 (input.empty, input.too-many-rows, input.non-finite, label.single-class, label.not-binary, metric.undefined, param.out-of-range,
+  metric.length-mismatch, metric.bad-probability, split.empty-fold, split.stratum-too-small). 301 and above are free. A tag in two bands is one
+  rule with two library-local codes: the wiring translates by tag.
+* **Exit codes:** 2 for `ml.param.out-of-range` and `ml.param.threads`, 8 for every other library tag, one exit code per tag in all three bands.
+* **Rule tags reachable from `ml`:** `extra()` and `rules()` of `tools/ml/spec.cho`, unchanged. **Tags of the libraries not reachable yet:**
+  `pending()` (13): ml.tensor.rank, ml.tensor.shape, ml.tensor.bounds, ml.linalg.not-positive-definite, ml.linalg.singular, ml.param.threads,
+  ml.fit.non-finite, ml.limit.depth, ml.limit.nodes, ml.metric.length-mismatch, ml.metric.bad-probability, ml.split.empty-fold,
+  ml.split.stratum-too-small. `ml.limit.fits` of the first list in `design.md` section 8 is built by no stage.
+* **RNG stream kinds** (`derive(derive(seed, kind), index)`): 1 tree bootstrap, 2 tree node features, 3 k-means centers, 4 train/test split,
+  5 k-fold, 6 stratified k-fold. Test-input streams (`derive(seed, 1..3)` in `linalg-check`, `models-check` and the oracles) use a generator's
+  own seed and never run in a library path. The next kind is 7.
+
+## 5. Where the summation order's constants live (for the lane task; nothing here was changed)
+
+* `lib/linalg/order.cho`: `block()` = 256 (the block length K), `group()`, `slots()`, and the fixed binary tree (`settle`, `settle_root`,
+  `finish`). **No lane constant exists there**: inside a block every linalg kernel (`dot`, `gemv`, `syrk`, `gemm`, ...) is one ascending chain,
+  which is the order of `docs/linalg.md` section 2. The models (`lib/models`) take their sums from these kernels.
+* `lib/metrics/sums.cho`: `lanes()` = 4 and `block_partial`, which unrolls 4 accumulators (`s0..s3`, term `i` of the block to lane `i mod 4`,
+  block partial `(l0 + l1) + (l2 + l3)`), then the same tree of `linalg.order`. It is **its own constant** and its own order, documented in
+  `docs/metrics.md` section 2.4. So the two libraries do not share a summation order in a block today.
+* The tree library's regression sums are sequential in a fixed row order (`docs/models-tree.md`), and its classification sums are exact
+  integers: neither depends on a lane count.
+
+## 6. What is not wired
+
+* **The CLI verbs call none of the libraries.** `ml fit | predict | eval` build and read only kinds 1, 2, 3 (the constant model). `lib/linalg`,
+  `lib/metrics`, `lib/models` (linear, logistic, k-means) and `lib/models/tree` are reached by their own drivers and tests only.
+* `tools/ml/mfile.cho` does not read or write kinds 4 to 7 (it refuses them as `ml.model.malformed`; one conformance case each). The writers
+  and readers of those payloads are `models.record` and `tree.model`.
+* The pipeline (`impute`, `scale`, `encode`), `--threads`, `ml.limit.fits`, multiclass, the second machine, the shared reader as a package
+  dependency of cancho-table (`docs/reader.md` section 1).
+* Wiring a verb means: move its tags from `pending()` to `extra()` and `rules()` with a fixture each, regenerate `schemas/` and
+  `generated/ml` (`scripts/schemas.py`, `scripts/manifest.py`), add `conc` to the authority row when `--threads` arrives, and add the kind to
+  `mfile.cho` with a parser in `tests/conformance/test_model_file.py`.
+
+## 7. Open items, with reproducers
+
+1. **G-ref, regression forest R1** (above): a recorded, pre-registered gate that fails; the stage attributed it and did not move the tolerance.
+   Reproduce: `python3 scripts/gate_sklearn.py --big; echo $?` prints 1 and the R1 row.
+2. **`models-check` traps without a message on a path containing `..`** (found while running `sklearn_models.py` with `ML_DATA` set to a path
+   with `..`; also in the linear stage's own tree, so not an integration effect). Reproduce, from the repository root after
+   `sh scripts/gate_models.sh`: `head -c 8000 /dev/zero > y.bin; build/gate-models/models-check linreg ../ml-data/n1000/x.bin y.bin n=1000 d=20; echo $?`
+   prints 132 (SIGILL) and nothing, where a missing file prints `error: bad or missing file` and exits 1, and an absolute path without `..`
+   works. It is a test driver, not a library, and `ml` checks paths itself (`path.dotdot`); not fixed here because the cause (the runtime's
+   `open_read` on such a path) was not investigated.
+3. `check.sh` now needs `../ml-data` (the files of spike F) for the tree gate, in addition to `../cancho-table-main`.
