@@ -3,7 +3,7 @@ edition 5;
 module ml.csv;
 
 // The CSV reader (docs/reader.md section 2). Cells are read by ml.csvcell (the CLI slice's exact grammar for ints and short decimals,
-// cancho-table's `flt.parse_float` for everything else: pinned by table.pin, not copied); records are RFC 4180, split by cancho-table's
+// cancho-table's `flt.parse_float` for everything else: a pinned package dependency, not copied); records are RFC 4180, split by cancho-table's
 // `reader` module:
 //
 // * the first non-blank record is the header; a UTF-8 byte order mark on the first line is dropped; a CR before the LF is dropped; a

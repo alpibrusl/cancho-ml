@@ -43,7 +43,7 @@ If D1 cannot be kept for a feature, the feature is refused or the exception is w
   works from the bitmap.
 * **Reading.** Cells go through cancho-table's exact reader (`:int`, `:dec(S)`, `:float`, correctly rounded). *(Corrected in place: this
   bullet said the reader of 15 to 17 digit doubles, `tools/table/flt.cho`, was on a branch and **not merged**. It is merged: cancho-table PR #32,
-  `main` at `7f36608`. What `ml` does with it, how it is pinned, and why it is not yet a `[dependencies.*]`, is `docs/reader.md`.)*
+  `main` at `7f36608`. What `ml` does with it and how it is pinned (six `[dependencies.*]` at cancho-table `202b214`) is `docs/reader.md`.)*
 * **No `float_of_bits`.** cancho has `bits_of` and no inverse; it is "missing on purpose" (`floating-point.md` §4.1)
   **[read]**. A stored double is therefore rebuilt from integers: mantissa as `float_of`, then `ldexp` from `std/math.cho`,
   which is exact for normal numbers. The cost of that load is **[M0]** (it is outside the timed fit but inside `predict`
@@ -436,10 +436,10 @@ matrix is 160 MB; **[estimate]**, not measured here).
 What is shared: the reader (`:int`, `:dec`, `:float`), the typed keys and the exact accumulator (`facc`). What is shared by
 **pin, not copy** (`CLAUDE.md`): the `contract/` package of `cancho-tools`. Options for the first three: (a) a package that
 cancho-table exports and cancho-ml depends on at a pinned commit; (b) a small `cancho-numeric` package both depend on.
-Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. *(Looked at, `docs/reader.md` section 1: option (a) needs
-no change to any source of cancho-table, only that it publishes `pow5`, `dec`, `flt`, `query`, `facc` and `reader` as `.cancho-vcs` stores
-at a commit, with a CI check that they match; measured on a scratch repository with compilers `a4572ea` and `e47d647`. Until it does, `ml`
-compiles the files of a pinned read-only clone. The draft for cancho-table is `docs/upstream/`.)*
+Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. *(Done, `docs/reader.md` section 1: option (a) needed
+no change to any source of cancho-table, only that it publish `pow5`, `dec`, `flt`, `query`, `facc` and `reader` as `.cancho-vcs` stores
+at a commit, with a CI check that they match (cancho-table PR #44, merged). `ml` pins them as six `[dependencies.*]`; the proposal is kept in
+`docs/upstream/` as the record.)*
 
 ## 11. What M0 must settle before section 6 and 9 are final
 
@@ -465,8 +465,8 @@ data beside them; every reduction has the fixed-block, fixed-tree order of `docs
 (`--model constant`), the log, the authority and the verdicts. What it changes in this document: the model file's digest is a
 trailer (section 4.1, corrected in place), section 7's row for `ml` has the labels the derivation printed, section 8 has the tags the
 slice added and the ones nothing reaches yet. What it does not settle: the speed factor (section 9), the second machine for D2, the
-shared reader (section 10). *(Settled by the reader stage: `tools/ml/csv*.cho` now reads cells with cancho-table's own modules, pinned by
-file list until cancho-table publishes stores; `docs/reader.md`.)*
+shared reader (section 10). *(Settled by the reader stage: `tools/ml/csv*.cho` now reads cells with cancho-table's own modules, pinned as
+`[dependencies.*]` on cancho-table's `.cancho-vcs` stores; `docs/reader.md`.)*
 
 
 ## 14. Stage M6 of v1: linear regression, logistic regression, k-means (library; not wired into the command line)

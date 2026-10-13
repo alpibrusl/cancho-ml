@@ -58,11 +58,6 @@ def compiler(root):
 
 
 # ------------------------------------------------------------------------------------------------ the binary of a tree
-def table_sources():
-    t = pathlib.Path(os.environ.get("CANCHO_TABLE", str(HERE.parent.parent / "cancho-table-main"))) / "tools" / "table"
-    return [str(t / (m + ".cho")) for m in ("pow5", "dec", "flt", "query", "facc", "reader")]
-
-
 def ml_sources(root, models):
     """The explicit file list of `cancho build --bin ml` for the tree: the libraries, the directories of the wired models, the tool, the dependencies"""
     root = pathlib.Path(root)
@@ -78,7 +73,7 @@ def ml_sources(root, models):
     files = g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho")
     for d in sorted(dirs):
         files += g(d + "/*.cho")
-    files += g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(root / "generated/ml/built.cho")] + g("tools/ml/*.cho") + table_sources()
+    files += g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(root / "generated/ml/built.cho")] + g("tools/ml/*.cho")
     seen, out = set(), []
     for f in files:
         if f not in seen:

@@ -11,7 +11,7 @@ import pt;
 // Gates X1, X2 and X5 of docs/transforms.md: fixtures whose parameters and outputs are written by hand here (not computed by the code under test),
 // the written rules for empty, constant, all-missing and missing columns, and the bytes of a step record.
 // `cancho test --std lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/sums.cho lib/transforms/*.cho tools/ml/csvcell.cho
-//  ../cancho-table-main/tools/table/{pow5,dec,flt}.cho tests/pt.cho tests/t_transforms.cho`. A test answers 0 to pass.
+//  build/deps/*.cho tests/pt.cho tests/t_transforms.cho`. A test answers 0 to pass.
 
 fn spec(kind: int, a: int, b: int, value: float) -> [] fit.Spec {
     return fit.Spec { kind: kind, a: a, b: b, value: value };

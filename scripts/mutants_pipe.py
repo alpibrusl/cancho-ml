@@ -11,7 +11,7 @@ import os, pathlib, shutil, subprocess, sys, tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CANCHO = os.environ.get("CANCHO", str(ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"))
-TABLE = os.environ.get("TABLE_SRC", str(ROOT.parent / "cancho-table-main" / "tools" / "table"))
+DEPS = os.environ.get("ML_DEPS", str(ROOT / "build" / "deps"))
 
 F = "lib/transforms/fit.cho"
 A = "lib/transforms/apply.cho"
@@ -172,7 +172,7 @@ def tree(tmp):
 
 
 def gate(tmp):
-    env = dict(os.environ, CANCHO=CANCHO, TABLE_SRC=TABLE, PIPE_FAST="1")
+    env = dict(os.environ, CANCHO=CANCHO, ML_DEPS=DEPS, PIPE_FAST="1")
     r = subprocess.run(["sh", "scripts/gate_pipe.sh"], cwd=tmp, capture_output=True, text=True, env=env, timeout=1800)
     return r
 
