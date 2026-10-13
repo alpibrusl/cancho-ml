@@ -493,7 +493,7 @@ def q11(c):
     p = subprocess.run([sys.executable, str(script), c.name], capture_output=True, text=True, env=dict(os.environ, ML_BIN=str(c.bin)), cwd=c.root)
     if p.returncode != 0:
         return "FAIL", (p.stdout + p.stderr)[-300:]
-    return "PASS", "%d comparisons within the stated tolerances" % p.stdout.count("PASS")
+    return "PASS", "%d comparisons within the stated tolerances" % p.stdout.count("observed")
 
 
 FUNCS = {"Q0": q0, "Q1": q1, "Q2": q2, "Q3": q3, "Q4": q4, "Q5": q5, "Q6": q6, "Q7": q7, "Q8": q8, "Q9": q9, "Q10": q10, "Q11": q11}

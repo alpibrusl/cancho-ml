@@ -3,7 +3,7 @@
 # package-mode build of `ml`, the schemas and the authority manifest checked against the sources, the conformance gates, and a
 # check that every edit of the mutant list still applies. The gates of lib/metrics and
 # lib/models/tree and the registry check are run here too. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
-# once per pattern, 53 of them, and run on request, as the stage 1 mutants do (the wiring stage's are scripts/mutants_wire.py: 38 patterns).
+# once per pattern, 53 of them, and run on request, as the stage 1 mutants do (the wiring stage's are scripts/mutants_wire.py: 40 patterns).
 set -e
 cd "$(dirname "$0")/.."
 # absolute, because the conformance tests run from tests/conformance

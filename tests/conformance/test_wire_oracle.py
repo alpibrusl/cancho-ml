@@ -38,7 +38,7 @@ class Oracle(unittest.TestCase):
         self.suite("logistic", 101)
 
     def test_the_cases_reach_what_the_task_asks_for(self):
-        # missing cells, a constant column, imputation, min-max and standard scaling, a split, a positive label: all appear in the generated cases
+        # missing cells, a constant column, imputation, min-max and standard scaling, a bucket step, a one-hot encoding, a split, a positive label: all appear in the generated cases
         seen = set()
         for model, off in (("linear", 0), ("logistic", 101)):
             for seed in range(1, CASES + 1):
@@ -46,7 +46,7 @@ class Oracle(unittest.TestCase):
                 if any("" in r for r in c.rows):
                     seen.add("missing")
                 for st in c.steps:
-                    seen.add({1: "impute", 2: "minmax", 3: "standard"}[st["kind"]])
+                    seen.add({1: "impute", 2: "minmax", 3: "standard", 4: "onehot", 6: "bucket"}[st["kind"]])
                 if c.split:
                     seen.add("split")
                 if c.positive is not None:
@@ -54,7 +54,7 @@ class Oracle(unittest.TestCase):
                 cols = list(zip(*[r[:-1] for r in c.rows]))
                 if any(len(set(col) - {""}) == 1 for col in cols):
                     seen.add("constant column")
-        self.assertEqual(seen, {"missing", "impute", "minmax", "standard", "split", "positive", "constant column"})
+        self.assertEqual(seen, {"missing", "impute", "minmax", "standard", "onehot", "bucket", "split", "positive", "constant column"})
 
 
 if __name__ == "__main__":

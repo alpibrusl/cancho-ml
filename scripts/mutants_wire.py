@@ -78,6 +78,9 @@ MUTANTS = [
     M("w-precision-and-recall-swapped", "W6", "eval computes recall where precision goes", [("tools/ml/wiredata.cho", "let pr = classify.precision(yt, yp, pos, cap);", "let pr = classify.recall(yt, yp, pos, cap);")], ORACLE),
     M("w-eval-positive-ignored", "W6", "eval --positive is not applied", [(IO, "            if pv == c0 || pv == c1 {\n                pos = pv;", "            if pv == c0 || pv == c1 {\n                pos = c1;")], ORACLE + ["test_wire"]),
     M("w-unknown-label-in-eval-accepted", "W8", "eval takes a label the model never saw", [(IO, "                if foreign >= 0 {", "                if false {")], RULES + ["test_wire"]),
+    # ------------------------------------------------------------------ a model file of kind 4 or 5 made with another summation order
+    M("w-sum-order-refusal-names-the-version", "M1", "the detail of the refusal calls the sum order a version", [(D, 'w = fail.detail_int(heap, w, "sum_order", f.a);', 'w = fail.detail_int(heap, w, "version", f.a);')], ["test_model_file"]),
+    M("w-sum-order-known-is-the-wrong-number", "M1", "the detail gives the value found as the value this reader knows", [(D, 'w = fail.detail_int(heap, w, "known", f.c);', 'w = fail.detail_int(heap, w, "known", f.a);')], ["test_model_file"]),
     # ------------------------------------------------------------------ threads
     M("w-thread-count-modulo-4", "W5", "the thread count reaches the library as t mod 4", [(W, "code = est.fit(heap, kind, o.threads, matrix.shape(xr),", "code = est.fit(heap, kind, o.threads % 4, matrix.shape(xr),")], DET),
     M("w-thread-ceiling-removed", "W5", "a thread count over 64 is accepted by eval", [(W, "if t < 1 || t > 64 {", "if t < 1 || t > 640 {")], RULES),

@@ -209,6 +209,14 @@ def fit_oracle(case):
         return r.tag, None
     if any(v is None for row in cur for v in row):
         return "ml.input.missing-value", None
+    if mask is not None:
+        # the held-out rows go through the stored steps in the fit (the "holdout" of the answer): an encode step with unknown=refuse may refuse them
+        try:
+            held = through_steps(stored, [X[i] for i in range(n) if mask[i] == 1])
+        except op.Refuse as r:
+            return r.tag, None
+        if any(v is None for row in held for v in row):
+            return "ml.input.missing-value", None
     d = len(cur[0])
     Xn = np.array(cur, dtype=np.float64).reshape(len(cur), d)
     yn = np.array(yfit, dtype=np.float64)
@@ -358,6 +366,15 @@ def gen_case(seed, model):
     coef = [rng.uniform(-2, 2) / (1 + (j % 3) * 50) for j in range(d)]
     z = [sum(c * v for c, v in zip(coef, row)) + rng.gauss(0, 0.5) for row in X]
     names = ["f%d" % j for j in range(d)]
+    # now and then a column of five categories (to be one-hot encoded) that carries some of the signal
+    categorical = rng.random() < 0.3
+    if categorical:
+        levels = [rng.randint(1, 5) for _ in range(n)]
+        effect = {k: rng.uniform(-3, 3) for k in range(1, 6)}
+        z = [v + effect[l] for v, l in zip(z, levels)]
+        cols.append([str(l) for l in levels])
+        names.append("cat")
+        d += 1
     if model == "linear":
         ycol = ["%.4f" % (v + 3.0) for v in z]
         target = "y"
@@ -381,8 +398,18 @@ def gen_case(seed, model):
         st = {"kind": sk, "a": rng.randint(0, 1) if sk == 3 else 0, "b": 0, "value": 0.0, "cols": sorted(rng.sample(range(d), rng.randint(1, d)))}
         steps.append(st)
         text.append(op.plan_line(st, names, None) + "\n")
+    if rng.random() < 0.3:
+        # a bucket step (equal-width or quantile edges) on a column that is not the categorical one
+        j = rng.randrange(d - (1 if categorical else 0))
+        st = {"kind": 6, "a": rng.randint(0, 1), "b": rng.choice([2, 3, 5, 8]), "value": 0.0, "cols": [j]}
+        steps.append(st)
+        text.append(op.plan_line(st, names, None) + "\n")
+    if categorical:
+        st = {"kind": 4, "a": rng.randint(0, 1), "b": 8, "value": 0.0, "cols": [d - 1]}
+        steps.append(st)
+        text.append(op.plan_line(st, names, None) + "\n")
     l2 = rng.choice(["0.0", "0.25", "1.5"]) if model == "linear" else rng.choice(["0.0", "0.5", "2.0"])
-    if const and l2 == "0.0":
+    if (const or categorical) and l2 == "0.0":
         l2 = "0.5"
     case = Case(model, allnames, rows, target, steps, text, l2=l2, iterations=rng.choice([5, 25, 100]))
     if rng.random() < 0.4:
