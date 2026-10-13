@@ -792,13 +792,20 @@ fn test_the_sum_order_is_written_for_kinds_4_to_7_and_checked[&h](heap: &!h Heap
     var kind = 4;
     while kind <= 7 {
         let fb = kind_file(heap, kind);
+        // the order a kind records: 2, the lane order, for kinds 4 to 6; 3, sequential sums, for a tree or a forest (kind 7: docs/wiring-trees.md section 4)
+        var right = 2;
+        var other = 3;
+        if kind == 7 {
+            right = 3;
+            other = 2;
+        }
         borrow fb as &fr in {
             let all = buffer.bytes(fr);
             if len(all) < 100 {
                 bad = bad + 1;
             }
-            // the writer put sum order 2 last in meta: the four bytes before the trailer are 2, 0, 0, 0
-            if int_of(all[order_at(all)]) != 2 || int_of(all[order_at(all) + 1]) != 0 || int_of(all[order_at(all) + 2]) != 0 || int_of(all[order_at(all) + 3]) != 0 {
+            // the writer put the order last in meta: the four bytes before the trailer are the order, 0, 0, 0
+            if int_of(all[order_at(all)]) != right || int_of(all[order_at(all) + 1]) != 0 || int_of(all[order_at(all) + 2]) != 0 || int_of(all[order_at(all) + 3]) != 0 {
                 bad = bad + 10;
             }
             let (l, lf) = file.decode(heap, all);
@@ -816,7 +823,7 @@ fn test_the_sum_order_is_written_for_kinds_4_to_7_and_checked[&h](heap: &!h Heap
             }
             file.drop(heap, l);
             // control: the same value written back
-            let (c2, a2, b2, d2) = with_order(heap, all, 2, 0);
+            let (c2, a2, b2, d2) = with_order(heap, all, right, 0);
             if c2 != 0 {
                 bad = bad + 10000;
             }
@@ -826,7 +833,7 @@ fn test_the_sum_order_is_written_for_kinds_4_to_7_and_checked[&h](heap: &!h Heap
             borrow mut vw as &!x in {
                 contents(x)[0] = 0;
                 contents(x)[1] = 1;
-                contents(x)[2] = 3;
+                contents(x)[2] = other;
                 contents(x)[3] = 4;
                 contents(x)[4] = 4294967295;
             }
@@ -834,7 +841,7 @@ fn test_the_sum_order_is_written_for_kinds_4_to_7_and_checked[&h](heap: &!h Heap
                 var i = 0;
                 while i < 5 {
                     let (c, a, b, d) = with_order(heap, all, contents(vr)[i], 0);
-                    if c != codes.bad_version() || a != contents(vr)[i] || b != 1 || d != 2 {
+                    if c != codes.bad_version() || a != contents(vr)[i] || b != 1 || d != right {
                         bad = bad + 100000;
                     }
                     i = i + 1;

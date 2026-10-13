@@ -24,7 +24,7 @@ SURVIVED  wt-regression-proba-allowed                      WT2
 KILLED    wt-labels-record-not-checked                     WT11  tests: test_the_labels_record_of_a_classification
 KILLED    wt-longer-payload-accepted                       WT11  tests: test_a_regression_payload_ends_with_its_values_and_has_no_labels, test_the_length_of_the_payload
 KILLED    wt-width-of-the-payload-not-compared             WT11  tests: test_the_header_of_the_library_payload
-SURVIVED  wt-task-of-plan-and-payload-not-compared         WT11  
+KILLED    wt-task-of-plan-and-payload-not-compared         WT11  tests: test_the_task_of_the_plan_and_the_task_of_the_payload_agree
 KILLED    wt-library-reader-skipped-for-the-header         WT11  tests: test_seeded_damage_of_the_model_section_by_whole_words
 SURVIVED  wt-plan-key-not-checked-against-the-kind         WT11  
 KILLED    wt-sum-order-of-kind-7-is-2                      WT3  tests: test_forest_classification, test_forest_regression, test_the_oracle_is_sensitive_to_the_sum_order_field, test_tree_classification
@@ -55,9 +55,8 @@ KILLED    wt-name-of-a-forest-is-the-trees                 WT2  tests: test_the_
 KILLED    wt-limit-depth-tag-missing                       WT6  tests: test_every_fixture, test_a_refused_fit_writes_nothing, test_the_limit_tags_of_the_library_have_their_exit_codes
 PASSED    baseline (the unchanged tree)                    -  
 
-55 mutants: 50 killed, 5 survived, 0 invalid
+55 mutants: 51 killed, 4 survived, 0 invalid
 SURVIVOR wt-regression-proba-allowed: a second line of defence: predict --proba on a regression is args.conflict before the adapter is called and eval calls proba for a classification only; no command line reaches the adapter's refusal
-SURVIVOR wt-task-of-plan-and-payload-not-compared: NO REASON GIVEN
 SURVIVOR wt-plan-key-not-checked-against-the-kind: pipeline.file.decode has already refused a plan whose model family is not the payload's (model_family_ok): this comparison is a second line of defence that no file reaches
-SURVIVOR wt-tree-threads-reach-the-seed: NO REASON GIVEN
+SURVIVOR wt-tree-threads-reach-the-seed: an equivalent mutant: a tree has no bootstrap and tries every column at every node, so no draw of its streams decides anything and its nodes do not depend on the seed at all (the seed in the file's meta is the command line's, not this one)
 SURVIVOR wt-threads-not-passed-to-the-fit: an equivalent mutant by design: no thread count changes a byte of the model (the property this gate asserts), so a fit that ignores the flag writes the same file; nothing a test reads from the file or the answer tells the two apart

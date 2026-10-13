@@ -1,0 +1,49 @@
+KILLED    w-step-separator-is-a-comma                      W3  tests: test_every_fixture, test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-last-step-not-ended                            W3  tests: test_every_fixture, test_retry_repairs_work_and_widen_nothing, test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-hyperparameter-flags-dropped                   W3  tests: test_every_fixture, test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-model-not-built-accepted                       W8  tests: test_every_fixture
+SURVIVED  w-bad-hyperparameter-token-ignored               W8  
+KILLED    w-train-and-test-swapped                         W7  tests: test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-steps-fitted-on-all-rows                       W2  tests: test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-split-test-side-is-the-train-fraction          W7  tests: test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-split-seed-ignored                             W7  tests: test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-seed-not-stored                                W3  tests: test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-eval-split-scores-the-train-side               W7  tests: test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+KILLED    w-holdout-scores-the-train-side                  W7  tests: test_every_fixture
+KILLED    w-empty-target-accepted                          W8  tests: test_every_fixture
+KILLED    w-positive-flag-ignored                          W6  tests: test_every_fixture, test_logistic_bytes_predictions_and_metrics
+KILLED    w-labels-stored-as-0-and-1                       W3  tests: test_logistic_bytes_predictions_and_metrics
+SURVIVED  w-class-1-is-the-negative-label                  W3  
+KILLED    w-missing-cells-reach-the-estimator              W8  tests: test_retry_repairs_work_and_widen_nothing, test_every_fixture
+KILLED    w-missing-cells-in-predict-not-checked           W8  tests: test_every_fixture
+KILLED    w-repair-adds-a-flag-that-is-not-one             W8  tests: test_retry_repairs_work_and_widen_nothing
+KILLED    w-columns-matched-by-position                    W2  tests: test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
+INVALID   w-schema-check-skipped                           W2  tools/ml/wireio.cho: 'let (e2, same) = verbs.schema_check(heap, args, e, st.view, ' found 0 times, wanted occurrence 1
+KILLED    w-predict-wants-the-target                       W2  tests: test_every_fixture
+KILLED    w-predict-reads-the-target-cell                  W2  tests: test_every_fixture
+KILLED    w-proba-column-is-the-label                      W6  tests: test_logistic_bytes_predictions_and_metrics
+KILLED    w-proba-flag-ignored                             W6  tests: test_every_fixture
+KILLED    w-proba-is-the-other-class                       W6  tests: test_logistic_bytes_predictions_and_metrics
+KILLED    w-labels-swapped-in-predict                      W6  tests: test_logistic_bytes_predictions_and_metrics
+KILLED    w-eval-score-not-flipped-for-the-other-label     W6  tests: test_logistic_bytes_predictions_and_metrics, test_the_positive_label_of_eval_is_the_one_precision_recall_and_f1_are_about
+KILLED    w-precision-and-recall-swapped                   W6  tests: test_logistic_bytes_predictions_and_metrics
+KILLED    w-eval-positive-ignored                          W6  tests: test_logistic_bytes_predictions_and_metrics, test_the_positive_label_of_eval_is_the_one_precision_recall_and_f1_are_about
+KILLED    w-unknown-label-in-eval-accepted                 W8  tests: test_a_label_the_model_never_saw_is_refused_with_its_row_and_value
+KILLED    w-sum-order-refusal-names-the-version            M1  tests: test_the_sum_order_of_kinds_4_to_7
+KILLED    w-sum-order-known-is-the-wrong-number            M1  tests: test_the_sum_order_of_kinds_4_to_7
+KILLED    w-thread-count-modulo-4                          W5  tests: test_no_thread_count_changes_a_byte
+KILLED    w-thread-ceiling-removed                         W5  tests: test_every_fixture
+KILLED    w-thread-floor-removed                           W5  tests: test_every_fixture
+KILLED    w-gen-hyperparameter-token-off-by-one            W3  tests: test_retry_repairs_work_and_widen_nothing, test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics, test_every_fixture
+KILLED    w-gen-takes-says-yes-to-every-flag               W8  tests: test_every_fixture
+KILLED    w-table-lets-predict-take-a-plan                 W2  tests: test_predict_and_eval_take_no_plan_step_or_model_flag, test_the_flags_of_predict_and_eval_in_the_tool_do_not_include_a_plan
+KILLED    w-table-model-choice-lists-a-library             W8  tests: test_the_models_in_the_flag_table_are_the_built_ones, test_another_model_name_is_refused, test_the_models_are_exactly_the_built_ones
+PASSED    baseline (the unchanged tree)                    -  
+
+40 mutants: 37 killed, 2 survived, 1 invalid
+SURVIVOR w-bad-hyperparameter-token-ignored: the plan parser has already refused every token that hparams would (its grammar is the same table): this check is a second line of defence that no input reaches
+SURVIVOR w-class-1-is-the-negative-label: NO REASON GIVEN
+
+# re-run after the two patterns were re-aimed at the vector branch / the new schema_check call:
+KILLED    w-class-1-is-the-negative-label W3 tests: test_logistic_bytes_predictions_and_metrics
+KILLED    w-schema-check-skipped W2 tests: test_every_fixture

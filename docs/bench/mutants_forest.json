@@ -1,0 +1,62 @@
+{
+ "model": "forest",
+ "machine": "Mac arm64 (Darwin 25.2.0), cancho a4572ea",
+ "suites": [
+  {
+   "script": "scripts/mutants_tree.py",
+   "log": "docs/bench/mutants_tree_w3a.log",
+   "patterns": 101,
+   "killed": 95,
+   "survivors": [
+    {
+     "id": "aggregation: sum starts from the first tree",
+     "why": "equivalent: acc starts at -0.0 instead of +0.0; the first addition gives the same bits unless a leaf value is -0.0, and no leaf value is -0.0 (sums start from +0.0, 0.0 / m is +0.0, class values are ratios of counts)"
+    },
+    {
+     "id": "score: swapped operands (an equivalent: + commutes)",
+     "why": "equivalent: IEEE addition is commutative, a + b and b + a have the same bits"
+    },
+    {
+     "id": "threads: refusal of the highest tree",
+     "why": "not observable today: the only refusal a tree returns is ml.limit.nodes, so which tree's refusal is reported cannot change the tag; the lowest-tree rule is kept for the day a second code exists"
+    },
+    {
+     "id": "threads: another static partition of the prediction rows",
+     "why": "equivalent by design: rows are independent, so any partition of them gives the same bits; this mutant IS another partition (it is the property G-thread relies on)"
+    },
+    {
+     "id": "pbins: a column with no value has edge 1.0",
+     "why": "unobservable by construction: a column with no present value has only missing cells, so every bin of it is the missing bin and no split of it is valid; its edges are never read and are not part of the model (the serial path's value 0.0 is checked by the E lines of the edge-case set, mutant 'a column with no value has edge 1.0 (serial)')"
+    },
+    {
+     "id": "pbins: another static partition of the columns",
+     "why": "equivalent by design: a column's edges and bins depend on that column alone, so any partition of the columns gives the same arrays (G-thread relies on it)"
+    }
+   ]
+  },
+  {
+   "script": "scripts/mutants_wire_trees.py",
+   "log": "docs/bench/mutants_wire_trees.log",
+   "patterns": 55,
+   "killed": 51,
+   "survivors": [
+    {
+     "id": "wt-regression-proba-allowed",
+     "why": "a second line of defence: predict --proba on a regression is args.conflict before the adapter is called and eval calls proba for a classification only; no command line reaches the adapter's refusal"
+    },
+    {
+     "id": "wt-plan-key-not-checked-against-the-kind",
+     "why": "pipeline.file.decode has already refused a plan whose model family is not the payload's (model_family_ok): this comparison is a second line of defence that no file reaches"
+    },
+    {
+     "id": "wt-tree-threads-reach-the-seed",
+     "why": "an equivalent mutant: a tree has no bootstrap and tries every column at every node, so no draw of its streams decides anything and its nodes do not depend on the seed at all (the seed in the file's meta is the command line's, not this one)"
+    },
+    {
+     "id": "wt-threads-not-passed-to-the-fit",
+     "why": "an equivalent mutant by design: no thread count changes a byte of the model (the property this gate asserts), so a fit that ignores the flag writes the same file; nothing a test reads from the file or the answer tells the two apart"
+    }
+   ]
+  }
+ ]
+}
