@@ -1,6 +1,7 @@
 /* The same algorithms as lib/linalg, in C (clang -O3 -ffp-contract=off), to ask one question: is the gap to numpy a gap of
  * cancho, or of any compiler without the vendor library's hand-tuned code? Same data (SplitMix64, docs/rng.md), same summation
- * order (docs/linalg.md section 2), so the result hash must equal linalg-check's; the time is the mean of REPS runs.
+ * order (docs/linalg.md section 2: blocks of 256, four lanes in a block, the tree over blocks, Cholesky in panels of 32; rewritten at v1-lanes),
+ * so the result hash must equal linalg-check's; the time is the mean of REPS runs.
  *     cc -O3 -ffp-contract=off -o build/parity scripts/c_parity/parity.c
  *     cc -O3 -ffp-contract=fast -o build/parity_fma scripts/c_parity/parity.c     (ablation: the cost of the no-fma rule; bits differ)
  *     build/parity KERNEL N D SEED REPS        (KERNEL dot axpy gemv_n gemv_t syrk chol; ablations dot_lanes dot_chain)
@@ -35,25 +36,34 @@ static void finish(double *st, int sp, long w) {
     while (sp >= 2) { double *a = st + (long)(sp - 2) * w, *b = st + (long)(sp - 1) * w; for (long j = 0; j < w; j++) a[j] = a[j] + b[j]; sp--; }
 }
 
+static double lane_combine(double s0, double s1, double s2, double s3) { return (s0 + s1) + (s2 + s3); }
+/* one block of m <= K terms, four lanes: term j to lane j mod 4 */
+static double block_dot(const double *x, const double *y, long m) {
+    double s0 = 0, s1 = 0, s2 = 0, s3 = 0; long j = 0;
+    for (; j + 4 <= m; j += 4) { s0 = s0 + x[j] * y[j]; s1 = s1 + x[j + 1] * y[j + 1]; s2 = s2 + x[j + 2] * y[j + 2]; s3 = s3 + x[j + 3] * y[j + 3]; }
+    if (j < m) s0 = s0 + x[j] * y[j];
+    if (j + 1 < m) s1 = s1 + x[j + 1] * y[j + 1];
+    if (j + 2 < m) s2 = s2 + x[j + 2] * y[j + 2];
+    return lane_combine(s0, s1, s2, s3);
+}
+
 static double dot(const double *x, const double *y, long n, double *st, int *lv) {
     if (n <= 0) return 0.0;
     long nb = (n - 1) / K + 1; int sp = 0; long b = 0;
     while (b < nb) {
-        if (b + 8 <= nb && (b + 8) * K <= n) {
-            double s[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-            const double *xb = x + b * K, *yb = y + b * K;
-            for (long j = 0; j < K; j++) {
-                s[0] = s[0] + xb[j] * yb[j];            s[1] = s[1] + xb[K + j] * yb[K + j];
-                s[2] = s[2] + xb[2 * K + j] * yb[2 * K + j]; s[3] = s[3] + xb[3 * K + j] * yb[3 * K + j];
-                s[4] = s[4] + xb[4 * K + j] * yb[4 * K + j]; s[5] = s[5] + xb[5 * K + j] * yb[5 * K + j];
-                s[6] = s[6] + xb[6 * K + j] * yb[6 * K + j]; s[7] = s[7] + xb[7 * K + j] * yb[7 * K + j];
+        if (b + 2 <= nb && (b + 2) * K <= n) {  /* two full blocks together: eight chains */
+            double a0 = 0, a1 = 0, a2 = 0, a3 = 0, b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+            const double *xa = x + b * K, *ya = y + b * K, *xb = xa + K, *yb = ya + K;
+            for (long j = 0; j < K; j += 4) {
+                a0 = a0 + xa[j] * ya[j]; a1 = a1 + xa[j + 1] * ya[j + 1]; a2 = a2 + xa[j + 2] * ya[j + 2]; a3 = a3 + xa[j + 3] * ya[j + 3];
+                b0 = b0 + xb[j] * yb[j]; b1 = b1 + xb[j + 1] * yb[j + 1]; b2 = b2 + xb[j + 2] * yb[j + 2]; b3 = b3 + xb[j + 3] * yb[j + 3];
             }
-            for (int k = 0; k < 8; k++) { st[sp] = s[k]; sp = settle(st, lv, sp, 1); }
-            b += 8;
+            st[sp] = lane_combine(a0, a1, a2, a3); sp = settle(st, lv, sp, 1);
+            st[sp] = lane_combine(b0, b1, b2, b3); sp = settle(st, lv, sp, 1);
+            b += 2;
         } else {
-            long m = n - b * K; if (m > K) m = K; double s = 0.0;
-            for (long j = 0; j < m; j++) s = s + x[b * K + j] * y[b * K + j];
-            st[sp] = s; sp = settle(st, lv, sp, 1); b++;
+            long m = n - b * K; if (m > K) m = K;
+            st[sp] = block_dot(x + b * K, y + b * K, m); sp = settle(st, lv, sp, 1); b++;
         }
     }
     finish(st, sp, 1); return st[0];
@@ -85,27 +95,36 @@ static double dot_chain(const double *x, const double *y, long n) { double s = 0
 static void axpy(double a, const double *x, double *y, long n) { for (long i = 0; i < n; i++) y[i] = y[i] + a * x[i]; }
 
 static void gemv_n(const double *X, long n, long d, const double *w, double *y) {
+    if (d > K) { for (long i = 0; i < n; i++) { /* block rule over j, then the tree */
+        double st[64]; int lv[64]; int sp = 0; long nbk = (d - 1) / K + 1;
+        for (long bk = 0; bk < nbk; bk++) { long m = d - bk * K; if (m > K) m = K; st[sp] = block_dot(X + i * d + bk * K, w + bk * K, m); sp = settle(st, lv, sp, 1); }
+        finish(st, sp, 1); y[i] = st[0]; } return; }
     long i = 0;
     for (; i + 4 <= n; i += 4) {
-        const double *r0 = X + i * d, *r1 = r0 + d, *r2 = r1 + d, *r3 = r2 + d;
-        double z0 = 0, z1 = 0, z2 = 0, z3 = 0;
-        for (long j = 0; j < d; j++) { double wj = w[j]; z0 = z0 + r0[j] * wj; z1 = z1 + r1[j] * wj; z2 = z2 + r2[j] * wj; z3 = z3 + r3[j] * wj; }
-        y[i] = z0; y[i + 1] = z1; y[i + 2] = z2; y[i + 3] = z3;
+        const double *r[4] = {X + i * d, X + (i + 1) * d, X + (i + 2) * d, X + (i + 3) * d};
+        double z[4][4] = {{0}};
+        long j = 0;
+        for (; j + 4 <= d; j += 4) for (int q = 0; q < 4; q++) for (int l = 0; l < 4; l++) z[q][l] = z[q][l] + r[q][j + l] * w[j + l];
+        for (int l = 0; l < 3; l++) if (j + l < d) for (int q = 0; q < 4; q++) z[q][l] = z[q][l] + r[q][j + l] * w[j + l];
+        for (int q = 0; q < 4; q++) y[i + q] = lane_combine(z[q][0], z[q][1], z[q][2], z[q][3]);
     }
-    for (; i < n; i++) { double z = 0; for (long j = 0; j < d; j++) z = z + X[i * d + j] * w[j]; y[i] = z; }
+    for (; i < n; i++) y[i] = block_dot(X + i * d, w, d);
 }
 
+/* st holds 40 slots of width d and then four lane vectors of width d (44 * d doubles) */
 static void gemv_t(const double *X, long n, long d, const double *r, double *g, double *st, int *lv) {
-    long nb = (n - 1) / K + 1; int sp = 0;
+    long nb = (n - 1) / K + 1; int sp = 0; double *lane = st + 40 * d;
     for (long b = 0; b < nb; b++) {
         long lo = b * K, hi = lo + K; if (hi > n) hi = n;
-        double *acc = st + (long)sp * d; for (long j = 0; j < d; j++) acc[j] = 0.0;
+        for (long j = 0; j < 4 * d; j++) lane[j] = 0.0;
         long i = lo;
         for (; i + 4 <= hi; i += 4) {
             const double *a0 = X + i * d, *a1 = a0 + d, *a2 = a1 + d, *a3 = a2 + d; double c0 = r[i], c1 = r[i + 1], c2 = r[i + 2], c3 = r[i + 3];
-            for (long j = 0; j < d; j++) { double s = acc[j]; s = s + a0[j] * c0; s = s + a1[j] * c1; s = s + a2[j] * c2; s = s + a3[j] * c3; acc[j] = s; }
+            for (long j = 0; j < d; j++) { lane[j] = lane[j] + a0[j] * c0; lane[d + j] = lane[d + j] + a1[j] * c1; lane[2 * d + j] = lane[2 * d + j] + a2[j] * c2; lane[3 * d + j] = lane[3 * d + j] + a3[j] * c3; }
         }
-        for (; i < hi; i++) { const double *a0 = X + i * d; double c0 = r[i]; for (long j = 0; j < d; j++) acc[j] = acc[j] + a0[j] * c0; }
+        for (int l = 0; i + l < hi; l++) { const double *a0 = X + (i + l) * d; double c0 = r[i + l]; for (long j = 0; j < d; j++) lane[l * d + j] = lane[l * d + j] + a0[j] * c0; }
+        double *slot = st + (long)sp * d;
+        for (long j = 0; j < d; j++) slot[j] = lane_combine(lane[j], lane[d + j], lane[2 * d + j], lane[3 * d + j]);
         sp = settle(st, lv, sp, d);
     }
     finish(st, sp, d); memcpy(g, st, d * 8);
@@ -116,37 +135,35 @@ static void syrk(const double *X, long n, long d, double *C, double *st, int *lv
     for (long b = 0; b < nb; b++) {
         long lo = b * K, hi = lo + K; if (hi > n) hi = n;
         double *slot = st + (long)sp * d * d;
-        for (long j0 = 0; j0 < d; j0 += 4) for (long k0 = j0; k0 < d; k0 += 4) {
-            if (j0 + 4 <= d && k0 + 4 <= d) {
-                double c[4][4] = {{0}};
-                for (long i = lo; i < hi; i++) {
-                    const double *p = X + i * d + j0, *q = X + i * d + k0;
-                    for (int u = 0; u < 4; u++) for (int v = 0; v < 4; v++) c[u][v] = c[u][v] + p[u] * q[v];
-                }
-                for (int u = 0; u < 4; u++) for (int v = 0; v < 4; v++) slot[(j0 + u) * d + k0 + v] = c[u][v];
-            } else {
-                for (long j = j0; j < j0 + 4 && j < d; j++) for (long k = k0; k < k0 + 4 && k < d; k++) {
-                    double c = 0; for (long i = lo; i < hi; i++) c = c + X[i * d + j] * X[i * d + k]; slot[j * d + k] = c;
-                }
+        for (long j0 = 0; j0 < d; j0 += 2) for (long k0 = j0; k0 < d; k0 += 2) {
+            double c[2][2][4] = {{{0}}}; long jb = j0 + 2 <= d ? 2 : d - j0, kb = k0 + 2 <= d ? 2 : d - k0;
+            for (long i = lo; i < hi; i++) {
+                int l = (int)((i - lo) % 4);
+                for (long u = 0; u < jb; u++) for (long v = 0; v < kb; v++) c[u][v][l] = c[u][v][l] + X[i * d + j0 + u] * X[i * d + k0 + v];
             }
+            for (long u = 0; u < jb; u++) for (long v = 0; v < kb; v++) slot[(j0 + u) * d + k0 + v] = lane_combine(c[u][v][0], c[u][v][1], c[u][v][2], c[u][v][3]);
         }
         sp = settle(st, lv, sp, d * d);
     }
     finish(st, sp, d * d); memcpy(C, st, d * d * 8);
 }
 
-static int chol(const double *A, double *L, long d) {  /* column by column, 8 rows at a time, ascending k */
+/* panels of 32, four lanes in a panel (docs/linalg.md 2.1); one entry at a time */
+static double panel_sum(const double *L, long d, long i, long j, double aij) {
+    double s = aij;
+    for (long p0 = 0; p0 < j; p0 += 32) {
+        long e = p0 + 32 < j ? p0 + 32 : j; double a[4] = {0, 0, 0, 0};
+        for (long k = p0; k < e; k++) a[(k - p0) % 4] = a[(k - p0) % 4] + L[i * d + k] * L[j * d + k];
+        s = s - lane_combine(a[0], a[1], a[2], a[3]);
+    }
+    return s;
+}
+static int chol(const double *A, double *L, long d) {
     for (long j = 0; j < d; j++) {
-        double s = A[j * d + j]; for (long k = 0; k < j; k++) s = s - L[j * d + k] * L[j * d + k];
+        double s = panel_sum(L, d, j, j, A[j * d + j]);
         if (!(s > 0.0)) return 1;
         double ljj = sqrt(s); L[j * d + j] = ljj;
-        long i = j + 1;
-        for (; i + 8 <= d; i += 8) {
-            double t[8]; for (int q = 0; q < 8; q++) t[q] = A[(i + q) * d + j];
-            for (long k = 0; k < j; k++) { double c = L[j * d + k]; for (int q = 0; q < 8; q++) t[q] = t[q] - L[(i + q) * d + k] * c; }
-            for (int q = 0; q < 8; q++) L[(i + q) * d + j] = t[q] / ljj;
-        }
-        for (; i < d; i++) { double t = A[i * d + j]; for (long k = 0; k < j; k++) t = t - L[i * d + k] * L[j * d + k]; L[i * d + j] = t / ljj; }
+        for (long i = j + 1; i < d; i++) L[i * d + j] = panel_sum(L, d, i, j, A[i * d + j]) / ljj;
     }
     return 0;
 }
@@ -155,7 +172,7 @@ int main(int argc, char **argv) {
     if (argc < 6) return 2;
     const char *kn = argv[1]; long n = atol(argv[2]), d = atol(argv[3]); uint64_t seed = atol(argv[4]); long reps = atol(argv[5]);
     uint64_t s1 = derive(seed, 1), s2 = derive(seed, 2), s3 = derive(seed, 3);
-    double *st = aligned_alloc(64, 40 * (d > 0 ? d * d : 1) * 8 + 4096); int lv[64]; double t0, t1; uint64_t h = 0; long cnt = 0;
+    double *st = aligned_alloc(64, (40 * (d > 0 ? d * d : 1) + 64 * d + 512) * 8 + 4096); int lv[64]; double t0, t1; uint64_t h = 0; long cnt = 0;
     if (!strcmp(kn, "dot")) {
         double *x = gen(n, s1), *y = gen(n, s2); double r = 0; t0 = now(); for (long q = 0; q < reps; q++) r = dot(x, y, n, st, lv); t1 = now(); h = hash(&r, 1); cnt = 1;
     } else if (!strcmp(kn, "dot_lanes") || !strcmp(kn, "dot_chain")) {
