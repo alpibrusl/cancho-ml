@@ -346,7 +346,7 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
     }
     let o = options(args, parsed);
     if verb == 1 {
-        if o.cat_given {
+        if o.cat_given && !wire.planned(o.plan_given, o.model) {
             return (catcli.fit(heap, args, fs, root, ps.file, o, e3, lg), log_ok);
         }
         if wire.planned(o.plan_given, o.model) {

@@ -168,8 +168,12 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 4 | one-hot encoding | `encode kind=onehot` |
 | 5 | label encoding | `encode kind=label` |
 | 6 | bucket (width or quantile edges) | `bucket` |
+| 7 | one-hot encoding of a categorical column | `encode kind=onehot` on a categorical column |
+| 8 | label encoding of a categorical column | `encode kind=label` on a categorical column |
+| 9 | frequency encoding of a categorical column | `freq` |
+| 10 | hashing of a categorical column | `hash` |
 
-**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta. The next step kind is 7.
+**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta. The next step kind is 11. Kinds 7 to 10 are the categorical steps of stage 2 of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them and no model file holds one before stage 3.
 
 Kinds 4 and 5 are built by `ml` since W1 (`tools/ml/wire.cho`, through `lib/pipeline/file.cho` and the adapters of `lib/models`; the logistic payload gained a labels record, `docs/wiring.md` section 4); kinds 6 and 7 are written by libraries only, and `mfile.cho` (the reader of the constant kinds)
 refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor

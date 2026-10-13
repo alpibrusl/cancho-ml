@@ -4,11 +4,14 @@ module ml.catcli;
 
 // `ml fit --cat` (docs/categorical.md section 8): the file is read with the loader of categorical columns, so every refusal of the reader and of the limits
 // (UTF-8, bytes, categories, pool, columns) is reached from the command line, in the order of the file; and when the read succeeds the fit is refused with
-// ml.input.categorical-not-encoded, because no step reads a text column yet (stage 2 of issue 21) and fitting without the column would drop it silently.
+// ml.input.categorical-not-encoded, because a model without steps (constant) reads no text column and fitting without the column would drop it silently. A planned
+// model (linear, logistic) goes through ml.wire, whose steps read the columns (stage 2 of issue 21, docs/categorical-encoders.md).
 
 import std.buffer;
 import std.bytes;
 import ml.catmat;
+import ml.catwire;
+import pipeline.names;
 import ml.csv;
 import ml.csvload;
 import ml.dict;
@@ -21,43 +24,15 @@ import ml.verbs;
 import ml.wiredata;
 import toolbox.fail;
 
-// the error for a vocabulary that was built and has no consumer: the names, the number of categories of each and the digest of the canonical dump
+// the error for a vocabulary that was built and has no consumer (a model that has no steps: constant): all the declared columns, with the shared text of ml.catwire
 fn not_encoded[&h, &v](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab) -> [heap] fail.Errors {
-    var names = buffer.empty(heap, 32);
-    var counts = buffer.empty(heap, 32);
-    var c = 0;
-    while c < dict.ncols(voc) {
-        if c > 0 {
-            names = buffer.push(heap, names, byte_of(44));
-            counts = buffer.push(heap, counts, byte_of(44));
-        }
-        names = buffer.append(heap, names, dict.name(voc, c));
-        counts = buffer.push_nat(heap, counts, dict.count(voc, c));
-        c = c + 1;
+    var nm = catwire.vocab_names(heap, voc);
+    var out = errs;
+    borrow nm as &nr in {
+        out = catwire.not_encoded(heap, out, voc, nr);
     }
-    var dumped = dict.dump(heap, voc);
-    var hex = buffer.empty(heap, 1);
-    borrow dumped as &dr in {
-        buffer.drop(heap, hex);
-        hex = mfile.sha256_hex(heap, buffer.bytes(dr));
-    }
-    buffer.drop(heap, dumped);
-    var q = fail.open_in(heap, spec.extra(), "ml.input.categorical-not-encoded", "a column named by --cat was read and no step reads text columns yet", "name the column in an encode step (encode column=NAME kind=onehot), which reads text columns from stage 2 of issue 21, or remove it from --cat and drop it with --drop");
-    q = fail.no_repair(heap, q);
-    q = fail.detail_open(heap, q);
-    borrow names as &nr in {
-        q = fail.detail_text(heap, q, "columns", buffer.bytes(nr));
-    }
-    borrow counts as &kr in {
-        q = fail.detail_text(heap, q, "categories", buffer.bytes(kr));
-    }
-    borrow hex as &xr in {
-        q = fail.detail_text(heap, q, "vocabulary_sha256", buffer.bytes(xr));
-    }
-    buffer.drop(heap, names);
-    buffer.drop(heap, counts);
-    buffer.drop(heap, hex);
-    return fail.add(heap, errs, q);
+    names.drop(heap, nm);
+    return out;
 }
 
 pub fn fit[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] verbs.Out {

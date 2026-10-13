@@ -273,7 +273,7 @@ fn test_step_kinds_and_section_tags_are_distinct() -> [] int {
         }
         i = i + 1;
     }
-    if kinds.step_at(0) != 0 || kinds.step_at(kinds.step_count() + 1) != 0 || kinds.step_count() != 6 {
+    if kinds.step_at(0) != 0 || kinds.step_at(kinds.step_count() + 1) != 0 || kinds.step_count() != 10 || kinds.step_numeric_count() != 6 {
         bad = bad + 1;
     }
     i = 1;
