@@ -1,0 +1,97 @@
+import std.test;
+import ml.fsq;
+
+// tests of lib/core/fsq.cho: `cancho test --std lib/core/fsq.cho tests/fsq.cho` (scripts/check.sh). The wide cases (cancellation across
+// 2000 bits, subnormals, halfway) are in scripts/gate_float.py against fractions.Fraction. A test answers 0 to pass.
+
+fn sq[&h, &p](heap: &!h Heap, pairs: &p [float]) -> [heap] (float, int) {
+    let acc = box_slice(heap, fsq.size(), 0);
+    var b = acc;
+    var out = (0.0, 0);
+    borrow mut b as &!w in {
+        var i = 0;
+        while i + 1 < len(pairs) {
+            fsq.add_square(contents(w), bits_of(pairs[i]), bits_of(pairs[i + 1]));
+            i = i + 2;
+        }
+        out = fsq.finish(contents(w));
+    }
+    unbox_slice(heap, b);
+    return out;
+}
+
+fn test_fsq_simple[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let p = box_slice(heap, 6, 0.0);
+    var q = p;
+    borrow mut q as &!w in {
+        let c = contents(w);
+        c[0] = 1.0;
+        c[1] = 0.5;
+        c[2] = 3.0;
+        c[3] = 5.0;
+        c[4] = 0.0 - 2.0;
+        c[5] = 2.0;
+    }
+    borrow q as &r in {
+        let (v, st) = sq(heap, contents(r));
+        // 0.25 + 4 + 16
+        if st != 0 || v != 20.25 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, q);
+    return bad;
+}
+
+fn test_fsq_cancellation_is_exact[&h](heap: &!h Heap) -> [heap] int {
+    // (1e16 - 1)^2 is 1e32 - 2e16 + 1: a double sum loses the 1; exactly: 99999999999999980000000000000001 rounds to the double nearest it
+    var bad = 0;
+    let p = box_slice(heap, 2, 0.0);
+    var q = p;
+    borrow mut q as &!w in {
+        let c = contents(w);
+        c[0] = 10000000000000000.0;
+        c[1] = 1.0;
+    }
+    borrow q as &r in {
+        let (v, st) = sq(heap, contents(r));
+        // 9999999999999999^2 = 99999999999999980000000000000001; the doubles near it are 1.7e16 apart in the last place,
+        // and Python float(99999999999999980000000000000001) is 9.999999999999999e+31
+        if st != 0 || v != 9.999999999999998e31 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, q);
+    return bad;
+}
+
+fn test_fsq_overflow_and_zero[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let p = box_slice(heap, 2, 0.0);
+    var q = p;
+    borrow mut q as &!w in {
+        let c = contents(w);
+        c[0] = 1.0e200;
+        c[1] = 0.0;
+    }
+    borrow q as &r in {
+        let (v, st) = sq(heap, contents(r));
+        if st != 1 {
+            bad = bad + 1;
+        }
+    }
+    borrow mut q as &!w in {
+        let c = contents(w);
+        c[0] = 7.5;
+        c[1] = 7.5;
+    }
+    borrow q as &r in {
+        let (v, st) = sq(heap, contents(r));
+        if st != 0 || v != 0.0 {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, q);
+    return bad;
+}

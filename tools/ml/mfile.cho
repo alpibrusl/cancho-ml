@@ -1,0 +1,609 @@
+edition 5;
+
+module ml.mfile;
+
+// The model file (docs/design.md section 4.1, docs/cli.md section 4): bytes, versioned, no timestamp, no host name, no path.
+//
+//     "CML1" | u32 version = 1 | u32 sections = 5 | section * 5 | SHA-256 (32 bytes) of every byte before it
+//     section = u32 tag | u64 length | payload              all integers little-endian, no padding
+//     1 plan    canonical pipeline text (design.md 4.2)
+//     2 schema  u32 columns | u32 target | per column: u32 name length | name | u32 type (0 int, 1 dec, 2 float) | u32 scale (0 for int and float)
+//     3 steps   u32 0 (no transform is built in this slice)
+//     4 model   u32 kind (1 constant regression of an int or dec target, 2 constant classification, 3 constant regression of a float
+//               target) | tensor record
+//     5 meta    u64 rows | u64 columns | u64 seed (0) | u32 hyperparameters (0) | u32 length | compiler pin, informational
+//               [ | u32 sum_order = 2, only for a model kind of 4 or above, which this tool reads but does not build (design.md 4.1) ]
+//     tensor record = u32 dtype (1 = i64) | u32 rank | rank * u64 shape | elements row-major, i64
+//       regression stats    shape [4]: n, scale, sum of quotients, sum of remainders (the exact sum, as in ml.exact)
+//       classification      shape [6]: n, classes (2), c0, c1, n0, n1
+//       float regression    shape [2]: n, the bits of the mean (a double: the exact sum of the targets over n, rounded once)
+// A model of int and dec columns is byte for byte what the CLI slice wrote (docs/reader.md section 4).
+//
+// The reader checks, in this order: the magic (bad-magic), the version (version), the structure -- section count, tags in
+// order, every length against the bytes that are there (truncated) -- the checksum (checksum), the sum order of a model of kind 4 or
+// above (status 6, reported as ml.model.version), and then every field of every
+// section against the limits (malformed), before anything sized by the file is allocated, and before a number is used in
+// arithmetic that could overflow. A file is input: the checksum says it is the file that was written, not that it is
+// sensible, so a file with a repaired checksum must be refused, not trusted.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import ml.csv;
+import ml.fbits;
+import toolbox.sha;
+
+pub fn version() -> [] int {
+    return 1;
+}
+
+pub fn max_columns() -> [] int {
+    return 8192;
+}
+
+// the statuses of decode
+pub fn ok() -> [] int {
+    return 0;
+}
+
+pub fn bad_magic() -> [] int {
+    return 1;
+}
+
+pub fn bad_version() -> [] int {
+    return 2;
+}
+
+pub fn truncated() -> [] int {
+    return 3;
+}
+
+pub fn checksum() -> [] int {
+    return 4;
+}
+
+pub fn malformed() -> [] int {
+    return 5;
+}
+
+// status 6 of decode: a model of kind 4 to 7 whose sum order (the last four bytes of `meta`) is not the one implemented (aux: the value found)
+pub fn bad_sum_order() -> [] int {
+    return 6;
+}
+
+// the sum order this reader implements (lib/core/kinds.cho sum_order(); scripts/check_registry.py compares the two)
+pub fn sum_order() -> [] int {
+    return 2;
+}
+
+// the first model kind with a sum order in `meta` and the last kind of the registry (kinds.cho first_ordered_model(), model_count())
+pub fn first_ordered_kind() -> [] int {
+    return 4;
+}
+
+pub fn last_kind() -> [] int {
+    return 7;
+}
+
+// model kind: 1 constant regression (int or dec target), 2 constant classification, 3 constant regression of a float target
+pub res struct Model {
+    kind: int,
+    rows: int,
+    cols: int,
+    target: int,
+    names: buffer.Buffer,
+    ends: vec.Vec[int],
+    // per column: [i] type (0 int, 1 dec, 2 float), [cols + i] scale
+    types: Box[[int]],
+    // regression: n, scale, sq, sr. classification: n, 2, c0, c1, n0, n1. float regression: n, the bits of the mean
+    stats: Box[[int]],
+    nstats: int,
+}
+
+pub fn drop_model[&h](heap: &!h Heap, m: Model) -> [heap] int {
+    let Model { kind, rows, cols, target, names, ends, types, stats, nstats } = m;
+    buffer.drop(heap, names);
+    vec.drop(heap, ends);
+    unbox_slice(heap, types);
+    unbox_slice(heap, stats);
+    return rows;
+}
+
+pub fn kind[&m](m: &m Model) -> [] int {
+    return m.kind;
+}
+
+pub fn rows[&m](m: &m Model) -> [] int {
+    return m.rows;
+}
+
+pub fn cols[&m](m: &m Model) -> [] int {
+    return m.cols;
+}
+
+pub fn target[&m](m: &m Model) -> [] int {
+    return m.target;
+}
+
+pub fn name[&m](m: &m Model, i: int) -> [] &m [byte] {
+    let b = buffer.bytes(m.names);
+    var from = 0;
+    if i > 0 {
+        from = vec.get(m.ends, i - 1);
+    }
+    return b[from..vec.get(m.ends, i)];
+}
+
+// 0 int, 1 dec, 2 float
+pub fn type_of[&m](m: &m Model, i: int) -> [] int {
+    return contents(m.types)[i];
+}
+
+pub fn scale_of[&m](m: &m Model, i: int) -> [] int {
+    return contents(m.types)[m.cols + i];
+}
+
+pub fn stat[&m](m: &m Model, i: int) -> [] int {
+    return contents(m.stats)[i];
+}
+
+// ---------------------------------------------------------------- bytes
+
+fn put32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+// v as 8 bytes, two's complement
+fn put64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < 8 {
+        o = buffer.push(heap, o, byte_of(v >> 8 * k & 255));
+        k = k + 1;
+    }
+    return o;
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+fn section[&h, &p](heap: &!h Heap, out: buffer.Buffer, tag: int, payload: &p [byte]) -> [heap] buffer.Buffer {
+    var o = put32(heap, out, tag);
+    o = put64(heap, o, len(payload));
+    return buffer.append(heap, o, payload);
+}
+
+// the SHA-256 of `data`, as 32 bytes appended to `out`
+fn digest_into[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [heap] buffer.Buffer {
+    var o = out;
+    let hasher = sha.update(sha.sha256(heap), data);
+    region a {
+        let dg = alloc_slice[a](64, byte_of(0));
+        sha.finish(heap, hasher, dg);
+        o = buffer.append(heap, o, dg[0..32]);
+    }
+    return o;
+}
+
+// the SHA-256 of `data` in lowercase hex (64 bytes)
+pub fn sha256_hex[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] buffer.Buffer {
+    var o = buffer.empty(heap, 64);
+    let hasher = sha.update(sha.sha256(heap), data);
+    region a {
+        let dg = alloc_slice[a](64, byte_of(0));
+        sha.finish(heap, hasher, dg);
+        let hex = alloc_slice[a](64, byte_of(0));
+        sha.hex_into(dg, 32, hex);
+        o = buffer.append(heap, o, hex);
+    }
+    return o;
+}
+
+// ---------------------------------------------------------------- the plan
+
+// the task a model kind belongs to: 1 regression (kinds 1 and 3), 2 classification
+pub fn task_of(kind: int) -> [] int {
+    if kind == 2 {
+        return 2;
+    }
+    return 1;
+}
+
+pub fn plan_text(kind: int) -> [] &static [byte] {
+    if kind != 2 {
+        return "model kind=constant task=regression\n";
+    }
+    return "model kind=constant task=classification\n";
+}
+
+// ---------------------------------------------------------------- encode
+
+// The file for a model. `compiler` is the pin of the compiler the tool was built with (informational).
+pub fn encode[&h, &m, &c](heap: &!h Heap, mo: &m Model, compiler: &c [byte]) -> [heap] buffer.Buffer {
+    // schema
+    var sc = put32(heap, buffer.empty(heap, 64), mo.cols);
+    sc = put32(heap, sc, mo.target);
+    var i = 0;
+    while i < mo.cols {
+        let nm = name(mo, i);
+        sc = put32(heap, sc, len(nm));
+        sc = buffer.append(heap, sc, nm);
+        sc = put32(heap, sc, type_of(mo, i));
+        sc = put32(heap, sc, scale_of(mo, i));
+        i = i + 1;
+    }
+    // steps
+    let st = put32(heap, buffer.empty(heap, 4), 0);
+    // model: the kind, then the tensor record
+    var md = put32(heap, buffer.empty(heap, 64), mo.kind);
+    md = put32(heap, md, 1);
+    md = put32(heap, md, 1);
+    md = put64(heap, md, mo.nstats);
+    i = 0;
+    while i < mo.nstats {
+        md = put64(heap, md, stat(mo, i));
+        i = i + 1;
+    }
+    // meta
+    var me = put64(heap, buffer.empty(heap, 64), mo.rows);
+    me = put64(heap, me, mo.cols);
+    me = put64(heap, me, 0);
+    me = put32(heap, me, 0);
+    me = put32(heap, me, len(compiler));
+    me = buffer.append(heap, me, compiler);
+    // assemble
+    var out = buffer.empty(heap, 256);
+    out = buffer.append(heap, out, "CML1");
+    out = put32(heap, out, 1);
+    out = put32(heap, out, 5);
+    out = section(heap, out, 1, plan_text(mo.kind));
+    borrow sc as &r in {
+        out = section(heap, out, 2, buffer.bytes(r));
+    }
+    borrow st as &r in {
+        out = section(heap, out, 3, buffer.bytes(r));
+    }
+    borrow md as &r in {
+        out = section(heap, out, 4, buffer.bytes(r));
+    }
+    borrow me as &r in {
+        out = section(heap, out, 5, buffer.bytes(r));
+    }
+    buffer.drop(heap, sc);
+    buffer.drop(heap, st);
+    buffer.drop(heap, md);
+    buffer.drop(heap, me);
+    var sum = buffer.empty(heap, 40);
+    borrow out as &r in {
+        sum = digest_into(heap, sum, buffer.bytes(r));
+    }
+    borrow sum as &w in {
+        out = buffer.append(heap, out, buffer.bytes(w));
+    }
+    buffer.drop(heap, sum);
+    return out;
+}
+
+// ---------------------------------------------------------------- decode
+
+pub fn empty_model[&h](heap: &!h Heap) -> [heap] Model {
+    return Model { kind: 0, rows: 0, cols: 0, target: 0, names: buffer.empty(heap, 1), ends: vec.empty(heap, 1, 0), types: box_slice(heap, 1, 0), stats: box_slice(heap, 8, 0), nstats: 0 };
+}
+
+// (status, aux). Walks the sections: 0, or 3 truncated, 5 malformed with aux 0. `at[i]` and `len[i]` receive where each
+// payload is.
+fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
+    let n = len(data);
+    let body = n - 32;
+    if body < 12 {
+        return (3, 0);
+    }
+    let count = get32(data, 8);
+    if count != 5 {
+        return (5, 0);
+    }
+    var pos = 12;
+    var s = 0;
+    while s < 5 {
+        if pos + 12 > body {
+            return (3, 0);
+        }
+        let tag = get32(data, pos);
+        let length = fbits.get64(data, pos + 4);
+        if length < 0 || length > body - pos - 12 {
+            return (3, 0);
+        }
+        if tag != s + 1 {
+            return (5, tag);
+        }
+        places[2 * s] = pos + 12;
+        places[2 * s + 1] = length;
+        pos = pos + 12 + length;
+        s = s + 1;
+    }
+    if pos != body {
+        return (5, 0);
+    }
+    return (0, 0);
+}
+
+// the checksum matches the 32 bytes at the end
+fn checksum_ok[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] bool {
+    let n = len(data);
+    var same = false;
+    let hasher = sha.update(sha.sha256(heap), data[0..n - 32]);
+    region a {
+        let dg = alloc_slice[a](64, byte_of(0));
+        sha.finish(heap, hasher, dg);
+        same = bytes.equal(dg[0..32], data[n - 32..n]);
+    }
+    return same;
+}
+
+// Decode the file in `data`. (model, status, aux): status 0 ok; 1 bad magic; 2 version (aux: the version found); 3 truncated;
+// 4 checksum; 5 malformed (aux: the tag of the section at fault, 0 for the structure); 6 sum order (aux: the value found). The model is empty unless status is 0.
+pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Model, int, int) {
+    let n = len(data);
+    if n < 4 {
+        return (empty_model(heap), 3, 0);
+    }
+    if !bytes.equal(data[0..4], "CML1") {
+        return (empty_model(heap), 1, 0);
+    }
+    if n < 8 {
+        return (empty_model(heap), 3, 0);
+    }
+    let v = get32(data, 4);
+    if v != 1 {
+        return (empty_model(heap), 2, v);
+    }
+    var status = 0;
+    var aux = 0;
+    var m = empty_model(heap);
+    region a {
+        let places = alloc_slice[a](10, 0);
+        let (st, ax) = structure(data, places);
+        status = st;
+        aux = ax;
+        if status == 0 {
+            if !checksum_ok(heap, data) {
+                status = 4;
+            } else {
+                let (mo, s2, a2) = content(heap, data, places);
+                drop_model(heap, m);
+                m = mo;
+                status = s2;
+                aux = a2;
+            }
+        }
+    }
+    return (m, status, aux);
+}
+
+fn bad_model[&h](heap: &!h Heap, tag: int) -> [heap] (Model, int, int) {
+    return (empty_model(heap), 5, tag);
+}
+
+// the fields of the five sections; places[2 s] is where section s + 1 starts and places[2 s + 1] how long it is
+fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [heap] (Model, int, int) {
+    // the sum order of a model of kind 4 to 7 comes first: a file made with another order is not reported as malformed because of what it holds
+    let md0 = data[places[6]..places[6] + places[7]];
+    if len(md0) >= 4 {
+        let k0 = get32(md0, 0);
+        if k0 >= first_ordered_kind() && k0 <= last_kind() {
+            // a meta of the shape the rule gives (36 + length bytes) has the field; any other shape is left to the checks below (a kind 4 to 7 file is
+            // refused as not built whatever its meta)
+            let me0 = data[places[8]..places[8] + places[9]];
+            if len(me0) >= 36 {
+                let cl0 = get32(me0, 28);
+                if cl0 >= 0 && cl0 <= 255 && len(me0) == 36 + cl0 {
+                    let so = get32(me0, 32 + cl0);
+                    if so != sum_order() {
+                        return (empty_model(heap), bad_sum_order(), so);
+                    }
+                }
+            }
+        }
+    }
+    // 1 plan
+    let plan = data[places[0]..places[0] + places[1]];
+    var plan_task = 0;
+    if bytes.equal(plan, plan_text(1)) {
+        plan_task = 1;
+    } else if bytes.equal(plan, plan_text(2)) {
+        plan_task = 2;
+    } else {
+        return bad_model(heap, 1);
+    }
+    // 2 schema
+    let sc = data[places[2]..places[2] + places[3]];
+    if len(sc) < 8 {
+        return bad_model(heap, 2);
+    }
+    let cols = get32(sc, 0);
+    let target = get32(sc, 4);
+    if cols < 1 || cols > max_columns() || target >= cols {
+        return bad_model(heap, 2);
+    }
+    var names = buffer.empty(heap, len(sc) + 1);
+    var ends = vec.empty(heap, cols + 1, 0);
+    var types = box_slice(heap, 2 * cols + 1, 0);
+    var pos = 8;
+    var i = 0;
+    var bad = false;
+    borrow mut types as &!tw in {
+        let t = contents(tw);
+        while i < cols && !bad {
+            if pos + 4 > len(sc) {
+                bad = true;
+            } else {
+                let nl = get32(sc, pos);
+                pos = pos + 4;
+                if nl < 0 || nl > len(sc) - pos || len(sc) - pos - nl < 8 {
+                    bad = true;
+                } else {
+                    names = buffer.append(heap, names, sc[pos..pos + nl]);
+                    var size = 0;
+                    borrow names as &nr in {
+                        size = buffer.size(nr);
+                    }
+                    ends = vec.push(heap, ends, size);
+                    pos = pos + nl;
+                    let ty = get32(sc, pos);
+                    let scl = get32(sc, pos + 4);
+                    pos = pos + 8;
+                    if ty > 2 || scl > 12 || (ty == 0 || ty == 2) && scl != 0 {
+                        bad = true;
+                    } else {
+                        t[i] = ty;
+                        t[cols + i] = scl;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+    }
+    if !bad && pos != len(sc) {
+        bad = true;
+    }
+    if !bad {
+        borrow names as &nr in {
+            borrow ends as &er in {
+                let (st, at) = csv.check_names(buffer.bytes(nr), er, cols);
+                if st != 0 {
+                    bad = true;
+                }
+            }
+        }
+    }
+    if bad {
+        buffer.drop(heap, names);
+        vec.drop(heap, ends);
+        unbox_slice(heap, types);
+        return bad_model(heap, 2);
+    }
+    // 3 steps
+    let stp = data[places[4]..places[4] + places[5]];
+    if len(stp) != 4 || get32(stp, 0) != 0 {
+        buffer.drop(heap, names);
+        vec.drop(heap, ends);
+        unbox_slice(heap, types);
+        return bad_model(heap, 3);
+    }
+    // 4 model
+    let md = data[places[6]..places[6] + places[7]];
+    var stats = box_slice(heap, 8, 0);
+    var nstats = 0;
+    var mk_kind = 0;
+    var mbad = false;
+    if len(md) < 20 {
+        mbad = true;
+    } else {
+        let mk = get32(md, 0);
+        let dtype = get32(md, 4);
+        let rank = get32(md, 8);
+        let shape = fbits.get64(md, 12);
+        if mk < 1 || mk > 3 || task_of(mk) != plan_task || dtype != 1 || rank != 1 {
+            mbad = true;
+        } else if mk == 1 && shape != 4 || mk == 2 && shape != 6 || mk == 3 && shape != 2 {
+            mbad = true;
+        } else if len(md) != 20 + 8 * shape {
+            mbad = true;
+        } else {
+            nstats = shape;
+            mk_kind = mk;
+            borrow mut stats as &!sw in {
+                let s = contents(sw);
+                var k = 0;
+                while k < shape {
+                    s[k] = fbits.get64(md, 20 + 8 * k);
+                    k = k + 1;
+                }
+            }
+            borrow stats as &sr in {
+                borrow types as &tr in {
+                    mbad = !stats_sane(mk, contents(sr), contents(tr), cols, target);
+                }
+            }
+        }
+    }
+    if mbad {
+        buffer.drop(heap, names);
+        vec.drop(heap, ends);
+        unbox_slice(heap, types);
+        unbox_slice(heap, stats);
+        return bad_model(heap, 4);
+    }
+    // 5 meta
+    let me = data[places[8]..places[8] + places[9]];
+    var rows = 0;
+    var meta_bad = false;
+    if len(me) < 32 {
+        meta_bad = true;
+    } else {
+        rows = fbits.get64(me, 0);
+        let mc = fbits.get64(me, 8);
+        let seed = fbits.get64(me, 16);
+        let nh = get32(me, 24);
+        let cl = get32(me, 28);
+        borrow stats as &sr in {
+            if rows != contents(sr)[0] || mc != cols || nh != 0 || cl < 0 || cl > 255 || len(me) != 32 + cl {
+                meta_bad = true;
+            }
+        }
+    }
+    if meta_bad {
+        buffer.drop(heap, names);
+        vec.drop(heap, ends);
+        unbox_slice(heap, types);
+        unbox_slice(heap, stats);
+        return bad_model(heap, 5);
+    }
+    return (Model { kind: mk_kind, rows: rows, cols: cols, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats }, 0, 0);
+}
+
+// the numbers of a model section are within the bounds the arithmetic needs (ml.exact)
+fn stats_sane[&s, &t](kind: int, s: &s [int], types: &t [int], cols: int, target: int) -> [] bool {
+    let n = s[0];
+    if n < 1 || n > 1000000000 {
+        return false;
+    }
+    if kind == 3 {
+        // the target is a float column; the mean is the bits of a finite double
+        if types[target] != 2 || s[1] >> 52 & 2047 == 2047 {
+            return false;
+        }
+        return true;
+    }
+    if kind == 1 {
+        if types[target] == 2 {
+            return false;
+        }
+        let scale = s[1];
+        if scale < 0 || scale > 12 || scale != types[cols + target] {
+            return false;
+        }
+        let sq = s[2];
+        let sr = s[3];
+        if sq > 1000 * n || sq < 0 - 1000 * n || sr > 999999999 * n || sr < 0 - 999999999 * n {
+            return false;
+        }
+        return true;
+    }
+    if s[1] != 2 || types[target] != 0 {
+        return false;
+    }
+    let c0 = s[2];
+    let c1 = s[3];
+    let n0 = s[4];
+    let n1 = s[5];
+    if c0 >= c1 || c0 < 0 - 999999999999 || c1 > 999999999999 || n0 < 1 || n1 < 1 {
+        return false;
+    }
+    return n0 + n1 == n;
+}

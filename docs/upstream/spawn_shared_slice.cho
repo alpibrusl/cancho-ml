@@ -1,0 +1,32 @@
+// GAP 2: a thread cannot be given a shared read-only slice (docs/thread-payloads.md is a design, not built), so a threaded
+// kernel over a big matrix must COPY the rows each thread reads into a Box the thread owns (par.cho: the copy is measured in
+// docs/linalg.md section 5). Expected: spawn(body, (xs[lo..hi], ...)) as designed in thread-payloads.md.
+//     cancho check --std spawn_shared_slice.cho   -> error: `spawn`'s payload has type `&d [float]`, which cannot cross to a real thread yet
+edition 5;
+
+fn sum[&r](xs: &r [float]) -> [] int {
+    return len(xs);
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    var h = heap;
+    var code = 1;
+    borrow mut h as &!hp in {
+        let data = box_slice(hp, 100, 1.0);
+        borrow data as &d in {
+            let body = sum;
+            let t = spawn(contents(d)[0..50], body);
+            code = join(t);
+        }
+        unbox_slice(hp, data);
+    }
+    release(h);
+    return code;
+}

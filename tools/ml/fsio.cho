@@ -1,0 +1,277 @@
+edition 6;
+
+module ml.fsio;
+
+// The files `ml` reads and writes besides the CSV: the model file (read whole under a size cap, written beside its final name
+// and renamed over it), and the log (appended). Everything goes through a directory handle opened beneath --root following no
+// link (toolbox.place), so the row of the tool says `dir_write` and `file_write` and no `fs_write`: it can create, append,
+// rename and remove beneath a directory it opened, and nowhere else (cancho docs/directory-handles.md).
+
+import std.buffer;
+import toolbox.place;
+
+// read the file `rel` (opened as toolbox.place says) whole. (bytes, status, aux): 0 ok; 1 the open failed (aux: errno); 2 the
+// read failed (aux: errno); 3 the file is longer than `cap` bytes (aux: its length)
+pub fn read_whole[&h, &f, &r, &p, &q](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte], cap: int) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, int, int) {
+    var out = buffer.empty(heap, 1);
+    var status = 0;
+    var aux = 0;
+    match place.open_operand(fs, root, rel, full) {
+        Opened::Failed(reason) => {
+            return (out, 1, reason);
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            borrow mut file as &!fh in {
+                match place.file_length(fh) {
+                    Done::Failed(reason) => {
+                        status = 2;
+                        aux = reason;
+                    }
+                    Done::Ok(size) => {
+                        if size > cap {
+                            status = 3;
+                            aux = size;
+                        } else {
+                            buffer.drop(heap, out);
+                            out = buffer.empty(heap, size + 4096);
+                            var going = true;
+                            while going {
+                                var used = 0;
+                                borrow out as &ur in {
+                                    used = buffer.size(ur);
+                                }
+                                if used > cap {
+                                    status = 3;
+                                    aux = used;
+                                    going = false;
+                                } else {
+                                    out = buffer.reserve(heap, out, 4096);
+                                    borrow mut out as &!ow in {
+                                        match file_read(fh, buffer.room(ow)) {
+                                            Read::Got(n) => {
+                                                buffer.filled(ow, n);
+                                            }
+                                            Read::End => {
+                                                going = false;
+                                            }
+                                            Read::Failed(reason) => {
+                                                status = 2;
+                                                aux = reason;
+                                                going = false;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            file_close(file);
+        }
+    }
+    return (out, status, aux);
+}
+
+// the whole of `data` into the open file; 0, or the errno of the first failed write
+fn write_all[&f, &d](file: &!f File, data: &d [byte]) -> [file_write] int {
+    var at = 0;
+    while at < len(data) {
+        match file_write(file, data[at..len(data)]) {
+            Done::Ok(n) => {
+                if n <= 0 {
+                    return 5;
+                }
+                at = at + n;
+            }
+            Done::Failed(reason) => {
+                return reason;
+            }
+        }
+    }
+    return 0;
+}
+
+// the name of the temporary file beside `leaf`
+fn temp_name[&h, &l](heap: &!h Heap, leaf: &l [byte]) -> [heap] buffer.Buffer {
+    var t = buffer.empty(heap, len(leaf) + 8);
+    t = buffer.append(heap, t, leaf);
+    return buffer.append(heap, t, ".ml-tmp");
+}
+
+// Write `data` to `rel` (see ml.fsio header): a temporary file beside it, synced, renamed over it, the directory synced. (status,
+// aux): 0 ok; 1 the directory did not open (aux: errno); 2 the file exists and `overwrite` is false; 3 `rel` names no file;
+// 4 the temporary could not be created (aux: errno); 5 a write or the sync failed (aux: errno); 6 the rename failed (aux: errno).
+// With `dry` nothing is created: the answer is 0 and aux 1 if the file exists (a replacement), 0 if not (a creation).
+pub fn write_atomic[&h, &f, &r, &p, &q, &d](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte], data: &d [byte], overwrite: bool, dry: bool) -> [heap, fs_read(""), dir_read, dir_write, file_write] (int, int) {
+    let leaf = place.leaf(rel);
+    if place.is_directory_name(leaf) {
+        return (3, 0);
+    }
+    var status = 0;
+    var aux = 0;
+    match place.parent(fs, root, rel, full) {
+        DirOpened::Failed(reason) => {
+            return (1, reason);
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &dh in {
+                var exists = false;
+                match dir_open_read(dh, leaf) {
+                    Opened::Ok(there) => {
+                        file_close(there);
+                        exists = true;
+                    }
+                    Opened::Failed(reason) => {
+                        if reason != 2 {
+                            // a link at the name, a directory in the way, a permission: not something to write over
+                            exists = true;
+                        }
+                    }
+                }
+                if exists && !overwrite {
+                    status = 2;
+                } else if dry {
+                    // everything was checked; nothing is created, renamed or removed
+                    if exists {
+                        aux = 1;
+                    }
+                } else {
+                    let tmp = temp_name(heap, leaf);
+                    borrow tmp as &tr in {
+                        match dir_open_new(dh, buffer.bytes(tr)) {
+                            Opened::Failed(reason) => {
+                                status = 4;
+                                aux = reason;
+                            }
+                            Opened::Ok(created) => {
+                                var file = created;
+                                borrow mut file as &!fh in {
+                                    var e = write_all(fh, data);
+                                    if e == 0 {
+                                        match file_sync(fh) {
+                                            Done::Ok(unused) => {
+                                            }
+                                            Done::Failed(reason) => {
+                                                e = reason;
+                                            }
+                                        }
+                                    }
+                                    if e != 0 {
+                                        status = 5;
+                                        aux = e;
+                                    }
+                                }
+                                file_close(file);
+                                if status == 0 {
+                                    match dir_rename(dh, buffer.bytes(tr), leaf) {
+                                        Done::Ok(unused) => {
+                                            dir_sync(dh);
+                                        }
+                                        Done::Failed(reason) => {
+                                            status = 6;
+                                            aux = reason;
+                                        }
+                                    }
+                                }
+                                if status != 0 {
+                                    dir_remove(dh, buffer.bytes(tr));
+                                }
+                            }
+                        }
+                    }
+                    buffer.drop(heap, tmp);
+                }
+            }
+            dir_close(dir);
+        }
+    }
+    return (status, aux);
+}
+
+// Append `data` to the log file `rel`. (status, aux): 0 ok; 1 the directory did not open (aux: errno); 2 the file could not
+// be opened for append (aux: errno); 3 `rel` names no file; 4 the file is already `cap` bytes or longer (aux: its length);
+// 5 the write failed (aux: errno)
+pub fn append_log[&f, &r, &p, &q, &d](fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte], data: &d [byte], cap: int) -> [fs_read(""), dir_read, dir_write, file_write, file_read] (int, int) {
+    let leaf = place.leaf(rel);
+    if place.is_directory_name(leaf) {
+        return (3, 0);
+    }
+    var status = 0;
+    var aux = 0;
+    match place.parent(fs, root, rel, full) {
+        DirOpened::Failed(reason) => {
+            return (1, reason);
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &dh in {
+                match dir_open_append(dh, leaf) {
+                    Opened::Failed(reason) => {
+                        status = 2;
+                        aux = reason;
+                    }
+                    Opened::Ok(created) => {
+                        var file = created;
+                        borrow mut file as &!fh in {
+                            match file_size(fh) {
+                                Done::Ok(size) => {
+                                    if size >= cap {
+                                        status = 4;
+                                        aux = size;
+                                    } else {
+                                        let e = write_all(fh, data);
+                                        if e != 0 {
+                                            status = 5;
+                                            aux = e;
+                                        }
+                                    }
+                                }
+                                Done::Failed(reason) => {
+                                    status = 5;
+                                    aux = reason;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            dir_close(dir);
+        }
+    }
+    return (status, aux);
+}
+
+// The length of the log file `rel` before this run: (status, aux). 0 and aux the length (0 if it does not exist yet); 1 and
+// the errno if it could not be inspected.
+pub fn log_length[&f, &r, &p, &q](fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte]) -> [fs_read(""), dir_read, file_read] (int, int) {
+    match place.open_operand(fs, root, rel, full) {
+        Opened::Failed(reason) => {
+            if reason == 2 {
+                return (0, 0);
+            }
+            return (1, reason);
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var size = 0;
+            var status = 0;
+            borrow mut file as &!fh in {
+                match place.file_length(fh) {
+                    Done::Ok(n) => {
+                        size = n;
+                    }
+                    Done::Failed(reason) => {
+                        status = 1;
+                        size = reason;
+                    }
+                }
+            }
+            file_close(file);
+            return (status, size);
+        }
+    }
+}

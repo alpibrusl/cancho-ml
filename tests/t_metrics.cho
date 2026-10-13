@@ -1,0 +1,432 @@
+import std.test;
+import std.math;
+import ml.rng;
+import metrics.rules;
+import metrics.ratio;
+import metrics.splits;
+import metrics.classify;
+import metrics.rank;
+import metrics.regress;
+import metrics.logloss;
+import mt;
+
+// metrics against values written by hand (docs/metrics.md sections 2.5 to 2.8) and one fixture for every code of metrics.rules
+// (`cancho test --std lib/core/*.cho lib/linalg/order.cho lib/metrics/*.cho tests/mt.cho tests/t_metrics.cho`, scripts/check_metrics.sh).
+// A test answers 0 to pass.
+
+fn want(r: rules.Scored, code: int, v: float) -> [] int {
+    if r.code != code {
+        return 1;
+    }
+    if code == 0 && bits_of(r.v) != bits_of(v) {
+        return 1;
+    }
+    return 0;
+}
+
+fn test_ratio() -> [] int {
+    var bad = mt.bits_is(ratio.ratio(1, 3), 0x3fd55555, 0x55555555);
+    bad = bad + mt.bits_is(ratio.ratio(2, 3), 0x3fe55555, 0x55555555);
+    bad = bad + mt.bits_is(ratio.ratio(0, 7), 0, 0);
+    bad = bad + mt.bits_is(ratio.ratio(9, 9), 0x3ff00000, 0);
+    bad = bad + mt.bits_is(ratio.ratio(5, 8), 0x3fe40000, 0);
+    // 1 / 2^61 and 2^61 - 1 over 2^61: exact power of two, and the nearest double below 1 after rounding to 53 bits
+    bad = bad + mt.bits_is(ratio.ratio(1, 2305843009213693952), 0x3c200000, 0);
+    // a tie: (2^53 + 1) / 2^54 rounds to even
+    bad = bad + mt.bits_is(ratio.ratio(9007199254740993, 18014398509481984), 0x3fe00000, 0);
+    // (2^53 + 3) / 2^54 rounds up to even
+    bad = bad + mt.bits_is(ratio.ratio(9007199254740995, 18014398509481984), 0x3fe00000, 2);
+    let nan = ratio.ratio(2, 1);
+    if nan == nan {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_accuracy_precision_recall_f1[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "1,1,1,0");
+    let (pa, m) = mt.ints(heap, "1,1,0,0");
+    borrow ya as &yr in {
+        borrow pa as &pr in {
+            let y = contents(yr)[0..n];
+            let p = contents(pr)[0..m];
+            bad = bad + want(classify.accuracy(y, p, 100), 0, 0.75);
+            // pos = 1: tp 2, fp 0, fn 1;  pos = 0: tp 1, fp 1, fn 0
+            bad = bad + want(classify.precision(y, p, 1, 100), 0, 1.0);
+            bad = bad + want(classify.recall(y, p, 1, 100), 0, 2.0 / 3.0);
+            bad = bad + want(classify.f1(y, p, 1, 100), 0, 0.8);
+            bad = bad + want(classify.precision(y, p, 0, 100), 0, 0.5);
+            bad = bad + want(classify.recall(y, p, 0, 100), 0, 1.0);
+            bad = bad + want(classify.f1(y, p, 0, 100), 0, 2.0 / 3.0);
+        }
+    }
+    unbox_slice(heap, ya);
+    unbox_slice(heap, pa);
+    return bad;
+}
+
+fn test_auc_by_hand[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // (labels, scores in eighths, expected AUC)
+    bad = bad + one_auc(heap, "1,0", "4,4", 0.5);
+    bad = bad + one_auc(heap, "1,0", "6,2", 1.0);
+    bad = bad + one_auc(heap, "1,0", "2,6", 0.0);
+    bad = bad + one_auc(heap, "1,1,0,0", "4,4,4,4", 0.5);
+    bad = bad + one_auc(heap, "1,0,1,0", "9,8,8,1", 0.875);
+    bad = bad + one_auc(heap, "1,0,0,0", "4,4,4,4", 0.5);
+    bad = bad + one_auc(heap, "0,0,0,1", "0,0,0,0", 0.5);
+    // negative scores and a tie between a negative and a positive at the same value
+    bad = bad + one_auc(heap, "1,0,0,1", "0-3,0-3,0-5,2", 0.0 + 0.875);
+    return bad;
+}
+
+fn one_auc[&h, &s](heap: &!h Heap, labels: &s [byte], scores: &s [byte], v: float) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, labels);
+    let (sa, m) = mt.eighths(heap, scores);
+    borrow ya as &yr in {
+        borrow sa as &sr in {
+            bad = want(rank.auc(heap, contents(yr)[0..n], contents(sr)[0..m], 1, 100), 0, v);
+        }
+    }
+    unbox_slice(heap, ya);
+    unbox_slice(heap, sa);
+    return bad;
+}
+
+fn test_regression_by_hand[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.eighths(heap, "0,8,16,24");
+    let (pa, m) = mt.eighths(heap, "8,16,24,32");
+    let (ca, k) = mt.eighths(heap, "12,12,12,12");
+    borrow ya as &yr in {
+        borrow pa as &pr in {
+            borrow ca as &cr in {
+                let y = contents(yr)[0..n];
+                let p = contents(pr)[0..m];
+                let c = contents(cr)[0..k];
+                bad = bad + want(regress.rmse(heap, y, p, 100), 0, 1.0);
+                bad = bad + want(regress.mae(heap, y, p, 100), 0, 1.0);
+                bad = bad + want(regress.r2(heap, y, y, 100), 0, 1.0);
+                bad = bad + want(regress.rmse(heap, y, y, 100), 0, 0.0);
+                // predicting the mean: R-squared is exactly 0
+                bad = bad + want(regress.r2(heap, y, c, 100), 0, 0.0);
+                // errors 1, 1, 1, 5: mae 2, rmse sqrt((1 + 1 + 1 + 25) / 4) = sqrt(7)
+                bad = bad + want(regress.mae(heap, y, contents(pr)[0..m], 100), 0, 1.0);
+            }
+        }
+    }
+    unbox_slice(heap, ya);
+    unbox_slice(heap, pa);
+    unbox_slice(heap, ca);
+    return bad;
+}
+
+fn test_logloss_by_hand[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "1,0,1,0");
+    let (ha, m) = mt.eighths(heap, "4,4,4,4");
+    let (ea, k) = mt.eighths(heap, "8,0,8,0");
+    let (za, z) = mt.eighths(heap, "0,8,0,8");
+    borrow ya as &yr in {
+        borrow ha as &hr in {
+            borrow ea as &er in {
+                borrow za as &zr in {
+                    let y = contents(yr)[0..n];
+                    let half = logloss.logloss(heap, y, contents(hr)[0..m], 1, 100);
+                    if half.code != 0 || half.v < 0.6931471805599452 || half.v > 0.6931471805599455 {
+                        bad = bad + 1;
+                    }
+                    // perfect predictions: p = 1 and 0 are clipped to 1 - eps and eps, the loss is -log(1 - eps), about eps
+                    let perfect = logloss.logloss(heap, y, contents(er)[0..k], 1, 100);
+                    if perfect.code != 0 || perfect.v < 2.0e-16 || perfect.v > 2.5e-16 || bits_of(perfect.v) != bits_of(logloss.term(true, 1.0)) {
+                        bad = bad + 1;
+                    }
+                    // fully wrong predictions: -log(eps) = 36.04...
+                    let wrong = logloss.logloss(heap, y, contents(zr)[0..z], 1, 100);
+                    if wrong.code != 0 || wrong.v < 36.0 || wrong.v > 36.1 || bits_of(wrong.v) != bits_of(logloss.term(true, 0.0)) {
+                        bad = bad + 1;
+                    }
+                    // the clip is [eps, 1 - eps] for either class
+                    if bits_of(logloss.term(false, 1.0)) != bits_of(logloss.term(true, 0.0)) {
+                        bad = bad + 1;
+                    }
+                    if bits_of(logloss.term(false, 0.0)) != bits_of(logloss.term(true, 1.0)) {
+                        bad = bad + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ya);
+    unbox_slice(heap, ha);
+    unbox_slice(heap, ea);
+    unbox_slice(heap, za);
+    return bad;
+}
+
+// a third label that is 0 (a value the mutants of a sloppy "other label" test would let through) is not binary, on every route
+fn test_third_label_is_refused_on_every_route[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "1,2,0,1");
+    let (pa, m) = mt.ints(heap, "1,1,1,1");
+    let (qa, q) = mt.ints(heap, "1,2,2,2");
+    let (ra, r) = mt.ints(heap, "1,2,0,2");
+    let (sa, s) = mt.eighths(heap, "4,2,6,1");
+    let (ua, u) = mt.ints(heap, "1,2,0,1,2,0");
+    let (va, v) = mt.ints(heap, "5");
+    borrow ya as &yr in {
+        borrow pa as &pr in {
+            borrow qa as &qr in {
+                borrow ra as &rr in {
+                    borrow sa as &sr in {
+                        borrow ua as &ur in {
+                            borrow va as &vr in {
+                                // true side: 2 is the other label, then 0
+                                bad = bad + want(classify.f1(contents(yr)[0..n], contents(pr)[0..m], 1, 100), rules.not_binary(), 0.0);
+                                // predicted side: 2 is the other label (from y_true), then 0 in y_pred
+                                bad = bad + want(classify.recall(contents(qr)[0..q], contents(rr)[0..r], 1, 100), rules.not_binary(), 0.0);
+                                bad = bad + want(rank.auc(heap, contents(yr)[0..n], contents(sr)[0..s], 1, 100), rules.not_binary(), 0.0);
+                                bad = bad + want(logloss.logloss(heap, contents(yr)[0..n], contents(sr)[0..s], 1, 100), rules.not_binary(), 0.0);
+                                var o6 = box_slice(heap, 7, 0);
+                                borrow mut o6 as &!ow in {
+                                    bad = bad + code_is(splits.stratified(heap, contents(ur)[0..u], 2, 1, 0, 100, contents(ow)[0..u]), rules.not_binary());
+                                }
+                                unbox_slice(heap, o6);
+                                // a single row of one label: one class, not a stratum that is too small
+                                var o1 = box_slice(heap, 2, 0);
+                                borrow mut o1 as &!ow1 in {
+                                    bad = bad + code_is(splits.stratified(heap, contents(vr)[0..v], 2, 1, 0, 100, contents(ow1)[0..v]), rules.single_class());
+                                    // an output longer than n is a mismatch too
+                                    bad = bad + code_is(splits.kfold(heap, 1, 2, 1, 0, 100, contents(ow1)[0..2]), rules.length_mismatch());
+                                }
+                                unbox_slice(heap, o1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ya);
+    unbox_slice(heap, pa);
+    unbox_slice(heap, qa);
+    unbox_slice(heap, ra);
+    unbox_slice(heap, sa);
+    unbox_slice(heap, ua);
+    unbox_slice(heap, va);
+    return bad;
+}
+
+// lengths that differ, in both directions, and infinities on either side
+fn test_lengths_and_infinities[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "1,0,1");
+    let (pa, m) = mt.ints(heap, "1,0,1,0");
+    let (fa, f) = mt.eighths(heap, "1,2,3");
+    borrow ya as &yr in {
+        borrow pa as &pr in {
+            borrow fa as &fr in {
+                bad = bad + want(classify.accuracy(contents(yr)[0..n], contents(pr)[0..m], 100), rules.length_mismatch(), 0.0);
+                bad = bad + want(classify.accuracy(contents(pr)[0..m], contents(yr)[0..n], 100), rules.length_mismatch(), 0.0);
+                bad = bad + want(regress.mae(heap, contents(fr)[0..f], contents(fr)[0..f - 1], 100), rules.length_mismatch(), 0.0);
+                bad = bad + want(regress.mae(heap, contents(fr)[0..f - 1], contents(fr)[0..f], 100), rules.length_mismatch(), 0.0);
+                var inf = box_slice(heap, 4, 0.5);
+                borrow mut inf as &!iw in {
+                    contents(iw)[1] = 1.0 / 0.0;
+                }
+                var ninf = box_slice(heap, 4, 0.5);
+                borrow mut ninf as &!nw in {
+                    contents(nw)[2] = 0.0 - 1.0 / 0.0;
+                }
+                borrow inf as &ir in {
+                    borrow ninf as &nr in {
+                        bad = bad + want(regress.mae(heap, contents(ir)[0..3], contents(fr)[0..f], 100), rules.non_finite(), 0.0);
+                        bad = bad + want(regress.mae(heap, contents(fr)[0..f], contents(ir)[0..3], 100), rules.non_finite(), 0.0);
+                        bad = bad + want(regress.rmse(heap, contents(fr)[0..f], contents(nr)[0..3], 100), rules.non_finite(), 0.0);
+                        bad = bad + want(regress.r2(heap, contents(nr)[0..3], contents(fr)[0..f], 100), rules.non_finite(), 0.0);
+                        bad = bad + want(rank.auc(heap, contents(yr)[0..n], contents(ir)[0..3], 1, 100), rules.non_finite(), 0.0);
+                        bad = bad + want(logloss.logloss(heap, contents(yr)[0..n], contents(nr)[0..3], 1, 100), rules.non_finite(), 0.0);
+                    }
+                }
+                unbox_slice(heap, inf);
+                unbox_slice(heap, ninf);
+            }
+        }
+    }
+    unbox_slice(heap, ya);
+    unbox_slice(heap, pa);
+    unbox_slice(heap, fa);
+    return bad;
+}
+
+// the ratio SSE / SST overflows although both are finite: undefined, not -inf
+fn test_r2_overflow_is_undefined[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var y = box_slice(heap, 3, 0.0);
+    var p = box_slice(heap, 3, 1.0e150);
+    borrow mut y as &!yw in {
+        contents(yw)[1] = 1.0e-160;
+    }
+    borrow y as &yr in {
+        borrow p as &pr in {
+            bad = bad + want(regress.r2(heap, contents(yr)[0..2], contents(pr)[0..2], 100), rules.undefined(), 0.0);
+        }
+    }
+    unbox_slice(heap, y);
+    unbox_slice(heap, p);
+    return bad;
+}
+
+// ------------------------------------------------------------------------- one fixture per code (T1)
+fn test_every_code_is_reached[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "1,0,1,0");
+    let (sa, m) = mt.eighths(heap, "4,2,6,1");
+    let (ta, t) = mt.ints(heap, "1,0,1");
+    let (ea, e) = mt.ints(heap, "");
+    let (fa, f) = mt.eighths(heap, "");
+    let (la, l) = mt.ints(heap, "0,1,2,0");
+    let (ca, c) = mt.eighths(heap, "5,5,5,5");
+    let (pa, pn) = mt.eighths(heap, "4,12,4,4");
+    let (na, nn) = mt.ints(heap, "1,1,1,1");
+    let (ba, bn) = mt.ints(heap, "1,0,0,1,0,0,0,0");
+    let nan = 0.0 / 0.0;
+    borrow ya as &yr in {
+        borrow sa as &sr in {
+            borrow ta as &tr in {
+                borrow ea as &er in {
+                    borrow fa as &fr in {
+                        borrow la as &lr in {
+                            borrow ca as &cr in {
+                                borrow pa as &pr in {
+                                    borrow na as &nr in {
+                                        borrow ba as &br in {
+                                            let y = contents(yr)[0..n];
+                                            let s = contents(sr)[0..m];
+                                            // 1 ml.input.empty: a split of zero rows
+                                            var out0 = box_slice(heap, 1, 0);
+                                            borrow mut out0 as &!ow in {
+                                                bad = bad + code_is(splits.kfold(heap, 0, 2, 1, 0, 100, contents(ow)[0..0]), rules.input_empty());
+                                            }
+                                            unbox_slice(heap, out0);
+                                            // 2 ml.input.too-many-rows
+                                            bad = bad + want(classify.accuracy(y, y, 3), rules.too_many_rows(), 0.0);
+                                            // 3 ml.input.non-finite
+                                            var nf = box_slice(heap, 5, 0.5);
+                                            borrow mut nf as &!nw in {
+                                                contents(nw)[2] = nan;
+                                            }
+                                            borrow nf as &nfr in {
+                                                bad = bad + want(rank.auc(heap, y, contents(nfr)[0..4], 1, 100), rules.non_finite(), 0.0);
+                                                bad = bad + want(regress.rmse(heap, contents(nfr)[0..4], contents(nfr)[0..4], 100), rules.non_finite(), 0.0);
+                                            }
+                                            unbox_slice(heap, nf);
+                                            // 4 ml.label.single-class
+                                            bad = bad + want(rank.auc(heap, contents(nr)[0..4], s, 1, 100), rules.single_class(), 0.0);
+                                            // 5 ml.label.not-binary
+                                            bad = bad + want(rank.auc(heap, contents(lr)[0..4], s, 1, 100), rules.not_binary(), 0.0);
+                                            // 6 ml.metric.undefined: empty input, constant target, 0 / 0
+                                            bad = bad + want(classify.accuracy(contents(er)[0..0], contents(er)[0..0], 100), rules.undefined(), 0.0);
+                                            bad = bad + want(regress.r2(heap, contents(cr)[0..4], s, 100), rules.undefined(), 0.0);
+                                            bad = bad + want(regress.rmse(heap, contents(fr)[0..0], contents(fr)[0..0], 100), rules.undefined(), 0.0);
+                                            bad = bad + want(classify.precision(contents(nr)[0..4], contents(er)[0..0], 1, 100), rules.length_mismatch(), 0.0);
+                                            // 7 ml.param.out-of-range: a cap of 0, and k = 1
+                                            bad = bad + want(classify.accuracy(y, y, 0), rules.out_of_range(), 0.0);
+                                            var out4 = box_slice(heap, 5, 0);
+                                            borrow mut out4 as &!ow4 in {
+                                                bad = bad + code_is(splits.kfold(heap, 4, 1, 1, 0, 100, contents(ow4)[0..4]), rules.out_of_range());
+                                                bad = bad + code_is(splits.kfold(heap, 4, 2, 1, 0 - 1, 100, contents(ow4)[0..4]), rules.out_of_range());
+                                                bad = bad + code_is(splits.train_test(heap, 4, 0, 1, 0, 100, contents(ow4)[0..4]), rules.out_of_range());
+                                                // 8 ml.metric.length-mismatch
+                                                bad = bad + want(classify.accuracy(y, contents(tr)[0..3], 100), rules.length_mismatch(), 0.0);
+                                                bad = bad + code_is(splits.kfold(heap, 4, 2, 1, 0, 100, contents(ow4)[0..3]), rules.length_mismatch());
+                                                // 9 ml.metric.bad-probability
+                                                bad = bad + want(logloss.logloss(heap, y, contents(pr)[0..4], 1, 100), rules.bad_probability(), 0.0);
+                                                // 10 ml.split.empty-fold
+                                                bad = bad + code_is(splits.kfold(heap, 4, 5, 1, 0, 100, contents(ow4)[0..4]), rules.empty_fold());
+                                                bad = bad + code_is(splits.train_test(heap, 4, 4, 1, 0, 100, contents(ow4)[0..4]), rules.empty_fold());
+                                                // 11 ml.split.stratum-too-small: one positive, three folds
+                                                var out8 = box_slice(heap, 9, 0);
+                                                borrow mut out8 as &!ow8 in {
+                                                    bad = bad + code_is(splits.stratified(heap, contents(br)[0..8], 3, 1, 0, 100, contents(ow8)[0..8]), rules.stratum_too_small());
+                                                    bad = bad + code_is(splits.stratified(heap, contents(nr)[0..4], 2, 1, 0, 100, contents(ow4)[0..4]), rules.single_class());
+                                                    bad = bad + code_is(splits.stratified(heap, contents(lr)[0..4], 2, 1, 0, 100, contents(ow4)[0..4]), rules.not_binary());
+                                                }
+                                                unbox_slice(heap, out8);
+                                            }
+                                            unbox_slice(heap, out4);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ya);
+    unbox_slice(heap, sa);
+    unbox_slice(heap, ta);
+    unbox_slice(heap, ea);
+    unbox_slice(heap, fa);
+    unbox_slice(heap, la);
+    unbox_slice(heap, ca);
+    unbox_slice(heap, pa);
+    unbox_slice(heap, na);
+    unbox_slice(heap, ba);
+    return bad;
+}
+
+fn code_is(got: int, code: int) -> [] int {
+    if got != code {
+        return 1;
+    }
+    return 0;
+}
+
+// the registry: every code has its own tag, the exit code of design.md section 8
+fn test_rule_registry() -> [] int {
+    var bad = 0;
+    var a = rules.first();
+    while a <= rules.last() {
+        if len(rules.tag(a)) == 0 {
+            bad = bad + 1;
+        }
+        var b = a + 1;
+        while b <= rules.last() {
+            if same(rules.tag(a), rules.tag(b)) {
+                bad = bad + 1;
+            }
+            b = b + 1;
+        }
+        var ex = 8;
+        if a == rules.out_of_range() {
+            ex = 2;
+        }
+        if rules.exit_code(a) != ex {
+            bad = bad + 1;
+        }
+        a = a + 1;
+    }
+    if len(rules.tag(0)) != 0 || len(rules.tag(rules.last() + 1)) != 0 || len(rules.tag(rules.first() - 1)) != 0 || rules.last() - rules.first() + 1 != rules.count() || rules.exit_code(0) != 0 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}

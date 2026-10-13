@@ -1,0 +1,864 @@
+import std.test;
+import std.buffer;
+import std.bytes;
+import ml.matrix;
+import transforms.codes;
+import transforms.steps;
+import transforms.fit;
+import transforms.apply;
+import pipeline.plan;
+import pipeline.names;
+import pipeline.schema;
+import pipeline.run;
+import pipeline.file;
+import pt;
+
+// Gate P1 of docs/pipeline.md: the plan text. The canonical form is written by hand here; every refusal is checked for its code, line and column.
+// A test answers 0 to pass. (Build line in scripts/gate_pipe.sh.)
+
+// the canonical text of a plan, or the empty text when it is refused
+fn canon_is[&h](heap: &!h Heap, src: &static [byte], want: &static [byte]) -> [heap] int {
+    let (p, f) = plan.parse(heap, src);
+    var bad = 0;
+    if f.code != 0 {
+        bad = 1;
+    } else {
+        borrow p as &pr in {
+            if !bytes.equal(plan.text(pr), want) {
+                bad = 1;
+            }
+        }
+    }
+    plan.drop(heap, p);
+    return bad;
+}
+
+// the refusal of a plan: 0 if it is as given (code, line or limit, column), else 1
+fn refused[&h](heap: &!h Heap, src: &static [byte], code: int, a: int, b: int) -> [heap] int {
+    let (p, f) = plan.parse(heap, src);
+    plan.drop(heap, p);
+    if f.code != code || f.a != a || f.b != b {
+        return 1;
+    }
+    return 0;
+}
+
+fn test_canonical_form[&h](heap: &!h Heap) -> [heap] int {
+    var bad = canon_is(heap, "impute column=b,a strategy=mean\nscale kind=standard column=*\nencode column=c kind=onehot\nbucket column=x kind=quantile bins=004\nmodel kind=constant task=regression\n", "impute column=a,b strategy=mean\nscale column=* kind=standard ddof=0\nencode column=c kind=onehot max-categories=64 unknown=ignore\nbucket column=x kind=quantile bins=4\nmodel kind=constant task=regression\n");
+    // the constant model's plan is the text tools/ml/mfile.cho writes
+    bad = bad + canon_is(heap, "model kind=constant task=regression", "model kind=constant task=regression\n");
+    bad = bad + canon_is(heap, "model   task=classification\tkind=constant\r\n", "model kind=constant task=classification\n");
+    // blanks, comments, blank lines, CRLF and tabs do not matter
+    bad = bad + canon_is(heap, "# a plan\n\n   scale\tcolumn=x   kind=minmax  \r\n\r\n  # more\nmodel kind=constant task=regression\n\n", "scale column=x kind=minmax\nmodel kind=constant task=regression\n");
+    // the optional keys
+    bad = bad + canon_is(heap, "scale column=x kind=standard ddof=1\nmodel kind=constant task=regression", "scale column=x kind=standard ddof=1\nmodel kind=constant task=regression\n");
+    bad = bad + canon_is(heap, "scale column=x kind=minmax\nmodel kind=linear", "scale column=x kind=minmax\nmodel kind=linear l2=0.0\n");
+    bad = bad + canon_is(heap, "encode column=x kind=label unknown=refuse max-categories=0010\nmodel kind=constant task=regression", "encode column=x kind=label max-categories=10 unknown=refuse\nmodel kind=constant task=regression\n");
+    return bad;
+}
+
+fn test_floats_have_one_spelling[&h](heap: &!h Heap) -> [heap] int {
+    var bad = canon_is(heap, "impute column=a strategy=constant value=1e-1\nmodel kind=linear l2=.10", "impute column=a strategy=constant value=0.1\nmodel kind=linear l2=0.1\n");
+    bad = bad + canon_is(heap, "impute column=a strategy=constant value=5\nmodel kind=linear l2=0", "impute column=a strategy=constant value=5.0\nmodel kind=linear l2=0.0\n");
+    bad = bad + canon_is(heap, "impute column=a strategy=constant value=-0\nmodel kind=linear l2=1e21", "impute column=a strategy=constant value=0.0\nmodel kind=linear l2=1e21\n");
+    bad = bad + canon_is(heap, "impute column=a strategy=constant value=-2.50\nmodel kind=linear", "impute column=a strategy=constant value=-2.5\nmodel kind=linear l2=0.0\n");
+    // 0.1 + 0.2 as a decimal of 17 digits is a different double from 0.3, and keeps its own spelling
+    bad = bad + canon_is(heap, "impute column=a strategy=constant value=0.30000000000000004\nmodel kind=linear", "impute column=a strategy=constant value=0.30000000000000004\nmodel kind=linear l2=0.0\n");
+    // a float that is not finite or not a number, a negative l2
+    bad = bad + refused(heap, "impute column=a strategy=constant value=nan\nmodel kind=linear", codes.plan_bad_value(), 1, 41);
+    bad = bad + refused(heap, "impute column=a strategy=constant value=1e999\nmodel kind=linear", codes.plan_bad_value(), 1, 41);
+    bad = bad + refused(heap, "model kind=linear l2=-1", codes.plan_bad_value(), 1, 22);
+    return bad;
+}
+
+fn test_canonical_is_a_fixed_point[&h](heap: &!h Heap) -> [heap] int {
+    let (p, f) = plan.parse(heap, "impute column=z,y strategy=constant value=.25e1\nencode column=* kind=label unknown=refuse\nbucket column=q kind=width bins=17\nmodel kind=forest task=regression trees=7");
+    var bad = 0;
+    if f.code != 0 {
+        bad = 1;
+    }
+    borrow p as &pr in {
+        let once = plan.text(pr);
+        let (q, g) = plan.parse(heap, once);
+        if g.code != 0 {
+            bad = bad + 1;
+        }
+        borrow q as &qr in {
+            if !bytes.equal(plan.text(qr), once) {
+                bad = bad + 1;
+            }
+        }
+        plan.drop(heap, q);
+    }
+    plan.drop(heap, p);
+    return bad;
+}
+
+fn test_the_specs_and_columns_are_read_back[&h](heap: &!h Heap) -> [heap] int {
+    let (p, f) = plan.parse(heap, "impute column=b,a strategy=constant value=2.5\nscale column=* kind=standard ddof=1\nencode column=c kind=label max-categories=9 unknown=refuse\nbucket column=x kind=quantile bins=4\nmodel kind=constant task=regression");
+    var bad = 0;
+    if f.code != 0 {
+        bad = 100;
+    }
+    borrow p as &pr in {
+        if plan.steps(pr) != 4 {
+            bad = bad + 1;
+        } else {
+            let s0 = plan.spec_of(pr, 0);
+            if s0.kind != 1 || s0.a != 2 || s0.value != 2.5 {
+                bad = bad + 1;
+            }
+            let s1 = plan.spec_of(pr, 1);
+            if s1.kind != 3 || s1.a != 1 || !plan.all_columns(pr, 1) {
+                bad = bad + 1;
+            }
+            let s2 = plan.spec_of(pr, 2);
+            if s2.kind != 5 || s2.a != 1 || s2.b != 9 {
+                bad = bad + 1;
+            }
+            let s3 = plan.spec_of(pr, 3);
+            if s3.kind != 6 || s3.a != 1 || s3.b != 4 {
+                bad = bad + 1;
+            }
+            if !bytes.equal(plan.columns(pr, 0), "a,b") || !bytes.equal(plan.columns(pr, 2), "c") || plan.all_columns(pr, 0) {
+                bad = bad + 1;
+            }
+            if plan.line_of(pr, 3) != 4 {
+                bad = bad + 1;
+            }
+            if !bytes.equal(plan.model_line(pr), "model kind=constant task=regression") {
+                bad = bad + 1;
+            }
+        }
+    }
+    plan.drop(heap, p);
+    return bad;
+}
+
+fn test_refusals_have_a_tag_a_line_and_a_column[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let m = "\nmodel kind=constant task=regression\n";
+    // the model line
+    bad = bad + refused(heap, "", codes.plan_model_line(), 1, 1);
+    bad = bad + refused(heap, "# only a comment\n", codes.plan_model_line(), 2, 1);
+    bad = bad + refused(heap, "model kind=constant task=regression\nscale column=a kind=minmax\n", codes.plan_model_line(), 2, 1);
+    bad = bad + refused(heap, "model kind=constant task=regression\nmodel kind=constant task=regression\n", codes.plan_model_line(), 2, 1);
+    bad = bad + refused(heap, "scale column=a kind=minmax\n", codes.plan_model_line(), 2, 1);
+    // the verb
+    bad = bad + refused(heap, "frobnicate column=a\nmodel kind=constant task=regression", codes.plan_unknown_step(), 1, 1);
+    bad = bad + refused(heap, "\n  model:constant task=regression", codes.plan_unknown_step(), 2, 3);
+    // the keys
+    bad = bad + refused(heap, "impute column=a strategy=mean extra=1\nmodel kind=constant task=regression", codes.plan_unknown_key(), 1, 31);
+    bad = bad + refused(heap, "model kind=constant task=regression l2=1", codes.plan_unknown_key(), 1, 37);
+    bad = bad + refused(heap, "impute column=a\nmodel kind=constant task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "impute column=a strategy=constant\nmodel kind=constant task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "model task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "bucket column=a kind=width\nmodel kind=constant task=regression", codes.plan_missing_key(), 1, 1);
+    bad = bad + refused(heap, "impute column=a column=b strategy=mean\nmodel kind=constant task=regression", codes.plan_duplicate_key(), 1, 17);
+    // the values
+    bad = bad + refused(heap, "impute column=a strategy=avg\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 26);
+    bad = bad + refused(heap, "impute column=a strategy=mean value=1\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 37);
+    bad = bad + refused(heap, "scale column=a kind=minmax ddof=1\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 33);
+    bad = bad + refused(heap, "impute column=a strategy=constant value=abc\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 41);
+    bad = bad + refused(heap, "bucket column=a kind=width bins=x\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 33);
+    bad = bad + refused(heap, "bucket column=a kind=width bins=1234567890\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 33);
+    bad = bad + refused(heap, "model kind=svm", codes.plan_bad_value(), 1, 12);
+    bad = bad + refused(heap, "scale column=a,a kind=minmax\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 16);
+    bad = bad + refused(heap, "scale column=a,,b kind=minmax\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 16);
+    bad = bad + refused(heap, "scale column=a,#b kind=minmax\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 16);
+    bad = bad + refused(heap, "scale column=a,*,b kind=minmax\nmodel kind=constant task=regression", codes.plan_bad_value(), 1, 16);
+    bad = bad + refused(heap, "model kind=constant task=speed", codes.plan_bad_value(), 1, 26);
+    // out of range
+    bad = bad + refused(heap, "bucket column=a kind=width bins=1\nmodel kind=constant task=regression", codes.out_of_range(), 1, 33);
+    bad = bad + refused(heap, "bucket column=a kind=width bins=257\nmodel kind=constant task=regression", codes.out_of_range(), 1, 33);
+    bad = bad + refused(heap, "scale column=a kind=standard ddof=2\nmodel kind=constant task=regression", codes.out_of_range(), 1, 35);
+    bad = bad + refused(heap, "encode column=a kind=onehot max-categories=1025\nmodel kind=constant task=regression", codes.out_of_range(), 1, 44);
+    bad = bad + refused(heap, "encode column=a kind=onehot max-categories=0\nmodel kind=constant task=regression", codes.out_of_range(), 1, 44);
+    // the shape of a line
+    bad = bad + refused(heap, "impute column\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 8);
+    bad = bad + refused(heap, "impute =a\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 8);
+    bad = bad + refused(heap, "impute column=\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 8);
+    bad = bad + refused(heap, "impute column=a=b\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 8);
+    bad = bad + refused(heap, "impute=1 column=a\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 7);
+    bad = bad + refused(heap, "impute column=a\0b strategy=mean\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 16);
+    bad = bad + refused(heap, "impute column=café strategy=mean\nmodel kind=constant task=regression", codes.plan_syntax(), 1, 18);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the pipeline: fit, the file, apply, the schema
+
+// the output of the file's stored steps on `test` (columns `feats`) as text-comparable differences with `want`; (differences, unknown count, fault code)
+fn predict_diff[&h, &f](heap: &!h Heap, filebytes: &f [byte], test: &static [byte], want: &static [byte]) -> [heap] (int, int, int) {
+    let (l, lf) = file.decode(heap, filebytes);
+    var d = 1000;
+    var u = 0;
+    var code = lf.code;
+    if lf.code == 0 {
+        let x = pt.mat(heap, test);
+        borrow l as &lr in {
+            borrow x as &xr in {
+                let (y, un, f2) = run.apply_steps(heap, file.steps_bytes(lr), xr, 1000, 100, 100000);
+                code = f2.code;
+                u = un;
+                if f2.code == 0 {
+                    borrow y as &yr in {
+                        d = pt.diff(yr, want);
+                    }
+                }
+                matrix.drop(heap, y);
+            }
+        }
+        matrix.drop(heap, x);
+    }
+    file.drop(heap, l);
+    return (d, u, code);
+}
+
+fn test_a_file_round_trips_and_applies_its_stored_steps[&h](heap: &!h Heap) -> [heap] int {
+    // a: 0 and 10 (the test value 100 is far outside); c: categories 1, 2, 3; train rows a = 0, 10, ?, 5 and c = 1, 2, 3, 1
+    // impute a mean (5) then minmax a: lo 0, d 10; one-hot c
+    let fb = pt.make_file(heap, "impute column=a strategy=mean\nscale column=a kind=minmax\nencode column=c kind=onehot\nmodel kind=constant task=regression", "a,c", "0,1;10,2;?,3;5,1");
+    var bad = 0;
+    borrow fb as &fr in {
+        let bytes0 = buffer.bytes(fr);
+        if len(bytes0) < 100 {
+            bad = bad + 100;
+        }
+        // test rows: 100 is outside the training range and is NOT clipped, 4 is unknown, a missing a is filled with the TRAINING mean 5 -> 0.5
+        let (d, u, c) = predict_diff(heap, bytes0, "100,2;?,3;5,9;0,1", "10,0,1,0;0.5,0,0,1;0.5,0,0,0;0,1,0,0");
+        bad = bad + d;
+        if u != 1 || c != 0 {
+            bad = bad + 1;
+        }
+        // the file has the five sections and the steps are the four bytes n plus three steps
+        let (l, lf) = file.decode(heap, bytes0);
+        if lf.code != 0 {
+            bad = bad + 1;
+        }
+        borrow l as &lr in {
+            if file.nsteps(lr) != 3 || file.features(lr) != 2 || file.width(lr) != 4 || file.model_kind(lr) != 1 || file.rows(lr) != 6 {
+                bad = bad + 1;
+            }
+            if !bytes.equal(file.plan_bytes(lr), "impute column=a strategy=mean\nscale column=a kind=minmax\nencode column=c kind=onehot max-categories=64 unknown=ignore\nmodel kind=constant task=regression\n") {
+                bad = bad + 1;
+            }
+        }
+        file.drop(heap, l);
+    }
+    buffer.drop(heap, fb);
+    return bad;
+}
+
+// the steps payload of a fit, as bytes (for comparing fits)
+fn fit_payload[&h](heap: &!h Heap, plan_src: &static [byte], feats: &static [byte], train: &static [byte]) -> [heap] buffer.Buffer {
+    let (pl, pf) = plan.parse(heap, plan_src);
+    let nm = names.from_list(heap, feats);
+    let x = pt.mat(heap, train);
+    var out = buffer.empty(heap, 1);
+    borrow pl as &pr in {
+        borrow nm as &nr in {
+            borrow x as &xr in {
+                let (fd, y, f) = run.fit(heap, pr, nr, xr, 1000, 100, 100000);
+                borrow fd as &fr in {
+                    buffer.drop(heap, out);
+                    out = buffer.append(heap, buffer.empty(heap, 16), buffer.bytes(fr.payload));
+                }
+                run.drop_fitted(heap, fd);
+                matrix.drop(heap, y);
+            }
+        }
+    }
+    matrix.drop(heap, x);
+    names.drop(heap, nm);
+    plan.drop(heap, pl);
+    return out;
+}
+
+fn buffers_equal[&h](heap: &!h Heap, a: buffer.Buffer, b: buffer.Buffer) -> [heap] bool {
+    var same = false;
+    borrow a as &ar in {
+        borrow b as &br in {
+            same = bytes.equal(buffer.bytes(ar), buffer.bytes(br));
+        }
+    }
+    buffer.drop(heap, a);
+    buffer.drop(heap, b);
+    return same;
+}
+
+// P2: the parameters are those of the training rows. A column fitted on 0 and 10 and applied to 100 gives 10 (a fit on the test row would give 0)
+fn test_fit_uses_the_training_rows_only[&h](heap: &!h Heap) -> [heap] int {
+    let fb = pt.make_file(heap, "scale column=a kind=minmax\nmodel kind=constant task=regression", "a", "0;10");
+    var bad = 0;
+    borrow fb as &fr in {
+        let (d, u, c) = predict_diff(heap, buffer.bytes(fr), "100;100", "10;10");
+        bad = bad + d + c;
+        // and the parameters are not those of train and test together: they would be lo 0, d 100
+        let (d2, u2, c2) = predict_diff(heap, buffer.bytes(fr), "100;100", "1;1");
+        if d2 == 0 {
+            bad = bad + 1;
+        }
+    }
+    buffer.drop(heap, fb);
+    // the bytes of the fit do not depend on anything but the training matrix: the same fit twice is the same bytes
+    if !buffers_equal(heap, fit_payload(heap, "scale column=a kind=minmax\nmodel kind=constant task=regression", "a", "0;10;4"), fit_payload(heap, "scale column=a kind=minmax\nmodel kind=constant task=regression", "a", "0;10;4")) {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// P3: step 2 is fitted on the output of step 1 (here: the imputed column), not on the raw matrix
+fn test_each_step_feeds_the_next[&h](heap: &!h Heap) -> [heap] int {
+    // the raw column is 2, ?, 4, 9 and the first step fills the gap with 5: the second step's fit equals the fit of that step alone on the
+    // column 2, 5, 4, 9 written by hand
+    var bad = 0;
+    let chained = fit_payload(heap, "impute column=a strategy=constant value=5\nscale column=a kind=standard\nmodel kind=constant task=regression", "a", "2;?;4;9");
+    let direct = fit_payload(heap, "scale column=a kind=standard\nmodel kind=constant task=regression", "a", "2;5;4;9");
+    var tail_equal = false;
+    borrow chained as &cr in {
+        borrow direct as &dr in {
+            // each payload is u32 n, then n steps of (u64 length, payload); the second step of the chained one is the only step of the direct one
+            let c = buffer.bytes(cr);
+            let d = buffer.bytes(dr);
+            if len(c) > len(d) && bytes.equal(c[len(c) - (len(d) - 4)..len(c)], d[4..len(d)]) {
+                tail_equal = true;
+            }
+        }
+    }
+    if !tail_equal {
+        bad = bad + 1;
+    }
+    buffer.drop(heap, chained);
+    buffer.drop(heap, direct);
+    // and a second step that is NOT the same as on the raw column (the raw column has a missing cell and other statistics)
+    let raw = fit_payload(heap, "scale column=a kind=standard\nmodel kind=constant task=regression", "a", "2;4;9");
+    let imputed = fit_payload(heap, "scale column=a kind=standard\nmodel kind=constant task=regression", "a", "2;5;4;9");
+    if buffers_equal(heap, raw, imputed) {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- editing the stored bytes
+
+// the index of the 8 bytes of a double (little endian) in b, or -1
+fn find_double[&s](b: &s [byte], v: float) -> [] int {
+    let bits = bits_of(v);
+    var i = 0;
+    while i + 8 <= len(b) {
+        var k = 0;
+        var same = true;
+        while k < 8 && same {
+            if int_of(b[i + k]) != bits >> 8 * k & 255 {
+                same = false;
+            }
+            k = k + 1;
+        }
+        if same {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn put_double[&d](b: &!d [byte], at: int, v: float) -> [] int {
+    let bits = bits_of(v);
+    var k = 0;
+    while k < 8 {
+        b[at + k] = byte_of(bits >> 8 * k & 255);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the file with the first double equal to `from` after the byte `after` replaced by `to`; if `fix`, with the checksum repaired; (diff against want, fault code of decode, fault code of apply)
+fn edit_and_apply[&h, &f](heap: &!h Heap, filebytes: &f [byte], after: int, from: float, to: float, fix: bool, test: &static [byte], want: &static [byte]) -> [heap] (int, int, int) {
+    var c = pt.copy_box(heap, filebytes);
+    var at = 0 - 1;
+    borrow c as &cr in {
+        at = find_double(contents(cr)[after..len(filebytes)], from);
+    }
+    if at < 0 {
+        unbox_slice(heap, c);
+        return (1000, 0 - 1, 0 - 1);
+    }
+    borrow mut c as &!cw in {
+        put_double(contents(cw), after + at, to);
+    }
+    var d = 0;
+    var dc = 0;
+    var ac = 0;
+    borrow c as &cr in {
+        let edited = contents(cr)[0..len(filebytes)];
+        if fix {
+            let sealed = file.reseal(heap, edited);
+            borrow sealed as &sr in {
+                let (d1, u1, c1) = predict_diff(heap, buffer.bytes(sr), test, want);
+                d = d1;
+                ac = c1;
+            }
+            buffer.drop(heap, sealed);
+        } else {
+            let (d1, u1, c1) = predict_diff(heap, edited, test, want);
+            d = d1;
+            ac = c1;
+        }
+    }
+    unbox_slice(heap, c);
+    return (d, dc, ac);
+}
+
+// P4/P5: edit a stored parameter; with the checksum repaired the prediction changes, without it the file is refused as ml.model.checksum
+fn test_editing_a_stored_parameter_changes_the_prediction[&h](heap: &!h Heap) -> [heap] int {
+    // minmax a on 0 and 10: lo 0.0, d 10.0; the test value 5 gives 0.5. The divisor 10.0 sits in the steps section: after the plan and the schema.
+    let fb = pt.make_file(heap, "scale column=a kind=minmax\nmodel kind=constant task=regression", "a", "0;10");
+    var bad = 0;
+    borrow fb as &fr in {
+        let all = buffer.bytes(fr);
+        // control: the file as written gives 0.5
+        let (d0, u0, c0) = predict_diff(heap, all, "5", "0.5");
+        bad = bad + d0 + c0;
+        // d = 10.0 -> 20.0, checksum repaired: decodes, and the output is 0.25
+        let (d1, dc1, ac1) = edit_and_apply(heap, all, 60, 10.0, 20.0, true, "5", "0.25");
+        bad = bad + d1 + ac1;
+        // the same edit, trailer not repaired: ml.model.checksum
+        let (d2, dc2, ac2) = edit_and_apply(heap, all, 60, 10.0, 20.0, false, "5", "0.25");
+        if ac2 != codes.checksum() {
+            bad = bad + 1;
+        }
+        // lo = 0.0 -> 1.0 (the first double of the step after the plan: lo is 0.0 and may match elsewhere, so edit the divisor to 0.0 instead):
+        // a zero divisor is refused as malformed, with the checksum repaired
+        let (d3, dc3, ac3) = edit_and_apply(heap, all, 60, 10.0, 0.0, true, "5", "0.5");
+        if ac3 != codes.malformed() {
+            bad = bad + 1;
+        }
+        // a negative divisor and a NaN-making edit are refused too
+        let (d4, dc4, ac4) = edit_and_apply(heap, all, 60, 10.0, 0.0 - 10.0, true, "5", "0.5");
+        if ac4 != codes.malformed() {
+            bad = bad + 1;
+        }
+    }
+    buffer.drop(heap, fb);
+    return bad;
+}
+
+// the decode fault (code, section a, step b) of the file with the first `from` replaced by `to` (same length) and the checksum repaired
+fn edit_text[&h, &f](heap: &!h Heap, filebytes: &f [byte], from: &static [byte], to: &static [byte]) -> [heap] (int, int, int) {
+    var c = pt.copy_box(heap, filebytes);
+    var at = 0 - 1;
+    borrow c as &cr in {
+        at = bytes.find(contents(cr)[0..len(filebytes)], from);
+    }
+    if at < 0 {
+        unbox_slice(heap, c);
+        return (0 - 1, 0, 0);
+    }
+    borrow mut c as &!cw in {
+        var i = 0;
+        while i < len(to) {
+            contents(cw)[at + i] = to[i];
+            i = i + 1;
+        }
+    }
+    var code = 0;
+    var a = 0;
+    var b = 0;
+    borrow c as &cr in {
+        let sealed = file.reseal(heap, contents(cr)[0..len(filebytes)]);
+        borrow sealed as &sr in {
+            let (l, lf) = file.decode(heap, buffer.bytes(sr));
+            code = lf.code;
+            a = lf.a;
+            b = lf.b;
+            file.drop(heap, l);
+        }
+        buffer.drop(heap, sealed);
+    }
+    unbox_slice(heap, c);
+    return (code, a, b);
+}
+
+// P5: the plan text is a description that must agree with the stored steps; it never decides an output
+fn test_the_plan_must_agree_with_the_steps[&h](heap: &!h Heap) -> [heap] int {
+    let fb = pt.make_file(heap, "scale column=a kind=minmax\nencode column=b kind=onehot unknown=ignore\nmodel kind=constant task=regression", "a,b", "0,1;10,2");
+    var bad = 0;
+    borrow fb as &fr in {
+        let all = buffer.bytes(fr);
+        let (c0, a0, b0) = edit_text(heap, all, "kind=minmax", "kind=minmax");
+        if c0 != 0 {
+            bad = bad + 1;
+        }
+        // another column of the same width name: canonical, but not the column the step stored
+        let (c1, a1, b1) = edit_text(heap, all, "scale column=a", "scale column=b");
+        if c1 != codes.malformed() || a1 != 3 || b1 != 1 {
+            bad = bad + 1;
+        }
+        // another unknown-category mode of the same length
+        let (c2, a2, b2) = edit_text(heap, all, "unknown=ignore", "unknown=refuse");
+        if c2 != codes.malformed() || a2 != 3 || b2 != 2 {
+            bad = bad + 1;
+        }
+        // a name that does not exist
+        let (c3, a3, b3) = edit_text(heap, all, "scale column=a", "scale column=z");
+        if c3 != codes.malformed() || a3 != 3 {
+            bad = bad + 1;
+        }
+        // an enum value that is not one: the plan no longer parses
+        let (c4, a4, b4) = edit_text(heap, all, "task=regression", "task=regressioN");
+        if c4 != codes.malformed() || a4 != 1 {
+            bad = bad + 1;
+        }
+        // a plan that parses but is not canonical (the names out of order) is not accepted either
+        let (c5, a5, b5) = edit_text(heap, all, "task=regression", "task=classifica");
+        if c5 != codes.malformed() || a5 != 1 {
+            bad = bad + 1;
+        }
+        // the model line of another family than the model section
+        let (c6, a6, b6) = edit_text(heap, all, "kind=constant", "kind=linear  ");
+        if c6 != codes.malformed() {
+            bad = bad + 1;
+        }
+    }
+    buffer.drop(heap, fb);
+    return bad;
+}
+
+// ---------------------------------------------------------------- P6: the schema
+
+fn types_box[&h](heap: &!h Heap, t: &static [byte]) -> [heap] Box[[int]] {
+    // one digit a column: the type, scale 0
+    let b = box_slice(heap, 2 * len(t) + 1, 0);
+    var w = b;
+    borrow mut w as &!x in {
+        var i = 0;
+        while i < len(t) {
+            contents(x)[2 * i] = int_of(t[i]) - '0';
+            i = i + 1;
+        }
+    }
+    return w;
+}
+
+// align the features a, b, c (floats) of a schema `y,a,b,c` (y the target) to an input with `given` names and `gtypes`; (code, detail text equal to want, perm)
+fn align_case[&h](heap: &!h Heap, given: &static [byte], gtypes: &static [byte], want_code: int, want_detail: &static [byte], want_perm: &static [byte]) -> [heap] int {
+    let sc = pt.make_schema(heap, "a,b,c");
+    let g = names.from_list(heap, given);
+    let tb = types_box(heap, gtypes);
+    var bad = 0;
+    borrow sc as &scr in {
+        borrow g as &gr in {
+            borrow tb as &tr in {
+                let (perm, detail, code) = schema.align(heap, scr, gr, contents(tr));
+                if code != want_code {
+                    bad = bad + 1;
+                }
+                borrow detail as &dr in {
+                    if !bytes.equal(buffer.bytes(dr), want_detail) {
+                        bad = bad + 1;
+                    }
+                }
+                if code == 0 {
+                    borrow perm as &pr in {
+                        let want = pt.ints_of(heap, want_perm);
+                        borrow want as &wr in {
+                            var j = 0;
+                            while j < 3 {
+                                if contents(pr)[j] != contents(wr)[j] {
+                                    bad = bad + 1;
+                                }
+                                j = j + 1;
+                            }
+                        }
+                        unbox_slice(heap, want);
+                    }
+                }
+                buffer.drop(heap, detail);
+                unbox_slice(heap, perm);
+            }
+        }
+    }
+    unbox_slice(heap, tb);
+    names.drop(heap, g);
+    schema.drop(heap, sc);
+    return bad;
+}
+
+fn test_columns_are_matched_by_name[&h](heap: &!h Heap) -> [heap] int {
+    var bad = align_case(heap, "a,b,c", "222", 0, "", "0,1,2");
+    bad = bad + align_case(heap, "c,a,b", "222", 0, "", "1,2,0");
+    bad = bad + align_case(heap, "b,c,a", "222", 0, "", "2,0,1");
+    // missing, extra, mistyped (the type of b is int), duplicate, the target in the input (extra), all together
+    bad = bad + align_case(heap, "a,b", "22", codes.schema_mismatch(), "missing: c", "0,1,2");
+    bad = bad + align_case(heap, "a,b,c,d", "2222", codes.schema_mismatch(), "extra: d", "0,1,2");
+    bad = bad + align_case(heap, "a,b,c", "202", codes.schema_mismatch(), "mistyped: b", "0,1,2");
+    bad = bad + align_case(heap, "y,a,b,c", "2222", codes.schema_mismatch(), "extra: y", "0,1,2");
+    bad = bad + align_case(heap, "a,c,c,d", "2222", codes.schema_mismatch(), "missing: b; extra: d; duplicate: c", "0,1,2");
+    bad = bad + align_case(heap, "d,e,a", "222", codes.schema_mismatch(), "missing: b,c; extra: d,e", "0,1,2");
+    return bad;
+}
+
+// reordering the input columns gives the output of the fitted order
+fn test_a_reordered_input_gives_the_same_output[&h](heap: &!h Heap) -> [heap] int {
+    let sc = pt.make_schema(heap, "a,c");
+    let g = names.from_list(heap, "c,a");
+    let tb = types_box(heap, "22");
+    let fb = pt.make_file(heap, "scale column=a kind=minmax\nmodel kind=constant task=regression", "a,c", "0,5;10,6");
+    var bad = 0;
+    // the test rows have c first, then a: (c = 7, a = 5), (c = 8, a = 10)
+    let x = pt.mat(heap, "7,5;8,10");
+    borrow sc as &scr in {
+        borrow g as &gr in {
+            borrow tb as &tr in {
+                let (perm, detail, code) = schema.align(heap, scr, gr, contents(tr));
+                if code != 0 {
+                    bad = bad + 1;
+                }
+                borrow perm as &pr in {
+                    borrow x as &xr in {
+                        let (z, pc) = run.permute(heap, xr, contents(pr), 1000, 100, 100000);
+                        if pc != 0 {
+                            bad = bad + 1;
+                        }
+                        borrow fb as &fr in {
+                            borrow z as &zr in {
+                                let (l, lf) = file.decode(heap, buffer.bytes(fr));
+                                borrow l as &lr in {
+                                    let (y, u, f2) = run.apply_steps(heap, file.steps_bytes(lr), zr, 1000, 100, 100000);
+                                    borrow y as &yr in {
+                                        // the fitted order is a, c: (5, 7) -> (0.5, 7); (10, 8) -> (1, 8)
+                                        bad = bad + pt.diff(yr, "0.5,7;1,8");
+                                    }
+                                    matrix.drop(heap, y);
+                                }
+                                file.drop(heap, l);
+                            }
+                        }
+                        matrix.drop(heap, z);
+                    }
+                }
+                buffer.drop(heap, detail);
+                unbox_slice(heap, perm);
+            }
+        }
+    }
+    matrix.drop(heap, x);
+    buffer.drop(heap, fb);
+    unbox_slice(heap, tb);
+    names.drop(heap, g);
+    schema.drop(heap, sc);
+    return bad;
+}
+
+// the decode fault (code, a) of the file with byte `at` set to `v` and the checksum repaired
+fn patch_byte[&h, &f](heap: &!h Heap, filebytes: &f [byte], at: int, v: int) -> [heap] (int, int) {
+    var c = pt.copy_box(heap, filebytes);
+    borrow mut c as &!cw in {
+        contents(cw)[at] = byte_of(v);
+    }
+    var code = 0;
+    var a = 0;
+    borrow c as &cr in {
+        let sealed = file.reseal(heap, contents(cr)[0..len(filebytes)]);
+        borrow sealed as &sr in {
+            let (l, lf) = file.decode(heap, buffer.bytes(sr));
+            code = lf.code;
+            a = lf.a;
+            file.drop(heap, l);
+        }
+        buffer.drop(heap, sealed);
+    }
+    unbox_slice(heap, c);
+    return (code, a);
+}
+
+// the start of the payload of section `tag` (1 to 5) of a file
+fn payload_start[&f](filebytes: &f [byte], tag: int) -> [] int {
+    var pos = 12;
+    var s = 1;
+    while s < tag {
+        var len64 = 0;
+        var k = 7;
+        while k >= 0 {
+            len64 = len64 << 8 | int_of(filebytes[pos + 4 + k]);
+            k = k - 1;
+        }
+        pos = pos + 12 + len64;
+        s = s + 1;
+    }
+    return pos + 12;
+}
+
+// every check of the structure and the sections has a repaired file that reaches it
+fn test_structure_and_section_checks_are_reached[&h](heap: &!h Heap) -> [heap] int {
+    let fb = pt.make_file(heap, "scale column=a,b kind=minmax\nmodel kind=constant task=regression", "a,b", "0,1;10,2");
+    var bad = 0;
+    borrow fb as &fr in {
+        let all = buffer.bytes(fr);
+        // a section tag out of order (the first section called 9): malformed, the tag in `a`
+        let (c1, a1) = patch_byte(heap, all, 12, 9);
+        if c1 != codes.malformed() || a1 != 9 {
+            bad = bad + 1;
+        }
+        // the model section of another family than the plan's `constant` (kind 4 is the linear regression)
+        let (c2, a2) = patch_byte(heap, all, payload_start(all, 4), 4);
+        if c2 != codes.malformed() || a2 != 4 {
+            bad = bad + 1;
+        }
+        // a model kind that is not registered
+        let (c3, a3) = patch_byte(heap, all, payload_start(all, 4), 99);
+        if c3 != codes.malformed() || a3 != 4 {
+            bad = bad + 1;
+        }
+        // control: the same patch with the value it had
+        let (c4, a4) = patch_byte(heap, all, payload_start(all, 4), 1);
+        if c4 != 0 {
+            bad = bad + 1;
+        }
+        // a plan that parses and agrees with the steps but is not in canonical form (the names out of order): refused, the plan section in `a`
+        let (c5, b5, d5) = edit_text(heap, all, "column=a,b", "column=b,a");
+        if c5 != codes.malformed() || b5 != 1 {
+            bad = bad + 1;
+        }
+    }
+    buffer.drop(heap, fb);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the sum order in `meta` (design.md 4.1, added at v1-post)
+
+// a file of model kind `kind` (4 to 7) with a plan line of that family; the model payload is the kind and 16 bytes of zeros (the file checks the leading kind only)
+fn kind_file[&h](heap: &!h Heap, kind: int) -> [heap] buffer.Buffer {
+    var line: &static [byte] = "model kind=linear";
+    if kind == 5 {
+        line = "model kind=logistic";
+    } else if kind == 6 {
+        line = "model kind=kmeans k=2";
+    } else if kind == 7 {
+        line = "model kind=tree task=regression";
+    }
+    var hexs: &static [byte] = "04000000 00000000 00000000 00000000 00000000";
+    if kind == 5 {
+        hexs = "05000000 00000000 00000000 00000000 00000000";
+    } else if kind == 6 {
+        hexs = "06000000 00000000 00000000 00000000 00000000";
+    } else if kind == 7 {
+        hexs = "07000000 00000000 00000000 00000000 00000000";
+    }
+    let est = pt.hex(heap, hexs);
+    var out = buffer.empty(heap, 1);
+    borrow est as &er in {
+        buffer.drop(heap, out);
+        out = pt.make_file_with(heap, line, "a", "1;2", contents(er)[0..20]);
+    }
+    unbox_slice(heap, est);
+    return out;
+}
+
+// where the last four bytes of `meta` are: the end of the file minus the 32-byte trailer minus 4
+fn order_at[&f](filebytes: &f [byte]) -> [] int {
+    return len(filebytes) - 32 - 4;
+}
+
+// (code, a, b, c) of the decode of the file with its sum order set to `v` and the checksum repaired
+fn with_order[&h, &f](heap: &!h Heap, filebytes: &f [byte], v: int, kind_byte: int) -> [heap] (int, int, int, int) {
+    var c = pt.copy_box(heap, filebytes);
+    borrow mut c as &!cw in {
+        if kind_byte > 0 {
+            contents(cw)[payload_start(filebytes, 4)] = byte_of(kind_byte);
+        }
+        let at = order_at(filebytes);
+        contents(cw)[at] = byte_of(v & 255);
+        contents(cw)[at + 1] = byte_of(v >> 8 & 255);
+        contents(cw)[at + 2] = byte_of(v >> 16 & 255);
+        contents(cw)[at + 3] = byte_of(v >> 24 & 255);
+    }
+    var f = codes.none();
+    borrow c as &cr in {
+        let sealed = file.reseal(heap, contents(cr)[0..len(filebytes)]);
+        borrow sealed as &sr in {
+            let (l, lf) = file.decode(heap, buffer.bytes(sr));
+            f = lf;
+            file.drop(heap, l);
+        }
+        buffer.drop(heap, sealed);
+    }
+    unbox_slice(heap, c);
+    return (f.code, f.a, f.b, f.c);
+}
+
+fn test_the_sum_order_is_written_for_kinds_4_to_7_and_checked[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var kind = 4;
+    while kind <= 7 {
+        let fb = kind_file(heap, kind);
+        borrow fb as &fr in {
+            let all = buffer.bytes(fr);
+            if len(all) < 100 {
+                bad = bad + 1;
+            }
+            // the writer put sum order 2 last in meta: the four bytes before the trailer are 2, 0, 0, 0
+            if int_of(all[order_at(all)]) != 2 || int_of(all[order_at(all) + 1]) != 0 || int_of(all[order_at(all) + 2]) != 0 || int_of(all[order_at(all) + 3]) != 0 {
+                bad = bad + 10;
+            }
+            let (l, lf) = file.decode(heap, all);
+            if lf.code != 0 {
+                bad = bad + 100;
+            }
+            borrow l as &lr in {
+                if file.model_kind(lr) != kind {
+                    bad = bad + 100;
+                }
+                // meta = 32 + 3 (the pin) + 4
+                if len(file.meta_bytes(lr)) != 39 {
+                    bad = bad + 1000;
+                }
+            }
+            file.drop(heap, l);
+            // control: the same value written back
+            let (c2, a2, b2, d2) = with_order(heap, all, 2, 0);
+            if c2 != 0 {
+                bad = bad + 10000;
+            }
+            // 0, 1 (retired), 3, 4 and the largest: ml.model.version, a = the value, b = 1 (the sum order, not the format), c = 2
+            let vs = box_slice(heap, 5, 0);
+            var vw = vs;
+            borrow mut vw as &!x in {
+                contents(x)[0] = 0;
+                contents(x)[1] = 1;
+                contents(x)[2] = 3;
+                contents(x)[3] = 4;
+                contents(x)[4] = 4294967295;
+            }
+            borrow vw as &vr in {
+                var i = 0;
+                while i < 5 {
+                    let (c, a, b, d) = with_order(heap, all, contents(vr)[i], 0);
+                    if c != codes.bad_version() || a != contents(vr)[i] || b != 1 || d != 2 {
+                        bad = bad + 100000;
+                    }
+                    i = i + 1;
+                }
+            }
+            unbox_slice(heap, vw);
+            // the order is read for a model kind of 4 and above only: the same file with the kind byte set to 1 (a constant model) and the order to 3 is
+            // malformed (the family of the plan is not the model's), not a sum order refusal
+            let (c7, a7, b7, d7) = with_order(heap, all, 3, 1);
+            if c7 != codes.malformed() {
+                bad = bad + 100000000;
+            }
+            // a meta of another length than 36 + the pin length is malformed in section 5 (the pin length says 7, then 2, not 3), never a sum order
+            let (c5, a5) = patch_byte(heap, all, payload_start(all, 5) + 28, 7);
+            if c5 != codes.malformed() || a5 != 5 {
+                bad = bad + 1000000;
+            }
+            let (c6, a6) = patch_byte(heap, all, payload_start(all, 5) + 28, 2);
+            if c6 != codes.malformed() || a6 != 5 {
+                bad = bad + 10000000;
+            }
+        }
+        buffer.drop(heap, fb);
+        kind = kind + 1;
+    }
+    return bad;
+}

@@ -1,0 +1,453 @@
+import std.test;
+import ml.rng;
+import ml.refuse;
+import linalg.tensor;
+import linalg.chol;
+import lref;
+
+fn mat(off: int, rows: int, cols: int, rs: int, cs: int) -> [] tensor.Tensor {
+    match tensor.matrix_strided(off, rows, cols, rs, cs) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn vec1(off: int, n: int, stride: int) -> [] tensor.Tensor {
+    match tensor.vector(off, n, stride) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+// lower-triangle bits equal; the strict upper triangle keeps its sentinel
+fn lower_same[&a, &b](x: &a [float], y: &b [float], d: int) -> [] int {
+    var bad = 0;
+    var i = 0;
+    while i < d {
+        var j = 0;
+        while j < d {
+            if bits_of(x[i * d + j]) != bits_of(y[i * d + j]) {
+                bad = bad + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+fn one[&h](heap: &!h Heap, d: int, seed: int, mode: int) -> [heap] int {
+    var bad = 0;
+    let a = box_slice(heap, d * d + 1, 0.0);
+    let ac = box_slice(heap, d * d + 1, 0.0);
+    let want = box_slice(heap, d * d + 1, 9.0);
+    let got = box_slice(heap, d * d + 1, 9.0);
+    let gotc = box_slice(heap, d * d + 1, 9.0);
+    let b = box_slice(heap, d + 1, 0.0);
+    let xw = box_slice(heap, d + 1, 0.0);
+    let xg = box_slice(heap, d + 1, 0.0);
+    let xwt = box_slice(heap, d + 1, 0.0);
+    let xgt = box_slice(heap, d + 1, 0.0);
+    borrow mut a as &!aw in {
+        lref.gen_spd(contents(aw), d, seed, mode);
+    }
+    borrow a as &ar in {
+        borrow mut ac as &!acw in {
+            var i = 0;
+            while i < d {
+                var j = 0;
+                while j < d {
+                    contents(acw)[j * d + i] = contents(ar)[i * d + j];
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    borrow mut b as &!bw in {
+        lref.gen(contents(bw), d, seed + 5, 0);
+    }
+    borrow a as &ar in {
+        borrow ac as &acr in {
+            borrow mut want as &!ww in {
+                if lref.chol(contents(ar), 0, d, 1, contents(ww), 0, d, 1, d) != 0 {
+                    bad = bad + 1;
+                }
+            }
+            borrow mut got as &!gw in {
+                bad = bad + chol.cholesky(mat(0, d, d, d, 1), contents(ar), mat(0, d, d, d, 1), contents(gw));
+            }
+            // column-major A (the lower triangle of the transpose is the same symmetric matrix) and column-major L output
+            borrow mut gotc as &!gw in {
+                bad = bad + chol.cholesky(mat(0, d, d, 1, d), contents(acr), mat(0, d, d, d, 1), contents(gw));
+            }
+        }
+    }
+    borrow want as &x in {
+        borrow got as &y in {
+            borrow gotc as &z in {
+                bad = bad + lower_same(contents(x), contents(y), d) + lower_same(contents(x), contents(z), d);
+            }
+        }
+    }
+    // the solves with the factor
+    borrow want as &lr in {
+        borrow b as &br in {
+            borrow mut xw as &!w1 in {
+                lref.solve(0, contents(lr), 0, d, 1, contents(br), contents(w1), d);
+            }
+            borrow mut xwt as &!w2 in {
+                lref.solve(1, contents(lr), 0, d, 1, contents(br), contents(w2), d);
+            }
+            borrow mut xg as &!g1 in {
+                bad = bad + chol.solve(0, mat(0, d, d, d, 1), contents(lr), vec1(0, d, 1), contents(br), vec1(0, d, 1), contents(g1));
+            }
+            borrow mut xgt as &!g2 in {
+                bad = bad + chol.solve(1, mat(0, d, d, d, 1), contents(lr), vec1(0, d, 1), contents(br), vec1(0, d, 1), contents(g2));
+            }
+        }
+    }
+    borrow xw as &x in {
+        borrow xg as &y in {
+            bad = bad + lref.same_bits(contents(x), contents(y), d);
+        }
+    }
+    borrow xwt as &x in {
+        borrow xgt as &y in {
+            bad = bad + lref.same_bits(contents(x), contents(y), d);
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, ac);
+    unbox_slice(heap, want);
+    unbox_slice(heap, got);
+    unbox_slice(heap, gotc);
+    unbox_slice(heap, b);
+    unbox_slice(heap, xw);
+    unbox_slice(heap, xg);
+    unbox_slice(heap, xwt);
+    unbox_slice(heap, xgt);
+    return bad;
+}
+
+fn test_chol_and_solves_every_small_d[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var d = 1;
+    while d <= 40 {
+        bad = bad + one(heap, d, 100 + d, 0);
+        bad = bad + one(heap, d, 300 + d, 1);
+        d = d + 1;
+    }
+    return bad;
+}
+
+fn test_chol_larger[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    bad = bad + one(heap, 63, 7, 0);
+    bad = bad + one(heap, 64, 8, 1);
+    bad = bad + one(heap, 65, 9, 0);
+    bad = bad + one(heap, 100, 10, 1);
+    bad = bad + one(heap, 129, 11, 0);
+    return bad;
+}
+
+fn test_chol_refusals[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let a = box_slice(heap, 16, 0.0);
+    let l = box_slice(heap, 16, 3.0);
+    let b = box_slice(heap, 4, 1.0);
+    let x = box_slice(heap, 4, 3.0);
+    borrow mut a as &!aw in {
+        let s = contents(aw);
+        // [[1, 2], [2, 1]]: second pivot 1 - 4 < 0
+        s[0] = 1.0;
+        s[1] = 2.0;
+        s[4] = 2.0;
+        s[5] = 1.0;
+    }
+    borrow a as &ar in {
+        borrow mut l as &!lw in {
+            if chol.cholesky(mat(0, 2, 2, 4, 1), contents(ar), mat(0, 2, 2, 4, 1), contents(lw)) != refuse.not_positive_definite() {
+                bad = bad + 1;
+            }
+            // a zero first pivot, and NaN
+            if chol.cholesky(mat(10, 1, 1, 4, 1), contents(ar), mat(0, 1, 1, 4, 1), contents(lw)) != refuse.not_positive_definite() {
+                bad = bad + 1;
+            }
+            contents(lw)[0] = 0.0 / 0.0;
+            // shape and bounds
+            if chol.cholesky(mat(0, 2, 3, 4, 1), contents(ar), mat(0, 2, 3, 4, 1), contents(lw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+            if chol.cholesky(mat(0, 5, 5, 5, 1), contents(ar), mat(0, 5, 5, 5, 1), contents(lw)) != refuse.tensor_bounds() {
+                bad = bad + 1;
+            }
+            if chol.cholesky(mat(0, 4, 4, 4, 1), contents(ar), mat(0, 4, 4, 0, 1), contents(lw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+            // solves: zero diagonal is singular, and nothing is written
+            contents(lw)[0] = 2.0;
+            contents(lw)[5] = 0.0;
+            borrow b as &br in {
+                borrow mut x as &!xw in {
+                    if chol.solve(0, mat(0, 2, 2, 4, 1), contents(lw), vec1(0, 2, 1), contents(br), vec1(0, 2, 1), contents(xw)) != refuse.singular() {
+                        bad = bad + 1;
+                    }
+                    if contents(xw)[0] != 3.0 {
+                        bad = bad + 1;
+                    }
+                    contents(lw)[5] = 0.0 / 0.0;
+                    if chol.solve(1, mat(0, 2, 2, 4, 1), contents(lw), vec1(0, 2, 1), contents(br), vec1(0, 2, 1), contents(xw)) != 0 {
+                        bad = bad + 1;
+                    }
+                    if chol.solve(0, mat(0, 2, 3, 4, 1), contents(lw), vec1(0, 2, 1), contents(br), vec1(0, 2, 1), contents(xw)) != refuse.tensor_shape() {
+                        bad = bad + 1;
+                    }
+                    if chol.solve(0, mat(0, 2, 2, 4, 1), contents(lw), vec1(0, 3, 1), contents(br), vec1(0, 2, 1), contents(xw)) != refuse.tensor_shape() {
+                        bad = bad + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, l);
+    unbox_slice(heap, b);
+    unbox_slice(heap, x);
+    return bad;
+}
+
+// a column-major L output (strides (1, d)): the generic path writes the same lower triangle; a zero pivot is refused on it too
+fn test_chol_generic_output_and_pivot[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let d = 37;
+    let a = box_slice(heap, d * d + 1, 0.0);
+    let want = box_slice(heap, d * d + 1, 9.0);
+    let got = box_slice(heap, d * d + 1, 9.0);
+    borrow mut a as &!aw in {
+        lref.gen_spd(contents(aw), d, 55, 0);
+    }
+    borrow a as &ar in {
+        borrow mut want as &!ww in {
+            if lref.chol(contents(ar), 0, d, 1, contents(ww), 0, d, 1, d) != 0 {
+                bad = bad + 1;
+            }
+        }
+        borrow mut got as &!gw in {
+            bad = bad + chol.cholesky(mat(0, d, d, d, 1), contents(ar), mat(0, d, d, 1, d), contents(gw));
+        }
+    }
+    borrow want as &wr in {
+        borrow got as &gr in {
+            var i = 0;
+            while i < d {
+                var j = 0;
+                while j <= i {
+                    if bits_of(contents(wr)[i * d + j]) != bits_of(contents(gr)[j * d + i]) {
+                        bad = bad + 1;
+                    }
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+            // the strict upper triangle of the column-major output (positions i*d + j with j > i seen row-major) keeps 9.0
+            if contents(gr)[1] != 9.0 {
+                bad = bad + 0;
+            }
+        }
+    }
+    // zero pivot on the generic path (column-major A): [[0]] and [[1, 0], [0, 0]]
+    let z = box_slice(heap, 8, 0.0);
+    let l = box_slice(heap, 8, 3.0);
+    borrow z as &zr in {
+        borrow mut l as &!lw in {
+            if chol.cholesky(mat(0, 1, 1, 1, 2), contents(zr), mat(0, 1, 1, 1, 2), contents(lw)) != refuse.not_positive_definite() {
+                bad = bad + 1;
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, want);
+    unbox_slice(heap, got);
+    unbox_slice(heap, z);
+    unbox_slice(heap, l);
+    return bad;
+}
+
+// the solves with L stored column-major, and with b and x at stride 2, give the bits of the row-major unit-stride solves
+fn test_solve_generic_paths[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let d = 29;
+    let a = box_slice(heap, d * d + 1, 0.0);
+    let l = box_slice(heap, d * d + 1, 0.0);
+    let lc = box_slice(heap, d * d + 1, 0.0);
+    let b = box_slice(heap, d + 1, 0.0);
+    let b2 = box_slice(heap, 2 * d + 3, 0.0);
+    let x = box_slice(heap, d + 1, 0.0);
+    let xc = box_slice(heap, d + 1, 0.0);
+    let x2 = box_slice(heap, 2 * d + 3, 0.0);
+    borrow mut a as &!aw in {
+        lref.gen_spd(contents(aw), d, 71, 0);
+    }
+    borrow mut b as &!bw in {
+        lref.gen(contents(bw), d, 72, 0);
+    }
+    borrow a as &ar in {
+        borrow mut l as &!lw in {
+            bad = bad + chol.cholesky(mat(0, d, d, d, 1), contents(ar), mat(0, d, d, d, 1), contents(lw));
+        }
+    }
+    borrow l as &lr in {
+        borrow mut lc as &!lcw in {
+            var i = 0;
+            while i < d {
+                var j = 0;
+                while j < d {
+                    contents(lcw)[j * d + i] = contents(lr)[i * d + j];
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    borrow b as &br in {
+        borrow mut b2 as &!w in {
+            var i = 0;
+            while i < d {
+                contents(w)[1 + 2 * i] = contents(br)[i];
+                i = i + 1;
+            }
+        }
+    }
+    var trans = 0;
+    while trans < 2 {
+        borrow l as &lr in {
+            borrow lc as &lcr in {
+                borrow b as &br in {
+                    borrow b2 as &b2r in {
+                        borrow mut x as &!w in {
+                            bad = bad + chol.solve(trans, mat(0, d, d, d, 1), contents(lr), vec1(0, d, 1), contents(br), vec1(0, d, 1), contents(w));
+                        }
+                        borrow mut xc as &!w in {
+                            bad = bad + chol.solve(trans, mat(0, d, d, 1, d), contents(lcr), vec1(0, d, 1), contents(br), vec1(0, d, 1), contents(w));
+                        }
+                        borrow mut x2 as &!w in {
+                            bad = bad + chol.solve(trans, mat(0, d, d, d, 1), contents(lr), vec1(1, d, 2), contents(b2r), vec1(2, d, 2), contents(w));
+                        }
+                    }
+                }
+            }
+        }
+        borrow x as &xr in {
+            borrow xc as &xcr in {
+                borrow x2 as &x2r in {
+                    var i = 0;
+                    while i < d {
+                        if bits_of(contents(xr)[i]) != bits_of(contents(xcr)[i]) || bits_of(contents(xr)[i]) != bits_of(contents(x2r)[2 + 2 * i]) {
+                            bad = bad + 1;
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+        }
+        trans = trans + 1;
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, l);
+    unbox_slice(heap, lc);
+    unbox_slice(heap, b);
+    unbox_slice(heap, b2);
+    unbox_slice(heap, x);
+    unbox_slice(heap, xc);
+    unbox_slice(heap, x2);
+    return bad;
+}
+
+// the relative pivot test (docs/models-linear.md 3.1): s > 2^-40 * A_jj, on the fast path (row-major) and the generic path
+// (column-major A: a different stride, the same test). A is symmetric, so one array serves both layouts.
+fn chol_code[&h](heap: &!h Heap, a00: float, a01: float, a11: float, generic: int) -> [heap] int {
+    let a = box_slice(heap, 4, 0.0);
+    let l = box_slice(heap, 4, 7.0);
+    var code = 0;
+    borrow mut a as &!aw in {
+        let s = contents(aw);
+        s[0] = a00;
+        s[1] = a01;
+        s[2] = a01;
+        s[3] = a11;
+    }
+    borrow a as &ar in {
+        borrow mut l as &!lw in {
+            if generic == 0 {
+                code = chol.cholesky(mat(0, 2, 2, 2, 1), contents(ar), mat(0, 2, 2, 2, 1), contents(lw));
+            } else {
+                code = chol.cholesky(mat(0, 2, 2, 1, 2), contents(ar), mat(0, 2, 2, 1, 2), contents(lw));
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, l);
+    return code;
+}
+
+fn test_chol_relative_pivot[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var g = 0;
+    while g < 2 {
+        // second pivot = a11 - a01^2 / a00. [[1, 1], [1, 1 + 2^-30]]: pivot 2^-30 = 9.3e-10 > 2^-40 * (1 + 2^-30): fitted
+        if chol_code(heap, 1.0, 1.0, 1.0 + 1.0 / 1073741824.0, g) != 0 {
+            bad = bad + 1;
+        }
+        // [[1, 1], [1, 1 + 2^-45]]: pivot 2^-45 = 2.8e-14, positive and exactly representable, but below 2^-40 times 1.0: refused (the old test accepted it)
+        if chol_code(heap, 1.0, 1.0, 1.0 + 1.0 / 35184372088832.0, g) != refuse.not_positive_definite() {
+            bad = bad + 10;
+        }
+        // the test is relative to the diagonal element, so it does not depend on the scale: the same two matrices times 2^-100 and times 2^100
+        if chol_code(heap, 1.0 / 1267650600228229401496703205376.0, 1.0 / 1267650600228229401496703205376.0, (1.0 + 1.0 / 1073741824.0) / 1267650600228229401496703205376.0, g) != 0 {
+            bad = bad + 100;
+        }
+        if chol_code(heap, 1267650600228229401496703205376.0, 1267650600228229401496703205376.0, (1.0 + 1.0 / 35184372088832.0) * 1267650600228229401496703205376.0, g) != refuse.not_positive_definite() {
+            bad = bad + 1000;
+        }
+        // exactly dependent: pivot exactly 0.0; and a negative pivot
+        if chol_code(heap, 2.0, 2.0, 2.0, g) != refuse.not_positive_definite() {
+            bad = bad + 10000;
+        }
+        // a negative diagonal element is refused (the bar tol * a is below a, so s <= a never passes): a00 = -1
+        if chol_code(heap, 0.0 - 1.0, 0.0, 1.0, g) != refuse.not_positive_definite() {
+            bad = bad + 100000;
+        }
+        // NaN diagonal element, and a NaN pivot
+        if chol_code(heap, 1.0, 0.0, 0.0 / 0.0, g) != refuse.not_positive_definite() {
+            bad = bad + 1000000;
+        }
+        // the boundary: a pivot of exactly 2^-40 * a_jj is NOT above it: [[1, 1], [1, 1 + 2^-40]] is refused
+        if chol_code(heap, 1.0, 1.0, 1.0 + 1.0 / 1099511627776.0, g) != refuse.not_positive_definite() {
+            bad = bad + 100000000;
+        }
+        // the diagonal element is the one of the column being tested, not the first: a00 = 1, a01 = 2^10, a11 = 2^20 + 2^-30: pivot 2^-30, which is 2^-50 of a11
+        // (refused) although it is above 2^-40 times a00; and a00 = 2^20, a01 = 2^10, a11 = 1 + 2^-30: pivot 2^-30, about 2^-30 of a11 (fitted) although it is
+        // below 2^-40 times a00 = 2^-20
+        if chol_code(heap, 1.0, 1024.0, 1048576.0 + 1.0 / 1073741824.0, g) != refuse.not_positive_definite() {
+            bad = bad + 1000000000;
+        }
+        if chol_code(heap, 1048576.0, 1024.0, 1.0 + 1.0 / 1073741824.0, g) != 0 {
+            bad = bad + 10000000000;
+        }
+        // an ordinary matrix is still fitted
+        if chol_code(heap, 4.0, 2.0, 3.0, g) != 0 {
+            bad = bad + 10000000;
+        }
+        g = g + 1;
+    }
+    return bad;
+}

@@ -1,0 +1,145 @@
+exp_table_form_is_std_exp ... ok
+log1p_unit_form_is_std_log1p ... ok
+score_order ... ok
+score_four_rows_equal_one_row ... ok
+record_bytes_and_round_trip ... ok
+record_kmeans_rank2 ... ok
+linreg_recovers_a_plane ... ok
+linreg_ridge_leaves_the_intercept ... ok
+linreg_refusals ... ok
+linreg_strided_view ... ok
+logreg_refusals ... ok
+logreg_bias_is_not_penalised ... ok
+logreg_objective_decreases ... ok
+logreg_predict_at_zero ... ok
+kmeans_tie_goes_to_the_lowest_index ... ok
+kmeans_padding_never_wins ... ok
+kmeans_empty_clusters_keep_their_centroid ... ok
+kmeans_k_equals_n_and_seeds ... ok
+kmeans_refusals ... ok
+limits_before_allocation ... ok
+views_same_bits_all_models ... ok
+threads_same_bits ... ok
+fuzz_never_traps ... ok
+linreg  n=1 d=1 seed=1 l2m=1000 t=1  ok
+linreg  n=2 d=1 seed=2 l2m=0 t=1  ok
+linreg  n=30 d=3 seed=3 l2m=0 t=1  ok
+linreg  n=255 d=3 seed=4 l2m=0 t=1  ok
+linreg  n=256 d=4 seed=5 l2m=1500 t=1  ok
+linreg  n=257 d=5 seed=6 l2m=0 t=1  ok
+linreg  n=1000 d=20 seed=7 l2m=0 t=1  ok
+linreg  n=2048 d=7 seed=8 l2m=250 t=1  ok
+linreg  n=2049 d=7 seed=9 l2m=0 t=1  ok
+linreg  n=4097 d=21 seed=10 l2m=1000 t=1  ok
+linreg  n=5000 d=1 seed=11 l2m=0 t=1  ok
+linreg  n=20000 d=20 seed=12 l2m=0 t=1  ok
+linreg  n=100000 d=20 seed=13 l2m=100 t=1  ok
+linreg  n=1000 d=4 seed=5 l2m=0 dup=1 t=1  ok
+linreg  n=1000 d=4 seed=5 l2m=10 dup=1 t=1  ok
+logreg  n=40 d=1 seed=1 l2m=0 iters=6 t=1  ok
+logreg  n=300 d=2 seed=2 l2m=0 iters=8 t=1  ok
+logreg  n=255 d=3 seed=3 l2m=1000 iters=8 t=1  ok
+logreg  n=256 d=4 seed=4 l2m=0 iters=8 t=1  ok
+logreg  n=257 d=5 seed=5 l2m=500 iters=8 t=1  ok
+logreg  n=1000 d=20 seed=6 l2m=0 iters=8 t=1  ok
+logreg  n=1000 d=20 seed=7 l2m=2000 iters=6 t=1  ok
+logreg  n=2048 d=7 seed=8 l2m=0 iters=8 t=1  ok
+logreg  n=2049 d=7 seed=9 l2m=100 iters=8 t=1  ok
+logreg  n=4097 d=21 seed=10 l2m=0 iters=8 t=1  ok
+logreg  n=5000 d=3 seed=11 l2m=0 iters=1 t=1  ok
+logreg  n=20000 d=20 seed=12 l2m=0 iters=8 t=1  ok
+kmeans  n=9 d=1 seed=1 k=1 iters=3 init=1 dup=0 t=1  ok
+kmeans  n=30 d=2 seed=2 k=3 iters=5 init=1 dup=0 t=1  ok
+kmeans  n=255 d=3 seed=3 k=4 iters=4 init=0 dup=0 t=1  ok
+kmeans  n=256 d=4 seed=4 k=5 iters=6 init=1 dup=0 t=1  ok
+kmeans  n=257 d=5 seed=5 k=3 iters=5 init=0 dup=0 t=1  ok
+kmeans  n=1000 d=20 seed=6 k=5 iters=8 init=1 dup=0 t=1  ok
+kmeans  n=1000 d=7 seed=7 k=9 iters=6 init=0 dup=0 t=1  ok
+kmeans  n=2048 d=7 seed=8 k=6 iters=5 init=1 dup=0 t=1  ok
+kmeans  n=2049 d=7 seed=9 k=5 iters=5 init=1 dup=0 t=1  ok
+kmeans  n=4097 d=10 seed=10 k=8 iters=4 init=0 dup=0 t=1  ok
+kmeans  n=5000 d=3 seed=11 k=7 iters=1 init=1 dup=0 t=1  ok
+kmeans  n=20000 d=20 seed=12 k=8 iters=6 init=1 dup=0 t=1  ok
+kmeans  n=8 d=2 seed=13 k=3 iters=3 init=1 dup=2 t=1  ok
+kmeans  n=300 d=3 seed=14 k=4 iters=3 init=0 dup=2 t=1  ok
+kmeans  n=3000 d=2 seed=15 k=5 iters=4 init=1 dup=2 t=1  ok
+kmeans  n=500 d=2 seed=24 k=9 iters=3 init=1 dup=2 t=1  ok
+kmeans  n=700 d=3 seed=25 k=13 iters=3 init=0 dup=2 t=1  ok
+kmeans  n=600 d=2 seed=26 k=8 iters=3 init=1 dup=2 t=1  ok
+kmeans  n=800 d=3 seed=27 k=16 iters=2 init=1 dup=2 t=1  ok
+kmeans  n=300 d=3 seed=28 k=4 iters=3 init=1 dup=2 t=1  ok
+kmeans  n=40 d=2 seed=16 k=3 iters=3 init=1 dup=3 t=1  ok
+kmeans  n=40 d=2 seed=17 k=3 iters=3 init=1 dup=3 t=1  ok
+kmeans  n=41 d=2 seed=18 k=4 iters=3 init=1 dup=3 t=1  ok
+kmeans  n=200 d=3 seed=19 k=5 iters=3 init=1 dup=3 t=1  ok
+kmeans  n=200 d=3 seed=20 k=3 iters=2 init=1 dup=3 t=1  ok
+kmeans  n=64 d=2 seed=21 k=4 iters=3 init=1 dup=3 t=1  ok
+kmeans  n=64 d=2 seed=22 k=3 iters=3 init=0 dup=3 t=1  ok
+kmeans  n=999 d=2 seed=23 k=6 iters=3 init=1 dup=3 t=1  ok
+suite: all bits equal
+linreg  n=5000 d=7 seed=3 l2m=0 t=1  ok
+linreg  n=5000 d=7 seed=3 l2m=0 t=2  ok
+linreg  n=5000 d=7 seed=3 l2m=0 t=4  ok
+linreg  n=5000 d=7 seed=3 l2m=0 t=8  ok
+linreg  n=5000 d=7 seed=3 l2m=0 t=16 ok
+linreg  n=30000 d=20 seed=4 l2m=500 t=1  ok
+linreg  n=30000 d=20 seed=4 l2m=500 t=2  ok
+linreg  n=30000 d=20 seed=4 l2m=500 t=4  ok
+linreg  n=30000 d=20 seed=4 l2m=500 t=8  ok
+linreg  n=30000 d=20 seed=4 l2m=500 t=16 ok
+linreg  n=9000 d=21 seed=5 l2m=0 t=1  ok
+linreg  n=9000 d=21 seed=5 l2m=0 t=2  ok
+linreg  n=9000 d=21 seed=5 l2m=0 t=4  ok
+linreg  n=9000 d=21 seed=5 l2m=0 t=8  ok
+linreg  n=9000 d=21 seed=5 l2m=0 t=16 ok
+linreg  n=4097 d=3 seed=6 l2m=0 t=1  ok
+linreg  n=4097 d=3 seed=6 l2m=0 t=2  ok
+linreg  n=4097 d=3 seed=6 l2m=0 t=4  ok
+linreg  n=4097 d=3 seed=6 l2m=0 t=8  ok
+linreg  n=4097 d=3 seed=6 l2m=0 t=16 ok
+logreg  n=5000 d=7 seed=3 l2m=0 iters=4 t=1  ok
+logreg  n=5000 d=7 seed=3 l2m=0 iters=4 t=2  ok
+logreg  n=5000 d=7 seed=3 l2m=0 iters=4 t=4  ok
+logreg  n=5000 d=7 seed=3 l2m=0 iters=4 t=8  ok
+logreg  n=5000 d=7 seed=3 l2m=0 iters=4 t=16 ok
+logreg  n=30000 d=20 seed=4 l2m=500 iters=6 t=1  ok
+logreg  n=30000 d=20 seed=4 l2m=500 iters=6 t=2  ok
+logreg  n=30000 d=20 seed=4 l2m=500 iters=6 t=4  ok
+logreg  n=30000 d=20 seed=4 l2m=500 iters=6 t=8  ok
+logreg  n=30000 d=20 seed=4 l2m=500 iters=6 t=16 ok
+logreg  n=9000 d=21 seed=5 l2m=0 iters=5 t=1  ok
+logreg  n=9000 d=21 seed=5 l2m=0 iters=5 t=2  ok
+logreg  n=9000 d=21 seed=5 l2m=0 iters=5 t=4  ok
+logreg  n=9000 d=21 seed=5 l2m=0 iters=5 t=8  ok
+logreg  n=9000 d=21 seed=5 l2m=0 iters=5 t=16 ok
+logreg  n=4097 d=3 seed=6 l2m=0 iters=8 t=1  ok
+logreg  n=4097 d=3 seed=6 l2m=0 iters=8 t=2  ok
+logreg  n=4097 d=3 seed=6 l2m=0 iters=8 t=4  ok
+logreg  n=4097 d=3 seed=6 l2m=0 iters=8 t=8  ok
+logreg  n=4097 d=3 seed=6 l2m=0 iters=8 t=16 ok
+kmeans  n=5000 d=7 seed=3 k=5 iters=4 init=1 dup=0 t=1  ok
+kmeans  n=5000 d=7 seed=3 k=5 iters=4 init=1 dup=0 t=2  ok
+kmeans  n=5000 d=7 seed=3 k=5 iters=4 init=1 dup=0 t=4  ok
+kmeans  n=5000 d=7 seed=3 k=5 iters=4 init=1 dup=0 t=8  ok
+kmeans  n=5000 d=7 seed=3 k=5 iters=4 init=1 dup=0 t=16 ok
+kmeans  n=30000 d=20 seed=4 k=6 iters=5 init=1 dup=0 t=1  ok
+kmeans  n=30000 d=20 seed=4 k=6 iters=5 init=1 dup=0 t=2  ok
+kmeans  n=30000 d=20 seed=4 k=6 iters=5 init=1 dup=0 t=4  ok
+kmeans  n=30000 d=20 seed=4 k=6 iters=5 init=1 dup=0 t=8  ok
+kmeans  n=30000 d=20 seed=4 k=6 iters=5 init=1 dup=0 t=16 ok
+kmeans  n=9000 d=10 seed=5 k=8 iters=3 init=0 dup=0 t=1  ok
+kmeans  n=9000 d=10 seed=5 k=8 iters=3 init=0 dup=0 t=2  ok
+kmeans  n=9000 d=10 seed=5 k=8 iters=3 init=0 dup=0 t=4  ok
+kmeans  n=9000 d=10 seed=5 k=8 iters=3 init=0 dup=0 t=8  ok
+kmeans  n=9000 d=10 seed=5 k=8 iters=3 init=0 dup=0 t=16 ok
+kmeans  n=4097 d=3 seed=6 k=4 iters=6 init=1 dup=0 t=1  ok
+kmeans  n=4097 d=3 seed=6 k=4 iters=6 init=1 dup=0 t=2  ok
+kmeans  n=4097 d=3 seed=6 k=4 iters=6 init=1 dup=0 t=4  ok
+kmeans  n=4097 d=3 seed=6 k=4 iters=6 init=1 dup=0 t=8  ok
+kmeans  n=4097 d=3 seed=6 k=4 iters=6 init=1 dup=0 t=16 ok
+kmeans  n=5000 d=2 seed=7 k=5 iters=3 init=1 dup=2 t=1  ok
+kmeans  n=5000 d=2 seed=7 k=5 iters=3 init=1 dup=2 t=2  ok
+kmeans  n=5000 d=2 seed=7 k=5 iters=3 init=1 dup=2 t=4  ok
+kmeans  n=5000 d=2 seed=7 k=5 iters=3 init=1 dup=2 t=8  ok
+kmeans  n=5000 d=2 seed=7 k=5 iters=3 init=1 dup=2 t=16 ok
+suite: all bits equal

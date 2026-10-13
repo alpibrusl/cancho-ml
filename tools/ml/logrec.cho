@@ -1,0 +1,89 @@
+edition 5;
+
+module ml.logrec;
+
+// The records of the NDJSON log (--log), one per line, in the order of spec.log_table(). A record is a closed object whose
+// fields are counts, flags, rule tags and hashes: the writers below take no cell, no column name and no path, so none can
+// be logged (the gate in tests/conformance/test_log.py plants canaries in all three). `seq` is the record's place in the run.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+
+// the log and the number of records in it
+fn counted(log: buffer.Buffer) -> [] (buffer.Buffer, int) {
+    var n = 0;
+    borrow log as &r in {
+        n = bytes.count_byte(buffer.bytes(r), 10);
+    }
+    return (log, n);
+}
+
+fn open_record[&h](heap: &!h Heap, seq: int, event: &static [byte]) -> [heap] json.Writer {
+    var w = json.writer(heap, 128);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "event");
+    w = json.put_string(heap, w, event);
+    w = json.put_key(heap, w, "seq");
+    return json.put_int(heap, w, seq);
+}
+
+fn close_record[&h](heap: &!h Heap, log: buffer.Buffer, w: json.Writer) -> [heap] buffer.Buffer {
+    let closed = json.end_object(heap, w);
+    let one = json.finish(closed);
+    var out = log;
+    borrow one as &r in {
+        out = buffer.append(heap, out, buffer.bytes(r));
+    }
+    buffer.drop(heap, one);
+    return buffer.push(heap, out, byte_of(10));
+}
+
+pub fn start[&h](heap: &!h Heap, log: buffer.Buffer, command: &static [byte], version: &static [byte]) -> [heap] buffer.Buffer {
+    let (lg, seq) = counted(log);
+    var w = open_record(heap, seq, "start");
+    w = json.put_key(heap, w, "command");
+    w = json.put_string(heap, w, command);
+    w = json.put_key(heap, w, "version");
+    w = json.put_string(heap, w, version);
+    return close_record(heap, lg, w);
+}
+
+pub fn read[&h](heap: &!h Heap, log: buffer.Buffer, rows: int, columns: int, bytes_read: int) -> [heap] buffer.Buffer {
+    let (lg, seq) = counted(log);
+    var w = open_record(heap, seq, "read");
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, rows);
+    w = json.put_key(heap, w, "columns");
+    w = json.put_int(heap, w, columns);
+    w = json.put_key(heap, w, "bytes");
+    w = json.put_int(heap, w, bytes_read);
+    return close_record(heap, lg, w);
+}
+
+pub fn write[&h, &s](heap: &!h Heap, log: buffer.Buffer, size: int, sha256: &s [byte]) -> [heap] buffer.Buffer {
+    let (lg, seq) = counted(log);
+    var w = open_record(heap, seq, "write");
+    w = json.put_key(heap, w, "bytes");
+    w = json.put_int(heap, w, size);
+    w = json.put_key(heap, w, "sha256");
+    w = json.put_string(heap, w, sha256);
+    return close_record(heap, lg, w);
+}
+
+// `rule` is the tag of the first error, empty when there is none
+pub fn end[&h, &t](heap: &!h Heap, log: buffer.Buffer, ok: bool, exit: int, rule: &t [byte]) -> [heap] buffer.Buffer {
+    let (lg, seq) = counted(log);
+    var w = open_record(heap, seq, "end");
+    w = json.put_key(heap, w, "ok");
+    w = json.put_bool(heap, w, ok);
+    w = json.put_key(heap, w, "exit");
+    w = json.put_int(heap, w, exit);
+    w = json.put_key(heap, w, "rule");
+    if len(rule) == 0 {
+        w = json.put_null(heap, w);
+    } else {
+        w = json.put_string(heap, w, rule);
+    }
+    return close_record(heap, lg, w);
+}

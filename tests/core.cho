@@ -1,0 +1,890 @@
+import std.test;
+import std.math;
+import ml.rng;
+import ml.refuse;
+import ml.limits;
+import ml.fbits;
+import linalg.tensor;
+
+// tests of lib/core and lib/linalg/tensor.cho: `cancho test --std lib/core/*.cho lib/linalg/tensor.cho tests/core.cho`
+// (scripts/check.sh). A test answers 0 to pass.
+
+// ---------------------------------------------------------------- SplitMix64 and derive (docs/rng.md)
+// vectors: Vigna's C reference (spikes/splitmix64_ref.c, run again for this file) and the numpy emulation of spike F. int
+// literals are signed, so a 64-bit value is compared as two 32-bit halves.
+fn expect(v: int, h: int, l: int) -> [] int {
+    if v >> 32 & 0xFFFFFFFF == h && v & 0xFFFFFFFF == l {
+        return 0;
+    }
+    return 1;
+}
+
+fn out5(seed: int, h0: int, l0: int, h1: int, l1: int, h2: int, l2: int, h3: int, l3: int, h4: int, l4: int) -> [] int {
+    var s = seed;
+    var bad = 0;
+    s = rng.advance(s);
+    bad = bad + expect(rng.output(s), h0, l0);
+    s = rng.advance(s);
+    bad = bad + expect(rng.output(s), h1, l1);
+    s = rng.advance(s);
+    bad = bad + expect(rng.output(s), h2, l2);
+    s = rng.advance(s);
+    bad = bad + expect(rng.output(s), h3, l3);
+    s = rng.advance(s);
+    bad = bad + expect(rng.output(s), h4, l4);
+    return bad;
+}
+
+fn test_splitmix_seed_0() -> [] int {
+    return out5(0, 0xe220a839, 0x7b1dcdaf, 0x6e789e6a, 0xa1b965f4, 0x06c45d18, 0x8009454f, 0xf88bb8a8, 0x724c81ec, 0x1b39896a, 0x51a8749b);
+}
+
+fn test_splitmix_seed_1234567() -> [] int {
+    return out5(1234567, 0x599ed017, 0xfb08fc85, 0x2c73f084, 0x58540fa5, 0x883ebce5, 0xa3f27c77, 0x3fbef740, 0xe9177b3f, 0xe3b83467, 0x08cb5ecd);
+}
+
+fn test_splitmix_seed_max() -> [] int {
+    return out5(0 - 1, 0xe4d97177, 0x1b652c20, 0xe99ff867, 0xdbf682c9, 0x382ff84c, 0xb27281e9, 0x6d1db36c, 0xcba982d2, 0xb4a0472e, 0x578069ae);
+}
+
+fn test_derive_vectors() -> [] int {
+    var bad = expect(rng.derive(rng.derive(42, 1), 0), 0xd8005cdd, 0x08a0d146);
+    bad = bad + expect(rng.derive(rng.derive(rng.derive(42, 2), 3), 77), 0x28fdfab5, 0x6efe31a1);
+    bad = bad + expect(rng.derive(rng.derive(20261012, 1), 9), 0x53391187, 0x3c329e77);
+    return bad;
+}
+
+fn uni5(seed: int, m: int, a: int, b: int, c: int, d: int, e: int) -> [] int {
+    var s = seed;
+    var bad = 0;
+    s = rng.advance(s);
+    if rng.uniform(rng.output(s), m) != a {
+        bad = bad + 1;
+    }
+    s = rng.advance(s);
+    if rng.uniform(rng.output(s), m) != b {
+        bad = bad + 1;
+    }
+    s = rng.advance(s);
+    if rng.uniform(rng.output(s), m) != c {
+        bad = bad + 1;
+    }
+    s = rng.advance(s);
+    if rng.uniform(rng.output(s), m) != d {
+        bad = bad + 1;
+    }
+    s = rng.advance(s);
+    if rng.uniform(rng.output(s), m) != e {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_uniform_vectors() -> [] int {
+    var bad = uni5(rng.derive(rng.derive(42, 1), 0), 1000, 97, 409, 299, 81, 999);
+    bad = bad + uni5(rng.derive(rng.derive(rng.derive(42, 2), 3), 77), 20, 6, 1, 18, 3, 15);
+    // an empty range draws 0 and does not trap
+    if rng.uniform(0 - 1, 0) != 0 || rng.uniform(0 - 1, 0 - 5) != 0 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_unit_range_and_exact() -> [] int {
+    var bad = 0;
+    var s = 7;
+    var i = 0;
+    while i < 10000 {
+        s = rng.advance(s);
+        let u = rng.unit(rng.output(s));
+        if !(u >= 0.0 - 1.0 && u < 1.0) {
+            bad = bad + 1;
+        }
+        // u + 1 is m * 2^-52 exactly: times 2^52 is an integer below 2^53
+        let m = (u + 1.0) * 4503599627370496.0;
+        if m != float_of(truncate(m)) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    // the first output of seed 0 is 0xe220a8397b1dcdaf: m = 7956156453446585, u = m * 2^-52 - 1, bits 0x3fe8882a0e5ec772 (numpy)
+    bad = bad + expect(bits_of(rng.unit(rng.output(rng.advance(0)))), 0x3fe8882a, 0x0e5ec772);
+    // the extremes: all-zero top bits -> -1, all-one -> 1 - 2^-52
+    if rng.unit(0) != 0.0 - 1.0 {
+        bad = bad + 1;
+    }
+    if rng.unit(0 - 1) != 1.0 - 2.220446049250313e-16 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- exact float loader
+fn roundtrip(v: float) -> [] int {
+    let bits = bits_of(v);
+    let d = fbits.decode(bits);
+    if bits_of(d) != bits {
+        return 1;
+    }
+    return 0;
+}
+
+fn test_fbits_specials() -> [] int {
+    var bad = 0;
+    bad = bad + roundtrip(0.0);
+    bad = bad + roundtrip(0.0 - 0.0);
+    bad = bad + roundtrip(1.0);
+    bad = bad + roundtrip(0.0 - 1.0);
+    bad = bad + roundtrip(0.1);
+    bad = bad + roundtrip(3.141592653589793);
+    bad = bad + roundtrip(1.7976931348623157e308);
+    bad = bad + roundtrip(2.2250738585072014e-308);
+    bad = bad + roundtrip(4.9e-324);
+    bad = bad + roundtrip(0.0 - 4.9e-324);
+    bad = bad + roundtrip(2.225073858507201e-308);
+    // -0.0 keeps its sign bit
+    if bits_of(fbits.decode(0 - 9223372036854775807 - 1)) != 0 - 9223372036854775807 - 1 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_fbits_every_exponent_and_random_patterns() -> [] int {
+    var bad = 0;
+    // every exponent field 0..2046 with several significands, both signs
+    var e = 0;
+    while e < 2047 {
+        var k = 0;
+        while k < 4 {
+            let m = rng.output(rng.advance(e * 4 + k)) & 4503599627370495;
+            let bits = e << 52 | m;
+            if bits_of(fbits.decode(bits)) != bits {
+                bad = bad + 1;
+            }
+            let nb = bits | 1 << 63;
+            if bits_of(fbits.decode(nb)) != nb {
+                bad = bad + 1;
+            }
+            k = k + 1;
+        }
+        e = e + 1;
+    }
+    // inf and NaN are refused (decode answers NaN)
+    let a = fbits.decode(2047 << 52);
+    let b = fbits.decode(2047 << 52 | 1);
+    if a == a || b == b {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_fbits_store_load[&h](heap: &!h Heap) -> [heap] int {
+    let xs = box_slice(heap, 6, 0.0);
+    let bytes = box_slice(heap, 48, byte_of(0));
+    let back = box_slice(heap, 6, 7.0);
+    var bad = 0;
+    borrow mut xs as &!xw in {
+        let s = contents(xw);
+        s[0] = 0.5;
+        s[1] = 0.0 - 0.0;
+        s[2] = 1e-310;
+        s[3] = 123456789.123456789;
+        s[4] = 0.0 - 1e300;
+        s[5] = 0.1;
+    }
+    borrow xs as &xr in {
+        borrow mut bytes as &!bw in {
+            fbits.store(contents(xr), contents(bw), 0, 6);
+        }
+        borrow bytes as &br in {
+            // little endian: 0.5 is 0x3FE0000000000000, the last byte is 0x3F, the first is 0
+            if contents(br)[7] != byte_of(0x3F) || contents(br)[6] != byte_of(0xE0) || contents(br)[0] != byte_of(0) {
+                bad = bad + 1;
+            }
+            borrow mut back as &!kw in {
+                bad = bad + fbits.load(contents(br), 0, contents(kw), 6);
+            }
+        }
+        borrow back as &kr in {
+            var i = 0;
+            while i < 6 {
+                if bits_of(contents(kr)[i]) != bits_of(contents(xr)[i]) {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, bytes);
+    unbox_slice(heap, back);
+    return bad;
+}
+
+fn test_fbits_load_counts_inf_nan[&h](heap: &!h Heap) -> [heap] int {
+    let bytes = box_slice(heap, 24, byte_of(0));
+    let out = box_slice(heap, 3, 0.0);
+    var bad = 0;
+    borrow mut bytes as &!bw in {
+        fbits.put64(contents(bw), 0, 2047 << 52);
+        fbits.put64(contents(bw), 8, 2047 << 52 | 5);
+        fbits.put64(contents(bw), 16, bits_of(2.5));
+    }
+    borrow bytes as &br in {
+        borrow mut out as &!ow in {
+            if fbits.load(contents(br), 0, contents(ow), 3) != 2 {
+                bad = bad + 1;
+            }
+        }
+    }
+    unbox_slice(heap, bytes);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// ---------------------------------------------------------------- refusals: every code has a tag, an exit code, a fixture
+fn same(a: &static [byte], b: &static [byte]) -> [] bool {
+    if len(a) != len(b) {
+        return false;
+    }
+    var i = 0;
+    while i < len(a) {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn test_refusal_tags_are_unique_and_complete() -> [] int {
+    var bad = 0;
+    var c = 1;
+    while c <= refuse.count() {
+        if len(refuse.tag(c)) < 6 {
+            bad = bad + 1;
+        }
+        if refuse.exit_code(c) != 2 && refuse.exit_code(c) != 8 {
+            bad = bad + 1;
+        }
+        var d = c + 1;
+        while d <= refuse.count() {
+            if same(refuse.tag(c), refuse.tag(d)) {
+                bad = bad + 1;
+            }
+            d = d + 1;
+        }
+        c = c + 1;
+    }
+    // no tag for 0 or past the end
+    if len(refuse.tag(0)) != 0 || len(refuse.tag(refuse.count() + 1)) != 0 {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.tensor_rank()), "ml.tensor.rank") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.tensor_shape()), "ml.tensor.shape") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.tensor_bounds()), "ml.tensor.bounds") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.too_many_rows()), "ml.input.too-many-rows") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.input_non_finite()), "ml.input.non-finite") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.label_single_class()), "ml.label.single-class") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.label_not_binary()), "ml.label.not-binary") == false {
+        bad = bad + 1;
+    }
+    if same(refuse.tag(refuse.fit_non_finite()), "ml.fit.non-finite") == false {
+        bad = bad + 1;
+    }
+    if refuse.exit_code(refuse.fit_non_finite()) != 8 || refuse.exit_code(refuse.threads()) != 2 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_limits_every_refusal() -> [] int {
+    var bad = 0;
+    let r = limits.default_rows();
+    let c = limits.default_cols();
+    let n = limits.default_cells();
+    if limits.check_matrix(100, 20, r, c, n) != 0 {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(r, 20, r, c, n) != 0 {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(0, 20, r, c, n) != refuse.input_empty() {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(5, 0, r, c, n) != refuse.input_empty() {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(r + 1, 2, r, c, n) != refuse.too_many_rows() {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(10, c + 1, r, c, n) != refuse.too_many_columns() {
+        bad = bad + 1;
+    }
+    // 10^7 x 1000 = 10^10 cells over 4e8
+    if limits.check_matrix(10000000, 1000, r, 4096, n) != refuse.too_many_cells() {
+        bad = bad + 1;
+    }
+    // exactly at the cell cap passes, one more row refuses
+    if limits.check_matrix(400000, 1000, r, c, n) != 0 {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(400001, 1000, r, c, n) != refuse.too_many_cells() {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(0 - 1, 20, r, c, n) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(5, 5, 0, c, n) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(5, 5, r, c, 0 - 3) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(5, 5, limits.ceiling_dim() + 1, c, n) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    if limits.check_matrix(5, 5, r, c, limits.ceiling_cells() + 1) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    // huge inputs never overflow: rows * cols would be 2^62
+    if limits.check_matrix(2147483647, 2147483647, 2147483647, 2147483647, limits.ceiling_cells()) != refuse.too_many_cells() {
+        bad = bad + 1;
+    }
+    if limits.check_threads(1) != 0 || limits.check_threads(64) != 0 {
+        bad = bad + 1;
+    }
+    if limits.check_threads(0) != refuse.threads() || limits.check_threads(65) != refuse.threads() {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- tensors
+fn code_of(m: tensor.Made) -> [] int {
+    match m {
+        tensor.Made::Ok(t) => {
+            return 0;
+        }
+        tensor.Made::Err(c) => {
+            return c;
+        }
+    }
+}
+
+fn get(m: tensor.Made) -> [] tensor.Tensor {
+    match m {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0 - 1, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn test_tensor_make_refusals() -> [] int {
+    var bad = 0;
+    if code_of(tensor.make(0, 0, 1, 1, 1, 1, 0, 0, 0, 0)) != refuse.tensor_rank() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 5, 1, 1, 1, 1, 0, 0, 0, 0)) != refuse.tensor_rank() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 0 - 1, 1, 1, 1, 1, 0, 0, 0, 0)) != refuse.tensor_rank() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 2, 0 - 1, 3, 1, 1, 3, 1, 0, 0)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 2, 3, 0 - 3, 1, 1, 3, 1, 0, 0)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    // element count over the ceiling: 2^40 * 2^40
+    if code_of(tensor.make(0, 2, 1099511627776, 1099511627776, 1, 1, 1, 1, 0, 0)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 4, 2097152, 2097152, 2097152, 2097152, 1, 1, 1, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    // a stride or offset beyond the ceiling
+    if code_of(tensor.make(0, 1, 3, 1, 1, 1, tensor.ceiling() + 1, 0, 0, 0)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(tensor.ceiling() + 1, 1, 3, 1, 1, 1, 1, 0, 0, 0)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 1, 3, 1, 1, 1, 0 - tensor.ceiling() - 1, 0, 0, 0)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    // a negative extent on any axis of a rank-4 tensor
+    if code_of(tensor.make(0, 4, 2, 2, 2, 0 - 1, 8, 4, 2, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 4, 2, 2, 0 - 1, 2, 8, 4, 2, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    // a negative extent after a zero one is still refused (a zero count would hide it)
+    if code_of(tensor.make(0, 4, 0, 1, 1, 0 - 1, 1, 1, 1, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 3, 0, 1, 0 - 7, 1, 1, 1, 1, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    // the count guard on the last axis: 2^60 elements pass, one more does not (2^20 * 2^20 * 2^20 * 2^20 and * (2^20 + 1))
+    if code_of(tensor.make(0, 4, 1048576, 1048576, 1048576, 1048576, 1, 1, 1, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 4, 1048576, 1048576, 1048576, 1, 1, 1, 1, 1)) != 0 {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 2, 1073741824, 1073741824, 1, 1, 1, 1, 0, 0)) != 0 {
+        bad = bad + 1;
+    }
+    if code_of(tensor.make(0, 2, 1073741824, 1073741825, 1, 1, 1, 1, 0, 0)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    // ok, with unused axes normalised
+    let t = get(tensor.make(5, 2, 3, 4, 99, 98, 4, 1, 77, 76));
+    if t.rank != 2 || t.s2 != 1 || t.s3 != 1 || t.t2 != 0 || t.t3 != 0 || t.off != 5 {
+        bad = bad + 1;
+    }
+    // an empty tensor is allowed
+    if code_of(tensor.make(0, 2, 0, 4, 1, 1, 4, 1, 0, 0)) != 0 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_tensor_check_bounds() -> [] int {
+    var bad = 0;
+    let m = get(tensor.matrix(0, 3, 4));
+    if tensor.check(m, 12) != 0 {
+        bad = bad + 1;
+    }
+    if tensor.check(m, 11) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    let o = get(tensor.matrix(1, 3, 4));
+    if tensor.check(o, 12) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    if tensor.check(o, 13) != 0 {
+        bad = bad + 1;
+    }
+    // a negative offset
+    let neg = get(tensor.vector(0 - 1, 3, 1));
+    if tensor.check(neg, 100) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    // a reversed axis: elements 9, 7, 5, 3 of 10
+    let rev = get(tensor.vector(9, 4, 0 - 2));
+    if tensor.check(rev, 10) != 0 {
+        bad = bad + 1;
+    }
+    let rev2 = get(tensor.vector(5, 4, 0 - 2));
+    if tensor.check(rev2, 10) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    // empty tensors address nothing, even with off beyond the data
+    let e = get(tensor.make(500, 1, 0, 1, 1, 1, 1, 0, 0, 0));
+    if tensor.check(e, 3) != 0 {
+        bad = bad + 1;
+    }
+    // a hand-built descriptor with absurd fields is refused, never a trap
+    let evil = tensor.Tensor { off: 0, rank: 2, s0: 9223372036854775807, s1: 9223372036854775807, s2: 1, s3: 1, t0: 9223372036854775807, t1: 0 - 9223372036854775807, t2: 0, t3: 0 };
+    if tensor.check(evil, 100) == 0 {
+        bad = bad + 1;
+    }
+    let evil2 = tensor.Tensor { off: 9223372036854775807, rank: 1, s0: 2, s1: 1, s2: 1, s3: 1, t0: 9223372036854775807, t1: 0, t2: 0, t3: 0 };
+    if tensor.check(evil2, 100) == 0 {
+        bad = bad + 1;
+    }
+    // sane() says why: each field beyond its range
+    let ok1 = tensor.Tensor { off: 0, rank: 1, s0: 2, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+    if tensor.sane(ok1) == false {
+        bad = bad + 1;
+    }
+    if tensor.sane(tensor.Tensor { off: tensor.ceiling() + 1, rank: 1, s0: 2, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 }) {
+        bad = bad + 1;
+    }
+    if tensor.sane(tensor.Tensor { off: 0, rank: 1, s0: 2, s1: 1, s2: 1, s3: 1, t0: tensor.ceiling() + 1, t1: 0, t2: 0, t3: 0 }) {
+        bad = bad + 1;
+    }
+    if tensor.sane(tensor.Tensor { off: 0, rank: 1, s0: 2, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 - tensor.ceiling() - 1 }) {
+        bad = bad + 1;
+    }
+    if tensor.sane(tensor.Tensor { off: 0, rank: 1, s0: tensor.ceiling() + 1, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 }) {
+        bad = bad + 1;
+    }
+    if tensor.sane(tensor.Tensor { off: 0, rank: 1, s0: 2, s1: 1, s2: 1, s3: 0 - 1, t0: 1, t1: 0, t2: 0, t3: 0 }) {
+        bad = bad + 1;
+    }
+    if tensor.sane(tensor.Tensor { off: 0 - 9223372036854775807 - 1, rank: 1, s0: 2, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 }) {
+        bad = bad + 1;
+    }
+    // an offset at the int limit must not overflow when sliced, rowed or columned
+    let hug = tensor.Tensor { off: 9223372036854775807, rank: 1, s0: 5, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+    if code_of(tensor.slice(hug, 0, 1, 3)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    let hug2 = tensor.Tensor { off: 9223372036854775807, rank: 2, s0: 5, s1: 5, s2: 1, s3: 1, t0: 5, t1: 1, t2: 0, t3: 0 };
+    if code_of(tensor.row(hug2, 1)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.column(hug2, 1)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    // an unused axis that is not normalised must not hide a used one: rank 1, extent 5 at offset 298 of 300, with s1 = 0
+    let hide = tensor.Tensor { off: 298, rank: 1, s0: 5, s1: 0, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+    if tensor.check(hide, 300) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    let hide2 = tensor.Tensor { off: 0, rank: 2, s0: 5, s1: 5, s2: 0, s3: 1, t0: 5, t1: 1, t2: 0, t3: 0 };
+    if tensor.check(hide2, 3) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    let evil3 = tensor.Tensor { off: 0, rank: 9, s0: 2, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+    if tensor.check(evil3, 100) != refuse.tensor_rank() {
+        bad = bad + 1;
+    }
+    let evil4 = tensor.Tensor { off: 0, rank: 1, s0: 0 - 5, s1: 1, s2: 1, s3: 1, t0: 1, t1: 0, t2: 0, t3: 0 };
+    if tensor.check(evil4, 100) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_tensor_slice_transpose_row_column() -> [] int {
+    var bad = 0;
+    let m = get(tensor.matrix(0, 5, 4));
+    // rows 1..3
+    let a = get(tensor.slice(m, 0, 1, 3));
+    if a.off != 4 || a.s0 != 2 || a.s1 != 4 || a.t0 != 4 || a.t1 != 1 {
+        bad = bad + 1;
+    }
+    // columns 1..4
+    let b = get(tensor.slice(m, 1, 1, 4));
+    if b.off != 1 || b.s0 != 5 || b.s1 != 3 || b.t0 != 4 || b.t1 != 1 {
+        bad = bad + 1;
+    }
+    if tensor.contiguous(b) {
+        bad = bad + 1;
+    }
+    // slice refusals
+    if code_of(tensor.slice(m, 2, 0, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.slice(m, 0 - 1, 0, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.slice(m, 0, 0, 6)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.slice(m, 0, 3, 2)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.slice(m, 0, 0 - 1, 2)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    // an empty slice is allowed
+    if code_of(tensor.slice(m, 0, 2, 2)) != 0 {
+        bad = bad + 1;
+    }
+    // transpose is a descriptor edit and twice is the identity
+    let t = get(tensor.transpose(m));
+    if t.s0 != 4 || t.s1 != 5 || t.t0 != 1 || t.t1 != 4 || t.off != 0 {
+        bad = bad + 1;
+    }
+    let tt = get(tensor.transpose(t));
+    if tt.s0 != 5 || tt.s1 != 4 || tt.t0 != 4 || tt.t1 != 1 {
+        bad = bad + 1;
+    }
+    if tensor.contiguous(t) {
+        bad = bad + 1;
+    }
+    // row and column
+    let r = get(tensor.row(m, 2));
+    if r.rank != 1 || r.off != 8 || r.s0 != 4 || r.t0 != 1 {
+        bad = bad + 1;
+    }
+    let c = get(tensor.column(m, 3));
+    if c.rank != 1 || c.off != 3 || c.s0 != 5 || c.t0 != 4 {
+        bad = bad + 1;
+    }
+    if code_of(tensor.row(m, 5)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.column(m, 4)) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.row(r, 0)) != refuse.tensor_rank() {
+        bad = bad + 1;
+    }
+    // the column of a transposed matrix steps by the column stride (4), not by 1
+    let ct = get(tensor.column(t, 2));
+    if ct.off != 8 || ct.s0 != 4 || ct.t0 != 1 {
+        bad = bad + 1;
+    }
+    let rt = get(tensor.row(t, 2));
+    if rt.off != 2 || rt.s0 != 5 || rt.t0 != 4 {
+        bad = bad + 1;
+    }
+    // rank 3 and 4 transposes reverse the axes
+    let t3 = get(tensor.make(0, 3, 2, 3, 4, 1, 12, 4, 1, 0));
+    let r3 = get(tensor.transpose(t3));
+    if r3.s0 != 4 || r3.s1 != 3 || r3.s2 != 2 || r3.t0 != 1 || r3.t2 != 12 {
+        bad = bad + 1;
+    }
+    let t4 = get(tensor.make(0, 4, 2, 3, 4, 5, 60, 20, 5, 1));
+    let r4 = get(tensor.transpose(t4));
+    if r4.s0 != 5 || r4.s3 != 2 || r4.t0 != 1 || r4.t3 != 60 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_tensor_reshape() -> [] int {
+    var bad = 0;
+    let m = get(tensor.matrix(3, 6, 4));
+    let a = get(tensor.reshape(m, 3, 2, 3, 4, 1));
+    if a.rank != 3 || a.off != 3 || a.t0 != 12 || a.t1 != 4 || a.t2 != 1 {
+        bad = bad + 1;
+    }
+    let b = get(tensor.reshape(m, 1, 24, 1, 1, 1));
+    if b.rank != 1 || b.s0 != 24 || b.t0 != 1 {
+        bad = bad + 1;
+    }
+    let c = get(tensor.reshape(m, 4, 2, 3, 2, 2));
+    if c.t0 != 12 || c.t1 != 4 || c.t2 != 2 || c.t3 != 1 {
+        bad = bad + 1;
+    }
+    // wrong count, a non-contiguous source, bad rank, negative extent
+    if code_of(tensor.reshape(m, 2, 5, 5, 1, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    let tr = get(tensor.transpose(m));
+    if code_of(tensor.reshape(tr, 1, 24, 1, 1, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    let sl = get(tensor.slice(m, 1, 0, 2));
+    if code_of(tensor.reshape(sl, 1, 12, 1, 1, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.reshape(m, 0, 24, 1, 1, 1)) != refuse.tensor_rank() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.reshape(m, 5, 24, 1, 1, 1)) != refuse.tensor_rank() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.reshape(m, 2, 0 - 4, 0 - 6, 1, 1)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    // a product that would overflow int is a shape refusal, not a trap
+    if code_of(tensor.reshape(m, 4, 9223372036854775807, 9223372036854775807, 9223372036854775807, 9223372036854775807)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    // a single column or row of extent 1 keeps contiguity whatever its stride
+    let one = get(tensor.make(0, 2, 1, 4, 1, 1, 999, 1, 0, 0));
+    if tensor.contiguous(one) == false {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_tensor_broadcast() -> [] int {
+    var bad = 0;
+    let v = get(tensor.make(2, 2, 1, 4, 1, 1, 4, 1, 0, 0));
+    let b = get(tensor.broadcast(v, 0, 6));
+    if b.s0 != 6 || b.t0 != 0 || b.s1 != 4 || b.t1 != 1 || b.off != 2 {
+        bad = bad + 1;
+    }
+    // the broadcast tensor addresses only the 4 elements 2..5
+    if tensor.check(b, 6) != 0 || tensor.check(b, 5) != refuse.tensor_bounds() {
+        bad = bad + 1;
+    }
+    // an axis that is not 1 cannot be broadcast
+    if code_of(tensor.broadcast(v, 1, 8)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.broadcast(v, 2, 8)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    if code_of(tensor.broadcast(v, 0, 0 - 2)) != refuse.tensor_shape() {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// property: for small random descriptors, check(t, len) == 0 exactly when every element offset is inside [0, len)
+fn brute_ok(t: tensor.Tensor, len: int) -> [] bool {
+    var i0 = 0;
+    while i0 < t.s0 {
+        var i1 = 0;
+        while i1 < t.s1 {
+            var i2 = 0;
+            while i2 < t.s2 {
+                var i3 = 0;
+                while i3 < t.s3 {
+                    let o = t.off + i0 * t.t0 + i1 * t.t1 + i2 * t.t2 + i3 * t.t3;
+                    if o < 0 || o >= len {
+                        return false;
+                    }
+                    i3 = i3 + 1;
+                }
+                i2 = i2 + 1;
+            }
+            i1 = i1 + 1;
+        }
+        i0 = i0 + 1;
+    }
+    return true;
+}
+
+fn test_tensor_check_property() -> [] int {
+    var bad = 0;
+    var s = 99;
+    var it = 0;
+    while it < 3000 {
+        s = rng.advance(s);
+        let z = rng.output(s);
+        let rank = 1 + rng.uniform(z, 4);
+        s = rng.advance(s);
+        let z2 = rng.output(s);
+        let e0 = rng.uniform(z2, 4);
+        let e1 = rng.uniform(z2 >> 7, 4);
+        let e2 = rng.uniform(z2 >> 13, 4);
+        let e3 = rng.uniform(z2 >> 21, 3);
+        s = rng.advance(s);
+        let z3 = rng.output(s);
+        let t0 = rng.uniform(z3, 11) - 5;
+        let t1 = rng.uniform(z3 >> 9, 11) - 5;
+        let t2 = rng.uniform(z3 >> 18, 11) - 5;
+        let t3 = rng.uniform(z3 >> 27, 11) - 5;
+        let off = rng.uniform(z3 >> 40, 40) - 5;
+        let len = rng.uniform(z3 >> 50, 60);
+        match tensor.make(off, rank, e0, e1, e2, e3, t0, t1, t2, t3) {
+            tensor.Made::Ok(t) => {
+                let want = brute_ok(t, len);
+                let got = tensor.check(t, len);
+                if want && got != 0 {
+                    bad = bad + 1;
+                }
+                if want == false && got != refuse.tensor_bounds() {
+                    bad = bad + 1;
+                }
+                // transposes and slices of a checked tensor are checked too
+                match tensor.transpose(t) {
+                    tensor.Made::Ok(u) => {
+                        if tensor.check(u, len) == 0 != want {
+                            bad = bad + 1;
+                        }
+                    }
+                    tensor.Made::Err(c) => {
+                        bad = bad + 1;
+                    }
+                }
+            }
+            tensor.Made::Err(c) => {
+                bad = bad + 1;
+            }
+        }
+        it = it + 1;
+    }
+    return bad;
+}
+
+// fuzz: arbitrary ints, including the extremes, through every operation; the test passes if nothing traps
+fn wild(z: int, k: int) -> [] int {
+    let pick = rng.uniform(z, 12);
+    if pick == 0 {
+        return 0;
+    }
+    if pick == 1 {
+        return 1;
+    }
+    if pick == 2 {
+        return 0 - 1;
+    }
+    if pick == 3 {
+        return 9223372036854775807;
+    }
+    if pick == 4 {
+        return 0 - 9223372036854775807 - 1;
+    }
+    if pick == 5 {
+        return tensor.ceiling();
+    }
+    if pick == 6 {
+        return tensor.ceiling() + 1;
+    }
+    if pick == 7 {
+        return 0 - tensor.ceiling();
+    }
+    if pick == 8 {
+        return 4294967296;
+    }
+    if pick == 9 {
+        return rng.uniform(rng.derive(z, k), 8);
+    }
+    return rng.derive(z, k);
+}
+
+fn test_tensor_fuzz_never_traps() -> [] int {
+    var s = 2026;
+    var seen = 0;
+    var it = 0;
+    while it < 20000 {
+        s = rng.advance(s);
+        let z = rng.output(s);
+        let t = tensor.Tensor { off: wild(z, 1), rank: wild(z, 2), s0: wild(z, 3), s1: wild(z, 4), s2: wild(z, 5), s3: wild(z, 6), t0: wild(z, 7), t1: wild(z, 8), t2: wild(z, 9), t3: wild(z, 10) };
+        let len = wild(z, 11);
+        seen = seen ^ tensor.check(t, len);
+        seen = seen ^ code_of(tensor.slice(t, wild(z, 12), wild(z, 13), wild(z, 14)));
+        seen = seen ^ code_of(tensor.transpose(t));
+        seen = seen ^ code_of(tensor.reshape(t, wild(z, 15), wild(z, 16), wild(z, 17), wild(z, 18), wild(z, 19)));
+        seen = seen ^ code_of(tensor.broadcast(t, wild(z, 20), wild(z, 21)));
+        seen = seen ^ code_of(tensor.row(t, wild(z, 22)));
+        seen = seen ^ code_of(tensor.column(t, wild(z, 23)));
+        seen = seen ^ code_of(tensor.make(wild(z, 1), wild(z, 2), wild(z, 3), wild(z, 4), wild(z, 5), wild(z, 6), wild(z, 7), wild(z, 8), wild(z, 9), wild(z, 10)));
+        seen = seen ^ code_of(tensor.vector(wild(z, 1), wild(z, 3), wild(z, 7)));
+        seen = seen ^ code_of(tensor.matrix(wild(z, 1), wild(z, 3), wild(z, 4)));
+        seen = seen ^ limits.check_matrix(wild(z, 3), wild(z, 4), wild(z, 5), wild(z, 6), wild(z, 7));
+        seen = seen ^ tensor.count(t) + limits.check_threads(wild(z, 30));
+        if tensor.contiguous(t) {
+            seen = seen ^ 1;
+        }
+        it = it + 1;
+    }
+    // the sum is only there so the calls are not dead; any value is fine
+    if seen == 0 - 123456789 {
+        return 1;
+    }
+    return 0;
+}
+
+fn test_element_is_the_stream() -> [] int {
+    var bad = 0;
+    var s = 12345;
+    var i = 0;
+    while i < 1000 {
+        s = rng.advance(s);
+        if bits_of(rng.unit(rng.output(s))) != bits_of(rng.element(12345, i)) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}

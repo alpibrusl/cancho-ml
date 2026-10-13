@@ -1,0 +1,194 @@
+module models.linreg;
+
+import linalg.tensor;
+import linalg.chol;
+import linalg.par;
+import ml.refuse;
+import ml.limits;
+import models.common;
+import models.score;
+
+// Linear regression by the normal equations (docs/models-linear.md 3.1): the decisive sums G = X^T X (syrk), the column sums
+// X^T 1 (gemv_t with ones), X^T y (gemv_t) and sum(y) (dot with ones) are the package's kernels with the package's order; then
+// the optional ridge on the d feature entries of the diagonal (the intercept is not penalised), Cholesky, forward and backward
+// solves. The parameters are w[0..d) and the intercept w[d].
+
+// the work after the checks: sums, assembly, solve. Answers a refusal code. diag receives G (P x P, mirrored) then b (P).
+fn run[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    let n = xt.s0;
+    let d = xt.s1;
+    let p = d + 1;
+    let ones = box_slice(heap, n, 1.0);
+    let cmat = box_slice(heap, d * d, 0.0);
+    let csum = box_slice(heap, d, 0.0);
+    let bsum = box_slice(heap, d, 0.0);
+    let gr = box_slice(heap, p * p, 0.0);
+    let lm = box_slice(heap, p * p, 0.0);
+    let rhs = box_slice(heap, p, 0.0);
+    let uu = box_slice(heap, p, 0.0);
+    let ww = box_slice(heap, p, 0.0);
+    var code = 0;
+    var sy = 0.0;
+    borrow ones as &onr in {
+        borrow mut cmat as &!cw in {
+            code = par.syrk_par(heap, t, xt, xd, common.mat(d, d), contents(cw));
+        }
+        if code == 0 {
+            borrow mut csum as &!sw in {
+                code = par.gemv_t_par(heap, t, xt, xd, common.vec(n), contents(onr), common.vec(d), contents(sw));
+            }
+        }
+        if code == 0 {
+            borrow mut bsum as &!bw in {
+                code = par.gemv_t_par(heap, t, xt, xd, common.vec(n), yd[0..n], common.vec(d), contents(bw));
+            }
+        }
+        if code == 0 {
+            let r = par.dot_par(heap, t, common.vec(n), yd[0..n], common.vec(n), contents(onr));
+            code = r.code;
+            sy = r.v;
+        }
+    }
+    if code == 0 {
+        // assemble G (upper from syrk, mirrored) and b into diag
+        borrow cmat as &cr in {
+            borrow csum as &sr in {
+                borrow bsum as &br in {
+                    let cc = contents(cr);
+                    let cs = contents(sr);
+                    let bs = contents(br);
+                    var j = 0;
+                    while j < d {
+                        var k = j;
+                        while k < d {
+                            diag[j * p + k] = cc[j * d + k];
+                            diag[k * p + j] = cc[j * d + k];
+                            k = k + 1;
+                        }
+                        diag[j * p + d] = cs[j];
+                        diag[d * p + j] = cs[j];
+                        diag[p * p + j] = bs[j];
+                        j = j + 1;
+                    }
+                    diag[d * p + d] = float_of(n);
+                    diag[p * p + d] = sy;
+                }
+            }
+        }
+        // an overflowed sum is a fit that cannot be trusted: refuse before the factorisation turns it into a pivot test
+        var q = 0;
+        while q < p * p + p {
+            if !common.is_finite(diag[q]) {
+                code = refuse.fit_non_finite();
+            }
+            q = q + 1;
+        }
+    }
+    if code == 0 {
+        // ridge on the feature entries, a copy; the raw sums stay in diag
+        borrow mut gr as &!gw in {
+            let gv = contents(gw);
+            var i = 0;
+            while i < p * p {
+                gv[i] = diag[i];
+                i = i + 1;
+            }
+            var j = 0;
+            while j < d {
+                gv[j * p + j] = gv[j * p + j] + l2;
+                j = j + 1;
+            }
+        }
+        borrow mut rhs as &!rw in {
+            var j = 0;
+            while j < p {
+                contents(rw)[j] = diag[p * p + j];
+                j = j + 1;
+            }
+        }
+        borrow gr as &grr in {
+            borrow mut lm as &!lw in {
+                code = chol.cholesky(common.mat(p, p), contents(grr), common.mat(p, p), contents(lw));
+            }
+            if code == 0 {
+                borrow lm as &lr in {
+                    borrow rhs as &rr in {
+                        borrow mut uu as &!uw in {
+                            code = chol.solve(0, common.mat(p, p), contents(lr), common.vec(p), contents(rr), common.vec(p), contents(uw));
+                        }
+                    }
+                    if code == 0 {
+                        borrow uu as &ur in {
+                            borrow mut ww as &!wwr in {
+                                code = chol.solve(1, common.mat(p, p), contents(lr), common.vec(p), contents(ur), common.vec(p), contents(wwr));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow ww as &wr in {
+                let w = contents(wr);
+                var j = 0;
+                while j < p {
+                    if !common.is_finite(w[j]) {
+                        code = refuse.fit_non_finite();
+                    }
+                    out[j] = w[j];
+                    j = j + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ones);
+    unbox_slice(heap, cmat);
+    unbox_slice(heap, csum);
+    unbox_slice(heap, bsum);
+    unbox_slice(heap, gr);
+    unbox_slice(heap, lm);
+    unbox_slice(heap, rhs);
+    unbox_slice(heap, uu);
+    unbox_slice(heap, ww);
+    return code;
+}
+
+// Fit. xt: n x d rank 2, d <= 256; y: n values; l2 >= 0 finite (0 = ordinary least squares); out: d + 1 values (the intercept
+// last); diag: (d + 1)^2 + (d + 1) values (G then b, the raw decisive sums). Answers 0 or a code of ml.refuse.
+pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    if limits.check_threads(t) != 0 {
+        return refuse.threads();
+    }
+    var c = common.check_l2(l2);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_x(xt, len(xd), common.max_features());
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    let p = d + 1;
+    c = common.check_len(n, len(yd));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(p, len(out));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(p * p + p, len(diag));
+    if c != 0 {
+        return c;
+    }
+    if common.count_bad(xd[xt.off..len(xd)], xt.t0, n, d) != 0 || common.count_bad_vec(yd, n) != 0 {
+        return refuse.input_non_finite();
+    }
+    return run(heap, t, xt, xd, yd, l2, out, diag);
+}
+
+// predicted values: the scores (the intercept first, then the features ascending)
+pub fn predict[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
+    return score.scores(xt, xd, wv, out);
+}

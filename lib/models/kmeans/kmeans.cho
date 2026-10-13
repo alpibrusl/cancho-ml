@@ -1,0 +1,299 @@
+module models.kmeans;
+
+import linalg.tensor;
+import linalg.order;
+import ml.refuse;
+import ml.limits;
+import ml.rng;
+import models.common;
+import models.kpass;
+import models.par;
+
+// k-means: seeded initialisation (k-means++ style or random), a fixed number of Lloyd iterations, deterministic tie-breaking,
+// centroid updates as decisive sums in the package order, and a written empty-cluster rule (docs/models-linear.md 3.3).
+
+// the stream kind of k-means (docs/rng.md)
+pub fn kind() -> [] int {
+    return 3;
+}
+
+// uniform float in [0, 1) from the top 53 bits of an output: exact
+fn u01(z: int) -> [] float {
+    return float_of(z >> 11 & 0x1FFFFFFFFFFFFF) / 9007199254740992.0;
+}
+
+fn chosen_before[&c](ch: &c [int], j: int, row: int) -> [] bool {
+    var i = 0;
+    while i < j {
+        if ch[i] == row {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// the rows of the k centers. xs positioned at X[0, 0]. random: center j is the first row not yet chosen among the draws
+// uniform(derive(z_j, a), n), a = 0, 1, ... (64 attempts, then the next unchosen row, cyclically). plusplus: see the doc.
+fn choose[&x, &c, &m](xs: &x [float], rs: int, n: int, d: int, k: int, seed: int, init: int, ch: &!c [int], mind: &!m [float]) -> [] int {
+    let root = rng.derive(seed, kind());
+    var j = 0;
+    while j < k {
+        let zj = rng.derive(root, j);
+        if init == 0 {
+            var row = 0;
+            var a = 0;
+            var found = false;
+            while a < 64 && !found {
+                row = rng.uniform(rng.derive(zj, a), n);
+                if !chosen_before(ch, j, row) {
+                    found = true;
+                }
+                a = a + 1;
+            }
+            while !found {
+                row = row + 1;
+                if row >= n {
+                    row = 0;
+                }
+                if !chosen_before(ch, j, row) {
+                    found = true;
+                }
+            }
+            ch[j] = row;
+        } else if j == 0 {
+            ch[0] = rng.uniform(zj, n);
+        } else {
+            // distances to the center chosen last, folded into the running minimum
+            let cr = xs[ch[j - 1] * rs..ch[j - 1] * rs + d];
+            var i = 0;
+            while i < n {
+                let dd = kpass.dist2(xs[i * rs..i * rs + d], cr, d);
+                if j == 1 || dd < mind[i] {
+                    mind[i] = dd;
+                }
+                i = i + 1;
+            }
+            var total = 0.0;
+            i = 0;
+            while i < n {
+                total = total + mind[i];
+                i = i + 1;
+            }
+            let u = u01(zj) * total;
+            var cum = 0.0;
+            var pick = 0 - 1;
+            i = 0;
+            while i < n && pick < 0 {
+                cum = cum + mind[i];
+                if cum > u {
+                    pick = i;
+                }
+                i = i + 1;
+            }
+            if pick < 0 {
+                pick = rng.uniform(zj, n);
+            }
+            ch[j] = pick;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// the Lloyd loop. cen: k x d centroids (row-major, in/out); diag: (iters + 1) slots of W sums; labels: n ints, the final assignment
+fn lloyd[&h, &x, &c, &g, &l](heap: &!h Heap, t: int, xs: &x [float], rs: int, n: int, d: int, k: int, iters: int, cen: &!c [float], diag: &!g [float], labels: &!l [int]) -> [heap, conc] int {
+    let ww = k * d + k + 1;
+    let depth = common.depth_for(order.blocks(n));
+    let ct = box_slice(heap, kpass.padk(k) * d + 1, 0.0);
+    let sl = kpass.scratch_len(k, d);
+    let dist = box_slice(heap, sl + 1, 0.0);
+    let st = box_slice(heap, depth * ww, 0.0);
+    let lv = box_slice(heap, depth + 1, 0);
+    let nolab = box_slice(heap, 1, 0.0);
+    var code = 0;
+    var it = 0;
+    while it <= iters && code == 0 {
+        borrow mut ct as &!cw in {
+            kpass.group(cen, k, d, contents(cw));
+        }
+        borrow ct as &cr in {
+            borrow mut dist as &!dw in {
+                borrow mut st as &!stw in {
+                    borrow mut lv as &!lvw in {
+                        borrow nolab as &nlr in {
+                            code = par.pass(heap, t, 2, xs, rs, contents(nlr), contents(cr), n, d, k, ww, sl, contents(dw), contents(stw), contents(lvw), labels);
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow st as &sr in {
+                let sums = contents(sr);
+                var i = 0;
+                var finite = true;
+                while i < ww {
+                    diag[it * ww + i] = sums[i];
+                    if !common.is_finite(sums[i]) {
+                        finite = false;
+                    }
+                    i = i + 1;
+                }
+                if !finite {
+                    code = refuse.fit_non_finite();
+                } else if it < iters {
+                    // the update: sum / count; an empty cluster keeps its centroid
+                    var c = 0;
+                    while c < k {
+                        let cnt = sums[k * d + c];
+                        if cnt > 0.0 {
+                            var j = 0;
+                            while j < d {
+                                cen[c * d + j] = sums[c * d + j] / cnt;
+                                j = j + 1;
+                            }
+                        }
+                        c = c + 1;
+                    }
+                }
+            }
+        }
+        it = it + 1;
+    }
+    unbox_slice(heap, ct);
+    unbox_slice(heap, dist);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    unbox_slice(heap, nolab);
+    return code;
+}
+
+// Fit. xt: n x d rank 2; k in 1..min(1024, n); iters in 1..1000; init 0 (random) or 1 (plusplus); out: k * d centroids; diag:
+// (iters + 1) * W values, W = k*d + k + 1: per Lloyd iteration the raw sums of the assignment before the update (k*d feature sums, k
+// counts, the inertia), then one more slot for the final assignment at the final centroids; labels: n ints (the final assignment).
+pub fn fit[&h, &x, &o, &g, &l](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], k: int, iters: int, seed: int, init: int, out: &!o [float], diag: &!g [float], labels: &!l [int]) -> [heap, conc] int {
+    if limits.check_threads(t) != 0 {
+        return refuse.threads();
+    }
+    var c = common.check_iters(iters);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_x(xt, len(xd), limits.default_cols());
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    if k < 1 || k > common.max_k() || k > n || init < 0 || init > 1 {
+        return refuse.param_out_of_range();
+    }
+    if k > limits.ceiling_dim() / d || k * d + k + 1 > common.max_slot() {
+        return refuse.param_out_of_range();
+    }
+    let ww = k * d + k + 1;
+    c = common.check_len(k * d, len(out));
+    if c != 0 {
+        return c;
+    }
+    if iters + 1 > len(diag) / ww {
+        return refuse.tensor_bounds();
+    }
+    c = common.check_len(n, len(labels));
+    if c != 0 {
+        return c;
+    }
+    let xs = xd[xt.off..len(xd)];
+    if common.count_bad(xs, xt.t0, n, d) != 0 {
+        return refuse.input_non_finite();
+    }
+    let ch = box_slice(heap, k, 0);
+    var mind = box_slice(heap, 1, 0.0);
+    if init == 1 {
+        unbox_slice(heap, mind);
+        mind = box_slice(heap, n, 0.0);
+    }
+    borrow mut ch as &!cw in {
+        borrow mut mind as &!mw in {
+            choose(xs, xt.t0, n, d, k, seed, init, contents(cw), contents(mw));
+        }
+    }
+    borrow ch as &cr in {
+        var j = 0;
+        while j < k {
+            let row = xs[contents(cr)[j] * xt.t0..contents(cr)[j] * xt.t0 + d];
+            var q = 0;
+            while q < d {
+                out[j * d + q] = row[q];
+                q = q + 1;
+            }
+            j = j + 1;
+        }
+    }
+    unbox_slice(heap, ch);
+    unbox_slice(heap, mind);
+    c = lloyd(heap, t, xs, xt.t0, n, d, k, iters, out, diag, labels);
+    return c;
+}
+
+// the labels of the rows of X for the centroids cen (k x d): the lowest index among equal distances
+pub fn predict[&h, &x, &c, &l](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], k: int, cen: &c [float], labels: &!l [int]) -> [heap] int {
+    var cc = common.check_x(xt, len(xd), limits.default_cols());
+    if cc != 0 {
+        return cc;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    if k < 1 || k > common.max_k() || k * d + k + 1 > common.max_slot() {
+        return refuse.param_out_of_range();
+    }
+    cc = common.check_len(k * d, len(cen));
+    if cc != 0 {
+        return cc;
+    }
+    cc = common.check_len(n, len(labels));
+    if cc != 0 {
+        return cc;
+    }
+    let ct = box_slice(heap, kpass.padk(k) * d + 1, 0.0);
+    borrow mut ct as &!cw in {
+        kpass.group(cen, k, d, contents(cw));
+    }
+    borrow ct as &cr in {
+        kpass.assign_rows(xd[xt.off..len(xd)], xt.t0, 0, n, d, k, contents(cr), labels);
+    }
+    unbox_slice(heap, ct);
+    return 0;
+}
+
+// the Euclidean distance of every row to every centroid: out[i * k + c] = sqrt(dist2(x_i, cen_c)), n * k values
+pub fn transform[&x, &c, &o](xt: tensor.Tensor, xd: &x [float], k: int, cen: &c [float], out: &!o [float]) -> [] int {
+    var cc = common.check_x(xt, len(xd), limits.default_cols());
+    if cc != 0 {
+        return cc;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    if k < 1 || k > common.max_k() || k * d + k + 1 > common.max_slot() {
+        return refuse.param_out_of_range();
+    }
+    cc = common.check_len(k * d, len(cen));
+    if cc != 0 {
+        return cc;
+    }
+    if n > limits.ceiling_cells() / k || common.check_len(n * k, len(out)) != 0 {
+        return refuse.tensor_bounds();
+    }
+    let xs = xd[xt.off..len(xd)];
+    var i = 0;
+    while i < n {
+        var c = 0;
+        while c < k {
+            out[i * k + c] = sqrt(kpass.dist2(xs[i * xt.t0..i * xt.t0 + d], cen[c * d..c * d + d], d));
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}

@@ -1,0 +1,285 @@
+module pt;
+
+import ml.matrix;
+import ml.csvcell;
+import std.buffer;
+import pipeline.plan;
+import pipeline.names;
+import pipeline.schema;
+import pipeline.run;
+import pipeline.file;
+
+// Helpers of the transform and pipeline tests: a matrix from text and a comparison of a matrix with text. A matrix is `r0c0,r0c1;r1c0,r1c1`
+// (rows separated by `;`, cells by `,`; a cell is read by ml.csvcell, the reader of the CLI; `?` is a missing cell).
+
+pub fn count_byte[&s](t: &s [byte], b: int) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(t) {
+        if int_of(t[i]) == b {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// the double of a cell text (the caller has checked it is a number)
+pub fn num[&s](t: &s [byte]) -> [] float {
+    let (st, kind, m, frac, idig, key) = csvcell.read(t);
+    if st != 0 {
+        return 0.0 / 0.0;
+    }
+    return csvcell.double(kind, m, frac, key);
+}
+
+pub fn cols_of[&s](t: &s [byte]) -> [] int {
+    var n = 1;
+    var i = 0;
+    while i < len(t) && int_of(t[i]) != ';' {
+        if int_of(t[i]) == ',' {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+pub fn rows_of[&s](t: &s [byte]) -> [] int {
+    return count_byte(t, ';') + 1;
+}
+
+pub fn mat[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] matrix.Matrix {
+    let rows = rows_of(t);
+    let cols = cols_of(t);
+    let (m0, code) = matrix.make(heap, rows, cols, 1000000, 8192, 100000000);
+    if code != 0 {
+        return m0;
+    }
+    let (tt, data, miss, r, c, wpc) = matrix.parts(m0);
+    var d = data;
+    var b = miss;
+    borrow mut d as &!dw in {
+        borrow mut b as &!bw in {
+            var ri = 0;
+            var ci = 0;
+            var start = 0;
+            var i = 0;
+            while i <= len(t) {
+                if i == len(t) || int_of(t[i]) == ',' || int_of(t[i]) == ';' {
+                    if ri < r && ci < c {
+                        if i - start == 1 && int_of(t[start]) == '?' {
+                            matrix.mark_missing(contents(bw), wpc, ri, ci);
+                        } else {
+                            matrix.put(contents(dw), c, ri, ci, num(t[start..i]));
+                        }
+                    }
+                    ci = ci + 1;
+                    if i < len(t) && int_of(t[i]) == ';' {
+                        ri = ri + 1;
+                        ci = 0;
+                    }
+                    start = i + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return matrix.assemble(tt, d, b, r, c, wpc);
+}
+
+// the number of cells in which the matrix differs from the text (shape, missing bit, value bits); a difference of shape counts all
+pub fn diff[&m, &s](x: &m matrix.Matrix, t: &s [byte]) -> [] int {
+    let rows = rows_of(t);
+    let cols = cols_of(t);
+    if matrix.rows(x) != rows || matrix.cols(x) != cols {
+        return rows * cols + 1;
+    }
+    var bad = 0;
+    var ri = 0;
+    var ci = 0;
+    var start = 0;
+    var i = 0;
+    while i <= len(t) {
+        if i == len(t) || int_of(t[i]) == ',' || int_of(t[i]) == ';' {
+            if ri < rows && ci < cols {
+                if i - start == 1 && int_of(t[start]) == '?' {
+                    if !matrix.is_missing(x, ri, ci) {
+                        bad = bad + 1;
+                    }
+                } else if matrix.is_missing(x, ri, ci) || bits_of(matrix.value(x, ri, ci)) != bits_of(num(t[start..i])) {
+                    bad = bad + 1;
+                }
+            }
+            ci = ci + 1;
+            if i < len(t) && int_of(t[i]) == ';' {
+                ri = ri + 1;
+                ci = 0;
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+// a list `0,2,5` of column indices
+pub fn ints_of[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] Box[[int]] {
+    let n = count_byte(t, ',') + 1;
+    let b = box_slice(heap, n, 0);
+    var o = b;
+    borrow mut o as &!w in {
+        var k = 0;
+        var v = 0;
+        var i = 0;
+        while i <= len(t) {
+            if i == len(t) || int_of(t[i]) == ',' {
+                contents(w)[k] = v;
+                k = k + 1;
+                v = 0;
+            } else {
+                v = v * 10 + (int_of(t[i]) - '0');
+            }
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+fn hexval(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    return c - 'a' + 10;
+}
+
+// bytes from hex digits; blanks are skipped
+pub fn hex[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] Box[[byte]] {
+    var n = 0;
+    var i = 0;
+    while i < len(t) {
+        if int_of(t[i]) != ' ' {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    let b = box_slice(heap, n / 2 + 1, byte_of(0));
+    var o = b;
+    borrow mut o as &!w in {
+        var k = 0;
+        var hi = 0 - 1;
+        i = 0;
+        while i < len(t) {
+            if int_of(t[i]) != ' ' {
+                if hi < 0 {
+                    hi = hexval(int_of(t[i]));
+                } else {
+                    contents(w)[k] = byte_of(hi * 16 + hexval(int_of(t[i])));
+                    k = k + 1;
+                    hi = 0 - 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// ---------------------------------------------------------------- files for the pipeline tests
+
+// a stand-in estimator payload: model kind 1 and one i64 record of 4 values (what tools/ml/mfile.cho writes for a constant regression)
+pub fn estimator[&h](heap: &!h Heap) -> [heap] Box[[byte]] {
+    return hex(heap, "01000000 01000000 01000000 0400000000000000 0100000000000000 0000000000000000 0000000000000000 0000000000000000");
+}
+
+// the schema of a target `y` then the features named in `feats`, all floats
+pub fn make_schema[&h, &s](heap: &!h Heap, feats: &s [byte]) -> [heap] schema.Schema {
+    var nm = names.from_list(heap, "y");
+    let fl = names.from_list(heap, feats);
+    borrow fl as &flr in {
+        var i = 0;
+        while i < names.count(flr) {
+            nm = names.add(heap, nm, names.name(flr, i));
+            i = i + 1;
+        }
+    }
+    var nc = 0;
+    borrow nm as &nmr in {
+        nc = names.count(nmr);
+    }
+    let ty = box_slice(heap, 2 * nc, 0);
+    var tw = ty;
+    borrow mut tw as &!w in {
+        var j = 0;
+        while j < nc {
+            contents(w)[2 * j] = 2;
+            j = j + 1;
+        }
+    }
+    names.drop(heap, fl);
+    return schema.make(nm, tw, 0);
+}
+
+// fit `plan_src` on `train` (columns `feats`) and write the file; the empty buffer when anything is refused
+pub fn make_file[&h, &a, &b, &c](heap: &!h Heap, plan_src: &a [byte], feats: &b [byte], train: &c [byte]) -> [heap] buffer.Buffer {
+    let est = estimator(heap);
+    var out = buffer.empty(heap, 1);
+    borrow est as &er in {
+        buffer.drop(heap, out);
+        out = make_file_with(heap, plan_src, feats, train, contents(er)[0..52]);
+    }
+    unbox_slice(heap, est);
+    return out;
+}
+
+// the same with the bytes of the `model` section given: `u32 kind` then whatever the estimator writes (the file only checks the leading kind)
+pub fn make_file_with[&h, &a, &b, &c, &m](heap: &!h Heap, plan_src: &a [byte], feats: &b [byte], train: &c [byte], model_payload: &m [byte]) -> [heap] buffer.Buffer {
+    let (pl, pf) = plan.parse(heap, plan_src);
+    let nm = names.from_list(heap, feats);
+    let x = mat(heap, train);
+    var out = buffer.empty(heap, 1);
+    if pf.code == 0 {
+        borrow pl as &pr in {
+            borrow nm as &nr in {
+                borrow x as &xr in {
+                    let (fd, y, f) = run.fit(heap, pr, nr, xr, 1000, 100, 100000);
+                    if f.code == 0 {
+                        let sc = make_schema(heap, feats);
+                        var sp = buffer.empty(heap, 1);
+                        borrow sc as &scr in {
+                            buffer.drop(heap, sp);
+                            sp = schema.encode(heap, scr);
+                        }
+                        borrow fd as &fr in {
+                            borrow sp as &spr in {
+                                buffer.drop(heap, out);
+                                out = file.encode(heap, plan.text(pr), buffer.bytes(spr), buffer.bytes(fr.payload), model_payload, 6, 1 + names.count(nr), 0, "pin");
+                            }
+                        }
+                        buffer.drop(heap, sp);
+                        schema.drop(heap, sc);
+                    }
+                    run.drop_fitted(heap, fd);
+                    matrix.drop(heap, y);
+                }
+            }
+        }
+    }
+    matrix.drop(heap, x);
+    names.drop(heap, nm);
+    plan.drop(heap, pl);
+    return out;
+}
+
+pub fn copy_box[&h, &s](heap: &!h Heap, b: &s [byte]) -> [heap] Box[[byte]] {
+    let o = box_slice(heap, len(b) + 1, byte_of(0));
+    var w = o;
+    borrow mut w as &!x in {
+        var i = 0;
+        while i < len(b) {
+            contents(x)[i] = b[i];
+            i = i + 1;
+        }
+    }
+    return w;
+}

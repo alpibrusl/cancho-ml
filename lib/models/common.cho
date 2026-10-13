@@ -1,0 +1,144 @@
+module models.common;
+
+import linalg.tensor;
+import ml.refuse;
+import ml.limits;
+
+// Checks and small helpers shared by the three estimators (docs/models-linear.md 3.5). Every check answers a code of
+// ml.refuse (0 = fine) and allocates nothing.
+
+// features of the linear models (the package's syrk is measured to 256; its stack is 40 d*d slots)
+pub fn max_features() -> [] int {
+    return 256;
+}
+
+// the widest slot of the Lloyd and Newton passes: sums per block, the stack holds one slot per tree level
+pub fn max_slot() -> [] int {
+    return 131072;
+}
+
+pub fn max_iters() -> [] int {
+    return 1000;
+}
+
+pub fn max_k() -> [] int {
+    return 1024;
+}
+
+pub fn is_finite(v: float) -> [] bool {
+    return v - v == 0.0;
+}
+
+// a descriptor invalid for every kernel (rank 0): passing it makes the kernel answer a refusal, never a trap
+pub fn nothing() -> [] tensor.Tensor {
+    return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+}
+
+pub fn mat(rows: int, cols: int) -> [] tensor.Tensor {
+    match tensor.matrix(0, rows, cols) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return nothing();
+        }
+    }
+}
+
+pub fn vec(n: int) -> [] tensor.Tensor {
+    match tensor.vector(0, n, 1) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return nothing();
+        }
+    }
+}
+
+// l2 (or any hyperparameter float): finite and >= 0
+pub fn check_l2(l2: float) -> [] int {
+    if !(l2 - l2 == 0.0) || l2 < 0.0 {
+        return refuse.param_out_of_range();
+    }
+    return 0;
+}
+
+pub fn check_iters(iters: int) -> [] int {
+    if iters < 1 || iters > max_iters() {
+        return refuse.param_out_of_range();
+    }
+    return 0;
+}
+
+// the feature matrix: rank 2, under the limits, inside the data, unit column stride, row stride >= d, offset >= 0.
+// The limits come before the data length, so a descriptor that claims 2^40 rows is refused as too many rows.
+pub fn check_x(xt: tensor.Tensor, nd: int, max_d: int) -> [] int {
+    if xt.rank != 2 {
+        return refuse.tensor_rank();
+    }
+    var c = limits.check_matrix(xt.s0, xt.s1, limits.default_rows(), limits.default_cols(), limits.default_cells());
+    if c != 0 {
+        return c;
+    }
+    if xt.s1 > max_d {
+        return refuse.too_many_columns();
+    }
+    c = tensor.expect(xt, 2, nd);
+    if c != 0 {
+        return c;
+    }
+    if xt.t1 != 1 || xt.t0 < xt.s1 || xt.off < 0 {
+        return refuse.tensor_shape();
+    }
+    return 0;
+}
+
+// a vector of n floats beside its data
+pub fn check_len(n: int, have: int) -> [] int {
+    if have < n {
+        return refuse.tensor_bounds();
+    }
+    return 0;
+}
+
+// number of non-finite cells of the n x d matrix (xs positioned at X[0, 0], row stride rs)
+pub fn count_bad[&x](xs: &x [float], rs: int, n: int, d: int) -> [] int {
+    var bad = 0;
+    var i = 0;
+    while i < n {
+        let r = xs[i * rs..i * rs + d];
+        var j = 0;
+        while j < d {
+            if !(r[j] - r[j] == 0.0) {
+                bad = bad + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+pub fn count_bad_vec[&v](vs: &v [float], n: int) -> [] int {
+    var bad = 0;
+    var i = 0;
+    while i < n {
+        if !(vs[i] - vs[i] == 0.0) {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+// stack slots the tree needs for `nb` blocks: ceil(log2(nb)) + 2 (order.slots() is the ceiling, 40)
+pub fn depth_for(nb: int) -> [] int {
+    var m = nb;
+    var dpt = 2;
+    while m > 1 {
+        m = (m + 1) / 2;
+        dpt = dpt + 1;
+    }
+    return dpt;
+}

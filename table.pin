@@ -1,0 +1,9 @@
+# The cancho-table commit whose numeric modules `ml` compiles (docs/reader.md section 1.3). LOCAL-DEV: read by scripts/check_table_pin.sh.
+# Changing this file is the act of moving the pin; the hashes are of the files at that commit. `rev` is a full commit hash.
+rev 7f3660881750f772bfd38de01792263fda930519
+sha256 dcad97d096800571389da01e6ab3fde35f9f11d8a9bcb0586bf36e5f3b106540 tools/table/pow5.cho
+sha256 d92f20b15327796e0b6d275c482b443988e52ab81cc6322e780ab46f9c065826 tools/table/dec.cho
+sha256 1845b08c3b96c549a35f1f671cdc8750c25449440d0cf5cef4b6e31c7bc8e250 tools/table/flt.cho
+sha256 4b7a97b71ea32e0e4757c67bb164c74d7583ef30b8e5f3cdf2b35af6b3663ea3 tools/table/query.cho
+sha256 7a1e91ee8c92c50efae90394a7767d047ef21d6e4446d7162266b7fe4b2cf156 tools/table/facc.cho
+sha256 54bd58fb1015c83b7f71066f35a8c898b5cb8cdb815701c4bcd16b51939912a5 tools/table/reader.cho

@@ -1,0 +1,317 @@
+// reader-check: reads a CSV file into the matrix of lib/core (tools/ml/csvload.cho) and prints what it holds, so that a script can
+// compare every cell, bit for bit, with Python (scripts/gate_reader.py; docs/reader.md section 5). Not a product: a driver for gates,
+// the way tools/linalg-check is.
+//
+//     reader-check [--mode shape|dump|hash] [--max-rows N] [--max-columns N] [--max-cells N] [--max-line-bytes N]
+//                  [--drop NAMES] [--float NAMES] FILE
+//
+// shape: pass 1 only (no matrix): rows, columns, the kind of every column. dump: the matrix, every cell. hash: the matrix, one hash.
+// stdout, one `key value...` per line:
+//     rows R / cols C (kept columns)            col J KIND SCALE MISSING NAME     (KIND 0 none, 1 int, 2 dec, 3 float)
+//     cell R J HEX16 | cell R J M               (dump: the 64 bits of the double, or M for a missing cell)
+//     hash H (16 hex digits), missing M (total) (hash)
+//     refused STATUS LINE COL AUX               (the report of ml.csv: docs/reader.md, ml.csv.Report)
+//     refused-matrix TAG                        (a shape over a cap, or no rows)
+// exit status: 0 read, 8 refused, 3 the file did not open, 2 the arguments.
+edition 5;
+
+import std.io;
+import ml.csv;
+import ml.csvload;
+import ml.limits;
+import ml.matrix;
+import ml.refuse;
+import ml.rng;
+import ml.pathcheck;
+import linalg.tensor;
+
+// decimal digits only, at most 18 of them; anything else answers -1
+fn number_of[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 18 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn hex16[&i](io: &!i Io, bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            putchar(io, '0' + nib);
+        } else {
+            putchar(io, 'a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn put_int[&i](io: &!i Io, v: int) -> [io_write] int {
+    if v < 0 {
+        putchar(io, '-');
+        return put_int(io, 0 - v);
+    }
+    if v >= 10 {
+        put_int(io, v / 10);
+    }
+    putchar(io, '0' + v % 10);
+    return 0;
+}
+
+fn word[&i](io: &!i Io, text: &static [byte]) -> [io_write] int {
+    io.write_all(io, text);
+    return 0;
+}
+
+fn shape_lines[&i, &s](io: &!i Io, sh: &s csv.Shape) -> [io_write] int {
+    word(io, "rows ");
+    put_int(io, csv.rows(sh));
+    io.newline(io);
+    var kept = 0;
+    var j = 0;
+    while j < csv.cols(sh) {
+        if !csv.dropped(sh, j) {
+            kept = kept + 1;
+        }
+        j = j + 1;
+    }
+    word(io, "cols ");
+    put_int(io, kept);
+    io.newline(io);
+    var k = 0;
+    j = 0;
+    while j < csv.cols(sh) {
+        if !csv.dropped(sh, j) {
+            word(io, "col ");
+            put_int(io, k);
+            word(io, " ");
+            put_int(io, csv.kind(sh, j));
+            word(io, " ");
+            put_int(io, csv.scale(sh, j));
+            word(io, " ");
+            io.write_all(io, csv.name(sh, j));
+            io.newline(io);
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// prints the refusal of a report and answers the exit status: 3 the file did not open, else 8
+fn refusal[&i](io: &!i Io, rep: csv.Report) -> [io_write] int {
+    if rep.status == 99 {
+        word(io, "refused-open ");
+        put_int(io, rep.aux);
+        io.newline(io);
+        return 3;
+    }
+    word(io, "refused ");
+    put_int(io, rep.status);
+    word(io, " ");
+    put_int(io, rep.line);
+    word(io, " ");
+    put_int(io, rep.col);
+    word(io, " ");
+    put_int(io, rep.aux);
+    io.newline(io);
+    return 8;
+}
+
+fn shape_only[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &static [byte], cfg: csv.Cfg) -> [heap, io_write, fs_read(""), dir_read, file_read] int {
+    let (sh, rep, sk) = csvload.pass(heap, fs, "", file, file, cfg, "", csv.plain_sinks(heap, 8, false));
+    csv.drop_sinks(heap, sk);
+    var code = 0;
+    if rep.status != 0 {
+        code = refusal(io, rep);
+    } else {
+        borrow sh as &sr in {
+            shape_lines(io, sr);
+        }
+    }
+    csv.drop_shape(heap, sh);
+    return code;
+}
+
+// the whole matrix: mode 1 prints every cell, mode 2 one hash
+fn whole[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &static [byte], cfg: csv.Cfg, mode: int) -> [heap, io_write, fs_read(""), dir_read, file_read] int {
+    let (mx, sh, rep, code) = csvload.load(heap, fs, "", file, file, cfg);
+    var out = 0;
+    if rep.status != 0 {
+        out = refusal(io, rep);
+    } else if code != 0 {
+        word(io, "refused-matrix ");
+        io.write_all(io, refuse.tag(code));
+        io.newline(io);
+        out = 8;
+    } else {
+        borrow sh as &sr in {
+            shape_lines(io, sr);
+        }
+        borrow mx as &mr in {
+            let rows = matrix.rows(mr);
+            let cols = matrix.cols(mr);
+            var h = 0;
+            var missing = 0;
+            var r = 0;
+            while r < rows {
+                var c = 0;
+                while c < cols {
+                    let gone = matrix.is_missing(mr, r, c);
+                    if gone {
+                        missing = missing + 1;
+                    }
+                    if mode == 1 {
+                        word(io, "cell ");
+                        put_int(io, r);
+                        word(io, " ");
+                        put_int(io, c);
+                        word(io, " ");
+                        if gone {
+                            word(io, "M");
+                        } else {
+                            hex16(io, bits_of(matrix.value(mr, r, c)));
+                        }
+                        io.newline(io);
+                    } else {
+                        var bits = bits_of(matrix.value(mr, r, c));
+                        if gone {
+                            bits = 0 - 1;
+                        }
+                        h = wrapping_add(h, rng.mix(bits ^ rng.mix(r * cols + c)));
+                    }
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+            if mode == 2 {
+                word(io, "hash ");
+                hex16(io, h);
+                io.newline(io);
+            }
+            word(io, "missing ");
+            put_int(io, missing);
+            io.newline(io);
+        }
+    }
+    csv.drop_shape(heap, sh);
+    matrix.drop(heap, mx);
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    var mode = 1;
+    var max_rows = limits.default_rows();
+    var max_cols = limits.default_cols();
+    var max_cells = limits.default_cells();
+    var max_line = 1048576;
+    var drops: &static [byte] = "";
+    var floats: &static [byte] = "";
+    var file: &static [byte] = "";
+    var bad = false;
+    borrow args as &g in {
+        var i = 1;
+        while i < arg_count(g) {
+            let a = arg(g, i);
+            if same(a, "--mode") && i + 1 < arg_count(g) {
+                let v = arg(g, i + 1);
+                if same(v, "shape") {
+                    mode = 0;
+                } else if same(v, "dump") {
+                    mode = 1;
+                } else if same(v, "hash") {
+                    mode = 2;
+                } else {
+                    bad = true;
+                }
+                i = i + 2;
+            } else if same(a, "--max-rows") && i + 1 < arg_count(g) {
+                max_rows = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if same(a, "--max-columns") && i + 1 < arg_count(g) {
+                max_cols = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if same(a, "--max-cells") && i + 1 < arg_count(g) {
+                max_cells = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if same(a, "--max-line-bytes") && i + 1 < arg_count(g) {
+                max_line = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if same(a, "--drop") && i + 1 < arg_count(g) {
+                drops = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--float") && i + 1 < arg_count(g) {
+                floats = arg(g, i + 1);
+                i = i + 2;
+            } else if len(a) > 1 && int_of(a[0]) == '-' && int_of(a[1]) == '-' {
+                bad = true;
+                i = i + 1;
+            } else {
+                file = a;
+                i = i + 1;
+            }
+        }
+    }
+    var code = 0;
+    if !bad && pathcheck.has_double_dot(file) {
+        // the same tag and exit as ml, models-check and tree-check: open_read traps on two dots in a row
+        borrow mut io as &!ip in {
+            word(ip, "refused ");
+            word(ip, pathcheck.tag());
+            io.newline(ip);
+        }
+        code = pathcheck.exit_code();
+    } else if bad || len(file) == 0 || max_rows < 1 || max_cols < 1 || max_cells < 1 || max_line < 1 {
+        borrow mut io as &!ip in {
+            word(ip, "usage: reader-check [--mode shape|dump|hash] [--max-rows N] [--max-columns N] [--max-cells N] [--max-line-bytes N] [--drop NAMES] [--float NAMES] FILE\n");
+        }
+        code = 2;
+    } else {
+        let cfg = csv.Cfg { cap: max_line, max_rows: max_rows, max_cols: max_cols, max_cells: max_cells, mode: 0, tscale: 0, pred: 0, drops: drops, floats: floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+        borrow mut heap as &!hp in {
+            borrow mut io as &!ip in {
+                borrow fs as &fr in {
+                    if mode == 0 {
+                        code = shape_only(hp, ip, fr, file, cfg);
+                    } else {
+                        code = whole(hp, ip, fr, file, cfg, mode);
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return code;
+}

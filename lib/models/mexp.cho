@@ -1,0 +1,73 @@
+module models.mexp;
+
+import std.math;
+
+// exp and log1p of the models (docs/models-linear.md 3.2). `exp` is std/math.cho's exp with the same operations; 2^k is read from
+// an exact table instead of being built by pow2's loop (the "tuned exp" of cancho-ml-opt, docs/spikes.md 8.3: identical bits on
+// 114M points there; here tests/t_models.cho and the oracle check it again). Outside |x| <= 660, and for NaN, std's exp is called.
+
+// 2^(e - 1075) for e = 1..2046 (index 0 unused)
+pub static pow2tab: [float] {
+    let t = alloc_slice[static](2047, 0.0);
+    var e = 1;
+    while e < 2047 {
+        t[e] = math.ldexp(1.0, e - 1075);
+        e = e + 1;
+    }
+    return t;
+}
+
+pub fn exp(x: float) -> [] float {
+    if x > 660.0 || x < 0.0 - 660.0 || x != x {
+        return math.exp(x);
+    }
+    let kf = x * 1.44269504088896338700e+00;
+    var h = 0.5;
+    if kf < 0.0 {
+        h = 0.0 - 0.5;
+    }
+    let k = truncate(kf + h);
+    let n = float_of(k);
+    let hi = x - n * 6.93147180369123816490e-01;
+    let lo = n * 1.90821492927058770002e-10;
+    let r = hi - lo;
+    let t = r * r;
+    let c = r - t * (1.66666666666666019037e-01 + t * (-2.77777777770155933842e-03 + t * (6.61375632143793436117e-05 + t * (-1.65339022054652515390e-06 + t * 4.13813679705723846039e-08))));
+    let y = 1.0 - (lo - r * c / (2.0 - c) - hi);
+    return y * pow2tab[k + 1075];
+}
+
+// log1p(x) for x in [0, 1] (the argument of the loss: x = exp(-|z|)), the bits of std's log1p there: u = 1 + x is in [1, 2], so
+// std's split_exponent gives k = 0 and m = u, or k = 1 and m = u / 2 when u > sqrt(2) (u = 2 has raw exponent 1024, k = 1,
+// m = 1: the same). Both branches of std's `log` are computed and one is selected, so that a row's sign of z does not make the
+// predictor guess; `tests/p_models.cho` compares it to std on a dense grid and the oracle compares whole fits. Outside [0, 1] or
+// for NaN, std's is called.
+pub fn log1p(x: float) -> [] float {
+    if !(x >= 0.0 && x <= 1.0) {
+        return math.log1p(x);
+    }
+    let u = 1.0 + x;
+    if u == 1.0 {
+        return x;
+    }
+    var m = u;
+    var n = 0.0;
+    if u > 1.4142135623730951 {
+        m = u * 0.5;
+        n = 1.0;
+    }
+    let f = m - 1.0;
+    let s = f / (2.0 + f);
+    let z = s * s;
+    let w = z * z;
+    let t1 = w * (3.999999999940941908e-01 + w * (2.222219843214978396e-01 + w * 1.531383769920937332e-01));
+    let t2 = z * (6.666666666666735130e-01 + w * (2.857142874366239149e-01 + w * (1.818357216161805012e-01 + w * 1.479819860511658591e-01)));
+    let tail = s * (0.5 * f * f + (t2 + t1));
+    let r0 = f - (0.5 * f * f - tail);
+    let r1 = n * 6.93147180369123816490e-01 - (0.5 * f * f - (tail + n * 1.90821492927058770002e-10) - f);
+    var lg = r0;
+    if n != 0.0 {
+        lg = r1;
+    }
+    return lg * x / (u - 1.0);
+}

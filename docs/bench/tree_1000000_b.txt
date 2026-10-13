@@ -1,0 +1,26 @@
+machine arm64 macOS-26.2, 16 cores, sklearn 1.8.0 numpy 2.4.6, size 1000000 (train 800000, test 200000), rounds 7, cancho reps 1/3
+round 1 done, load 5.03 -> 4.79
+round 2 done, load 4.79 -> 4.47
+round 3 done, load 4.47 -> 3.81
+round 4 done, load 3.81 -> 2.97
+round 5 done, load 2.97 -> 2.57
+round 6 done, load 2.57 -> 3.18
+round 7 done, load 3.18 -> 3.53
+load average (1 min) over the rounds: min 2.57 max 5.03; start of first round 5.03, end of last 3.53   FLAGGED: load >= 2
+entry              trees threads |  fit min s  spread | pred min s  spread
+cancho                10       1 |     0.5830   1.036 |     0.0863   1.108
+cancho                10       2 |     0.3060   1.065 |     0.0453   1.110
+cancho                10       4 |     0.2330   1.064 |     0.0263   1.025
+cancho                10       8 |     0.2070   1.053 |     0.0147   1.023
+cancho                10      16 |     0.2210   1.018 |     0.0103   1.290
+cancho                32       1 |     1.2890   1.036 |     0.3563   1.026
+cancho                32       2 |     0.7590   1.061 |     0.1807   1.033
+cancho                32       4 |     0.5710   1.011 |     0.1020   1.023
+cancho                32       8 |     0.3860   1.039 |     0.0533   1.012
+cancho                32      16 |     0.3810   1.055 |     0.0337   1.248
+sklearn-rf            10       1 |    12.6230   1.034 |     0.0845   1.055
+sklearn-rf            10      16 |     1.8624   1.025 |     0.0139   1.303
+sklearn-hgb-1iter      1       1 |     0.6020   1.022 |     0.0058   1.197
+serial part of fit at 1 thread (measured once, T-independent): edges 0.211 s, bin matrix 0.037 s
+forest hash at T=10 over threads (1, 2, 4, 8, 16): IDENTICAL a4c9d1274414
+forest hash at T=32 over threads (1, 2, 4, 8, 16): IDENTICAL d86934deb8d1

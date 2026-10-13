@@ -1,0 +1,18 @@
+// GAP 1: copy_into is for [byte] only. A float slice copy is a loop; the threaded kernels (lib/linalg/par.cho) copy their input
+// rows this way. Expected: copy_into(dst: &![T], src: &[T]) as a memmove, as for bytes (docs/bulk-copy.md).
+//     cancho check --std copy_into_float.cho      -> error: expected `byte`, found `float`
+edition 5;
+import std.test;
+
+fn test_copy[&h](heap: &!h Heap) -> [heap] int {
+    let a = box_slice(heap, 10, 1.5);
+    let b = box_slice(heap, 10, 0.0);
+    borrow a as &ar in {
+        borrow mut b as &!bw in {
+            copy_into(contents(bw)[2..7], contents(ar)[0..5]);
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    return 0;
+}

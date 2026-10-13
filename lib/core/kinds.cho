@@ -1,0 +1,223 @@
+module ml.kinds;
+
+// The registry of the numbers two stages could claim twice (docs/design.md section 4.1 for the model kinds, docs/rng.md for the stream
+// kinds). A number is never reused and never renumbered once a file or a stream depends on it. tests/t_registry.cho fails if two entries
+// of either list are equal, or if a stage's own constant (models.record, tree.model, metrics.splits, models.kmeans, tools/ml/mfile.cho's
+// readers) differs from this table; scripts/check_registry.py compares this file with the tables of the documents and with the places
+// that still write a number (tree.grow's two stream kinds).
+
+// ---- model kinds: the `u32 kind` that opens the payload of the `model` section of a CML1 file
+pub fn model_const_regression() -> [] int {
+    return 1;
+}
+
+pub fn model_const_classification() -> [] int {
+    return 2;
+}
+
+pub fn model_const_float_regression() -> [] int {
+    return 3;
+}
+
+pub fn model_linear() -> [] int {
+    return 4;
+}
+
+pub fn model_logistic() -> [] int {
+    return 5;
+}
+
+pub fn model_kmeans() -> [] int {
+    return 6;
+}
+
+// decision tree or random forest; the task (classification or regression) is a field of the first record
+pub fn model_tree() -> [] int {
+    return 7;
+}
+
+pub fn model_count() -> [] int {
+    return 7;
+}
+
+// ---- the sum order recorded in `meta` (docs/design.md section 4.1, `v1-post`): a model of a kind from first_ordered_model() on has a `u32 sum_order` as the
+// last four bytes of its `meta`, equal to sum_order(); the constant models (kinds 1 to 3) have none. 1 was the order before `v1-lanes` (retired, never written).
+pub fn first_ordered_model() -> [] int {
+    return 4;
+}
+
+pub fn sum_order() -> [] int {
+    return 2;
+}
+
+// ---- stream kinds: derive(derive(seed, kind), index)
+pub fn stream_tree_bootstrap() -> [] int {
+    return 1;
+}
+
+pub fn stream_tree_features() -> [] int {
+    return 2;
+}
+
+pub fn stream_kmeans() -> [] int {
+    return 3;
+}
+
+pub fn stream_train_test() -> [] int {
+    return 4;
+}
+
+pub fn stream_kfold() -> [] int {
+    return 5;
+}
+
+pub fn stream_stratified() -> [] int {
+    return 6;
+}
+
+pub fn stream_count() -> [] int {
+    return 6;
+}
+
+// ---- section tags of the CML1 file (docs/design.md section 4.1; only tools/ml/mfile.cho and lib/pipeline/file.cho write them)
+pub fn section_plan() -> [] int {
+    return 1;
+}
+
+pub fn section_schema() -> [] int {
+    return 2;
+}
+
+pub fn section_steps() -> [] int {
+    return 3;
+}
+
+pub fn section_model() -> [] int {
+    return 4;
+}
+
+pub fn section_meta() -> [] int {
+    return 5;
+}
+
+pub fn section_count() -> [] int {
+    return 5;
+}
+
+// ---- step kinds: the `u32 kind` that opens one step of the `steps` section (docs/transforms.md section 4)
+pub fn step_impute() -> [] int {
+    return 1;
+}
+
+pub fn step_minmax() -> [] int {
+    return 2;
+}
+
+pub fn step_standard() -> [] int {
+    return 3;
+}
+
+pub fn step_onehot() -> [] int {
+    return 4;
+}
+
+pub fn step_label() -> [] int {
+    return 5;
+}
+
+pub fn step_bucket() -> [] int {
+    return 6;
+}
+
+pub fn step_count() -> [] int {
+    return 6;
+}
+
+// the number of the i-th entry of each list, 1 <= i <= count (0 beyond), for the registry test
+pub fn model_at(i: int) -> [] int {
+    if i == 1 {
+        return model_const_regression();
+    }
+    if i == 2 {
+        return model_const_classification();
+    }
+    if i == 3 {
+        return model_const_float_regression();
+    }
+    if i == 4 {
+        return model_linear();
+    }
+    if i == 5 {
+        return model_logistic();
+    }
+    if i == 6 {
+        return model_kmeans();
+    }
+    if i == 7 {
+        return model_tree();
+    }
+    return 0;
+}
+
+pub fn stream_at(i: int) -> [] int {
+    if i == 1 {
+        return stream_tree_bootstrap();
+    }
+    if i == 2 {
+        return stream_tree_features();
+    }
+    if i == 3 {
+        return stream_kmeans();
+    }
+    if i == 4 {
+        return stream_train_test();
+    }
+    if i == 5 {
+        return stream_kfold();
+    }
+    if i == 6 {
+        return stream_stratified();
+    }
+    return 0;
+}
+
+pub fn section_at(i: int) -> [] int {
+    if i == 1 {
+        return section_plan();
+    }
+    if i == 2 {
+        return section_schema();
+    }
+    if i == 3 {
+        return section_steps();
+    }
+    if i == 4 {
+        return section_model();
+    }
+    if i == 5 {
+        return section_meta();
+    }
+    return 0;
+}
+
+pub fn step_at(i: int) -> [] int {
+    if i == 1 {
+        return step_impute();
+    }
+    if i == 2 {
+        return step_minmax();
+    }
+    if i == 3 {
+        return step_standard();
+    }
+    if i == 4 {
+        return step_onehot();
+    }
+    if i == 5 {
+        return step_label();
+    }
+    if i == 6 {
+        return step_bucket();
+    }
+    return 0;
+}

@@ -1,0 +1,103 @@
+mutants_tree: control (unmutated) passes all gates
+tie-class: equal replaces                                  killed by ident1000      (1 s)
+tie-reg: equal replaces                                    killed by ident1000      (1 s)
+tie-variant: variant 1 before 0 (class)                    SURVIVED
+tie-variant: variant 1 before 0 (reg)                      SURVIVED
+bin boundary: e < x                                        killed by ident1000      (1 s)
+bin search: a step missing (64)                            killed by ident1000      (1 s)
+bin search: a step missing (256)                           killed by ident1000      (1 s)
+bin padding: not +inf                                      killed by ident1000      (1 s)
+bootstrap: draw 0 of tree 0 plus one                       killed by ident1000      (1 s)
+bootstrap: stream of tree + 1                              killed by ident1000      (1 s)
+child swap in training                                     killed by ident1000      (1 s)
+child swap in prediction                                   killed by ident1000      (1 s)
+child swap in both                                         killed by ident1000      (1 s)
+depth - 1                                                  killed by ident1000      (1 s)
+subset size - 1 (the caller's mtry)                        killed by ident1000      (1 s)
+subset: the first mtry - 1 marked                          killed by ident1000      (1 s)
+subset stream: the node's preorder rank                    killed by ident1000      (1 s)
+subset draw: uniform(d) every time                         killed by ident1000      (1 s)
+aggregation: trees summed last to first                    killed by ident1000      (1 s)
+aggregation: multiply by 1 / T instead of dividing         killed by ident1000      (1 s)
+aggregation: sum starts from the first tree                SURVIVED (explained: equivalent: acc starts at -0.0 instead of +0.0; the first addition gives the same bits unless a leaf value is -0.0, and no leaf value is -0.0 (sums start from +0.0, 0.0 / m is +0.0, class values are ratios of counts))
+missing side: always left in training                      killed by ident1000      (1 s)
+missing side: always right in training                     killed by ident1000      (1 s)
+missing side: flipped in prediction                        killed by ident1000      (1 s)
+missing bin: bin 0                                         killed by ident1000      (1 s)
+missing: variant 1 never tried (class)                     killed by ident1000      (1 s)
+missing: variant 1 never tried (reg)                       killed by ident1000      (1 s)
+missing: variant 1 counts but not the sums (reg)           killed by ident1000      (1 s)
+missing: variant 1 class counts (class)                    killed by ident1000      (1 s)
+missing: edges include missing cells                       killed by ident1000      (1 s)
+missing: default side not stored                           killed by ident1000      (1 s)
+min_samples_leaf: nl > ml (class)                          killed by ident1000      (1 s)
+min_samples_leaf: nr > ml (reg)                            killed by ident1000      (1 s)
+leaf rule: m > 2 ml                                        killed by ident1000      (1 s)
+leaf rule: pure class node is split                        killed by ident1000      (1 s)
+leaf rule: regression purity test removed                  killed by ident1000      (1 s)
+edge index: k nv / (B + 1)                                 killed by ident1000      (1 s)
+edge: the last edge one value lower                        killed by ident1000      (1 s)
+threshold: edge of bin b + 1 instead of b                  killed by ident1000      (1 s)
+leaf value: class 0 fraction                               killed by ident1000      (1 s)
+leaf value: mean over m + 1                                killed by ident1000      (1 s)
+exact: operand of the second product                       killed by ident1000      (1 s)
+exact: limb shift 29                                       killed by ident100000    (2 s)
+exact: low parts only                                      killed by ident100000    (2 s)
+exact: carry dropped                                       killed by ident1000      (1 s)
+sum order: node total summed last to first                 killed by ident1000      (1 s)
+sum order: bin sums last to first (hist1r)                 killed by ident1000      (1 s)
+sum order: cumulative from the last bin                    killed by ident1000      (1 s)
+sum: right sum off by 1e-12                                killed by ident1000      (1 s)
+score: swapped operands (an equivalent: + commutes)        SURVIVED (explained: equivalent: IEEE addition is commutative, a + b and b + a have the same bits)
+partition: unstable swap partition                         killed by ident1000      (1 s)
+node budget: > instead of >=                               SURVIVED
+node cap: 2^depth - 1                                      killed by ident1000      (1 s)
+depth ceiling >= 31 accepted                               SURVIVED
+node total check off by one                                SURVIVED
+row bound of the exact comparison                          SURVIVED
+min_leaf range                                             SURVIVED
+copies ceiling: not checked                                SURVIVED
+single class not refused                                   SURVIVED
+label check: 2.0 accepted as 1                             SURVIVED
+target bound 1e100                                         SURVIVED
+non-finite X not seen                                      SURVIVED
+missing cell read as non-finite                            killed by ident1000      (1 s)
+threads: tree stream from the thread-local index           killed by threads        (6 s)
+threads: partition ceil(T / t)                             killed by threads        (5 s)
+threads: the last group one tree short                     killed by threads        (5 s)
+threads: merge copies group k at slot k                    killed by threads (timeout) (122 s)
+threads: refusal of the highest tree                       SURVIVED (explained: not observable today: the only refusal a tree returns is ml.limit.nodes, so which tree's refusal is reported cannot change the tag; the lowest-tree rule is kept for the day a second code exists)
+threads: predict pieces leave a row                        killed by threads        (6 s)
+threads: another static partition of the prediction rows   SURVIVED (explained: equivalent by design: rows are independent, so any partition of them gives the same bits; this mutant IS another partition (it is the property G-thread relies on))
+threads: copy of the bitmap at a wrong column offset       killed by threads        (5 s)
+pbins: gather reads the next column                        killed by threads        (6 s)
+pbins: bitmap bytes of the first columns                   killed by threads        (5 s)
+pbins: bins copied back to the first columns               killed by threads        (5 s)
+pbins: edges copied back to the first columns              killed by threads        (6 s)
+pbins: missing cell in bin 0                               killed by threads        (5 s)
+pbins: missing cells enter the sort                        killed by threads        (5 s)
+pbins: a column with no value has edge 1.0                 SURVIVED (explained: unobservable by construction: a column with no present value has only missing cells, so every bin of it is the missing bin and no split of it is valid; its edges are never read and are not part of the model (the serial path's value 0.0 is checked by the E lines of the edge-case set, mutant 'a column with no value has edge 1.0 (serial)'))
+a column with no value has edge 1.0 (serial)               killed by ident1000      (1 s)
+pbins: another static partition of the columns             SURVIVED (explained: equivalent by design: a column's edges and bins depend on that column alone, so any partition of the columns gives the same arrays (G-thread relies on it))
+reader: left child must be i + 1 not checked               SURVIVED
+reader: depth bound                                        SURVIVED
+reader: feature range                                      SURVIVED
+reader: bin range                                          SURVIVED
+reader: default side                                       SURVIVED
+reader: leaf form                                          SURVIVED
+reader: counts non-negative                                SURVIVED
+reader: finite values (load)                               SURVIVED
+reader: class leaf value equals the counts                 SURVIVED
+reader: tree offsets increase                              SURVIVED
+reader: offsets end at total                               SURVIVED
+reader: length equation (longer)                           SURVIVED
+reader: length equation (shorter)                          SURVIVED
+reader: record headers                                     SURVIVED
+reader: header ranges (d)                                  SURVIVED
+reader: node ceiling                                       SURVIVED
+reader: every tree is checked                              SURVIVED
+reader: pending right children empty                       SURVIVED
+reader: a right child must be popped by the node of that index SURVIVED
+reader: kind                                               SURVIVED
+mutants_tree: 62 killed {'ident1000': 48, 'ident100000': 2, 'threads': 11, 'threads (timeout)': 1}, 6 survived and explained, 32 unexplained, 0 did not build
+SURVIVORS: tie-variant: variant 1 before 0 (class); tie-variant: variant 1 before 0 (reg); node budget: > instead of >=; depth ceiling >= 31 accepted; node total check off by one; row bound of the exact comparison; min_leaf range; copies ceiling: not checked; single class not refused; label check: 2.0 accepted as 1; target bound 1e100; non-finite X not seen; reader: left child must be i + 1 not checked; reader: depth bound; reader: feature range; reader: bin range; reader: default side; reader: leaf form; reader: counts non-negative; reader: finite values (load); reader: class leaf value equals the counts; reader: tree offsets increase; reader: offsets end at total; reader: length equation (longer); reader: length equation (shorter); reader: record headers; reader: header ranges (d); reader: node ceiling; reader: every tree is checked; reader: pending right children empty; reader: a right child must be popped by the node of that index; reader: kind

@@ -1,0 +1,449 @@
+edition 5;
+
+module tree.grow;
+
+import ml.rng;
+import tree.deny;
+import tree.exact;
+import tree.params;
+
+// Growing one tree (docs/models-tree.md sections 2.2 to 2.5). Code of spike F's `grow`, made general: any number of columns, bins
+// and features per node, min_samples_leaf, a node budget, missing cells (bin `nbins`, a default side per split), regression,
+// and a STABLE partition (the row order inside a node is a function of the bootstrap order alone, so the float sums of the
+// regression criterion are a function of the algorithm and not of the implementation).
+//
+// Node arrays of the tree, in preorder (the root is node 0, the left child of node i is the next node created):
+//     oi[k * cap + i] with k = 0 feat, 1 bin, 2 dleft, 3 left, 4 right, 5 na, 6 nb;   ov[i] = threshold or leaf value
+// A leaf has feat = bin = left = right = -1 and dleft = 0.
+//
+// The scratch: `wk` (ints, `work_ints` of them) and `wf` (floats, `work_floats`), laid out as
+//     HIST 0 (4 groups of 2 * (nbins + 1)) | PERM (d) | MARK (d) | SUB (mtry) | BEST (8) | STACK (64 entries of 8)
+// BEST: [0] found, [1] numerator, [2] denominator, [3] feature, [4] bin, [5] default-left, [6] left count, [7] left class-1 count.
+// The stack entry: heap number, lo, hi, depth, n0, n1, parent node (-1 for the root), side (0 left, 1 right).
+
+pub fn work_ints(nbins: int, d: int, mtry: int) -> [] int {
+    return 8 * (nbins + 1) + 2 * d + mtry + 8 + 512;
+}
+
+pub fn work_floats(nbins: int) -> [] int {
+    return 4 * (nbins + 1) + 4;
+}
+
+// ---------------------------------------------------------------- histograms
+// classification: h[g * hs + 2 * bin + class] += 1, hs = 2 * (nbins + 1)
+
+fn hist4c[&a, &b, &c, &e, &y, &i, &h](c0: &a [byte], c1: &b [byte], c2: &c [byte], c3: &e [byte], yb: &y [byte], idx: &i [int], lo: int, hi: int, h: &!h [int], hs: int) -> [] int {
+    var k = lo;
+    while k < hi {
+        let r = idx[k];
+        let yy = int_of(yb[r]);
+        let i0 = int_of(c0[r]) * 2 + yy;
+        let i1 = hs + int_of(c1[r]) * 2 + yy;
+        let i2 = 2 * hs + int_of(c2[r]) * 2 + yy;
+        let i3 = 3 * hs + int_of(c3[r]) * 2 + yy;
+        h[i0] = h[i0] + 1;
+        h[i1] = h[i1] + 1;
+        h[i2] = h[i2] + 1;
+        h[i3] = h[i3] + 1;
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn hist1c[&a, &y, &i, &h](c0: &a [byte], yb: &y [byte], idx: &i [int], lo: int, hi: int, h: &!h [int], base: int) -> [] int {
+    var k = lo;
+    while k < hi {
+        let r = idx[k];
+        let i0 = base + int_of(c0[r]) * 2 + int_of(yb[r]);
+        h[i0] = h[i0] + 1;
+        k = k + 1;
+    }
+    return 0;
+}
+
+// regression: counts hc[g * w + bin], sums hf[g * w + bin] (w = nbins + 1), each sum a sequential float sum in row order
+fn hist4r[&a, &b, &c, &e, &y, &i, &h, &f](c0: &a [byte], c1: &b [byte], c2: &c [byte], c3: &e [byte], yv: &y [float], idx: &i [int], lo: int, hi: int, hc: &!h [int], hf: &!f [float], w: int) -> [] int {
+    var k = lo;
+    while k < hi {
+        let r = idx[k];
+        let v = yv[r];
+        let i0 = int_of(c0[r]);
+        let i1 = w + int_of(c1[r]);
+        let i2 = 2 * w + int_of(c2[r]);
+        let i3 = 3 * w + int_of(c3[r]);
+        hc[i0] = hc[i0] + 1;
+        hc[i1] = hc[i1] + 1;
+        hc[i2] = hc[i2] + 1;
+        hc[i3] = hc[i3] + 1;
+        hf[i0] = hf[i0] + v;
+        hf[i1] = hf[i1] + v;
+        hf[i2] = hf[i2] + v;
+        hf[i3] = hf[i3] + v;
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn hist1r[&a, &y, &i, &h, &f](c0: &a [byte], yv: &y [float], idx: &i [int], lo: int, hi: int, hc: &!h [int], hf: &!f [float], base: int) -> [] int {
+    var k = lo;
+    while k < hi {
+        let r = idx[k];
+        let i0 = base + int_of(c0[r]);
+        hc[i0] = hc[i0] + 1;
+        hf[i0] = hf[i0] + yv[r];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- candidates and scans (section 2.4, items 2 to 4)
+
+// a classification candidate: left side (nl rows, pl of class 1) of a node of m rows with n1 of class 1; replaces the best only
+// if strictly better, by the exact comparison of tree.exact
+fn cand_c[&w](wk: &!w [int], ob: int, nl: int, pl: int, dl: int, b: int, fi: int, m: int, n1: int, ml: int) -> [] int {
+    let nr = m - nl;
+    if nl >= ml && nr >= ml {
+        let pr = n1 - pl;
+        let ql = nl - pl;
+        let qr = nr - pr;
+        let nn = (pl * pl + ql * ql) * nr + (pr * pr + qr * qr) * nl;
+        let dd = nl * nr;
+        if wk[ob] == 0 || exact.gt(nn, dd, wk[ob + 1], wk[ob + 2]) {
+            wk[ob] = 1;
+            wk[ob + 1] = nn;
+            wk[ob + 2] = dd;
+            wk[ob + 3] = fi;
+            wk[ob + 4] = b;
+            wk[ob + 5] = dl;
+            wk[ob + 6] = nl;
+            wk[ob + 7] = pl;
+        }
+    }
+    return 0;
+}
+
+// the bins of feature `fi` (histogram at wk[hb ..]): candidates for b = 0 .. nbins - 2, variant 0 then variant 1
+fn scan_c[&w](wk: &!w [int], hb: int, ob: int, nbins: int, fi: int, m: int, n1: int, ml: int) -> [] int {
+    let mc = wk[hb + 2 * nbins] + wk[hb + 2 * nbins + 1];
+    let mp = wk[hb + 2 * nbins + 1];
+    var nl = 0;
+    var pl = 0;
+    var b = 0;
+    while b < nbins - 1 {
+        let h1 = wk[hb + 2 * b + 1];
+        nl = nl + wk[hb + 2 * b] + h1;
+        pl = pl + h1;
+        cand_c(wk, ob, nl, pl, 0, b, fi, m, n1, ml);
+        if mc > 0 {
+            cand_c(wk, ob, nl + mc, pl + mp, 1, b, fi, m, n1, ml);
+        }
+        b = b + 1;
+    }
+    return 0;
+}
+
+// a regression candidate: left side nl rows with sum sl; the right side's sum is sm - sl. The score is
+// sl * sl / nl + sr * sr / nr, three roundings of the products and quotients and one of the sum, in this order
+fn cand_r[&w, &f](wk: &!w [int], wf: &!f [float], ob: int, ofb: int, nl: int, sl: float, dl: int, b: int, fi: int, m: int, sm: float, ml: int) -> [] int {
+    let nr = m - nl;
+    if nl >= ml && nr >= ml {
+        let sr = sm - sl;
+        let sc = sl * sl / float_of(nl) + sr * sr / float_of(nr);
+        if wk[ob] == 0 || sc > wf[ofb] {
+            wk[ob] = 1;
+            wf[ofb] = sc;
+            wk[ob + 3] = fi;
+            wk[ob + 4] = b;
+            wk[ob + 5] = dl;
+            wk[ob + 6] = nl;
+        }
+    }
+    return 0;
+}
+
+// counts at wk[hb + bin], sums at wf[fb + bin]
+fn scan_r[&w, &f](wk: &!w [int], wf: &!f [float], hb: int, fb: int, ob: int, ofb: int, nbins: int, fi: int, m: int, sm: float, ml: int) -> [] int {
+    let mc = wk[hb + nbins];
+    let ms = wf[fb + nbins];
+    var nl = 0;
+    var sl = 0.0;
+    var b = 0;
+    while b < nbins - 1 {
+        nl = nl + wk[hb + b];
+        sl = sl + wf[fb + b];
+        cand_r(wk, wf, ob, ofb, nl, sl, 0, b, fi, m, sm, ml);
+        if mc > 0 {
+            cand_r(wk, wf, ob, ofb, nl + mc, sl + ms, 1, b, fi, m, sm, ml);
+        }
+        b = b + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- the tree
+
+// Grow tree number `tree`. Answers the number of nodes (>= 1), or 0 - the refusal code (ml.limit.nodes when the tree needs more
+// than `cap` nodes). Needs the parameters to have passed `params.check`, the arrays to have the sizes documented above
+// (idx, tmp: n; bins: d * n; yb: n bytes for classification; yv: n floats for regression; ed: d * (nbins - 1); oi: 7 * cap;
+// ov: cap; wk, wf: work_ints, work_floats).
+pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int, d: int, mtry: int, cap: int, tree: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], ed: &e [float], idx: &!i [int], tmp: &!t [int], wk: &!w [int], wf: &!wfl [float], oi: &!a [int], ov: &!c [float]) -> [] int {
+    let nbins = p.bins;
+    let hs = 2 * (nbins + 1);
+    let w1 = nbins + 1;
+    let o_perm = 4 * hs;
+    let o_mark = o_perm + d;
+    let o_sub = o_mark + d;
+    let o_best = o_sub + mtry;
+    let o_stack = o_best + 8;
+    let ofb = 4 * w1;
+    let ne = nbins - 1;
+    let task = p.task;
+    // bootstrap (2.2)
+    var s = rng.derive(rng.derive(p.seed, 1), tree);
+    var root1 = 0;
+    var k = 0;
+    while k < n {
+        var r = k;
+        if p.bootstrap == 1 {
+            s = rng.advance(s);
+            r = rng.uniform(rng.output(s), n);
+        }
+        idx[k] = r;
+        if task == 0 {
+            root1 = root1 + int_of(yb[r]);
+        }
+        k = k + 1;
+    }
+    var sp = 1;
+    wk[o_stack] = 1;
+    wk[o_stack + 1] = 0;
+    wk[o_stack + 2] = n;
+    wk[o_stack + 3] = 0;
+    wk[o_stack + 4] = n - root1;
+    wk[o_stack + 5] = root1;
+    wk[o_stack + 6] = 0 - 1;
+    wk[o_stack + 7] = 0;
+    var cnt = 0;
+    while sp > 0 {
+        sp = sp - 1;
+        let so = o_stack + sp * 8;
+        let id = wk[so];
+        let lo = wk[so + 1];
+        let hi = wk[so + 2];
+        let dep = wk[so + 3];
+        let n0 = wk[so + 4];
+        let n1 = wk[so + 5];
+        let parent = wk[so + 6];
+        let side = wk[so + 7];
+        let m = hi - lo;
+        let ni = cnt;
+        cnt = cnt + 1;
+        if cnt > cap {
+            return 0 - deny.limit_nodes();
+        }
+        if parent >= 0 {
+            if side == 0 {
+                oi[3 * cap + parent] = ni;
+            } else {
+                oi[4 * cap + parent] = ni;
+            }
+        }
+        var can = dep < p.max_depth && m >= 2 * p.min_leaf;
+        var sm = 0.0;
+        if task == 0 {
+            can = can && n0 > 0 && n1 > 0;
+        } else {
+            // the node total in row order, and whether the targets are all equal
+            var ymin = yv[idx[lo]];
+            var ymax = ymin;
+            k = lo;
+            while k < hi {
+                let v = yv[idx[k]];
+                sm = sm + v;
+                if v < ymin {
+                    ymin = v;
+                }
+                if v > ymax {
+                    ymax = v;
+                }
+                k = k + 1;
+            }
+            can = can && ymin != ymax;
+        }
+        var found = false;
+        if can {
+            // the feature subset (2.4 item 1)
+            var j = 0;
+            while j < d {
+                wk[o_perm + j] = j;
+                wk[o_mark + j] = 0;
+                j = j + 1;
+            }
+            var fs = rng.derive(rng.derive(rng.derive(p.seed, 2), tree), id);
+            j = 0;
+            while j < mtry {
+                fs = rng.advance(fs);
+                let q = j + rng.uniform(rng.output(fs), d - j);
+                let tt = wk[o_perm + j];
+                wk[o_perm + j] = wk[o_perm + q];
+                wk[o_perm + q] = tt;
+                j = j + 1;
+            }
+            j = 0;
+            while j < mtry {
+                wk[o_mark + wk[o_perm + j]] = 1;
+                j = j + 1;
+            }
+            var sc = 0;
+            j = 0;
+            while j < d {
+                if wk[o_mark + j] == 1 {
+                    wk[o_sub + sc] = j;
+                    sc = sc + 1;
+                }
+                j = j + 1;
+            }
+            j = 0;
+            while j < 8 {
+                wk[o_best + j] = 0;
+                j = j + 1;
+            }
+            // histograms and scans, four features at a time and then one by one; features in ascending order
+            var g = 0;
+            while g < mtry {
+                var gn = 4;
+                if g + 4 > mtry {
+                    gn = 1;
+                }
+                // clear
+                j = 0;
+                if task == 0 {
+                    while j < gn * hs {
+                        wk[j] = 0;
+                        j = j + 1;
+                    }
+                } else {
+                    while j < gn * w1 {
+                        wk[j] = 0;
+                        wf[j] = 0.0;
+                        j = j + 1;
+                    }
+                }
+                let f0 = wk[o_sub + g];
+                let c0 = bins[f0 * n..f0 * n + n];
+                if gn == 4 {
+                    let f1 = wk[o_sub + g + 1];
+                    let f2 = wk[o_sub + g + 2];
+                    let f3 = wk[o_sub + g + 3];
+                    let c1 = bins[f1 * n..f1 * n + n];
+                    let c2 = bins[f2 * n..f2 * n + n];
+                    let c3 = bins[f3 * n..f3 * n + n];
+                    if task == 0 {
+                        hist4c(c0, c1, c2, c3, yb, idx, lo, hi, wk, hs);
+                    } else {
+                        hist4r(c0, c1, c2, c3, yv, idx, lo, hi, wk, wf, w1);
+                    }
+                } else if task == 0 {
+                    hist1c(c0, yb, idx, lo, hi, wk, 0);
+                } else {
+                    hist1r(c0, yv, idx, lo, hi, wk, wf, 0);
+                }
+                var u = 0;
+                while u < gn {
+                    let fu = wk[o_sub + g + u];
+                    if task == 0 {
+                        scan_c(wk, u * hs, o_best, nbins, fu, m, n1, p.min_leaf);
+                    } else {
+                        scan_r(wk, wf, u * w1, u * w1, o_best, ofb, nbins, fu, m, sm, p.min_leaf);
+                    }
+                    u = u + 1;
+                }
+                g = g + gn;
+            }
+            found = wk[o_best] == 1;
+        }
+        if found == false {
+            oi[ni] = 0 - 1;
+            oi[cap + ni] = 0 - 1;
+            oi[2 * cap + ni] = 0;
+            oi[3 * cap + ni] = 0 - 1;
+            oi[4 * cap + ni] = 0 - 1;
+            if task == 0 {
+                oi[5 * cap + ni] = n0;
+                oi[6 * cap + ni] = n1;
+                ov[ni] = float_of(n1) / float_of(n0 + n1);
+            } else {
+                oi[5 * cap + ni] = m;
+                oi[6 * cap + ni] = 0;
+                ov[ni] = sm / float_of(m);
+            }
+        } else {
+            let bf = wk[o_best + 3];
+            let bb = wk[o_best + 4];
+            let bdl = wk[o_best + 5];
+            let bnl = wk[o_best + 6];
+            let bpl = wk[o_best + 7];
+            oi[ni] = bf;
+            oi[cap + ni] = bb;
+            oi[2 * cap + ni] = bdl;
+            oi[3 * cap + ni] = 0 - 1;
+            oi[4 * cap + ni] = 0 - 1;
+            if task == 0 {
+                oi[5 * cap + ni] = n0;
+                oi[6 * cap + ni] = n1;
+            } else {
+                oi[5 * cap + ni] = m;
+                oi[6 * cap + ni] = 0;
+            }
+            ov[ni] = ed[bf * ne + bb];
+            // stable partition of idx[lo..hi): the left rows in place, the right rows through tmp (2.4 item 5)
+            let col = bins[bf * n..bf * n + n];
+            var a = lo;
+            var z = 0;
+            k = lo;
+            while k < hi {
+                let r = idx[k];
+                let v = int_of(col[r]);
+                var lf = 0;
+                if v <= bb {
+                    lf = 1;
+                }
+                if v == nbins {
+                    lf = bdl;
+                }
+                // branch-free: write the row to both lists, advance one of them (a <= k, so idx[a] is never a row still to be read)
+                idx[a] = r;
+                tmp[z] = r;
+                a = a + lf;
+                z = z + 1 - lf;
+                k = k + 1;
+            }
+            k = 0;
+            while k < z {
+                idx[a + k] = tmp[k];
+                k = k + 1;
+            }
+            // push the right child, then the left (so that the left is visited first: preorder)
+            let o1 = o_stack + sp * 8;
+            wk[o1] = 2 * id + 1;
+            wk[o1 + 1] = a;
+            wk[o1 + 2] = hi;
+            wk[o1 + 3] = dep + 1;
+            wk[o1 + 4] = n0 - (bnl - bpl);
+            wk[o1 + 5] = n1 - bpl;
+            wk[o1 + 6] = ni;
+            wk[o1 + 7] = 1;
+            let o2 = o1 + 8;
+            wk[o2] = 2 * id;
+            wk[o2 + 1] = lo;
+            wk[o2 + 2] = a;
+            wk[o2 + 3] = dep + 1;
+            wk[o2 + 4] = bnl - bpl;
+            wk[o2 + 5] = bpl;
+            wk[o2 + 6] = ni;
+            wk[o2 + 7] = 0;
+            sp = sp + 2;
+        }
+    }
+    return cnt;
+}

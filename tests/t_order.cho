@@ -1,0 +1,74 @@
+import std.test;
+import linalg.order;
+import lref;
+
+// The constants of the summation order (docs/linalg.md section 2) and the two functions that hold it: the lane combine and the
+// partial of a block of ready-made terms. The reference in lref.cho writes the constants again on purpose (a test of the numbers
+// themselves must not read them from the code it judges); the kernels are compared to it in t_dot, t_gemv, t_syrk, t_chol, t_gemm.
+
+fn test_order_constants() -> [] int {
+    var bad = 0;
+    if order.block() != 256 || lref.k() != 256 {
+        bad = bad + 1;
+    }
+    if order.lanes() != 4 || lref.lanes() != 4 {
+        bad = bad + 1;
+    }
+    if order.panel() != 32 || lref.panel() != 32 {
+        bad = bad + 1;
+    }
+    if order.group() != 8 {
+        bad = bad + 1;
+    }
+    // K and NB are multiples of L (the lane of a term is then its index mod L from the start of any block or panel)
+    if order.block() % order.lanes() != 0 || order.panel() % order.lanes() != 0 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// (l0 + l1) + (l2 + l3), the left operand first. Two lane vectors on which the association shows: 2^53 absorbs a 1 but not a 2.
+fn test_lane_combine_order() -> [] int {
+    var bad = 0;
+    let big = 9007199254740992.0;
+    // (big, 1, 0, 1): the tree gives (big + 1) + (0 + 1) = big; the pairing (l0 + l2) + (l1 + l3) gives big + 2
+    let t1 = big + 1.0 + (0.0 + 1.0);
+    let p1 = big + 0.0 + (1.0 + 1.0);
+    if bits_of(order.lane_combine(big, 1.0, 0.0, 1.0)) != bits_of(t1) || bits_of(t1) == bits_of(p1) {
+        bad = bad + 1;
+    }
+    // (big, 0, 1, 1): the tree gives big + (1 + 1) = big + 2; a left fold gives big
+    let t2 = big + 0.0 + (1.0 + 1.0);
+    let f2 = big + 0.0 + 1.0 + 1.0;
+    if bits_of(order.lane_combine(big, 0.0, 1.0, 1.0)) != bits_of(t2) || bits_of(t2) == bits_of(f2) {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// block_partial of ready-made terms against the lane rule of the reference, for every length 0 .. 260, wide and cancelling data
+fn test_block_partial_is_the_lane_rule[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let x = box_slice(heap, 300, 0.0);
+    let one = box_slice(heap, 300, 1.0);
+    borrow mut x as &!xw in {
+        lref.gen(contents(xw), 300, 6061, 1);
+    }
+    borrow x as &xr in {
+        borrow one as &or in {
+            var m = 0;
+            while m <= 260 {
+                // the reference lane sum of x[i] * 1.0 = x[i], lanes counted from 0
+                let want = lref.lane_sum(contents(xr), 0, 1, contents(or), 0, 1, 0, m);
+                let got = order.block_partial(contents(xr), m);
+                if bits_of(got) != bits_of(want) {
+                    bad = bad + 1;
+                }
+                m = m + 1;
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, one);
+    return bad;
+}

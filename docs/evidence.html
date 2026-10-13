@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<!--
+  Hand-written. Every number on this page is copied from a document of this repository, named next to it:
+  docs/integration.md (every gate on the merged tree), docs/cli.md, docs/reader.md, docs/linalg.md,
+  docs/models-linear.md, docs/metrics.md and docs/models-tree.md. Nothing here was measured by the page.
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cancho-ml evidence: the gates, the oracles and the mutants</title>
+<meta name="description" content="What each gate of cancho-ml checks, against which oracle, how it was shown able to fail, and what it does not prove. One gate is red.">
+<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/evidence.html">
+<meta name="robots" content="index, follow">
+<meta property="og:site_name" content="cancho-ml">
+<meta property="og:locale" content="en">
+<meta property="og:type" content="website">
+<meta property="og:title" content="cancho-ml evidence: the gates, the oracles and the mutants">
+<meta property="og:description" content="What each gate of cancho-ml checks, against which oracle, how it was shown able to fail, and what it does not prove. One gate is red.">
+<meta property="og:url" content="https://alpibrusl.github.io/cancho-ml/evidence.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="cancho-ml evidence: the gates, the oracles and the mutants">
+<meta name="twitter:description" content="What each gate of cancho-ml checks, against which oracle, how it was shown able to fail, and what it does not prove. One gate is red.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/svg+xml" href="assets/cancho-ml-icon.svg">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top"><div class="wrap">
+  <a class="brand" href="./"><img class="mark" src="assets/cancho-ml-icon.svg" alt="" width="28" height="28">cancho-ml</a>
+  <nav aria-label="Site">
+    <a href="./" class="opt">Overview</a><a href="evidence.html" aria-current="page">Evidence</a><a href="benchmarks.html">Benchmarks</a><a href="./#start" class="opt">Quick start</a>
+    <a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
+  </nav>
+</div></header>
+
+<main id="main" class="wrap">
+<div class="pagehead">
+  <h1>Evidence</h1>
+  <p class="lead">What each gate checks, against what, how it was shown able to fail, and what it does not prove.</p>
+  <p class="sub">A gate is written before the code it judges. To show a gate can fail there is a <em>mutant</em>: a one-line change to the source (or to a table, a schema or the fixtures) that the gate must catch. A mutant that survives is explained or it is a gap. The oracles are programs written for the purpose, mostly in Python; they check the code against the document, not the document against anything outside it, and the page says where that matters.</p>
+  <ul class="toc">
+    <li><a href="#conditions">Conditions</a></li><li><a href="#mutants">The mutants</a></li><li><a href="#cli">The command line</a></li><li><a href="#reader">The reader</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#models">Linear models, k-means</a></li><li><a href="#metrics">Metrics and splits</a></li><li><a href="#trees">Trees and forests</a></li><li><a href="#red">The red gate</a></li><li><a href="#determinism">Determinism</a></li><li><a href="#registries">The registries</a></li><li><a href="#notprove">What this does not prove</a></li>
+  </ul>
+</div>
+
+<section id="conditions">
+  <h2>Conditions</h2>
+  <p class="sub">Every figure below was printed by a script of the repository, in the document that cites it. The merged tree&rsquo;s run is <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/integration.md">docs/integration.md</a> section 3: one Mac (arm64, Darwin 25.2.0), cancho <code>a4572ea</code>, Python 3.14.5, numpy 2.4.6, scikit-learn 1.8.0. The machine was loaded by the mutant runs (a load average up to 36) while they ran. That changes no verdict, because a correctness gate does not depend on the load; it is the reason no time is quoted from that run. <strong>All of it is one machine.</strong> A Linux x86-64 run is not done.</p>
+</section>
+
+<section id="mutants">
+  <h2>The mutants</h2>
+  <p class="sub">Each run applies every edit to a copy of the tree, rebuilds and runs the gate; the unmutated control passes first. <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/integration.md">docs/integration.md</a> section 3 (the counts equal what each stage recorded); the logs are in <code>docs/bench/</code>.</p>
+  <div class="fitwrap"><table class="fit">
+    <thead><tr><th>script</th><th class="num">mutants</th><th class="num">killed</th><th class="num">survived, each explained</th><th class="num">unexplained</th></tr></thead>
+    <tbody>
+      <tr><th><code>mutants_core.py</code></th><td class="num">50</td><td class="num">48</td><td class="num">2</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_linalg.py</code></th><td class="num">86</td><td class="num">84</td><td class="num">2</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_models.py</code></th><td class="num">67</td><td class="num">65</td><td class="num">2</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_metrics.py</code></th><td class="num">146</td><td class="num">138</td><td class="num">8</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_tree.py</code></th><td class="num">100</td><td class="num">94</td><td class="num">6</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_reader.py</code></th><td class="num">40</td><td class="num">36</td><td class="num">4</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_cli.py</code></th><td class="num">45</td><td class="num">45</td><td class="num">0</td><td class="num">0</td></tr>
+      <tr class="us"><th>total</th><td class="num">534</td><td class="num">510</td><td class="num">24</td><td class="num">0</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">The total is the sum of the rows. A survivor is usually an equivalent mutant: the change cannot alter a result (an addition is commutative, a clamp removes only all-zero partials). The argument for each is in the script that holds it. Several stages also found that their first gate checked less than it said, because a mutant survived: <code>docs/cli.md</code> section 7 (a crafted file with junk before the checksum), <code>docs/reader.md</code> section 6 (five gates), <code>docs/metrics.md</code> section 5.3 (a harness that hid infinities).</p>
+</section>
+
+<section id="cli">
+  <h2>The command line</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">docs/cli.md</a> sections 1 and 7, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/integration.md">docs/integration.md</a> section 3. The conformance suite is <code>tests/conformance</code>: 101 tests pass and 1 is skipped (the determinism test across <code>--threads</code>, which <code>ml</code> does not have).</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>what it checks, against what</th><th>what it does not show</th></tr></thead>
+    <tbody>
+      <tr><th>T1 tables</th><td>Every flag and every rule of the table is in <code>introspect</code>, in <code>skill</code>, in the schema and in a fixture; the schemas are generated, and a stale file fails.</td><td>That a help sentence is true.</td></tr>
+      <tr><th>R1 refusals</th><td>Every refusal is one JSON line valid against the schema, with the exit code of the table and an empty standard error.</td><td></td></tr>
+      <tr><th>N1 no trap</th><td>A seeded fuzz of argument vectors (2,500) and about 3,200 systematic ones (every flag with every one-flag mistake in every verb) never traps and always prints one valid JSON line. It found the third case of spike F&rsquo;s trap: two dots in a row in a path.</td><td>Input the vectors did not cover.</td></tr>
+      <tr><th>L1 no payload logged</th><td>Canary strings in cells, column names and paths never appear in the log or on standard error; the log is bounded.</td><td></td></tr>
+      <tr><th>M1 model file</th><td>The writer and an independent reader round-trip; every truncation, every flipped byte (three ways) and a wrong checksum is refused with its own rule; no damaged file is accepted.</td><td></td></tr>
+      <tr><th>S1 schema</th><td>Prediction columns that differ from the fitted ones are <code>ml.schema.mismatch</code> with the columns named; order may differ.</td><td></td></tr>
+      <tr><th>O1 oracle</th><td><code>fit</code>, <code>predict</code> and <code>eval</code> agree, value for value, with an exact-rational oracle (<code>fractions.Fraction</code>) on seeded data whose sums leave 64 bits.</td><td>The oracle is written by the same author from the same text. Its RMSE repeats the tool&rsquo;s three IEEE steps.</td></tr>
+      <tr><th>D1 determinism</th><td>The same data and plan give the same model bytes whatever the working directory, the spelling of the path, the line ending or the repetition.</td><td>Another machine. The <code>--threads</code> branch only skips: it is shown able to fail by a stand-in binary.</td></tr>
+      <tr><th>A1 authority</th><td><code>manifest.py --check</code> fails if the committed manifest, the embedded one or the binary&rsquo;s <code>introspect</code> differ from a fresh derivation, or a label is outside the ceiling of <code>tools.toml</code>.</td><td>Extent: the row says <code>fs_read("")</code>, the verb and not the place.</td></tr>
+      <tr><th>H1 honesty</th><td>The <code>--model</code> list is exactly what is built; asking for another is <code>args.bad-value</code>.</td><td></td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">The mutants: 45 killed of 45 (<code>docs/bench/mutants_cli_reader.log</code>; the CLI slice&rsquo;s own 34 are in <code>docs/bench/mutants_cli.log</code>). The gates found two bugs in the code, both fixed: <code>eval</code> of a classification model computed a regression mean from the labels and trapped on 12-digit labels, and a path with two dots in a row ended the process with <code>SIGILL</code>. <strong>Not done:</strong> the <code>dry_run</code> guarantee was not run under <code>strace</code>; no gate measures memory or speed.</p>
+</section>
+
+<section id="reader">
+  <h2>The reader</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/reader.md">docs/reader.md</a> sections 5 and 6. The cell reader is cancho-table&rsquo;s, compiled from a pinned clone and not copied; the oracle is Python&rsquo;s <code>float()</code> and <code>fractions.Fraction</code>.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>RD1 pinned, not copied</th><td>The clone is at the commit of <code>table.pin</code> with the pinned SHA-256 of each of the six files, and no file of this repository declares one of the six modules or holds its bytes. Four mutants caught.</td></tr>
+      <tr><th>RD2 differential</th><td>1,966,143 accepted cells compared bit for bit with Python <code>float()</code>, and 34,380 refusals compared: <strong>0 differences</strong>. The cells include halfway points written exactly (up to 767 digits), subnormals, every power of ten from 1e-330 to 1e310 and huge exponents.</td></tr>
+      <tr><th>RD3 matrix and missing bitmap</th><td>192 random files, 28,518 cells, plus 216 kind and scale checks: 0 differences.</td></tr>
+      <tr><th>RD4 limits before allocation</th><td>36 checks, 0 differences. A 200 MB file refused at its 11th row peaks at 1.5 MB; read whole into the matrix it peaks at 414 MB.</td></tr>
+      <tr><th>RD5 CSV shape</th><td>277 files and 11,331 numeric cells against Python&rsquo;s <code>csv</code> module, 17 refusal cases: 0 differences.</td></tr>
+      <tr><th>RD6 no trap</th><td>5,014 inputs through <code>reader-check</code> and 5,115 runs of <code>ml</code>, and 14 large cases (a 100,000-digit cell, a 10<sup>6</sup> exponent, a 5 MB line): 0 traps, 0 malformed answers.</td></tr>
+      <tr><th>RD7 CLI oracle</th><td>11 tests on 240 seeded datasets: a float target&rsquo;s mean, <code>sse</code> and <code>rmse</code> agree bit for bit with <code>Fraction</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">Mutants: 36 killed, 4 survive, all explained (<code>docs/bench/mutants_reader.log</code>); five mutants survived the first run and each exposed a gate that checked less than it said. <strong>Not shown:</strong> only these generated and adversarial cells were read; a second machine; and nothing about speed beyond <a href="benchmarks.html#reader">the benchmark</a>.</p>
+</section>
+
+<section id="linalg">
+  <h2>Linear algebra</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/linalg.md">docs/linalg.md</a> section 5.1 and 5.4. Every reduction has a written summation order that does not depend on the thread count.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>unit tests</th><td>53 test functions in 8 files, each kernel against its definition written separately; plain, wide-magnitude, signed-zero and subnormal data, ragged and aligned block counts. All pass.</td></tr>
+      <tr><th>numpy oracle</th><td>46 cases (0 to 1e6 rows, d on both sides of 256) against numpy performing the same additions in the same order, never numpy&rsquo;s BLAS: all bits equal.</td></tr>
+      <tr><th>a third implementation</th><td>The same algorithms in C (<code>-ffp-contract=off</code>) give the same hash as cancho on dot, axpy, gemv, syrk and Cholesky.</td></tr>
+      <tr><th>fuzz</th><td>8 entries by 20,000 random descriptors, extremes included: no trap. It found two holes, fixed with a test and a mutant each.</td></tr>
+      <tr><th>threads</th><td>The same bytes at 1, 2, 3, 4, 8 and 16 threads on 15 shapes of dot, gemv_t, syrk, gemv_n and gemm. The gate can fail: a mutant that adds the threads&rsquo; partial sums in thread order gives 4 or 5 distinct hashes at 5 thread counts on dot, gemv_t and syrk.</td></tr>
+      <tr><th>mutants</th><td>136 (core and linalg): 132 killed, 4 survive and are equivalent.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note"><strong>Not shown:</strong> a second machine. A BLAS does not give thread-independent bytes in part: Accelerate&rsquo;s <code>gemv_t</code> at 1e5 by 64 differed between 1 and 2 or more threads; the other four operations tried did not. That is one of five operations, in one run, and the page does not claim more. The exact-accumulator alternative to the fixed tree was not exercised.</p>
+</section>
+
+<section id="models">
+  <h2>Linear regression, logistic regression, k-means</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> sections 6.2 to 6.4. A library; no verb calls it.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>unit, refusal, limit and fuzz tests</th><td>23 tests, every refusal of every entry, the tie and empty-cluster rules, views at 1 and 4 threads, 4,000 fuzz iterations of 8 entries with wild descriptors: all pass, no call traps.</td></tr>
+      <tr><th>oracle, bit for bit</th><td>55 cases (15 linear, 12 logistic, 28 k-means): the parameters, every raw decisive sum of every iteration and every loss and inertia line equal numpy performing the same operations in the same order.</td></tr>
+      <tr><th>determinism</th><td>13 cases at 1, 2, 4, 8 and 16 threads, 65 runs: all bits equal; the thread-order mutant fails it.</td></tr>
+      <tr><th>against scikit-learn</th><td>39 comparisons within a tolerance written before the first run (a tolerance, not equality). Worst measured: linear coefficients 5.2e-15 against 1e-8; logistic coefficients 5.7e-9 against 1e-6 (without l2) and 1.2e-7 against 1e-6 (l2 = 0.01); k-means centroids 1.1e-15 against 1e-9; no row with another k-means label in up to 800,000.</td></tr>
+      <tr><th>mutants</th><td>67: 65 killed, 2 survive and are explained.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note"><strong>Not shown:</strong> the linear coefficients agree with scikit-learn to rounding because the data are well conditioned; on an ill-conditioned design the normal equations would not, and are refused only when a pivot is not positive. Newton has a fixed number of iterations and no damping: nearly separable data can fail with <code>ml.fit.non-finite</code>. Empty clusters keep their centroid, where scikit-learn relocates one.</p>
+</section>
+
+<section id="metrics">
+  <h2>Metrics and splits</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/metrics.md">docs/metrics.md</a> sections 5 and 6.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>unit tests</th><td>24 tests.</td></tr>
+      <tr><th>splits</th><td>2,978 cases (k-fold, train/test, stratified) compared whole against an independent Python implementation: bit equal. 492 sequences of the bounded draw, 150 of them with moduli above 2<sup>62</sup>, where 3,336 of 12,336 attempts are rejected.</td></tr>
+      <tr><th>counts, ratio, AUC, sums</th><td>3,066 ratio pairs and 68 count cells bit equal to Python <code>a / b</code>; 109 AUC cases bit equal to <code>float(Fraction)</code>; 1,033 sum cases bit equal to numpy in the written order.</td></tr>
+      <tr><th>log-loss</th><td>13,407 of 13,896 terms bit equal to Python <code>math.log</code> terms, the rest within 1.00 ulp (the library&rsquo;s <code>log</code> is cancho&rsquo;s, not the platform&rsquo;s).</td></tr>
+      <tr><th>against scikit-learn</th><td>Bit equal where the two compute one correctly rounded division of the same integers; elsewhere within a bound of 130 u (132 u for log-loss), with the largest gap measured 4.57 u for log-loss and 8.30 u for R-squared, which is relative to the value. Where this library refuses and scikit-learn returns a value (a one-class AUC, a precision with nothing predicted positive) the document lists each.</td></tr>
+      <tr><th>tags and fuzz</th><td>11 tags, each reached by 45 fixtures; 400 driver runs, none outside exits 0, 2 and 8 (85 succeeded, 315 refused with a tag).</td></tr>
+      <tr><th>mutants</th><td>146: 138 killed, 8 survive and are explained.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">The metrics keep their own summation order (4 lanes in a block of 256 terms), not the linear-algebra package&rsquo;s (one chain in a block): <code>docs/integration.md</code> section 5. There is no threaded variant.</p>
+</section>
+
+<section id="trees">
+  <h2>Decision trees and random forests</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-tree.md">docs/models-tree.md</a> section 10. The Gini criterion is compared by exact integer arithmetic (98-bit products in 30-bit limbs), which limits a fit to 2<sup>20</sup> rows; the regression sums are floats in a fixed row order.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>unit tests</th><td>21 tests: every parameter range and tag, the limits compared before allocation, hand-worked trees, the missing-value rule, the tie between the two sides, the bytes at 1 to 7 threads.</td></tr>
+      <tr><th>identity with the oracle</th><td>The library and <code>oracle_tree.py</code> print the same bin edges, nodes and test predictions, byte for byte, on 20 (configuration, size) pairs at 1,000 and 100,000 rows. A port of spike F gives spike F&rsquo;s own output.</td></tr>
+      <tr><th>exact comparison</th><td>2,006 pairs, 0 wrong.</td></tr>
+      <tr><th>threads</th><td>The same SHA-256 of the forest and the same predictions at 1, 2, 3, 4, 5, 8 and 16 threads on 11 rows of configurations.</td></tr>
+      <tr><th>fuzz of the model reader</th><td>Byte-level and seeded damage to payloads of 13,836 bytes (classification) and 11,588 bytes (regression), and structured damage to every field: no trap, no hang, no answer that disagrees with the rules.</td></tr>
+      <tr><th>mutants</th><td>100: 94 killed, 6 survive and are explained, none failed to build. The oracle and the thread gate alone kill 62 of them; the unit tests, the fuzz and the exact comparison kill the rest, and the document records the division of work.</td></tr>
+      <tr><th>against scikit-learn</th><td>Pre-registered, with a depth-1 control that sits far outside the tolerance in every row, so the gate can fail. <strong class="red">Red for R1.</strong> <a href="#red">Below.</a></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="red">
+  <h2>The red gate</h2>
+  <p class="sub"><code>python3 scripts/gate_sklearn.py --big</code> exits 1 and prints &ldquo;G-ref (pre-registered) FAILED&rdquo;. <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-tree.md">docs/models-tree.md</a> section 10.8; the rerun on the merged tree printed the same rows as <code>docs/bench/gate_sklearn.txt</code>, byte for byte. Tolerances, fixed before the first run: AUC within 0.005, RMSE within 3% relative. scikit-learn 1.8.0, <code>n_jobs = 1</code>, matching trees, depth, <code>max_features</code> and <code>min_samples_leaf</code>.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>config</th><th class="num">rows</th><th>metric</th><th class="num">cancho</th><th class="num">scikit-learn</th><th class="num">distance</th><th>within</th><th class="num">control (depth 1)</th></tr></thead>
+    <tbody>
+      <tr><th>C1</th><td class="num">100,000</td><td>AUC</td><td class="num">0.826189</td><td class="num">0.826105</td><td class="num">0.000084</td><td>yes</td><td class="num">0.0844, outside</td></tr>
+      <tr><th>C2 (missing cells)</th><td class="num">100,000</td><td>AUC</td><td class="num">0.865853</td><td class="num">0.866141</td><td class="num">0.000288</td><td>yes</td><td class="num">0.0681, outside</td></tr>
+      <tr><th>C3 (one tree)</th><td class="num">100,000</td><td>AUC</td><td class="num">0.767285</td><td class="num">0.767211</td><td class="num">0.000074</td><td>yes</td><td class="num">0.1324, outside</td></tr>
+      <tr><th>C1</th><td class="num">1,000,000</td><td>AUC</td><td class="num">0.826176</td><td class="num">0.827210</td><td class="num">0.001033</td><td>yes</td><td class="num">0.0833, outside</td></tr>
+      <tr class="us"><th>R1 (missing cells)</th><td class="num">100,000</td><td>RMSE</td><td class="num">2.784408</td><td class="num">3.029622</td><td class="num"><strong class="red">8.1%</strong></td><td class="red">NO</td><td class="num">12.8%, outside</td></tr>
+      <tr><th>R2 (one tree)</th><td class="num">100,000</td><td>RMSE</td><td class="num">3.045111</td><td class="num">3.117527</td><td class="num">2.3%</td><td>yes</td><td class="num">7.1%, outside</td></tr>
+    </tbody>
+  </table></div>
+  <p class="sub" style="margin-top:1rem"><strong>What it shows.</strong> The classification forests agree with scikit-learn&rsquo;s to 0.001 AUC or better, and the 1,000,000-row figure of spike F is reproduced. The regression forest is 8.1% <em>better</em> (lower RMSE) than scikit-learn&rsquo;s on R1, against a tolerance of 3%. The algorithms differ: scikit-learn looks for exact thresholds on raw values with its own random generator, this library uses quantile bins. The diagnosis, run after the failure and labelled so in the script: scikit-learn fitted on the bin indices of this library&rsquo;s own edges gives 2.8737, 3.1% from this library, and without missing cells 0.6%. So most of the gap is the thresholds on a target with a product term whose extreme values an exact splitter isolates; the remaining 3.1% with missing cells is <strong>not attributed</strong>. <strong>What it does not show:</strong> that the library is wrong (it is bit-identical to an independent oracle of its own specification), or that it is right (no regression comparison with the same algorithm exists). The tolerance was not moved. The maintainer decides whether to keep the rule and leave the gate red, to compare on bin indices only, or to drop the regression comparison.</p>
+</section>
+
+<section id="determinism">
+  <h2>Determinism</h2>
+  <p class="sub">What was verified, and where.</p>
+  <ul class="plain">
+    <li><strong>The command line:</strong> the same data and plan give the same model bytes whatever the working directory, the spelling of the path (<code>./</code>, <code>//</code>), the line ending, a byte order mark, blank lines, the caps given or the repetition; the same command gives the same output five times (D1, <code>docs/cli.md</code> section 6).</li>
+    <li><strong>The libraries, by thread count:</strong> linear algebra at 1, 2, 3, 4, 8 and 16 threads; linear models and k-means at 1, 2, 4, 8 and 16 (65 runs); trees and forests at 1, 2, 3, 4, 5, 8 and 16, and the benchmark scripts check the same equality at 100,000 and 1,000,000 rows (by hash, without an oracle at 1,000,000).</li>
+    <li><strong>Not verified:</strong> the same bytes on another machine. Everything above ran on one Mac (arm64). The design argues the arithmetic is the same on Linux x86-64 (IEEE binary64, no fused multiply-add, no platform <code>libm</code>), and that is unverified. <code>ml</code> itself has no <code>--threads</code>.</li>
+    <li><strong>Changed at integration:</strong> the stream kinds of the splits changed from 1, 2, 3 to 4, 5, 6 (the tree and k-means streams use 1, 2 and 3), so the assignment vectors of the splits for a given seed changed. Nothing stored depended on them (<code>docs/integration.md</code> section 2).</li>
+  </ul>
+</section>
+
+<section id="registries">
+  <h2>The registries, and what the integration found</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/integration.md">docs/integration.md</a> sections 1, 2 and 4. Six stages were written apart and merged into one tree. Git reported one text conflict; reading the stages against each other found collisions that merged without a conflict marker and were wrong.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>what</th><th>the collision</th><th>resolved</th></tr></thead>
+    <tbody>
+      <tr><th>model kind</th><td>Kind 3 was the CLI&rsquo;s constant regression of a float target, the linear stage&rsquo;s linear regression and the tree stage&rsquo;s forest.</td><td>One table: kinds 1 to 7, the next is 8.</td></tr>
+      <tr><th>refusal code</th><td>Metrics codes 1 to 11 had other meanings in <code>ml.refuse</code>; the tree library used 101 to 108.</td><td>Three bands: 1 to 99, 101 to 199, 201 to 299.</td></tr>
+      <tr><th>RNG stream kind</th><td>The splits used kinds 1 to 3, which the tree and k-means also used: the same seed would give a split and a forest the same draws.</td><td>Splits are 4, 5, 6.</td></tr>
+      <tr><th>build lists, CI, rule tags</th><td>Two gates built without <code>tensor.cho</code>; <code>check.sh</code> ran neither the metrics gate, the tree gate nor a registry check; the tags of the libraries were in no table of <code>tools/ml/spec.cho</code> and few in <code>docs/design.md</code>.</td><td>Lists fixed, gates added, 13 tags registered in <code>pending()</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">The result: 7 model kinds, 6 stream kinds and 34 refusal codes in 3 bands. <code>tests/t_registry.cho</code> (5 tests) and <code>scripts/check_registry.py</code> fail if two stages claim one number, and the new tests were shown able to fail (with the tree&rsquo;s kind set back to 3, two of them fail). Files that already existed keep their bytes: every model file the CLI writes is what it was.</p>
+</section>
+
+<section id="notprove">
+  <h2>What this does not prove</h2>
+  <ul class="plain">
+    <li><strong>Nothing here is a claim about speed.</strong> No gate measures it; <a href="benchmarks.html">the benchmarks page</a> has the timings and their load.</li>
+    <li><strong>An oracle written from the same text</strong> shows the code does what the document says, not that the document is right. The stages that compared with an outside implementation (Python <code>float()</code>, numpy, scikit-learn) say where they agree and where only within a tolerance.</li>
+    <li><strong>The command line builds one model.</strong> The gates of the other models judge libraries; they do not show that a verb that calls them will be right, because no verb does yet. Wiring a verb is a change with its own gates (<code>docs/integration.md</code> section 6).</li>
+    <li><strong>One machine, one operating system, one compiler revision.</strong> A second-machine run (D2) is not done.</li>
+    <li><strong>Not run at integration:</strong> the benchmarks, a package-mode build of <code>models-check</code>, and the 1,000,000-row identity and timing runs of the tree stage beyond the defaults.</li>
+    <li><strong>Open items with reproducers</strong> (<code>docs/integration.md</code> section 7): the red gate above; <code>models-check</code> traps without a message on a path containing <code>..</code> (a test driver, not a library; <code>ml</code> checks paths itself); <code>check.sh</code> needs <code>../ml-data</code> and <code>../cancho-table-main</code>.</li>
+  </ul>
+  <p class="note">To rerun: <code>sh scripts/check.sh</code> runs the gates; the mutant runs are <code>python3 scripts/mutants_core.py</code>, <code>mutants_linalg.py</code>, <code>mutants_models.py</code>, <code>mutants_metrics.py</code>, <code>mutants_tree.py</code>, <code>mutants_reader.py</code> and <code>mutants_cli.py</code>, each with <code>--check</code> to see that every edit still applies.</p>
+</section>
+</main>
+
+<footer><div class="wrap">
+  <a href="https://github.com/alpibrusl/cancho-ml">Repository</a><a href="./">Overview</a><a href="benchmarks.html">Benchmarks</a>
+  <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">Status</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/integration.md">Integration</a>
+  <span>Built on <a href="https://github.com/alpibrusl/cancho">cancho</a> · EUPL-1.2</span>
+</div></footer>
+</body>
+</html>

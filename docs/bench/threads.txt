@@ -1,0 +1,9 @@
+load start 4.2; machine has 16 cores; min of 5 runs
+dot     n=1000000  d=0   reps=512  t=1 0.238 ms (1.00x)  t=2 0.576 ms (0.41x)  t=4 0.529 ms (0.45x)  t=8 0.537 ms (0.44x)  t=16 0.621 ms (0.38x)   hashes: 1 distinct
+gemv_t  n=1000000  d=64  reps=16   t=1 10.312 ms (1.00x)  t=2 20.812 ms (0.50x)  t=4 19.625 ms (0.53x)  t=8 18.688 ms (0.55x)  t=16 19.062 ms (0.54x)   hashes: 1 distinct
+gemv_n  n=1000000  d=64  reps=8    t=1 13.000 ms (1.00x)  t=2 24.750 ms (0.53x)  t=4 20.000 ms (0.65x)  t=8 20.625 ms (0.63x)  t=16 20.125 ms (0.65x)   hashes: 1 distinct
+syrk    n=100000   d=64  reps=8    t=1 17.500 ms (1.00x)  t=2 10.625 ms (1.65x)  t=4 6.375 ms (2.75x)  t=8 4.625 ms (3.78x)  t=16 3.750 ms (4.67x)   hashes: 1 distinct
+syrk    n=100000   d=20  reps=64   t=1 2.047 ms (1.00x)  t=2 1.500 ms (1.36x)  t=4 0.922 ms (2.22x)  t=8 0.844 ms (2.43x)  t=16 0.844 ms (2.43x)   hashes: 1 distinct
+gemm    n=512      d=0   reps=16   t=1 10.812 ms (1.00x)  t=2 5.750 ms (1.88x)  t=4 3.312 ms (3.26x)  t=8 2.312 ms (4.68x)  t=16 2.250 ms (4.81x)   hashes: 1 distinct
+gemm    n=1024     d=0   reps=2    t=1 89.500 ms (1.00x)  t=2 69.500 ms (1.29x)  t=4 61.000 ms (1.47x)  t=8 42.500 ms (2.11x)  t=16 40.000 ms (2.24x)   hashes: 1 distinct
+load end 4.4

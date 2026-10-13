@@ -1,0 +1,2 @@
+22:02  up 7 days,  1:15, 5 users, load averages: 8.33 6.04 6.18
+{"env": {"VECLIB_MAXIMUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"}, "gemm1024_cpu_over_wall": 0.9990828196264085, "wall_s": 0.02798466698732227}

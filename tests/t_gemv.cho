@@ -1,0 +1,316 @@
+import std.test;
+import ml.rng;
+import ml.refuse;
+import linalg.tensor;
+import linalg.gemv;
+import lref;
+
+// gemv_n and gemv_t against the references (docs/linalg.md section 2.1), bit for bit
+
+fn mat(off: int, rows: int, cols: int, rs: int, cs: int) -> [] tensor.Tensor {
+    match tensor.matrix_strided(off, rows, cols, rs, cs) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn vec1(off: int, n: int, stride: int) -> [] tensor.Tensor {
+    match tensor.vector(off, n, stride) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+// one shape, both gemvs, row-major and column-major storage of the same matrix, mode of the data
+fn one[&h](heap: &!h Heap, n: int, d: int, seed: int, mode: int) -> [heap] int {
+    var bad = 0;
+    let x = box_slice(heap, n * d + 1, 0.0);
+    let xc = box_slice(heap, n * d + 1, 0.0);
+    let w = box_slice(heap, d + 1, 0.0);
+    let r = box_slice(heap, n + 1, 0.0);
+    let y = box_slice(heap, n + 1, 0.0);
+    let yw = box_slice(heap, n + 1, 0.0);
+    let yc = box_slice(heap, n + 1, 0.0);
+    let g = box_slice(heap, d + 1, 0.0);
+    let gw = box_slice(heap, d + 1, 0.0);
+    let gc = box_slice(heap, d + 1, 0.0);
+    let parts = box_slice(heap, (n + d) / 256 + 3, 0.0);
+    borrow mut x as &!a in {
+        lref.gen(contents(a), n * d, seed, mode);
+    }
+    // column-major copy of x
+    borrow x as &xr in {
+        borrow mut xc as &!b in {
+            var i = 0;
+            while i < n {
+                var j = 0;
+                while j < d {
+                    contents(b)[j * n + i] = contents(xr)[i * d + j];
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    borrow mut w as &!a in {
+        lref.gen(contents(a), d, seed + 1, mode);
+    }
+    borrow mut r as &!a in {
+        lref.gen(contents(a), n, seed + 2, mode);
+    }
+    borrow x as &xr in {
+        borrow xc as &xcr in {
+            borrow w as &wr in {
+                borrow r as &rr in {
+                    borrow mut parts as &!pw in {
+                        borrow mut yw as &!ywr in {
+                            lref.gemv_n(contents(xr), 0, d, 1, contents(wr), 0, 1, n, d, contents(ywr), contents(pw));
+                        }
+                        borrow mut gw as &!gwr in {
+                            lref.gemv_t(contents(xr), 0, d, 1, contents(rr), 0, 1, n, d, contents(gwr), contents(pw));
+                        }
+                    }
+                    borrow mut y as &!yy in {
+                        bad = bad + gemv.gemv_n(heap, mat(0, n, d, d, 1), contents(xr), vec1(0, d, 1), contents(wr), vec1(0, n, 1), contents(yy));
+                    }
+                    borrow mut yc as &!yy in {
+                        bad = bad + gemv.gemv_n(heap, mat(0, n, d, 1, n), contents(xcr), vec1(0, d, 1), contents(wr), vec1(0, n, 1), contents(yy));
+                    }
+                    borrow mut g as &!gg in {
+                        bad = bad + gemv.gemv_t(heap, mat(0, n, d, d, 1), contents(xr), vec1(0, n, 1), contents(rr), vec1(0, d, 1), contents(gg));
+                    }
+                    borrow mut gc as &!gg in {
+                        bad = bad + gemv.gemv_t(heap, mat(0, n, d, 1, n), contents(xcr), vec1(0, n, 1), contents(rr), vec1(0, d, 1), contents(gg));
+                    }
+                }
+            }
+        }
+    }
+    borrow y as &a in {
+        borrow yw as &b in {
+            borrow yc as &c in {
+                bad = bad + lref.same_bits(contents(a), contents(b), n) + lref.same_bits(contents(c), contents(b), n);
+            }
+        }
+    }
+    borrow g as &a in {
+        borrow gw as &b in {
+            borrow gc as &c in {
+                bad = bad + lref.same_bits(contents(a), contents(b), d) + lref.same_bits(contents(c), contents(b), d);
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, xc);
+    unbox_slice(heap, w);
+    unbox_slice(heap, r);
+    unbox_slice(heap, y);
+    unbox_slice(heap, yw);
+    unbox_slice(heap, yc);
+    unbox_slice(heap, g);
+    unbox_slice(heap, gw);
+    unbox_slice(heap, gc);
+    unbox_slice(heap, parts);
+    return bad;
+}
+
+fn test_gemv_small_shapes[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var mode = 0;
+    while mode < 3 {
+        bad = bad + one(heap, 1, 1, 1, mode);
+        bad = bad + one(heap, 7, 3, 2, mode);
+        bad = bad + one(heap, 8, 5, 3, mode);
+        bad = bad + one(heap, 9, 20, 4, mode);
+        bad = bad + one(heap, 17, 64, 5, mode);
+        bad = bad + one(heap, 100, 7, 6, mode);
+        bad = bad + one(heap, 255, 20, 7, mode);
+        bad = bad + one(heap, 256, 21, 8, mode);
+        bad = bad + one(heap, 257, 20, 9, mode);
+        bad = bad + one(heap, 300, 64, 10, mode);
+        bad = bad + one(heap, 2048, 20, 11, mode);
+        bad = bad + one(heap, 2049, 33, 12, mode);
+        bad = bad + one(heap, 5000, 17, 13, mode);
+        mode = mode + 1;
+    }
+    return bad;
+}
+
+fn test_gemv_wide_d[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    bad = bad + one(heap, 9, 255, 21, 1);
+    bad = bad + one(heap, 9, 256, 22, 1);
+    bad = bad + one(heap, 9, 257, 23, 1);
+    bad = bad + one(heap, 20, 300, 24, 1);
+    bad = bad + one(heap, 33, 600, 25, 0);
+    bad = bad + one(heap, 600, 40, 26, 1);
+    bad = bad + one(heap, 3, 1025, 27, 1);
+    return bad;
+}
+
+fn test_gemv_zero_and_refusals[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let x = box_slice(heap, 40, 1.0);
+    let w = box_slice(heap, 8, 1.0);
+    let y = box_slice(heap, 8, 5.0);
+    borrow x as &xr in {
+        borrow w as &wr in {
+            borrow mut y as &!yw in {
+                // shape mismatches
+                if gemv.gemv_n(heap, mat(0, 8, 5, 5, 1), contents(xr), vec1(0, 4, 1), contents(wr), vec1(0, 8, 1), contents(yw)) != refuse.tensor_shape() {
+                    bad = bad + 1;
+                }
+                if gemv.gemv_n(heap, mat(0, 8, 5, 5, 1), contents(xr), vec1(0, 5, 1), contents(wr), vec1(0, 7, 1), contents(yw)) != refuse.tensor_shape() {
+                    bad = bad + 1;
+                }
+                if gemv.gemv_t(heap, mat(0, 8, 5, 5, 1), contents(xr), vec1(0, 7, 1), contents(wr), vec1(0, 5, 1), contents(yw)) != refuse.tensor_shape() {
+                    bad = bad + 1;
+                }
+                // x beyond its data (8 x 6 = 48 > 40)
+                if gemv.gemv_n(heap, mat(0, 8, 6, 6, 1), contents(xr), vec1(0, 6, 1), contents(wr), vec1(0, 8, 1), contents(yw)) != refuse.tensor_bounds() {
+                    bad = bad + 1;
+                }
+                // a rank-1 'matrix'
+                if gemv.gemv_n(heap, vec1(0, 8, 1), contents(xr), vec1(0, 8, 1), contents(wr), vec1(0, 8, 1), contents(yw)) != refuse.tensor_rank() {
+                    bad = bad + 1;
+                }
+                // an aliasing (zero stride) output
+                if gemv.gemv_n(heap, mat(0, 8, 5, 5, 1), contents(xr), vec1(0, 5, 1), contents(wr), vec1(0, 8, 0), contents(yw)) != refuse.tensor_shape() {
+                    bad = bad + 1;
+                }
+                // d = 0: y is zeroed; n = 0: nothing is written
+                if gemv.gemv_n(heap, mat(0, 8, 0, 0, 1), contents(xr), vec1(0, 0, 1), contents(wr), vec1(0, 8, 1), contents(yw)) != 0 {
+                    bad = bad + 1;
+                }
+                if bits_of(contents(yw)[3]) != bits_of(0.0) {
+                    bad = bad + 1;
+                }
+                contents(yw)[3] = 5.0;
+                if gemv.gemv_n(heap, mat(0, 0, 5, 5, 1), contents(xr), vec1(0, 5, 1), contents(wr), vec1(0, 0, 1), contents(yw)) != 0 {
+                    bad = bad + 1;
+                }
+                if contents(yw)[3] != 5.0 {
+                    bad = bad + 1;
+                }
+                // gemv_t with n = 0 zeroes g
+                contents(yw)[5] = 5.0;
+                contents(yw)[4] = 5.0;
+                if gemv.gemv_t(heap, mat(0, 0, 5, 5, 1), contents(xr), vec1(0, 0, 1), contents(wr), vec1(0, 5, 1), contents(yw)) != 0 {
+                    bad = bad + 1;
+                }
+                if bits_of(contents(yw)[4]) != bits_of(0.0) || contents(yw)[5] != 5.0 {
+                    bad = bad + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, w);
+    unbox_slice(heap, y);
+    return bad;
+}
+
+// strided vector operands (w and r at stride 2, y and g at stride 3, offsets) give the bits of the unit-stride call
+fn test_gemv_strided_vectors[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let n = 700;
+    let d = 30;
+    let x = box_slice(heap, n * d + 1, 0.0);
+    let w = box_slice(heap, d + 1, 0.0);
+    let r = box_slice(heap, n + 1, 0.0);
+    let w2 = box_slice(heap, 2 * d + 5, 0.0);
+    let r2 = box_slice(heap, 2 * n + 5, 0.0);
+    let y = box_slice(heap, n + 1, 0.0);
+    let g = box_slice(heap, d + 1, 0.0);
+    let y3 = box_slice(heap, 3 * n + 5, 0.0);
+    let g3 = box_slice(heap, 3 * d + 5, 0.0);
+    borrow mut x as &!a in {
+        lref.gen(contents(a), n * d, 31, 1);
+    }
+    borrow mut w as &!a in {
+        lref.gen(contents(a), d, 32, 1);
+    }
+    borrow mut r as &!a in {
+        lref.gen(contents(a), n, 33, 1);
+    }
+    borrow w as &wr in {
+        borrow mut w2 as &!a in {
+            var j = 0;
+            while j < d {
+                contents(a)[1 + 2 * j] = contents(wr)[j];
+                j = j + 1;
+            }
+        }
+    }
+    borrow r as &rr in {
+        borrow mut r2 as &!a in {
+            var i = 0;
+            while i < n {
+                contents(a)[2 + 2 * i] = contents(rr)[i];
+                i = i + 1;
+            }
+        }
+    }
+    borrow x as &xr in {
+        borrow w as &wr in {
+            borrow r as &rr in {
+                borrow w2 as &w2r in {
+                    borrow r2 as &r2r in {
+                        borrow mut y as &!a in {
+                            bad = bad + gemv.gemv_n(heap, mat(0, n, d, d, 1), contents(xr), vec1(0, d, 1), contents(wr), vec1(0, n, 1), contents(a));
+                        }
+                        borrow mut y3 as &!a in {
+                            bad = bad + gemv.gemv_n(heap, mat(0, n, d, d, 1), contents(xr), vec1(1, d, 2), contents(w2r), vec1(2, n, 3), contents(a));
+                        }
+                        borrow mut g as &!a in {
+                            bad = bad + gemv.gemv_t(heap, mat(0, n, d, d, 1), contents(xr), vec1(0, n, 1), contents(rr), vec1(0, d, 1), contents(a));
+                        }
+                        borrow mut g3 as &!a in {
+                            bad = bad + gemv.gemv_t(heap, mat(0, n, d, d, 1), contents(xr), vec1(2, n, 2), contents(r2r), vec1(1, d, 3), contents(a));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    borrow y as &yr in {
+        borrow y3 as &y3r in {
+            var i = 0;
+            while i < n {
+                if bits_of(contents(yr)[i]) != bits_of(contents(y3r)[2 + 3 * i]) {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    borrow g as &gr in {
+        borrow g3 as &g3r in {
+            var j = 0;
+            while j < d {
+                if bits_of(contents(gr)[j]) != bits_of(contents(g3r)[1 + 3 * j]) {
+                    bad = bad + 1;
+                }
+                j = j + 1;
+            }
+        }
+    }
+    unbox_slice(heap, x);
+    unbox_slice(heap, w);
+    unbox_slice(heap, r);
+    unbox_slice(heap, w2);
+    unbox_slice(heap, r2);
+    unbox_slice(heap, y);
+    unbox_slice(heap, g);
+    unbox_slice(heap, y3);
+    unbox_slice(heap, g3);
+    return bad;
+}

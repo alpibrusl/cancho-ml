@@ -1,0 +1,308 @@
+edition 5;
+
+module tree.bins;
+
+import ml.fbits;
+import ml.refuse;
+import tree.deny;
+
+// The missing-value bitmap, the quantile edges and the bin matrix (docs/models-tree.md sections 2.3 and 6). Code of spike F
+// (spike_f.cho: key_of, radix, make_edges, make_bins) made general in the number of columns and bins and aware of missing cells.
+
+// ---------------------------------------------------------------- the bitmap
+// column c occupies stride = ceil(n / 8) bytes; row i is bit i & 7 (least significant first) of byte i >> 3; a set bit is missing
+
+pub fn stride(n: int) -> [] int {
+    return (n + 7) / 8;
+}
+
+// whether cell (row i, column c) is missing; `bm` holds d * stride bytes
+pub fn is_missing[&b](bm: &b [byte], st: int, c: int, i: int) -> [] bool {
+    return int_of(bm[c * st + (i >> 3)]) >> (i & 7) & 1 == 1;
+}
+
+// 0, or the refusal for a bitmap that is neither empty nor d columns of ceil(n / 8) bytes
+pub fn check_bitmap[&b](bm: &b [byte], n: int, d: int) -> [] int {
+    if len(bm) == 0 {
+        return 0;
+    }
+    if n < 1 || d < 1 || d > 2147483647 || n > 2147483647 || len(bm) != d * stride(n) {
+        return refuse.param_out_of_range();
+    }
+    return 0;
+}
+
+// the number of cells that are present and not finite (NaN or infinite); a missing cell is never read
+pub fn count_bad_cells[&x, &b](xs: &x [float], bm: &b [byte], n: int, d: int) -> [] int {
+    var bad = 0;
+    let st = stride(n);
+    var i = 0;
+    while i < n {
+        let row = xs[i * d..i * d + d];
+        var f = 0;
+        while f < d {
+            let v = row[f];
+            if v == v && v - v == 0.0 {
+                // finite
+            } else if len(bm) == 0 || !is_missing(bm, st, f, i) {
+                bad = bad + 1;
+            }
+            f = f + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------- order-preserving keys and the radix sort
+
+// the unsigned order of the key is the float order (-0.0 sorts before 0.0)
+pub fn key_of(bits: int) -> [] int {
+    if bits < 0 {
+        return ~bits;
+    }
+    return bits ^ 1 << 63;
+}
+
+pub fn bits_of_key(key: int) -> [] int {
+    if key < 0 {
+        return key ^ 1 << 63;
+    }
+    return ~key;
+}
+
+// LSD radix sort of ka[0..n) by unsigned key, 6 passes of 11 bits (the result is in ka); kb is scratch, cnt has >= 2048 entries
+pub fn radix[&a, &b, &c](ka: &!a [int], kb: &!b [int], cnt: &!c [int], n: int) -> [] int {
+    var pass = 0;
+    while pass < 6 {
+        let sh = pass * 11;
+        var j = 0;
+        while j < 2048 {
+            cnt[j] = 0;
+            j = j + 1;
+        }
+        var i = 0;
+        if pass % 2 == 0 {
+            while i < n {
+                let dg = ka[i] >> sh & 2047;
+                cnt[dg] = cnt[dg] + 1;
+                i = i + 1;
+            }
+        } else {
+            while i < n {
+                let dg = kb[i] >> sh & 2047;
+                cnt[dg] = cnt[dg] + 1;
+                i = i + 1;
+            }
+        }
+        var run = 0;
+        j = 0;
+        while j < 2048 {
+            let c = cnt[j];
+            cnt[j] = run;
+            run = run + c;
+            j = j + 1;
+        }
+        i = 0;
+        if pass % 2 == 0 {
+            while i < n {
+                let v = ka[i];
+                let dg = v >> sh & 2047;
+                kb[cnt[dg]] = v;
+                cnt[dg] = cnt[dg] + 1;
+                i = i + 1;
+            }
+        } else {
+            while i < n {
+                let v = kb[i];
+                let dg = v >> sh & 2047;
+                ka[cnt[dg]] = v;
+                cnt[dg] = cnt[dg] + 1;
+                i = i + 1;
+            }
+        }
+        pass = pass + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- edges (section 2.3)
+
+// the float whose order key is `key`
+pub fn edge_value(key: int) -> [] float {
+    return fbits.decode(bits_of_key(key));
+}
+
+// the edges of one column, ed[0 .. nbins - 1), padded with +inf to ps = 64 (nbins <= 64) or 256 entries in ep
+pub fn pad_column[&e, &o](ed: &e [float], nbins: int, ep: &!o [float]) -> [] int {
+    var ps = 64;
+    if nbins > 64 {
+        ps = 256;
+    }
+    let inf = 1.0e300 * 1.0e300;
+    var k = 0;
+    while k < ps {
+        if k < nbins - 1 {
+            ep[k] = ed[k];
+        } else {
+            ep[k] = inf;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// ed[f * (nbins - 1) + k - 1] = e[f][k], k = 1 .. nbins - 1, from the sorted non-missing values of column f of the first n rows
+pub fn make_edges[&x, &b, &a, &k2, &c, &e](xs: &x [float], bm: &b [byte], n: int, d: int, nbins: int, ka: &!a [int], kb: &!k2 [int], cnt: &!c [int], ed: &!e [float]) -> [] int {
+    let st = stride(n);
+    let ne = nbins - 1;
+    var f = 0;
+    while f < d {
+        var nv = 0;
+        var i = 0;
+        if len(bm) == 0 {
+            while i < n {
+                ka[i] = key_of(bits_of(xs[i * d + f]));
+                i = i + 1;
+            }
+            nv = n;
+        } else {
+            while i < n {
+                if !is_missing(bm, st, f, i) {
+                    ka[nv] = key_of(bits_of(xs[i * d + f]));
+                    nv = nv + 1;
+                }
+                i = i + 1;
+            }
+        }
+        radix(ka, kb, cnt, nv);
+        var k = 1;
+        while k < nbins {
+            if nv == 0 {
+                ed[f * ne + k - 1] = 0.0;
+            } else {
+                ed[f * ne + k - 1] = edge_value(ka[k * nv / nbins]);
+            }
+            k = k + 1;
+        }
+        f = f + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- bins
+
+// The edges padded with +inf to ps entries per column (ps = 64 when nbins <= 64, else 256), ep[f * ps + k - 1] = e[f][k]
+fn pad_edges[&e, &o](ed: &e [float], d: int, nbins: int, ps: int, ep: &!o [float]) -> [] int {
+    let ne = nbins - 1;
+    let inf = 1.0e300 * 1.0e300;
+    var f = 0;
+    while f < d {
+        var k = 0;
+        while k < ps {
+            if k < ne {
+                ep[f * ps + k] = ed[f * ne + k];
+            } else {
+                ep[f * ps + k] = inf;
+            }
+            k = k + 1;
+        }
+        f = f + 1;
+    }
+    return 0;
+}
+
+// #{k : e[k - 1] <= x} over a column of 256 non-decreasing entries (+inf past the real edges): 8 steps of a binary search with a
+// constant trip count and every index masked into the table, so that the compare compiles to a select and not to a branch
+// (measured: 5 ms against 33 ms for 80,000 rows x 20 columns with a search that tests `t <= ne` and bounds-checks `e[t - 1]`;
+// docs/models-tree.md section 10)
+pub fn bin_of[&e](e: &e [float], x: float) -> [] int {
+    var c = 0;
+    if e[127] <= x {
+        c = 128;
+    }
+    if e[c + 63 & 255] <= x {
+        c = c + 64;
+    }
+    if e[c + 31 & 255] <= x {
+        c = c + 32;
+    }
+    if e[c + 15 & 255] <= x {
+        c = c + 16;
+    }
+    if e[c + 7 & 255] <= x {
+        c = c + 8;
+    }
+    if e[c + 3 & 255] <= x {
+        c = c + 4;
+    }
+    if e[c + 1 & 255] <= x {
+        c = c + 2;
+    }
+    if e[c & 255] <= x {
+        c = c + 1;
+    }
+    return c;
+}
+
+// the same over 64 entries (at most 63 edges): 6 steps
+pub fn bin_of64[&e](e: &e [float], x: float) -> [] int {
+    var c = 0;
+    if e[31] <= x {
+        c = 32;
+    }
+    if e[c + 15 & 63] <= x {
+        c = c + 16;
+    }
+    if e[c + 7 & 63] <= x {
+        c = c + 8;
+    }
+    if e[c + 3 & 63] <= x {
+        c = c + 4;
+    }
+    if e[c + 1 & 63] <= x {
+        c = c + 2;
+    }
+    if e[c & 63] <= x {
+        c = c + 1;
+    }
+    return c;
+}
+
+// bins[f * n + i] = the bin of x[i][f] (nbins for a missing cell). `ep` is scratch of d * ps floats, ps = 64 for nbins <= 64, else 256.
+pub fn make_bins[&x, &b, &e, &p, &o](xs: &x [float], bm: &b [byte], ed: &e [float], n: int, d: int, nbins: int, ep: &!p [float], bins: &!o [byte]) -> [] int {
+    let st = stride(n);
+    var i = 0;
+    if nbins <= 64 {
+        pad_edges(ed, d, nbins, 64, ep);
+        while i < n {
+            let row = xs[i * d..i * d + d];
+            var f = 0;
+            while f < d {
+                var c = nbins;
+                if len(bm) == 0 || !is_missing(bm, st, f, i) {
+                    c = bin_of64(ep[f * 64..f * 64 + 64], row[f]);
+                }
+                bins[f * n + i] = byte_of(c);
+                f = f + 1;
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+    pad_edges(ed, d, nbins, 256, ep);
+    while i < n {
+        let row = xs[i * d..i * d + d];
+        var f = 0;
+        while f < d {
+            var c = nbins;
+            if len(bm) == 0 || !is_missing(bm, st, f, i) {
+                c = bin_of(ep[f * 256..f * 256 + 256], row[f]);
+            }
+            bins[f * n + i] = byte_of(c);
+            f = f + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}

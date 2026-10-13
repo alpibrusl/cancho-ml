@@ -1,0 +1,601 @@
+import std.test;
+import std.buffer;
+import std.bytes;
+import ml.rng;
+import ml.matrix;
+import transforms.codes;
+import pipeline.plan;
+import pipeline.names;
+import pipeline.schema;
+import pipeline.run;
+import pipeline.file;
+import pt;
+
+// Gates P7 and P8 (docs/pipeline.md): hostile plans, columns, matrices and model files through the parser, `run.fit`, `file.decode` and
+// `run.apply_steps`; limits before allocation. No call may trap and every answer is a code of transforms.codes; the fuzz must also reach the
+// value paths (it fails if too few plans or files are accepted). A test answers 0 to pass.
+
+fn d(seed: int, i: int, m: int) -> [] int {
+    return rng.uniform(rng.derive(seed, i), m);
+}
+
+fn in_band(code: int) -> [] bool {
+    return code == 0 || code >= codes.first() && code <= codes.last();
+}
+
+fn base_plan(i: int) -> [] &static [byte] {
+    if i == 0 {
+        return "impute column=a strategy=mean\nscale column=a,b kind=standard ddof=1\nencode column=c kind=onehot max-categories=9 unknown=refuse\nmodel kind=constant task=regression\n";
+    }
+    if i == 1 {
+        return "# plan\nbucket column=* kind=quantile bins=4\nmodel kind=logistic iterations=7 l2=0.5\n";
+    }
+    if i == 2 {
+        return "impute column=b strategy=constant value=1e-1\nscale column=b kind=minmax\nencode column=c kind=label\nmodel kind=forest task=classification trees=3\n";
+    }
+    return "model kind=kmeans k=3\n";
+}
+
+// a copy of a plan with one random edit: a byte replaced, inserted, deleted, a line duplicated, a prefix kept
+fn mutate[&h, &s](heap: &!h Heap, src: &s [byte], seed: int) -> [heap] Box[[byte]] {
+    let n = len(src);
+    let out = box_slice(heap, n + 70000, byte_of(0));
+    var w = out;
+    borrow mut w as &!x in {
+        var i = 0;
+        while i < n {
+            contents(x)[i] = src[i];
+            i = i + 1;
+        }
+        let kind = d(seed, 1, 5);
+        let at = d(seed, 2, n + 1);
+        let pool = "abcdefghijklmnopqrstuvwxyz0123456789=,*#-. \n\t\r:+e\0é";
+        let b = byte_of(int_of(pool[d(seed, 3, len(pool))]));
+        if kind == 0 && at < n {
+            contents(x)[at] = b;
+        } else if kind == 1 {
+            var j = n;
+            while j > at {
+                contents(x)[j] = contents(x)[j - 1];
+                j = j - 1;
+            }
+            contents(x)[at] = b;
+        } else if kind == 2 && at < n {
+            var j = at;
+            while j + 1 < n {
+                contents(x)[j] = contents(x)[j + 1];
+                j = j + 1;
+            }
+            contents(x)[n - 1] = byte_of(0);
+        }
+    }
+    return w;
+}
+
+fn test_fuzz_plan_text[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var ok = 0;
+    var refused = 0;
+    var round = 0;
+    while round < 4000 {
+        let seed = round * 104729 + 7;
+        let base = base_plan(d(seed, 0, 4));
+        let m = mutate(heap, base, seed);
+        var n = len(base) + 1;
+        if d(seed, 4, 6) == 0 {
+            n = d(seed, 5, len(base) + 1);
+        }
+        if d(seed, 6, 3) == 0 {
+            n = len(base);
+        }
+        borrow m as &mr in {
+            var take = n;
+            if take > len(base) + 1 {
+                take = len(base) + 1;
+            }
+            let (p, f) = plan.parse(heap, contents(mr)[0..take]);
+            if !(f.code == 0 || f.code >= codes.first() && f.code <= codes.last()) {
+                bad = bad + 1;
+            }
+            if f.code == 0 {
+                ok = ok + 1;
+                // the canonical form of a canonical form is itself
+                borrow p as &pr in {
+                    let (q, g) = plan.parse(heap, plan.text(pr));
+                    if g.code != 0 {
+                        bad = bad + 1;
+                    } else {
+                        borrow q as &qr in {
+                            if !bytes.equal(plan.text(qr), plan.text(pr)) {
+                                bad = bad + 1;
+                            }
+                        }
+                    }
+                    plan.drop(heap, q);
+                }
+            } else {
+                refused = refused + 1;
+            }
+            plan.drop(heap, p);
+        }
+        unbox_slice(heap, m);
+        round = round + 1;
+    }
+    if bad > 0 {
+        return 2;
+    }
+    if ok < 300 || refused < 1500 {
+        return 3;
+    }
+    return 0;
+}
+
+// the limits of the plan, each checked before anything sized by the plan is built
+fn test_plan_limits[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // more than 64 KiB
+    let big = box_slice(heap, 70000, byte_of('#'));
+    borrow big as &br in {
+        let (p, f) = plan.parse(heap, contents(br));
+        if f.code != codes.plan_limit() || f.a != 1 {
+            bad = bad + 1;
+        }
+        plan.drop(heap, p);
+        // exactly 64 KiB of comment is not over the limit: it has no model line
+        let (p2, f2) = plan.parse(heap, contents(br)[0..65536]);
+        if f2.code != codes.plan_model_line() {
+            bad = bad + 1;
+        }
+        plan.drop(heap, p2);
+    }
+    unbox_slice(heap, big);
+    // 65 lines
+    var t = buffer.empty(heap, 4096);
+    var i = 0;
+    while i < 64 {
+        t = buffer.append(heap, t, "scale column=a kind=minmax\n");
+        i = i + 1;
+    }
+    t = buffer.append(heap, t, "model kind=constant task=regression\n");
+    borrow t as &tr in {
+        let (p, f) = plan.parse(heap, buffer.bytes(tr));
+        if f.code != codes.plan_limit() || f.a != 2 || f.b != 65 {
+            bad = bad + 1;
+        }
+        plan.drop(heap, p);
+    }
+    buffer.drop(heap, t);
+    // 63 steps and the model line is exactly 64 lines: accepted
+    var t2 = buffer.empty(heap, 4096);
+    i = 0;
+    while i < 63 {
+        t2 = buffer.append(heap, t2, "scale column=a kind=minmax\n");
+        i = i + 1;
+    }
+    t2 = buffer.append(heap, t2, "model kind=constant task=regression\n");
+    borrow t2 as &tr in {
+        let (p, f) = plan.parse(heap, buffer.bytes(tr));
+        borrow p as &pr2 in {
+            if f.code != 0 || plan.steps(pr2) != 63 {
+                bad = bad + 1;
+            }
+        }
+        plan.drop(heap, p);
+    }
+    buffer.drop(heap, t2);
+    // 4097 names in one list, and 4096 (accepted)
+    var t3 = buffer.append(heap, buffer.empty(heap, 4096), "scale column=");
+    i = 0;
+    while i < 4097 {
+        if i > 0 {
+            t3 = buffer.push(heap, t3, byte_of(','));
+        }
+        t3 = buffer.push(heap, t3, byte_of('n'));
+        t3 = buffer.push_nat(heap, t3, i);
+        i = i + 1;
+    }
+    t3 = buffer.append(heap, t3, " kind=minmax\nmodel kind=constant task=regression\n");
+    borrow t3 as &tr in {
+        let (p, f) = plan.parse(heap, buffer.bytes(tr));
+        if f.code != codes.plan_limit() || f.a != 3 {
+            bad = bad + 1;
+        }
+        plan.drop(heap, p);
+    }
+    buffer.drop(heap, t3);
+    var t4 = buffer.append(heap, buffer.empty(heap, 4096), "scale column=");
+    i = 0;
+    while i < 4096 {
+        if i > 0 {
+            t4 = buffer.push(heap, t4, byte_of(','));
+        }
+        t4 = buffer.push(heap, t4, byte_of('n'));
+        t4 = buffer.push_nat(heap, t4, i);
+        i = i + 1;
+    }
+    t4 = buffer.append(heap, t4, " kind=minmax\nmodel kind=constant task=regression\n");
+    borrow t4 as &tr in {
+        let (p, f) = plan.parse(heap, buffer.bytes(tr));
+        borrow p as &pr2 in {
+            if f.code != 0 || plan.listed(pr2, 0) != 4096 {
+                bad = bad + 1;
+            }
+        }
+        plan.drop(heap, p);
+    }
+    buffer.drop(heap, t4);
+    // a name of 256 bytes (limit), 255 accepted
+    var t5 = buffer.append(heap, buffer.empty(heap, 512), "scale column=");
+    i = 0;
+    while i < 256 {
+        t5 = buffer.push(heap, t5, byte_of('x'));
+        i = i + 1;
+    }
+    t5 = buffer.append(heap, t5, " kind=minmax\nmodel kind=constant task=regression\n");
+    borrow t5 as &tr in {
+        let (p, f) = plan.parse(heap, buffer.bytes(tr));
+        if f.code != codes.plan_limit() || f.a != 4 {
+            bad = bad + 1;
+        }
+        plan.drop(heap, p);
+    }
+    buffer.drop(heap, t5);
+    return bad;
+}
+
+// ---------------------------------------------------------------- fit through the pipeline on hostile columns and matrices
+
+fn test_fuzz_fit_and_apply_through_the_pipeline[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var fitted = 0;
+    var refused = 0;
+    var applied = 0;
+    var round = 0;
+    while round < 1500 {
+        let seed = round * 7919 + 3;
+        let ncols = 1 + d(seed, 0, 5);
+        let names_text = "a,b,c,d,e";
+        // plan lines over the columns a .. e (some do not exist), random verbs and parameters
+        var pt_ = buffer.empty(heap, 256);
+        let steps_n = d(seed, 1, 4);
+        var s = 0;
+        while s < steps_n {
+            let verb = d(seed, 10 + s, 4);
+            var col = "a";
+            let ci = d(seed, 20 + s, 7);
+            if ci == 0 {
+                col = "b";
+            } else if ci == 1 {
+                col = "c";
+            } else if ci == 2 {
+                col = "a,b";
+            } else if ci == 3 {
+                col = "*";
+            } else if ci == 4 {
+                col = "e";
+            } else if ci == 5 {
+                col = "zz";
+            }
+            if verb == 0 {
+                pt_ = buffer.append(heap, pt_, "impute column=");
+                pt_ = buffer.append(heap, pt_, col);
+                pt_ = buffer.append(heap, pt_, " strategy=median\n");
+            } else if verb == 1 {
+                pt_ = buffer.append(heap, pt_, "scale column=");
+                pt_ = buffer.append(heap, pt_, col);
+                pt_ = buffer.append(heap, pt_, " kind=standard ddof=1\n");
+            } else if verb == 2 {
+                pt_ = buffer.append(heap, pt_, "bucket column=");
+                pt_ = buffer.append(heap, pt_, col);
+                pt_ = buffer.append(heap, pt_, " kind=quantile bins=5\n");
+            } else {
+                pt_ = buffer.append(heap, pt_, "encode column=");
+                pt_ = buffer.append(heap, pt_, col);
+                pt_ = buffer.append(heap, pt_, " kind=onehot max-categories=8 unknown=refuse\n");
+            }
+            s = s + 1;
+        }
+        pt_ = buffer.append(heap, pt_, "model kind=constant task=regression\n");
+        let rows = d(seed, 2, 30);
+        let x = rand_train(heap, seed, rows, ncols);
+        let t = rand_train(heap, seed + 1, 1 + d(seed, 3, 10), ncols);
+        let nm = names.from_list(heap, "a,b,c,d,e");
+        var nmk = names.empty(heap);
+        borrow nm as &nr in {
+            var j = 0;
+            while j < ncols {
+                nmk = names.add(heap, nmk, names.name(nr, j));
+                j = j + 1;
+            }
+        }
+        borrow pt_ as &pr in {
+            let (pl, pf) = plan.parse(heap, buffer.bytes(pr));
+            if pf.code != 0 {
+                bad = bad + 1;
+            } else {
+                borrow pl as &plr in {
+                    borrow nmk as &nkr in {
+                        borrow x as &xr in {
+                            var rc = 1000;
+                            if d(seed, 4, 5) == 0 {
+                                rc = d(seed, 5, 4);
+                            }
+                            let (fd, y, f) = run.fit(heap, plr, nkr, xr, 100, rc + 2, 100000);
+                            if !in_band(f.code) {
+                                bad = bad + 1;
+                            }
+                            if f.code == 0 {
+                                fitted = fitted + 1;
+                                borrow t as &tr in {
+                                    borrow fd as &fdr in {
+                                        let (z, u, f2) = run.apply_steps(heap, buffer.bytes(fdr.payload), tr, 100, 100, 100000);
+                                        if !in_band(f2.code) {
+                                            bad = bad + 1;
+                                        }
+                                        if f2.code == 0 {
+                                            applied = applied + 1;
+                                        }
+                                        matrix.drop(heap, z);
+                                    }
+                                }
+                            } else {
+                                refused = refused + 1;
+                            }
+                            run.drop_fitted(heap, fd);
+                            matrix.drop(heap, y);
+                        }
+                    }
+                }
+            }
+            plan.drop(heap, pl);
+        }
+        buffer.drop(heap, pt_);
+        names.drop(heap, nm);
+        names.drop(heap, nmk);
+        matrix.drop(heap, x);
+        matrix.drop(heap, t);
+        round = round + 1;
+    }
+    if bad > 0 {
+        return 2;
+    }
+    if fitted < 300 || refused < 300 || applied < 100 {
+        return 3;
+    }
+    return 0;
+}
+
+// a train/test matrix: small categories in every column, some holes (not whole columns)
+fn rand_train[&h](heap: &!h Heap, seed: int, rows: int, cols: int) -> [heap] matrix.Matrix {
+    if rows == 0 {
+        return matrix.empty(heap);
+    }
+    let (m0, code) = matrix.make(heap, rows, cols, 1000, 64, 100000);
+    if code != 0 {
+        return m0;
+    }
+    let (t, data, miss, r, c, wpc) = matrix.parts(m0);
+    var dd = data;
+    var mm = miss;
+    borrow mut dd as &!dw in {
+        borrow mut mm as &!mw in {
+            var j = 0;
+            while j < c {
+                var i = 0;
+                while i < r {
+                    if d(seed, 1000 + i * 64 + j, 12) == 0 {
+                        matrix.mark_missing(contents(mw), wpc, i, j);
+                    } else {
+                        matrix.put(contents(dw), c, i, j, float_of(d(seed, 5000 + i * 64 + j, 6)) / 2.0);
+                    }
+                    i = i + 1;
+                }
+                j = j + 1;
+            }
+        }
+    }
+    return matrix.assemble(t, dd, mm, r, c, wpc);
+}
+
+// ---------------------------------------------------------------- corrupted model files
+
+fn test_corrupted_files[&h](heap: &!h Heap) -> [heap] int {
+    let plan_src = "impute column=a strategy=mean\nscale column=a,b kind=standard\nencode column=c kind=onehot max-categories=9 unknown=ignore\nbucket column=b kind=width bins=4\nmodel kind=constant task=regression\n";
+    let fb = pt.make_file(heap, plan_src, "a,b,c", "1,2,0;3,?,1;?,4,2;5,6,1;7,8,0");
+    var bad = 0;
+    var accepted = 0;
+    var refused = 0;
+    var resealed_ok = 0;
+    let t = rand_train(heap, 5, 6, 3);
+    borrow fb as &fr in {
+        let all = buffer.bytes(fr);
+        if len(all) < 300 {
+            bad = bad + 1;
+        }
+        // control
+        let (l0, f0) = file.decode(heap, all);
+        if f0.code != 0 {
+            bad = bad + 1;
+        }
+        file.drop(heap, l0);
+        // every truncation
+        var cut = 0;
+        while cut < len(all) {
+            let (l, f) = file.decode(heap, all[0..cut]);
+            if f.code == 0 || !in_band(f.code) {
+                bad = bad + 1;
+            }
+            file.drop(heap, l);
+            cut = cut + 1;
+        }
+        // every byte flipped three ways, without and with a repaired checksum; an accepted file applies without a trap
+        var at = 0;
+        while at < len(all) {
+            var mask = 1;
+            while mask < 256 {
+                let c = pt.copy_box(heap, all);
+                var cw = c;
+                borrow mut cw as &!w in {
+                    contents(w)[at] = byte_of(int_of(all[at]) ^ mask);
+                }
+                borrow cw as &cr in {
+                    let edited = contents(cr)[0..len(all)];
+                    let (l, f) = file.decode(heap, edited);
+                    if f.code == 0 || !in_band(f.code) {
+                        bad = bad + 1;
+                    }
+                    file.drop(heap, l);
+                    let sealed = file.reseal(heap, edited);
+                    borrow sealed as &sr in {
+                        let (l2, f2) = file.decode(heap, buffer.bytes(sr));
+                        if !in_band(f2.code) {
+                            bad = bad + 1;
+                        }
+                        if f2.code == 0 {
+                            resealed_ok = resealed_ok + 1;
+                            borrow l2 as &l2r in {
+                                borrow t as &tr in {
+                                    let (z, u, f3) = run.apply_steps(heap, file.steps_bytes(l2r), tr, 100, 100, 100000);
+                                    if !in_band(f3.code) {
+                                        bad = bad + 1;
+                                    }
+                                    if f3.code == 0 {
+                                        accepted = accepted + 1;
+                                    } else {
+                                        refused = refused + 1;
+                                    }
+                                    matrix.drop(heap, z);
+                                }
+                            }
+                        }
+                        file.drop(heap, l2);
+                    }
+                    buffer.drop(heap, sealed);
+                }
+                unbox_slice(heap, cw);
+                mask = mask * 8;
+            }
+            at = at + 1;
+        }
+        // seeded damage of several bytes, checksum repaired
+        var round = 0;
+        while round < 600 {
+            let seed = round * 31 + 5;
+            let c = pt.copy_box(heap, all);
+            var cw = c;
+            borrow mut cw as &!w in {
+                var k = 0;
+                let nk = 1 + d(seed, 0, 6);
+                while k < nk {
+                    contents(w)[d(seed, 1 + k, len(all) - 32)] = byte_of(d(seed, 20 + k, 256));
+                    k = k + 1;
+                }
+            }
+            borrow cw as &cr in {
+                let sealed = file.reseal(heap, contents(cr)[0..len(all)]);
+                borrow sealed as &sr in {
+                    let (l2, f2) = file.decode(heap, buffer.bytes(sr));
+                    if !in_band(f2.code) {
+                        bad = bad + 1;
+                    }
+                    if f2.code == 0 {
+                        resealed_ok = resealed_ok + 1;
+                        borrow l2 as &l2r in {
+                            borrow t as &tr in {
+                                let (z, u, f3) = run.apply_steps(heap, file.steps_bytes(l2r), tr, 100, 100, 100000);
+                                if !in_band(f3.code) {
+                                    bad = bad + 1;
+                                }
+                                matrix.drop(heap, z);
+                            }
+                        }
+                    }
+                    file.drop(heap, l2);
+                }
+                buffer.drop(heap, sealed);
+            }
+            unbox_slice(heap, cw);
+            round = round + 1;
+        }
+    }
+    buffer.drop(heap, fb);
+    matrix.drop(heap, t);
+    if bad > 0 {
+        return 2;
+    }
+    // some repaired files are valid (a flipped pin or seed byte, a mantissa bit of a stored double), most are not
+    if resealed_ok < 50 || accepted < 20 {
+        return 3;
+    }
+    return 0;
+}
+
+// A file of model kind 4 (written with the sum order in meta, design.md 4.1): every truncation, every byte flipped three ways without a repaired checksum (never
+// accepted) and with one (a code of the band; a flip inside the sum order is always ml.model.version; a flip of the kind byte is a refusal), seeded damage of the
+// tail of the file (the model, the meta and the order), no trap.
+fn test_corrupted_file_of_an_ordered_kind[&h](heap: &!h Heap) -> [heap] int {
+    let est = pt.hex(heap, "04000000 00000000 00000000 00000000 00000000");
+    var bad = 0;
+    var fb = buffer.empty(heap, 1);
+    borrow est as &er in {
+        buffer.drop(heap, fb);
+        fb = pt.make_file_with(heap, "model kind=linear", "a", "1;2", contents(er)[0..20]);
+    }
+    unbox_slice(heap, est);
+    borrow fb as &fr in {
+        let all = buffer.bytes(fr);
+        let n = len(all);
+        let order_at = n - 32 - 4;
+        let (l0, f0) = file.decode(heap, all);
+        if f0.code != 0 {
+            bad = bad + 1;
+        }
+        file.drop(heap, l0);
+        var cut = 0;
+        while cut < n {
+            let (l, f) = file.decode(heap, all[0..cut]);
+            if f.code == 0 || !in_band(f.code) {
+                bad = bad + 1;
+            }
+            file.drop(heap, l);
+            cut = cut + 1;
+        }
+        var at = 0;
+        while at < n {
+            var mask = 1;
+            while mask < 256 {
+                let c = pt.copy_box(heap, all);
+                var cw = c;
+                borrow mut cw as &!w in {
+                    contents(w)[at] = byte_of(int_of(all[at]) ^ mask);
+                }
+                borrow cw as &cr in {
+                    let edited = contents(cr)[0..n];
+                    let (l, f) = file.decode(heap, edited);
+                    if f.code == 0 || !in_band(f.code) {
+                        bad = bad + 1;
+                    }
+                    file.drop(heap, l);
+                    let sealed = file.reseal(heap, edited);
+                    borrow sealed as &sr in {
+                        let (l2, f2) = file.decode(heap, buffer.bytes(sr));
+                        if !in_band(f2.code) {
+                            bad = bad + 1;
+                        }
+                        // a changed sum order is never accepted and is the version refusal
+                        if at >= order_at && at < order_at + 4 && f2.code != codes.bad_version() {
+                            bad = bad + 1;
+                        }
+                        file.drop(heap, l2);
+                    }
+                    buffer.drop(heap, sealed);
+                }
+                unbox_slice(heap, cw);
+                mask = mask * 8;
+            }
+            at = at + 1;
+        }
+    }
+    buffer.drop(heap, fb);
+    return bad;
+}

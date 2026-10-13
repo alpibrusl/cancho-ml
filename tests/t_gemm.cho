@@ -1,0 +1,128 @@
+import std.test;
+import ml.rng;
+import ml.refuse;
+import linalg.tensor;
+import linalg.gemm;
+import lref;
+
+fn mat(off: int, rows: int, cols: int, rs: int, cs: int) -> [] tensor.Tensor {
+    match tensor.matrix_strided(off, rows, cols, rs, cs) {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+fn one[&h](heap: &!h Heap, m: int, n: int, p: int, seed: int, mode: int) -> [heap] int {
+    var bad = 0;
+    let a = box_slice(heap, m * p + 1, 0.0);
+    let b = box_slice(heap, p * n + 1, 0.0);
+    let bt = box_slice(heap, p * n + 1, 0.0);
+    let want = box_slice(heap, m * n + 1, 0.0);
+    let got = box_slice(heap, m * n + 1, 9.0);
+    let gotg = box_slice(heap, m * n + 1, 9.0);
+    let parts = box_slice(heap, p / 256 + 3, 0.0);
+    borrow mut a as &!w in {
+        lref.gen(contents(w), m * p, seed, mode);
+    }
+    borrow mut b as &!w in {
+        lref.gen(contents(w), p * n, seed + 1, mode);
+    }
+    borrow b as &br in {
+        borrow mut bt as &!w in {
+            var k = 0;
+            while k < p {
+                var j = 0;
+                while j < n {
+                    contents(w)[j * p + k] = contents(br)[k * n + j];
+                    j = j + 1;
+                }
+                k = k + 1;
+            }
+        }
+    }
+    borrow a as &ar in {
+        borrow b as &br in {
+            borrow bt as &btr in {
+                borrow mut parts as &!pw in {
+                    borrow mut want as &!w in {
+                        lref.gemm(contents(ar), 0, p, 1, contents(br), 0, n, 1, m, n, p, contents(w), contents(pw));
+                    }
+                }
+                borrow mut got as &!w in {
+                    bad = bad + gemm.gemm(heap, mat(0, m, p, p, 1), contents(ar), mat(0, p, n, n, 1), contents(br), mat(0, m, n, n, 1), contents(w));
+                }
+                // B stored transposed (strides (1, p)): the generic path
+                borrow mut gotg as &!w in {
+                    bad = bad + gemm.gemm(heap, mat(0, m, p, p, 1), contents(ar), mat(0, p, n, 1, p), contents(btr), mat(0, m, n, n, 1), contents(w));
+                }
+            }
+        }
+    }
+    borrow want as &x in {
+        borrow got as &y in {
+            borrow gotg as &z in {
+                bad = bad + lref.same_bits(contents(x), contents(y), m * n) + lref.same_bits(contents(x), contents(z), m * n);
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    unbox_slice(heap, bt);
+    unbox_slice(heap, want);
+    unbox_slice(heap, got);
+    unbox_slice(heap, gotg);
+    unbox_slice(heap, parts);
+    return bad;
+}
+
+fn test_gemm_shapes[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var mode = 0;
+    while mode < 3 {
+        bad = bad + one(heap, 1, 1, 1, 1, mode);
+        bad = bad + one(heap, 4, 4, 4, 2, mode);
+        bad = bad + one(heap, 5, 7, 3, 3, mode);
+        bad = bad + one(heap, 8, 8, 255, 4, mode);
+        bad = bad + one(heap, 9, 6, 256, 5, mode);
+        bad = bad + one(heap, 8, 12, 257, 6, mode);
+        bad = bad + one(heap, 12, 9, 513, 7, mode);
+        bad = bad + one(heap, 7, 5, 1024, 8, mode);
+        bad = bad + one(heap, 16, 16, 700, 9, mode);
+        bad = bad + one(heap, 33, 31, 40, 10, mode);
+        mode = mode + 1;
+    }
+    return bad;
+}
+
+fn test_gemm_refusals[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let a = box_slice(heap, 24, 1.0);
+    let c = box_slice(heap, 24, 7.0);
+    borrow a as &ar in {
+        borrow mut c as &!cw in {
+            if gemm.gemm(heap, mat(0, 4, 5, 5, 1), contents(ar), mat(0, 4, 5, 5, 1), contents(ar), mat(0, 4, 5, 5, 1), contents(cw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+            if gemm.gemm(heap, mat(0, 4, 6, 6, 1), contents(ar), mat(0, 6, 5, 5, 1), contents(ar), mat(0, 4, 5, 5, 1), contents(cw)) != refuse.tensor_bounds() {
+                bad = bad + 1;
+            }
+            if gemm.gemm(heap, mat(0, 4, 6, 6, 1), contents(ar), mat(0, 6, 4, 4, 1), contents(ar), mat(0, 4, 4, 0, 1), contents(cw)) != refuse.tensor_shape() {
+                bad = bad + 1;
+            }
+            // inner dimension 0: C is zeros
+            if gemm.gemm(heap, mat(0, 3, 0, 0, 1), contents(ar), mat(0, 0, 3, 3, 1), contents(ar), mat(0, 3, 3, 3, 1), contents(cw)) != 0 {
+                bad = bad + 1;
+            }
+            if bits_of(contents(cw)[4]) != bits_of(0.0) || contents(cw)[9] != 7.0 {
+                bad = bad + 1;
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, c);
+    return bad;
+}

@@ -1,0 +1,250 @@
+import std.test;
+import ml.rng;
+import ml.refuse;
+import linalg.tensor;
+import linalg.dot;
+import linalg.axpy;
+import linalg.gemv;
+import linalg.syrk;
+import linalg.chol;
+import linalg.gemm;
+
+// No input reaches a trap: random descriptors (extents 0..70, strides and offsets from the whole int range, the extremes
+// included) through every kernel entry, with small data. A call either refuses (the answer is a code of ml.refuse) or runs;
+// this test passes if no call traps and every code returned is in range.
+
+fn wild(z: int, k: int) -> [] int {
+    let pick = rng.uniform(z >> 5, 14);
+    let r = rng.derive(z, k);
+    if pick == 0 {
+        return 0;
+    }
+    if pick == 1 {
+        return 1;
+    }
+    if pick == 2 {
+        return 0 - 1;
+    }
+    if pick == 3 {
+        return 9223372036854775807;
+    }
+    if pick == 4 {
+        return 0 - 9223372036854775807 - 1;
+    }
+    if pick == 5 {
+        return tensor.ceiling();
+    }
+    if pick == 6 {
+        return tensor.ceiling() + 1;
+    }
+    if pick == 7 {
+        return 0 - tensor.ceiling();
+    }
+    if pick == 8 {
+        return rng.uniform(r, 200) - 100;
+    }
+    if pick == 9 {
+        return rng.uniform(r, 9) - 4;
+    }
+    return rng.uniform(r, 70);
+}
+
+fn ext(z: int, k: int) -> [] int {
+    return rng.uniform(rng.derive(z, k), 71);
+}
+
+fn stride(z: int, k: int) -> [] int {
+    let p = rng.uniform(rng.derive(z, k + 100), 8);
+    if p < 4 {
+        return rng.uniform(rng.derive(z, k), 7) - 2;
+    }
+    return wild(z, k);
+}
+
+// a descriptor of a rank-1 operand with extent n: unit, doubled, reversed or tripled stride, a small offset that keeps it inside
+// 300 elements; then, one time in three, one field replaced by a wild value
+fn mk1(z: int, k: int, n: int) -> [] tensor.Tensor {
+    let p = rng.uniform(rng.derive(z, k), 6);
+    var st = 1;
+    if p == 3 {
+        st = 2;
+    }
+    if p == 4 {
+        st = 0 - 1;
+    }
+    if p == 5 {
+        st = 3;
+    }
+    var off = rng.uniform(rng.derive(z, k + 1), 6);
+    if st < 0 {
+        off = off + (n - 1) * (0 - st);
+    }
+    return spoil(z, k + 2, tensor.Tensor { off: off, rank: 1, s0: n, s1: 1, s2: 1, s3: 1, t0: st, t1: 0, t2: 0, t3: 0 });
+}
+
+// a rank-2 operand r x c: row-major (any padding), column-major, or a strided view
+fn mk2(z: int, k: int, r: int, c: int) -> [] tensor.Tensor {
+    let p = rng.uniform(rng.derive(z, k), 5);
+    var t0 = c;
+    var t1 = 1;
+    if p == 1 {
+        t0 = c + 3;
+    }
+    if p == 2 {
+        t0 = 1;
+        t1 = r;
+    }
+    if p == 3 {
+        t0 = 2 * c;
+        t1 = 2;
+    }
+    let off = rng.uniform(rng.derive(z, k + 1), 6);
+    return spoil(z, k + 2, tensor.Tensor { off: off, rank: 2, s0: r, s1: c, s2: 1, s3: 1, t0: t0, t1: t1, t2: 0, t3: 0 });
+}
+
+// one time in three, replace one field with a wild value (extremes, huge, negative)
+fn spoil(z: int, k: int, t: tensor.Tensor) -> [] tensor.Tensor {
+    let r = rng.derive(z, k);
+    if rng.uniform(r, 3) != 0 {
+        return t;
+    }
+    let which = rng.uniform(r >> 9, 11);
+    let v = wild(r, 5);
+    if which == 0 {
+        return tensor.Tensor { off: v, rank: t.rank, s0: t.s0, s1: t.s1, s2: t.s2, s3: t.s3, t0: t.t0, t1: t.t1, t2: t.t2, t3: t.t3 };
+    }
+    if which == 1 {
+        return tensor.Tensor { off: t.off, rank: v, s0: t.s0, s1: t.s1, s2: t.s2, s3: t.s3, t0: t.t0, t1: t.t1, t2: t.t2, t3: t.t3 };
+    }
+    if which == 2 {
+        return tensor.Tensor { off: t.off, rank: t.rank, s0: v, s1: t.s1, s2: t.s2, s3: t.s3, t0: t.t0, t1: t.t1, t2: t.t2, t3: t.t3 };
+    }
+    if which == 3 {
+        return tensor.Tensor { off: t.off, rank: t.rank, s0: t.s0, s1: v, s2: t.s2, s3: t.s3, t0: t.t0, t1: t.t1, t2: t.t2, t3: t.t3 };
+    }
+    if which == 4 {
+        return tensor.Tensor { off: t.off, rank: t.rank, s0: t.s0, s1: t.s1, s2: v, s3: t.s3, t0: t.t0, t1: t.t1, t2: t.t2, t3: t.t3 };
+    }
+    if which == 5 {
+        return tensor.Tensor { off: t.off, rank: t.rank, s0: t.s0, s1: t.s1, s2: t.s2, s3: v, t0: t.t0, t1: t.t1, t2: t.t2, t3: t.t3 };
+    }
+    if which == 6 {
+        return tensor.Tensor { off: t.off, rank: t.rank, s0: t.s0, s1: t.s1, s2: t.s2, s3: t.s3, t0: v, t1: t.t1, t2: t.t2, t3: t.t3 };
+    }
+    if which == 7 {
+        return tensor.Tensor { off: t.off, rank: t.rank, s0: t.s0, s1: t.s1, s2: t.s2, s3: t.s3, t0: t.t0, t1: v, t2: t.t2, t3: t.t3 };
+    }
+    if which == 8 {
+        return tensor.Tensor { off: t.off, rank: t.rank, s0: t.s0, s1: t.s1, s2: t.s2, s3: t.s3, t0: t.t0, t1: t.t1, t2: v, t3: t.t3 };
+    }
+    if which == 9 {
+        return tensor.Tensor { off: t.off, rank: t.rank, s0: t.s0, s1: t.s1, s2: t.s2, s3: t.s3, t0: t.t0, t1: t.t1, t2: t.t2, t3: v };
+    }
+    return tensor.Tensor { off: v, rank: 3, s0: v, s1: v, s2: v, s3: v, t0: v, t1: v, t2: v, t3: v };
+}
+
+fn ok_code(c: int) -> [] int {
+    if c < 0 || c > refuse.count() {
+        return 1;
+    }
+    return 0;
+}
+
+// one random call of kernel `which` (1..8); answers 0 if it refused, 1 if it ran, 1000 if the code is out of range
+fn call[&h, &a, &b, &c](heap: &!h Heap, which: int, z: int, ar: &a [float], br: &b [float], cw: &!c [float]) -> [heap] int {
+    var code = 0;
+    let n = rng.uniform(rng.derive(z, 901), 11);
+    let d = rng.uniform(rng.derive(z, 902), 11);
+    let m = rng.uniform(rng.derive(z, 903), 11);
+    if which == 1 {
+        code = dot.dot(heap, mk1(z, 1, n), ar, mk1(z, 11, n), br).code;
+    } else if which == 2 {
+        code = axpy.axpy(0.5, mk1(z, 21, n), ar, mk1(z, 31, n), cw);
+    } else if which == 3 {
+        code = gemv.gemv_n(heap, mk2(z, 41, n, d), ar, mk1(z, 51, d), br, mk1(z, 61, n), cw);
+    } else if which == 4 {
+        code = gemv.gemv_t(heap, mk2(z, 71, n, d), ar, mk1(z, 81, n), br, mk1(z, 91, d), cw);
+    } else if which == 5 {
+        code = syrk.syrk(heap, mk2(z, 101, n, d), ar, mk2(z, 111, d, d), cw);
+    } else if which == 6 {
+        code = chol.cholesky(mk2(z, 121, d, d), ar, mk2(z, 131, d, d), cw);
+    } else if which == 7 {
+        code = chol.solve(rng.uniform(z, 2), mk2(z, 141, d, d), ar, mk1(z, 151, d), br, mk1(z, 161, d), cw);
+    } else {
+        code = gemm.gemm(heap, mk2(z, 171, n, m), ar, mk2(z, 181, m, d), br, mk2(z, 191, n, d), cw);
+    }
+    if ok_code(code) != 0 {
+        return 1000;
+    }
+    if code == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn fuzz[&h](heap: &!h Heap, which: int, iters: int) -> [heap] int {
+    var ran = 0;
+    var bad = 0;
+    let a = box_slice(heap, 300, 0.5);
+    let b = box_slice(heap, 300, 0.25);
+    let c = box_slice(heap, 300, 0.0);
+    var s = 20261012 + which;
+    var it = 0;
+    while it < iters {
+        s = rng.advance(s);
+        let z = rng.output(s);
+        borrow a as &ar in {
+            borrow b as &br in {
+                borrow mut c as &!cw in {
+                    let r = call(heap, which, z, contents(ar), contents(br), contents(cw));
+                    if r == 1000 {
+                        bad = bad + 1;
+                    } else {
+                        ran = ran + r;
+                    }
+                }
+            }
+        }
+        it = it + 1;
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    unbox_slice(heap, c);
+    // the generator must reach the kernels' real paths too, not only the refusals
+    if ran < iters / 60 {
+        return bad + 1;
+    }
+    return bad;
+}
+
+fn test_fuzz_dot[&h](heap: &!h Heap) -> [heap] int {
+    return fuzz(heap, 1, 20000);
+}
+
+fn test_fuzz_axpy[&h](heap: &!h Heap) -> [heap] int {
+    return fuzz(heap, 2, 20000);
+}
+
+fn test_fuzz_gemv_n[&h](heap: &!h Heap) -> [heap] int {
+    return fuzz(heap, 3, 20000);
+}
+
+fn test_fuzz_gemv_t[&h](heap: &!h Heap) -> [heap] int {
+    return fuzz(heap, 4, 20000);
+}
+
+fn test_fuzz_syrk[&h](heap: &!h Heap) -> [heap] int {
+    return fuzz(heap, 5, 20000);
+}
+
+fn test_fuzz_cholesky[&h](heap: &!h Heap) -> [heap] int {
+    return fuzz(heap, 6, 20000);
+}
+
+fn test_fuzz_solve[&h](heap: &!h Heap) -> [heap] int {
+    return fuzz(heap, 7, 20000);
+}
+
+fn test_fuzz_gemm[&h](heap: &!h Heap) -> [heap] int {
+    return fuzz(heap, 8, 20000);
+}

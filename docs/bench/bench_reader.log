@@ -1,0 +1,28 @@
+file float17_500000.csv: 500000 rows x 8 columns = 4.0 M cells, 94.0 MB; machine arm64; load 4.84 before, 4.06 after; 7 interleaved rounds, one thread
+   load per round (before, after): 4.8/4.5 4.5/4.5 4.5/4.5 4.5/4.3 4.3/4.3 4.3/4.1 4.1/4.1
+   reader-check[reader-check] shape (pass 1)            min 0.233 s  median 0.245 s    17.1 M cells/s (min)
+   reader-check[reader-check] hash (whole load)         min 0.525 s  median 0.532 s     7.6 M cells/s (min)
+   reader-check[reader-check-e47] shape (pass 1)        min 0.225 s  median 0.256 s    17.8 M cells/s (min)
+   reader-check[reader-check-e47] hash (whole load)     min 0.523 s  median 0.533 s     7.7 M cells/s (min)
+   table[table-e47d647] max:c0..c7:float                min 0.204 s  median 0.210 s    19.6 M cells/s (min)
+   table[table-e47d647] max:c0:float                    min 0.077 s  median 0.085 s    51.6 M cells/s (min)  (6.5 M parsed cells/s)
+   table[table-e47d647] count                           min 0.059 s  median 0.068 s    67.3 M cells/s (min)
+file short_500000.csv: 500000 rows x 8 columns = 4.0 M cells, 29.6 MB; machine arm64; load 4.06 before, 3.98 after; 7 interleaved rounds, one thread
+   load per round (before, after): 4.1/4.1 4.1/4.0 4.0/4.0 4.0/4.0 4.0/4.0 4.0/4.0 4.0/4.0
+   reader-check[reader-check] shape (pass 1)            min 0.096 s  median 0.099 s    41.8 M cells/s (min)
+   reader-check[reader-check] hash (whole load)         min 0.201 s  median 0.205 s    19.9 M cells/s (min)
+   reader-check[reader-check-e47] shape (pass 1)        min 0.097 s  median 0.098 s    41.4 M cells/s (min)
+   reader-check[reader-check-e47] hash (whole load)     min 0.201 s  median 0.205 s    19.9 M cells/s (min)
+   table[table-e47d647] max:c0..c7:float                min 0.098 s  median 0.101 s    40.7 M cells/s (min)
+   table[table-e47d647] max:c0:float                    min 0.044 s  median 0.047 s    91.4 M cells/s (min)  (11.4 M parsed cells/s)
+   table[table-e47d647] count                           min 0.038 s  median 0.040 s   104.7 M cells/s (min)
+file mixed_500000.csv: 500000 rows x 8 columns = 4.0 M cells, 61.8 MB; machine arm64; load 3.98 before, 3.59 after; 7 interleaved rounds, one thread
+   load per round (before, after): 4.0/4.0 4.0/4.0 4.0/3.8 3.8/3.8 3.8/3.8 3.8/3.8 3.8/3.6
+   reader-check[reader-check] shape (pass 1)            min 0.180 s  median 0.191 s    22.2 M cells/s (min)
+   reader-check[reader-check] hash (whole load)         min 0.405 s  median 0.408 s     9.9 M cells/s (min)
+   reader-check[reader-check-e47] shape (pass 1)        min 0.190 s  median 0.196 s    21.1 M cells/s (min)
+   reader-check[reader-check-e47] hash (whole load)     min 0.397 s  median 0.405 s    10.1 M cells/s (min)
+   table[table-e47d647] max:c0..c7:float                min 0.171 s  median 0.175 s    23.4 M cells/s (min)
+   table[table-e47d647] max:c0:float                    min 0.069 s  median 0.070 s    58.1 M cells/s (min)  (7.3 M parsed cells/s)
+   table[table-e47d647] count                           min 0.056 s  median 0.061 s    71.5 M cells/s (min)
+python3 scripts/bench_reader.py --rows 500000 --runs 7 --keep $SP/bench        33.66s user 0.81s system 98% cpu 34.925 total

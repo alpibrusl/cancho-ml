@@ -1,0 +1,48 @@
+KILLED    t1-flag-without-fixture                      T1  tests: test_embedded_schema_is_the_committed_one, test_every_flag_is_taken_by_some_verb_and_every_listed_flag_exists, test_flags_in_a_fixture, test_flags_in_schema
+KILLED    t1-flag-missing-from-the-schema              T1  tests: test_embedded_schema_is_the_committed_one, test_flags_in_schema, test_schemas_are_the_regeneration_of_the_tables
+KILLED    t1-rule-without-fixture                      T1  tests: test_embedded_schema_is_the_committed_one, test_rules_in_a_fixture
+KILLED    t1-fixture-reaches-another-rule              T1  tests: test_rules_in_a_fixture
+KILLED    t1-log-record-without-fixture                T1  tests: test_log_records_in_a_fixture
+KILLED    t1-skill-lacks-a-flag                        T1  tests: test_flags_in_skill
+KILLED    r1-exit-code-changed                         R1  tests: test_exit_codes_are_the_d4_classes
+KILLED    r1-text-in-json-mode                         R1  tests: test_every_fixture, test_retry_repairs_work_and_widen_nothing
+KILLED    r1-missing-operand-not-refused               R1  tests: test_every_fixture
+KILLED    n1-verb-read-before-counting                 N1  tests: test_no_arguments_at_all
+KILLED    n1-double-dot-check-removed                  N1  tests: test_a_missing_value_and_a_dotdot_in_every_path_position
+KILLED    l1-column-name-logged                        L1  tests: test_fit_predict_eval_log_counts_and_hashes_only
+KILLED    l1-cap-not-checked                           L1  tests: test_the_log_of_one_run_is_small_and_the_cap_refuses
+KILLED    m1-checksum-not-compared                     M1  tests: test_checksum_wrong, test_every_single_byte_flip_is_refused_never_accepted, test_seeded_multi_byte_damage
+KILLED    m1-section-length-not-checked                M1  tests: test_truncated_at_every_length
+KILLED    m1-version-not-compared                      M1  tests: test_version
+KILLED    m1-trailing-bytes-accepted                   M1  tests: test_bytes_between_the_last_section_and_the_trailer_are_refused
+KILLED    s1-check-removed                             S1  tests: test_dropped_columns_are_not_part_of_the_schema, test_dropping_a_needed_column_is_a_mismatch, test_extras_alone_have_a_retry_that_works, test_missing_extra_and_mistyped_are_named
+KILLED    s1-repair-names-the-wrong-side               S1  tests: test_dropped_columns_are_not_part_of_the_schema, test_extras_alone_have_a_retry_that_works, test_retry_repairs_work_and_widen_nothing
+KILLED    o1-mean-divides-by-n-minus-1                 O1  tests: test_regression_extremes, test_regression_seeded, test_sums_that_leave_64_bits, test_the_mean_rounds_half_away_from_zero
+KILLED    o1-tie-goes-to-the-larger-label              O1  tests: test_a_tie_goes_to_the_smaller_label, test_classification_seeded
+KILLED    o1-half-rounds-down                          O1  tests: test_the_mean_rounds_half_away_from_zero
+KILLED    o1-mean-truncates                            O1  tests: test_regression_seeded, test_the_mean_rounds_half_away_from_zero
+KILLED    o1-carry-dropped                             O1  tests: test_sums_that_leave_64_bits
+KILLED    o1-sum-in-one-int                            O1  tests: test_regression_extremes, test_regression_seeded, test_sums_that_leave_64_bits
+KILLED    o1-accuracy-counts-the-wrong-rows            O1  tests: test_classification_seeded, test_every_fixture
+KILLED    o1-eval-ignores-the-cell-scale               O1  tests: test_regression_extremes, test_regression_seeded
+KILLED    d1-model-holds-the-byte-count                D1  tests: test_line_endings_bom_and_blank_lines_do_not_change_the_model
+KILLED    d1-thread-count-changes-a-byte               D1  tests: test_no_thread_count_changes_a_byte
+KILLED    a1-reads-standard-input                      A1  manifest.py --tree: FAIL ml: manifests/ml.authority.json is not the compiler's report | FAIL ml: generated/ml/built.cho is stale | FAIL ml: io_read is not within the ceiling in tools.toml
+KILLED    a1-reads-the-clock                           A1  manifest.py --tree: FAIL ml: manifests/ml.authority.json is not the compiler's report | FAIL ml: generated/ml/built.cho is stale | FAIL ml: clock is forbidden to every tool | FAIL ml: clock is not within the ceiling in tools.toml
+KILLED    a1-manifest-is-stale                         A1  manifest.py --check: FAIL ml: manifests/ml.authority.json is not the compiler's report
+KILLED    h1-a-model-in-the-table-that-is-not-built    H1  tests: test_another_model_name_is_refused, test_the_models_are_exactly_the_built_ones, test_the_models_in_the_flag_table_are_the_built_ones
+KILLED    h1-an-exponent-is-read-as-a-prefix           H1  tests: test_float_text_is_read_exactly_not_approximated
+KILLED    rd7-mean-divides-by-n-plus-1                 RD7  tests: test_a_dec_column_that_needs_more_than_12_digits_is_a_float, test_a_sum_that_leaves_64_bits_and_a_double_is_exact, test_exact_ties_in_the_mean_go_to_even, test_the_largest_doubles_have_a_mean
+KILLED    rd7-sum-is-not-exact                         RD7  tests: test_a_dec_column_that_needs_more_than_12_digits_is_a_float, test_a_sum_that_leaves_64_bits_and_a_double_is_exact, test_exact_ties_in_the_mean_go_to_even, test_the_largest_doubles_have_a_mean
+KILLED    rd7-sse-carry                                RD7  tests: test_a_sum_that_leaves_64_bits_and_a_double_is_exact, test_exact_ties_in_the_sse_go_to_even, test_the_mean_sse_and_rmse_are_the_exact_ones_rounded_once
+KILLED    rd7-sse-rounds-half-up                       RD7  tests: test_exact_ties_in_the_sse_go_to_even
+KILLED    rd7-sse-ignores-the-sticky-bit               RD7  tests: test_the_mean_sse_and_rmse_are_the_exact_ones_rounded_once
+KILLED    rd7-rmse-from-two-roots                      RD7  tests: test_the_mean_sse_and_rmse_are_the_exact_ones_rounded_once
+KILLED    rd7-sse-against-a-neighbour-of-the-mean      RD7  tests: test_the_largest_doubles_have_a_mean, test_exact_ties_in_the_sse_go_to_even, test_the_mean_sse_and_rmse_are_the_exact_ones_rounded_once
+KILLED    rd7-float-column-fits-an-int-model           RD7  tests: test_a_float_feature_and_an_int_model_column
+KILLED    rd7-int-model-bytes-change                   RD7  tests: test_a_model_of_ints_and_decimals_is_byte_for_byte_what_the_cli_slice_wrote
+KILLED    rd7-float-target-as-class-label              RD7  tests: test_a_float_target_is_not_a_class_label
+KILLED    rd7-float-model-kind-checked-as-int          RD7  tests: test_a_float_regression_model_is_checked_field_by_field
+PASSED    baseline (the unchanged tree)                -  
+
+45 mutants: 45 killed, 0 survived, 0 invalid

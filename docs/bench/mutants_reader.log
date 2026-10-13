@@ -1,0 +1,51 @@
+control (unmutated): passes every gate
+rd1-control                                  passes  check_table_pin: ok (6 sources at 7f36608, none copied)
+rd1-pin-with-another-hash                    KILLED  check_table_pin: tools/table/flt.cho has sha256 1845b08c3b96c549a35f1f671cdc8750c25449440d
+rd1-pin-at-another-commit                    KILLED  check_table_pin: the clone is at 7f3660881750f772bfd38de01792263fda930519, the pin is 0000
+rd1-vendored-copy                            KILLED  check_table_pin: tools/ml/flt.cho is a copy of tools/table/flt.cho
+rd1-vendored-and-edited-copy                 KILLED  check_table_pin: tools/ml/dec.cho declares module dec, which is cancho-table's
+rd2-clinger-limit-23                     KILLED   (diff) diff: DIFFERENCE ('file 0 refused: ', None, None)
+rd2-clinger-mantissa-2p53-plus-1         KILLED   (diff) diff: DIFFERENCE (b'9007199254740993e-22', '3eae392010175ee7', '3eae392010175ee6')
+rd2-sticky-retry-removed                 KILLED   (diff) diff: DIFFERENCE ('file 0 refused: refused 8 1225 0 3\n', None, None)
+rd2-halfway-test-removed                 KILLED   (diff) diff: DIFFERENCE (b'9007199254740993', '4340000000000000', '4340000000000001')
+rd2-truncate-not-round                   KILLED   (diff) diff: DIFFERENCE (b'9007199254740993.5', '4340000000000001', '4340000000000000')
+rd2-negative-sign-dropped                KILLED   (diff) diff: DIFFERENCE (b'-.5', 'bfe0000000000000', '3fe0000000000000')
+rd2-signed-zero-refused                  KILLED   (diff) diff: DIFFERENCE ('file 0 refused: refused 8 2 7 3\n', None, None)
+rd2-subnormal-flush                      KILLED   (diff) diff: DIFFERENCE ('file 0 refused: refused 8 8 3 3\n', None, None)
+rd2-sign-dropped-int                     KILLED   (diff) diff: DIFFERENCE (b'-02359', 'c0a26e0000000000', '40a26e0000000000')
+rd2-reciprocal                           KILLED   (diff) diff: DIFFERENCE (b'0.3', '3fd3333333333333', '3fd3333333333334')
+rd2-digits-11                            SURVIVED 
+rd2-point-forms-refused                  KILLED   (diff) diff: DIFFERENCE ('file 0 refused: refused 8 3 3 2\n', None, None)
+rd2-nan-stored                           KILLED   (diff) diff: DIFFERENCE (b'nan', 'refused 9 2 0 0', 'rows 1')
+rd2-nan-one-layer                        SURVIVED, explained: equivalent: nan and inf are refused twice, by ml.csvcell.decimal and by flt.parse_float (its status 10), and the answer 
+rd2-overflow-accepted                    KILLED   (diff) diff: DIFFERENCE (b'1.7976931348623159e308', 'refused 9 2 0 1', 'rows 1')
+rd2-underflow-accepted                   KILLED   (diff) diff: DIFFERENCE (b'2.4703282292062327e-324', 'refused 8 2 0 3', 'rows 1')
+rd2-long-cell-accepted-as-garbage        KILLED   (diff) diff: DIFFERENCE (b'777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777
+rd2-empty-cell-check-removed             KILLED   (diff) diff: DIFFERENCE ('file 0 refused: ', None, None)
+rd3-missing-as-zero                      KILLED   (matrix) matrix: DIFFERENCE ('missing', 1, 0, 1, '0000000000000000')
+rd3-bit-off-by-one                       KILLED   (matrix) matrix: DIFFERENCE ('missing', 1, 0, 1, '0000000000000000')
+rd3-word-of-64                           KILLED   (matrix) matrix: DIFFERENCE ('value', 33, 0, 1, 'M', ('ok', 3, 9e-40, 4022727851561599632, 0))
+rd3-next-column                          KILLED   (matrix) matrix: DIFFERENCE ('refused', 1, 2, '')
+rd3-types-do-not-widen                   KILLED   (matrix) matrix: DIFFERENCE ('kind of a column', (1, 2, 1), [(1, 2, 'a')])
+rd3-drop-ignored                         KILLED   (matrix) matrix: DIFFERENCE ('shape', 1, 2, {'rows': 1, 'cols': 2, 'missing': 2})
+rd3-float-flag-ignored                   KILLED   (matrix) matrix: DIFFERENCE ('kind', 1, 1, (0, 0, 'n1'), 3)
+rd3-column-index-counts-dropped          KILLED   (matrix) matrix: DIFFERENCE ('refused', 1, 2, '')
+rd4-row-cap-off-by-one                   KILLED   (limits) limits: DIFFERENCE ('rows over by one (1)', 'refused 7 ', 'refused-matrix ml.input.too-many-rows')
+rd4-column-cap-off-by-one                KILLED   (limits) limits: DIFFERENCE ('columns over by one (1)', 'refused 6 ', 'refused-matrix ml.input.too-many-columns')
+rd4-cell-cap-off-by-one                  KILLED   (limits) limits: DIFFERENCE ('cells 10x3 over 29', 'refused 13 ', 'refused-matrix ml.input.too-many-cells')
+rd4-record-cap-removed                   KILLED   (limits) limits: DIFFERENCE ('a record of 3 lines over the cap', 'refused 2 2 0 ', 'rows 1')
+rd4-matrix-before-check                  SURVIVED 
+rd4-cell-cap-by-product                  SURVIVED, explained: equivalent: every cap is at most 2^31 - 1 (ml.limits.ceiling_dim) so rows * cols stays below 2^62; the division is defen
+rd5-cr-kept                              KILLED   (csv) csv: DIFFERENCE ('refused', 4, 'refused 8 2 4 2\n')
+rd5-bom-kept                             KILLED   (csv) csv: DIFFERENCE ('names', 7, ['ï»¿x0', 'x2', 'x4'])
+rd5-bad-quote-accepted                   KILLED   (csv) csv: DIFFERENCE ('a quote closed and followed by a letter', 'refused 17 2 0 0', 'refused 3 2 0 0')
+rd5-spanning-record-line                 KILLED   (csv) csv: DIFFERENCE ('a quote open at the end of the file', 'refused 18 3 0 0', 'refused 18 4 0 0')
+rd5-unterminated-quote-accepted          KILLED   (csv) csv: DIFFERENCE ('a quote open at the end of the file', 'refused 18 3 0 0', 'rows 1')
+rd5-blank-line-in-quote-skipped          SURVIVED, explained: equivalent for everything a numeric reader can observe: a blank line inside a quoted field changes the field's text, whi
+rd6-field-count-not-checked              KILLED   (fuzz) fuzz: TRAP OR BAD OUTPUT ('mutated', -4, '', b'a,e\x9a\xae\xb8b,c\n1')
+rd6-fields-count-ignored                 SURVIVED, explained: equivalent: reader.scan has already counted the same fields and flagged the same quotes of the same record (seps + 1 != 
+34 killed, 4 survived and explained, 2 unexplained or invalid
+UNEXPLAINED: rd2-digits-11, rd4-matrix-before-check
+--- re-runs after the first run (two mutants re-aimed):
+rd2-digits-11 KILLED (matrix gate)
+rd4-matrix-before-check KILLED (limits gate, peak 401 MB against 16)

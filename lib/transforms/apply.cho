@@ -1,0 +1,190 @@
+module transforms.apply;
+
+import ml.matrix;
+import transforms.codes;
+import transforms.steps;
+
+// The apply of every transform (docs/transforms.md sections 2 and 3). It reads the parameters of the Step and nothing else: there is no
+// parameter here that comes from the matrix being transformed, which is what makes a test row unable to change what a transform learned.
+// A missing cell passes through (docs/transforms.md 2.1) except under `impute`. The output is a new matrix; the input is not touched.
+
+// the first index i in [0, n) with f[from + i] == v by binary search over ascending values, or -1
+fn lookup[&f](f: &f [float], from: int, n: int, v: float) -> [] int {
+    var lo = 0;
+    var hi = n;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let e = f[from + mid];
+        if e == v {
+            return mid;
+        }
+        if e < v {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return 0 - 1;
+}
+
+// how many of the ascending f[from .. from + n) are <= v
+fn upper[&f](f: &f [float], from: int, n: int, v: float) -> [] int {
+    var lo = 0;
+    var hi = n;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if f[from + mid] <= v {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+fn gone[&h](heap: &!h Heap, f: codes.Fault) -> [heap] (matrix.Matrix, int, codes.Fault) {
+    return (matrix.empty(heap), 0, f);
+}
+
+// (the transformed matrix, the number of unknown categories met, Fault). step_no is for the Fault only. The caps are those of
+// matrix.make for the output.
+pub fn apply[&h, &s, &m](heap: &!h Heap, st: &s steps.Step, x: &m matrix.Matrix, step_no: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int, codes.Fault) {
+    let kind = st.kind;
+    let a = contents(st.ints);
+    let f = contents(st.floats);
+    let nc = matrix.cols(x);
+    let n = matrix.rows(x);
+    if steps.check_ints(kind, a, nc) != 0 || nc != a[1] {
+        return gone(heap, codes.fault(codes.schema_mismatch(), step_no, 0, 0));
+    }
+    let k = a[0];
+    let base = 2 + k;
+    let wout = steps.width_out(kind, a);
+    let (out, code) = matrix.make(heap, n, wout, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        matrix.drop(heap, out);
+        return gone(heap, codes.fault(codes.from_refuse(code), step_no, 0, 0));
+    }
+    // sel[c] = index j of the selected column c, or -1; off[c] = the first output column of input column c; coff[j] = the first category
+    let sel = box_slice(heap, nc + 1, 0 - 1);
+    let off = box_slice(heap, nc + 1, 0);
+    let coff = box_slice(heap, k + 1, 0);
+    var selw = sel;
+    var offw = off;
+    var coffw = coff;
+    borrow mut selw as &!sw in {
+        borrow mut offw as &!ow in {
+            borrow mut coffw as &!cw in {
+                var j = 0;
+                while j < k {
+                    contents(sw)[a[2 + j]] = j;
+                    j = j + 1;
+                }
+                var pos = 0;
+                var c = 0;
+                while c < nc {
+                    contents(ow)[c] = pos;
+                    if kind == 4 && contents(sw)[c] >= 0 {
+                        pos = pos + a[base + 1 + contents(sw)[c]];
+                    } else {
+                        pos = pos + 1;
+                    }
+                    c = c + 1;
+                }
+                if kind == 4 || kind == 5 {
+                    j = 0;
+                    var q = 0;
+                    while j < k {
+                        contents(cw)[j] = q;
+                        q = q + a[base + 1 + j];
+                        j = j + 1;
+                    }
+                }
+            }
+        }
+    }
+    let (t, data, miss, rows, cols, wpc) = matrix.parts(out);
+    var dw0 = data;
+    var mw0 = miss;
+    var unknown = 0;
+    var fault = codes.none();
+    borrow selw as &sr in {
+        borrow offw as &orr in {
+            borrow coffw as &cr in {
+                borrow mut dw0 as &!dw in {
+                    borrow mut mw0 as &!mw in {
+                        var r = 0;
+                        while r < n && fault.code == 0 {
+                            var c = 0;
+                            while c < nc && fault.code == 0 {
+                                let j = contents(sr)[c];
+                                let o = contents(orr)[c];
+                                if matrix.is_missing(x, r, c) {
+                                    // a missing cell stays missing; only impute fills it
+                                    if j >= 0 && kind == 1 {
+                                        matrix.put(contents(dw), cols, r, o, f[j]);
+                                    } else if j >= 0 && kind == 4 {
+                                        var t2 = 0;
+                                        while t2 < a[base + 1 + j] {
+                                            matrix.mark_missing(contents(mw), wpc, r, o + t2);
+                                            t2 = t2 + 1;
+                                        }
+                                    } else {
+                                        matrix.mark_missing(contents(mw), wpc, r, o);
+                                    }
+                                } else {
+                                    let v = matrix.value(x, r, c);
+                                    if !(v - v == 0.0) {
+                                        fault = codes.fault(codes.input_non_finite(), step_no, c, r);
+                                    } else if j < 0 {
+                                        matrix.put(contents(dw), cols, r, o, v);
+                                    } else if kind == 1 {
+                                        matrix.put(contents(dw), cols, r, o, v);
+                                    } else if kind == 2 || kind == 3 {
+                                        let z = (v - f[2 * j]) / f[2 * j + 1];
+                                        if !(z - z == 0.0) {
+                                            fault = codes.fault(codes.input_non_finite(), step_no, c, r);
+                                        } else {
+                                            matrix.put(contents(dw), cols, r, o, z);
+                                        }
+                                    } else if kind == 4 || kind == 5 {
+                                        let cn = a[base + 1 + j];
+                                        let idx = lookup(f, contents(cr)[j], cn, v);
+                                        if idx < 0 {
+                                            if a[base] == 1 {
+                                                fault = codes.fault(codes.unknown_category(), step_no, c, r);
+                                            } else {
+                                                unknown = unknown + 1;
+                                                if kind == 5 {
+                                                    matrix.put(contents(dw), cols, r, o, 0.0 - 1.0);
+                                                }
+                                            }
+                                        } else if kind == 5 {
+                                            matrix.put(contents(dw), cols, r, o, float_of(idx));
+                                        } else {
+                                            matrix.put(contents(dw), cols, r, o + idx, 1.0);
+                                        }
+                                    } else {
+                                        let w = a[base] - 1;
+                                        matrix.put(contents(dw), cols, r, o, float_of(upper(f, j * w, w, v)));
+                                    }
+                                }
+                                c = c + 1;
+                            }
+                            r = r + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, selw);
+    unbox_slice(heap, offw);
+    unbox_slice(heap, coffw);
+    let made = matrix.assemble(t, dw0, mw0, rows, cols, wpc);
+    if fault.code != 0 {
+        matrix.drop(heap, made);
+        return gone(heap, fault);
+    }
+    return (made, unknown, codes.none());
+}

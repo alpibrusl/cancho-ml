@@ -1,0 +1,310 @@
+import std.test;
+import ml.kinds;
+import ml.refuse;
+import metrics.rules;
+import metrics.splits;
+import tree.deny;
+import transforms.codes;
+import tree.model;
+import models.record;
+import models.kmeans;
+
+// The registry gate of the integration (docs/design.md sections 4.1 and 8.1, docs/rng.md): two stages must not claim one number.
+// Model kinds, stream kinds and refusal codes are each one table; each stage's own constant must be the table's. This test fails if two
+// stages are given the same model kind (the collision that the first merge had: kind 3 was the CLI's float model, the linear
+// stage's linear regression and the tree's), the same stream kind, or the same refusal code for two tags.
+// (`cancho test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho tests/t_registry.cho`)
+// A test answers 0 to pass.
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn test_model_kinds_are_distinct() -> [] int {
+    var bad = 0;
+    var i = 1;
+    while i <= kinds.model_count() {
+        if kinds.model_at(i) < 1 {
+            bad = bad + 1;
+        }
+        var j = i + 1;
+        while j <= kinds.model_count() {
+            if kinds.model_at(i) == kinds.model_at(j) {
+                bad = bad + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if kinds.model_at(0) != 0 || kinds.model_at(kinds.model_count() + 1) != 0 {
+        bad = bad + 1;
+    }
+    // the three kinds that tools/ml/mfile.cho ships are kept as shipped (files with them exist)
+    if kinds.model_const_regression() != 1 || kinds.model_const_classification() != 2 || kinds.model_const_float_regression() != 3 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+fn test_stream_kinds_are_distinct() -> [] int {
+    var bad = 0;
+    var i = 1;
+    while i <= kinds.stream_count() {
+        if kinds.stream_at(i) < 1 {
+            bad = bad + 1;
+        }
+        var j = i + 1;
+        while j <= kinds.stream_count() {
+            if kinds.stream_at(i) == kinds.stream_at(j) {
+                bad = bad + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if kinds.stream_at(0) != 0 || kinds.stream_at(kinds.stream_count() + 1) != 0 {
+        bad = bad + 1;
+    }
+    // spike F's streams: the tree gate compares with them, so these two do not move
+    if kinds.stream_tree_bootstrap() != 1 || kinds.stream_tree_features() != 2 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// every stage's own constant is the registry's
+fn test_stages_use_the_registry() -> [] int {
+    var bad = 0;
+    if record.kind_linear() != kinds.model_linear() || record.kind_logistic() != kinds.model_logistic() || record.kind_kmeans() != kinds.model_kmeans() {
+        bad = bad + 1;
+    }
+    if model.kind() != kinds.model_tree() {
+        bad = bad + 1;
+    }
+    if kmeans.kind() != kinds.stream_kmeans() {
+        bad = bad + 1;
+    }
+    if splits.kind_train_test() != kinds.stream_train_test() || splits.kind_kfold() != kinds.stream_kfold() || splits.kind_stratified() != kinds.stream_stratified() {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// the kinds the stages write, taken from the stages and not from the table, are pairwise different (1 to 3 are tools/ml/mfile.cho's)
+fn stage_kind(i: int) -> [] int {
+    if i == 1 {
+        return 1;
+    }
+    if i == 2 {
+        return 2;
+    }
+    if i == 3 {
+        return 3;
+    }
+    if i == 4 {
+        return record.kind_linear();
+    }
+    if i == 5 {
+        return record.kind_logistic();
+    }
+    if i == 6 {
+        return record.kind_kmeans();
+    }
+    return model.kind();
+}
+
+fn test_no_two_stages_share_a_model_kind() -> [] int {
+    var bad = 0;
+    var i = 1;
+    while i <= 7 {
+        var j = i + 1;
+        while j <= 7 {
+            if stage_kind(i) == stage_kind(j) {
+                bad = bad + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}
+
+// the tag of a code by band: 1 to 99 ml.refuse, 101 to 199 tree.deny, 201 to 299 metrics.rules, 301 to 399 transforms.codes
+fn tag_of(c: int) -> [] &static [byte] {
+    if c >= 1 && c <= 99 {
+        return refuse.tag(c);
+    }
+    if c >= 101 && c <= 199 {
+        return deny.tag(c);
+    }
+    if c >= 201 && c <= 299 {
+        return rules.tag(c);
+    }
+    if c >= 301 && c <= 399 {
+        return codes.tag(c);
+    }
+    return "";
+}
+
+fn exit_of(c: int) -> [] int {
+    if c >= 1 && c <= 99 {
+        return refuse.exit_code(c);
+    }
+    if c >= 101 && c <= 199 {
+        return deny.exit_code(c);
+    }
+    if c >= 301 && c <= 399 {
+        return codes.exit_code(c);
+    }
+    return rules.exit_code(c);
+}
+
+fn test_refusal_codes_are_unique() -> [] int {
+    var bad = 0;
+    // a library's codes are in its own band, contiguous from its first code, every one with a tag
+    var c = 1;
+    while c <= refuse.count() {
+        if len(refuse.tag(c)) == 0 {
+            bad = bad + 1;
+        }
+        c = c + 1;
+    }
+    if refuse.count() > 99 {
+        bad = bad + 1;
+    }
+    c = 101;
+    while c <= deny.last() {
+        if len(deny.tag(c)) == 0 || deny.exit_code(c) == 0 {
+            bad = bad + 1;
+        }
+        c = c + 1;
+    }
+    if deny.last() > 199 {
+        bad = bad + 1;
+    }
+    c = rules.first();
+    while c <= rules.last() {
+        if len(rules.tag(c)) == 0 || rules.exit_code(c) == 0 {
+            bad = bad + 1;
+        }
+        c = c + 1;
+    }
+    if rules.first() < 201 || rules.last() > 299 {
+        bad = bad + 1;
+    }
+    c = codes.first();
+    while c <= codes.last() {
+        if len(codes.tag(c)) == 0 || codes.exit_code(c) == 0 {
+            bad = bad + 1;
+        }
+        c = c + 1;
+    }
+    if codes.first() < 301 || codes.last() > 399 || codes.last() - codes.first() + 1 != codes.count() {
+        bad = bad + 1;
+    }
+    // no number is claimed by two libraries: a code outside a library's own band has no tag there (tree.deny answers ml.refuse's
+    // codes by design, so it is asked only inside 101 to 199)
+    c = 0;
+    while c <= 500 {
+        var claims = 0;
+        if len(refuse.tag(c)) != 0 {
+            claims = claims + 1;
+        }
+        if c >= 100 && len(deny.tag(c)) != 0 {
+            claims = claims + 1;
+        }
+        if len(rules.tag(c)) != 0 {
+            claims = claims + 1;
+        }
+        if len(codes.tag(c)) != 0 {
+            claims = claims + 1;
+        }
+        if claims > 1 {
+            bad = bad + 1;
+        }
+        c = c + 1;
+    }
+    // one tag, one exit code, whichever band answers; one tag at most once inside a band
+    var a = 1;
+    while a <= 399 {
+        if len(tag_of(a)) != 0 {
+            var b = a + 1;
+            while b <= 399 {
+                if same(tag_of(a), tag_of(b)) {
+                    if exit_of(a) != exit_of(b) {
+                        bad = bad + 1;
+                    }
+                    if b / 100 == a / 100 {
+                        bad = bad + 1;
+                    }
+                }
+                b = b + 1;
+            }
+        }
+        a = a + 1;
+    }
+    return bad;
+}
+
+// the step kinds and section tags of the model file: distinct, from 1, with the stages' own numbers where a stage writes them
+fn test_step_kinds_and_section_tags_are_distinct() -> [] int {
+    var bad = 0;
+    var i = 1;
+    while i <= kinds.step_count() {
+        if kinds.step_at(i) != i {
+            bad = bad + 1;
+        }
+        var j = i + 1;
+        while j <= kinds.step_count() {
+            if kinds.step_at(i) == kinds.step_at(j) {
+                bad = bad + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if kinds.step_at(0) != 0 || kinds.step_at(kinds.step_count() + 1) != 0 || kinds.step_count() != 6 {
+        bad = bad + 1;
+    }
+    i = 1;
+    while i <= kinds.section_count() {
+        if kinds.section_at(i) != i {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    if kinds.section_at(0) != 0 || kinds.section_at(kinds.section_count() + 1) != 0 || kinds.section_count() != 5 {
+        bad = bad + 1;
+    }
+    return bad;
+}
+
+// the library's own constants (steps.cho, file.cho) are the registry's; the exit codes of the band: 303 is the only one that is not 8
+fn test_pipeline_codes_follow_the_registry() -> [] int {
+    var bad = 0;
+    var c = codes.first();
+    while c <= codes.last() {
+        var want = 8;
+        if c == 303 {
+            want = 2;
+        }
+        if codes.exit_code(c) != want {
+            bad = bad + 1;
+        }
+        c = c + 1;
+    }
+    if codes.exit_code(300) != 0 || codes.exit_code(codes.last() + 1) != 0 {
+        bad = bad + 1;
+    }
+    return bad;
+}

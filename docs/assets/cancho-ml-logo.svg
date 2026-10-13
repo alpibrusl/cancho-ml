@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 120" width="440" height="120" role="img" aria-labelledby="t">
+  <title id="t">cancho-ml</title>
+  <rect x="8" y="8" width="104" height="104" rx="20" fill="#17406b"/>
+  <g fill="#ffffff">
+    <rect x="26" y="66" width="14" height="26" rx="2.5"/>
+    <rect x="47" y="50" width="14" height="42" rx="2.5"/>
+    <rect x="68" y="34" width="14" height="58" rx="2.5"/>
+  </g>
+  <path d="M22 78 L50 60 L76 42 L98 26" fill="none" stroke="#8fc2ff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="98" cy="26" r="6" fill="#8fc2ff"/>
+  <text x="132" y="74" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="46" font-weight="700" fill="#3f78bf" letter-spacing="-1">cancho-ml</text>
+  <text x="134" y="100" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" fill="#7d8a97">classical ML on tables</text>
+</svg>

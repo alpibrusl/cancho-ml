@@ -1,0 +1,92 @@
+module metrics.gen;
+
+import ml.rng;
+import std.math;
+
+// The generated inputs of the metrics gates (scripts/oracle_metrics.py rebuilds them bit for bit with numpy). Every value is a
+// few exact IEEE operations on the data set of docs/rng.md (element i of a seed = rng.element(seed, i), in [-1, 1)).
+//
+//   labels   label(seed, i, pm)     1 if (mix(seed + (i + 1) * gold) >> 1) mod 1000 < pm, else 0
+//   floats   value(mode, i, seed, seed2):
+//     0  uniform in [0, 1):               (e + 1) * 0.5
+//     1  quantised to 16 values:          trunc(((e + 1) * 0.5) * 16) / 16      (many ties)
+//     2  constant 0.5
+//     3  extreme probabilities:           one of 0, 1, 2^-52, 1 - 2^-53, 1e-300, 5e-324, 0.5, 1 - 2^-52 by the draw mod 8
+//     4  wide magnitude:                  e * 2^k, k = (draw mod 41) - 20
+//     5  zeros and ones with signed zero: one of -0.0, 0.0, 1.0, -1.0 by the draw mod 4
+//     6  e itself, in [-1, 1)
+//     10 mode 0 of seed plus a little noise: (e + 1) * 0.5 + 0.0625 * element(seed2, i)
+
+pub fn label(seed: int, i: int, pm: int) -> [] int {
+    let z = rng.mix(wrapping_add(seed, wrapping_mul(i + 1, rng.gold())));
+    if (z >> 1 & 9223372036854775807) % 1000 < pm {
+        return 1;
+    }
+    return 0;
+}
+
+fn draw(seed: int, i: int) -> [] int {
+    let z = rng.mix(wrapping_add(seed, wrapping_mul(i + 1, rng.gold())));
+    return z >> 1 & 9223372036854775807;
+}
+
+pub fn value(mode: int, i: int, seed: int, seed2: int) -> [] float {
+    let e = rng.element(seed, i);
+    if mode == 0 {
+        return (e + 1.0) * 0.5;
+    }
+    if mode == 1 {
+        return float_of(truncate((e + 1.0) * 0.5 * 16.0)) / 16.0;
+    }
+    if mode == 2 {
+        return 0.5;
+    }
+    if mode == 3 {
+        let k = draw(seed, i) % 8;
+        if k == 0 {
+            return 0.0;
+        }
+        if k == 1 {
+            return 1.0;
+        }
+        if k == 2 {
+            return 2.220446049250313e-16;
+        }
+        if k == 3 {
+            return 1.0 - 1.1102230246251565e-16;
+        }
+        if k == 4 {
+            return 1.0e-300;
+        }
+        if k == 5 {
+            return math.ldexp(1.0, 0 - 1074);
+        }
+        if k == 6 {
+            return 0.5;
+        }
+        return 1.0 - 2.220446049250313e-16;
+    }
+    if mode == 4 {
+        return e * math.ldexp(1.0, draw(seed, i) % 41 - 20);
+    }
+    if mode == 5 {
+        let k = draw(seed, i) % 4;
+        if k == 0 {
+            return 0.0 * (0.0 - 1.0);
+        }
+        if k == 1 {
+            return 0.0;
+        }
+        if k == 2 {
+            return 1.0;
+        }
+        return 0.0 - 1.0;
+    }
+    if mode == 6 {
+        return e;
+    }
+    if mode == 10 {
+        return (e + 1.0) * 0.5 + 0.0625 * rng.element(seed2, i);
+    }
+    return 0.0;
+}

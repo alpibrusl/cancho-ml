@@ -1,0 +1,359 @@
+module models.npass;
+
+import linalg.order;
+import models.mexp;
+
+// One block of the Newton pass of logistic regression (docs/models-linear.md 3.2): the partial of the W decisive sums over the
+// rows [r0, r1) of one block (at most 256, r0 a multiple of 256), by the package's lane rule (docs/linalg.md section 2): row i of the
+// block to lane i mod 4, each lane ascending from +0.0 in the rows' order, the partial of a sum (l0 + l1) + (l2 + l3). The partials of
+// the blocks are combined by the package's tree (linalg.order), by the caller.
+//
+// The loop is the tuned one of cancho-ml-opt and cancho-ml-armb (docs/spikes.md 8.3) with one change of shape: instead of a
+// rank-1 update of 231 accumulators per row (a load and a store each), the block is staged. Phase 1 reads the rows once, eight at
+// a time (eight independent chains of z, eight independent exps), copies each row into the scratch A (zero padded to pd columns,
+// a multiple of 4), and keeps r, s and the loss term of each row. Phase 2 makes SX = s * A and the gradient and bias-row
+// accumulators (four lanes each). Phase 3 forms the lower triangle of H = SX^T A in 2 x 2 register tiles of four lanes held across the
+// block's rows (the tiles of linalg.syrk). Every sum receives the same terms, each lane ascending in its rows, as the per-row
+// version: the terms are fl(r * a_ia), fl(fl(s * a_ia) * a_ib), fl(s * a_ib) for the bias row, and the loss (staged in `ll` and
+// summed by order.block_partial).
+//
+// Scratch layout (floats), pd = 4 * ceil(d / 4): A 256*pd, SX 256*pd, hacc pd*pd, gacc 4*pd, hb 4*pd, rr 256, ss 256, ll 256, gb 4, hbb 4.
+
+pub fn pad(d: int) -> [] int {
+    return (d + 3) / 4 * 4;
+}
+
+pub fn scratch_len(d: int) -> [] int {
+    let pd = pad(d);
+    return 512 * pd + pd * pd + 8 * pd + 768 + 16;
+}
+
+// number of sums: P + P (P + 1) / 2 + 1, P = d + 1
+pub fn width(d: int) -> [] int {
+    let p = d + 1;
+    return p + p * (p + 1) / 2 + 1;
+}
+
+// r, s and the loss term of a row with score z and label y. No data-dependent branch: the two forms of the sigmoid differ in
+// the numerator only (1 for z >= 0, e otherwise), and the sign of z is a select.
+fn row_terms(z: float, y: float) -> [] (float, float, float) {
+    var az = z;
+    if z < 0.0 {
+        az = 0.0 - z;
+    }
+    let e = mexp.exp(0.0 - az);
+    var num = e;
+    var pos = 0.0;
+    if z >= 0.0 {
+        num = 1.0;
+        pos = z;
+    }
+    let p = num / (1.0 + e);
+    let r = p - y;
+    let s = p * (1.0 - p);
+    let loss = pos + mexp.log1p(e) - y * z;
+    return (r, s, loss);
+}
+
+// eight rows i0 .. i0 + 7 (local indices into the block, absolute rows r0 + i): the scores, A, r, s, and the loss term of each row
+fn rows8[&x, &y, &w, &a, &q, &u, &o](xs: &x [float], rs: int, ys: &y [float], r0: int, i0: int, d: int, pd: int, wv: &w [float], am: &!a [float], rr: &!q [float], ss: &!u [float], ll: &!o [float]) -> [] int {
+    let x0 = xs[(r0 + i0 + 0) * rs..(r0 + i0 + 0) * rs + d];
+    let x1 = xs[(r0 + i0 + 1) * rs..(r0 + i0 + 1) * rs + d];
+    let x2 = xs[(r0 + i0 + 2) * rs..(r0 + i0 + 2) * rs + d];
+    let x3 = xs[(r0 + i0 + 3) * rs..(r0 + i0 + 3) * rs + d];
+    let x4 = xs[(r0 + i0 + 4) * rs..(r0 + i0 + 4) * rs + d];
+    let x5 = xs[(r0 + i0 + 5) * rs..(r0 + i0 + 5) * rs + d];
+    let x6 = xs[(r0 + i0 + 6) * rs..(r0 + i0 + 6) * rs + d];
+    let x7 = xs[(r0 + i0 + 7) * rs..(r0 + i0 + 7) * rs + d];
+    let a0 = am[(i0 + 0) * pd..(i0 + 0) * pd + d];
+    let a1 = am[(i0 + 1) * pd..(i0 + 1) * pd + d];
+    let a2 = am[(i0 + 2) * pd..(i0 + 2) * pd + d];
+    let a3 = am[(i0 + 3) * pd..(i0 + 3) * pd + d];
+    let a4 = am[(i0 + 4) * pd..(i0 + 4) * pd + d];
+    let a5 = am[(i0 + 5) * pd..(i0 + 5) * pd + d];
+    let a6 = am[(i0 + 6) * pd..(i0 + 6) * pd + d];
+    let a7 = am[(i0 + 7) * pd..(i0 + 7) * pd + d];
+    let wr = wv[0..d];
+    let b = wv[d];
+    var z0 = b;
+    var z1 = b;
+    var z2 = b;
+    var z3 = b;
+    var z4 = b;
+    var z5 = b;
+    var z6 = b;
+    var z7 = b;
+    var j = 0;
+    while j < d {
+        let wj = wr[j];
+        let v0 = x0[j];
+        let v1 = x1[j];
+        let v2 = x2[j];
+        let v3 = x3[j];
+        let v4 = x4[j];
+        let v5 = x5[j];
+        let v6 = x6[j];
+        let v7 = x7[j];
+        a0[j] = v0;
+        a1[j] = v1;
+        a2[j] = v2;
+        a3[j] = v3;
+        a4[j] = v4;
+        a5[j] = v5;
+        a6[j] = v6;
+        a7[j] = v7;
+        z0 = z0 + v0 * wj;
+        z1 = z1 + v1 * wj;
+        z2 = z2 + v2 * wj;
+        z3 = z3 + v3 * wj;
+        z4 = z4 + v4 * wj;
+        z5 = z5 + v5 * wj;
+        z6 = z6 + v6 * wj;
+        z7 = z7 + v7 * wj;
+        j = j + 1;
+    }
+    let (r0t, s0t, l0t) = row_terms(z0, ys[r0 + i0 + 0]);
+    let (r1t, s1t, l1t) = row_terms(z1, ys[r0 + i0 + 1]);
+    let (r2t, s2t, l2t) = row_terms(z2, ys[r0 + i0 + 2]);
+    let (r3t, s3t, l3t) = row_terms(z3, ys[r0 + i0 + 3]);
+    let (r4t, s4t, l4t) = row_terms(z4, ys[r0 + i0 + 4]);
+    let (r5t, s5t, l5t) = row_terms(z5, ys[r0 + i0 + 5]);
+    let (r6t, s6t, l6t) = row_terms(z6, ys[r0 + i0 + 6]);
+    let (r7t, s7t, l7t) = row_terms(z7, ys[r0 + i0 + 7]);
+    rr[i0 + 0] = r0t;
+    rr[i0 + 1] = r1t;
+    rr[i0 + 2] = r2t;
+    rr[i0 + 3] = r3t;
+    rr[i0 + 4] = r4t;
+    rr[i0 + 5] = r5t;
+    rr[i0 + 6] = r6t;
+    rr[i0 + 7] = r7t;
+    ss[i0 + 0] = s0t;
+    ss[i0 + 1] = s1t;
+    ss[i0 + 2] = s2t;
+    ss[i0 + 3] = s3t;
+    ss[i0 + 4] = s4t;
+    ss[i0 + 5] = s5t;
+    ss[i0 + 6] = s6t;
+    ss[i0 + 7] = s7t;
+    ll[i0 + 0] = l0t;
+    ll[i0 + 1] = l1t;
+    ll[i0 + 2] = l2t;
+    ll[i0 + 3] = l3t;
+    ll[i0 + 4] = l4t;
+    ll[i0 + 5] = l5t;
+    ll[i0 + 6] = l6t;
+    ll[i0 + 7] = l7t;
+    return 0;
+}
+
+fn row1[&x, &y, &w, &a, &q, &u, &o](xs: &x [float], rs: int, ys: &y [float], r0: int, i: int, d: int, pd: int, wv: &w [float], am: &!a [float], rr: &!q [float], ss: &!u [float], ll: &!o [float]) -> [] int {
+    let x0 = xs[(r0 + i) * rs..(r0 + i) * rs + d];
+    let a0 = am[i * pd..i * pd + d];
+    let wr = wv[0..d];
+    var z0 = wv[d];
+    var j = 0;
+    while j < d {
+        let v0 = x0[j];
+        a0[j] = v0;
+        z0 = z0 + v0 * wr[j];
+        j = j + 1;
+    }
+    let (r0t, s0t, l0t) = row_terms(z0, ys[r0 + i]);
+    rr[i] = r0t;
+    ss[i] = s0t;
+    ll[i] = l0t;
+    return 0;
+}
+
+// the 2 x 2 tile of SX^T A at (a0, b0) over the m rows of the block, four lanes per entry (row i to lane i mod 4), into hacc
+// (pd x pd) as (l0 + l1) + (l2 + l3). Offsets carried (wrapping adds).
+fn tile22[&s, &a, &h](sx: &s [float], am: &a [float], pd: int, m: int, a0: int, b0: int, hacc: &!h [float]) -> [] int {
+    var c000 = 0.0;
+    var c001 = 0.0;
+    var c002 = 0.0;
+    var c003 = 0.0;
+    var c010 = 0.0;
+    var c011 = 0.0;
+    var c012 = 0.0;
+    var c013 = 0.0;
+    var c100 = 0.0;
+    var c101 = 0.0;
+    var c102 = 0.0;
+    var c103 = 0.0;
+    var c110 = 0.0;
+    var c111 = 0.0;
+    var c112 = 0.0;
+    var c113 = 0.0;
+    var po = a0;
+    var qo = b0;
+    var i = 0;
+    while i + 4 <= m {
+        let p0 = sx[po..wrapping_add(po, 2)];
+        let q0 = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        let p1 = sx[po..wrapping_add(po, 2)];
+        let q1 = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        let p2 = sx[po..wrapping_add(po, 2)];
+        let q2 = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        let p3 = sx[po..wrapping_add(po, 2)];
+        let q3 = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        c000 = c000 + p0[0] * q0[0];
+        c010 = c010 + p0[0] * q0[1];
+        c100 = c100 + p0[1] * q0[0];
+        c110 = c110 + p0[1] * q0[1];
+        c001 = c001 + p1[0] * q1[0];
+        c011 = c011 + p1[0] * q1[1];
+        c101 = c101 + p1[1] * q1[0];
+        c111 = c111 + p1[1] * q1[1];
+        c002 = c002 + p2[0] * q2[0];
+        c012 = c012 + p2[0] * q2[1];
+        c102 = c102 + p2[1] * q2[0];
+        c112 = c112 + p2[1] * q2[1];
+        c003 = c003 + p3[0] * q3[0];
+        c013 = c013 + p3[0] * q3[1];
+        c103 = c103 + p3[1] * q3[0];
+        c113 = c113 + p3[1] * q3[1];
+        i = i + 4;
+    }
+    if i + 0 < m {
+        let p = sx[po..wrapping_add(po, 2)];
+        let q = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        c000 = c000 + p[0] * q[0];
+        c010 = c010 + p[0] * q[1];
+        c100 = c100 + p[1] * q[0];
+        c110 = c110 + p[1] * q[1];
+    }
+    if i + 1 < m {
+        let p = sx[po..wrapping_add(po, 2)];
+        let q = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        c001 = c001 + p[0] * q[0];
+        c011 = c011 + p[0] * q[1];
+        c101 = c101 + p[1] * q[0];
+        c111 = c111 + p[1] * q[1];
+    }
+    if i + 2 < m {
+        let p = sx[po..wrapping_add(po, 2)];
+        let q = am[qo..wrapping_add(qo, 2)];
+        po = wrapping_add(po, pd);
+        qo = wrapping_add(qo, pd);
+        c002 = c002 + p[0] * q[0];
+        c012 = c012 + p[0] * q[1];
+        c102 = c102 + p[1] * q[0];
+        c112 = c112 + p[1] * q[1];
+    }
+    hacc[(a0 + 0) * pd + b0 + 0] = order.lane_combine(c000, c001, c002, c003);
+    hacc[(a0 + 0) * pd + b0 + 1] = order.lane_combine(c010, c011, c012, c013);
+    hacc[(a0 + 1) * pd + b0 + 0] = order.lane_combine(c100, c101, c102, c103);
+    hacc[(a0 + 1) * pd + b0 + 1] = order.lane_combine(c110, c111, c112, c113);
+    return 0;
+}
+
+// The partial of rows [r0, r1) (at most 256) into slot (W values). xs is positioned at X[0, 0] with row stride rs, ys at y[0]; wv
+// holds the d + 1 parameters; sc is the scratch (scratch_len(d)), zero on entry for the first block and left in a state that only
+// ever differs from zero in columns [0, d) of A (the padding columns are never written).
+pub fn block[&x, &y, &w, &c, &s](xs: &x [float], rs: int, ys: &y [float], r0: int, r1: int, d: int, wv: &w [float], sc: &!c [float], slot: &!s [float]) -> [] int {
+    let pd = pad(d);
+    let m = r1 - r0;
+    let am = sc[0..256 * pd];
+    let sx = sc[256 * pd..512 * pd];
+    let hacc = sc[512 * pd..512 * pd + pd * pd];
+    let gacc = sc[512 * pd + pd * pd..512 * pd + pd * pd + 4 * pd];
+    let hb = sc[512 * pd + pd * pd + 4 * pd..512 * pd + pd * pd + 8 * pd];
+    let tail = 512 * pd + pd * pd + 8 * pd;
+    let rr = sc[tail..tail + 256];
+    let ss = sc[tail + 256..tail + 512];
+    let ll = sc[tail + 512..tail + 768];
+    let gbv = sc[tail + 768..tail + 772];
+    let hbv = sc[tail + 772..tail + 776];
+    // phase 1: scores, A, r, s, the loss term of each row
+    var i = 0;
+    while i + 8 <= m {
+        rows8(xs, rs, ys, r0, i, d, pd, wv, am, rr, ss, ll);
+        i = i + 8;
+    }
+    while i < m {
+        row1(xs, rs, ys, r0, i, d, pd, wv, am, rr, ss, ll);
+        i = i + 1;
+    }
+    // phase 2: SX = s * A; gradient and bias-row accumulators, four lanes (row i to lane i mod 4), ascending in the row
+    var j = 0;
+    while j < 4 * pd {
+        gacc[j] = 0.0;
+        hb[j] = 0.0;
+        j = j + 1;
+    }
+    j = 0;
+    while j < 4 {
+        gbv[j] = 0.0;
+        hbv[j] = 0.0;
+        j = j + 1;
+    }
+    i = 0;
+    while i < m {
+        let lane = i % 4;
+        let ar = am[i * pd..i * pd + pd];
+        let sr = sx[i * pd..i * pd + pd];
+        let ga = gacc[lane * pd..lane * pd + pd];
+        let hl = hb[lane * pd..lane * pd + pd];
+        let ri = rr[i];
+        let si = ss[i];
+        j = 0;
+        while j < pd {
+            let v = ar[j];
+            let t = si * v;
+            ga[j] = ga[j] + ri * v;
+            hl[j] = hl[j] + t;
+            sr[j] = t;
+            j = j + 1;
+        }
+        gbv[lane] = gbv[lane] + ri;
+        hbv[lane] = hbv[lane] + si;
+        i = i + 1;
+    }
+    // phase 3: the lower triangle of H (b <= a) in 2 x 2 tiles of four lanes
+    var a0 = 0;
+    while a0 < pd {
+        var b0 = 0;
+        while b0 <= a0 {
+            tile22(sx, am, pd, m, a0, b0, hacc);
+            b0 = b0 + 2;
+        }
+        a0 = a0 + 2;
+    }
+    // the slot: g (d + 1), H rows a < d, the bias row, the loss
+    let p = d + 1;
+    var a = 0;
+    while a < d {
+        slot[a] = order.lane_combine(gacc[a], gacc[pd + a], gacc[2 * pd + a], gacc[3 * pd + a]);
+        let row = slot[p + a * (a + 1) / 2..p + a * (a + 1) / 2 + a + 1];
+        let hr = hacc[a * pd..a * pd + a + 1];
+        var b = 0;
+        while b <= a {
+            row[b] = hr[b];
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    slot[d] = order.lane_combine(gbv[0], gbv[1], gbv[2], gbv[3]);
+    let brow = slot[p + d * (d + 1) / 2..p + d * (d + 1) / 2 + d + 1];
+    var b = 0;
+    while b < d {
+        brow[b] = order.lane_combine(hb[b], hb[pd + b], hb[2 * pd + b], hb[3 * pd + b]);
+        b = b + 1;
+    }
+    brow[d] = order.lane_combine(hbv[0], hbv[1], hbv[2], hbv[3]);
+    slot[p + p * (p + 1) / 2] = order.block_partial(ll, m);
+    return 0;
+}

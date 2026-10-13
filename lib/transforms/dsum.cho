@@ -1,0 +1,43 @@
+module transforms.dsum;
+
+import metrics.sums;
+
+// THE decisive sums of lib/transforms (docs/transforms.md section 2.5), behind one door. A transform adds decisive terms (the mean,
+// the squared deviations of a standard scaler) only through the two functions here, which call the package's reduction
+// (metrics.sums.reduce, which takes its block, lanes and tree from lib/linalg/order.cho: the one order of the package, docs/linalg.md section 2). Nothing in lib/transforms or lib/pipeline names a block length, a lane
+// count or a tree, and nothing else adds more than two decisive terms. If the order of the package changes, these two functions
+// follow it by being recompiled; if the signature of the reduction changes, this is the one file to edit.
+
+// the sum of vals[0 .. n); 0.0 for n <= 0
+pub fn total[&h, &v](heap: &!h Heap, vals: &v [float], n: int) -> [heap] float {
+    return run(heap, sums.kind_val(), vals, 0.0, n);
+}
+
+// the sum of (vals[i] - center)^2 over i in [0, n); 0.0 for n <= 0
+pub fn sq_dev[&h, &v](heap: &!h Heap, vals: &v [float], center: float, n: int) -> [heap] float {
+    return run(heap, sums.kind_dev(), vals, center, n);
+}
+
+fn run[&h, &v](heap: &!h Heap, kind: int, vals: &v [float], center: float, n: int) -> [heap] float {
+    if n <= 0 {
+        return 0.0;
+    }
+    let buf = box_slice(heap, 256, 0.0);
+    let st = box_slice(heap, 40, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    var b = buf;
+    var s = st;
+    var l = lv;
+    var r = 0.0;
+    borrow mut b as &!bw in {
+        borrow mut s as &!sw in {
+            borrow mut l as &!lw in {
+                r = sums.reduce(kind, vals, vals, center, n, contents(bw), contents(sw), contents(lw));
+            }
+        }
+    }
+    unbox_slice(heap, b);
+    unbox_slice(heap, s);
+    unbox_slice(heap, l);
+    return r;
+}

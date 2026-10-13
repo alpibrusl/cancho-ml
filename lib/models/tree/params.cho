@@ -1,0 +1,166 @@
+edition 5;
+
+module tree.params;
+
+import ml.refuse;
+import ml.limits;
+import tree.deny;
+
+// Parameters, ceilings and the checks made before any allocation sized by input (docs/models-tree.md section 4).
+
+pub struct Params {
+    task: int,
+    trees: int,
+    max_depth: int,
+    min_leaf: int,
+    max_nodes: int,
+    bins: int,
+    mtry: int,
+    bootstrap: int,
+    seed: int,
+    threads: int,
+}
+
+// classification 0, regression 1
+pub fn task_class() -> [] int {
+    return 0;
+}
+
+pub fn task_reg() -> [] int {
+    return 1;
+}
+
+// training rows: the exactness bound of the Gini comparison (section 3.1)
+pub fn rows_max() -> [] int {
+    return 1048576;
+}
+
+pub fn depth_max() -> [] int {
+    return 30;
+}
+
+pub fn trees_max() -> [] int {
+    return 1024;
+}
+
+// per-tree node budget ceiling, and the forest's total
+pub fn nodes_max() -> [] int {
+    return 4194304;
+}
+
+pub fn nodes_total_max() -> [] int {
+    return 16777216;
+}
+
+// the copies a threaded fit makes (docs/models-tree.md section 5) may not exceed this many bytes: 2^34 (16 GiB) [choice, provisional]
+pub fn copies_max() -> [] int {
+    return 17179869184;
+}
+
+// regression targets are refused above this magnitude (section 3.2)
+pub fn y_max() -> [] float {
+    return 1.0e100;
+}
+
+pub fn isqrt(v: int) -> [] int {
+    var r = 0;
+    while (r + 1) * (r + 1) <= v {
+        r = r + 1;
+    }
+    return r;
+}
+
+// the default number of features per node: classification floor(sqrt(d)), regression max(1, d / 3)
+pub fn default_mtry(task: int, d: int) -> [] int {
+    if task == 0 {
+        if isqrt(d) < 1 {
+            return 1;
+        }
+        return isqrt(d);
+    }
+    if d / 3 < 1 {
+        return 1;
+    }
+    return d / 3;
+}
+
+// mtry as used: 0 means the default
+pub fn mtry_of(p: Params, d: int) -> [] int {
+    if p.mtry == 0 {
+        return default_mtry(p.task, d);
+    }
+    return p.mtry;
+}
+
+fn min2(a: int, b: int) -> [] int {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// the nodes one tree can ever have: min(max_nodes, 2^(depth+1) - 1, 2n - 1). Exceeding it is only possible through max_nodes.
+// Needs the parameters to have passed `check`.
+pub fn node_cap(p: Params, n: int) -> [] int {
+    var c = min2(p.max_nodes, 2 * n - 1);
+    c = min2(c, (1 << p.max_depth + 1) - 1);
+    return c;
+}
+
+// 0, or the code of the first refusal. Order: threads, the matrix caps, the row bound of the exact comparison, then each
+// parameter, then the node allocation. Nothing is allocated here.
+pub fn check(p: Params, n: int, d: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [] int {
+    let t = limits.check_threads(p.threads);
+    if t != 0 {
+        return t;
+    }
+    let m = limits.check_matrix(n, d, rows_cap, cols_cap, cells_cap);
+    if m != 0 {
+        return m;
+    }
+    if n > rows_max() {
+        return refuse.too_many_rows();
+    }
+    if p.task != 0 && p.task != 1 {
+        return refuse.param_out_of_range();
+    }
+    if p.trees < 1 || p.trees > trees_max() {
+        return refuse.param_out_of_range();
+    }
+    if p.max_depth < 1 {
+        return refuse.param_out_of_range();
+    }
+    if p.max_depth > depth_max() {
+        return deny.limit_depth();
+    }
+    if p.min_leaf < 1 || p.min_leaf > n {
+        return refuse.param_out_of_range();
+    }
+    if p.bins < 2 || p.bins > 255 {
+        return refuse.param_out_of_range();
+    }
+    if p.mtry < 0 || p.mtry > d {
+        return refuse.param_out_of_range();
+    }
+    if p.bootstrap != 0 && p.bootstrap != 1 {
+        return refuse.param_out_of_range();
+    }
+    if p.seed < 0 {
+        return refuse.param_out_of_range();
+    }
+    if p.max_nodes < 1 {
+        return refuse.param_out_of_range();
+    }
+    if p.max_nodes > nodes_max() {
+        return deny.limit_nodes();
+    }
+    if p.trees > nodes_total_max() / node_cap(p, n) {
+        return deny.limit_nodes();
+    }
+    // every thread owns a copy of the bin matrix and n-sized scratch (about 24 bytes a row), and the binning gathers the matrix once
+    // more: n * d * 9 + threads * (n * d + 24 n) bytes, compared before anything is allocated (both products are far below 2^62)
+    if n * d * 9 + p.threads * (n * d + 24 * n) > copies_max() {
+        return refuse.threads();
+    }
+    return 0;
+}

@@ -1,0 +1,98 @@
+[
+ {
+  "name": "AUC uniform scores, sklearn.roc_auc_score",
+  "py_min": 146.5928329853341,
+  "py_spread": 1.0406954893822697,
+  "c_min": 24.0,
+  "c_spread": 1.125,
+  "load0": 4.56787109375,
+  "load1": 4.56787109375,
+  "py_value": 0.5002732402222771,
+  "c_value": 0.5002732402222771,
+  "what": "auc"
+ },
+ {
+  "name": "AUC uniform scores, thin numpy (argsort + cumsum)",
+  "py_min": 86.20520797558129,
+  "py_spread": 1.0603047549012812,
+  "c_min": 24.333333333333332,
+  "c_spread": 1.0684931506849316,
+  "load0": 4.56787109375,
+  "load1": 4.52197265625,
+  "py_value": 0.5002732402222771,
+  "c_value": 0.5002732402222771,
+  "what": "auc"
+ },
+ {
+  "name": "AUC 16 distinct values (ties), sklearn.roc_auc_score",
+  "py_min": 78.5434580175206,
+  "py_spread": 1.0493537865307376,
+  "c_min": 22.666666666666668,
+  "c_spread": 1.0588235294117647,
+  "load0": 4.52197265625,
+  "load1": 4.52197265625,
+  "py_value": 0.5003179212842598,
+  "c_value": 0.5003179212842598,
+  "what": "auc"
+ },
+ {
+  "name": "AUC 16 distinct values (ties), thin numpy (argsort + cumsum)",
+  "py_min": 32.15550002641976,
+  "py_spread": 1.048599775531724,
+  "c_min": 23.0,
+  "c_spread": 1.0434782608695652,
+  "load0": 4.52197265625,
+  "load1": 4.52197265625,
+  "py_value": 0.5003179212842598,
+  "c_value": 0.5003179212842598,
+  "what": "auc"
+ },
+ {
+  "name": "log-loss uniform probabilities, sklearn.log_loss",
+  "py_min": 51.880541956052184,
+  "py_spread": 1.0323997599715267,
+  "c_min": 16.0,
+  "c_spread": 1.0208333333333333,
+  "load0": 4.52197265625,
+  "load1": 4.52197265625,
+  "py_value": 1.0001745450823847,
+  "c_value": 1.0001745450823847,
+  "what": "ll"
+ },
+ {
+  "name": "log-loss uniform probabilities, thin numpy (clip, log, sum)",
+  "py_min": 5.152667057700455,
+  "py_spread": 1.0457611364279398,
+  "c_min": 15.666666666666666,
+  "c_spread": 1.0425531914893618,
+  "load0": 4.52197265625,
+  "load1": 4.52197265625,
+  "py_value": 1.0001745450823847,
+  "c_value": 1.0001745450823847,
+  "what": "ll"
+ },
+ {
+  "name": "log-loss 16 distinct values, sklearn.log_loss",
+  "py_min": 56.687708012759686,
+  "py_spread": 1.0300726570232028,
+  "c_min": 16.333333333333332,
+  "c_spread": 1.0204081632653064,
+  "load0": 4.52197265625,
+  "load1": 4.52197265625,
+  "py_value": 1.5386044068042515,
+  "c_value": 1.5386044068042515,
+  "what": "ll"
+ },
+ {
+  "name": "log-loss 16 distinct values, thin numpy (clip, log, sum)",
+  "py_min": 5.426333984360099,
+  "py_spread": 1.0796193388917763,
+  "c_min": 16.0,
+  "c_spread": 1.0416666666666667,
+  "load0": 4.52197265625,
+  "load1": 4.52197265625,
+  "py_value": 1.5386044068042515,
+  "c_value": 1.5386044068042515,
+  "what": "ll"
+ }
+]

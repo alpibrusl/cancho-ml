@@ -1,0 +1,227 @@
+// GAP 10 (stage M7): a bounds-checked load behind a guard appears to turn a data-dependent compare into a branch. The bin search of
+// lib/models/tree/bins.cho counts the edges <= x in a sorted column with a binary search. Written the natural way (variant "guarded":
+// `if t <= ne { if e[t - 1] <= x { c = t; } }` with a runtime `ne`), the compare is, I infer from the timing (no counter was read, no disassembly checked), a
+// mispredicted branch, and the loop takes 12x longer than the same search over a table of constant length (variant "constant") and 6x longer than over a padded
+// table indexed with a mask (variant "masked": every index is `& 255`, so no check can fail and no load needs a guard, and the compare is a
+// select). Nothing in the source says "this index is below the length"; the language has no way to say it except the mask.
+// Measured on this Mac (80,000 rows x 20 columns x 6-8 steps, 20 runs of each, one run of this file; load about 3 to 8 on a shared
+// machine, so read the ratios, not the numbers): guarded 33 ms, constant 2.8 ms, masked 5.4 ms per run. The library uses the masked form (docs/models-tree.md 10).
+//     cancho build --std bounds_branch.cho -o bb && ./bb
+edition 5;
+import std.io;
+
+fn guarded[&x, &e, &o](xs: &x [float], ed: &e [float], n: int, d: int, ne: int, bins: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < n {
+        let row = xs[i * d..i * d + d];
+        var f = 0;
+        while f < d {
+            let e = ed[f * ne..f * ne + ne];
+            let x = row[f];
+            var c = 0;
+            var step = 32;
+            while step > 0 {
+                let t = c + step;
+                if t <= ne {
+                    if e[t - 1] <= x {
+                        c = t;
+                    }
+                }
+                step = step >> 1;
+            }
+            bins[f * n + i] = byte_of(c);
+            f = f + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn constant[&x, &e, &o](xs: &x [float], ed: &e [float], n: int, bins: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < n {
+        let row = xs[i * 20..i * 20 + 20];
+        var f = 0;
+        while f < 20 {
+            let e = ed[f * 63..f * 63 + 63];
+            let x = row[f];
+            var c = 0;
+            var step = 32;
+            while step > 0 {
+                let t = c + step;
+                if t <= 63 {
+                    if e[t - 1] <= x {
+                        c = t;
+                    }
+                }
+                step = step >> 1;
+            }
+            bins[f * n + i] = byte_of(c);
+            f = f + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ep: d columns of 256 edges, +inf past the real ones
+fn masked[&x, &e, &o](xs: &x [float], ep: &e [float], n: int, d: int, bins: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < n {
+        let row = xs[i * d..i * d + d];
+        var f = 0;
+        while f < d {
+            let e = ep[f * 256..f * 256 + 256];
+            let x = row[f];
+            var c = 0;
+            if e[127] <= x {
+                c = 128;
+            }
+            if e[c + 63 & 255] <= x {
+                c = c + 64;
+            }
+            if e[c + 31 & 255] <= x {
+                c = c + 32;
+            }
+            if e[c + 15 & 255] <= x {
+                c = c + 16;
+            }
+            if e[c + 7 & 255] <= x {
+                c = c + 8;
+            }
+            if e[c + 3 & 255] <= x {
+                c = c + 4;
+            }
+            if e[c + 1 & 255] <= x {
+                c = c + 2;
+            }
+            if e[c & 255] <= x {
+                c = c + 1;
+            }
+            bins[f * n + i] = byte_of(c);
+            f = f + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    let n = 80000;
+    var g0 = 0;
+    var g1 = 0;
+    var c1 = 0;
+    var m1 = 0;
+    borrow mut heap as &!hp in {
+        let xs = box_slice(hp, n * 20, 0.0);
+        let ed = box_slice(hp, 20 * 63, 0.0);
+        let ep = box_slice(hp, 20 * 256, 1.0e300 * 1.0e300);
+        let b1 = box_slice(hp, n * 20, byte_of(0));
+        let b2 = box_slice(hp, n * 20, byte_of(0));
+        let b3 = box_slice(hp, n * 20, byte_of(0));
+        borrow mut xs as &!xw in {
+            var s = 12345;
+            var i = 0;
+            while i < n * 20 {
+                s = wrapping_add(wrapping_mul(s, 6364136223846793005), 1442695040888963407);
+                contents(xw)[i] = float_of(s >> 40 & 65535) / 32768.0 - 1.0;
+                i = i + 1;
+            }
+        }
+        borrow mut ed as &!ew in {
+            borrow mut ep as &!pw in {
+                var f = 0;
+                while f < 20 {
+                    var k = 0;
+                    while k < 63 {
+                        contents(ew)[f * 63 + k] = float_of(k) / 31.5 - 1.0;
+                        contents(pw)[f * 256 + k] = float_of(k) / 31.5 - 1.0;
+                        k = k + 1;
+                    }
+                    f = f + 1;
+                }
+            }
+        }
+        borrow xs as &xr in {
+            borrow ed as &er in {
+                borrow ep as &pr in {
+                    borrow mut b1 as &!w1 in {
+                        borrow mut b2 as &!w2 in {
+                            borrow mut b3 as &!w3 in {
+                                borrow clock as &c in {
+                                    var r = 0;
+                                    g0 = clock_ms(c);
+                                    while r < 20 {
+                                        guarded(contents(xr), contents(er), n, 20, 63, contents(w1));
+                                        r = r + 1;
+                                    }
+                                    g1 = clock_ms(c);
+                                    r = 0;
+                                    while r < 20 {
+                                        constant(contents(xr), contents(er), n, contents(w2));
+                                        r = r + 1;
+                                    }
+                                    c1 = clock_ms(c);
+                                    r = 0;
+                                    while r < 20 {
+                                        masked(contents(xr), contents(pr), n, 20, contents(w3));
+                                        r = r + 1;
+                                    }
+                                    m1 = clock_ms(c);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        var same = true;
+        borrow b1 as &r1 in {
+            borrow b2 as &r2 in {
+                borrow b3 as &r3 in {
+                    var i = 0;
+                    while i < n * 20 {
+                        if contents(r1)[i] != contents(r2)[i] || contents(r1)[i] != contents(r3)[i] {
+                            same = false;
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+        }
+        borrow mut io as &!i in {
+            io.write_all(i, "guarded ms per run (x20 total): ");
+            io.print_int(i, (g1 - g0) / 20);
+            io.write_all(i, " (");
+            io.print_int(i, g1 - g0);
+            io.write_all(i, ")\nconstant lengths: ");
+            io.print_int(i, (c1 - g1) / 20);
+            io.write_all(i, " (");
+            io.print_int(i, c1 - g1);
+            io.write_all(i, ")\nmasked, padded: ");
+            io.print_int(i, (m1 - c1) / 20);
+            io.write_all(i, " (");
+            io.print_int(i, m1 - c1);
+            if same {
+                io.write_all(i, ")\nthe three give the same bins\n");
+            } else {
+                io.write_all(i, ")\nthe three DIFFER\n");
+            }
+        }
+        unbox_slice(hp, xs);
+        unbox_slice(hp, ed);
+        unbox_slice(hp, ep);
+        unbox_slice(hp, b1);
+        unbox_slice(hp, b2);
+        unbox_slice(hp, b3);
+    }
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}

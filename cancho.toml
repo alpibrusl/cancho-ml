@@ -1,0 +1,78 @@
+[package]
+name = "ml"
+cancho = "a4572ea3b506e4bcec1c4be43deda1043c11ba9f"   # the compiler these sources were written for
+
+# `contract` is cancho-tools' package, one store per module, pinned to a commit, as in cancho-table (never copied).
+# The linear algebra (lib/linalg) and the core (lib/core) import nothing from it; `ml` (tools/ml) does. `cancho install` fetches
+# the pinned modules into build/deps (not committed), `cancho build --bin ml` is package mode, and `toolbox.built` is this
+# tool's own generated module (generated/ml, written by scripts/manifest.py), as in cancho-table.
+# cancho-table's numeric modules (pow5, dec, flt, query, facc, reader) are NOT yet a [dependencies.*]: cancho-table is a binary
+# repository and commits no .cancho-vcs store, so there is nothing to pin (docs/reader.md section 1; the proposal for cancho-table is
+# docs/upstream/cancho-table-numeric-package.md). LOCAL-DEV FALLBACK until then: the `sources` of the binaries that read cells name
+# the six FILES of a read-only clone at ../cancho-table-main, pinned by table.pin and checked by scripts/check_table_pin.sh. Nothing
+# is copied here. When cancho-table publishes the stores, these lines become `cancho add flt|query|facc|reader` and the paths go away.
+
+[dependencies.cli]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.cli"
+
+[dependencies.describe]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.describe"
+
+[dependencies.fail]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.fail"
+
+[dependencies.limit]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.limit"
+
+[dependencies.lines]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.lines"
+
+[dependencies.out]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.out"
+
+[dependencies.path]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.path"
+
+[dependencies.place]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.place"
+
+[dependencies.text]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "8dab9176e521660333914dc768a80a29330a2a8e"
+path = ".cancho-vcs/toolbox.text"
+
+[[bin]]
+name = "linalg-check"
+sources = ["lib/core", "lib/linalg", "tools/linalg-check"]
+std = true
+out = "build/linalg-check"
+
+# the driver of the numeric gates of lib/models (scripts/gate_models.sh builds it from an explicit file list; this entry was not built in
+# package mode, which needs `cancho install`)
+[[bin]]
+name = "models-check"
+sources = ["lib/core", "lib/linalg", "lib/models", "lib/models/linear", "lib/models/kmeans", "tools/models-check"]
+std = true
+out = "build/models-check"
+
+[[bin]]
+name = "ml"
+sources = ["lib/core", "lib/linalg/tensor.cho", "tools/ml", "generated/ml", "../cancho-table-main/tools/table/pow5.cho", "../cancho-table-main/tools/table/dec.cho", "../cancho-table-main/tools/table/flt.cho", "../cancho-table-main/tools/table/query.cho", "../cancho-table-main/tools/table/facc.cho", "../cancho-table-main/tools/table/reader.cho"]  # LOCAL-DEV: the last six
+std = true
+out = "build/ml"
