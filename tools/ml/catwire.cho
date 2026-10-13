@@ -390,7 +390,7 @@ pub fn answer[&h, &n](heap: &!h Heap, o: verbs.Opts, name: &static [byte], task:
     plain = buffer.append(heap, plain, task);
     plain = buffer.append(heap, plain, ", ");
     plain = buffer.push_nat(heap, plain, rows);
-    plain = buffer.append(heap, plain, " rows, fitted with categorical columns and written to no file (the vocabulary cannot be stored before stage 3 of issue 21)\n");
+    plain = buffer.append(heap, plain, " rows, fitted with categorical columns and written to no file (the model file has no string table for the vocabulary)\n");
     var extra = buffer.empty(heap, 1);
     if o.dry {
         buffer.drop(heap, extra);
