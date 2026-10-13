@@ -282,6 +282,10 @@ def render_modeldefs(models):
         out += ["    if bytes.equal(verb, %s) {" % lit("model:" + m["name"]),
                 "        return %s;" % lit(" ".join(plan_defs(h) for h in m["hyperparameter"])), "    }"]
     out += ["    return \"\";", "}", ""]
+    out += ["// the keys of the model called `name`, or \"\" when there is no such model", "pub fn model_defs[&s](name: &s [byte]) -> [] &static [byte] {"]
+    for m in models:
+        out += ["    if bytes.equal(name, %s) {" % lit(m["name"]), "        return %s;" % lit(" ".join(plan_defs(h) for h in m["hyperparameter"])), "    }"]
+    out += ["    return \"\";", "}", ""]
     text = "\n".join(out)
     return text.replace("module pipeline.modeldefs;\n", "module pipeline.modeldefs;\n\nimport std.bytes;\n", 1)
 

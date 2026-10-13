@@ -508,25 +508,7 @@ fn emit[&h, &s, &k, &w, &f](heap: &!h Heap, src: &s [byte], line_no: int, ls: in
 
 // the defs of a model kind by its name in v, or "" when there is no such kind
 fn model_defs[&v](v: &v [byte]) -> [] &static [byte] {
-    if bytes.equal(v, "constant") {
-        return defs_of("model:constant");
-    }
-    if bytes.equal(v, "linear") {
-        return defs_of("model:linear");
-    }
-    if bytes.equal(v, "logistic") {
-        return defs_of("model:logistic");
-    }
-    if bytes.equal(v, "kmeans") {
-        return defs_of("model:kmeans");
-    }
-    if bytes.equal(v, "tree") {
-        return defs_of("model:tree");
-    }
-    if bytes.equal(v, "forest") {
-        return defs_of("model:forest");
-    }
-    return "";
+    return modeldefs.model_defs(v);
 }
 
 // is `key` a key of the def string

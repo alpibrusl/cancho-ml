@@ -21,12 +21,15 @@ import subprocess
 import sys
 import tempfile
 
+import warnings
+
 import numpy as np
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import log_loss, mean_squared_error, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
+warnings.filterwarnings("ignore", module="sklearn")  # C=inf is how this version of scikit-learn spells no penalty, and it says so
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BIN = os.environ.get("ML_BIN", str(ROOT / "build" / "ml"))
 N, D = 2000, 6

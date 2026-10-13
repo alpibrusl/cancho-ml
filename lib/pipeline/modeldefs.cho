@@ -55,3 +55,26 @@ pub fn defs[&s](verb: &s [byte]) -> [] &static [byte] {
     }
     return "";
 }
+
+// the keys of the model called `name`, or "" when there is no such model
+pub fn model_defs[&s](name: &s [byte]) -> [] &static [byte] {
+    if bytes.equal(name, "constant") {
+        return "task:enum=regression,classification:req";
+    }
+    if bytes.equal(name, "linear") {
+        return "l2:fnn:=0.0";
+    }
+    if bytes.equal(name, "logistic") {
+        return "iterations:int=1,1000:=100 l2:fnn:=0.0";
+    }
+    if bytes.equal(name, "kmeans") {
+        return "k:int=1,1024:req iterations:int=1,1000:=10";
+    }
+    if bytes.equal(name, "tree") {
+        return "task:enum=classification,regression:req max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
+    }
+    if bytes.equal(name, "forest") {
+        return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,30:=8 min-leaf:int=1,1000000:=1";
+    }
+    return "";
+}
