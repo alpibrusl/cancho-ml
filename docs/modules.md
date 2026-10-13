@@ -130,7 +130,30 @@ control (an honest twin of `linear` under another name and kind) is admitted by 
 
 ## 8. Results
 
-*(Filled in when the code and its runs exist; see the end of this document.)*
+Machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python 3.14.5, numpy 2.4.6, scikit-learn 1.8.0. Printed by `python3 scripts/admit.py <model>` and `python3 tests/modules/run.py`; no time is a claim.
+
+**Admission of the three wired models** (all twelve checks, no `--fast`):
+
+| model | result | what each check saw |
+|---|---|---|
+| `linear` | **ADMITTED, 12 of 12 PASS** | Q0 the doc `docs/models-linear.md` was committed before both files; Q1 manifest, generated files, the eight functions of the adapter; Q2 kind 4; Q3 10 tags; Q4 2 files scanned; Q5 the derived authority equals the committed one, the module adds `conc`; Q6 `--threads` 1 to 16, one file of 616 bytes; Q7 764 damaged files; Q8 4 files under 2,000 lines; Q9 30 oracle cases, byte for byte; Q10 133 mutant patterns in 2 suites (`mutants_models.py` 93, `mutants_wire.py` 40), 3 survivors, each explained; Q11 6 comparisons with scikit-learn |
+| `logistic` | **ADMITTED, 12 of 12 PASS** | the same; kind 5, 12 tags, 3 files, a file of 667 bytes, 807 damaged files, 5 of 30 oracle cases not judged (only checked not to trap), 9 comparisons |
+| `constant` | ADMITTED, 9 PASS, 3 SKIP | Q6 and Q7 skip (no threaded fit, no model file of its own beyond the CLI slice's, whose damaged-file gate is M1), Q11 skips (exact integers against `fractions.Fraction` is Q9); Q10 is the 53 patterns of `mutants_cli.py` |
+
+So `linear` and `logistic` are `supported` by the rule of section 6 (their manifests say so), and k-means, the tree and the forest are `experimental` and `wired = false`.
+
+**The mutant modules** (`python3 tests/modules/run.py`, 13 s): the control (an honest twin of `linear` under another name and kind 8) is **ADMITTED**; each of the six defects is **REFUSED on the check it was written for**:
+
+| mutant module | check that failed |
+|---|---|
+| `mutant-capability` | Q5 only |
+| `mutant-kind-reuse` | Q2, and Q1 (the generator itself refuses a manifest whose kind is another model's) |
+| `mutant-unregistered-tag` | Q3 only |
+| `mutant-sum-outside-order` | Q4 only |
+| `mutant-threads-one-count` | Q6 only |
+| `mutant-threads-eleven` | Q6 only |
+
+**What the first runs found.** The control failed at first: `ml fit --model twin` was refused with `ml.plan.bad-value`, because `lib/pipeline/plan.cho` still held a second hand-written list of the model names (`model_defs`) beside the one that the generator had replaced. The mutant module test is what showed that a "generated" table still had a hand copy; the list is generated now (`modeldefs.model_defs`). The capability mutant could not be built as a module alone: an adapter is called with the heap and arrays only, so it holds no `Clock`, `Io` or `Fs` to read, and the compiler derives a label only from code that main reaches; the mutant therefore also edits `tools/ml/main.cho` to hand its function a clock, which is what a pull request that adds a capability would have to do, and Q5 sees it. That is a property of the interface (a module that follows it can add `conc` and nothing else), and it is stated here so that nobody reads Q5 as the only barrier.
 
 ## 9. Open questions
 
