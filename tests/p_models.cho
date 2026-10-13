@@ -318,6 +318,91 @@ fn test_record_bytes_and_round_trip[&h](heap: &!h Heap) -> [heap] int {
     return bad;
 }
 
+// the logistic payload of the wiring stage (docs/wiring.md section 4): the two records of the linear payload under kind 5, then the labels record
+fn test_logistic_payload_and_its_labels[&h](heap: &!h Heap) -> [heap] int {
+    let w = fill(heap, 4, 5);
+    let bytes = box_slice(heap, record.logistic_size(3) + 8, byte_of(0));
+    let back = box_slice(heap, 8, 0.0);
+    var bad = 0;
+    var total = 0;
+    borrow w as &wr in {
+        borrow mut bytes as &!bw in {
+            let end = record.encode_linear(contents(bw), 0, record.kind_logistic(), 3, contents(wr));
+            total = record.encode_labels(contents(bw), end, 0 - 7, 12);
+            if total != record.logistic_size(3) {
+                bad = bad + 1;
+            }
+        }
+        borrow bytes as &br in {
+            let b = contents(br)[0..total];
+            // the labels record: dtype 1 (i64), rank 1, shape 2, the two labels, as written by hand
+            let at = record.linear_size(3);
+            if record.get32(b, at) != 1 || record.get32(b, at + 4) != 1 || fbits.get64(b, at + 8) != 2 || fbits.get64(b, at + 16) != 0 - 7 || fbits.get64(b, at + 24) != 12 {
+                bad = bad + 1;
+            }
+            borrow mut back as &!kw in {
+                let d = record.decode_linear(b, record.kind_logistic(), 3, true, contents(kw));
+                if d.code != 0 || d.c0 != 0 - 7 || d.c1 != 12 || d.end != total {
+                    bad = bad + 1;
+                }
+                bad = bad + same_bits(contents(kw), contents(wr), 4);
+                // the wrong kind, a payload that is not expected to hold labels, a payload with nothing after the intercept
+                if record.decode_linear(b, record.kind_linear(), 3, true, contents(kw)).code != 1 {
+                    bad = bad + 1;
+                }
+                if record.decode_linear(b, record.kind_logistic(), 3, false, contents(kw)).code != 1 {
+                    bad = bad + 1;
+                }
+                if record.decode_linear(b[0..at], record.kind_logistic(), 3, true, contents(kw)).code != 1 {
+                    bad = bad + 1;
+                }
+                if record.decode_linear(b, record.kind_logistic(), 2, true, contents(kw)).code != 1 {
+                    bad = bad + 1;
+                }
+                // bytes after the labels are not part of the payload
+                if record.decode_linear(contents(br)[0..total + 8], record.kind_logistic(), 3, true, contents(kw)).code != 1 {
+                    bad = bad + 1;
+                }
+                // every truncation is refused, never a trap
+                var cut = 0;
+                while cut < total {
+                    if record.decode_linear(b[0..cut], record.kind_logistic(), 3, true, contents(kw)).code != 1 {
+                        bad = bad + 1;
+                    }
+                    cut = cut + 1;
+                }
+            }
+        }
+        // the labels are an i64 record: a record of another dtype with the same shape is refused
+        borrow mut bytes as &!bw in {
+            record.put32(contents(bw), record.linear_size(3), 2);
+        }
+        borrow bytes as &br in {
+            borrow mut back as &!kw in {
+                if record.decode_linear(contents(br)[0..total], record.kind_logistic(), 3, true, contents(kw)).code != 1 {
+                    bad = bad + 1;
+                }
+            }
+        }
+        // equal labels are not two labels
+        borrow mut bytes as &!bw in {
+            let end = record.encode_linear(contents(bw), 0, record.kind_logistic(), 3, contents(wr));
+            record.encode_labels(contents(bw), end, 5, 5);
+        }
+        borrow bytes as &br in {
+            borrow mut back as &!kw in {
+                if record.decode_linear(contents(br)[0..total], record.kind_logistic(), 3, true, contents(kw)).code != 1 {
+                    bad = bad + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, w);
+    unbox_slice(heap, bytes);
+    unbox_slice(heap, back);
+    return bad;
+}
+
 fn test_record_kmeans_rank2[&h](heap: &!h Heap) -> [heap] int {
     let c = fill(heap, 12, 9);
     let bytes = box_slice(heap, record.kmeans_size(4, 3), byte_of(0));
@@ -1624,6 +1709,7 @@ fn main(world: World) -> [conc] int {
             failed = failed + report(ip, "score_order", test_score_order(hp));
             failed = failed + report(ip, "score_four_rows_equal_one_row", test_score_four_rows_equal_one_row(hp));
             failed = failed + report(ip, "record_bytes_and_round_trip", test_record_bytes_and_round_trip(hp));
+            failed = failed + report(ip, "logistic_payload_and_its_labels", test_logistic_payload_and_its_labels(hp));
             failed = failed + report(ip, "record_kmeans_rank2", test_record_kmeans_rank2(hp));
             failed = failed + report(ip, "linreg_recovers_a_plane", test_linreg_recovers_a_plane(hp));
             failed = failed + report(ip, "linreg_ridge_leaves_the_intercept", test_linreg_ridge_leaves_the_intercept(hp));

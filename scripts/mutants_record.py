@@ -17,14 +17,24 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def parse(log):
+    """The summary of a run of a mutant script. Two formats exist: `N mutants: K killed, S survived, I invalid` with `SURVIVOR id: reason` lines (mutants_cli.py,
+    mutants_wire.py), and `mutants_models: K killed, S survived and explained, U unexplained` with `id SURVIVED (explained: reason)` lines (mutants_models.py)."""
     text = pathlib.Path(log).read_text()
     m = re.search(r"(\d+) mutants: (\d+) killed, (\d+) survived, (\d+) invalid", text)
-    if not m:
-        raise SystemExit("%s: no summary line `N mutants: K killed, S survived, I invalid`" % log)
-    total, killed, survived, invalid = map(int, m.groups())
-    if invalid:
-        raise SystemExit("%s: %d invalid mutants" % (log, invalid))
-    surv = [{"id": i, "why": w.strip()} for i, w in re.findall(r"^SURVIVOR (\S+?): (.*)$", text, re.M)]
+    if m:
+        total, killed, survived, invalid = map(int, m.groups())
+        if invalid:
+            raise SystemExit("%s: %d invalid mutants" % (log, invalid))
+        surv = [{"id": i, "why": w.strip()} for i, w in re.findall(r"^SURVIVOR (\S+?): (.*)$", text, re.M)]
+    else:
+        m = re.search(r"mutants_\w+: (\d+) killed, (\d+) survived and explained, (\d+) unexplained", text)
+        if not m:
+            raise SystemExit("%s: no summary line" % log)
+        killed, survived, unexplained = map(int, m.groups())
+        if unexplained:
+            raise SystemExit("%s: %d unexplained survivors" % (log, unexplained))
+        total = killed + survived
+        surv = [{"id": i, "why": w.strip()} for i, w in re.findall(r"^(\S+)\s+SURVIVED \(explained: (.*)\)$", text, re.M)]
     if len(surv) != survived:
         raise SystemExit("%s: %d survivors counted, %d listed" % (log, survived, len(surv)))
     return total, killed, surv

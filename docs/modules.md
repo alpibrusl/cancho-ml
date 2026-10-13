@@ -29,17 +29,19 @@ One file per model, parsed by `scripts/gen_models.py` with Python's `tomllib`. A
 |---|---|---|
 | `name` | string | the plan name and the `--model` value; equal to the directory name |
 | `kind` | int | the `u32` that opens the `model` section; **from `lib/core/kinds.cho`** (the registry in code) |
+| `extra_kinds` | list of int, optional | more kinds the model writes (`constant` writes 1, 2 and 3: regression, classification, float regression) |
 | `kind_fn` | string | the function of `kinds.cho` that returns it (`model_linear`); the generator checks the body |
 | `shares_kind_with` | string, optional | `tree` and `forest` share kind 7 (the task is a field of the payload); both name each other, no other pair may |
 | `task` | `regression` or `classification` | what the model predicts (`clustering` for k-means, which is never wired) |
 | `tier` | `experimental` or `supported` | section 6 |
 | `wired` | bool | callable from `ml`. `false`: the manifest holds the kind and the plan keys, the dispatch has no branch |
-| `adapter` | string | the module that implements the interface of section 4 (required when `wired`) |
+| `adapter` | string | the module that implements the interface of section 4 (required when `wired`); `builtin` for `constant`, which `tools/ml/verbs.cho` builds exactly and which has no adapter |
+| `plan_order` | int | the place of the model in the plan grammar's list (`0 .. n-1`, once each): `constant`, `linear`, `logistic`, `kmeans`, `tree`, `forest` are 0 to 5 |
 | `payload_version` | int | the version of the records after the `u32 kind` (linear 1, logistic 2: it gained the labels record, `docs/wiring.md` section 4) |
 | `doc` | string | the document that holds the model's gates, written before its code (`admit` checks it exists, has a `Gates` section and was committed first) |
 | `files` | list of strings | the source files of the module; `admit` applies the size, sum and tag checks to them |
 | `[limits]` | table | named integer limits (`max_features = 256`): data, shown by `introspect` through the doc table |
-| `[[hyperparameter]]` | table list | `name`, `type` (`int`, `float`, `enum`), `min`/`max` (int), `values` (enum), `default` (string, the canonical spelling), `doc` (one sentence) |
+| `[[hyperparameter]]` | table list | `name`, `type` (`int`: `min`, `max`; `float`: `nonneg = true`, the only float the plan grammar has; `enum`: `values`), `default` (string, the canonical spelling) or `required = true`, `doc` (one sentence without `;`, `\|` or a quote: it is a cell of the flag table) |
 | `[tags]` | table | `emits`: every rule tag the module can answer; each must be in the tables of `spec.cho` (`extra()` or `pending()`), and each reachable one has a fixture |
 | `[authority]` | table | `adds`: labels the module needs beyond the base row of `lib/models/contract.toml`, `reason`: why (empty when `adds` is empty) |
 | `[sums]` | table | `decisive`: the files that hold decisive float sums; each must route them through `lib/linalg/order.cho` (section 5, Q4) |
@@ -113,17 +115,18 @@ payload. `supported`: all of Q0 to Q11 pass at the commit that sets the tier, th
 
 ## 7. The mutant modules: the gate of the gate (`tests/modules/`)
 
-`tests/modules/run.py` copies the tree to a scratch directory, overlays one directory of `tests/modules/mutants/<id>/` (a new model, or an edited file), runs
-`gen_models.py` there, builds `ml` and runs `admit.py --fast` on it. The test passes only if the check named in the table **fails** for that mutant, and the
-control (no overlay) passes every check.
+`tests/modules/run.py` copies the tree to a scratch directory, adds the defective module (`tests/modules/mutants.py`: a new model directory, its entry in the registry, and for the capability mutant one edit of `main.cho`), runs
+`gen_models.py`, `schemas.py` and `manifest.py` there as a module's author would, and runs `admit.py --fast` on it (building `ml` first when the check needs the binary). The run passes only if the check named in the table **fails** for that mutant, and the
+control (an honest twin of `linear` under another name and kind) is admitted by every check that runs.
 
 | mutant module | what it does | the check that must fail |
 |---|---|---|
-| `mutant-capability` | an adapter that reads the clock | Q5 |
+| `mutant-capability` | a function of the adapter's file reads the clock, and `tools/ml/main.cho` hands it one | Q5 |
 | `mutant-kind-reuse` | a model with kind 4, the number of `linear` | Q2 |
 | `mutant-unregistered-tag` | emits `ml.mutant.not-registered` | Q3 |
 | `mutant-sum-outside-order` | a float accumulation in the adapter, no `linalg.order` | Q4 |
-| `mutant-threads-one-count` | a fit whose bytes differ at thread count 11 only | Q6 |
+| `mutant-threads-one-count` | a fit whose bytes are the same at one thread count only (any count above 1 changes a byte) | Q6 |
+| `mutant-threads-eleven` | a fit that is linear's at every thread count but 11 (a check at 1, 2, 4, 8 and 16 alone would pass it) | Q6 |
 
 ## 8. Results
 
