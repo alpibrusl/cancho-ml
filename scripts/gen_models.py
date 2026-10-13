@@ -24,12 +24,13 @@ DEFAULT_ROOT = HERE.parent
 
 TOP_KEYS = {
     "name": str, "kind": int, "extra_kinds": list, "kind_fn": str, "shares_kind_with": str, "task": str, "tier": str, "wired": bool,
-    "adapter": str, "payload_version": int, "doc": str, "files": list, "plan_order": int, "limits": dict, "hyperparameter": list,
+    "adapter": str, "shape": str, "payload_version": int, "doc": str, "files": list, "plan_order": int, "limits": dict, "hyperparameter": list,
     "tags": dict, "authority": dict, "sums": dict, "oracle": dict,
 }
 REQUIRED = {"name", "kind", "kind_fn", "task", "tier", "wired", "payload_version", "doc", "files", "plan_order", "tags", "authority", "sums"}
 HP_KEYS = {"name": str, "type": str, "min": int, "max": int, "values": list, "default": str, "required": bool, "doc": str, "nonneg": bool}
-TASKS = {"regression", "classification", "clustering"}
+TASKS = {"regression", "classification", "clustering", "both"}
+SHAPES = {"vector", "blob"}
 TIERS = {"experimental", "supported"}
 HP_TYPES = {"int", "float", "enum"}
 NAME = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -68,6 +69,13 @@ def parse_manifest(path):
         raise ManifestError("%s: tier %r" % (where, m["tier"]))
     if m["wired"] and "adapter" not in m:
         raise ManifestError("%s: a wired model names its adapter" % where)
+    m.setdefault("shape", "vector")
+    if m["shape"] not in SHAPES:
+        raise ManifestError("%s: shape %r (vector or blob)" % (where, m["shape"]))
+    if m["shape"] == "blob" and (m["task"] != "both" or not any(h.get("name") == "task" and h.get("type") == "enum" for h in m.get("hyperparameter", []))):
+        raise ManifestError("%s: a blob model serves both tasks and has a `task` enum hyperparameter" % where)
+    if m["task"] == "both" and m["shape"] != "blob":
+        raise ManifestError("%s: task = both needs shape = blob" % where)
     for k in ("emits",):
         if k not in m["tags"]:
             raise ManifestError("%s: [tags] needs %r" % (where, k))
@@ -83,9 +91,10 @@ def parse_manifest(path):
     if m["authority"]["adds"] and not m["authority"]["reason"]:
         raise ManifestError("%s: [authority] adds labels and states no reason" % where)
     for k in m["sums"]:
-        if k != "decisive":
+        if k not in ("decisive", "sequential"):
             raise ManifestError("%s: [sums] has unknown key %r" % (where, k))
     m["sums"].setdefault("decisive", [])
+    m["sums"].setdefault("sequential", [])
     for k in m.get("oracle", {}):
         if k not in ("script", "args", "tolerance"):
             raise ManifestError("%s: [oracle] has unknown key %r" % (where, k))
@@ -114,6 +123,8 @@ def parse_manifest(path):
             raise ManifestError("%s: hyperparameter %s: only nonneg floats exist in the plan grammar" % (where, h["name"]))
         if h["type"] == "enum" and not h.get("values"):
             raise ManifestError("%s: hyperparameter %s: an enum has values" % (where, h["name"]))
+        if h["type"] == "enum" and h["name"] != "task":
+            raise ManifestError("%s: an enum hyperparameter has no flag of its own yet: only `task` (the existing --task)" % where)
         if ";" in h["doc"] or "|" in h["doc"] or "\"" in h["doc"] or "\\" in h["doc"]:
             raise ManifestError("%s: hyperparameter %s: the doc holds a character of the table syntax" % (where, h["name"]))
         hps.append(h)
@@ -203,7 +214,7 @@ def hp_flag_entries(models):
     for m in wired(models):
         for h in m["hyperparameter"]:
             if h["type"] == "enum":
-                raise ManifestError("%s: an enum hyperparameter has no flag yet" % m["name"])
+                continue
             kind = "nat" if h["type"] == "int" else "text"
             default = h["default"]
             entry = "%s||%s|none|%s|%s" % (h["name"], kind, default, h["doc"])
@@ -216,9 +227,13 @@ def hp_flag_entries(models):
 def model_flag_entry(models):
     names = [m["name"] for m in models if m["wired"]]
     tiers = ", ".join("%s (%s)" % (m["name"], m["tier"]) for m in models if m["wired"])
+    how = {"linear": "linear fits by least squares", "logistic": "logistic by Newton's method",
+           "tree": "tree is a CART decision tree with histogram splits (--task chooses classification or regression)",
+           "forest": "forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed)"}
+    sentences = [how[n] for n in names if n in how]
     help_ = ("the model fit builds: %s. constant (the default) is the training mean for a regression and the majority class with its probability for a "
-             "classification. linear fits by least squares and logistic by Newton's method, both through the pipeline of --plan or --step. A name outside "
-             "this list is args.bad-value" % tiers)
+             "classification. %s. All but constant are fitted through the pipeline of --plan or --step. A name outside "
+             "this list is args.bad-value" % (tiers, " and ".join(sentences) if sentences else "the others go through the pipeline"))
     return "model||choice:%s|none|constant|%s" % ("/".join(names), help_)
 
 
@@ -242,6 +257,8 @@ def render_spec(models, root):
         "LIMITS_HYPER": "".join(";" + e for e in limit_entries(models)),
         "MODEL_LIST": ", ".join("%s (%s)" % (m["name"], m["tier"]) for m in models if m["wired"]),
         "MODEL_CHOICES": "|".join(m["name"] for m in models if m["wired"]),
+        "HYPER_USAGE": " ".join("[--%s %s]" % (n, "N" if next(h for m in wired(models) for h in m["hyperparameter"] if h["name"] == n)["type"] == "int" else "X") for n in hyper_names),
+        "HYPER_FLAG_NAMES": ", ".join("--" + n for n in hyper_names),
     }
     out = tmpl
     for k, v in subs.items():
@@ -292,56 +309,109 @@ def render_modeldefs(models):
 
 # ------------------------------------------------------------------------------------------------ est.cho
 
-def _chain(ws, body):
-    """body(m) -> list of lines for the branch of wired model m; the last model's branch is the fall through."""
+def keys_of(ws):
+    """{model name: dispatch key}. The key of a model is its kind; the second of a declared pair that shares a kind (tree and forest) is the kind plus 100, so that
+    a fit can tell them apart (different hyperparameters) while a file, which has only the kind, goes to the first (docs/wiring-trees.md section 10)."""
+    keys, seen = {}, set()
+    for m in ws:
+        k = m["kind"]
+        keys[m["name"]] = k + 100 if k in seen else k
+        seen.add(k)
+    return keys
+
+
+def is_blob(m):
+    return m.get("shape", "vector") == "blob"
+
+
+def _chain(ws, body, keys):
+    """body(m) -> list of lines for the branch of wired model m, tested on its dispatch key"""
     out = []
     for m in ws:
-        out.append("    if kind == %d {" % m["kind"])
+        out.append("    if kind == %d {" % keys[m["name"]])
         out += ["        " + l for l in body(m)]
         out.append("    }")
     return out
 
 
+def int_like(m):
+    """the hyperparameters stored in ip: the ints and the enums (an enum as the index of its value), in manifest order"""
+    return [h for h in m["hyperparameter"] if h["type"] in ("int", "enum")]
+
+
 def render_est(models):
     ws = wired(models)
+    keys = keys_of(ws)
+    vec = [m for m in ws if not is_blob(m)]
+    blob = [m for m in ws if is_blob(m)]
     imports = ["import std.bytes;", "import linalg.tensor;", "import ml.csvcell;", "import models.record;"]
     imports += ["import %s;" % m["adapter"] for m in ws]
     o = ["edition 5;", "", "module ml.est;", "", "// GENERATED by scripts/gen_models.py from lib/models/*/model.toml -- do not edit (docs/modules.md section 3).",
-         "// The dispatch of ml over the kind numbers of the wired models: one chain of `if kind == N` per operation, one branch per model. Function values",
-         "// and traits are not used (docs/modules.md section 1). The adapters are the fixed interface of docs/modules.md section 4.", ""]
+         "// The dispatch of ml over the models wired: one chain of `if kind == N` per operation, one branch per model. Function values and traits are not used",
+         "// (docs/modules.md section 1). `kind` is the dispatch key of a model: its kind number, plus 100 for the second of a pair that shares a kind (kind_of gives the",
+         "// number a file has). The adapters are the two fixed interfaces of docs/modules.md sections 4 (vector models) and 4b (blob models).", ""]
     o += sorted(imports, key=lambda s: (not s.startswith("import std"), s))
     o.append("")
-    kinds = " || ".join("kind == %d" % m["kind"] for m in ws) or "false"
-    o += ["pub fn wired(kind: int) -> [] bool {", "    return %s;" % kinds, "}", ""]
-    o += ["// the kind of the wired model called `name` (0 if there is none)", "pub fn kind_named[&n](name: &n [byte]) -> [] int {"]
+    kinds = " || ".join("kind == %d" % k for k in sorted({m["kind"] for m in ws})) or "false"
+    o += ["// whether a file whose model section opens with this kind is one `ml` builds", "pub fn wired(kind: int) -> [] bool {", "    return %s;" % kinds, "}", ""]
+    o += ["// the kind a file has for the dispatch key of a model (0 if there is none)", "pub fn kind_of(kind: int) -> [] int {"]
+    o += _chain(ws, lambda m: ["return %d;" % m["kind"]], keys)
+    o += ["    return 0;", "}", ""]
+    o += ["// the dispatch key of the wired model called `name` (0 if there is none)", "pub fn kind_named[&n](name: &n [byte]) -> [] int {"]
     for m in ws:
-        o += ["    if bytes.equal(name, %s) {" % lit(m["name"]), "        return %d;" % m["kind"], "    }"]
+        o += ["    if bytes.equal(name, %s) {" % lit(m["name"]), "        return %d;" % keys[m["name"]], "    }"]
     o += ["    return 0;", "}", ""]
 
     def simple(fname, ret, f, default):
         lines = ["pub fn %s(kind: int) -> [] %s {" % (fname, ret)]
-        lines += _chain(ws, lambda m: ["return %s;" % f(m)])
+        lines += _chain(ws, lambda m: ["return %s;" % f(m)], keys)
         lines += ["    return %s;" % default, "}", ""]
         return lines
 
     o += simple("name", "&static [byte]", lambda m: lit(m["name"]), '""')
     o += simple("tier", "&static [byte]", lambda m: lit(m["tier"]), '""')
-    o += ["// 1 regression, 2 classification, 0 not a wired model"]
-    o += simple("task", "int", lambda m: {"regression": "1", "classification": "2"}.get(m["task"], "0"), "0")
-    o += simple("nints", "int", lambda m: str(sum(1 for h in m["hyperparameter"] if h["type"] == "int")), "0")
+    o += ["// 1 regression, 2 classification, 3 either (the `task` of the model line, task_of), 0 not a wired model"]
+    o += simple("task", "int", lambda m: {"regression": "1", "classification": "2", "both": "3"}.get(m["task"], "0"), "0")
+    o += simple("nints", "int", lambda m: str(len(int_like(m))), "0")
     o += simple("nfloats", "int", lambda m: str(sum(1 for h in m["hyperparameter"] if h["type"] == "float")), "0")
-    o += ["// whether the model has a hyperparameter called `flag`", "pub fn takes[&f](kind: int, flag: &f [byte]) -> [] bool {"]
+    o += ["// 1 regression or 2 classification: the task of the model whose integer hyperparameters are `ip` (a model of both tasks has it in `task`)",
+          "pub fn task_of[&i](kind: int, ip: &i [int]) -> [] int {"]
     for m in ws:
-        o.append("    if kind == %d {" % m["kind"])
+        if m["task"] == "both":
+            idx = [h["name"] for h in int_like(m)].index("task")
+            vals = next(h for h in m["hyperparameter"] if h["name"] == "task")["values"]
+            o += ["    if kind == %d {" % keys[m["name"]], "        if ip[%d] == %d {" % (idx, vals.index("classification")), "            return 2;", "        }", "        return 1;", "    }"]
+    o += ["    return task(kind);", "}", ""]
+    o += ["// whether the model has a hyperparameter called `flag` (the `task` of a model of both tasks is the --task flag, not a hyperparameter flag)",
+          "pub fn takes[&f](kind: int, flag: &f [byte]) -> [] bool {"]
+    for m in ws:
+        o.append("    if kind == %d {" % keys[m["name"]])
         for h in m["hyperparameter"]:
+            if h["type"] == "enum":
+                continue
             o += ["        if bytes.equal(flag, %s) {" % lit(h["name"]), "            return true;", "        }"]
         o.append("    }")
     o += ["    return false;", "}", ""]
     o += ["// whether `flag` is a hyperparameter of some wired model (its flag is then a flag of fit)", "pub fn hparam_flag[&f](flag: &f [byte]) -> [] bool {"]
-    names = sorted({h["name"] for m in ws for h in m["hyperparameter"]})
+    names = sorted({h["name"] for m in ws for h in m["hyperparameter"] if h["type"] != "enum"})
     for n in names:
         o += ["    if bytes.equal(flag, %s) {" % lit(n), "        return true;", "    }"]
     o += ["    return false;", "}", ""]
+    o += ["// whether the model keeps its fitted state as a byte payload that its adapter builds and reads (the blob interface), not as a vector of floats",
+          "pub fn is_blob(kind: int) -> [] bool {"]
+    o += ["    return %s;" % (" || ".join("kind == %d" % keys[m["name"]] for m in blob) or "false"), "}", ""]
+
+    # the least value of an integer hyperparameter flag (1 unless its manifest says 0: the generic check of the nat flags is 1 to the ceiling)
+    mins = {}
+    for m in ws:
+        for h in m["hyperparameter"]:
+            if h["type"] == "int":
+                mins.setdefault(h["name"], h["min"])
+    o += ["// the least value the command line accepts for the integer hyperparameter flag `name` (the ceiling is in spec.limits())", "pub fn hparam_min[&n](name: &n [byte]) -> [] int {"]
+    for n in sorted(mins):
+        if mins[n] != 1:
+            o += ["    if bytes.equal(name, %s) {" % lit(n), "        return %d;" % mins[n], "    }"]
+    o += ["    return 1;", "}", ""]
 
     # the readers of the values of the model line (used by hparams and hparam_ok below)
     o += [
@@ -392,7 +462,7 @@ def render_est(models):
     seen = set()
     for m in ws:
         for h in m["hyperparameter"]:
-            if h["name"] in seen:
+            if h["type"] == "enum" or h["name"] in seen:
                 continue
             seen.add(h["name"])
             o.append("    if bytes.equal(name, %s) {" % lit(h["name"]))
@@ -403,44 +473,66 @@ def render_est(models):
             o.append("    }")
     o += ["    return false;", "}", ""]
 
-    o += ["pub fn diag_len[&i](kind: int, d: int, ip: &i [int]) -> [] int"]
-    o[-1] += " {"
-    o += _chain(ws, lambda m: ["return %s.diag_len(d, ip);" % m["adapter"].split(".")[-1]])
+    # ---- the vector interface (docs/modules.md section 4)
+    ad = lambda m: m["adapter"].split(".")[-1]
+    o += ["pub fn diag_len[&i](kind: int, d: int, ip: &i [int]) -> [] int {"]
+    o += _chain(vec, lambda m: ["return %s.diag_len(d, ip);" % ad(m)], keys)
     o += ["    return 0 - 1;", "}", ""]
     o += ["pub fn out_len(kind: int, d: int) -> [] int {"]
-    o += _chain(ws, lambda m: ["return %s.out_len(d);" % m["adapter"].split(".")[-1]])
+    o += _chain(vec, lambda m: ["return %s.out_len(d);" % ad(m)], keys)
     o += ["    return 0 - 1;", "}", ""]
     o += ["pub fn payload_size(kind: int, d: int) -> [] int {"]
-    o += _chain(ws, lambda m: ["return %s.payload_size(d);" % m["adapter"].split(".")[-1]])
+    o += _chain(vec, lambda m: ["return %s.payload_size(d);" % ad(m)], keys)
     o += ["    return 0 - 1;", "}", ""]
     o += ["// 0, or a code of ml.refuse (ml.param.out-of-range for a kind that is not wired)",
           "pub fn fit[&h, &x, &y, &i, &f, &q, &g](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], ip: &i [int], fp: &f [float], seed: int, out: &!q [float], diag: &!g [float]) -> [heap, conc] int {"]
-    o += _chain(ws, lambda m: ["return %s.fit(heap, threads, xt, xd, yd, ip, fp, seed, out, diag);" % m["adapter"].split(".")[-1]])
+    o += _chain(vec, lambda m: ["return %s.fit(heap, threads, xt, xd, yd, ip, fp, seed, out, diag);" % ad(m)], keys)
     o += ["    return 8;", "}", ""]
     for fn in ("predict", "proba"):
         o += ["pub fn %s[&x, &w, &q](kind: int, xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!q [float]) -> [] int {" % fn]
-        o += _chain(ws, lambda m, fn=fn: ["return %s.%s(xt, xd, wv, out);" % (m["adapter"].split(".")[-1], fn)])
+        o += _chain(vec, lambda m, fn=fn: ["return %s.%s(xt, xd, wv, out);" % (ad(m), fn)], keys)
         o += ["    return 8;", "}", ""]
     o += ["pub fn encode[&b, &w](kind: int, dst: &!b [byte], at: int, d: int, wv: &w [float], c0: int, c1: int) -> [] int {"]
-    o += _chain(ws, lambda m: ["return %s.encode(dst, at, d, wv, c0, c1);" % m["adapter"].split(".")[-1]])
+    o += _chain(vec, lambda m: ["return %s.encode(dst, at, d, wv, c0, c1);" % ad(m)], keys)
     o += ["    return 0 - 1;", "}", ""]
     o += ["pub fn decode[&s, &q](kind: int, src: &s [byte], d: int, out: &!q [float]) -> [] record.Decoded {"]
-    o += _chain(ws, lambda m: ["return %s.decode(src, d, out);" % m["adapter"].split(".")[-1]])
+    o += _chain(vec, lambda m: ["return %s.decode(src, d, out);" % ad(m)], keys)
+    o += ["    return record.decoded(1, 0, 0, 0);", "}", ""]
+
+    # ---- the blob interface (docs/modules.md section 4b): the fitted model is a payload of bytes
+    o += ["// 0, or a code of ml.refuse or of the library (the payload is then empty; ml.param.out-of-range for a kind that has no blob adapter)",
+          "pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {"]
+    o += _chain(blob, lambda m: ["return %s.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);" % ad(m)], keys)
+    o += ["    return (box_slice(heap, 1, byte_of(0)), 8);", "}", ""]
+    for fn in ("predict", "proba"):
+        o += ["pub fn %s_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!q [float]) -> [heap] int {" % fn]
+        o += _chain(blob, lambda m, fn=fn: ["return %s.%s_blob(heap, blob, xt, xd, miss, wpc, out);" % (ad(m), fn)], keys)
+        o += ["    return 8;", "}", ""]
+    o += ["// the payload read and checked: the code, the two labels and in `end` the task (1 regression, 2 classification)",
+          "pub fn decode_blob[&h, &s](heap: &!h Heap, kind: int, src: &s [byte], d: int) -> [heap] record.Decoded {"]
+    o += _chain(blob, lambda m: ["return %s.decode_blob(heap, src, d);" % ad(m)], keys)
     o += ["    return record.decoded(1, 0, 0, 0);", "}", ""]
 
     # the hyperparameters of the canonical model line: `model kind=NAME k=v k=v` (docs/pipeline.md section 2)
     o += [
-        "// The integer and float hyperparameters of the model line, in the order of the manifest, into ip and fp. 0, or the place (from 1) of the token that is not",
-        "// a value of its kind. `line` is the canonical model line without its LF.",
+        "// The integer and float hyperparameters of the model line, in the order of the manifest, into ip and fp (an enum as the index of its value, in ip). 0, or the place",
+        "// (from 1) of the token that is not a value of its kind. `line` is the canonical model line without its LF.",
         "pub fn hparams[&l, &i, &f](kind: int, line: &l [byte], ip: &!i [int], fp: &!f [float]) -> [] int {",
     ]
     for m in ws:
-        o.append("    if kind == %d {" % m["kind"])
+        o.append("    if kind == %d {" % keys[m["name"]])
         ni = nf = 0
         for k, h in enumerate(m["hyperparameter"]):
             tok = "bytes.field(line, ' ', %d)" % (3 + k)
             if h["type"] == "int":
                 o += ["        ip[%d] = int_value(value_of(%s));" % (ni, tok), "        if ip[%d] < 0 {" % ni, "            return %d;" % (k + 1), "        }"]
+                ni += 1
+            elif h["type"] == "enum":
+                first = True
+                for vi, v in enumerate(h["values"]):
+                    o += ["        %sif bytes.equal(value_of(%s), %s) {" % ("" if first else "} else ", tok, lit(v)), "            ip[%d] = %d;" % (ni, vi)]
+                    first = False
+                o += ["        } else {", "            return %d;" % (k + 1), "        }"]
                 ni += 1
             else:
                 o += ["        fp[%d] = float_value(value_of(%s));" % (nf, tok), "        if fp[%d] < 0.0 {" % nf, "            return %d;" % (k + 1), "        }"]

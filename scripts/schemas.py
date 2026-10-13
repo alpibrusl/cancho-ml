@@ -114,12 +114,17 @@ def data_defs():
         "plan": {"type": "string"}, "steps": NAT, "features": NAT,
         "coefficients": {"type": "array", "items": obj({"name": TB, "value": FLT})}, "intercept": FLT,
     }
+    # a tree or a forest has no coefficients: what the header of its payload says (docs/wiring-trees.md section 2)
+    forest_keys = {"plan": {"type": "string"}, "steps": NAT, "features": NAT,
+                   "forest": obj({"trees": NAT, "nodes": NAT, "bins": NAT, "max_depth": NAT, "min_leaf": NAT, "mtry": NAT})}
+    classes = {"classes": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "positive": {"type": "integer"}}
     summary_reg = obj({**summary_keys, "split": split, "holdout": holdout_reg}, list(summary_keys))
-    summary_cls = obj({**summary_keys, "classes": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
-                       "positive": {"type": "integer"}, "split": split, "holdout": holdout_cls}, list(summary_keys) + ["classes", "positive"])
+    summary_cls = obj({**summary_keys, **classes, "split": split, "holdout": holdout_cls}, list(summary_keys) + ["classes", "positive"])
+    summary_forest_reg = obj({**forest_keys, "split": split, "holdout": holdout_reg}, list(forest_keys))
+    summary_forest_cls = obj({**forest_keys, **classes, "split": split, "holdout": holdout_cls}, list(forest_keys) + ["classes", "positive"])
     fit_p = obj({
         "model": names, "task": {"enum": ["regression", "classification"]}, "rows": NAT, "columns": NAT, "target": TB, "path": TB,
-        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls]},
+        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls]},
     })
     predict_p = obj({
         "model": names, "task": {"enum": ["regression", "classification"]},

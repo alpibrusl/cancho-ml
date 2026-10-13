@@ -74,7 +74,7 @@ fn digest_into[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [
 
 // The file. plan: the canonical text; schema_payload: schema.encode; steps_payload: Fitted.payload; model_payload: u32 kind then the estimator's records;
 // columns: the number of columns of the schema; the meta section is `u64 rows | u64 columns | u64 seed | u32 0 | u32 length | pin`, and for a model
-// kind of 4 or above (the leading u32 of model_payload) `| u32 sum_order` (kinds.sum_order(), design.md section 4.1); kinds 1 to 3 have the bytes of mfile.cho.
+// kind of 4 or above (the leading u32 of model_payload) `| u32 sum_order` (kinds.sum_order_for(kind): 2, or 3 for a tree or a forest; design.md section 4.1); kinds 1 to 3 have the bytes of mfile.cho.
 pub fn encode[&h, &a, &b, &c, &e, &f](heap: &!h Heap, plan_text: &a [byte], schema_payload: &b [byte], steps_payload: &c [byte], model_payload: &e [byte], rows: int, columns: int, seed: int, pin: &f [byte]) -> [heap] buffer.Buffer {
     var me = put64(heap, buffer.empty(heap, 64), rows);
     me = put64(heap, me, columns);
@@ -83,7 +83,7 @@ pub fn encode[&h, &a, &b, &c, &e, &f](heap: &!h Heap, plan_text: &a [byte], sche
     me = put32(heap, me, len(pin));
     me = buffer.append(heap, me, pin);
     if len(model_payload) >= 4 && get32(model_payload, 0) >= kinds.first_ordered_model() {
-        me = put32(heap, me, kinds.sum_order());
+        me = put32(heap, me, kinds.sum_order_for(get32(model_payload, 0)));
     }
     var out = buffer.empty(heap, 256);
     out = buffer.append(heap, out, "CML1");
@@ -301,8 +301,8 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
             let cl0 = get32(me0, 28);
             if cl0 >= 0 && cl0 <= 255 && len(me0) == 36 + cl0 {
                 let so = get32(me0, 32 + cl0);
-                if so != kinds.sum_order() {
-                    return (codes.fault(codes.bad_version(), so, 1, kinds.sum_order()), 0, 0, 0, 0, 0, 0);
+                if so != kinds.sum_order_for(get32(md0, 0)) {
+                    return (codes.fault(codes.bad_version(), so, 1, kinds.sum_order_for(get32(md0, 0))), 0, 0, 0, 0, 0, 0);
                 }
             }
         }

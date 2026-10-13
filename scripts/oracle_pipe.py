@@ -613,8 +613,10 @@ MODEL_TABLE = {
     "linear": [("l2", "fnn", "0.0", None)],
     "logistic": [("iterations", "int:1,1000", "100", None), ("l2", "fnn", "0.0", None)],
     "kmeans": [("k", "int:1,1024", None, None), ("iterations", "int:1,1000", "10", None)],
-    "tree": [("task", "enum:classification,regression", None, None), ("max-depth", "int:1,30", "8", None), ("min-leaf", "int:1,1000000", "1", None)],
-    "forest": [("task", "enum:classification,regression", None, None), ("trees", "int:1,1024", "100", None), ("max-depth", "int:1,30", "8", None), ("min-leaf", "int:1,1000000", "1", None)],
+    "tree": [("task", "enum:classification,regression", None, None), ("max-depth", "int:1,1000", "8", None), ("min-leaf", "int:1,1000000", "1", None), ("bins", "int:2,255", "64", None),
+             ("max-nodes", "int:1,999999999", "4194304", None)],
+    "forest": [("task", "enum:classification,regression", None, None), ("trees", "int:1,1024", "100", None), ("max-depth", "int:1,1000", "8", None), ("min-leaf", "int:1,1000000", "1", None),
+               ("bins", "int:2,255", "64", None), ("mtry", "int:0,4096", "0", None), ("bootstrap", "int:0,1", "1", None), ("max-nodes", "int:1,999999999", "4194304", None)],
 }
 
 

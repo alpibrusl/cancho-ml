@@ -397,5 +397,74 @@ def _cat_cases():
 CASES += _cat_cases()
 
 
+# ------------------------------------------------------------------ the tree and the forest (docs/wiring-trees.md)
+FIT_TREE = ["fit", "--model", "tree", "--target", "y", "--output", "t.cml", "lin.csv"]
+FIT_FOREST_CLS = ["fit", "--model", "forest", "--task", "classification", "--trees", "7", "--seed", "3", "--target", "lab", "--output", "f.cml", "lcls.csv"]
+WITH_TREE = LBASE + [("fit", "--model", "tree", "--target", "y", "--output", "t.cml", "lin.csv")]
+WITH_FOREST = LBASE + [("fit", "--model", "forest", "--task", "classification", "--trees", "7", "--seed", "3", "--target", "lab", "--output", "f.cml", "lcls.csv")]
+
+
+def _tree_cases():
+    return [
+        case("fit-tree-regression", FIT_TREE,
+             ok({"model": "tree", "task": "regression", "rows": 8, "columns": 3, "target": "y", "path": "t.cml", "written": True,
+                 "summary": {"plan": "model kind=tree task=regression max-depth=8 min-leaf=1 bins=64 max-nodes=4194304\n", "steps": 0, "features": 2,
+                             "forest": {"trees": 1, "bins": 64, "max_depth": 8, "min_leaf": 1, "mtry": 2}}}), setup=LBASE),
+        case("fit-tree-classification", ["fit", "--model", "tree", "--task", "classification", "--max-depth", "3", "--min-leaf", "2", "--bins", "16", "--max-nodes", "100",
+                                         "--target", "lab", "--output", "t.cml", "lcls.csv"],
+             ok({"model": "tree", "task": "classification", "summary": {"classes": [0, 1], "positive": 1, "forest": {"trees": 1, "bins": 16, "max_depth": 3, "min_leaf": 2}}}), setup=LBASE),
+        case("fit-forest-regression-every-flag", ["fit", "--model", "forest", "--task", "regression", "--trees", "5", "--max-depth", "4", "--min-leaf", "1", "--bins", "8",
+                                                 "--mtry", "1", "--bootstrap", "0", "--max-nodes", "1000", "--seed", "3", "--threads", "2", "--target", "y", "--output", "f.cml",
+                                                 "lin.csv"],
+             ok({"model": "forest", "task": "regression", "summary": {"forest": {"trees": 5, "bins": 8, "max_depth": 4, "mtry": 1}}}), setup=LBASE),
+        case("fit-forest-classification-positive-label", FIT_FOREST_CLS[:-1] + ["--positive", "0", "lcls.csv"],
+             ok({"model": "forest", "task": "classification", "summary": {"classes": [1, 0], "positive": 0}}), setup=LBASE),
+        case("fit-forest-from-a-plan", ["fit", "--plan", "p.txt", "--target", "lab", "--output", "f.cml", "lcls.csv"],
+             ok({"model": "forest", "task": "classification", "summary": {"steps": 1, "forest": {"trees": 3, "max_depth": 5}}}),
+             setup=LBASE + [("write", "p.txt", "scale column=* kind=standard\nmodel kind=forest task=classification trees=3 max-depth=5\n")]),
+        case("fit-tree-takes-missing-cells-without-an-impute-step", ["fit", "--model", "tree", "--target", "y", "--output", "m.cml", "linmis.csv"],
+             ok({"model": "tree", "rows": 8, "summary": {"steps": 0}}), setup=LBASE),
+        case("fit-forest-text", ["--format", "text"] + FIT_FOREST_CLS, ok(None, stdout_starts="fit: forest classification, 12 rows, wrote f.cml"), setup=LBASE),
+        case("fit-forest-split-holdout", ["fit", "--model", "forest", "--task", "classification", "--trees", "5", "--split", "train=0.7", "--seed", "1", "--target", "lab",
+                                          "--output", "f.cml", "lcls.csv"], ok({"summary": {"split": {"train": 8, "test": 4, "seed": 1}}}), setup=LBASE),
+        case("predict-tree-regression", ["predict", "--model-file", "t.cml", "--limit", "2", "lin.csv"],
+             ok({"model": "tree", "task": "regression", "columns": ["prediction"], "row_count": 2, "total_rows": 8, "truncated": True, "unknown_categories": 0}), setup=WITH_TREE),
+        case("predict-forest-proba", ["predict", "--model-file", "f.cml", "--proba", "--limit", "3", "lcls.csv"],
+             ok({"model": "forest", "task": "classification", "columns": ["label", "probability"], "row_count": 3}), setup=WITH_FOREST),
+        case("predict-forest-label", ["predict", "--model-file", "f.cml", "--limit", "3", "lcls.csv"], ok({"columns": ["label"], "row_count": 3}), setup=WITH_FOREST),
+        case("predict-forest-with-a-missing-cell", ["predict", "--model-file", "f.cml", "--limit", "20", "x.csv"], ok({"row_count": 2}),
+             setup=WITH_FOREST + [("write", "x.csv", "a,b\n1,\n,2\n")]),
+        case("eval-tree-regression", ["eval", "--model-file", "t.cml", "lin.csv"], ok({"model": "tree", "task": "regression", "rows": 8}), setup=WITH_TREE),
+        case("eval-forest-classification", ["eval", "--model-file", "f.cml", "lcls.csv"], ok({"model": "forest", "task": "classification", "rows": 12, "positive": 1}), setup=WITH_FOREST),
+        case("eval-forest-other-positive-label", ["eval", "--model-file", "f.cml", "--positive", "0", "lcls.csv"], ok({"positive": 0}), setup=WITH_FOREST),
+        # ---- refusals reachable from ml
+        case("ml-limit-depth", ["fit", "--model", "tree", "--max-depth", "31", "--target", "y", "--output", "t.cml", "lin.csv"], bad("ml.limit.depth"), setup=LBASE),
+        case("ml-limit-nodes-a-tree-that-needs-more", ["fit", "--model", "tree", "--max-nodes", "1", "--target", "y", "--output", "t.cml", "lin.csv"], bad("ml.limit.nodes"), setup=LBASE),
+        case("ml-limit-nodes-over-the-ceiling", ["fit", "--model", "forest", "--max-nodes", "4194305", "--target", "y", "--output", "t.cml", "lin.csv"], bad("ml.limit.nodes"), setup=LBASE),
+        case("ml-limit-nodes-of-a-forest", ["fit", "--model", "forest", "--trees", "1024", "--max-depth", "30", "--max-nodes", "4194304", "--target", "y", "--output", "t.cml", "big.csv"],
+             bad("ml.limit.nodes"), setup=LBASE + [("write", "big.csv", "a,y\n" + "".join("%d,%d\n" % (i, (i * 7) % 13) for i in range(1, 8200)))]),
+        case("ml-param-out-of-range-mtry-above-d", ["fit", "--model", "forest", "--mtry", "5", "--target", "y", "--output", "f.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-min-leaf-above-n", ["fit", "--model", "tree", "--min-leaf", "100", "--target", "y", "--output", "t.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-bootstrap", ["fit", "--model", "forest", "--bootstrap", "2", "--target", "y", "--output", "f.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-threads-tree", ["fit", "--model", "forest", "--threads", "65", "--target", "y", "--output", "f.cml", "lin.csv"], bad("ml.param.threads"), setup=LBASE),
+        case("ml-param-out-of-range-bins-in-a-plan", ["fit", "--plan", "p.txt", "--target", "y", "--output", "t.cml", "lin.csv"], bad("ml.param.out-of-range"),
+             setup=LBASE + [("write", "p.txt", "model kind=tree task=regression bins=1\n")]),
+        case("ml-param-out-of-range-bins", ["fit", "--model", "tree", "--bins", "1", "--target", "y", "--output", "t.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-plan-missing-key-task-of-a-plan", ["fit", "--plan", "p.txt", "--target", "y", "--output", "f.cml", "lin.csv"], bad("ml.plan.missing-key"),
+             setup=LBASE + [("write", "p.txt", "model kind=forest trees=3\n")]),
+        case("args-conflict-trees-with-a-tree", ["fit", "--model", "tree", "--trees", "5", "--target", "y", "--output", "t.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-mtry-with-linear", ["fit", "--model", "linear", "--mtry", "1", "--target", "y", "--output", "m.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-l2-with-a-forest", ["fit", "--model", "forest", "--l2", "1", "--target", "y", "--output", "f.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-positive-with-a-regression-forest", ["fit", "--model", "forest", "--positive", "1", "--target", "y", "--output", "f.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-max-depth-without-a-model", ["fit", "--max-depth", "3", "--target", "y", "--output", "m.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-proba-of-a-regression-forest", ["predict", "--model-file", "t.cml", "--proba", "lin.csv"], bad("args.conflict"), setup=WITH_TREE),
+        case("ml-label-not-integer-for-a-forest", ["fit", "--model", "forest", "--task", "classification", "--target", "y", "--output", "f.cml", "lin.csv"], bad("ml.label.not-integer"), setup=LBASE),
+        case("ml-input-missing-value-linear-still-refuses", FIT_LIN[:-1] + ["linmis.csv"], bad("ml.input.missing-value", repair_retry=True), setup=LBASE),
+    ]
+
+
+CASES += _tree_cases()
+
+
 def log_cases():
     return [c for c in CASES if c.get("log")]

@@ -1,0 +1,30 @@
+module models.adapter_forest;
+
+import linalg.tensor;
+import models.record;
+import tree.adapt;
+import tree.params;
+
+// The adapter of the `forest` module (docs/modules.md section 4b, docs/wiring-trees.md): the blob interface over the library of docs/models-tree.md.
+// Hyperparameters, in manifest order: ints [task, trees, max-depth, min-leaf, bins, mtry, bootstrap, max-nodes] (task: 0 classification, 1 regression, the
+// library's numbers). No arithmetic of its own; the seed is the contract's.
+
+pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    let p = params.Params { task: ip[0], trees: ip[1], max_depth: ip[2], min_leaf: ip[3], max_nodes: ip[7], bins: ip[4], mtry: ip[5], bootstrap: ip[6], seed: seed, threads: threads };
+    return adapt.fit(heap, p, xd, miss, wpc, xt.s0, xt.s1, yd, c0, c1, rows_cap, cols_cap, cells_cap);
+}
+
+// 0.0 or 1.0 per row for a classification, the value for a regression
+pub fn predict_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
+    return adapt.predict_rows(heap, blob, xt, xd, miss, wpc, out, 0);
+}
+
+// the probability of the positive class per row; a regression answers a refusal
+pub fn proba_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
+    return adapt.predict_rows(heap, blob, xt, xd, miss, wpc, out, 1);
+}
+
+// code, the two labels, and in `end` the task (1 regression, 2 classification)
+pub fn decode_blob[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] record.Decoded {
+    return adapt.decode(heap, src, d);
+}
