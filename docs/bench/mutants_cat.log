@@ -1,7 +1,8 @@
-# scripts/mutants_cat.py, run on 2026-10-13, Mac arm64, compiler a4572ea (load 2 to 4, shared). The first 41 patterns in one run; the three first-appearance patterns were then redefined (the vocabulary lookup made linear too, so ids stay consistent) and re-run alone with --only.
+Tue Oct 13 14:43:47 CEST 2026
 control (unmutated): passes every gate
-c2-first-appearance                          KILLED   (order) order: DIFF accepted in one order and refused in another (64, 6, 1048576, 128, 'rows 2\ncols 7\ncol 0 1 0 id\ncol 1 4 0 
-c1-first-appearance-diff                     KILLED   (diff) diff: DIFF adversarial duplicate-looking strings status 8 vs oracle 0; first difference at line 0: got ['refused 15 2 1 
+c2-first-appearance                          KILLED   (order) order: DIFF ids or cells of a row (1, 1, {0: (-1, 1), 1: (0, 0)}, {0: (-1, 1), 1: (1, 0)})
+c1-first-appearance-diff                     KILLED   (diff) diff: DIFF adversarial duplicate-looking strings status 0 vs oracle 0; first difference at line 22: got ['id 0 0 0 0'] w
+c2-first-appearance-dictionary-only          KILLED   (order) order: DIFF accepted in one order and refused in another (64, 6, 1048576, 128, 'rows 2\ncols 7\ncol 0 1 0 id\ncol 1 4 0 
 c1-descending                                KILLED   (diff,unit) diff: DIFF adversarial duplicate-looking strings status 8 vs oracle 0; first difference at line 0: got ['refused 15 2 1 
 c1-freeze-reversed                           KILLED   (diff,unit) diff: DIFF adversarial duplicate-looking strings status 8 vs oracle 0; first difference at line 0: got ['refused 15 2 1 
 c1-ids-from-the-row                          KILLED   (diff,roundtrip) diff: DIFF adversarial duplicate-looking strings status 0 vs oracle 0; first difference at line 22: got ['id 0 0 0 0'] w
@@ -41,9 +42,6 @@ c11-limit-flag-without-cat-accepted          KILLED   (cli) cli: FAILED (failure
 c11-na-values-list-not-checked               KILLED   (cli) cli: FAILED (failures=2)
 c11-cat-fit-writes-a-model                   KILLED   (cli) cli: FAILED (failures=10, errors=3)
 c11-unknown-cat-name-ignored                 KILLED   (cli) cli: FAILED (failures=2)
-39 killed, 2 survived and explained, 0 unexplained or invalid
-# re-run alone after the redefinition (--only):
-c2-first-appearance                          KILLED   (order) order: DIFF ids or cells of a row (1, 1, {0: (-1, 1), 1: (0, 0)}, {0: (-1, 1), 1: (1, 0)})
-c1-first-appearance-diff                     KILLED   (diff) diff: DIFF adversarial duplicate-looking strings status 0 vs oracle 0; first difference at line 22: got ['id 0 0 0 0'] w
-c2-first-appearance-dictionary-only          KILLED   (order) order: DIFF accepted in one order and refused in another (64, 6, 1048576, 128, 'rows 2\ncols 7\ncol 0 1 0 id\ncol 1 4 0 
-# total: 42 patterns, 40 killed, 2 survived and explained (c4-ids-not-counted-in-cells, c7-fit-lookup-miss-ignored), 0 unexplained. The 41-pattern run reported "39 killed, 2 survived and explained"; its c2-first-appearance, c1-first-appearance-diff lines above are of the first definition (also KILLED).
+40 killed, 2 survived and explained, 0 unexplained or invalid
+EXIT 0
+Tue Oct 13 14:47:40 CEST 2026

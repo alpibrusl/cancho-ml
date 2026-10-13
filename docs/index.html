@@ -59,7 +59,7 @@
     <a class="badge" href="#status"><i></i>Early, alpha · three models are built</a>
     <h1>Classical ML as a command line an agent can read.</h1>
     <p class="lead">Fit, apply and score a model on a CSV, with exact sums, bounded resources, structured refusals and a machine-verifiable authority.</p>
-    <p class="sub">A command line and flags, not a chat box. The same tool for a person and for an agent. Today it builds three models: the constant one (the training mean or the majority class, a baseline with the whole path around it), linear regression and logistic regression, the last two through a pipeline of steps that is fitted on the training rows and stored with the model in one file. k-means and trees exist as tested libraries and are not wired in yet.</p>
+    <p class="sub">A command line and flags, not a chat box. The same tool for a person and for an agent. Today it builds three models: the constant one (the training mean or the majority class, a baseline with the whole path around it), linear regression and logistic regression, the last two through a pipeline of steps that is fitted on the training rows and stored with the model in one file. k-means, trees and forests are tested libraries that no verb calls.</p>
     <div class="cta"><a class="btn primary" href="#flow">See a complete flow</a><a class="btn ghost" href="#start">Quick start</a></div>
   </div>
 <!-- gen:hero -->
@@ -71,7 +71,7 @@
 
 <section id="flow">
   <h2>One complete flow</h2>
-  <p class="sub">Fit, predict, score, get refused with a repair, run the repair. The repair is the corrected command, and every line below is what the built program prints, on the small files shown under &ldquo;What you can do now&rdquo;.</p>
+  <p class="sub">Fit, predict, score, get refused with a repair, run the repair. The repair is the command with the mistake taken out, and every line below is what the built program prints, on the small files shown under &ldquo;What you can do&rdquo;.</p>
 <!-- gen:flow -->
 <pre class="code" tabindex="0"><span class="c"># Fit the training mean of price. area has a decimal point: it is a float column, read exactly</span>
 <span class="c">$</span> ml fit --target price --output houses.ml houses.csv
@@ -114,12 +114,12 @@
 
 <section id="why">
   <h2>Why cancho-ml?</h2>
-  <p class="big">Most ML tools optimise for how many models they offer. <code>ml</code> is built to be predictable first, and so far offers three models and a pipeline.</p>
+  <p class="big">Most ML tools optimise for how many models they offer. <code>ml</code> is built to be predictable first, and offers three models and a pipeline.</p>
   <ul class="why">
 <li><b>Explicit types</b><span>A column is an integer, a decimal or a float, read to the nearest double by cancho-table&rsquo;s exact reader. <code>nan</code>, <code>inf</code>, an empty cell and a cell that is not a number are refused with the line and the column. <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/reader.md">docs/reader.md</a></span></li>
 <li><b>Exact where a sum decides</b><span>The mean of an integer or decimal target and the sum of squared errors are exact integers, not floats; a float target is summed exactly and rounded once. A test compares every digit with Python&rsquo;s <code>fractions.Fraction</code>. The <code>rmse</code> is three IEEE steps after the exact sum, and says so. <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">docs/cli.md</a></span></li>
 <li><b>The same bytes</b><span>A model file holds no timestamp, host or path. The same data, plan and seed give the same bytes whatever the working directory or the spelling of the path, and at every <code>--threads</code> from 1 to 16 (linear and logistic, one Mac); across machines it is not tested. <a href="evidence.html#determinism">Evidence</a></span></li>
-<li><b>Bounded resource use</b><span>Rows, columns, cells, line length, model size and log size each have a limit flag with a default and a ceiling, checked before anything sized by the input is allocated (<a href="#limits">the limits</a>). No gate measures memory use.</span></li>
+<li><b>Bounded resource use</b><span>Rows, columns, cells, line length, model size, log size and the categorical dictionary each have a limit flag with a default and a ceiling, checked before anything sized by the input is allocated (<a href="#limits">the limits</a>). Peak memory is measured for one case, the reader&rsquo;s refusal of a 200 MB file (1.5 MB); no gate measures the memory of a fit.</span></li>
 <li><b>No implicit network access</b><span>The authority row lists what the program can reach: no <code>net_out</code>, <code>net_in</code>, <code>ffi</code> or <code>clock</code>, no standard input and no write by path. <code>cancho authority</code> derives it, and <code>scripts/manifest.py --check</code> fails if the binary differs from the committed <a href="https://github.com/alpibrusl/cancho-ml/blob/main/manifests/ml.authority.json">manifest</a>.</span></li>
 <li><b>Machine-readable errors</b><span>One JSON line against a schema (<code>ml.v1</code>). A refusal is <code>{code, rule, message, hint, repair, detail}</code> with a stable <code>&lt;area&gt;.&lt;name&gt;</code> rule tag. <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/design.md">docs/design.md</a></span></li>
 <li><b>Repair hints</b><span>A refusal says how to fix the request: an argv to run as it stands, or why there is none.</span></li>
@@ -138,19 +138,19 @@
     <rect class="box" x="8" y="90" width="170" height="52" rx="10"/><text class="tt" x="93" y="112" text-anchor="middle">constant model</text><text class="ss" x="93" y="130" text-anchor="middle">mean, or majority class</text>
     <rect class="box" x="195" y="90" width="170" height="52" rx="10"/><text class="tt" x="280" y="112" text-anchor="middle">linear, logistic</text><text class="ss" x="280" y="130" text-anchor="middle">ridge, Newton, --threads</text>
     <rect class="box" x="382" y="90" width="170" height="52" rx="10"/><text class="tt" x="467" y="112" text-anchor="middle">metrics, splits</text><text class="ss" x="467" y="130" text-anchor="middle">AUC, RMSE, --split</text>
-    <text class="ss" x="8" y="172">Exist as tested libraries; no verb calls them yet:</text>
+    <text class="ss" x="8" y="172">Tested libraries that no verb calls:</text>
     <g stroke-dasharray="5 4">
     <rect class="box" x="8" y="184" width="170" height="52" rx="10"/><text class="tt" x="93" y="206" text-anchor="middle">k-means</text><text class="ss" x="93" y="224" text-anchor="middle">seeded, Lloyd</text>
     <rect class="box" x="195" y="184" width="170" height="52" rx="10"/><text class="tt" x="280" y="206" text-anchor="middle">trees, forests</text><text class="ss" x="280" y="224" text-anchor="middle">one gate is red</text>
     </g>
-    <text class="ss" x="8" y="262">Not built: text columns, the MCP server, ml-serve.</text>
+    <text class="ss" x="8" y="262">Read, not encoded: text columns. Not built: the MCP server, ml-serve.</text>
   </svg>
   <figcaption>Solid: reachable from <code>ml</code>. Dashed: a library with its own gates and tests, not called by any verb. <a href="evidence.html">What the gates prove</a>.</figcaption>
 </figure>
 </section>
 
 <section id="can">
-  <h2>What you can do now</h2>
+  <h2>What you can do</h2>
   <p class="sub">Every example runs on these small files, in this order, and the output is what the program prints. The first examples use the constant model, whose prediction is the same for every row; the pipeline models have their own flow above.</p>
   <pre class="code" tabindex="0"><code># houses.csv
 id,rooms,area,price
@@ -201,7 +201,7 @@ id,rooms,area                id,rooms,area,city
   </div>
   <div>
     <h3 class="task">Check before you write</h3>
-    <p>An existing output is refused unless <code>--overwrite</code> is given. <code>--dry-run</code> reads, checks and fits, runs every check the write would, and answers with the file it would write: exit 9, and nothing created or changed. The file is written to a temporary name beside the final one and renamed over it, so a reader never sees half a model.</p>
+    <p>An existing output is refused unless <code>--overwrite</code> is given. <code>--dry-run</code> reads, checks and fits, runs every check the write would, and answers with the file it would write: exit 9, and nothing created or changed. The file is written to a temporary name beside the final one, synced and renamed over it; that this keeps a reader from seeing half a model, and two writers racing on one output, were not tested.</p>
 <!-- gen:t-dry -->
 <pre class="code" tabindex="0"><span class="c">$</span> ml fit --target price --output houses.ml houses.csv
 {"rule": "conflict.exists", "hint": "use --overwrite to replace it, or name another file", "detail": {"path": "houses.ml"}}
@@ -213,7 +213,7 @@ id,rooms,area                id,rooms,area,city
   </div>
   <div>
     <h3 class="task">A damaged model is refused</h3>
-    <p>The model file ends with the SHA-256 of every byte before it. Here one byte of <code>houses.ml</code> was changed and the file saved as <code>damaged.ml</code>.</p>
+    <p>The model file ends with the SHA-256 of every byte before it. <code>damaged.ml</code> is <code>houses.ml</code> with one byte altered.</p>
 <!-- gen:t-damaged -->
 <pre class="code" tabindex="0"><span class="c">$</span> ml eval --model-file damaged.ml houses.csv
 {"rule": "ml.model.checksum", "hint": "the file changed after it was written"}
@@ -307,15 +307,15 @@ An error is `{code, rule, message, hint, repair, detail}`. Match on `rule`, not 
 </section>
 
 <section id="cannot">
-  <h2>What it cannot do yet</h2>
+  <h2>What it cannot do</h2>
   <ul class="plain">
     <li><strong>Three models are reachable:</strong> constant, linear and logistic. k-means, decision trees and random forests exist as libraries with independent oracles and a manifest with <code>wired = false</code>; a plan naming one is <code>ml.plan.model-not-built</code> (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/modules.md">docs/modules.md</a>).</li>
-    <li><strong>No text columns yet.</strong> The pipeline has <code>impute</code>, <code>scale</code>, <code>encode</code> of numbers and <code>bucket</code>; a column of text has to be dropped. Text categories are the next stage (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/wiring.md">docs/wiring.md</a> section 3).</li>
+    <li><strong>Text columns are read and not encoded.</strong> The pipeline has <code>impute</code>, <code>scale</code>, <code>encode</code> of numbers and <code>bucket</code>. <code>fit --cat NAMES</code> reads declared text columns into a bytewise-sorted dictionary and an id matrix, with limits, and then refuses with <code>ml.input.categorical-not-encoded</code>; a text column that is not declared is <code>ml.input.non-numeric</code>, with <code>--drop</code> as the repair (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/categorical.md">docs/categorical.md</a>).</li>
     <li><strong>Binary classification only,</strong> and <code>--threads</code> only does something in <code>fit</code>: <code>eval</code> accepts and checks it, and nothing in it is threaded.</li>
-    <li><strong class="red">One gate is red.</strong> The regression forest against scikit-learn&rsquo;s: RMSE 8.1% apart where the tolerance was 3%. The algorithms differ (histogram against exact splits), the stage attributed most of the gap to that, the tolerance was not moved, and the decision is the maintainer&rsquo;s (<a href="evidence.html#red">evidence</a>).</li>
+    <li><strong class="red">One gate is red.</strong> The regression forest against scikit-learn&rsquo;s: RMSE 8.1% apart where the tolerance is 3%. The algorithms differ (histogram against exact splits) and most of the gap is attributed to that; the tolerance is kept and the decision is the maintainer&rsquo;s (<a href="evidence.html#red">evidence</a>).</li>
     <li><strong>Not tested across machines.</strong> The bytes are verified on one Mac, arm64. A Linux x86-64 run is not done.</li>
-    <li><strong>No CI workflow yet.</strong> The reader is a pinned dependency on cancho-table&rsquo;s stores (<a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a>, merged), so no sibling clone is needed, but <code>cancho install</code> needs the network and nothing here runs <code>scripts/check.sh</code> automatically.</li>
-    <li><strong>Not started:</strong> the MCP server and <code>ml-serve</code> (issue #16).</li>
+    <li><strong>No CI workflow.</strong> The reader is a pinned dependency on cancho-table&rsquo;s stores (<a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a>), so no sibling clone is needed, but <code>cancho install</code> needs the network and nothing here runs <code>scripts/check.sh</code> automatically.</li>
+    <li><strong>Not built:</strong> the MCP server and <code>ml-serve</code> (issue #16).</li>
     <li><strong>Not planned in v1:</strong> neural networks and a GPU path. Boosting, naive Bayes, k-NN and multiclass are in the plan and not built.</li>
   </ul>
   <p class="note">Nothing in this list is a promise. <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">docs/status.md</a> has it as a table, with the document that measured each item.</p>
@@ -323,7 +323,7 @@ An error is `{code, rule, message, hint, repair, detail}`. Match on `rule`, not 
 
 <section id="start">
   <h2>Quick start</h2>
-  <p class="sub">You need <code>git</code>, Rust, <code>clang</code> and Python 3, and network access for the clones and for <code>cancho install</code>, which fetches the pinned <code>cancho-tools</code> modules and cancho-table&rsquo;s five numeric modules (the stores of <a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a>) into <code>build/deps</code>. Both are <code>[dependencies.*]</code> of <code>cancho.toml</code>, pinned to one commit each (cancho-table: <code>202b214372a0</code>); nothing is cloned or copied. On a 16-core Mac with the compiler already built, <code>cancho build --bin ml</code> took 2.9 seconds once; the compiler build and the clones are extra.</p>
+  <p class="sub">You need <code>git</code>, Rust, <code>clang</code> and Python 3, and network access for the clones and for <code>cancho install</code>, which fetches the pinned <code>cancho-tools</code> modules and cancho-table&rsquo;s five numeric modules (the stores of <a href="https://github.com/alpibrusl/cancho-table/pull/44">cancho-table#44</a>) into <code>build/deps</code>. Both are <code>[dependencies.*]</code> of <code>cancho.toml</code>, pinned to one commit each (cancho-table: <code>202b214372a0</code>); nothing is cloned or copied. On a 16-core Mac at a load average of 3 to 5 with the compiler built, <code>cancho install</code> took 1.4 seconds and <code>cancho build --bin ml</code> 5.0 seconds, once each; the compiler build and the clones are extra.</p>
   <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/cancho
 git clone https://github.com/alpibrusl/cancho-ml &amp;&amp; cd cancho-ml
 REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
@@ -358,7 +358,7 @@ printf 'id,rooms,area,city\n6,2,52.5,Lyon\n7,3,80,Porto\n' &gt; listings.csv</co
 
 <section id="cancho">
   <h2>Built in cancho, with an authority the compiler wrote</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>ml</code> that is the line below: it can read its arguments and the files named on its command line, allocate memory, create, append to, rename and remove files beneath a directory it opened itself, and write to the terminal. It cannot use the network, call foreign code, read the clock, read standard input or write a file by path. There is no <code>conc</code>, because <code>ml</code> has no <code>--threads</code>. The path extent is a run-time value, so the row names the verb, not the place: <code>fs_read("")</code>.</p>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>ml</code> that is the line below: it can read its arguments and the files named on its command line, allocate memory, create, append to, rename and remove files beneath a directory it opened itself, and write to the terminal. It cannot use the network, call foreign code, read the clock, read standard input or write a file by path. <code>conc</code> is in the row because <code>fit --threads</code> calls the threaded kernels of the linear algebra. The path extent is a run-time value, so the row names the verb, not the place: <code>fs_read("")</code>.</p>
 <!-- gen:authority -->
 <pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json</span>
 ml    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_write
@@ -368,7 +368,7 @@ ml    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read
 
 <section id="fast">
   <h2>How fast</h2>
-  <p class="sub"><strong>No speed is claimed for <code>ml</code>: the command line has not been timed.</strong> The libraries under it were timed on one shared Mac (arm64, 16 cores) at a load average of 2.4 or more, so every figure is flagged <code>load &gt;= 2</code> and none is a quiet-machine number. A serial rerun on a quiet machine is pending. They are on the <a href="benchmarks.html">benchmarks page</a> with their conditions, and these are the shape of them.</p>
+  <p class="sub"><strong>No speed is claimed for <code>ml</code>: the command line has not been timed.</strong> The libraries under it were timed on one shared Mac (arm64, 16 cores) at a load average of 2.4 or more, so every figure is flagged <code>load &gt;= 2</code> and none is a quiet-machine number. No run on a quiet machine exists, and the linear-algebra and model timings were taken with the summation order of one chain per block, not the 4-lane order the libraries use today. They are on the <a href="benchmarks.html">benchmarks page</a> with their conditions, and these are the shape of them.</p>
   <ul class="plain">
     <li><strong>Where it is slower.</strong> Dense float linear algebra: on the 29 gate shapes, one thread, 8 match numpy and Accelerate and 21 do not, from 1.05 to 14.9 times slower; square <code>gemm</code> is 13.8 to 16.5 times slower. The same algorithm in C takes about as long, so the gap is the vendor library and the language (no SIMD vector type). Logistic regression is 1.4 to 1.5 times slower than numpy&rsquo;s same algorithm. A log-loss is 3.0 times slower than a thin numpy version.</li>
     <li><strong>Where it is not.</strong> The triangular solves and small Cholesky match; k-means is level with scikit-learn (306 against 330 ms on 1,000,000 rows); the AUC took 24 ms against 86 ms for a thin numpy version on 1,000,000 scores.</li>
@@ -381,7 +381,7 @@ ml    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read
   <ul>
     <li>What is listed above works and is tested. The command line builds three models. Nothing here is for production.</li>
     <li>One pre-registered gate is red, and the speed figures are from a loaded machine. <a href="evidence.html">Evidence</a> and <a href="benchmarks.html">benchmarks</a> say exactly what each shows.</li>
-    <li>The program is built with one pinned compiler version, and that compiler is still changing.</li>
+    <li>The program is built with one pinned compiler revision, <code>a4572ea</code>, and no other is used.</li>
   </ul>
 </aside>
 
@@ -390,7 +390,7 @@ ml    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read
 <footer><div class="wrap">
   <a href="https://github.com/alpibrusl/cancho-ml">Repository</a><a href="examples.html">Examples</a><a href="evidence.html">Evidence</a><a href="benchmarks.html">Benchmarks</a>
   <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">Status</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">Command line</a>
-  <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/design.md">Design</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/integration.md">Integration</a>
+  <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/design.md">Design</a>
   <span>Built on <a href="https://github.com/alpibrusl/cancho">cancho</a> · EUPL-1.2</span>
 </div></footer>
 </body>

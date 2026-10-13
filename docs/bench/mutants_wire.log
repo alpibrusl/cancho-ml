@@ -1,3 +1,4 @@
+Tue Oct 13 15:08:32 CEST 2026
 KILLED    w-step-separator-is-a-comma                      W3  tests: test_every_fixture, test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
 KILLED    w-last-step-not-ended                            W3  tests: test_every_fixture, test_retry_repairs_work_and_widen_nothing, test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
 KILLED    w-hyperparameter-flags-dropped                   W3  tests: test_every_fixture, test_linear_bytes_predictions_and_metrics, test_logistic_bytes_predictions_and_metrics
@@ -42,3 +43,5 @@ PASSED    baseline (the unchanged tree)                    -
 
 40 mutants: 39 killed, 1 survived, 0 invalid
 SURVIVOR w-bad-hyperparameter-token-ignored: the plan parser has already refused every token that hparams would (its grammar is the same table): this check is a second line of defence that no input reaches
+EXIT 0
+Tue Oct 13 15:16:47 CEST 2026

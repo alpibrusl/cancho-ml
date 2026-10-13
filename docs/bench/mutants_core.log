@@ -1,3 +1,4 @@
+Tue Oct 13 14:40:26 CEST 2026
 mutants_core: control (unmutated) passes
 rng-gold                                 killed
 rng-shift30                              killed
@@ -50,3 +51,5 @@ tensor-check-normalised                  killed
 tensor-normalised-axes                   killed
 tensor-abs-clamp                         killed
 mutants_core: 48 killed, 2 survived and explained, 0 unexplained
+EXIT 0
+Tue Oct 13 14:40:56 CEST 2026

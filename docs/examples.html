@@ -2,7 +2,7 @@
 <html lang="en">
 <!--
   Hand-written prose. Everything between a pair of gen comments is written by scripts/site.py from the built `ml` and from
-  docs/examples/reference.json (scikit-learn's results, written once by scripts/examples_data.py and not re-run by the check).
+  docs/examples/reference.json (scikit-learn's results, written by scripts/examples_data.py; the check does not run scikit-learn).
   The gate (what is compared, the tolerances and why) was written first: docs/examples.md.
 -->
 <head>
@@ -40,11 +40,11 @@
   <h1>Worked examples</h1>
   <p class="lead">Four classic datasets, solved by the real <code>ml</code> binary and checked against scikit-learn on the same two files.</p>
   <div class="notice">
-    <p><b>What this is.</b> For each dataset the same <code>train.csv</code> and <code>test.csv</code> go to <code>ml</code> and to scikit-learn. The <code>ml</code> commands and what they print are on this page exactly as run, and the page is regenerated from the built binary by <code>scripts/check_docs.sh</code>, which fails if a character drifts. The scikit-learn column is <b>not re-run by that check</b>: it is read from <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/examples/reference.json">docs/examples/reference.json</a>, which <code>scripts/examples_data.py</code> wrote once, and each table says with which version.</p>
+    <p><b>What this is.</b> For each dataset the same <code>train.csv</code> and <code>test.csv</code> go to <code>ml</code> and to scikit-learn. The <code>ml</code> commands and what they print are on this page exactly as run, and the page is regenerated from the built binary by <code>scripts/check_docs.sh</code>, which fails if a character drifts. The scikit-learn column is <b>not computed by that check</b>: it is read from <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/examples/reference.json">docs/examples/reference.json</a>, which <code>scripts/examples_data.py</code> wrote once, and each table says with which version.</p>
     <p><b>What the comparison is worth.</b> What was compared, which scikit-learn parameters correspond to <code>--l2</code>, and the tolerances, with the reason for each, were written <b>before</b> any example was run: <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/examples.md">docs/examples.md</a>. A row outside its tolerance says <b>differs</b> and the cause is written next to it. These are teaching datasets: nothing here says anything about medicine, botany or chemistry, and nothing about how fast <code>ml</code> is.</p>
   </div>
   <ul class="toc">
-    <li><a href="#cancer">Breast cancer</a></li><li><a href="#diabetes">Diabetes</a></li><li><a href="#iris">Iris</a></li><li><a href="#wine">Wine</a></li><li><a href="#notyet">Not yet</a></li><li><a href="#run">Run it yourself</a></li><li><a href="#data">The data and where it comes from</a></li>
+    <li><a href="#cancer">Breast cancer</a></li><li><a href="#diabetes">Diabetes</a></li><li><a href="#iris">Iris</a></li><li><a href="#wine">Wine</a></li><li><a href="#notcovered">Not covered</a></li><li><a href="#run">Run it yourself</a></li><li><a href="#data">The data and where it comes from</a></li>
   </ul>
 </div>
 
@@ -105,7 +105,7 @@
 <!-- gen:ex-breast_cancer-conv -->
 <div class="fitwrap"><table class="fit"><thead><tr><th>penalty</th><th class="num">iterations</th><th class="num">compared with</th><th class="num">largest change in a coefficient or the intercept</th><th class="num">largest coefficient</th></tr></thead><tbody><tr><th><code>--l2 0.01</code></th><td class="num">25</td><td class="num">100</td><td class="num">2.2e-16</td><td class="num">0.738</td></tr></tbody></table></div>
 <!-- /gen:ex-breast_cancer-conv -->
-  <p class="sub"><b>What the first two commands show.</b> The first command, with no penalty, is the one most people would type, and it succeeds. It also classifies every training row correctly, which means a plane separates the two classes; the penalty-free optimum is then at infinity, there is nothing for Newton's method to converge to, and what comes out depends on the number of iterations. The same command with more iterations is refused with <code>ml.linalg.not-positive-definite</code>, and the hint, a penalty above a threshold, is the repair in words (the refusal has no argv to offer). The fit that was compared has <code>--l2 0.01</code>, and it is the one whose iteration count no longer matters. The scikit-learn parameters that correspond to it are in the line under the first table.</p>
+  <p class="sub"><b>What the first two commands show.</b> The first command, with no penalty, is the one most people would type, and it succeeds. It also classifies every training row correctly, which means a plane separates the two classes; the penalty-free optimum is then at infinity, there is nothing for Newton's method to converge to, and what comes out depends on the number of iterations. The same command with more iterations is refused with <code>ml.linalg.not-positive-definite</code>, and the hint, a penalty above a threshold, is the repair in words (the refusal has no argv to offer). The fit that was compared has <code>--l2 0.01</code>, and it is the one whose iteration count does not matter. The scikit-learn parameters that correspond to it are in the line under the first table.</p>
 </section>
 
 <section id="diabetes">
@@ -276,13 +276,13 @@
   <p class="sub"><b>What the first commands show.</b> <code>ml</code> reads the type of a column from the file in front of it. <code>color_intensity</code> has two decimals in the train file and six in the test file, so the fit worked and the scoring of the test file was refused with <code>ml.schema.mismatch</code>, which says which column. <code>--float color_intensity</code> at fit time reads it as a float, and the stored model then accepts the test file. The penalty-free fit then repeats the breast-cancer lesson: it succeeds, changes when the iterations change, and is refused with enough of them.</p>
 </section>
 
-<section id="notyet">
-  <h2>Not yet</h2>
-  <p class="sub">Popular tasks that need something <code>ml</code> does not have. These are plain planned items, not promises with dates, and nothing is claimed about running them.</p>
+<section id="notcovered">
+  <h2>Not covered</h2>
+  <p class="sub">Popular tasks that need something <code>ml</code> does not have. Nothing is claimed about running them.</p>
   <ul class="plain">
-    <li><b>Titanic</b> (survival, a binary label) has columns of text such as names, sexes and ports. Text categories are the next stage (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">status</a>).</li>
-    <li><b>House Prices</b> (a regression) has many columns of text categories. The same stage.</li>
-    <li><b>Digit Recognizer</b> (handwritten digits) has ten classes and images with many columns. <code>ml</code> is binary only today (a third label is <code>ml.label.not-binary</code>), and how large images would be read has not been looked at.</li>
+    <li><b>Titanic</b> (survival, a binary label) has columns of text such as names, sexes and ports. <code>ml</code> reads declared text columns and has no step that encodes them (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">status</a>).</li>
+    <li><b>House Prices</b> (a regression) has many columns of text categories. The same limit.</li>
+    <li><b>Digit Recognizer</b> (handwritten digits) has ten classes and images with many columns. <code>ml</code> is binary only (a third label is <code>ml.label.not-binary</code>), and how large images would be read has not been looked at.</li>
   </ul>
 </section>
 

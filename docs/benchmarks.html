@@ -1,26 +1,25 @@
 <!doctype html>
 <html lang="en">
 <!--
-  Hand-written. Every figure is copied from the raw output in docs/bench/ named next to it; the linear-algebra table was
-  written from docs/bench/gate-1thread.jsonl by a one-off script and pasted. Nothing here was measured by the page, and
-  nothing was timed while writing it.
+  Hand-written. Every figure is copied from the raw output in docs/bench/ named next to it; the linear-algebra table is
+  docs/bench/gate-1thread.jsonl as a table. The page measures nothing.
 -->
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cancho-ml benchmarks: what was timed, and under what load</title>
-<meta name="description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. A serial rerun is pending.">
+<meta name="description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. No quiet-machine run exists.">
 <link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/benchmarks.html">
 <meta name="robots" content="index, follow">
 <meta property="og:site_name" content="cancho-ml">
 <meta property="og:locale" content="en">
 <meta property="og:type" content="website">
 <meta property="og:title" content="cancho-ml benchmarks: what was timed, and under what load">
-<meta property="og:description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. A serial rerun is pending.">
+<meta property="og:description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. No quiet-machine run exists.">
 <meta property="og:url" content="https://alpibrusl.github.io/cancho-ml/benchmarks.html">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="cancho-ml benchmarks: what was timed, and under what load">
-<meta name="twitter:description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. A serial rerun is pending.">
+<meta name="twitter:description" content="Timings of the cancho-ml libraries with machine, threads, load and minimum of N. Taken on a loaded machine: not claims. No quiet-machine run exists.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" type="image/png" href="assets/cancho-ml-icon.png">
 <link rel="stylesheet" href="assets/site.css">
@@ -38,10 +37,10 @@
 <main id="main" class="wrap">
 <div class="pagehead">
   <h1>Benchmarks</h1>
-  <p class="lead">What was timed, on what, and under what load. None of it is a claim yet.</p>
+  <p class="lead">What was timed, on what, and under what load. None of it is a claim.</p>
   <div class="notice">
-    <p><b>Read this first.</b> Every table on this page was taken on one Mac (arm64, 16 cores, macOS 26.2; the documents that name the chip say Apple M4 Max) that other users and other agents&rsquo; builds and benchmarks were also using. The load average (1 minute) was 2.4 or more in every cell, and up to 10 in the linear-algebra table: every cell is flagged <code>load &gt;= 2</code>, and none is a quiet-machine number. <b>A serial rerun on a quiet machine is pending.</b> Until it is done, these are the conditions of one stretch of time, not measurements to quote.</p>
-    <p><b>The command line has not been timed.</b> All of this is the libraries under <code>ml</code>; since stage W1 the verbs call the linear and logistic models, the pipeline and the metrics, and none of that was timed through the command line. There is no timing of <code>ml fit</code>, <code>predict</code> or <code>eval</code> in this repository.</p>
+    <p><b>Read this first.</b> Every table on this page was taken on one Mac (arm64, 16 cores, macOS 26.2; the documents that name the chip say Apple M4 Max) that other users and other agents&rsquo; builds and benchmarks were also using. The load average (1 minute) was 2.4 or more in every cell, and up to 10 in the linear-algebra table: every cell is flagged <code>load &gt;= 2</code>, and none is a quiet-machine number. <b>No quiet-machine run exists.</b> These are the conditions of one stretch of time, not measurements to quote. The linear-algebra and model timings were taken with the summation order of one chain per block; the 4-lane order the libraries use today has not been timed (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/lanes.md">docs/lanes.md</a> section 6).</p>
+    <p><b>The command line has not been timed.</b> All of this is the libraries under <code>ml</code>. The verbs call the linear and logistic models, the pipeline and the metrics, and none of that is timed through the command line: there is no timing of <code>ml fit</code>, <code>predict</code> or <code>eval</code> in this repository.</p>
   </div>
   <ul class="toc">
     <li><a href="#models">Models against numpy and scikit-learn</a></li><li><a href="#threads">Threads</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#metrics">Metrics</a></li><li><a href="#trees">Forests</a></li><li><a href="#reader">The reader</a></li><li><a href="#not">What was not measured</a></li>
@@ -67,7 +66,7 @@
 
 <section id="threads">
   <h2>Threads</h2>
-  <p class="sub">The same models at 1, 2, 4, 8 and 16 threads, in milliseconds, one run each; every output of every run is identical to the one-thread run. Source: <code>docs/bench/models-bench.txt</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> section 6.7. Load average 3.2 to 3.6 for these cells (2.96 for the rerun). The script rounds to whole milliseconds.</p>
+  <p class="sub">The same models at 1, 2, 4, 8 and 16 threads, in milliseconds, one run each; every output of every run is identical to the one-thread run. Source: <code>docs/bench/models-bench.txt</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-linear.md">docs/models-linear.md</a> section 6.7. Load average 3.2 to 3.6 for these cells (2.96 for the million-row k-means row). The script rounds to whole milliseconds.</p>
   <div class="fitwrap"><table class="fit bench">
     <thead><tr><th>model</th><th class="num">rows</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16 threads</th><th class="num">speed-up at 16</th></tr></thead>
     <tbody>
@@ -76,10 +75,10 @@
       <tr><th>linear</th><td class="num">100,000</td><td class="num">3</td><td class="num">3</td><td class="num">3</td><td class="num">2</td><td class="num">3</td><td class="num">1.10</td></tr>
       <tr><th>linear</th><td class="num">1,000,000</td><td class="num">34</td><td class="num">34</td><td class="num">28</td><td class="num">25</td><td class="num">24</td><td class="num">1.40</td></tr>
       <tr><th>k-means</th><td class="num">100,000</td><td class="num">34</td><td class="num">25</td><td class="num">19</td><td class="num">17</td><td class="num">16</td><td class="num">2.17</td></tr>
-      <tr><th>k-means</th><td class="num">1,000,000 (rerun)</td><td class="num">319</td><td class="num">227</td><td class="num">161</td><td class="num">129</td><td class="num">113</td><td class="num">2.82</td></tr>
+      <tr><th>k-means</th><td class="num">1,000,000</td><td class="num">319</td><td class="num">227</td><td class="num">161</td><td class="num">129</td><td class="num">113</td><td class="num">2.82</td></tr>
     </tbody>
   </table></div>
-  <p class="fn">The first run of the million-row k-means printed 515 ms at one thread; the cause was not found, the rerun above agrees with the 306 to 320 ms of every other measurement of that cell, and the first line is kept in the raw log. Every thread owns a copy of its rows, made at every pass, because cancho cannot hand a thread a shared read-only slice (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/linalg.md">docs/linalg.md</a> section 5.6, U2); the copy is in the time, which is why the speed-up is far from linear and linear regression, one pass, hardly gains. For the linear-algebra kernels, <code>dot</code>, <code>gemv_t</code> and <code>gemv_n</code> get <em>slower</em> with threads (0.38 to 0.65 of the one-thread speed) for the same reason; <code>syrk</code> at 100,000 by 64 takes 17.5 ms on one thread and 3.75 ms on sixteen, and <code>gemm</code> at 512 takes 10.8 ms and 2.25 ms (<code>docs/bench/threads.txt</code>, load 4.2, minimum of 5).</p>
+  <p class="fn">The million-row k-means row is the second measurement of that cell. The first printed 515 ms at one thread, its cause was not found, and every other measurement of the cell is 306 to 320 ms; the raw log keeps both. Every thread owns a copy of its rows, made at every pass, because cancho cannot hand a thread a shared read-only slice (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/linalg.md">docs/linalg.md</a> section 5.6, U2); the copy is in the time, which is why the speed-up is far from linear and linear regression, one pass, hardly gains. For the linear-algebra kernels, <code>dot</code>, <code>gemv_t</code> and <code>gemv_n</code> get <em>slower</em> with threads (0.38 to 0.65 of the one-thread speed) for the same reason; <code>syrk</code> at 100,000 by 64 takes 17.5 ms on one thread and 3.75 ms on sixteen, and <code>gemm</code> at 512 takes 10.8 ms and 2.25 ms (<code>docs/bench/threads.txt</code>, load 4.2, minimum of 5).</p>
 </section>
 
 <section id="linalg">
@@ -147,7 +146,7 @@
 <section id="trees">
   <h2>Forests</h2>
   <p class="sub">Classification, depth 8, 64 bins, 4 candidate features per node (<code>mtry</code>), bootstrap, 20 columns, train on the first 80% of the rows, test on the last 20%. Minimum of 7 interleaved rounds. Seconds. Source: <code>docs/bench/tree_100000.txt</code> and <code>tree_1000000_b.txt</code>, <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-tree.md">docs/models-tree.md</a> section 10.9. Load average over the rounds: 3.3 to 4.9 (100,000 rows) and 2.6 to 5.0 (1,000,000 rows). <strong>Both are the lower-load session of two; the other session is in the document and the raw files.</strong></p>
-  <div class="notice"><p><b>These are not speed comparisons with scikit-learn.</b> scikit-learn&rsquo;s <code>RandomForestClassifier</code> is an exact-split forest: it looks for thresholds on the raw values. This library bins the values into quantiles first. The two make models of the same family by different algorithms, so the scikit-learn rows are the time to produce such a model, not the speed of the same algorithm, and no ratio is given. No histogram random forest was installed to compare with, and nothing was installed. scikit-learn ran with <code>n_jobs = 1</code>; that it ran on one thread was not checked with a counter. <code>HistGradientBoosting</code> with one iteration builds one tree with leaf-wise growth and second-order leaf values, so its row is context only.</p></div>
+  <div class="notice"><p><b>These are not speed comparisons with scikit-learn.</b> scikit-learn&rsquo;s <code>RandomForestClassifier</code> is an exact-split forest: it looks for thresholds on the raw values. This library bins the values into quantiles first. The two make models of the same family by different algorithms, so the scikit-learn rows are the time to produce such a model, not the speed of the same algorithm, and no ratio is given. No histogram random forest is compared with. scikit-learn ran with <code>n_jobs = 1</code>; that it ran on one thread was not checked with a counter. <code>HistGradientBoosting</code> with one iteration builds one tree with leaf-wise growth and second-order leaf values, so its row is context only.</p></div>
   <div class="fitwrap"><table class="fit bench">
     <thead><tr><th>entry</th><th class="num">trees</th><th class="num">threads</th><th class="num">fit, 100,000 rows</th><th class="num">predict, 20,000</th><th class="num">fit, 1,000,000 rows</th><th class="num">predict, 200,000</th></tr></thead>
     <tbody>
@@ -162,7 +161,7 @@
       <tr><th>scikit-learn <code>HistGradientBoosting</code>, 1 iteration (context only)</th><td class="num">1</td><td class="num">1</td><td class="num">0.1055</td><td class="num">0.0007</td><td class="num">0.602</td><td class="num">0.0058</td></tr>
     </tbody>
   </table></div>
-  <p class="fn">Spreads (maximum over minimum) of the cancho cells are 1.01 to 1.12, except the 16-thread predictions (1.25 to 1.33), which are at or above the protocol&rsquo;s limit of 1.25; the cells above it were not rerun. <strong>Scaling.</strong> Fit speed-up at 16 threads, against the same configuration on one thread, for 32 trees: 6.61 times at 100,000 rows and 3.38 at 1,000,000; predict 9.28 and 10.58 times. The 10-tree fits do not divide by 4, 8 or 16 and use at most 10 threads. The explanation, by elimination and not measured: the parent builds a copy of the bin matrix and the labels for each thread, one after another, because a thread cannot be given a shared read-only slice. At 16 threads on a machine with 12 performance cores and a load of 3 or more, read the cells as &ldquo;no worse than&rdquo;. The forest&rsquo;s bytes are identical at every thread count. <strong>Quality is not the same as speed:</strong> the classification forests agree with scikit-learn&rsquo;s to 0.001 AUC, and the regression forest does not (<a href="evidence.html#red">the red gate</a>).</p>
+  <p class="fn">Spreads (maximum over minimum) of the cancho cells are 1.01 to 1.12, except the 16-thread predictions (1.25 to 1.33), which are at or above the protocol&rsquo;s limit of 1.25; the cells above it are not repeated. <strong>Scaling.</strong> Fit speed-up at 16 threads, against the same configuration on one thread, for 32 trees: 6.61 times at 100,000 rows and 3.38 at 1,000,000; predict 9.28 and 10.58 times. The 10-tree fits do not divide by 4, 8 or 16 and use at most 10 threads. The explanation, by elimination and not measured: the parent builds a copy of the bin matrix and the labels for each thread, one after another, because a thread cannot be given a shared read-only slice. At 16 threads on a machine with 12 performance cores and a load of 3 or more, read the cells as &ldquo;no worse than&rdquo;. The forest&rsquo;s bytes are identical at every thread count. <strong>Quality is not the same as speed:</strong> the classification forests agree with scikit-learn&rsquo;s to within 0.0011 AUC, and the regression forest does not (<a href="evidence.html#red">the red gate</a>).</p>
 </section>
 
 <section id="reader">
@@ -183,11 +182,11 @@
   <h2>What was not measured</h2>
   <ul class="plain">
     <li><strong>The command line.</strong> <code>ml fit</code>, <code>predict</code> and <code>eval</code> have no benchmark (the constant model needs no matrix; the pipeline models read one).</li>
-    <li><strong>A quiet machine.</strong> The serial rerun is pending, and so are the quiet-machine versions of every table above.</li>
+    <li><strong>A quiet machine.</strong> No table above has a quiet-machine version.</li>
     <li><strong>Another machine.</strong> Everything is one Mac, arm64. A Linux x86-64 box has not been used.</li>
     <li><strong>Memory.</strong> No gate measures it. The reader&rsquo;s refusal of a 200 MB file peaked at 1.5 MB, and the tree fit holds about 16 times 35 MB of thread copies at 16 threads for 800,000 rows (<code>docs/models-tree.md</code> section 10.9); there is no measurement of a model fit.</li>
     <li><strong>Rows above a million</strong> for the linear models, and 10,000,000 for anything. The tree fit is limited to 2<sup>20</sup> rows in the library.</li>
-    <li><strong>How to rerun:</strong> <code>python3 scripts/bench_models.py</code>, <code>bench_models_threads.py</code>, <code>bench_linalg.py --gate --c</code>, <code>bench_metrics.py</code>, <code>bench_tree.py</code> and <code>bench_reader.py</code>. They were not run for this page.</li>
+    <li><strong>How to run them:</strong> <code>python3 scripts/bench_models.py</code>, <code>bench_models_threads.py</code>, <code>bench_linalg.py --gate --c</code>, <code>bench_metrics.py</code>, <code>bench_tree.py</code> and <code>bench_reader.py</code>. No check runs them.</li>
   </ul>
 </section>
 </main>
