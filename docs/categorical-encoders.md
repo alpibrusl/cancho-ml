@@ -203,7 +203,7 @@ the `--split` train side) with the categorical steps, and fits the estimator on 
 | a categorical step, no `--split`, no `--dry-run` | `ml.model.vocabulary-not-stored` (exit 8), repair `none`, hint: add `--split train=F` to fit and score in one invocation without writing a model; nothing is written. The refusal comes **after** the plan and the data have been checked, so a plan error is reported first |
 | a categorical step and `--split train=F [--seed N]` | the fit on the train rows, the held-out metrics from the **fitted steps** applied to the test rows (the same `apply` that stage 3's predict will use), `written: false` in the answer, no `path`, `bytes` or `sha256`, the summary with `steps_sha256` (SHA-256 of the steps payload, so the fitted vocabulary and counts can be compared) and the categorical columns' sizes. `--output` is still required by the command line (the flag table is unchanged) and is **not** touched: an existing file stays, a missing one is not created |
 | a categorical step and `--dry-run` | as above without a split; exit 9 as every dry run |
-| no categorical step (numeric plan, with or without `--cat` of a column some step reads: not possible) | unchanged |
+| a plan with no categorical step (and no `--cat`) | unchanged: `pipeline.run`, the model file and every byte as before (E10); a declared column that no step reads is `ml.input.categorical-not-encoded` |
 
 The held-out metrics path is `fit`'s own (`wiring.md` W7): the test side is `ceil(n * (1 - F))` rows, the same split as `eval --split`. `predict` and `eval` take no categorical column
 before stage 3 (`ml.input.non-numeric` as before).
