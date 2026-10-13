@@ -107,7 +107,8 @@ MUTANTS = [
     # ------------------------------------------------------------------ the thread count
     M("wt-threads-minus-one", "WT7", "the library gets one thread fewer than --threads", [(AF, "seed: seed, threads: threads }", "seed: seed, threads: threads - 1 }")], TREES + ORACLE),
     M("wt-threads-reach-the-seed", "WT7", "the seed of the forest depends on the thread count", [(AF, "seed: seed, threads: threads }", "seed: seed + threads - 1, threads: threads }")], TREES + ORACLE),
-    M("wt-tree-threads-reach-the-seed", "WT7", "the seed of the tree depends on the thread count", [(AT, "seed: seed, threads: threads }", "seed: seed + threads - 1, threads: threads }")], TREES + ORACLE),
+    M("wt-tree-threads-reach-the-seed", "WT7", "the seed of the tree depends on the thread count", [(AT, "seed: seed, threads: threads }", "seed: seed + threads - 1, threads: threads }")], TREES + ORACLE,
+      why="an equivalent mutant: a tree has no bootstrap and tries every column at every node, so no draw of its streams decides anything and its nodes do not depend on the seed at all (the seed in the file's meta is the command line's, not this one)"),
     M("wt-threads-not-passed-to-the-fit", "WT7", "the forest is fitted with one thread whatever --threads says", [(AF, "seed: seed, threads: threads }", "seed: seed, threads: 1 }")], TREES + ORACLE,
       why="an equivalent mutant by design: no thread count changes a byte of the model (the property this gate asserts), so a fit that ignores the flag writes the same file; nothing a test reads from the file or the answer tells the two apart"),
     M("wt-fit-threads-from-the-seed", "WT7", "ml hands the adapter the seed where the threads go", [(W, "est.fit_blob(heap, pls.kind, o.threads,", "est.fit_blob(heap, pls.kind, o.seed + 1,")], TREES + ORACLE),

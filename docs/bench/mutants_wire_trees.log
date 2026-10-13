@@ -21,3 +21,43 @@ KILLED    wt-proba-is-the-class                            WT2  tests: test_fore
 KILLED    wt-forest-proba-mode                             WT2  tests: test_forest_classification
 KILLED    wt-class-of-a-tie                                WT2  tests: test_forest_classification, test_tree_classification
 SURVIVED  wt-regression-proba-allowed                      WT2  
+KILLED    wt-labels-record-not-checked                     WT11  tests: test_the_labels_record_of_a_classification
+KILLED    wt-longer-payload-accepted                       WT11  tests: test_a_regression_payload_ends_with_its_values_and_has_no_labels, test_the_length_of_the_payload
+KILLED    wt-width-of-the-payload-not-compared             WT11  tests: test_the_header_of_the_library_payload
+SURVIVED  wt-task-of-plan-and-payload-not-compared         WT11  
+KILLED    wt-library-reader-skipped-for-the-header         WT11  tests: test_seeded_damage_of_the_model_section_by_whole_words
+SURVIVED  wt-plan-key-not-checked-against-the-kind         WT11  
+KILLED    wt-sum-order-of-kind-7-is-2                      WT3  tests: test_forest_classification, test_forest_regression, test_the_oracle_is_sensitive_to_the_sum_order_field, test_tree_classification
+KILLED    wt-sum-order-3-for-every-ordered-kind            WT12  tests: test_every_old_fixture_gives_the_bytes_of_the_baseline, test_every_model_file_of_linear_and_logistic_is_byte_for_byte_the_old_one
+KILLED    wt-sum-order-checked-as-2                        WT3  tests: test_a_node_that_saw_no_missing_cell_sends_it_to_the_right, test_an_input_column_with_no_cell_is_a_missing_column_for_the_linear_models_and_every_cell_missing_for_the_trees, test_columns_are_matched_by_name, test_labels_probability_and_the_positive_label
+KILLED    wt-kind-7-of-a-constant-plan-is-ours             WT12  tests: test_every_constant_case_gives_the_bytes_of_v1_post, test_every_old_fixture_gives_the_bytes_of_the_baseline
+KILLED    wt-row-bound-removed                             WT6  tests: test_a_tree_fit_takes_at_most_2_to_the_20_training_rows
+KILLED    wt-row-bound-off-by-one                          WT6  tests: test_exactly_2_to_the_20_rows_are_fitted
+KILLED    wt-row-bound-counts-the-file                     WT6  tests: test_a_tree_fit_takes_at_most_2_to_the_20_training_rows
+KILLED    wt-row-bound-message                             WT6  tests: test_a_tree_fit_takes_at_most_2_to_the_20_training_rows
+KILLED    wt-fit-refuses-missing-for-the-trees             WT5  tests: test_the_task_of_a_plan_is_the_plans, test_a_plan_with_no_impute_step_is_accepted_for_the_trees_and_refused_for_the_linear_models, test_a_tree_is_a_forest_of_one, test_an_all_missing_column_is_refused_by_a_step_that_selects_it_and_ignored_otherwise
+KILLED    wt-predict-refuses-missing-for-the-trees         WT5  tests: test_a_node_that_saw_no_missing_cell_sends_it_to_the_right, test_an_input_column_with_no_cell_is_a_missing_column_for_the_linear_models_and_every_cell_missing_for_the_trees, test_labels_probability_and_the_positive_label, test_the_default_side_is_learned_from_the_training_rows_that_miss
+KILLED    wt-holdout-refuses-missing-for-the-trees         WT5  tests: test_forest_classification, test_forest_regression, test_tree_classification, test_tree_regression
+KILLED    wt-empty-column-is-missing-for-all               WT5  tests: test_a_node_that_saw_no_missing_cell_sends_it_to_the_right, test_an_input_column_with_no_cell_is_a_missing_column_for_the_linear_models_and_every_cell_missing_for_the_trees, test_forest_classification, test_forest_regression
+KILLED    wt-empty-column-is-fine-for-all                  WT5  tests: test_an_input_column_with_no_cell_is_a_missing_column_for_the_linear_models_and_every_cell_missing_for_the_trees
+KILLED    wt-bitmap-bit-order                              WT5  tests: test_forest_classification, test_forest_regression, test_tree_classification, test_tree_regression
+KILLED    wt-bitmap-word-of-a-byte                         WT5  tests: test_forest_classification, test_forest_regression, test_tree_classification, test_tree_regression
+KILLED    wt-bitmap-column-start                           WT5  tests: test_forest_classification, test_forest_regression, test_tree_classification, test_tree_regression
+KILLED    wt-bitmap-not-passed-when-any                    WT5  tests: test_forest_classification, test_forest_regression, test_tree_classification, test_tree_regression
+KILLED    wt-bitmap-not-passed-at-predict                  WT5  tests: test_forest_classification, test_forest_regression, test_tree_classification, test_tree_regression
+KILLED    wt-threads-minus-one                             WT7  tests: test_the_task_of_a_plan_is_the_plans, test_a_plan_with_no_impute_step_is_accepted_for_the_trees_and_refused_for_the_linear_models, test_a_tree_is_a_forest_of_one, test_an_impute_step_removes_the_missing_cells_and_is_stored
+KILLED    wt-threads-reach-the-seed                        WT7  tests: test_the_model_file_is_the_same_at_1_2_4_8_and_16_threads, test_forest_classification, test_forest_regression
+SURVIVED  wt-tree-threads-reach-the-seed                   WT7  
+SURVIVED  wt-threads-not-passed-to-the-fit                 WT7  
+KILLED    wt-fit-threads-from-the-seed                     WT7  tests: test_forest_classification, test_forest_regression, test_the_oracle_is_sensitive_to_the_sum_order_field, test_tree_classification
+KILLED    wt-summary-trees-from-the-wrong-field            WT2  tests: test_every_fixture
+KILLED    wt-name-of-a-forest-is-the-trees                 WT2  tests: test_the_plan_of_the_file_decides_the_name_predict_prints
+KILLED    wt-limit-depth-tag-missing                       WT6  tests: test_every_fixture, test_a_refused_fit_writes_nothing, test_the_limit_tags_of_the_library_have_their_exit_codes
+PASSED    baseline (the unchanged tree)                    -  
+
+55 mutants: 50 killed, 5 survived, 0 invalid
+SURVIVOR wt-regression-proba-allowed: a second line of defence: predict --proba on a regression is args.conflict before the adapter is called and eval calls proba for a classification only; no command line reaches the adapter's refusal
+SURVIVOR wt-task-of-plan-and-payload-not-compared: NO REASON GIVEN
+SURVIVOR wt-plan-key-not-checked-against-the-kind: pipeline.file.decode has already refused a plan whose model family is not the payload's (model_family_ok): this comparison is a second line of defence that no file reaches
+SURVIVOR wt-tree-threads-reach-the-seed: NO REASON GIVEN
+SURVIVOR wt-threads-not-passed-to-the-fit: an equivalent mutant by design: no thread count changes a byte of the model (the property this gate asserts), so a fit that ignores the flag writes the same file; nothing a test reads from the file or the answer tells the two apart

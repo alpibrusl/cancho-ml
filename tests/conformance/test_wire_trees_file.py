@@ -116,10 +116,13 @@ class TreeFile(unittest.TestCase):
         self.refused("rf", self.resize_model("rf", add=struct.pack("<IIQqq", 1, 1, 2, 0, 1)), "labels on a regression")
 
     def test_the_task_of_the_plan_and_the_task_of_the_payload_agree(self):
-        # the plan says classification: turn the payload's task into regression, and a regression plan's into classification
-        self.refused("cf", self.edit_model("cf", 20, struct.pack("<q", 1)), "payload regression, plan classification")
-        data = self.files["rf"]
-        self.refused("rf", self.edit_model("rf", 20, struct.pack("<q", 0)), "payload classification, plan regression")
+        # the plan is rewritten (still canonical, still agreeing with the steps) and the payload is untouched: regression payload under a classification plan, and the reverse
+        from test_model_file import write_file
+        for key, old, new in (("rf", b"task=regression", b"task=classification"), ("cf", b"task=classification", b"task=regression"), ("t", b"task=regression", b"task=classification")):
+            secs = payloads(self.files[key])
+            self.assertIn(old, secs[1])
+            secs[1] = secs[1].replace(old, new)
+            self.refused(key, write_file(secs), "%s plan %s over the payload" % (key, new))
 
     def test_the_tree_offsets_and_the_nodes(self):
         for key in self.files:

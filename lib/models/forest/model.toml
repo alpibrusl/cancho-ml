@@ -102,4 +102,4 @@ type = "int"
 min = 1
 max = 999999999
 default = "4194304"
-doc = "the most nodes one tree may have: above 4194304 or more than the tree needs is ml.limit.nodes, a tree is never cut"
+doc = "the most nodes one tree may have: above 4194304, or fewer than the tree needs, is ml.limit.nodes (a tree is never cut)"
