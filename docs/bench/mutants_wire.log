@@ -29,6 +29,8 @@ KILLED    w-eval-score-not-flipped-for-the-other-label     W6  tests: test_logis
 KILLED    w-precision-and-recall-swapped                   W6  tests: test_logistic_bytes_predictions_and_metrics
 KILLED    w-eval-positive-ignored                          W6  tests: test_logistic_bytes_predictions_and_metrics, test_the_positive_label_of_eval_is_the_one_precision_recall_and_f1_are_about
 KILLED    w-unknown-label-in-eval-accepted                 W8  tests: test_a_label_the_model_never_saw_is_refused_with_its_row_and_value
+KILLED    w-sum-order-refusal-names-the-version            M1  tests: test_the_sum_order_of_kinds_4_to_7
+KILLED    w-sum-order-known-is-the-wrong-number            M1  tests: test_the_sum_order_of_kinds_4_to_7
 KILLED    w-thread-count-modulo-4                          W5  tests: test_no_thread_count_changes_a_byte
 KILLED    w-thread-ceiling-removed                         W5  tests: test_every_fixture
 KILLED    w-thread-floor-removed                           W5  tests: test_every_fixture
@@ -38,5 +40,5 @@ KILLED    w-table-lets-predict-take-a-plan                 W2  tests: test_predi
 KILLED    w-table-model-choice-lists-a-library             W8  tests: test_the_models_in_the_flag_table_are_the_built_ones, test_another_model_name_is_refused, test_the_models_are_exactly_the_built_ones
 PASSED    baseline (the unchanged tree)                    -  
 
-38 mutants: 37 killed, 1 survived, 0 invalid
+40 mutants: 39 killed, 1 survived, 0 invalid
 SURVIVOR w-bad-hyperparameter-token-ignored: the plan parser has already refused every token that hparams would (its grammar is the same table): this check is a second line of defence that no input reaches
