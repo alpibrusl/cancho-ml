@@ -59,7 +59,7 @@ MUTANTS = [
     M("r1-exit-code-changed", "R1", "ml.input.empty exits 3 instead of 8", [("tools/ml/spec.cho", "ml.input.empty|8|", "ml.input.empty|3|", 1)],
       ["test_rules"]),
     M("r1-text-in-json-mode", "R1", "the answer is always rendered as text",
-      [("tools/ml/app.cho", 'bytes.equal(cli.text(args, parsed, table, "format"), "text")', "true", 1)], ["test_rules"]),
+      [("tools/ml/app.cho", 'bytes.equal(cli.text(args, parsed, table, "format"), "text")', 'bytes.equal(cli.text(args, parsed, table, "format"), "text") || true', 1)], ["test_rules"]),
     M("r1-missing-operand-not-refused", "R1", "`ml fit` with no file is not refused (no trap follows: the contract's accessors answer a harmless value)",
       [("tools/ml/app.cho", "} else if cli.operand_count(parsed) == 1 {", "} else if false {", 1)], ["test_rules"]),
     # ------------------------------------------------------------------ N1: no trap

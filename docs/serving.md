@@ -172,8 +172,29 @@ No tool holds `ffi`, `net_out`, `net_in` or `clock` (`tools.toml`). `max_tools` 
 
 ## 9. Results
 
-(Filled when the gates have run: commit, counts and conditions.)
+Machine: Mac, arm64, Apple M4 Max, macOS 26.2, compiler `a4572ea`, load about 8 while the suites ran. `scripts/check.sh` exits 0: 288 conformance tests pass in 524 seconds, none skipped.
+
+| gate | result | script |
+|---|---|---|
+| V1 to V4 | 16 models x 30 inputs, from a file and from standard input: same status, same bytes on standard output and standard error (a refusal differs only where it names the file); inputs of 181,486 bytes (three 64 KiB chunks) equal; the bound exact at `--max-bytes` and one below; `-`, `./-`, no operand, empty and closed standard input as section 2 says; a refused command line answers while standard input stays open | `tests/conformance/test_serving.py` (28 tests, with P1, P2, P5, D3, T1) |
+| P1, P2, P5, D3, T1 | `ml-predict` equals `ml` over the same pairs from a file and from standard input (the program name inside a `retry` repair is the one difference) and for `describe` of every model; it refuses `fit`, `eval` and 19 flags of them; its 12 flags are those of `predict` and `describe` without the log, each with the kind, role and default of `ml`'s; a run in a directory nobody can write to leaves it as it was | the same |
+| V5, P3 | the derived rows are committed and embedded; the ceilings are exact; a derived row with `conc`, `file_write`, `dir_write`, `net_out`, `clock`, `ffi` or `fs_write` added fails `manifest.gate`; a source change that appends to a log from the `main` of `ml-predict` fails `manifest.py --tree` | `test_authority.py`, `mutants_serve.py` |
+| P4 | the lists agree; 7 mutants refused | `scripts/check_bins.py` |
+| D1 | 16 models x 3 page sizes (1,000, 5 and 1 strings per column): every field equal to `scripts/oracle_describe.py`; the corpus covers kinds 1, 2, 3, 4, 5 and 7, the four encoders, the four column types, 5 and 6 sections, the three `missing_cells` values, markers, truncated vocabularies, a float target | `tests/conformance/test_describe.py` |
+| D2 | 28,718 damaged files, 0 traps; 1,763 with a repaired checksum are another valid file, equal to the oracle's description of it | the same, `ST_STRIDE=1`; `check.sh` runs it at that stride |
+| D4 | schema, table of section 5 and answer agree on 16 fields in one order; golden answers of the 16 models | the same, `scripts/golden_describe.py` |
+| mutants | 55 patterns of `scripts/mutants_serve.py`: 55 killed. A first run killed 53: a chunk that skips a byte (a small input never reached a chunk boundary: the multi-chunk input was added) and a ceiling wider than the row (the mutant ran only the manifest check: it now runs the tests) | `scripts/mutants_serve.py` |
+| existing fixtures | every fixture and golden unchanged but `args-missing-verb` and `args-unknown-command` of `golden_constant.json` and `golden_numeric.json`, whose messages list the verbs and now name `describe`; re-recorded in one commit | `tests/conformance` |
+| binary size | `ml` 1,062,592 bytes, `ml-predict` 706,296 bytes (66.5 percent), `cancho build` on the Mac. Linux not measured | `ls -l build/` |
+| standard input throughput | a 10,182,226-byte CSV, `predict --limit 1` with a constant model: 0.06 s from a file, 0.20 s from standard input (`getchar`), minimum of 3, load about 8. A figure of this run, no claim | `/usr/bin/time` |
 
 ## 10. Open for the server
 
-(Filled with what the implementation showed.)
+1. **Bulk read of standard input.** The pinned compiler has `getchar` only. `read_bytes` (cancho #363, edition 9) is the bulk read; using it is a move of the pin of the whole repository (its sources are `edition 5`). The in-process server needs no standard input at all: it can hand the CSV text to the same library call. Whether `ml-serve` links `ml.csv` with `Source::Mem` directly (no `io_read`) is a decision for that stage.
+2. **The library boundary.** `ml-serve` should call `wireio.predict`-level code in-process. Today that function takes `Rp` paths, `Args` and `Fs`; a memory-in, memory-out entry (a CSV text and a model file's bytes in, the document out) is the missing piece and is a small refactor of `tools/ml/wireio.cho` and `verbs.cho` (the `Source::Mem` plumbing is already there).
+3. **Single-row type inference.** Section 6 step 4: the reader types a column from its cells, so a one-row request must render `int` columns as integers and `dec` columns within their scale. The server can pre-check against `describe` or let the reader refuse.
+4. **`describe` size.** Bounded by the file (a table of 12 MiB can list about that much); `--limit` caps the strings per column. A server would call it once at start.
+5. **`ml predict` with no operand on a terminal** waits for input like `cat` does; the MCP generator should always pass `-` or a file (`docs/cli.md` section 9).
+6. **Hot reload and the model digest.** `describe.file.sha256` is the digest a response should carry.
+
+Files other branches also edit: `tools/ml/main.cho` (the shared command-line code moved to `tools/ml/app.cho`), `tools/ml/spec.tmpl` (the template of `spec.cho`), `scripts/gen_models.py`, `scripts/manifest.py`, `scripts/site.py`, `scripts/mutants_cli.py` and `scripts/mutants_cat.py` (patterns retargeted), `cancho.toml`, `tools.toml`, `tests/conformance/harness.py` (a `stdin` argument), `tests/conformance/golden_constant.json` and `golden_numeric.json`.
