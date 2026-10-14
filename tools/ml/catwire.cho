@@ -4,7 +4,8 @@ module ml.catwire;
 
 // The pieces of `ml fit --cat` with a planned model that the numeric path does not have (docs/categorical-encoders.md section 6): the rows of the categorical ids that
 // a split selects, the schema and the target's place among the NUMERIC columns, the errors of the categorical faults (with the name of the column), the
-// summary of what the categorical steps learned, and the answer of a fit that writes no file (the vocabulary cannot be stored before stage 3 of issue 21).
+// summary of what the categorical steps learned and of the string table the file holds (docs/stringtable.md), the schema of every column the model reads (the categorical ones with the type 3), and the
+// refusal of a table past its bounds.
 
 import std.buffer;
 import std.bytes;

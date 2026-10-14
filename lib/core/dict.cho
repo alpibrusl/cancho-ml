@@ -409,7 +409,7 @@ pub fn find[&v, &w](v: &v Vocab, c: int, cell: &w [byte]) -> [] int {
 }
 
 // Whether the pieces are what `freeze` writes: counts non-negative and adding up, ends non-decreasing inside the pool, names inside theirs, every column
-// strictly ascending and with no empty string. A vocabulary read from a file (stage 3) is checked with this before it is used.
+// strictly ascending and with no empty string. The vocabulary of a stored model is built from its string table by pipeline.mixed.vocab_of, whose strings the table decoder has already checked.
 pub fn valid[&v](v: &v Vocab) -> [] bool {
     var c = 0;
     var e = 0;

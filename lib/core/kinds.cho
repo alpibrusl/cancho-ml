@@ -188,7 +188,7 @@ pub fn step_count() -> [] int {
 }
 
 // ---- column kinds of the reader's shape (tools/ml/csv.cho `kind`; docs/categorical.md section 3) and the schema type code of a categorical column
-// (docs/wiring.md section 3 reserved 3; stage 3 of issue 21 writes it). The numeric kinds are inferred, widening only; the categorical one is only ever declared.
+// (docs/wiring.md section 3 reserved 3; the model file of a categorical fit writes it, docs/stringtable.md). The numeric kinds are inferred, widening only; the categorical one is only ever declared.
 pub fn column_none() -> [] int {
     return 0;
 }

@@ -18,7 +18,7 @@ import transforms.codes;
 // computed from that, never stored beside it, so there is one source of truth.
 //
 // APPLY reads a Fit and ids with the vocabulary THEY refer to (the reader's): the cells are matched to the Fit by the bytes of the string, so the ids may come from a
-// reader vocabulary that also holds held-out strings (a --split) or from the stored vocabulary of a predict (stage 3).
+// reader vocabulary that also holds held-out strings (a --split) or from the vocabulary rebuilt from a model file's string table at predict (docs/stringtable.md).
 //
 // The bytes of a step (section 5.2): u32 kind, u32 layout = 1, u32 k, u32 unknown, u32 missing, u32 param, u64 rows, then per column u32 name length, the name,
 // u32 categories, per category u32 length, the bytes, u64 count. `decode` checks every field before it allocates anything sized by the bytes.
@@ -892,7 +892,7 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Fit, int) {
     return (Fit { kind: kd, unknown: unknown, missing: missing, param: par, rows: rows, k: k, total: entries, names: names, nends: nends, counts: counts, first: first, ends: ends, pool: pool, cnt: cnt }, 0);
 }
 
-// The bytes of a step, alone: the step kind, u32 k and the vocabulary part (what stage 3 stores; the same bytes as the tail of the payload)
+// The bytes of a step, alone: the step kind, u32 k and the vocabulary part (what the string table stores; the same bytes as the tail of the payload)
 pub fn digest_input[&h, &f](heap: &!h Heap, st: &f Fit) -> [heap] buffer.Buffer {
     return encode_payload(heap, buffer.empty(heap, payload_size(st)), st);
 }
