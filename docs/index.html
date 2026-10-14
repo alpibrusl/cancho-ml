@@ -314,7 +314,7 @@ mean_distance 1.2398733702280837 1.0644974060896137 1.1737313271562995</pre>
 <span class="r"># exit status 8; the rule, hint of the JSON line it prints</span>
 <span class="c"># describe: what the model file requires of a caller. Excerpt: the model, the columns of a request, the classes, the columns of an answer</span>
 <span class="c">$</span> ml describe --model-file pets.ml --limit 2
-{"model": "logistic", "task": "classification", "request": {"header": ["age", "species", "city", "visits"], "optional": ["adopted"], "extra_columns": "refused", "missing_cells": "needs_impute"}, "classes": [0, 1], "output": {"columns": ["label"], "with_proba": ["label", "probability"], "label_threshold": "0.5"}}
+{"model": "logistic", "task": "classification", "request": {"header": ["age", "species", "city", "visits"], "optional": ["adopted"], "extra_columns": "refused", "missing_cells": "needs_impute"}, "classes": [0, 1], "output": {"columns": ["label"], "with_proba": ["label", "probability"], "with_distance": null, "label_threshold": "0.5"}}
 <span class="c"># ml-predict predicts and describes, from the same sources, with a row that has no write and no thread</span>
 <span class="c">$</span> ml-predict predict --model-file pets.ml --proba - &lt; newpets.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","columns":["label","probability"],"rows":[["1","0.779143555391799"],["1","0.5062375189261414"],["1","0.7357314548827897"]],"row_count":3,"total_rows":3,"truncated":false,"next":null,"unknown_categories":2},"meta":{"version":"0.1.0"}}
