@@ -1,7 +1,7 @@
 module ml.rng;
 
-// SplitMix64 and derived streams (design.md section 6, docs/rng.md). Code of spike F (cancho-ml-forest
-// scripts/spikes/spike_f.cho), whose vectors are tests/core.cho's. State is one int. The shifts are arithmetic in cancho, so
+// SplitMix64 and derived streams (design.md section 6, docs/rng.md). Code of spike F
+// (scripts/spikes/spike_f.cho), whose vectors are tests/core.cho's. State is one int. The shifts are arithmetic in cancho, so
 // each logical shift is a shift and a mask.
 //
 //     state' = state + 0x9E3779B97F4A7C15 (wrapping);  output = mix(state')

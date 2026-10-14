@@ -1,0 +1,645 @@
+// SPIKE S (docs/spikes.md section 10): logistic regression by Newton (IRLS) or L-BFGS, a FIXED number of iterations,
+// plain sequential float sums, one thread. The same algorithms as oracle_s.py (section 10.1 is the specification).
+//
+//     spike_s X.bin Y.bin N ALGO ITERS M TRIALS T0E
+//
+//   X.bin  N rows x 20 float64, row-major little-endian;  Y.bin  N float64 (0/1)
+//   ALGO   0 = Newton (ignores M, TRIALS, T0E);  1 = L-BFGS
+//   ITERS  iteration count (no stopping rule)
+//   M      L-BFGS history size;  TRIALS  maximum backtracking trials per iteration;  T0E  first trial step is 2^T0E / ||g||
+//
+// stdout: 21 lines of 16 hex digits (w[0..19] then b, as bits_of), then "#fit_ms", "#load_ms", "#passes" (evaluations of
+// the gradient = passes over X), "#backtracks", "#skipped" (L-BFGS pairs with s.y <= 0). Train = first N - N/5 rows.
+// The loader is spike_l.cho's (exact decode, every value checked bit for bit with bits_of), outside the timed region.
+edition 5;
+
+import std.buffer;
+import std.io;
+import std.math;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn hex_digit(c: int) -> [] int {
+    if c >= 'a' {
+        return c - 'a' + 10;
+    }
+    return c - '0';
+}
+
+fn bits_from_hex[&s](text: &s [byte]) -> [] int {
+    var v = 0;
+    var i = 0;
+    while i < len(text) {
+        v = (v << 4) | hex_digit(int_of(text[i]));
+        i = i + 1;
+    }
+    return v;
+}
+
+fn read_all[&h, &f](heap: &!h Heap, file: &!f File, text: buffer.Buffer) -> [heap, file_read] buffer.Buffer {
+    var out = text;
+    var chunk = buffer.empty(heap, 4194304);
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            match file_read(file, buffer.room(cw)) {
+                Read::Got(n) => {
+                    buffer.filled(cw, n);
+                    got = n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        if got > 0 {
+            borrow chunk as &cr in {
+                out = buffer.append(heap, out, buffer.bytes(cr));
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return out;
+}
+
+// the 8 bytes at `at`, little-endian, as an int (the bit pattern)
+fn word[&s](src: &s [byte], at: int) -> [] int {
+    var v = 0;
+    var k = 7;
+    while k >= 0 {
+        v = (v << 8) | int_of(src[at + k]);
+        k = k - 1;
+    }
+    return v;
+}
+
+// 2^(e - 1075) for e = 0..2046 (index 0 unused): the scale of a normal number's 53-bit significand. Every entry is
+// exactly representable (2^-1074 .. 2^971) and math.ldexp is exact where the result is representable.
+fn power_table[&h](heap: &!h Heap) -> [heap] Box[[float]] {
+    let t = box_slice(heap, 2047, 0.0);
+    borrow mut t as &!w in {
+        let s = contents(w);
+        var e = 1;
+        while e < 2047 {
+            s[e] = math.ldexp(1.0, e - 1075);
+            e = e + 1;
+        }
+    }
+    return t;
+}
+
+// Exact decode of the binary64 whose bits are `bits`. Inf and NaN answer NaN (the caller refuses it).
+fn decode[&t](bits: int, table: &t [float]) -> [] float {
+    let e = (bits >> 52) & 2047;
+    let m = bits & 4503599627370495;
+    var v = 0.0;
+    if e == 2047 {
+        return 0.0 / 0.0;
+    }
+    if e == 0 {
+        // zero or subnormal: m * 2^-1074 (m < 2^52 is exact in a float; ldexp splits the scale in two exact halves)
+        v = math.ldexp(float_of(m), 0 - 1074);
+    } else {
+        // (2^52 + m) < 2^53 is exact; times an exact power of two is exact (the result is a normal number)
+        v = float_of(m + 4503599627370496) * table[e];
+    }
+    if bits < 0 {
+        v = v * (0.0 - 1.0);
+    }
+    return v;
+}
+
+// decode count doubles from src into out; answers the number of values refused or not reproduced bit for bit
+fn load[&s, &t, &o](src: &s [byte], table: &t [float], out: &!o [float], count: int) -> [] int {
+    var bad = 0;
+    var i = 0;
+    while i < count {
+        let bits = word(src, i * 8);
+        let v = decode(bits, table);
+        if v != v {
+            bad = bad + 1;
+        } else if bits_of(v) != bits {
+            bad = bad + 1;
+        }
+        out[i] = v;
+        i = i + 1;
+    }
+    return bad;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Workspace for Newton (one float slice, offsets): w 0, g 21, H 42 (21x21, lower triangle), L 483, u 924, d 945, row 966.
+// The bias is w[20]; the row buffer holds the 20 features and a 1.0 in slot 20.
+
+// One pass: gradient (mean) and Hessian lower triangle (mean) at w. Rows ascending, products in the order of section 10.1.
+fn newton_pass[&x, &y, &w](xs: &x [float], ys: &y [float], ntr: int, ws: &!w [float]) -> [] int {
+    let nf = float_of(ntr);
+    var j = 0;
+    while j < 21 {
+        ws[21 + j] = 0.0;
+        j = j + 1;
+    }
+    j = 0;
+    while j < 441 {
+        ws[42 + j] = 0.0;
+        j = j + 1;
+    }
+    ws[986] = 1.0;
+    var i = 0;
+    while i < ntr {
+        let base = i * 20;
+        var z = ws[20];
+        j = 0;
+        while j < 20 {
+            let v = xs[base + j];
+            ws[966 + j] = v;
+            z = z + v * ws[j];
+            j = j + 1;
+        }
+        let p = 1.0 / (1.0 + math.exp(0.0 - z));
+        let r = p - ys[i];
+        let s = p * (1.0 - p);
+        var a = 0;
+        while a < 21 {
+            let xa = ws[966 + a];
+            ws[21 + a] = ws[21 + a] + r * xa;
+            let t = s * xa;
+            let hrow = 42 + a * 21;
+            var b = 0;
+            while b <= a {
+                ws[hrow + b] = ws[hrow + b] + t * ws[966 + b];
+                b = b + 1;
+            }
+            a = a + 1;
+        }
+        i = i + 1;
+    }
+    j = 0;
+    while j < 21 {
+        ws[21 + j] = ws[21 + j] / nf;
+        j = j + 1;
+    }
+    j = 0;
+    while j < 441 {
+        ws[42 + j] = ws[42 + j] / nf;
+        j = j + 1;
+    }
+    return 0;
+}
+
+// Cholesky H = L L^T then L u = g, L^T d = u, every sum in ascending index order. Answers 1 if a pivot is not > 0.
+fn newton_solve[&w](ws: &!w [float]) -> [] int {
+    var i = 0;
+    while i < 21 {
+        var j = 0;
+        while j <= i {
+            var s = ws[42 + i * 21 + j];
+            var k = 0;
+            while k < j {
+                s = s - ws[483 + i * 21 + k] * ws[483 + j * 21 + k];
+                k = k + 1;
+            }
+            if i == j {
+                if !(s > 0.0) {
+                    return 1;
+                }
+                ws[483 + i * 21 + i] = sqrt(s);
+            } else {
+                ws[483 + i * 21 + j] = s / ws[483 + j * 21 + j];
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < 21 {
+        var s = ws[21 + i];
+        var k = 0;
+        while k < i {
+            s = s - ws[483 + i * 21 + k] * ws[924 + k];
+            k = k + 1;
+        }
+        ws[924 + i] = s / ws[483 + i * 21 + i];
+        i = i + 1;
+    }
+    i = 20;
+    while i >= 0 {
+        var s = ws[924 + i];
+        var k = i + 1;
+        while k < 21 {
+            s = s - ws[483 + k * 21 + i] * ws[945 + k];
+            k = k + 1;
+        }
+        ws[945 + i] = s / ws[483 + i * 21 + i];
+        i = i - 1;
+    }
+    return 0;
+}
+
+fn fit_newton[&x, &y, &w](xs: &x [float], ys: &y [float], ntr: int, iters: int, ws: &!w [float]) -> [] int {
+    var it = 0;
+    while it < iters {
+        newton_pass(xs, ys, ntr, ws);
+        if newton_solve(ws) != 0 {
+            return 1;
+        }
+        var j = 0;
+        while j < 21 {
+            ws[j] = ws[j] - ws[945 + j];
+            j = j + 1;
+        }
+        it = it + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// L-BFGS workspace: w 0, g 21, wn 42, gn 63, d 84, q 105 (21 each), then S ((m+1) x 21), Y ((m+1) x 21), rho (m), alpha (m);
+// slot m of S and Y is scratch for the candidate pair.
+// Ring buffer of pairs: pair i (oldest first) lives in slot (start + i) % m.
+
+// Fused pass: mean loss at the 21 values starting at ws[wo], gradient written to ws[go..go+21].
+fn loss_pass[&x, &y, &w](xs: &x [float], ys: &y [float], ntr: int, ws: &!w [float], wo: int, go: int) -> [] float {
+    var j = 0;
+    while j < 21 {
+        ws[go + j] = 0.0;
+        j = j + 1;
+    }
+    var total = 0.0;
+    var i = 0;
+    while i < ntr {
+        let base = i * 20;
+        var z = ws[wo + 20];
+        j = 0;
+        while j < 20 {
+            z = z + xs[base + j] * ws[wo + j];
+            j = j + 1;
+        }
+        var az = z;
+        if z < 0.0 {
+            az = 0.0 - z;
+        }
+        let e = math.exp(0.0 - az);
+        var p = e / (1.0 + e);
+        var pos = 0.0;
+        if z >= 0.0 {
+            p = 1.0 / (1.0 + e);
+            pos = z;
+        }
+        let yi = ys[i];
+        total = total + ((pos + math.log1p(e)) - yi * z);
+        let r = p - yi;
+        j = 0;
+        while j < 20 {
+            ws[go + j] = ws[go + j] + r * xs[base + j];
+            j = j + 1;
+        }
+        ws[go + 20] = ws[go + 20] + r;
+        i = i + 1;
+    }
+    let nf = float_of(ntr);
+    j = 0;
+    while j < 21 {
+        ws[go + j] = ws[go + j] / nf;
+        j = j + 1;
+    }
+    return total / nf;
+}
+
+fn dot[&w](ws: &!w [float], a: int, b: int) -> [] float {
+    var s = 0.0;
+    var j = 0;
+    while j < 21 {
+        s = s + ws[a + j] * ws[b + j];
+        j = j + 1;
+    }
+    return s;
+}
+
+// d = -(two-loop recursion applied to g); cnt pairs stored from slot `start`. d is written at 84.
+fn two_loop[&w](ws: &!w [float], m: int, cnt: int, start: int) -> [] int {
+    let so = 126;
+    let yo = 126 + (m + 1) * 21;
+    let ro = 126 + 2 * (m + 1) * 21;
+    let ao = ro + m;
+    var j = 0;
+    while j < 21 {
+        ws[105 + j] = ws[21 + j];
+        j = j + 1;
+    }
+    var i = cnt - 1;
+    while i >= 0 {
+        let slot = (start + i) % m;
+        let al = ws[ro + slot] * dot(ws, so + slot * 21, 105);
+        ws[ao + slot] = al;
+        j = 0;
+        while j < 21 {
+            ws[105 + j] = ws[105 + j] - al * ws[yo + slot * 21 + j];
+            j = j + 1;
+        }
+        i = i - 1;
+    }
+    if cnt > 0 {
+        let last = (start + cnt - 1) % m;
+        let gamma = dot(ws, so + last * 21, yo + last * 21) / dot(ws, yo + last * 21, yo + last * 21);
+        j = 0;
+        while j < 21 {
+            ws[105 + j] = ws[105 + j] * gamma;
+            j = j + 1;
+        }
+    }
+    i = 0;
+    while i < cnt {
+        let slot = (start + i) % m;
+        let beta = ws[ro + slot] * dot(ws, yo + slot * 21, 105);
+        let c = ws[ao + slot] - beta;
+        j = 0;
+        while j < 21 {
+            ws[105 + j] = ws[105 + j] + c * ws[so + slot * 21 + j];
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    j = 0;
+    while j < 21 {
+        ws[84 + j] = 0.0 - ws[105 + j];
+        j = j + 1;
+    }
+    return 0;
+}
+
+// answers passes; stats[0] = backtracks, stats[1] = skipped pairs
+fn fit_lbfgs[&x, &y, &w, &t](xs: &x [float], ys: &y [float], ntr: int, iters: int, m: int, trials: int, t0e: int, ws: &!w [float], stats: &!t [int]) -> [] int {
+    let so = 126;
+    let yo = 126 + (m + 1) * 21;
+    let ro = 126 + 2 * (m + 1) * 21;
+    var f = loss_pass(xs, ys, ntr, ws, 0, 21);
+    var passes = 1;
+    var cnt = 0;
+    var start = 0;
+    let c1 = 1.0 / 10000.0;
+    var k = 0;
+    while k < iters {
+        two_loop(ws, m, cnt, start);
+        let gd = dot(ws, 21, 84);
+        var t = 1.0;
+        if k == 0 {
+            t = 1.0 / sqrt(dot(ws, 21, 21));
+            var e = 0;
+            while e < t0e {
+                t = t * 2.0;
+                e = e + 1;
+            }
+        }
+        var fn_ = 0.0;
+        var tr = 0;
+        var going = true;
+        while going {
+            var j = 0;
+            while j < 21 {
+                ws[42 + j] = ws[j] + t * ws[84 + j];
+                j = j + 1;
+            }
+            fn_ = loss_pass(xs, ys, ntr, ws, 42, 63);
+            passes = passes + 1;
+            if fn_ <= f + c1 * t * gd || tr == trials - 1 {
+                going = false;
+            } else {
+                t = t * 0.5;
+                stats[0] = stats[0] + 1;
+                tr = tr + 1;
+            }
+        }
+        // s = wn - w, y = gn - g into the scratch slot m; the pair is kept (copied into the ring) only if s.y > 0
+        var j = 0;
+        while j < 21 {
+            ws[so + m * 21 + j] = ws[42 + j] - ws[j];
+            ws[yo + m * 21 + j] = ws[63 + j] - ws[21 + j];
+            j = j + 1;
+        }
+        let sy = dot(ws, so + m * 21, yo + m * 21);
+        if sy > 0.0 {
+            var slot = (start + cnt) % m;
+            if cnt == m {
+                slot = start;
+            }
+            j = 0;
+            while j < 21 {
+                ws[so + slot * 21 + j] = ws[so + m * 21 + j];
+                ws[yo + slot * 21 + j] = ws[yo + m * 21 + j];
+                j = j + 1;
+            }
+            ws[ro + slot] = 1.0 / sy;
+            if cnt < m {
+                cnt = cnt + 1;
+            } else {
+                start = (start + 1) % m;
+            }
+        } else {
+            stats[1] = stats[1] + 1;
+        }
+        j = 0;
+        while j < 21 {
+            ws[j] = ws[42 + j];
+            ws[21 + j] = ws[63 + j];
+            j = j + 1;
+        }
+        f = fn_;
+        k = k + 1;
+    }
+    return passes;
+}
+
+fn hex_line[&i, &l](io: &!i Io, line: &!l [byte], bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = (bits >> (60 - 4 * k)) & 15;
+        if nib < 10 {
+            line[k] = byte_of('0' + nib);
+        } else {
+            line[k] = byte_of('a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    line[16] = byte_of(10);
+    io.write_all(io, line);
+    return 0;
+}
+
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    var n = 0;
+    var iters = 0;
+    var algo = 0;
+    var mem = 0;
+    var trials = 0;
+    var t0e = 0;
+    borrow args as &g in {
+        n = number_of(arg(g, 3));
+        algo = number_of(arg(g, 4));
+        iters = number_of(arg(g, 5));
+        mem = number_of(arg(g, 6));
+        trials = number_of(arg(g, 7));
+        t0e = number_of(arg(g, 8));
+    }
+    var t0 = 0;
+    var t1 = 0;
+    var t2 = 0;
+    var bad = 0;
+    var passes = 0;
+    var failed = 0;
+    borrow clock as &k in {
+        t0 = clock_ms(k);
+    }
+    borrow mut heap as &!hp in {
+        var xbytes = buffer.empty(hp, 1048576);
+        var ybytes = buffer.empty(hp, 1048576);
+        borrow fs as &f in {
+            borrow args as &g in {
+                match open_read(f, arg(g, 1)) {
+                    Opened::Ok(file) => {
+                        var fl = file;
+                        borrow mut fl as &!fw in {
+                            xbytes = read_all(hp, fw, xbytes);
+                        }
+                        file_close(fl);
+                    }
+                    Opened::Failed(reason) => {
+                    }
+                }
+                match open_read(f, arg(g, 2)) {
+                    Opened::Ok(file) => {
+                        var fl = file;
+                        borrow mut fl as &!fw in {
+                            ybytes = read_all(hp, fw, ybytes);
+                        }
+                        file_close(fl);
+                    }
+                    Opened::Failed(reason) => {
+                    }
+                }
+            }
+        }
+        borrow mut io as &!i in {
+            let table = power_table(hp);
+            let xs = box_slice(hp, n * 20, 0.0);
+            let ys = box_slice(hp, n, 0.0);
+            let ws = box_slice(hp, 1000 + 2 * (mem + 1) * 21 + 4 * mem, 0.0);
+            let stats = box_slice(hp, 2, 0);
+            let line = box_slice(hp, 17, byte_of(10));
+            borrow table as &tr in {
+                let tab = contents(tr);
+                borrow xbytes as &xb in {
+                    borrow mut xs as &!xw in {
+                        bad = bad + load(buffer.bytes(xb), tab, contents(xw), n * 20);
+                    }
+                }
+                borrow ybytes as &yb in {
+                    borrow mut ys as &!yw in {
+                        bad = bad + load(buffer.bytes(yb), tab, contents(yw), n);
+                    }
+                }
+            }
+            borrow clock as &k in {
+                t1 = clock_ms(k);
+            }
+            var sx = 0;
+            var sy = 0;
+            borrow xbytes as &xb in {
+                sx = len(buffer.bytes(xb));
+            }
+            borrow ybytes as &yb in {
+                sy = len(buffer.bytes(yb));
+            }
+            if bad == 0 && sy == n * 8 && sx == n * 160 {
+                borrow xs as &xr in {
+                    borrow ys as &yr in {
+                        borrow mut ws as &!ww in {
+                            borrow mut stats as &!sw in {
+                                if algo == 0 {
+                                    passes = iters;
+                                    failed = fit_newton(contents(xr), contents(yr), n - n / 5, iters, contents(ww));
+                                } else {
+                                    passes = fit_lbfgs(contents(xr), contents(yr), n - n / 5, iters, mem, trials, t0e, contents(ww), contents(sw));
+                                }
+                            }
+                        }
+                    }
+                }
+                borrow clock as &k in {
+                    t2 = clock_ms(k);
+                }
+                borrow ws as &wr in {
+                    let s = contents(wr);
+                    borrow mut line as &!lw in {
+                        var j = 0;
+                        while j < 21 {
+                            hex_line(i, contents(lw), bits_of(s[j]));
+                            j = j + 1;
+                        }
+                    }
+                }
+                io.write_all(i, "#fit_ms ");
+                io.print_int(i, t2 - t1);
+                io.newline(i);
+                io.write_all(i, "#load_ms ");
+                io.print_int(i, t1 - t0);
+                io.newline(i);
+                io.write_all(i, "#passes ");
+                io.print_int(i, passes);
+                io.newline(i);
+                borrow stats as &sr in {
+                    let sv = contents(sr);
+                    io.write_all(i, "#backtracks ");
+                    io.print_int(i, sv[0]);
+                    io.newline(i);
+                    io.write_all(i, "#skipped ");
+                    io.print_int(i, sv[1]);
+                    io.newline(i);
+                }
+                if failed != 0 {
+                    io.write_all(i, "#error: solver.not_positive_definite");
+                    io.newline(i);
+                }
+            } else {
+                io.write_all(i, "#error: bad values or wrong file size, bad=");
+                io.print_int(i, bad);
+                io.write_all(i, " xbytes=");
+                io.print_int(i, sx);
+                io.write_all(i, " ybytes=");
+                io.print_int(i, sy);
+                io.newline(i);
+            }
+            unbox_slice(hp, table);
+            unbox_slice(hp, xs);
+            unbox_slice(hp, ys);
+            unbox_slice(hp, ws);
+            unbox_slice(hp, stats);
+            unbox_slice(hp, line);
+        }
+        buffer.drop(hp, xbytes);
+        buffer.drop(hp, ybytes);
+    }
+    release(args);
+    release(fs);
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}

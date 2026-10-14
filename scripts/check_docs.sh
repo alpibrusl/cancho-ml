@@ -5,6 +5,8 @@
 #   3. the basics of the pages, and the sitemap and robots.txt agree with the list of pages (scripts/seo_check.py)
 #   4. the README, the pages and docs/status.md describe the current state and hold no phrase of history (scripts/check_prose.py), and the
 #      lint is shown able to fail (its mutants)
+#   5. every docs/ path that README.md and docs/*.md name is a file of this repository, and none names a local clone (scripts/check_doc_refs.py),
+#      and the check is shown able to fail (its mutants)
 # scripts/check.sh runs this script at its end.
 set -e
 cd "$(dirname "$0")/.."
@@ -13,3 +15,5 @@ python3 scripts/check_links.py
 python3 scripts/seo_check.py
 python3 scripts/check_prose.py
 python3 scripts/check_prose.py --mutants
+python3 scripts/check_doc_refs.py
+python3 scripts/check_doc_refs.py --mutants

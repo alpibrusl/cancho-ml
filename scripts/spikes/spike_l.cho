@@ -1,0 +1,338 @@
+// SPIKE L, arm A (docs/spikes.md section 3): logistic regression by batch gradient descent on the mean log-loss,
+// plain sequential float sums, one thread. The same algorithm as oracle_l.py (see its docstring).
+//
+//     spike_l X.bin Y.bin N LR_BITS ITERS
+//
+//   X.bin  N rows x 20 float64, row-major little-endian;  Y.bin  N float64 (0/1)
+//   N      rows in the files
+//   LR_BITS the learning rate as the 16 hex digits of its IEEE bit pattern (there is no text-to-float in std, and
+//          no float_of_bits; this program's own exact decoder turns the bits into the float)
+//   ITERS  iteration count
+//
+// stdout: 21 lines of 16 hex digits (w[0..19] then b, as bits_of), then "#fit_ms <ms>" and "#load_ms <ms>".
+// Train = first N - N/5 rows (the last 20% is the test set, not used here).
+//
+// The loader rebuilds every double from its 8 bytes with integers, float_of and a table of exact powers of two:
+// zero, subnormals and normal numbers are exact; inf and NaN are refused (the run stops). After decoding, each value
+// is checked bit for bit against its source bytes with bits_of; any difference stops the run. The loader is outside
+// the timed region; `#fit_ms` is clock_ms (monotonic, milliseconds) around the iterations only.
+edition 5;
+
+import std.buffer;
+import std.io;
+import std.math;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn hex_digit(c: int) -> [] int {
+    if c >= 'a' {
+        return c - 'a' + 10;
+    }
+    return c - '0';
+}
+
+fn bits_from_hex[&s](text: &s [byte]) -> [] int {
+    var v = 0;
+    var i = 0;
+    while i < len(text) {
+        v = (v << 4) | hex_digit(int_of(text[i]));
+        i = i + 1;
+    }
+    return v;
+}
+
+fn read_all[&h, &f](heap: &!h Heap, file: &!f File, text: buffer.Buffer) -> [heap, file_read] buffer.Buffer {
+    var out = text;
+    var chunk = buffer.empty(heap, 4194304);
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            match file_read(file, buffer.room(cw)) {
+                Read::Got(n) => {
+                    buffer.filled(cw, n);
+                    got = n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        if got > 0 {
+            borrow chunk as &cr in {
+                out = buffer.append(heap, out, buffer.bytes(cr));
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return out;
+}
+
+// the 8 bytes at `at`, little-endian, as an int (the bit pattern)
+fn word[&s](src: &s [byte], at: int) -> [] int {
+    var v = 0;
+    var k = 7;
+    while k >= 0 {
+        v = (v << 8) | int_of(src[at + k]);
+        k = k - 1;
+    }
+    return v;
+}
+
+// 2^(e - 1075) for e = 0..2046 (index 0 unused): the scale of a normal number's 53-bit significand. Every entry is
+// exactly representable (2^-1074 .. 2^971) and math.ldexp is exact where the result is representable.
+fn power_table[&h](heap: &!h Heap) -> [heap] Box[[float]] {
+    let t = box_slice(heap, 2047, 0.0);
+    borrow mut t as &!w in {
+        let s = contents(w);
+        var e = 1;
+        while e < 2047 {
+            s[e] = math.ldexp(1.0, e - 1075);
+            e = e + 1;
+        }
+    }
+    return t;
+}
+
+// Exact decode of the binary64 whose bits are `bits`. Inf and NaN answer NaN (the caller refuses it).
+fn decode[&t](bits: int, table: &t [float]) -> [] float {
+    let e = (bits >> 52) & 2047;
+    let m = bits & 4503599627370495;
+    var v = 0.0;
+    if e == 2047 {
+        return 0.0 / 0.0;
+    }
+    if e == 0 {
+        // zero or subnormal: m * 2^-1074 (m < 2^52 is exact in a float; ldexp splits the scale in two exact halves)
+        v = math.ldexp(float_of(m), 0 - 1074);
+    } else {
+        // (2^52 + m) < 2^53 is exact; times an exact power of two is exact (the result is a normal number)
+        v = float_of(m + 4503599627370496) * table[e];
+    }
+    if bits < 0 {
+        v = v * (0.0 - 1.0);
+    }
+    return v;
+}
+
+// decode count doubles from src into out; answers the number of values refused or not reproduced bit for bit
+fn load[&s, &t, &o](src: &s [byte], table: &t [float], out: &!o [float], count: int) -> [] int {
+    var bad = 0;
+    var i = 0;
+    while i < count {
+        let bits = word(src, i * 8);
+        let v = decode(bits, table);
+        if v != v {
+            bad = bad + 1;
+        } else if bits_of(v) != bits {
+            bad = bad + 1;
+        }
+        out[i] = v;
+        i = i + 1;
+    }
+    return bad;
+}
+
+// The iterations. g holds the 20 weight gradients then the bias gradient; wb the 20 weights then the bias.
+fn fit[&x, &y, &w, &g](xs: &x [float], ys: &y [float], ntr: int, lr: float, iters: int, wb: &!w [float], g: &!g [float]) -> [] int {
+    let nf = float_of(ntr);
+    var it = 0;
+    while it < iters {
+        var j = 0;
+        while j < 21 {
+            g[j] = 0.0;
+            j = j + 1;
+        }
+        var i = 0;
+        while i < ntr {
+            let base = i * 20;
+            var z = wb[20];
+            j = 0;
+            while j < 20 {
+                z = z + xs[base + j] * wb[j];
+                j = j + 1;
+            }
+            let p = 1.0 / (1.0 + math.exp(0.0 - z));
+            let r = p - ys[i];
+            j = 0;
+            while j < 20 {
+                g[j] = g[j] + r * xs[base + j];
+                j = j + 1;
+            }
+            g[20] = g[20] + r;
+            i = i + 1;
+        }
+        j = 0;
+        while j < 21 {
+            wb[j] = wb[j] - lr * (g[j] / nf);
+            j = j + 1;
+        }
+        it = it + 1;
+    }
+    return 0;
+}
+
+fn hex_line[&i, &l](io: &!i Io, line: &!l [byte], bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = (bits >> (60 - 4 * k)) & 15;
+        if nib < 10 {
+            line[k] = byte_of('0' + nib);
+        } else {
+            line[k] = byte_of('a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    line[16] = byte_of(10);
+    io.write_all(io, line);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    var n = 0;
+    var iters = 0;
+    var lr_bits = 0;
+    borrow args as &g in {
+        n = number_of(arg(g, 3));
+        lr_bits = bits_from_hex(arg(g, 4));
+        iters = number_of(arg(g, 5));
+    }
+    var t0 = 0;
+    var t1 = 0;
+    var t2 = 0;
+    var bad = 0;
+    var lr = 0.0;
+    borrow clock as &k in {
+        t0 = clock_ms(k);
+    }
+    borrow mut heap as &!hp in {
+        var xbytes = buffer.empty(hp, 1048576);
+        var ybytes = buffer.empty(hp, 1048576);
+        borrow fs as &f in {
+            borrow args as &g in {
+                match open_read(f, arg(g, 1)) {
+                    Opened::Ok(file) => {
+                        var fl = file;
+                        borrow mut fl as &!fw in {
+                            xbytes = read_all(hp, fw, xbytes);
+                        }
+                        file_close(fl);
+                    }
+                    Opened::Failed(reason) => {
+                    }
+                }
+                match open_read(f, arg(g, 2)) {
+                    Opened::Ok(file) => {
+                        var fl = file;
+                        borrow mut fl as &!fw in {
+                            ybytes = read_all(hp, fw, ybytes);
+                        }
+                        file_close(fl);
+                    }
+                    Opened::Failed(reason) => {
+                    }
+                }
+            }
+        }
+        borrow mut io as &!i in {
+            let table = power_table(hp);
+            let xs = box_slice(hp, n * 20, 0.0);
+            let ys = box_slice(hp, n, 0.0);
+            let wb = box_slice(hp, 21, 0.0);
+            let g = box_slice(hp, 21, 0.0);
+            let line = box_slice(hp, 17, byte_of(10));
+            borrow table as &tr in {
+                let tab = contents(tr);
+                lr = decode(lr_bits, tab);
+                borrow xbytes as &xb in {
+                    borrow mut xs as &!xw in {
+                        bad = bad + load(buffer.bytes(xb), tab, contents(xw), n * 20);
+                    }
+                }
+                borrow ybytes as &yb in {
+                    borrow mut ys as &!yw in {
+                        bad = bad + load(buffer.bytes(yb), tab, contents(yw), n);
+                    }
+                }
+            }
+            borrow clock as &k in {
+                t1 = clock_ms(k);
+            }
+            var sx = 0;
+            var sy = 0;
+            borrow xbytes as &xb in {
+                sx = len(buffer.bytes(xb));
+            }
+            borrow ybytes as &yb in {
+                sy = len(buffer.bytes(yb));
+            }
+            if bad == 0 && sy == n * 8 && sx == n * 160 {
+                borrow xs as &xr in {
+                    borrow ys as &yr in {
+                        borrow mut wb as &!ww in {
+                            borrow mut g as &!gw in {
+                                fit(contents(xr), contents(yr), n - n / 5, lr, iters, contents(ww), contents(gw));
+                            }
+                        }
+                    }
+                }
+                borrow clock as &k in {
+                    t2 = clock_ms(k);
+                }
+                borrow wb as &wr in {
+                    let s = contents(wr);
+                    borrow mut line as &!lw in {
+                        var j = 0;
+                        while j < 21 {
+                            hex_line(i, contents(lw), bits_of(s[j]));
+                            j = j + 1;
+                        }
+                    }
+                }
+                io.write_all(i, "#fit_ms ");
+                io.print_int(i, t2 - t1);
+                io.newline(i);
+                io.write_all(i, "#load_ms ");
+                io.print_int(i, t1 - t0);
+                io.newline(i);
+            } else {
+                io.write_all(i, "#error: bad values or wrong file size, bad=");
+                io.print_int(i, bad);
+                io.write_all(i, " xbytes=");
+                io.print_int(i, sx);
+                io.write_all(i, " ybytes=");
+                io.print_int(i, sy);
+                io.newline(i);
+            }
+            unbox_slice(hp, table);
+            unbox_slice(hp, xs);
+            unbox_slice(hp, ys);
+            unbox_slice(hp, wb);
+            unbox_slice(hp, g);
+            unbox_slice(hp, line);
+        }
+        buffer.drop(hp, xbytes);
+        buffer.drop(hp, ybytes);
+    }
+    release(args);
+    release(fs);
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}
