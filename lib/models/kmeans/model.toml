@@ -41,7 +41,7 @@ type = "int"
 min = 1
 max = 1024
 required = true
-doc = "the number of clusters, at most the number of training rows"
+doc = "the number of clusters of a kmeans fit: required, 1 to 1024 and at most the number of training rows"
 
 [[hyperparameter]]
 name = "iterations"
