@@ -127,7 +127,7 @@ MUTANTS = [
       [("manifests/ml.authority.json", '"name": "heap",', '"name": "heapx",', 1)], ["test_authority"], kind="manifest"),
     # ------------------------------------------------------------------ H1: honesty
     M("h1-a-model-in-the-table-that-is-not-built", "H1", "logreg is a choice of --model, with no implementation",
-      [("tools/ml/spec.cho", "model||choice:constant/linear/logistic/tree/forest|", "model||choice:constant/linear/logistic/tree/forest/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
+      [("tools/ml/spec.cho", "model||choice:constant/linear/logistic/kmeans/tree/forest|", "model||choice:constant/linear/logistic/kmeans/tree/forest/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
     M("h1-an-exponent-is-read-as-a-prefix", "H1", "1e5 is read as 1", [("tools/ml/csvcell.cho", "return (4, 0, 0, 0);", "return (0, 1, 0, 1);", 1)],
       ["test_honesty"]),
     # ------------------------------------------------------------------ RD7: the constant model on floats (docs/reader.md section 5)
