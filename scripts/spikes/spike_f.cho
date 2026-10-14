@@ -1,0 +1,889 @@
+// SPIKE F (docs/spikes.md section 13): random forest, T=10 trees, depth 8, 64 quantile bins, 4 of 20 features per split,
+// seeded bootstrap, Gini by exact integer comparison. One thread.
+//
+//     spike_f X.bin Y.bin N SEED        (stdout: E, N, P lines of section 13.1.8, then #timing lines)
+//     spike_f --vectors                 (SplitMix64 / derive / uniform vectors, same text as oracle_f.py --vectors)
+//
+// The loader (number_of ... load) is spike_l_tuned.cho's, unchanged: exact bit decode, checked with bits_of.
+edition 5;
+
+import std.buffer;
+import std.io;
+import std.math;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn hex_digit(c: int) -> [] int {
+    if c >= 'a' {
+        return c - 'a' + 10;
+    }
+    return c - '0';
+}
+
+fn bits_from_hex[&s](text: &s [byte]) -> [] int {
+    var v = 0;
+    var i = 0;
+    while i < len(text) {
+        v = (v << 4) | hex_digit(int_of(text[i]));
+        i = i + 1;
+    }
+    return v;
+}
+
+fn read_all[&h, &f](heap: &!h Heap, file: &!f File, text: buffer.Buffer) -> [heap, file_read] buffer.Buffer {
+    var out = text;
+    var chunk = buffer.empty(heap, 4194304);
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            match file_read(file, buffer.room(cw)) {
+                Read::Got(n) => {
+                    buffer.filled(cw, n);
+                    got = n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        if got > 0 {
+            borrow chunk as &cr in {
+                out = buffer.append(heap, out, buffer.bytes(cr));
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return out;
+}
+
+// the 8 bytes at `at`, little-endian, as an int (the bit pattern)
+fn word[&s](src: &s [byte], at: int) -> [] int {
+    var v = 0;
+    var k = 7;
+    while k >= 0 {
+        v = (v << 8) | int_of(src[at + k]);
+        k = k - 1;
+    }
+    return v;
+}
+
+// 2^(e - 1075) for e = 0..2046 (index 0 unused): the scale of a normal number's 53-bit significand. Every entry is
+// exactly representable (2^-1074 .. 2^971) and math.ldexp is exact where the result is representable.
+fn power_table[&h](heap: &!h Heap) -> [heap] Box[[float]] {
+    let t = box_slice(heap, 2047, 0.0);
+    borrow mut t as &!w in {
+        let s = contents(w);
+        var e = 1;
+        while e < 2047 {
+            s[e] = math.ldexp(1.0, e - 1075);
+            e = e + 1;
+        }
+    }
+    return t;
+}
+
+// Exact decode of the binary64 whose bits are `bits`. Inf and NaN answer NaN (the caller refuses it).
+fn decode[&t](bits: int, table: &t [float]) -> [] float {
+    let e = (bits >> 52) & 2047;
+    let m = bits & 4503599627370495;
+    var v = 0.0;
+    if e == 2047 {
+        return 0.0 / 0.0;
+    }
+    if e == 0 {
+        // zero or subnormal: m * 2^-1074 (m < 2^52 is exact in a float; ldexp splits the scale in two exact halves)
+        v = math.ldexp(float_of(m), 0 - 1074);
+    } else {
+        // (2^52 + m) < 2^53 is exact; times an exact power of two is exact (the result is a normal number)
+        v = float_of(m + 4503599627370496) * table[e];
+    }
+    if bits < 0 {
+        v = v * (0.0 - 1.0);
+    }
+    return v;
+}
+
+// decode count doubles from src into out; answers the number of values refused or not reproduced bit for bit
+fn load[&s, &t, &o](src: &s [byte], table: &t [float], out: &!o [float], count: int) -> [] int {
+    var bad = 0;
+    var i = 0;
+    while i < count {
+        let bits = word(src, i * 8);
+        let v = decode(bits, table);
+        if v != v {
+            bad = bad + 1;
+        } else if bits_of(v) != bits {
+            bad = bad + 1;
+        }
+        out[i] = v;
+        i = i + 1;
+    }
+    return bad;
+}
+
+
+// ---------------------------------------------------------------- RNG (13.1.1, 13.1.2)
+// 0x9E3779B97F4A7C15, 0xBF58476D1CE4E5B9, 0x94D049BB133111EB as two's complement ints; >> is arithmetic, so each logical
+// shift is a shift and a mask.
+fn gold() -> [] int {
+    return 0 - 7046029254386353131;
+}
+
+fn mix(z0: int) -> [] int {
+    var z = z0;
+    z = wrapping_mul(z ^ ((z >> 30) & 0x3FFFFFFFF), 0 - 4658895280553007687);
+    z = wrapping_mul(z ^ ((z >> 27) & 0x1FFFFFFFFF), 0 - 7723592293110705685);
+    return z ^ ((z >> 31) & 0x1FFFFFFFF);
+}
+
+fn derive1(h: int, c: int) -> [] int {
+    return mix(wrapping_add(h ^ c, gold()));
+}
+
+// (next() >> 1) mod m, with next() the output for state s (the caller has already added gold to the state)
+fn uni(s: int, m: int) -> [] int {
+    return ((mix(s) >> 1) & 0x7FFFFFFFFFFFFFFF) % m;
+}
+
+// ---------------------------------------------------------------- exact comparison (13.1.6, 13.5)
+// n1 * d2 > n2 * d1, exactly, for n < 2^60, d < 2^38: base 2^30 limbs, product as (hi, low 60 bits)
+fn gt(n1: int, d1: int, n2: int, d2: int) -> [] bool {
+    let a1 = n1 >> 30;
+    let a0 = n1 & 0x3FFFFFFF;
+    let b1 = d2 >> 30;
+    let b0 = d2 & 0x3FFFFFFF;
+    let lo = a0 * b0;
+    let t = a1 * b0 + a0 * b1 + (lo >> 30);
+    let hi_p = a1 * b1 + (t >> 30);
+    let lo_p = ((t & 0x3FFFFFFF) << 30) | (lo & 0x3FFFFFFF);
+    let c1 = n2 >> 30;
+    let c0 = n2 & 0x3FFFFFFF;
+    let e1 = d1 >> 30;
+    let e0 = d1 & 0x3FFFFFFF;
+    let lo2 = c0 * e0;
+    let t2 = c1 * e0 + c0 * e1 + (lo2 >> 30);
+    let hi_q = c1 * e1 + (t2 >> 30);
+    let lo_q = ((t2 & 0x3FFFFFFF) << 30) | (lo2 & 0x3FFFFFFF);
+    if hi_p != hi_q {
+        return hi_p > hi_q;
+    }
+    return lo_p > lo_q;
+}
+
+// ---------------------------------------------------------------- binning (13.1.3)
+// order-preserving key of a float's bits: unsigned order of the key is the float order
+fn key_of(bits: int) -> [] int {
+    if bits < 0 {
+        return ~bits;
+    }
+    return bits ^ (1 << 63);
+}
+
+fn bits_of_key(key: int) -> [] int {
+    if key < 0 {
+        return key ^ (1 << 63);
+    }
+    return ~key;
+}
+
+// LSD radix sort of ka[0..n) by unsigned key, 6 passes of 11 bits (ends in ka); cnt has >= 2048 entries
+fn radix[&a, &b, &c](ka: &!a [int], kb: &!b [int], cnt: &!c [int], n: int) -> [] int {
+    var pass = 0;
+    while pass < 6 {
+        let sh = pass * 11;
+        var j = 0;
+        while j < 2048 {
+            cnt[j] = 0;
+            j = j + 1;
+        }
+        var i = 0;
+        if pass % 2 == 0 {
+            while i < n {
+                let d = (ka[i] >> sh) & 2047;
+                cnt[d] = cnt[d] + 1;
+                i = i + 1;
+            }
+        } else {
+            while i < n {
+                let d = (kb[i] >> sh) & 2047;
+                cnt[d] = cnt[d] + 1;
+                i = i + 1;
+            }
+        }
+        var run = 0;
+        j = 0;
+        while j < 2048 {
+            let c = cnt[j];
+            cnt[j] = run;
+            run = run + c;
+            j = j + 1;
+        }
+        i = 0;
+        if pass % 2 == 0 {
+            while i < n {
+                let v = ka[i];
+                let d = (v >> sh) & 2047;
+                kb[cnt[d]] = v;
+                cnt[d] = cnt[d] + 1;
+                i = i + 1;
+            }
+        } else {
+            while i < n {
+                let v = kb[i];
+                let d = (v >> sh) & 2047;
+                ka[cnt[d]] = v;
+                cnt[d] = cnt[d] + 1;
+                i = i + 1;
+            }
+        }
+        pass = pass + 1;
+    }
+    return 0;
+}
+
+// fl[f*64 + k - 1] = e[f][k], k = 1..63, from the sorted training column; answers the number of bad decodes
+fn make_edges[&x, &t, &a, &b, &c, &f](xs: &x [float], tab: &t [float], ntr: int, ka: &!a [int], kb: &!b [int], cnt: &!c [int], fl: &!f [float]) -> [] int {
+    var ft = 0;
+    while ft < 20 {
+        var i = 0;
+        while i < ntr {
+            ka[i] = key_of(bits_of(xs[i * 20 + ft]));
+            i = i + 1;
+        }
+        radix(ka, kb, cnt, ntr);
+        var k = 1;
+        while k < 64 {
+            fl[ft * 64 + k - 1] = decode(bits_of_key(ka[(k * ntr) / 64]), tab);
+            k = k + 1;
+        }
+        fl[ft * 64 + 63] = 0.0;
+        ft = ft + 1;
+    }
+    return 0;
+}
+
+// bins[f*ntr + i] = #{k : e[f][k] <= x[i][f]}, 6 branch-free steps over the 63 edges
+fn make_bins[&x, &e, &b](xs: &x [float], ed: &e [float], ntr: int, bins: &!b [byte]) -> [] int {
+    var i = 0;
+    while i < ntr {
+        let row = xs[i * 20..i * 20 + 20];
+        var f = 0;
+        while f < 20 {
+            let e = ed[f * 64..f * 64 + 64];
+            let x = row[f];
+            var c = 0;
+            var step = 32;
+            while step > 0 {
+                let t = c + step;
+                if t <= 63 {
+                    if e[t - 1] <= x {
+                        c = t;
+                    }
+                }
+                step = step >> 1;
+            }
+            bins[f * ntr + i] = byte_of(c);
+            f = f + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- growing (13.1.4 to 13.1.6)
+// wk layout (ints): HIST 0..2047 | FEAT 2048 | BIN 7168 | N0 12288 | N1 17408 | STACK 22528 (64 entries of 6) | SUB 22920
+// tree t, heap id: slot t*512 + id; FEAT = -2 where the node does not exist, -1 for a leaf.
+fn grow[&b, &y, &i, &w](seed: int, t: int, ntr: int, bins: &b [byte], yb: &y [byte], idx: &!i [int], wk: &!w [int]) -> [] int {
+    // bootstrap: derive(seed, 1, t), then ntr uniform(ntr) draws in order
+    var s = derive1(derive1(seed, 1), t);
+    var k = 0;
+    var root1 = 0;
+    while k < ntr {
+        s = wrapping_add(s, gold());
+        let r = uni(s, ntr);
+        idx[k] = r;
+        root1 = root1 + int_of(yb[r]);
+        k = k + 1;
+    }
+    var j = 0;
+    while j < 512 {
+        wk[2048 + t * 512 + j] = 0 - 2;
+        j = j + 1;
+    }
+    // stack: id, lo, hi, depth, n0, n1
+    var sp = 1;
+    wk[22528] = 1;
+    wk[22529] = 0;
+    wk[22530] = ntr;
+    wk[22531] = 0;
+    wk[22532] = ntr - root1;
+    wk[22533] = root1;
+    while sp > 0 {
+        sp = sp - 1;
+        let so = 22528 + sp * 6;
+        let id = wk[so];
+        let lo = wk[so + 1];
+        let hi = wk[so + 2];
+        let dep = wk[so + 3];
+        let n0 = wk[so + 4];
+        let n1 = wk[so + 5];
+        let m = hi - lo;
+        let slot = t * 512 + id;
+        var found = false;
+        var bn = 0;
+        var bd = 1;
+        var bf = 0;
+        var bb = 0;
+        var bnl = 0;
+        var bpl = 0;
+        if dep < 8 && n0 > 0 && n1 > 0 {
+            // feature subset: derive(seed, 2, t, id); partial Fisher-Yates over 0..19, 4 draws, then sorted
+            var fs = derive1(derive1(derive1(seed, 2), t), id);
+            j = 0;
+            while j < 20 {
+                wk[22920 + j] = j;
+                j = j + 1;
+            }
+            j = 0;
+            while j < 4 {
+                fs = wrapping_add(fs, gold());
+                let q = j + uni(fs, 20 - j);
+                let tmp = wk[22920 + j];
+                wk[22920 + j] = wk[22920 + q];
+                wk[22920 + q] = tmp;
+                j = j + 1;
+            }
+            // insertion sort of the first four
+            j = 1;
+            while j < 4 {
+                let v = wk[22920 + j];
+                var p = j - 1;
+                while p >= 0 && wk[22920 + p] > v {
+                    wk[22920 + p + 1] = wk[22920 + p];
+                    p = p - 1;
+                }
+                wk[22920 + p + 1] = v;
+                j = j + 1;
+            }
+            let f0 = wk[22920];
+            let f1 = wk[22921];
+            let f2 = wk[22922];
+            let f3 = wk[22923];
+            j = 0;
+            while j < 512 {
+                wk[j] = 0;
+                j = j + 1;
+            }
+            let c0 = bins[f0 * ntr..f0 * ntr + ntr];
+            let c1 = bins[f1 * ntr..f1 * ntr + ntr];
+            let c2 = bins[f2 * ntr..f2 * ntr + ntr];
+            let c3 = bins[f3 * ntr..f3 * ntr + ntr];
+            k = lo;
+            while k < hi {
+                let r = idx[k];
+                let yy = int_of(yb[r]);
+                let i0 = int_of(c0[r]) * 2 + yy;
+                let i1 = 128 + int_of(c1[r]) * 2 + yy;
+                let i2 = 256 + int_of(c2[r]) * 2 + yy;
+                let i3 = 384 + int_of(c3[r]) * 2 + yy;
+                wk[i0] = wk[i0] + 1;
+                wk[i1] = wk[i1] + 1;
+                wk[i2] = wk[i2] + 1;
+                wk[i3] = wk[i3] + 1;
+                k = k + 1;
+            }
+            var q = 0;
+            while q < 4 {
+                var nl = 0;
+                var pl = 0;
+                var b = 0;
+                while b < 63 {
+                    let h1 = wk[q * 128 + b * 2 + 1];
+                    nl = nl + wk[q * 128 + b * 2] + h1;
+                    pl = pl + h1;
+                    let nr = m - nl;
+                    if nl >= 1 && nr >= 1 {
+                        let pr = n1 - pl;
+                        let ql = nl - pl;
+                        let qr = nr - pr;
+                        let nn = (pl * pl + ql * ql) * nr + (pr * pr + qr * qr) * nl;
+                        let dd = nl * nr;
+                        if found == false || gt(nn, dd, bn, bd) {
+                            found = true;
+                            bn = nn;
+                            bd = dd;
+                            bf = wk[22920 + q];
+                            bb = b;
+                            bnl = nl;
+                            bpl = pl;
+                        }
+                    }
+                    b = b + 1;
+                }
+                q = q + 1;
+            }
+        }
+        if found == false {
+            wk[2048 + slot] = 0 - 1;
+            wk[7168 + slot] = 0 - 1;
+            wk[12288 + slot] = n0;
+            wk[17408 + slot] = n1;
+        } else {
+            wk[2048 + slot] = bf;
+            wk[7168 + slot] = bb;
+            wk[12288 + slot] = n0;
+            wk[17408 + slot] = n1;
+            // partition idx[lo..hi): bin <= bb to the left
+            let col = bins[bf * ntr..bf * ntr + ntr];
+            var a = lo;
+            var z = hi - 1;
+            while a <= z {
+                let r = idx[a];
+                if int_of(col[r]) <= bb {
+                    a = a + 1;
+                } else {
+                    idx[a] = idx[z];
+                    idx[z] = r;
+                    z = z - 1;
+                }
+            }
+            // push right then left
+            let o1 = 22528 + sp * 6;
+            wk[o1] = 2 * id + 1;
+            wk[o1 + 1] = a;
+            wk[o1 + 2] = hi;
+            wk[o1 + 3] = dep + 1;
+            wk[o1 + 4] = (n0 - (bnl - bpl));
+            wk[o1 + 5] = (n1 - bpl);
+            let o2 = o1 + 6;
+            wk[o2] = 2 * id;
+            wk[o2 + 1] = lo;
+            wk[o2 + 2] = a;
+            wk[o2 + 3] = dep + 1;
+            wk[o2 + 4] = bnl - bpl;
+            wk[o2 + 5] = bpl;
+            sp = sp + 2;
+        }
+    }
+    return 0;
+}
+
+// thresholds and leaf probabilities: fl layout EDGES 0 | THR 1280 | PROB 6400 | POUT 11520
+fn finish[&w, &f](wk: &w [int], fl: &!f [float]) -> [] int {
+    var t = 0;
+    while t < 10 {
+        var id = 1;
+        while id < 512 {
+            let slot = t * 512 + id;
+            let ft = wk[2048 + slot];
+            if ft >= 0 {
+                fl[1280 + slot] = fl[ft * 64 + wk[7168 + slot]];
+            }
+            if ft == 0 - 1 {
+                fl[6400 + slot] = float_of(wk[17408 + slot]) / float_of(wk[12288 + slot] + wk[17408 + slot]);
+            }
+            id = id + 1;
+        }
+        t = t + 1;
+    }
+    return 0;
+}
+
+fn predict[&x, &w, &f](xs: &x [float], wk: &w [int], ntr: int, nte: int, fl: &!f [float]) -> [] int {
+    var i = 0;
+    while i < nte {
+        let row = xs[(ntr + i) * 20..(ntr + i) * 20 + 20];
+        var acc = 0.0;
+        var t = 0;
+        while t < 10 {
+            var id = 1;
+            while wk[2048 + t * 512 + id] >= 0 {
+                let slot = t * 512 + id;
+                if row[wk[2048 + slot]] < fl[1280 + slot] {
+                    id = 2 * id;
+                } else {
+                    id = 2 * id + 1;
+                }
+            }
+            acc = acc + fl[6400 + t * 512 + id];
+            t = t + 1;
+        }
+        fl[11520 + i] = acc / 10.0;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn hex_line[&i, &l](io: &!i Io, line: &!l [byte], bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = (bits >> (60 - 4 * k)) & 15;
+        if nib < 10 {
+            line[k] = byte_of('0' + nib);
+        } else {
+            line[k] = byte_of('a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    line[16] = byte_of(10);
+    io.write_all(io, line);
+    return 0;
+}
+
+fn vec_sm[&i, &l, &s0](io: &!i Io, line: &!l [byte], label: &s0 [byte], seed: int) -> [io_write] int {
+    var s = seed;
+    var k = 0;
+    while k < 5 {
+        s = wrapping_add(s, gold());
+        io.write_all(io, "sm ");
+        io.write_all(io, label);
+        io.write_all(io, " ");
+        io.print_int(io, k + 1);
+        io.write_all(io, " ");
+        hex_line(io, line, mix(s));
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn vec_uni[&i, &s0](io: &!i Io, label: &s0 [byte], start: int, m: int) -> [io_write] int {
+    var s = start;
+    var k = 0;
+    while k < 5 {
+        s = wrapping_add(s, gold());
+        io.write_all(io, "uni ");
+        io.write_all(io, label);
+        io.write_all(io, " ");
+        io.print_int(io, k + 1);
+        io.write_all(io, " ");
+        io.print_int(io, uni(s, m));
+        io.newline(io);
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn vectors[&i, &l](io: &!i Io, line: &!l [byte]) -> [io_write] int {
+    vec_sm(io, line, "0", 0);
+    vec_sm(io, line, "1234567", 1234567);
+    vec_sm(io, line, "max", 0 - 1);
+    io.write_all(io, "derive 42,1,0 ");
+    hex_line(io, line, derive1(derive1(42, 1), 0));
+    io.write_all(io, "derive 42,2,3,77 ");
+    hex_line(io, line, derive1(derive1(derive1(42, 2), 3), 77));
+    io.write_all(io, "derive 20261012,1,9 ");
+    hex_line(io, line, derive1(derive1(20261012, 1), 9));
+    vec_uni(io, "a1000", derive1(derive1(42, 1), 0), 1000);
+    vec_uni(io, "b20", derive1(derive1(derive1(42, 2), 3), 77), 20);
+    return 0;
+}
+
+fn lines_edges[&i, &l, &f](io: &!i Io, line: &!l [byte], fl: &f [float]) -> [io_write] int {
+    var f = 0;
+    while f < 20 {
+        var k = 1;
+        while k < 64 {
+            io.write_all(io, "E ");
+            io.print_int(io, f);
+            io.write_all(io, " ");
+            io.print_int(io, k);
+            io.write_all(io, " ");
+            hex_line(io, line, bits_of(fl[f * 64 + k - 1]));
+            k = k + 1;
+        }
+        f = f + 1;
+    }
+    return 0;
+}
+
+fn lines_nodes[&i, &w](io: &!i Io, wk: &w [int]) -> [io_write] int {
+    var t = 0;
+    while t < 10 {
+        var id = 1;
+        while id < 512 {
+            let slot = t * 512 + id;
+            if wk[2048 + slot] >= 0 - 1 {
+                io.write_all(io, "N ");
+                io.print_int(io, t);
+                io.write_all(io, " ");
+                io.print_int(io, id);
+                io.write_all(io, " ");
+                io.print_int(io, wk[2048 + slot]);
+                io.write_all(io, " ");
+                io.print_int(io, wk[7168 + slot]);
+                io.write_all(io, " ");
+                io.print_int(io, wk[12288 + slot]);
+                io.write_all(io, " ");
+                io.print_int(io, wk[17408 + slot]);
+                io.newline(io);
+            }
+            id = id + 1;
+        }
+        t = t + 1;
+    }
+    return 0;
+}
+
+fn lines_probs[&i, &l, &f](io: &!i Io, line: &!l [byte], fl: &f [float], nte: int) -> [io_write] int {
+    var k = 0;
+    while k < nte {
+        io.write_all(io, "P ");
+        io.print_int(io, k);
+        io.write_all(io, " ");
+        hex_line(io, line, bits_of(fl[11520 + k]));
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    var vmode = false;
+    var n = 0;
+    var seed = 0;
+    borrow args as &g in {
+        if len(arg(g, 1)) > 0 {
+            if arg(g, 1)[0] == byte_of('-') {
+                vmode = true;
+            }
+        }
+        if vmode == false {
+            n = number_of(arg(g, 3));
+            seed = number_of(arg(g, 4));
+        }
+    }
+    var t0 = 0;
+    var t1 = 0;
+    var t2 = 0;
+    var t3 = 0;
+    var t4 = 0;
+    var t5 = 0;
+    var t6 = 0;
+    var bad = 0;
+    borrow clock as &k in {
+        t0 = clock_ms(k);
+    }
+    let ntr = n - n / 5;
+    let nte = n / 5;
+    borrow mut heap as &!hp in {
+        var xbytes = buffer.empty(hp, 1048576);
+        var ybytes = buffer.empty(hp, 1048576);
+        if vmode == false {
+            borrow fs as &f in {
+                borrow args as &g in {
+                    match open_read(f, arg(g, 1)) {
+                        Opened::Ok(file) => {
+                            var fl = file;
+                            borrow mut fl as &!fw in {
+                                xbytes = read_all(hp, fw, xbytes);
+                            }
+                            file_close(fl);
+                        }
+                        Opened::Failed(reason) => {
+                        }
+                    }
+                    match open_read(f, arg(g, 2)) {
+                        Opened::Ok(file) => {
+                            var fl = file;
+                            borrow mut fl as &!fw in {
+                                ybytes = read_all(hp, fw, ybytes);
+                            }
+                            file_close(fl);
+                        }
+                        Opened::Failed(reason) => {
+                        }
+                    }
+                }
+            }
+        }
+        borrow mut io as &!i in {
+            let table = power_table(hp);
+            let xs = box_slice(hp, n * 20, 0.0);
+            let ys = box_slice(hp, n, 0.0);
+            let line = box_slice(hp, 17, byte_of(10));
+            let bins = box_slice(hp, ntr * 20, byte_of(0));
+            let yb = box_slice(hp, ntr, byte_of(0));
+            let idx = box_slice(hp, ntr, 0);
+            let tmp = box_slice(hp, ntr, 0);
+            let wk = box_slice(hp, 23000, 0);
+            let fl = box_slice(hp, 11520 + nte, 0.0);
+            if vmode {
+                borrow mut line as &!lw in {
+                    vectors(i, contents(lw));
+                }
+            } else {
+                var sx = 0;
+                var sy = 0;
+                borrow xbytes as &xb in {
+                    sx = len(buffer.bytes(xb));
+                }
+                borrow ybytes as &yb2 in {
+                    sy = len(buffer.bytes(yb2));
+                }
+                if sx == n * 160 && sy == n * 8 && n >= 10 {
+                    borrow table as &tr in {
+                        let tab = contents(tr);
+                        borrow xbytes as &xb in {
+                            borrow mut xs as &!xw in {
+                                bad = bad + load(buffer.bytes(xb), tab, contents(xw), n * 20);
+                            }
+                        }
+                        borrow ybytes as &yb2 in {
+                            borrow mut ys as &!yw in {
+                                bad = bad + load(buffer.bytes(yb2), tab, contents(yw), n);
+                            }
+                        }
+                    }
+                }
+                // labels must be exactly 0.0 or 1.0
+                borrow ys as &yr in {
+                    borrow mut yb as &!ybw in {
+                        let ysl = contents(yr);
+                        let ybs = contents(ybw);
+                        var q = 0;
+                        while q < ntr {
+                            if ysl[q] == 1.0 {
+                                ybs[q] = byte_of(1);
+                            } else if ysl[q] != 0.0 {
+                                bad = bad + 1;
+                            }
+                            q = q + 1;
+                        }
+                        while q < n {
+                            if ysl[q] != 1.0 && ysl[q] != 0.0 {
+                                bad = bad + 1;
+                            }
+                            q = q + 1;
+                        }
+                    }
+                }
+                if bad == 0 && sy == n * 8 && sx == n * 160 && ntr <= 1048576 && n >= 10 {
+                    borrow clock as &k in {
+                        t1 = clock_ms(k);
+                    }
+                    borrow xs as &xr in {
+                        borrow table as &tr2 in {
+                            borrow mut idx as &!iw in {
+                                borrow mut tmp as &!tw in {
+                                    borrow mut wk as &!ww in {
+                                        borrow mut fl as &!fw in {
+                                            make_edges(contents(xr), contents(tr2), ntr, contents(iw), contents(tw), contents(ww), contents(fw));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    borrow clock as &k in {
+                        t2 = clock_ms(k);
+                    }
+                    borrow xs as &xr in {
+                        borrow fl as &fr in {
+                            borrow mut bins as &!bw in {
+                                make_bins(contents(xr), contents(fr), ntr, contents(bw));
+                            }
+                        }
+                    }
+                    borrow clock as &k in {
+                        t3 = clock_ms(k);
+                    }
+                    borrow bins as &br in {
+                        borrow yb as &yr3 in {
+                            borrow mut idx as &!iw in {
+                                borrow mut wk as &!ww in {
+                                    var t = 0;
+                                    while t < 10 {
+                                        grow(seed, t, ntr, contents(br), contents(yr3), contents(iw), contents(ww));
+                                        t = t + 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    borrow clock as &k in {
+                        t4 = clock_ms(k);
+                    }
+                    borrow wk as &wr in {
+                        borrow mut fl as &!fw in {
+                            finish(contents(wr), contents(fw));
+                        }
+                    }
+                    borrow clock as &k in {
+                        t5 = clock_ms(k);
+                    }
+                    borrow xs as &xr in {
+                        borrow wk as &wr in {
+                            borrow mut fl as &!fw in {
+                                predict(contents(xr), contents(wr), ntr, nte, contents(fw));
+                            }
+                        }
+                    }
+                    borrow clock as &k in {
+                        t6 = clock_ms(k);
+                    }
+                    borrow fl as &fr in {
+                        borrow mut line as &!lw in {
+                            lines_edges(i, contents(lw), contents(fr));
+                            borrow wk as &wr in {
+                                lines_nodes(i, contents(wr));
+                            }
+                            lines_probs(i, contents(lw), contents(fr), nte);
+                        }
+                    }
+                    io.write_all(i, "#edges_ms ");
+                    io.print_int(i, t2 - t1);
+                    io.write_all(i, "\n#bins_ms ");
+                    io.print_int(i, t3 - t2);
+                    io.write_all(i, "\n#grow_ms ");
+                    io.print_int(i, t4 - t3);
+                    io.write_all(i, "\n#finish_ms ");
+                    io.print_int(i, t5 - t4);
+                    io.write_all(i, "\n#fit_ms ");
+                    io.print_int(i, t5 - t1);
+                    io.write_all(i, "\n#predict_ms ");
+                    io.print_int(i, t6 - t5);
+                    io.write_all(i, "\n#load_ms ");
+                    io.print_int(i, t1 - t0);
+                    io.newline(i);
+                } else {
+                    io.write_all(i, "#error: bad values or wrong file size, bad=");
+                    io.print_int(i, bad);
+                    io.newline(i);
+                }
+            }
+            unbox_slice(hp, table);
+            unbox_slice(hp, xs);
+            unbox_slice(hp, ys);
+            unbox_slice(hp, line);
+            unbox_slice(hp, bins);
+            unbox_slice(hp, yb);
+            unbox_slice(hp, idx);
+            unbox_slice(hp, tmp);
+            unbox_slice(hp, wk);
+            unbox_slice(hp, fl);
+        }
+        buffer.drop(hp, xbytes);
+        buffer.drop(hp, ybytes);
+    }
+    release(args);
+    release(fs);
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}
