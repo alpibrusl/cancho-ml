@@ -8,7 +8,7 @@ decided.
 ## 0. What this slice is
 
 The agent-visible surface of cancho-ml is the command line (and later an MCP server). `ml` is one binary with the verbs
-`fit`, `predict`, `eval`, `introspect` and `skill`, built the way `cancho-table`'s `table` is: one flag table drives the
+`fit`, `predict`, `eval`, `describe`, `introspect` and `skill` (`predict` reads standard input; `describe` prints what a model file requires of its caller; a second binary, `ml-predict`, has `predict`, `describe`, `introspect` and `skill` only: `docs/serving.md`), built the way `cancho-table`'s `table` is: one flag table drives the
 parser, `introspect` and `skill`; every refusal is data with a `<area>.<name>` tag, an exit code and, where safe, a repair;
 the authority is derived by the compiler and gated against a committed manifest. The linear-algebra and tensor packages stay
 internal: nothing in this slice imports them, because the one model built here (`--model constant`) needs none. *(Stage W1, `docs/wiring.md`, wires `--model linear` and `--model logistic` through the pipeline; they import them. `--model constant` and every file it writes are unchanged, byte for byte: `tests/conformance/test_wire_baseline.py`.)*
@@ -41,8 +41,9 @@ verdict of each, with the survivors.
 
 ```
 ml [FLAGS] fit FILE       fit a model on a CSV and write it
-ml [FLAGS] predict FILE   apply a stored model to a CSV
+ml [FLAGS] predict FILE   apply a stored model to a CSV (FILE, or - or nothing for standard input)
 ml [FLAGS] eval FILE      score a stored model on a CSV
+ml [FLAGS] describe       what a model file requires of its caller (docs/serving.md section 5)
 ml introspect             the tool as data (flags, rules, limits, authority, schema)
 ml skill                  the same as a SKILL.md for an agent
 ```
@@ -57,6 +58,7 @@ table to drift (gate T1 checks the one table against its projections).
 | `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) and, for `--model tree|forest`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes` (`docs/wiring-trees.md` section 2) |
 | `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
 | `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
+| `describe` | `--model-file MODEL` | `--limit` (category strings listed per column), `--max-bytes`, `--format` (no CSV operand) |
 
 **Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,
 error, errors, meta}`, errors `{code, rule, message, hint, repair, detail}`, no timestamp, no duration, no float (every decimal is a
@@ -222,9 +224,10 @@ logged; gate L1 plants canaries in all three and in every kind of run. Bounded: 
 ## 6. Authority and determinism
 
 `tools.toml` is the ceiling and `manifests/ml.authority.json` the derivation (`scripts/manifest.py`): `args`, **`conc`**, `dir_read`, `dir_write`,
-`err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, `io_write` and nothing else. In words: it reads the files named on its
-command line; it creates, appends to, renames and removes only beneath a directory it opened itself, and holds no `fs_write`, so no
-path write; it spawns threads for `fit --threads N` (`conc`); it has no standard input, no clock, no environment, no network, no foreign code.
+`err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, **`io_read`**, `io_write` and nothing else. In words: it reads the files named on its
+command line, and standard input for `predict -` and `predict` with no operand (`io_read`, `docs/serving.md` section 2.4); it creates, appends to, renames and removes only beneath a directory it opened itself, and holds no `fs_write`, so no
+path write; it spawns threads for `fit --threads N` (`conc`); it has no clock, no environment, no network, no foreign code. `ml-predict`, built from the same sources, has the row
+without `conc`, `dir_write` and `file_write` (`manifests/ml-predict.authority.json`, `docs/serving.md` section 3.3).
 `design.md` section 7 expected `conc`. **The label arrived at stage W1, deliberately, in the same diff as the test that no thread count changes a byte**
 (`tests/conformance/test_determinism.py`, gate D1), as this section asked: `ml` now links `lib/linalg/par.cho`, which spawns, and the compiler derives
 `conc` from the code, so the label is in the row at `--threads 1` too. The reason is stated in `tools.toml` (`[ml.reasons]`), in the manifests of the two
@@ -319,7 +322,7 @@ description of its own. From the flag table:
   path flags (section 2.1), so the generator must emit two arguments for flags of role `path-*`. The alternative, teaching `ml` to take
   `--output=FILE`, needs a text form of `toolbox.path.operand` that the pinned package does not have.
 * **Result.** `structuredContent` is the one JSON document, `isError` is `ok == false`, and `meta.version` is the tool's. The
-  generator refuses a tool whose derived authority holds `io_read` (the server gives the child an empty standard input).
+  generator refuses a tool whose derived authority holds `io_read` unless the verb that reads it is `predict` with an operand always given (the server gives the child an empty standard input, and `predict -` would answer the refusal of an empty file). `ml-serve` (`docs/serving.md`) calls the predictor in-process and is the way a service is served.
 * **Gate (when built):** the same shape as table's `test_mcp.py`: the argv a stand-in binary receives, no shell metacharacter, the
   schema of every tool equal to a projection of the flag table (T1 extended with the MCP schema), and a mutant per rule.
 

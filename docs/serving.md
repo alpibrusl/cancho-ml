@@ -19,12 +19,12 @@ Three pieces, in the order a server needs them:
 | V2 | every refusal of a file is the refusal of the same bytes on standard input, equal but for `detail.path` (`-` for standard input): ragged row, bad quote, unterminated quote, over `--max-rows`, `--max-columns`, `--max-cells`, `--max-line-bytes`, schema mismatch, a cell that is not a number, no data | `test_serving.py` | a refusal that reads the file name of standard input; `--max-line-bytes` not applied |
 | V3 | the bound of standard input: more than `--max-bytes` bytes is `limit.input-too-large` before any parse, an empty standard input is the refusal of an empty file, a closed standard input is an empty one | `test_serving.py` | the bound off by one; a read past the bound |
 | V4 | the operand: `-` and no operand mean standard input, `./-` is a file named `-`, `ml fit ... -` and `ml eval ... -` read a file named `-` as before, `--root` does not apply to standard input and is still checked as a value | `test_serving.py` | `./-` read as standard input; `-` read as a file |
-| V5 | the authority row of `ml` is `io_read` more than before, with a reason in `tools.toml`; the manifest check fails when any other label is added | `test_authority.py`, `scripts/mutants_serve.py` | a `file_write`-free source gaining `net_out`, `clock`, `ffi`, `fs_write` |
-| P1 | `ml-predict predict` prints the bytes `ml predict` prints, for every case of V1 and every refusal reachable by `predict` | `test_serving.py` | an output column renamed in one binary only (the sources are the same, so this is a test of the build list) |
+| V5 | the authority row of `ml` is `io_read` more than before, with a reason in `tools.toml`; the manifest check fails when any other label is added to the derived row, and when the ceiling or its reason is edited | `test_authority.py`, `scripts/mutants_serve.py` | a ceiling without `io_read`; an `io_read` without its reason; a derived row with `net_out`, `clock`, `ffi`, `fs_write`, `conc`, `file_write` added (in `test_authority.py`, on the derived row) |
+| P1 | `ml-predict predict` prints the bytes `ml predict` prints, for every case of V1 and every refusal reachable by `predict`, from a file and from standard input (but for the program name inside a `retry` repair) | `test_serving.py` | `describe` mapped to another function in one binary; a table of one binary with another default |
 | P2 | `ml-predict` takes `predict`, `describe`, `introspect` and `skill` and refuses `fit` and `eval` (`args.unknown-command`) and every flag of `fit` and `eval` (`args.unknown-flag`) | `test_serving.py` | `fit` reachable; a fit flag in the table |
 | P3 | the authority row of `ml-predict` is the committed `manifests/ml-predict.authority.json`, within the ceiling of `tools.toml`, and has no `conc`, `dir_write`, `file_write`; the check fails on a mutant that adds a capability | `test_authority.py`, `scripts/manifest.py --check`, `scripts/mutants_serve.py` | a write in a reachable function; a thread in a reachable function; a stale manifest |
 | P4 | the two binaries are built from the same sources: the file list of `ml-predict` is the file list of `ml` with the entry point replaced | `scripts/check_bins.py` | a copy of a module under `tools/ml-predict`; a file of `tools/ml` missing from the list |
-| P5 | `ml-predict` writes no file: a run in a read-only directory with a read-only `--root` leaves the directory as it was (the byte-exact listing) | `test_serving.py` | none (the row says it); the check is that the row and the behaviour agree |
+| P5 | `ml-predict` writes no file: a run in a directory nobody can write to leaves the directory as it was (the byte-exact listing) | `test_serving.py` | none (the row says it); the check is that the row and the behaviour agree |
 | D1 | `describe` agrees field by field with an independent reader of the file (`scripts/oracle_describe.py`) over corpora of models of all kinds | `tests/conformance/test_describe.py` | a field dropped, renamed, off by one, a type code misread, a category count wrong |
 | D2 | damaged files: every byte flipped, every truncation, counts of 2^63 - 1, a repaired checksum: `describe` answers a refusal as data, never a trap, never an allocation sized by a number read from the file before it was checked | `test_describe.py` | a size read and allocated before the check |
 | D3 | `ml-predict describe` prints the bytes `ml describe` prints | `test_serving.py` | none |
@@ -54,11 +54,11 @@ Memory is the input plus what the file case needs. This is the price of two pass
 
 ### 2.3 Bounds and refusals
 
-* More than `--max-bytes` bytes (default 16 MiB, ceiling 256 MiB, the flag that bounds a model file) is refused as `limit.input-too-large` (exit 8), with `detail` `{"path": "-", "size": N, "max": M}`
-  where `size` is the bytes read when the bound was found (`max + 1`), not the length of the stream. **[choice]** The rule is the one a model file over the flag has; a CSV file has no such
+* More than `--max-bytes` bytes (default 16 MiB, ceiling 256 MiB, the flag that bounds a model file) is refused as `limit.input-too-large` (exit 8), with `detail` `{"size": N, "max": M}`
+  (the detail a too large model file has) where `size` is the bytes read when the bound was found (`max + 1`), not the length of the stream. Reading stops there: nothing past the bound is kept. **[choice]** The rule is the one a model file over the flag has; a CSV file has no such
   bound (it is read in chunks), so **a CSV that is accepted from a file and is larger than `--max-bytes` is refused from standard input**. This is the one difference, and it is documented in `introspect` (the flag's help).
 * Every other check is the file's, in the file's order: `--max-line-bytes`, `--max-columns`, `--max-rows`, `--max-cells`, the quote and ragged-row refusals, the schema check, the missing cells.
-* A read error of standard input is `io.read-failed` with `detail.path` `-`. A closed standard input is read as an empty one (`getchar` answers the end), so `ml.input.empty`.
+* **A read error of standard input is the end of the input**: `getchar` answers the same value for an error and for the end, so the bytes read so far are the input (a truncated stream is then a refusal of the reader if it ends inside a record, `parse.csv-unterminated-quote` or `parse.csv-ragged-row`, or a shorter input). A closed standard input is an empty one, so `ml.input.empty`.
 * **The order of the refusals [choice]:** the command line first (as before), then standard input is read (so a model file that is missing is found after the bytes were read), then the model file, then the parse. A caller that sends
   standard input to a command that is going to refuse its flags is not made to wait: the command line is checked before any read.
 * The reads are `getchar` calls on `Io` (`io_read`): **[read]** the compiler of the pin has no bulk read of standard input (`read_bytes` is edition 9, cancho #363, after the pin). `cancho-table` measured `getchar`
@@ -86,7 +86,8 @@ answer, is the code of `ml`: P4 compares the file lists. **[read]** The authorit
   **`--log` and `--log-max-bytes` are not flags of `ml-predict`.** **[choice]** The log is a file append (`file_write`, `dir_write`): the point of this binary is that its row has neither. A server that wants a log
   writes one itself, from the answers. Every other flag of `ml` is `args.unknown-flag`, with the nearest flag suggested as for any unknown flag.
 * The table of flags of `ml-predict` is generated from the table of `ml` (`scripts/gen_models.py`) by name, so a flag has one definition; T1 compares the two.
-* The answer is the answer of `ml`: the envelope says `"command": "ml"` and `"schema": "ml.v1"` in both (the bytes of an answer are the same from either binary; V1/P1). `introspect` says `"tool": "ml-predict"`. **[choice]**
+* The answer is the answer of `ml`: the envelope says `"command": "ml"` and `"schema": "ml.v1"` in both (the bytes of an answer are the same from either binary; P1). `introspect` says `"tool": "ml-predict"`. **[choice]**
+  One exception: the `retry` repair of a refusal is the command line to run again, and starts with the name the process was run by; the two binaries differ there and nowhere else (the gate P1 replaces one name by the other).
 * Threads: prediction is single-threaded. **[read]** `wireio.predict` and the predictors it calls declare no `conc` (their signatures end `[heap, args, fs_read(""), dir_read, file_read]`); the threads of `ml` are
   `fit --threads` and `eval --threads`. So the row of `ml-predict` has no `conc`, and `--threads` is not one of its flags.
 
@@ -126,10 +127,10 @@ One JSON object in `data` of the envelope `ml.v1`. A field is always present; a 
 |---|---|---|
 | `model` | `constant`, `linear`, `logistic`, `tree`, `forest` | the estimator the plan names |
 | `task` | `regression`, `classification` | |
-| `kind` | integer 1 to 7 | the registry number of the file's model section (`lib/core/kinds.cho`) |
+| `kind` | integer 1 to 7 | the registry number of the file's model section (`lib/core/kinds.cho`): 1 and 3 constant regression, 2 constant classification, 4 linear, 5 logistic, 7 tree and forest |
 | `plan` | string | the canonical plan text, section 1 of the file |
 | `rows` | integer | training rows |
-| `file` | object | `bytes` (integer), `sha256` (hex of the file's bytes, the digest of the whole file), `format` (`"CML1"`), `version` (1), `sections` (5, or 6 with a string table), `compiler` (the pin the file records, TB), `sum_order` (2 for the kinds that record one, else `null`) |
+| `file` | object | `bytes` (integer), `sha256` (hex of the file's bytes, the digest of the whole file), `format` (`"CML1"`), `version` (1), `sections` (5, or 6 with a string table), `compiler` (the pin the file records, TB), `sum_order` (the summation order the file records for a model of kind 4 or above, 2 or 3; `null` for the constant kinds) |
 | `target` | object | `name` (TB), `type` (`int`, `dec`, `float`), `scale` (integer for `dec`, else `null`) |
 | `columns` | array | one object per column of the schema, in the file's order: `name` (TB), `type` (`int`, `dec`, `float`, `categorical`), `scale` (integer for `dec`, else `null`), `role` (`feature` or `target`), `required` (a feature: true; the target: false) |
 | `request` | object | `header` (array of TB: the columns a prediction input holds, the schema's columns without the target, in the file's order), `optional` (array of TB: the target, which an input may hold or omit, content ignored), `extra_columns` (`"refused"`: a column that is not the model's is `ml.schema.mismatch`, unless `--drop` ignores it), `missing_cells` (`"refused"` for constant, `"needs_impute"` for linear and logistic: a missing cell of a column no step imputes is refused, `"handled"` for tree and forest) |
@@ -137,9 +138,9 @@ One JSON object in `data` of the envelope `ml.v1`. A field is always present; a 
 | `na_values` | array of TB | the missing-value markers the file records (`--na-values` at fit), in the order given; `[]` for a model without a string table |
 | `reader` | object or `null` | the reader limits recorded with the vocabulary: `max_categories`, `max_string_bytes`, `max_pool_bytes`, `max_cat_columns`; `null` without a string table |
 | `classes` | array or `null` | classification: the two labels, ascending |
-| `positive` | integer or `null` | classification: the label whose probability `--proba` prints (the larger of the two for a model fitted without `--positive`; the file stores it) |
-| `output` | object | `columns` (the names of the columns of a prediction row: `["prediction"]` for a regression, `["label"]` for a classification), `with_proba` (for a classification, `["label", "probability"]`, else `null`), `label_threshold` (`"0.5"` for a classification, else `null`: the label is `classes[1]` when the probability is above it) |
-| `limits` | object | `max_columns` (the number of columns the file has), `limit` (the `--limit` in force), `max_bytes` (the `--max-bytes` in force) |
+| `positive` | integer or `null` | a classification other than constant: the label whose probability `--proba` prints (the larger of the two for a model fitted without `--positive`; the file stores it). `null` for a constant model, which has no positive label |
+| `output` | object | `columns` (the names of the columns of a prediction row: `["prediction"]` for a regression, `["label"]` for a classification, `["label", "probability"]` for a constant classification, which always prints its probability), `with_proba` (the columns with `--proba`: `["label", "probability"]` for a classification other than constant, else `null`, because a regression and a constant model refuse `--proba`), `label_threshold` (`"0.5"` for a classification other than constant, else `null`: the label is `classes[1]` when the probability is above it) |
+| `limits` | object | `values_per_column` (the `--limit` in force) and `max_bytes` (the `--max-bytes` in force) |
 
 The JSON Schema of the answer (`schemas/ml.v1.json`, the `describe` member of `data`) is generated from this table by `scripts/schemas.py`; D4 compares the schema, the table and the answers.
 
