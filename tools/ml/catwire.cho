@@ -24,6 +24,7 @@ import pipeline.names;
 import pipeline.plan;
 import pipeline.schema;
 import transforms.catenc;
+import transforms.strtab;
 import transforms.codes;
 import toolbox.fail;
 import toolbox.text;
@@ -188,25 +189,6 @@ pub fn not_encoded[&h, &v, &n](heap: &!h Heap, errs: fail.Errors, voc: &v dict.V
     return fail.add(heap, errs, q);
 }
 
-// ml.model.vocabulary-not-stored: a fit with categorical steps that would write a model file
-pub fn not_stored[&h, &v](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab) -> [heap] fail.Errors {
-    var nm = vocab_names(heap, voc);
-    var list = buffer.empty(heap, 1);
-    borrow nm as &nr in {
-        buffer.drop(heap, list);
-        list = comma_list(heap, nr);
-    }
-    names.drop(heap, nm);
-    var q = wiredata.open_tag(heap, "ml.model.vocabulary-not-stored");
-    q = fail.no_repair(heap, q);
-    q = fail.detail_open(heap, q);
-    borrow list as &lr in {
-        q = fail.detail_text(heap, q, "columns", buffer.bytes(lr));
-    }
-    buffer.drop(heap, list);
-    return fail.add(heap, errs, q);
-}
-
 fn plain_name[&n](nm: &n [byte]) -> [] bool {
     return len(nm) > 0 && bytes.count_byte(nm, ' ') == 0 && bytes.count_byte(nm, ',') == 0 && bytes.count_byte(nm, '=') == 0 && bytes.count_byte(nm, '#') == 0 && bytes.count_byte(nm, ';') == 0 && text.is_utf8(nm);
 }
@@ -361,40 +343,95 @@ pub fn put_categorical[&h, &s](heap: &!h Heap, w0: json.Writer, payload: &s [byt
     return w;
 }
 
-// The answer of a fit that wrote nothing: the data object, the text line and, for a dry run, the keys of one. `summary` is consumed.
-pub fn answer[&h, &n](heap: &!h Heap, o: verbs.Opts, name: &static [byte], task: &static [byte], rows: int, cols: int, tname: &n [byte], summary: buffer.Buffer, errs: fail.Errors, log: buffer.Buffer) -> [heap] verbs.Out {
-    var w = json.writer(heap, 512);
+// the schema of every kept column of a shape, in file order, the target marked: a numeric column has the type wiredata.schema_of_shape gives it, a categorical one the
+// type 3 (kinds.schema_type_categorical) with no scale (docs/stringtable.md section 3)
+pub fn full_schema[&h, &s, &t](heap: &!h Heap, sh: &s csv.Shape, tname: &t [byte]) -> [heap] schema.Schema {
+    var nm = names.empty(heap);
+    var kept = 0;
+    var i = 0;
+    while i < csv.cols(sh) {
+        if !csv.dropped(sh, i) {
+            kept = kept + 1;
+        }
+        i = i + 1;
+    }
+    var types = box_slice(heap, 2 * kept + 2, 0);
+    var target = 0;
+    borrow mut types as &!tw in {
+        var at = 0;
+        i = 0;
+        while i < csv.cols(sh) {
+            if !csv.dropped(sh, i) {
+                nm = names.add(heap, nm, csv.name(sh, i));
+                let k = csv.kind(sh, i);
+                if csv.catplace(sh, i) > 0 {
+                    contents(tw)[2 * at] = kinds.schema_type_categorical();
+                } else if k == 1 {
+                    contents(tw)[2 * at] = 0;
+                } else if k == 2 {
+                    contents(tw)[2 * at] = 1;
+                    contents(tw)[2 * at + 1] = csv.scale(sh, i);
+                } else {
+                    contents(tw)[2 * at] = 2;
+                }
+                if bytes.equal(csv.name(sh, i), tname) {
+                    target = at;
+                }
+                at = at + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return schema.make(nm, types, target);
+}
+
+// "string_table" of the summary of a fit: the sections' entries, strings, string bytes, size and digest
+pub fn put_table[&h, &t](heap: &!h Heap, w0: json.Writer, table: &t [byte]) -> [heap] json.Writer {
+    var w = w0;
+    w = json.put_key(heap, w, "string_table");
+    if len(table) == 0 {
+        return json.put_null(heap, w);
+    }
     w = json.begin_object(heap, w);
-    w = json.put_key(heap, w, "model");
-    w = json.put_string(heap, w, name);
-    w = json.put_key(heap, w, "task");
-    w = json.put_string(heap, w, task);
-    w = json.put_key(heap, w, "rows");
-    w = json.put_int(heap, w, rows);
-    w = json.put_key(heap, w, "columns");
-    w = json.put_int(heap, w, cols);
-    w = verbs.put_name(heap, w, "target", tname);
-    w = json.put_key(heap, w, "written");
-    w = json.put_bool(heap, w, false);
-    w = json.put_key(heap, w, "summary");
-    borrow summary as &sr in {
-        w = json.put_fragment(heap, w, buffer.bytes(sr));
+    w = json.put_key(heap, w, "entries");
+    w = json.put_int(heap, w, strtab.entries(table));
+    w = json.put_key(heap, w, "strings");
+    w = json.put_int(heap, w, strtab.strings(table));
+    w = json.put_key(heap, w, "pool_bytes");
+    w = json.put_int(heap, w, strtab.pool_bytes(table));
+    w = json.put_key(heap, w, "bytes");
+    w = json.put_int(heap, w, len(table));
+    w = json.put_key(heap, w, "sha256");
+    let hex = mfile.sha256_hex(heap, table);
+    borrow hex as &hr in {
+        w = json.put_string(heap, w, buffer.bytes(hr));
     }
-    w = json.end_object(heap, w);
-    let payload = json.finish(w);
-    buffer.drop(heap, summary);
-    var plain = buffer.empty(heap, 64);
-    plain = buffer.append(heap, plain, "fit: ");
-    plain = buffer.append(heap, plain, name);
-    plain = buffer.push(heap, plain, byte_of(' '));
-    plain = buffer.append(heap, plain, task);
-    plain = buffer.append(heap, plain, ", ");
-    plain = buffer.push_nat(heap, plain, rows);
-    plain = buffer.append(heap, plain, " rows, fitted with categorical columns and written to no file (the model file has no string table for the vocabulary)\n");
-    var extra = buffer.empty(heap, 1);
-    if o.dry {
-        buffer.drop(heap, extra);
-        extra = buffer.append(heap, buffer.empty(heap, 64), ",\"dry_run\":true,\"planned_actions\":[]");
+    buffer.drop(heap, hex);
+    return json.end_object(heap, w);
+}
+
+// ml.schema.mismatch for categorical columns of a stored model that the file lacks (or drops): the names of the vocabulary that the shape does not keep, in detail
+pub fn missing_columns_error[&h, &v, &s](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab, sh: &s csv.Shape) -> [heap] fail.Errors {
+    var list = buffer.empty(heap, 32);
+    var first = true;
+    var c = 0;
+    while c < dict.ncols(voc) {
+        let at = csv.find(sh, dict.name(voc, c));
+        if at < 0 || csv.dropped(sh, at) {
+            if !first {
+                list = buffer.append(heap, list, ", ");
+            }
+            list = buffer.append(heap, list, dict.name(voc, c));
+            first = false;
+        }
+        c = c + 1;
     }
-    return wiredata.out_of(payload, plain, extra, errs, log, o.dry);
+    var w = fail.open_in(heap, spec.extra(), "ml.schema.mismatch", "the input columns differ from the columns the model was fitted on", "add the missing columns, retype the mistyped ones, and ignore the extra ones with --drop");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    borrow list as &lr in {
+        w = fail.detail_text(heap, w, "missing", buffer.bytes(lr));
+    }
+    buffer.drop(heap, list);
+    return fail.add(heap, errs, w);
 }

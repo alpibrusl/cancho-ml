@@ -114,8 +114,27 @@ pub fn section_meta() -> [] int {
     return 5;
 }
 
-pub fn section_count() -> [] int {
+// the string table, present only when a step of kind 7 to 10 needs it (docs/stringtable.md); a file has `core_sections()` sections, or one more with the table
+pub fn section_strings() -> [] int {
+    return 6;
+}
+
+pub fn core_sections() -> [] int {
     return 5;
+}
+
+pub fn section_count() -> [] int {
+    return 6;
+}
+
+// the layout number of the string table, and the layout number that marks the 8-byte stub of a categorical step in the `steps` section (layout 1 is the full
+// payload of docs/categorical-encoders.md section 5.2, which a file never holds)
+pub fn table_layout() -> [] int {
+    return 1;
+}
+
+pub fn stub_layout() -> [] int {
+    return 2;
 }
 
 // ---- step kinds: the `u32 kind` that opens one step of the `steps` section (docs/transforms.md section 4)
@@ -262,6 +281,9 @@ pub fn section_at(i: int) -> [] int {
     }
     if i == 5 {
         return section_meta();
+    }
+    if i == 6 {
+        return section_strings();
     }
     return 0;
 }

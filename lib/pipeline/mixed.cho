@@ -564,3 +564,446 @@ pub fn apply_steps[&h, &s, &m, &i, &v](heap: &!h Heap, payload: &s [byte], x: &m
     }
     return (cur, unknown, codes.none());
 }
+
+// ---------------------------------------------------------------- the payload of a stored model (docs/stringtable.md)
+
+// The steps payload (numeric and categorical steps, as `fit` makes it) against `cols_in` numeric columns: (the number of steps, the width the last one leaves,
+// Fault). A categorical step appends the columns it writes. Nothing is applied. A step that does not decode is ml.model.malformed (section 3, the step).
+pub fn check_steps[&h, &s](heap: &!h Heap, payload: &s [byte], cols_in: int) -> [heap] (int, int, codes.Fault) {
+    let bad = codes.fault(codes.malformed(), 3, 0, 0);
+    if len(payload) < 4 {
+        return (0, 0, bad);
+    }
+    let n = get32(payload, 0);
+    if n < 0 || n > max_steps() {
+        return (0, 0, bad);
+    }
+    var pos = 4;
+    var width = cols_in;
+    var i = 0;
+    while i < n {
+        if len(payload) - pos < 8 {
+            return (0, 0, codes.fault(codes.malformed(), 3, i + 1, 0));
+        }
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        if l < 4 || l > len(payload) - pos {
+            return (0, 0, codes.fault(codes.malformed(), 3, i + 1, 0));
+        }
+        if get32(payload, pos) >= kinds.step_cat_onehot() {
+            let (cs, code) = catenc.decode(heap, payload[pos..pos + l]);
+            if code != 0 {
+                catenc.drop(heap, cs);
+                return (0, 0, codes.fault(codes.malformed(), 3, i + 1, 0));
+            }
+            borrow cs as &cr in {
+                var c = 0;
+                while c < catenc.ncols(cr) {
+                    width = width + catenc.out_width(heap, cr, c);
+                    c = c + 1;
+                }
+            }
+            catenc.drop(heap, cs);
+        } else {
+            let (st, code, w) = steps.decode(heap, payload[pos..pos + l], width);
+            steps.drop(heap, st);
+            if code != 0 {
+                return (0, 0, codes.fault(codes.malformed(), 3, i + 1, 0));
+            }
+            width = w;
+        }
+        pos = pos + l;
+        i = i + 1;
+    }
+    if pos != len(payload) {
+        return (0, 0, bad);
+    }
+    return (n, width, codes.none());
+}
+
+// Does the plan describe the stored steps of a model with categorical columns? `nm` are the names of the NUMERIC feature columns, `cats` those of the
+// categorical ones, both in the order of the schema. For a numeric step: pipeline.run.agrees_step. For a categorical step: the kind the line asks for (encode
+// onehot or label read a categorical column as kind 7 or 8; freq 9, hash 10), unknown, missing, min-count or buckets as the line states them, no more effective
+// categories than max-categories, and the columns stored are the columns the line names (all the ones not read yet for `*`), in the order of the schema.
+// (agree, the first step (1-based) that does not).
+pub fn agrees[&h, &p, &n, &c, &s](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Names, cats: &c names.Names, payload: &s [byte]) -> [heap] (bool, int) {
+    let ns = plan.steps(pl);
+    if len(payload) < 4 || get32(payload, 0) != ns {
+        return (false, 0);
+    }
+    var cur = names.empty(heap);
+    var q = 0;
+    while q < names.count(nm) {
+        cur = names.add(heap, cur, names.name(nm, q));
+        q = q + 1;
+    }
+    var alive = box_slice(heap, names.count(cats) + 1, 1);
+    var pos = 4;
+    var i = 0;
+    var ok = true;
+    while i < ns && ok {
+        var width = 0;
+        borrow cur as &cr in {
+            width = names.count(cr);
+        }
+        if len(payload) - pos < 8 {
+            ok = false;
+        } else {
+            let l = fbits.get64(payload, pos);
+            pos = pos + 8;
+            if l < 4 || l > len(payload) - pos {
+                ok = false;
+            } else if get32(payload, pos) >= kinds.step_cat_onehot() {
+                let (cs, code) = catenc.decode(heap, payload[pos..pos + l]);
+                if code != 0 {
+                    ok = false;
+                } else {
+                    borrow cs as &sr in {
+                        borrow mut alive as &!aw in {
+                            ok = cat_step_agrees(heap, pl, i, sr, cats, contents(aw));
+                        }
+                        if ok {
+                            cur = add_names(heap, cur, sr);
+                        }
+                    }
+                }
+                catenc.drop(heap, cs);
+                pos = pos + l;
+            } else {
+                let (st, code, w) = steps.decode(heap, payload[pos..pos + l], width);
+                pos = pos + l;
+                if code != 0 {
+                    ok = false;
+                } else {
+                    borrow st as &sr in {
+                        let (ok2, cur2) = run.agrees_step(heap, pl, i, cur, sr);
+                        ok = ok2;
+                        cur = cur2;
+                    }
+                }
+                steps.drop(heap, st);
+            }
+        }
+        if ok {
+            i = i + 1;
+        }
+    }
+    names.drop(heap, cur);
+    unbox_slice(heap, alive);
+    return (ok, i + 1);
+}
+
+// whether name `nm` is one of the comma separated names of `list`
+fn listed_in[&a, &b](list: &a [byte], nm: &b [byte]) -> [] bool {
+    let count = bytes.count_byte(list, ',') + 1;
+    var k = 1;
+    while k <= count {
+        if bytes.equal(bytes.field(list, ',', k), nm) {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+fn cat_step_agrees[&h, &p, &f, &c, &a](heap: &!h Heap, pl: &p plan.Plan, i: int, st: &f catenc.Fit, cats: &c names.Names, alive: &!a [int]) -> [heap] bool {
+    let sp = plan.spec_of(pl, i);
+    let kd = catenc.kind(st);
+    var want = sp.kind;
+    if want == 4 || want == 5 {
+        want = want + 3;
+    }
+    if kd != want {
+        return false;
+    }
+    var missing = 0;
+    if plan.missing_zero(pl, i) {
+        missing = 1;
+    }
+    if catenc.missing_mode(st) != missing {
+        return false;
+    }
+    if kd == kinds.step_hash() {
+        if catenc.param(st) != sp.b || catenc.unknown_mode(st) != 0 {
+            return false;
+        }
+    } else if catenc.param(st) != plan.min_count_of(pl, i) || catenc.unknown_mode(st) != sp.a {
+        return false;
+    }
+    // the columns: those the line names (all the unread ones for `*`), in the order of the schema
+    var k = 0;
+    var c = 0;
+    while c < names.count(cats) {
+        let here = alive[c] == 1 && (plan.all_columns(pl, i) || listed_in(plan.columns(pl, i), names.name(cats, c)));
+        if here {
+            if k >= catenc.ncols(st) || !bytes.equal(catenc.name(st, k), names.name(cats, c)) {
+                return false;
+            }
+            if kd != kinds.step_hash() && catenc.effective_count(heap, st, k) > sp.b {
+                return false;
+            }
+            alive[c] = 0;
+            k = k + 1;
+        }
+        c = c + 1;
+    }
+    if k != catenc.ncols(st) {
+        return false;
+    }
+    // a name the line lists that is not an unread categorical column of the schema is a column the step could not have read
+    if !plan.all_columns(pl, i) && k != plan.listed(pl, i) {
+        return false;
+    }
+    return true;
+}
+
+// The vocabulary the reader of a stored model uses: the columns of every categorical step, in the order of the steps and, inside a step, of its column list,
+// with the strings of the fitted vocabulary (ascending, so `dict.valid` holds) and, for a hash step, no string and the number of buckets as the hash mode of
+// the column (ml.dict.hash_buckets). (the vocabulary, a code: 0 or ml.model.malformed). The payload has been checked: it is not trusted for the sizes.
+pub fn vocab_of[&h, &s](heap: &!h Heap, payload: &s [byte]) -> [heap] (dict.Vocab, int) {
+    if len(payload) < 4 {
+        return (dict.empty_vocab(heap), codes.malformed());
+    }
+    let n = get32(payload, 0);
+    if n < 0 || n > max_steps() {
+        return (dict.empty_vocab(heap), codes.malformed());
+    }
+    // first pass: the sizes
+    var ncols = 0;
+    var nbytes = 0;
+    var maxc = 1;
+    var pos = 4;
+    var k = 0;
+    while k < n {
+        if len(payload) - pos < 8 {
+            return (dict.empty_vocab(heap), codes.malformed());
+        }
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        if l < 4 || l > len(payload) - pos {
+            return (dict.empty_vocab(heap), codes.malformed());
+        }
+        if get32(payload, pos) >= kinds.step_cat_onehot() {
+            let (st, code) = catenc.decode(heap, payload[pos..pos + l]);
+            if code != 0 {
+                catenc.drop(heap, st);
+                return (dict.empty_vocab(heap), codes.malformed());
+            }
+            borrow st as &sr in {
+                var c = 0;
+                while c < catenc.ncols(sr) {
+                    ncols = ncols + 1;
+                    nbytes = nbytes + len(catenc.name(sr, c));
+                    if catenc.ncat(sr, c) > maxc {
+                        maxc = catenc.ncat(sr, c);
+                    }
+                    c = c + 1;
+                }
+            }
+            catenc.drop(heap, st);
+        }
+        pos = pos + l;
+        k = k + 1;
+    }
+    // the names, then the dictionary and its strings
+    var nm = buffer.empty(heap, nbytes + 1);
+    var ends = box_slice(heap, ncols + 1, 0);
+    var hb = box_slice(heap, ncols + 1, 0);
+    pos = 4;
+    k = 0;
+    var at = 0;
+    borrow mut ends as &!ew in {
+        borrow mut hb as &!hw in {
+            while k < n {
+                let l = fbits.get64(payload, pos);
+                pos = pos + 8;
+                if get32(payload, pos) >= kinds.step_cat_onehot() {
+                    let (st, code) = catenc.decode(heap, payload[pos..pos + l]);
+                    borrow st as &sr in {
+                        var c = 0;
+                        while c < catenc.ncols(sr) {
+                            nm = buffer.append(heap, nm, catenc.name(sr, c));
+                            var sz = 0;
+                            borrow nm as &nb in {
+                                sz = buffer.size(nb);
+                            }
+                            contents(ew)[at] = sz;
+                            if catenc.kind(sr) == kinds.step_hash() {
+                                contents(hw)[at] = catenc.param(sr);
+                            }
+                            at = at + 1;
+                            c = c + 1;
+                        }
+                    }
+                    catenc.drop(heap, st);
+                }
+                pos = pos + l;
+                k = k + 1;
+            }
+        }
+    }
+    var made = dict.empty_dict(heap);
+    var code = 0;
+    borrow nm as &nr in {
+        borrow ends as &er in {
+            let (d, c) = dict.make(heap, ncols, dict.ceiling_columns(), maxc, dict.ceiling_string_bytes(), dict.ceiling_pool_bytes(), buffer.bytes(nr), contents(er));
+            dict.drop(heap, made);
+            made = d;
+            code = c;
+        }
+    }
+    buffer.drop(heap, nm);
+    unbox_slice(heap, ends);
+    if code != 0 {
+        dict.drop(heap, made);
+        unbox_slice(heap, hb);
+        return (dict.empty_vocab(heap), codes.malformed());
+    }
+    pos = 4;
+    k = 0;
+    at = 0;
+    while k < n && code == 0 {
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        if get32(payload, pos) >= kinds.step_cat_onehot() {
+            let (st, dcode) = catenc.decode(heap, payload[pos..pos + l]);
+            borrow st as &sr in {
+                var c = 0;
+                while c < catenc.ncols(sr) && code == 0 {
+                    var i = 0;
+                    while i < catenc.ncat(sr, c) && code == 0 {
+                        borrow mut made as &!mw in {
+                            code = dict.intern(mw, at, catenc.string(sr, c, i));
+                        }
+                        i = i + 1;
+                    }
+                    at = at + 1;
+                    c = c + 1;
+                }
+            }
+            catenc.drop(heap, st);
+        }
+        pos = pos + l;
+        k = k + 1;
+    }
+    if code != 0 {
+        dict.drop(heap, made);
+        unbox_slice(heap, hb);
+        return (dict.empty_vocab(heap), codes.malformed());
+    }
+    var voc = dict.freeze(heap, made);
+    borrow hb as &hr in {
+        var c = 0;
+        while c < ncols {
+            if contents(hr)[c] > 0 {
+                borrow mut voc as &!vw in {
+                    let set = dict.set_hash(vw, c, contents(hr)[c]);
+                }
+            }
+            c = c + 1;
+        }
+    }
+    unbox_slice(heap, hb);
+    return (voc, 0);
+}
+
+// The names of the columns the steps leave, from the names of the numeric features: a numeric step as pipeline.run.next_names, a categorical one as `fit` names its
+// columns. The payload has been checked.
+pub fn output_names[&h, &n, &s](heap: &!h Heap, nm: &n names.Names, payload: &s [byte]) -> [heap] names.Names {
+    var cur = names.empty(heap);
+    var q = 0;
+    while q < names.count(nm) {
+        cur = names.add(heap, cur, names.name(nm, q));
+        q = q + 1;
+    }
+    if len(payload) < 4 {
+        return cur;
+    }
+    let n = get32(payload, 0);
+    var pos = 4;
+    var i = 0;
+    while i < n && pos + 8 <= len(payload) {
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        if l < 4 || l > len(payload) - pos {
+            return cur;
+        }
+        if get32(payload, pos) >= kinds.step_cat_onehot() {
+            let (st, code) = catenc.decode(heap, payload[pos..pos + l]);
+            if code == 0 {
+                borrow st as &sr in {
+                    cur = add_names(heap, cur, sr);
+                }
+            }
+            catenc.drop(heap, st);
+        } else {
+            var width = 0;
+            borrow cur as &wcr in {
+                width = names.count(wcr);
+            }
+            let (st, code, w) = steps.decode(heap, payload[pos..pos + l], width);
+            if code == 0 {
+                borrow st as &sr in {
+                    var nn = names.empty(heap);
+                    borrow cur as &cr in {
+                        names.drop(heap, nn);
+                        nn = run.next_names(heap, cr, sr);
+                    }
+                    names.drop(heap, cur);
+                    cur = nn;
+                }
+            }
+            steps.drop(heap, st);
+        }
+        pos = pos + l;
+        i = i + 1;
+    }
+    return cur;
+}
+
+// Are the columns of the categorical steps of the payload exactly the names in `cats` (the type 3 columns of the schema)? Each column of a stored model is read
+// by one step (the table checks that), so the count and the membership are the equality of the two sets.
+pub fn columns_agree[&h, &s, &c](heap: &!h Heap, payload: &s [byte], cats: &c names.Names) -> [heap] bool {
+    if len(payload) < 4 {
+        return false;
+    }
+    let n = get32(payload, 0);
+    if n < 0 || n > max_steps() {
+        return false;
+    }
+    var pos = 4;
+    var total = 0;
+    var ok = true;
+    var k = 0;
+    while k < n && ok {
+        if len(payload) - pos < 8 {
+            return false;
+        }
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        if l < 4 || l > len(payload) - pos {
+            return false;
+        }
+        if get32(payload, pos) >= kinds.step_cat_onehot() {
+            let (st, code) = catenc.decode(heap, payload[pos..pos + l]);
+            if code != 0 {
+                ok = false;
+            } else {
+                borrow st as &sr in {
+                    var c = 0;
+                    while c < catenc.ncols(sr) {
+                        if names.find(cats, catenc.name(sr, c)) < 0 {
+                            ok = false;
+                        }
+                        total = total + 1;
+                        c = c + 1;
+                    }
+                }
+            }
+            catenc.drop(heap, st);
+        }
+        pos = pos + l;
+        k = k + 1;
+    }
+    return ok && total == names.count(cats);
+}

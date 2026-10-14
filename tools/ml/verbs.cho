@@ -902,6 +902,9 @@ fn put_type[&h](heap: &!h Heap, b: buffer.Buffer, ty: int, scale: int) -> [heap]
     if ty == 2 {
         return buffer.append(heap, o, "float");
     }
+    if ty == 3 {
+        return buffer.append(heap, o, "categorical");
+    }
     o = buffer.append(heap, o, "dec(");
     o = buffer.push_nat(heap, o, scale);
     return buffer.push(heap, o, byte_of(')'));
@@ -912,6 +915,10 @@ fn compatible[&m, &s](mo: &m mfile.Model, i: int, sh: &s csv.Shape, j: int) -> [
     let k = csv.kind(sh, j);
     if k == 0 {
         return true;
+    }
+    if mfile.type_of(mo, i) == 3 {
+        // a categorical column is read as one when the model's vocabulary names it (docs/stringtable.md section 5)
+        return k == 4;
     }
     if mfile.type_of(mo, i) == 2 {
         // a float column takes any number

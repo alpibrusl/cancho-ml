@@ -1,0 +1,645 @@
+module transforms.strtab;
+
+import std.buffer;
+import std.bytes;
+import std.crypto;
+import ml.dict;
+import ml.fbits;
+import ml.kinds;
+import transforms.catenc;
+import transforms.codes;
+
+// The string table of the model file (docs/stringtable.md): section tag 6, present only when a step of kind 7 to 10 needs it. It holds, for every categorical
+// step, the payload of docs/categorical-encoders.md section 5.2 (the fitted vocabulary: parameters, column names, sorted strings, counts), behind a header that
+// gives the totals, the missing-value markers and the reader limits of the fit, and in front of a SHA-256 of the table. In the `steps` section a categorical step
+// is an 8-byte stub (kind, layout 2); `pack` makes the two from the payload of a fit, `join` makes the payload again.
+//
+//     u32 layout 1 | u32 entries | u64 pool_bytes | u64 strings | u32 na_len | na | u32 max_categories | u32 max_string_bytes | u32 max_pool_bytes |
+//     u32 max_cat_columns | entries x (u32 step | u64 length | payload) | SHA-256 of every byte before it
+//
+// Faults: ml.model.string-table (a = the reason below, b = the step when one) and ml.limit.string-table (a = 1 strings, 2 pool bytes, 3 table bytes; b = the size,
+// c = the maximum). Every length and count is compared with the bytes that exist, and with its bound, before anything sized by it is allocated or added to a sum.
+
+pub fn max_bytes() -> [] int {
+    return 12582912;
+}
+
+pub fn max_strings() -> [] int {
+    return 131072;
+}
+
+pub fn max_pool() -> [] int {
+    return 8388608;
+}
+
+pub fn max_entries() -> [] int {
+    return 64;
+}
+
+pub fn max_na() -> [] int {
+    return 16383;
+}
+
+pub fn max_markers() -> [] int {
+    return 64;
+}
+
+pub fn max_marker() -> [] int {
+    return 255;
+}
+
+// the reasons of ml.model.string-table
+pub fn r_digest() -> [] int {
+    return 1;
+}
+
+pub fn r_layout() -> [] int {
+    return 2;
+}
+
+pub fn r_entries() -> [] int {
+    return 3;
+}
+
+pub fn r_header() -> [] int {
+    return 4;
+}
+
+pub fn r_step() -> [] int {
+    return 5;
+}
+
+pub fn r_length() -> [] int {
+    return 6;
+}
+
+pub fn r_payload() -> [] int {
+    return 7;
+}
+
+pub fn r_utf8() -> [] int {
+    return 8;
+}
+
+pub fn r_totals() -> [] int {
+    return 9;
+}
+
+pub fn r_limits() -> [] int {
+    return 10;
+}
+
+pub fn r_stub() -> [] int {
+    return 11;
+}
+
+pub fn r_schema() -> [] int {
+    return 12;
+}
+
+pub fn r_plan() -> [] int {
+    return 13;
+}
+
+pub fn r_trailing() -> [] int {
+    return 14;
+}
+
+pub fn reason_word(r: int) -> [] &static [byte] {
+    if r == 1 {
+        return "digest";
+    }
+    if r == 2 {
+        return "layout";
+    }
+    if r == 3 {
+        return "entries";
+    }
+    if r == 4 {
+        return "header";
+    }
+    if r == 5 {
+        return "step";
+    }
+    if r == 6 {
+        return "length";
+    }
+    if r == 7 {
+        return "payload";
+    }
+    if r == 8 {
+        return "utf8";
+    }
+    if r == 9 {
+        return "totals";
+    }
+    if r == 10 {
+        return "limits";
+    }
+    if r == 11 {
+        return "stub";
+    }
+    if r == 12 {
+        return "schema";
+    }
+    if r == 13 {
+        return "plan";
+    }
+    return "trailing";
+}
+
+fn bad(reason: int, step: int) -> [] codes.Fault {
+    return codes.fault(codes.string_table(), reason, step, 0);
+}
+
+fn too_big(what: int, size: int, max: int) -> [] codes.Fault {
+    return codes.fault(codes.limit_string_table(), what, size, max);
+}
+
+fn put32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+fn put64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < 8 {
+        o = buffer.push(heap, o, byte_of(v >> 8 * k & 255));
+        k = k + 1;
+    }
+    return o;
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+// the SHA-256 of data appended to out as 32 bytes
+fn digest_into[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [heap] buffer.Buffer {
+    let state = box_slice(heap, crypto.sha256_state_len(), 0);
+    let dg = box_slice(heap, 32, byte_of(0));
+    var sw = state;
+    var dw = dg;
+    var o = out;
+    borrow mut sw as &!s in {
+        crypto.sha256_init(contents(s));
+        crypto.sha256_update(contents(s), data);
+        borrow mut dw as &!x in {
+            crypto.sha256_final(contents(s), contents(x));
+        }
+    }
+    borrow dw as &r in {
+        o = buffer.append(heap, o, contents(r));
+    }
+    unbox_slice(heap, sw);
+    unbox_slice(heap, dw);
+    return o;
+}
+
+fn digest_ok[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] bool {
+    let n = len(data);
+    var sum = digest_into(heap, buffer.empty(heap, 40), data[0..n - 32]);
+    var same = false;
+    borrow sum as &r in {
+        same = bytes.equal(buffer.bytes(r), data[n - 32..n]);
+    }
+    buffer.drop(heap, sum);
+    return same;
+}
+
+// the markers of a --na-values list: 1 to 64, each 1 to 255 bytes, none empty; the empty list has none
+fn markers_ok[&n](na: &n [byte]) -> [] bool {
+    if len(na) == 0 {
+        return true;
+    }
+    if len(na) > max_na() {
+        return false;
+    }
+    let count = bytes.count_byte(na, ',') + 1;
+    if count > max_markers() {
+        return false;
+    }
+    var k = 1;
+    while k <= count {
+        let m = bytes.field(na, ',', k);
+        if len(m) < 1 || len(m) > max_marker() {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------- making the table
+
+// The steps payload of a fit (`u32 n`, n times `u64 length | step`, as pipeline.run and pipeline.mixed make it) split into the `steps` section of a file and the
+// string table: (the section, the table, Fault). With no categorical step the section is the payload and the table is empty (a file with no table). `na` is the
+// --na-values list as given and the four limits are those the vocabulary was built with. A table over a bound is ml.limit.string-table.
+pub fn pack[&h, &p, &n](heap: &!h Heap, payload: &p [byte], na: &n [byte], max_cats: int, max_str: int, max_pool_bytes: int, max_cat_cols: int) -> [heap] (buffer.Buffer, buffer.Buffer, codes.Fault) {
+    let none = codes.none();
+    if len(payload) < 4 {
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), bad(r_payload(), 0));
+    }
+    let count = get32(payload, 0);
+    // first pass: the categorical steps and the sums of the table (nothing is built)
+    var pos = 4;
+    var i = 0;
+    var cats = 0;
+    var strings = 0;
+    var pool = 0;
+    var body = 0;
+    var cols = 0;
+    while i < count {
+        if len(payload) - pos < 8 {
+            return (buffer.empty(heap, 1), buffer.empty(heap, 1), bad(r_payload(), i + 1));
+        }
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        if l < 4 || l > len(payload) - pos {
+            return (buffer.empty(heap, 1), buffer.empty(heap, 1), bad(r_payload(), i + 1));
+        }
+        if get32(payload, pos) >= kinds.step_cat_onehot() {
+            let (st, code) = catenc.decode(heap, payload[pos..pos + l]);
+            if code != 0 {
+                catenc.drop(heap, st);
+                return (buffer.empty(heap, 1), buffer.empty(heap, 1), bad(r_payload(), i + 1));
+            }
+            borrow st as &sr in {
+                var c = 0;
+                while c < catenc.ncols(sr) {
+                    strings = strings + catenc.ncat(sr, c);
+                    c = c + 1;
+                }
+                cols = cols + catenc.ncols(sr);
+                pool = pool + string_bytes(sr);
+            }
+            catenc.drop(heap, st);
+            cats = cats + 1;
+            body = body + 12 + l;
+        }
+        pos = pos + l;
+        i = i + 1;
+    }
+    if pos != len(payload) {
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), bad(r_payload(), 0));
+    }
+    if cats == 0 {
+        return (buffer.append(heap, buffer.empty(heap, len(payload)), payload), buffer.empty(heap, 1), none);
+    }
+    if strings > max_strings() {
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), too_big(1, strings, max_strings()));
+    }
+    if pool > max_pool() {
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), too_big(2, pool, max_pool()));
+    }
+    let size = 28 + len(na) + 16 + body + 32;
+    if len(na) > max_na() || size > max_bytes() || cats > max_entries() {
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), too_big(3, size, max_bytes()));
+    }
+    // second pass: the section and the table
+    var section = put32(heap, buffer.empty(heap, len(payload)), count);
+    var table = put32(heap, buffer.empty(heap, size), kinds.table_layout());
+    table = put32(heap, table, cats);
+    table = put64(heap, table, pool);
+    table = put64(heap, table, strings);
+    table = put32(heap, table, len(na));
+    table = buffer.append(heap, table, na);
+    table = put32(heap, table, max_cats);
+    table = put32(heap, table, max_str);
+    table = put32(heap, table, max_pool_bytes);
+    table = put32(heap, table, max_cat_cols);
+    pos = 4;
+    i = 0;
+    while i < count {
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        let kd = get32(payload, pos);
+        if kd >= kinds.step_cat_onehot() {
+            section = put64(heap, section, 8);
+            section = put32(heap, section, kd);
+            section = put32(heap, section, kinds.stub_layout());
+            table = put32(heap, table, i + 1);
+            table = put64(heap, table, l);
+            table = buffer.append(heap, table, payload[pos..pos + l]);
+        } else {
+            section = put64(heap, section, l);
+            section = buffer.append(heap, section, payload[pos..pos + l]);
+        }
+        pos = pos + l;
+        i = i + 1;
+    }
+    var dg = buffer.empty(heap, 40);
+    borrow table as &tr in {
+        dg = digest_into(heap, dg, buffer.bytes(tr));
+    }
+    borrow dg as &dr in {
+        table = buffer.append(heap, table, buffer.bytes(dr));
+    }
+    buffer.drop(heap, dg);
+    return (section, table, none);
+}
+
+// the bytes of all the strings of a step
+fn string_bytes[&f](st: &f catenc.Fit) -> [] int {
+    var t = 0;
+    var c = 0;
+    while c < catenc.ncols(st) {
+        var i = 0;
+        while i < catenc.ncat(st, c) {
+            t = t + len(catenc.string(st, c, i));
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    return t;
+}
+
+// ---------------------------------------------------------------- reading it
+
+// where the entries start in a validated table
+fn entries_at[&t](table: &t [byte]) -> [] int {
+    return 28 + get32(table, 24) + 16;
+}
+
+// the layout is the one of the registry, and the number of entries
+pub fn entries[&t](table: &t [byte]) -> [] int {
+    return get32(table, 4);
+}
+
+pub fn strings[&t](table: &t [byte]) -> [] int {
+    return fbits.get64(table, 16);
+}
+
+pub fn pool_bytes[&t](table: &t [byte]) -> [] int {
+    return fbits.get64(table, 8);
+}
+
+// the --na-values list of the fit
+pub fn na_of[&t](table: &t [byte]) -> [] &t [byte] {
+    return table[28..28 + get32(table, 24)];
+}
+
+// the reader limits of the fit: 0 max_categories, 1 max_string_bytes, 2 max_pool_bytes, 3 max_cat_columns
+pub fn limit_of[&t](table: &t [byte], which: int) -> [] int {
+    return get32(table, 28 + get32(table, 24) + 4 * which);
+}
+
+// the step (1-based, in the plan) and the payload of entry i (0-based) of a validated table
+pub fn entry_step[&t](table: &t [byte], i: int) -> [] int {
+    var pos = entries_at(table);
+    var k = 0;
+    while k < i {
+        pos = pos + 12 + fbits.get64(table, pos + 4);
+        k = k + 1;
+    }
+    return get32(table, pos);
+}
+
+pub fn entry_payload[&t](table: &t [byte], i: int) -> [] &t [byte] {
+    var pos = entries_at(table);
+    var k = 0;
+    while k < i {
+        pos = pos + 12 + fbits.get64(table, pos + 4);
+        k = k + 1;
+    }
+    let l = fbits.get64(table, pos + 4);
+    return table[pos + 12..pos + 12 + l];
+}
+
+// Every check of docs/stringtable.md section 4, in that order, on the table alone: a Fault of ml.model.string-table, or none. The table is input.
+pub fn validate[&h, &t](heap: &!h Heap, table: &t [byte]) -> [heap] codes.Fault {
+    let n = len(table);
+    if n > max_bytes() || n < 28 + 16 + 32 {
+        return bad(r_header(), 0);
+    }
+    if !digest_ok(heap, table) {
+        return bad(r_digest(), 0);
+    }
+    let body = n - 32;
+    if get32(table, 0) != kinds.table_layout() {
+        return bad(r_layout(), 0);
+    }
+    let ne = get32(table, 4);
+    if ne < 1 || ne > max_entries() {
+        return bad(r_entries(), 0);
+    }
+    let pool = fbits.get64(table, 8);
+    let strs = fbits.get64(table, 16);
+    let nal = get32(table, 24);
+    if pool < 0 || pool > max_pool() || strs < 0 || strs > max_strings() || nal > max_na() || nal > body - 44 {
+        return bad(r_header(), 0);
+    }
+    if !markers_ok(table[28..28 + nal]) {
+        return bad(r_header(), 0);
+    }
+    let lim_cats = get32(table, 28 + nal);
+    let lim_str = get32(table, 32 + nal);
+    let lim_pool = get32(table, 36 + nal);
+    let lim_cols = get32(table, 40 + nal);
+    if lim_cats < 1 || lim_cats > dict.ceiling_categories() || lim_str < 1 || lim_str > dict.ceiling_string_bytes() || lim_pool < 1 || lim_pool > dict.ceiling_pool_bytes() || lim_cols < 1 || lim_cols > dict.ceiling_columns() {
+        return bad(r_header(), 0);
+    }
+    var pos = 44 + nal;
+    var prev = 0;
+    var e = 0;
+    var sum_pool = 0;
+    var sum_strings = 0;
+    var sum_cols = 0;
+    // the column names seen so far, one after another (a column is read by one step): the bytes are re-read from the table
+    var names_at = box_slice(heap, 1, 0);
+    var names_count = 0;
+    var fault = codes.none();
+    while e < ne && fault.code == 0 {
+        if body - pos < 12 {
+            fault = bad(r_length(), prev + 1);
+        } else {
+            let step = get32(table, pos);
+            let l = fbits.get64(table, pos + 4);
+            pos = pos + 12;
+            if step <= prev || step > max_entries() {
+                fault = bad(r_step(), step);
+            } else if l < 32 || l > body - pos {
+                fault = bad(r_length(), step);
+            } else {
+                let (st, code) = catenc.decode(heap, table[pos..pos + l]);
+                if code != 0 {
+                    fault = bad(r_payload(), step);
+                } else {
+                    borrow st as &sr in {
+                        if sum_cols + catenc.ncols(sr) > lim_cols {
+                            fault = bad(r_limits(), step);
+                        }
+                        var c = 0;
+                        while c < catenc.ncols(sr) && fault.code == 0 {
+                            let nm = catenc.name(sr, c);
+                            if dict.utf8_offset(nm) >= 0 {
+                                fault = bad(r_utf8(), step);
+                            }
+                            // the same name in an earlier step
+                            borrow names_at as &nar in {
+                                var q = 0;
+                                while q < names_count && fault.code == 0 {
+                                    if bytes.equal(names_of(table, contents(nar), q), nm) {
+                                        fault = bad(r_schema(), step);
+                                    }
+                                    q = q + 1;
+                                }
+                            }
+                            if fault.code == 0 && catenc.ncat(sr, c) > lim_cats {
+                                fault = bad(r_limits(), step);
+                            }
+                            var i = 0;
+                            while i < catenc.ncat(sr, c) && fault.code == 0 {
+                                let s = catenc.string(sr, c, i);
+                                if len(s) > lim_str {
+                                    fault = bad(r_limits(), step);
+                                } else if dict.utf8_offset(s) >= 0 {
+                                    fault = bad(r_utf8(), step);
+                                }
+                                sum_pool = sum_pool + len(s);
+                                i = i + 1;
+                            }
+                            sum_strings = sum_strings + catenc.ncat(sr, c);
+                            c = c + 1;
+                        }
+                        sum_cols = sum_cols + catenc.ncols(sr);
+                    }
+                    if fault.code == 0 {
+                        // remember this step's names for the next steps' distinctness: their places in the table (the payload starts at pos)
+                        names_at = remember(heap, names_at, names_count, table, pos);
+                        names_count = names_count + get32(table, pos + 8);
+                    }
+                }
+                catenc.drop(heap, st);
+                prev = step;
+                pos = pos + l;
+            }
+        }
+        e = e + 1;
+    }
+    unbox_slice(heap, names_at);
+    if fault.code != 0 {
+        return fault;
+    }
+    if pos != body {
+        return bad(r_trailing(), 0);
+    }
+    if sum_pool != pool || sum_strings != strs {
+        return bad(r_totals(), 0);
+    }
+    if sum_pool > lim_pool || sum_cols > lim_cols {
+        return bad(r_limits(), 0);
+    }
+    return codes.none();
+}
+
+// the name at place q of the names remembered: names_at holds the places (offset in the table) of the names, two cells each (offset, length)
+fn names_of[&t, &a](table: &t [byte], at: &a [int], q: int) -> [] &t [byte] {
+    return table[at[2 * q]..at[2 * q] + at[2 * q + 1]];
+}
+
+// the places of the names of the entry whose payload starts at `pos` appended to those already remembered (count of them): a new box
+fn remember[&h, &t](heap: &!h Heap, old: Box[[int]], count: int, table: &t [byte], pos: int) -> [heap] Box[[int]] {
+    let k = get32(table, pos + 8);
+    let out = box_slice(heap, 2 * (count + k) + 2, 0);
+    var ow = out;
+    borrow old as &or in {
+        borrow mut ow as &!w in {
+            var i = 0;
+            while i < 2 * count {
+                contents(w)[i] = contents(or)[i];
+                i = i + 1;
+            }
+            // walk the entry's columns: name_len, name, ncat, then the strings
+            var q = pos + 32;
+            var c = 0;
+            while c < k {
+                let nl = get32(table, q);
+                contents(w)[2 * (count + c)] = q + 4;
+                contents(w)[2 * (count + c) + 1] = nl;
+                q = q + 4 + nl;
+                let m = get32(table, q);
+                q = q + 4;
+                var t2 = 0;
+                while t2 < m {
+                    q = q + 4 + get32(table, q) + 8;
+                    t2 = t2 + 1;
+                }
+                c = c + 1;
+            }
+        }
+    }
+    unbox_slice(heap, old);
+    return ow;
+}
+
+// ---------------------------------------------------------------- putting the payload back
+
+// The `steps` section of a file (`u32 n`, n times `u64 length | step`) and its validated string table, joined into the payload `pipeline.mixed.fit` made: every
+// stub is replaced by `u64 length | payload` of the entry of its step. (the payload, Fault). A stub without an entry, an entry without a stub, a stub of another
+// kind than its entry, or of a layout other than 2, is ml.model.string-table (reason stub). With an empty table the section is copied as it is.
+pub fn join[&h, &s, &t](heap: &!h Heap, section: &s [byte], table: &t [byte]) -> [heap] (buffer.Buffer, codes.Fault) {
+    if len(table) == 0 {
+        return (buffer.append(heap, buffer.empty(heap, len(section)), section), codes.none());
+    }
+    if len(section) < 4 {
+        return (buffer.empty(heap, 1), bad(r_stub(), 0));
+    }
+    let count = get32(section, 0);
+    if count > max_entries() {
+        return (buffer.empty(heap, 1), bad(r_stub(), 0));
+    }
+    let ne = entries(table);
+    var out = put32(heap, buffer.empty(heap, len(section) + len(table)), count);
+    var pos = 4;
+    var used = 0;
+    var i = 0;
+    var fault = codes.none();
+    while i < count && fault.code == 0 {
+        if len(section) - pos < 8 {
+            fault = bad(r_stub(), i + 1);
+        } else {
+            let l = fbits.get64(section, pos);
+            pos = pos + 8;
+            if l < 0 || l > len(section) - pos {
+                fault = bad(r_stub(), i + 1);
+            } else {
+                var kd = 0;
+                if l >= 4 {
+                    kd = get32(section, pos);
+                }
+                if kd >= kinds.step_cat_onehot() && kd <= kinds.step_hash() {
+                    if l != 8 || get32(section, pos + 4) != kinds.stub_layout() || used >= ne || entry_step(table, used) != i + 1 {
+                        fault = bad(r_stub(), i + 1);
+                    } else {
+                        let pl = entry_payload(table, used);
+                        if get32(pl, 0) != kd {
+                            fault = bad(r_stub(), i + 1);
+                        } else {
+                            out = put64(heap, out, len(pl));
+                            out = buffer.append(heap, out, pl);
+                            used = used + 1;
+                        }
+                    }
+                } else {
+                    out = put64(heap, out, l);
+                    out = buffer.append(heap, out, section[pos..pos + l]);
+                }
+                pos = pos + l;
+            }
+        }
+        i = i + 1;
+    }
+    if fault.code == 0 && (pos != len(section) || used != ne) {
+        fault = bad(r_stub(), 0);
+    }
+    if fault.code != 0 {
+        buffer.drop(heap, out);
+        return (buffer.empty(heap, 1), fault);
+    }
+    return (out, codes.none());
+}

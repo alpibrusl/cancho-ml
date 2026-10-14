@@ -16,6 +16,7 @@ module ml.csv;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import ml.bucket;
 import ml.catmat;
 import ml.csvcell;
 import ml.dict;
@@ -105,35 +106,60 @@ pub res struct CatState {
     ncat: int,
     crows: int,
     cwpc: int,
+    // the markers of a stored model (docs/stringtable.md section 2) beside cc.na, and the scratch of the digest a hashed column is read with (section 5)
+    nab: Box[[byte]],
+    hst: Box[[int]],
+    hdg: Box[[byte]],
 }
 
 pub fn off_state[&h](heap: &!h Heap) -> [heap] CatState {
-    return CatState { kind: 0, bld: dict.empty_dict(heap), voc: dict.empty_vocab(heap), ids: box_slice(heap, 1, 0), cmiss: box_slice(heap, 1, 0), unseen: box_slice(heap, 1, 0), ncat: 0, crows: 0, cwpc: 0 };
+    return CatState { kind: 0, bld: dict.empty_dict(heap), voc: dict.empty_vocab(heap), ids: box_slice(heap, 1, 0), cmiss: box_slice(heap, 1, 0), unseen: box_slice(heap, 1, 0), ncat: 0, crows: 0, cwpc: 0, nab: box_slice(heap, 1, byte_of(0)), hst: box_slice(heap, bucket.state_len(), 0), hdg: box_slice(heap, 32, byte_of(0)) };
 }
 
 // pass 1 of a fit: the strings of the columns named in cfg are interned
 pub fn build_state[&h](heap: &!h Heap) -> [heap] CatState {
-    return CatState { kind: 1, bld: dict.empty_dict(heap), voc: dict.empty_vocab(heap), ids: box_slice(heap, 1, 0), cmiss: box_slice(heap, 1, 0), unseen: box_slice(heap, 1, 0), ncat: 0, crows: 0, cwpc: 0 };
+    return CatState { kind: 1, bld: dict.empty_dict(heap), voc: dict.empty_vocab(heap), ids: box_slice(heap, 1, 0), cmiss: box_slice(heap, 1, 0), unseen: box_slice(heap, 1, 0), ncat: 0, crows: 0, cwpc: 0, nab: box_slice(heap, 1, byte_of(0)), hst: box_slice(heap, bucket.state_len(), 0), hdg: box_slice(heap, 32, byte_of(0)) };
 }
 
 // a lookup state over the vocabulary `v` (consumed). kind 2 or 3. `ids` etc. are those of ml.catmat.parts (empty boxes for a pass that writes nothing)
 pub fn lookup_state[&h](heap: &!h Heap, kind: int, v: dict.Vocab, ids: Box[[int]], cmiss: Box[[int]], unseen: Box[[int]], ncat: int, crows: int, cwpc: int) -> [heap] CatState {
-    return CatState { kind: kind, bld: dict.empty_dict(heap), voc: v, ids: ids, cmiss: cmiss, unseen: unseen, ncat: ncat, crows: crows, cwpc: cwpc };
+    return CatState { kind: kind, bld: dict.empty_dict(heap), voc: v, ids: ids, cmiss: cmiss, unseen: unseen, ncat: ncat, crows: crows, cwpc: cwpc, nab: box_slice(heap, 1, byte_of(0)), hst: box_slice(heap, bucket.state_len(), 0), hdg: box_slice(heap, 32, byte_of(0)) };
+}
+
+// the state with the markers of a stored model (the bytes of the --na-values list; the state keeps its own copy)
+pub fn set_markers[&h, &n](heap: &!h Heap, k: CatState, na: &n [byte]) -> [heap] CatState {
+    let CatState { kind, bld, voc, ids, cmiss, unseen, ncat, crows, cwpc, nab, hst, hdg } = k;
+    unbox_slice(heap, nab);
+    var copy = box_slice(heap, len(na) + 1, byte_of(0));
+    borrow mut copy as &!cw in {
+        var i = 0;
+        while i < len(na) {
+            contents(cw)[i] = na[i];
+            i = i + 1;
+        }
+    }
+    return CatState { kind: kind, bld: bld, voc: voc, ids: ids, cmiss: cmiss, unseen: unseen, ncat: ncat, crows: crows, cwpc: cwpc, nab: copy, hst: hst, hdg: hdg };
 }
 
 pub fn drop_state[&h](heap: &!h Heap, k: CatState) -> [heap] int {
-    let CatState { kind, bld, voc, ids, cmiss, unseen, ncat, crows, cwpc } = k;
+    let CatState { kind, bld, voc, ids, cmiss, unseen, ncat, crows, cwpc, nab, hst, hdg } = k;
     dict.drop(heap, bld);
     dict.drop_vocab(heap, voc);
     unbox_slice(heap, ids);
     unbox_slice(heap, cmiss);
     unbox_slice(heap, unseen);
+    unbox_slice(heap, nab);
+    unbox_slice(heap, hst);
+    unbox_slice(heap, hdg);
     return kind;
 }
 
 // the pieces: (kind, builder, vocabulary, ids, bitmap, unseen counts)
-pub fn state_parts(k: CatState) -> [] (int, dict.Dict, dict.Vocab, Box[[int]], Box[[int]], Box[[int]]) {
-    let CatState { kind, bld, voc, ids, cmiss, unseen, ncat, crows, cwpc } = k;
+pub fn state_parts[&h](heap: &!h Heap, k: CatState) -> [heap] (int, dict.Dict, dict.Vocab, Box[[int]], Box[[int]], Box[[int]]) {
+    let CatState { kind, bld, voc, ids, cmiss, unseen, ncat, crows, cwpc, nab, hst, hdg } = k;
+    unbox_slice(heap, nab);
+    unbox_slice(heap, hst);
+    unbox_slice(heap, hdg);
     return (kind, bld, voc, ids, cmiss, unseen);
 }
 
@@ -447,7 +473,7 @@ fn unquote[&d, &c](dst: &!d [byte], cell: &c [byte]) -> [] int {
 }
 
 // whether the cell is one of the markers of `list` (comma separated; an empty list has none)
-fn is_marker[&c](cell: &c [byte], list: &static [byte]) -> [] bool {
+fn is_marker[&c, &l](cell: &c [byte], list: &l [byte]) -> [] bool {
     if len(list) == 0 {
         return false;
     }
@@ -466,7 +492,7 @@ fn is_marker[&c](cell: &c [byte], list: &static [byte]) -> [] bool {
 // (0, 0), or (status, aux) as in Report. `writes`: this is the pass that fills the ids.
 fn cat_cell[&k, &c](cs: &!k CatState, cc: CatCfg, cell: &c [byte], cj: int, row: int, writes: bool) -> [] (int, int) {
     var id = catmat.missing_id();
-    if len(cell) > 0 && !is_marker(cell, cc.na) {
+    if len(cell) > 0 && !is_marker(cell, cc.na) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {
         if len(cell) > cc.max_str {
             return (21, len(cell));
         }
@@ -474,27 +500,32 @@ fn cat_cell[&k, &c](cs: &!k CatState, cc: CatCfg, cell: &c [byte], cj: int, row:
         if off >= 0 {
             return (20, off);
         }
-        if cs.kind == 1 {
-            let code = dict.intern(cs.bld, cj, cell);
-            if code == refuse.limit_categories() {
-                return (22, cc.max_cats);
+        if cs.kind == 3 && dict.hash_buckets(cs.voc, cj) > 0 {
+            // a hashed column of a stored model: the bucket of the cell is the id; nothing is interned, looked up or counted as unseen (docs/stringtable.md section 5)
+            id = bucket.bucket_of(contents(cs.hst), contents(cs.hdg), cell, dict.hash_buckets(cs.voc, cj));
+        } else {
+            if cs.kind == 1 {
+                let code = dict.intern(cs.bld, cj, cell);
+                if code == refuse.limit_categories() {
+                    return (22, cc.max_cats);
+                }
+                if code == refuse.limit_string_pool() {
+                    return (23, dict.dict_pool_used(cs.bld) + len(cell));
+                }
+                if code != 0 {
+                    return (30, code);
+                }
+                return (0, 0);
             }
-            if code == refuse.limit_string_pool() {
-                return (23, dict.dict_pool_used(cs.bld) + len(cell));
-            }
-            if code != 0 {
-                return (30, code);
-            }
-            return (0, 0);
-        }
-        id = dict.find(cs.voc, cj, cell);
-        if id < 0 {
-            if cs.kind == 2 {
-                return (15, 0);
-            }
-            id = catmat.unseen_id();
-            if writes {
-                contents(cs.unseen)[cj] = contents(cs.unseen)[cj] + 1;
+            id = dict.find(cs.voc, cj, cell);
+            if id < 0 {
+                if cs.kind == 2 {
+                    return (15, 0);
+                }
+                id = catmat.unseen_id();
+                if writes {
+                    contents(cs.unseen)[cj] = contents(cs.unseen)[cj] + 1;
+                }
             }
         }
     }
@@ -578,9 +609,9 @@ fn cat_header[&h, &s, &n, &e](heap: &!h Heap, flags: &!s [int], names: &n [byte]
         borrow nm as &nr in {
             borrow nee as &er in {
                 let (d, c) = dict.make(heap, count, cc.max_catcols, cc.max_cats, cc.max_str, cc.max_pool, buffer.bytes(nr), contents(er));
-                let (k2, b2, v2, i2, m2, u2) = state_parts(made);
+                let (k2, b2, v2, i2, m2, u2) = state_parts(heap, made);
                 dict.drop(heap, b2);
-                made = CatState { kind: k2, bld: d, voc: v2, ids: i2, cmiss: m2, unseen: u2, ncat: count, crows: 0, cwpc: 0 };
+                made = CatState { kind: k2, bld: d, voc: v2, ids: i2, cmiss: m2, unseen: u2, ncat: count, crows: 0, cwpc: 0, nab: box_slice(heap, 1, byte_of(0)), hst: box_slice(heap, 1, 0), hdg: box_slice(heap, 1, byte_of(0)) };
                 code = c;
             }
         }
