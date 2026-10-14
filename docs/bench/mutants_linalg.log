@@ -1,4 +1,4 @@
-Tue Oct 13 15:05:44 CEST 2026
+frozen copy of commit ea9ff28, arm64
 mutants_linalg/dot: control (unmutated) passes
 dot-lane-init                            killed
 dot-lane-map                             killed
@@ -164,4 +164,4 @@ lane-combine-fold                        killed
 chol-panel-16                            killed
 mutants_linalg/oracle: 11 oracle mutants, 0 survive
 EXIT 0
-Tue Oct 13 15:08:11 CEST 2026
+Wed Oct 14 12:37:41 CEST 2026

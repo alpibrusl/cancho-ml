@@ -1,4 +1,4 @@
-Tue Oct 13 14:57:54 CEST 2026
+frozen copy of commit ea9ff28, arm64
 mutants_models: control (unmutated) passes
 lin-ridge-on-intercept                   killed
 lin-ridge-sign                           killed
@@ -95,4 +95,4 @@ par-models-weights                       killed
 par-models-ragged                        SURVIVED (explained: without the clamp the last chunk runs blocks past the end; each is an all-zero partial (m <= 0 rows), and x + 0.0 = x, so the tree of the real blocks keeps its bits: an equivalent mutant (the clamp is kept so that no block is made of nothing))
 mutants_models: 91 killed, 2 survived and explained, 0 unexplained
 EXIT 0
-Tue Oct 13 15:01:49 CEST 2026
+Wed Oct 14 11:51:05 CEST 2026
