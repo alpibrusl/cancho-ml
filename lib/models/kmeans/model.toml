@@ -20,7 +20,7 @@ max_diag_floats = 16777216
 [tags]
 emits = [
   "ml.input.empty", "ml.input.non-finite", "ml.input.too-many-rows", "ml.input.too-many-columns", "ml.input.too-many-cells", "ml.input.missing-value",
-  "ml.fit.non-finite", "ml.param.out-of-range", "ml.param.threads", "ml.model.truncated", "ml.model.malformed", "ml.schema.mismatch",
+  "ml.fit.non-finite", "ml.param.out-of-range", "ml.param.threads", "ml.tensor.bounds", "ml.model.truncated", "ml.model.malformed", "ml.schema.mismatch",
 ]
 
 [authority]
