@@ -65,10 +65,10 @@ The texts that name the reachable models (`ml.plan.model-not-built`, the `args.c
 
 ## 3. The verbs [choice]
 
-* **fit.** The summary has `clusters`: `{k, iterations, init, inertia, sizes, mean_distance}` of the training rows (after the steps), next to `plan`, `steps`, `features`.
-  `inertia` is the decisive sum of the squared distances of the rows to their centres in the package order (section 6); `sizes` the rows per cluster; `mean_distance` the mean
-  Euclidean distance of the rows of each cluster to its centre, `null` for an empty cluster. With `--split train=F` the answer adds `split` and `holdout`: the same three
-  numbers on the held-out rows, scored through the stored steps and the fitted centroids. `target` is `null`; `task` is `clustering`.
+* **fit.** The summary has `clusters`: `{k, iterations, init, rows, metrics}`, where `metrics` is `{inertia, sizes, mean_distance}` of the training rows (after the steps), next to
+  `plan`, `steps`, `features`. `inertia` is the decisive sum of the squared distances of the rows to their centres in the package order (section 6); `sizes` the rows per cluster;
+  `mean_distance` the mean Euclidean distance of the rows of each cluster to its centre, `null` for an empty cluster. With `--split train=F` the answer adds `split` and `holdout`
+  (`{rows, metrics}`): the same three numbers on the held-out rows, scored through the stored steps and the fitted centroids. `target` is `null`; `task` is `clustering`.
 * **predict.** `columns` is `["cluster"]`, or `["cluster", "distance"]` with `--distance`; a row of `rows` is the cluster index (0 to k-1, the lowest index among equal
   distances) and the squared distance as the shortest decimal that reads back. The file needs the feature columns only; a column that is not a feature is `ml.schema.mismatch`
   with the `--drop` repair, as for every model. `unknown_categories` as for the others.
@@ -171,8 +171,8 @@ reported as such; the configurations above have none and the script checks it. T
   with no hyperparameter. `shape = "blob"` is allowed with `task = "clustering"` besides `both`; the generator's rule that a blob model has a `task` enum is for `both` only.
 * The four functions of the blob interface keep their signatures; for a clustering model their results are: `predict_blob` the cluster of each row (the integer as a double), `proba_blob`
   **the squared distance to the centre of that cluster** (the second output of the model: the probability of the positive class for a classification, a refusal for a regression, the squared
-  distance for a clustering; the name is the interface's), `decode_blob` the code, `k` in `c0`, 0 in `c1` and 3 in `end` (the task: 1 regression, 2 classification, 3 clustering; the
-  tree and forest keep 1 and 2). `fit_blob` takes an empty target slice.
+  distance for a clustering; the name is the interface's), `decode_blob` the code, `k` in `c0`, 0 in `c1` and 4 in `end` (the task: 1 regression, 2 classification, 4 clustering; the
+  tree and forest keep 1 and 2, and `est.task` answers 3 for "either"). `fit_blob` takes an empty target slice.
 * The generated `est` gains `takes_missing(kind)` (a blob model of both tasks: the tree and the forest) beside `is_blob`, so that the missing-cell refusal is a fact of the manifest.
   `est.task` answers 4 for clustering. `hparam_flag`, `takes`, `hparams` and `hparam_min` include enum hyperparameters other than `task`.
 * The adapter is `lib/models/kmeans/adapter.cho` (module `models.adapter_kmeans`). It calls `models.kmeans.fit` and `models.kmeans.predict`, forms the squared distance of a row to its
