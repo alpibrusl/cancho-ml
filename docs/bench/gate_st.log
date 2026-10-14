@@ -1,0 +1,57 @@
+commit ea9ff28 plus the comment changes of 1d7a2c1, arm64, ML=build/ml, ST_STRIDE=1 (every byte)
+tests/strtab.cho: test result: ok. 13 passed; 0 failed
+oracle_st: ok
+S1/S6: 300 random tables (140 the oracle accepts, 160 it refuses), the corner families and the reader's adversarial files, machine arm64, load 2.95
+S1/S6 file bytes against the oracle: 545 runs, 0 differences
+S2: 60 fits written and read back, machine arm64, load 4.55
+S2 round trip (file against in-process): 120 runs, 0 differences
+S4: 40 tables x 5 orders and 5 thread counts, machine arm64, load 4.59
+S4 information (whole file identical / different, 8 permuted triples each): tree 0/8, forest 0/8, linear 0/8, logistic 0/8
+S4 row order and thread count: 496 runs, 0 differences
+S5: 400 models and predict files (95 the oracle refuses, 1559 unseen strings counted in all), machine arm64, load 4.70
+S5 hash mode: 40 models with 9 unseen strings each predicted from the bucket they hash to
+S5 unseen, missing and markers at predict: 440 runs, 0 differences
+S7: 128 and 129 columns of 1,024 strings, three modes each, machine arm64, load 4.70
+S7 the bounds of a fit: 7 runs, 0 differences
+S8 alignment by name: 156 runs, 0 differences
+S9 privacy: 8 runs, 0 differences
+S10: 19497 single-byte flips (three ways each, and with repaired digests), every truncation, the table fields at their extremes, 3000 seeded damages, machine arm64, load 6.65
+S10 damaged files: 61155 runs, 0 differences
+machine arm64, load 6.65
+logistic, data seed 1  predicted labels that differ (count)       observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 1  probability (max abs)                      observed 1.043e-08  bound 1e-06  PASS
+logistic, data seed 1  accuracy (difference)                      observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 1  roc_auc (absolute)                         observed 1.110e-16  bound 1e-06  PASS
+logistic, data seed 1  log_loss (relative)                        observed 3.657e-09  bound 1e-06  PASS
+logistic, data seed 1  unseen categories counted (difference)     observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 1  test rows 375, train rows 1125, unseen categories 0; ml accuracy 0.8053333333333333 roc_auc 0.8960170697012803 log_loss 0.4989187237891559; sklearn 0.8053333333333333 0.8960170697012801 0.4989187256138538
+forest,   data seed 1  accuracy (absolute)                        observed 8.000e-03  bound 5e-02  PASS
+forest,   data seed 1  roc_auc (absolute)                         observed 5.448e-03  bound 5e-02  PASS
+forest,   data seed 1  ml accuracy 0.7893333333333333 roc_auc 0.8857894736842106; sklearn 0.797333 0.880341; predict and eval from the file agree on the labels: True
+logistic data seed 1  eval --split on the file equals the held-out metrics of the fit, string for string: PASS
+forest   data seed 1  eval --split on the file equals the held-out metrics of the fit, string for string: PASS
+logistic, data seed 2  predicted labels that differ (count)       observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 2  probability (max abs)                      observed 3.416e-08  bound 1e-06  PASS
+logistic, data seed 2  accuracy (difference)                      observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 2  roc_auc (absolute)                         observed 0.000e+00  bound 1e-06  PASS
+logistic, data seed 2  log_loss (relative)                        observed 4.968e-09  bound 1e-06  PASS
+logistic, data seed 2  unseen categories counted (difference)     observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 2  test rows 375, train rows 1125, unseen categories 0; ml accuracy 0.7466666666666667 roc_auc 0.8463704630788486 log_loss 0.5285505043845838; sklearn 0.7466666666666667 0.8463704630788486 0.5285505017586558
+forest,   data seed 2  accuracy (absolute)                        observed 2.133e-02  bound 5e-02  PASS
+forest,   data seed 2  roc_auc (absolute)                         observed 9.301e-03  bound 5e-02  PASS
+forest,   data seed 2  ml accuracy 0.792 roc_auc 0.8758391170781659; sklearn 0.770667 0.866538; predict and eval from the file agree on the labels: True
+logistic data seed 2  eval --split on the file equals the held-out metrics of the fit, string for string: PASS
+forest   data seed 2  eval --split on the file equals the held-out metrics of the fit, string for string: PASS
+logistic, data seed 3  predicted labels that differ (count)       observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 3  probability (max abs)                      observed 2.815e-08  bound 1e-06  PASS
+logistic, data seed 3  accuracy (difference)                      observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 3  roc_auc (absolute)                         observed 0.000e+00  bound 1e-06  PASS
+logistic, data seed 3  log_loss (relative)                        observed 8.292e-09  bound 1e-06  PASS
+logistic, data seed 3  unseen categories counted (difference)     observed 0.000e+00  bound 0e+00  PASS
+logistic, data seed 3  test rows 375, train rows 1125, unseen categories 4; ml accuracy 0.792 roc_auc 0.8855988455988456 log_loss 0.5015729679545919; sklearn 0.792 0.8855988455988456 0.5015729637956443
+forest,   data seed 3  accuracy (absolute)                        observed 2.667e-03  bound 5e-02  PASS
+forest,   data seed 3  roc_auc (absolute)                         observed 1.814e-02  bound 5e-02  PASS
+forest,   data seed 3  ml accuracy 0.7813333333333333 roc_auc 0.8717027417027418; sklearn 0.784000 0.853564; predict and eval from the file agree on the labels: True
+logistic data seed 3  eval --split on the file equals the held-out metrics of the fit, string for string: PASS
+forest   data seed 3  eval --split on the file equals the held-out metrics of the fit, string for string: PASS
+S11 scikit-learn 1.8.0, numpy 2.4.6, machine arm64: all PASS

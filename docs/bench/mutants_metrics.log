@@ -1,4 +1,4 @@
-Tue Oct 13 15:05:44 CEST 2026
+frozen copy of commit ea9ff28, arm64
 mutants_metrics: control (unmutated) passes
 seed-derive-index                        killed
 seed-derive-swap                         killed
@@ -148,4 +148,4 @@ rules-table-drop                         killed
 rules-code-swap                          killed
 mutants_metrics: 138 killed, 8 survived and explained, 0 unexplained
 EXIT 0
-Tue Oct 13 15:18:17 CEST 2026
+Wed Oct 14 12:35:52 CEST 2026

@@ -146,7 +146,7 @@ oracle and the mutants are in `docs/transforms.md` section 6, which judges the s
 2. **Names with a blank, `,`, `=` or `#`** cannot be addressed in a plan (only by `*`). Quoting is not designed.
 3. **Text categories** *(answered at stage 2 of issue 21: `docs/categorical-encoders.md`)*: `fit --cat` declares them, `encode` (on a categorical column, with `min-count` and `missing`), `freq` and `hash` read them
    (`lib/pipeline/mixed.cho`, `lib/transforms/catenc.cho`); the canonical text of a numeric `encode` line is unchanged because the new keys are written only when they differ from their defaults (the rule `~default` of
-   the grammar table). The steps are kinds 7 to 10, outside `file.decode` until stage 3 stores the vocabulary.
+   the grammar table). The steps are kinds 7 to 10; in a model file each is a stub in the `steps` section and its payload an entry of the string table (`docs/stringtable.md`), which `file.decode` joins back.
 4. **`unknown=ignore` for `label` gives -1.0**, a value no category has; a downstream estimator sees it as a number.
 5. The summation order is the package's, through `transforms.dsum`. When the lane-order change lands, `oracle_pipe.py --sums` fails until `ordered_sum`
    there is updated (one function), and the stored step bytes of standard scalers and mean imputers change with it: model files fitted before the change are

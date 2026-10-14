@@ -1,13 +1,13 @@
-tests/enc.cho: test result: ok. 12 passed; 0 failed
-E1/E4/E5: 400 random tables (166 answered, 234 refused by the oracle's verdict), the corner families and the all-unseen predict files, machine arm64, load 6.20
+tests/enc.cho: test result: ok. 13 passed; 0 failed
+E1/E4/E5: 400 random tables (166 answered, 234 refused by the oracle's verdict), the corner families and the all-unseen predict files, machine arm64, load 9.79
 E1/E4/E5 diff: 515 runs, 0 differences
-E2: 50 tables (35 accepted), 5 seeded permutations each, machine arm64, load 6.20
+E2: 50 tables (35 accepted), 5 seeded permutations each, machine arm64, load 9.79
 E2 row order: 250 runs, 0 differences
-E6: hashing against hashlib at B in {2,3,7,16,1000,1024}, 900+ strings a table, machine arm64, load 6.24
+E6: hashing against hashlib at B in {2,3,7,16,1000,1024}, 900+ strings a table, machine arm64, load 9.58
 E6 hash: 72 runs, 0 differences
-E3: 8 answered fits (of 37 tried), 5 thread counts each, machine arm64, load 6.24
+E3: 8 answered fits (of 37 tried), 5 thread counts each, machine arm64, load 9.58
 E3 threads: 40 runs, 0 differences
-E11: 3024 runs (enc-check and ml fit --cat with hostile plans and files), machine arm64, load 6.47
+E11: 3024 runs (enc-check and ml fit --cat with hostile plans and files), machine arm64, load 9.52
 E11 no trap: 3024 runs, 0 differences
 data seed 1  train rows / test rows                 observed 0.000e+00  bound 0e+00  PASS
 data seed 1  coefficients and intercept (max abs)   observed 1.705e-08  bound 1e-05  PASS

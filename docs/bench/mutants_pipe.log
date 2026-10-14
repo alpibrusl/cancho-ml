@@ -1,4 +1,4 @@
-Tue Oct 13 15:16:47 CEST 2026
+frozen copy of commit ea9ff28, arm64
 mutants_pipe: control (unmutated) passes
 impute-constant-column-is-not-its-own-mean       killed
 median-even-count-not-averaged                   killed
@@ -75,4 +75,4 @@ exit-code-of-the-parameter-tag-moved             killed
 tag-renamed                                      killed
 mutants_pipe: 72 killed, 1 survived and explained, 0 unexplained
 EXIT 0
-Tue Oct 13 15:19:37 CEST 2026
+Wed Oct 14 12:42:14 CEST 2026

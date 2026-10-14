@@ -7,10 +7,13 @@ import ml.matrix;
 import ml.rng;
 import transforms.catenc;
 import transforms.codes;
+import pipeline.file;
 import pipeline.mixed;
 import pipeline.names;
 import pipeline.plan;
 import pipeline.run;
+import pipeline.schema;
+import transforms.strtab;
 import pt;
 
 // Unit tests of lib/transforms/catenc.cho (docs/categorical-encoders.md gates E5, E6, E7 and the unit half of E1 and E4): hand-computed matrices, the rare
@@ -820,6 +823,141 @@ fn test_the_mixed_pipeline_fits_stores_and_applies_the_same_matrix[&h](heap: &!h
                                 }
                                 catenc.drop(heap, s3);
                             }
+                        }
+                        names.drop(heap, rem);
+                        matrix.drop(heap, y);
+                        run.drop_fitted(heap, fd);
+                    }
+                }
+            }
+        }
+    }
+    catmat.drop(heap, ids);
+    dict.drop_vocab(heap, voc);
+    names.drop(heap, nm);
+    matrix.drop(heap, x);
+    plan.drop(heap, pl);
+    return bad;
+}
+
+// the fit of the test above, stored in a file with a string table and read back by file.decode: the steps payload comes back byte for byte, the reader's vocabulary is
+// built from it, and a damaged table is the string table's refusal
+fn test_a_file_with_a_string_table_decodes_and_gives_the_steps_back[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let plan_text = "scale column=a kind=minmax\nencode column=c kind=onehot min-count=2 missing=zero\nfreq column=d\nmodel kind=linear\n";
+    let (pl, pf) = plan.parse(heap, plan_text);
+    let x = pt.mat(heap, "1;3;5;2;4");
+    let nm = names.from_list(heap, "a");
+    let (ids, voc) = build_multi(heap, "b,a,b,c,|x,y,x,y,x");
+    borrow pl as &pr in {
+        borrow x as &xr in {
+            borrow nm as &nr in {
+                borrow ids as &ir in {
+                    borrow voc as &vr in {
+                        let (fd, y, rem, flt) = mixed.fit(heap, pr, nr, xr, 5, ir, vr, 1000, 100, 100000);
+                        if flt.code != 0 {
+                            bad = bad + 1;
+                        }
+                        borrow fd as &fdr in {
+                            // the schema: a (int), c and d (categorical), the target e (int)
+                            var snm = names.empty(heap);
+                            snm = names.add(heap, snm, "a");
+                            snm = names.add(heap, snm, "c");
+                            snm = names.add(heap, snm, "d");
+                            snm = names.add(heap, snm, "e");
+                            var types = box_slice(heap, 8, 0);
+                            borrow mut types as &!tw in {
+                                contents(tw)[2] = 3;
+                                contents(tw)[4] = 3;
+                            }
+                            let sch = schema.make(snm, types, 3);
+                            var sbytes = buffer.empty(heap, 1);
+                            borrow sch as &sr in {
+                                buffer.drop(heap, sbytes);
+                                sbytes = schema.encode(heap, sr);
+                            }
+                            schema.drop(heap, sch);
+                            let (section, table, pk) = strtab.pack(heap, buffer.bytes(fdr.payload), "NA", 64, 255, 1048576, 128);
+                            if pk.code != 0 {
+                                bad = bad + 1;
+                            }
+                            var model = buffer.empty(heap, 8);
+                            model = p32(heap, model, 4);
+                            borrow sbytes as &sbr in {
+                                borrow section as &secr in {
+                                    borrow table as &tabr in {
+                                        borrow model as &mr in {
+                                            let fbytes = file.encode_with_table(heap, plan.text(pr), buffer.bytes(sbr), buffer.bytes(secr), buffer.bytes(tabr), buffer.bytes(mr), 5, 4, 0, "pin");
+                                            borrow fbytes as &fr in {
+                                                let (lo, fl) = file.decode(heap, buffer.bytes(fr));
+                                                if fl.code != 0 {
+                                                    bad = bad + 1;
+                                                } else {
+                                                    borrow lo as &lor in {
+                                                        if !bytes.equal(file.steps_bytes(lor), buffer.bytes(fdr.payload)) || !file.has_table(lor) || file.categorical_columns(lor) != 2 {
+                                                            bad = bad + 1;
+                                                        }
+                                                        if file.nsteps(lor) != 3 || file.width(lor) != 4 || file.features(lor) != 3 || file.rows(lor) != 5 {
+                                                            bad = bad + 1;
+                                                        }
+                                                        // the reader's vocabulary: c and d, hashed columns none, valid
+                                                        let (v2, vc) = mixed.vocab_of(heap, file.steps_bytes(lor));
+                                                        borrow v2 as &v2r in {
+                                                            if vc != 0 || dict.ncols(v2r) != 2 || !bytes.equal(dict.name(v2r, 0), "c") || !bytes.equal(dict.name(v2r, 1), "d") || dict.count(v2r, 0) != 3 || dict.count(v2r, 1) != 2 || !dict.valid(v2r) {
+                                                                bad = bad + 1;
+                                                            }
+                                                        }
+                                                        dict.drop_vocab(heap, v2);
+                                                        if !bytes.equal(strtab.na_of(file.table_bytes(lor)), "NA") || strtab.limit_of(file.table_bytes(lor), 3) != 128 {
+                                                            bad = bad + 1;
+                                                        }
+                                                    }
+                                                }
+                                                file.drop(heap, lo);
+                                                // a byte of the table flipped with both digests repaired is the string table's refusal or still a file; a byte flipped with the
+                                                // file digest alone repaired is the table's digest
+                                                var k = 0;
+                                                while k < 6 {
+                                                    let at = len(buffer.bytes(fr)) - 32 - 40 - 7 * k;
+                                                    var cp = buffer.empty(heap, len(buffer.bytes(fr)));
+                                                    var j = 0;
+                                                    while j < len(buffer.bytes(fr)) {
+                                                        if j == at {
+                                                            cp = buffer.push(heap, cp, byte_of(int_of(buffer.bytes(fr)[j]) ^ 1));
+                                                        } else {
+                                                            cp = buffer.push(heap, cp, buffer.bytes(fr)[j]);
+                                                        }
+                                                        j = j + 1;
+                                                    }
+                                                    borrow cp as &cpr in {
+                                                        let fixed = file.reseal(heap, buffer.bytes(cpr));
+                                                        borrow fixed as &fxr in {
+                                                            let (l2, f2) = file.decode(heap, buffer.bytes(fxr));
+                                                            if f2.code != codes.string_table() || f2.a != 1 {
+                                                                bad = bad + 1;
+                                                            }
+                                                            file.drop(heap, l2);
+                                                        }
+                                                        buffer.drop(heap, fixed);
+                                                        let (l3, f3) = file.decode(heap, buffer.bytes(cpr));
+                                                        if f3.code != codes.checksum() {
+                                                            bad = bad + 1;
+                                                        }
+                                                        file.drop(heap, l3);
+                                                    }
+                                                    buffer.drop(heap, cp);
+                                                    k = k + 1;
+                                                }
+                                            }
+                                            buffer.drop(heap, fbytes);
+                                        }
+                                    }
+                                }
+                            }
+                            buffer.drop(heap, model);
+                            buffer.drop(heap, sbytes);
+                            buffer.drop(heap, section);
+                            buffer.drop(heap, table);
                         }
                         names.drop(heap, rem);
                         matrix.drop(heap, y);

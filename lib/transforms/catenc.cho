@@ -3,6 +3,7 @@ module transforms.catenc;
 import std.buffer;
 import std.bytes;
 import std.crypto;
+import ml.bucket;
 import ml.catmat;
 import ml.dict;
 import ml.fbits;
@@ -17,7 +18,7 @@ import transforms.codes;
 // computed from that, never stored beside it, so there is one source of truth.
 //
 // APPLY reads a Fit and ids with the vocabulary THEY refer to (the reader's): the cells are matched to the Fit by the bytes of the string, so the ids may come from a
-// reader vocabulary that also holds held-out strings (a --split) or from the stored vocabulary of a predict (stage 3).
+// reader vocabulary that also holds held-out strings (a --split) or from the vocabulary rebuilt from a model file's string table at predict (docs/stringtable.md).
 //
 // The bytes of a step (section 5.2): u32 kind, u32 layout = 1, u32 k, u32 unknown, u32 missing, u32 param, u64 rows, then per column u32 name length, the name,
 // u32 categories, per category u32 length, the bytes, u64 count. `decode` checks every field before it allocates anything sized by the bytes.
@@ -159,12 +160,7 @@ pub fn count[&f](f: &f Fit, c: int, i: int) -> [] int {
 // the bucket of `text` in 0 .. b-1: SHA-256 of the bytes, the first 8 bytes read big-endian as an unsigned 64-bit integer, modulo b (docs section 3.5).
 // state has sha256_state_len() words and dg 32 bytes. The unsigned modulo is taken from two 32-bit halves, so the sign bit of a 64-bit integer is never read.
 pub fn bucket_of[&a, &d, &s](state: &!a [int], dg: &!d [byte], text: &s [byte], b: int) -> [] int {
-    crypto.sha256_init(state);
-    crypto.sha256_update(state, text);
-    crypto.sha256_final(state, dg);
-    let hi = int_of(dg[0]) << 24 | int_of(dg[1]) << 16 | int_of(dg[2]) << 8 | int_of(dg[3]);
-    let lo = int_of(dg[4]) << 24 | int_of(dg[5]) << 16 | int_of(dg[6]) << 8 | int_of(dg[7]);
-    return (hi % b * (4294967296 % b) + lo % b) % b;
+    return bucket.bucket_of(state, dg, text, b);
 }
 
 pub fn hash_bucket[&h, &s](heap: &!h Heap, text: &s [byte], b: int) -> [heap] int {
@@ -468,6 +464,9 @@ pub fn apply[&h, &f, &i, &v](heap: &!h Heap, st: &f Fit, ids: &i catmat.Ids, rv:
                 let rc = dict.find_column(rv, name(st, j));
                 if rc < 0 || rc >= catmat.cols(ids) {
                     fault = codes.fault(codes.schema_mismatch(), step_no, 0, 0);
+                } else if dict.hash_buckets(rv, rc) > 0 && (kd != kinds.step_hash() || dict.hash_buckets(rv, rc) != st.param) {
+                    // a column the reader hashed (docs/stringtable.md section 5) is read by a hash step of the same number of buckets, and by nothing else
+                    fault = codes.fault(codes.schema_mismatch(), step_no, 0, 0);
                 } else {
                     contents(rw)[j] = rc;
                     var ne = 0;
@@ -519,7 +518,11 @@ pub fn apply[&h, &f, &i, &v](heap: &!h Heap, st: &f Fit, ids: &i catmat.Ids, rv:
                                 var ei = box_slice(heap, 1, 0);
                                 var ec = box_slice(heap, 1, 0);
                                 var ne = 0;
-                                if kd == kinds.step_hash() {
+                                let direct = dict.hash_buckets(rv, rc);
+                                if kd == kinds.step_hash() && direct > 0 {
+                                    // the ids are the buckets already: nothing to hash here
+                                    ne = 0;
+                                } else if kd == kinds.step_hash() {
                                     borrow mut tab as &!tv in {
                                         var id = 0;
                                         while id < vc {
@@ -582,7 +585,11 @@ pub fn apply[&h, &f, &i, &v](heap: &!h Heap, st: &f Fit, ids: &i catmat.Ids, rv:
                                                 }
                                             } else {
                                                 var e = 0 - 1;
-                                                if id >= 0 && id < vc {
+                                                if direct > 0 {
+                                                    if id >= 0 && id < direct {
+                                                        e = id;
+                                                    }
+                                                } else if id >= 0 && id < vc {
                                                     e = contents(tr)[id];
                                                 }
                                                 if e < 0 {
@@ -740,25 +747,6 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Fit, int) {
             return (empty(heap), bad);
         }
         nbytes = nbytes + nl;
-        // distinct from the names before it (re-read from the bytes: the names are not copied yet)
-        var q = 32;
-        var d2 = 0;
-        while d2 < c {
-            let ql = get32(data, q);
-            if ql == nl && bytes.equal(data[q + 4..q + 4 + ql], data[pos..pos + nl]) {
-                return (empty(heap), bad);
-            }
-            q = q + 4 + ql;
-            // skip the categories of column d2
-            let qc = get32(data, q);
-            q = q + 4;
-            var t2 = 0;
-            while t2 < qc {
-                q = q + 4 + get32(data, q) + 8;
-                t2 = t2 + 1;
-            }
-            d2 = d2 + 1;
-        }
         pos = pos + nl;
         let m = get32(data, pos);
         pos = pos + 4;
@@ -802,6 +790,42 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Fit, int) {
         c = c + 1;
     }
     if pos != n {
+        return (empty(heap), bad);
+    }
+    // the names are distinct: the places of the names (k <= 4096 of them, the structure being right) are walked once, then compared two by two
+    var nat = box_slice(heap, k + 1, 0);
+    var dup = false;
+    borrow mut nat as &!nw in {
+        var q = 32;
+        var c2 = 0;
+        while c2 < k {
+            let nl2 = get32(data, q);
+            contents(nw)[c2] = q + 4;
+            q = q + 4 + nl2;
+            let qc = get32(data, q);
+            q = q + 4;
+            var t2 = 0;
+            while t2 < qc {
+                q = q + 4 + get32(data, q) + 8;
+                t2 = t2 + 1;
+            }
+            c2 = c2 + 1;
+        }
+        var a2 = 1;
+        while a2 < k && !dup {
+            let la = get32(data, contents(nw)[a2] - 4);
+            var b2 = 0;
+            while b2 < a2 && !dup {
+                if get32(data, contents(nw)[b2] - 4) == la && bytes.equal(data[contents(nw)[a2]..contents(nw)[a2] + la], data[contents(nw)[b2]..contents(nw)[b2] + la]) {
+                    dup = true;
+                }
+                b2 = b2 + 1;
+            }
+            a2 = a2 + 1;
+        }
+    }
+    unbox_slice(heap, nat);
+    if dup {
         return (empty(heap), bad);
     }
     // second pass: the copies
@@ -868,9 +892,17 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Fit, int) {
     return (Fit { kind: kd, unknown: unknown, missing: missing, param: par, rows: rows, k: k, total: entries, names: names, nends: nends, counts: counts, first: first, ends: ends, pool: pool, cnt: cnt }, 0);
 }
 
-// The bytes of a step, alone: the step kind, u32 k and the vocabulary part (what stage 3 stores; the same bytes as the tail of the payload)
+// The bytes of a step, alone: the step kind, u32 k and the vocabulary part (what the string table stores; the same bytes as the tail of the payload)
 pub fn digest_input[&h, &f](heap: &!h Heap, st: &f Fit) -> [heap] buffer.Buffer {
     return encode_payload(heap, buffer.empty(heap, payload_size(st)), st);
+}
+
+// the number of effective categories of column c of a fitted step of kind 7 to 9 (the strings that reach min-count, and the bucket when one is merged)
+pub fn effective_count[&h, &f](heap: &!h Heap, st: &f Fit, c: int) -> [heap] int {
+    let (ei, ec, ne) = effective(heap, st, c, st.param);
+    unbox_slice(heap, ei);
+    unbox_slice(heap, ec);
+    return ne;
 }
 
 // the number of columns the block of column c of a fitted step takes in the output (one-hot: the effective categories; hash: the buckets; else 1)

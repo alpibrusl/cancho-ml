@@ -1,0 +1,22 @@
+module ml.bucket;
+
+import std.crypto;
+
+// The hash bucket of a category string (docs/categorical-encoders.md section 3.5): SHA-256 of the bytes of the cell, the first 8 bytes read big-endian as an
+// unsigned 64-bit integer, modulo b. One function for the encoder (transforms.catenc, which hashes the strings of a vocabulary) and for the reader of a stored
+// model (ml.csv, which hashes the cells of a file it has no vocabulary for: docs/stringtable.md section 5), so the two cannot differ.
+
+// the words of the digest state a caller allocates once and passes to every call
+pub fn state_len() -> [] int {
+    return crypto.sha256_state_len();
+}
+
+// state has state_len() words and dg 32 bytes. The unsigned modulo is taken from two 32-bit halves, so the sign bit of a 64-bit integer is never read.
+pub fn bucket_of[&a, &d, &s](state: &!a [int], dg: &!d [byte], text: &s [byte], b: int) -> [] int {
+    crypto.sha256_init(state);
+    crypto.sha256_update(state, text);
+    crypto.sha256_final(state, dg);
+    let hi = int_of(dg[0]) << 24 | int_of(dg[1]) << 16 | int_of(dg[2]) << 8 | int_of(dg[3]);
+    let lo = int_of(dg[4]) << 24 | int_of(dg[5]) << 16 | int_of(dg[6]) << 8 | int_of(dg[7]);
+    return (hi % b * (4294967296 % b) + lo % b) % b;
+}

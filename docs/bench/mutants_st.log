@@ -1,0 +1,67 @@
+frozen copy of commit 1d7a2c1, arm64
+control (unmutated): passes every gate
+s4-first-appearance                      KILLED   (order) order: DIFF table 1 fit refused with 1 threads: ['ml.model.string-table']
+l-table-layout-number                    KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [6]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-entries-count                          KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [6]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-pool-field                             KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [6]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-strings-field                          KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [6]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-na-not-stored                          KILLED   (diff,cli) diff: DIFF markers encoder 0 file bytes differ; sections that differ [6]; sizes got {1: 144, 2: 48, 3: 20, 4: 1204, 5: 7
+l-na-not-passed                          KILLED   (diff,cli) diff: DIFF markers encoder 0 file bytes differ; sections that differ [6]; sizes got {1: 144, 2: 48, 3: 20, 4: 1204, 5: 7
+l-limits-swapped                         KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [6]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-string-limit-constant                  KILLED   (diff,cli) diff: DIFF multibyte string at the limit encoder 1 file bytes differ; sections that differ [6]; sizes got {1: 155, 2: 48
+l-digest-span                            KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [6]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-step-number                            KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [6]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-entry-length                           KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [6]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-stub-layout                            KILLED   (diff,unit) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [3]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-schema-type                            KILLED   (diff,cli) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [2]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-meta-columns                           KILLED   (diff,roundtrip) diff: DIFF rare threshold 2 #2 file bytes differ; sections that differ [5]; sizes got {1: 153, 2: 48, 3: 20, 4: 308, 5: 
+l-table-always                           KILLED   (cli) cli: FAILED (failures=7, errors=8)
+b-strings-bound                          KILLED   (unit) unit tests/strtab.cho: test test_every_field_out_of_its_range_is_refused_with_its_reason ... FAILED
+b-pool-bound                             KILLED   (unit) unit tests/strtab.cho: test test_every_field_out_of_its_range_is_refused_with_its_reason ... FAILED
+b-table-bound                            KILLED   (unit) unit tests/strtab.cho: test test_the_size_of_the_table_and_the_markers_are_bounded_exactly ... FAILED
+b-entries-bound                          KILLED   (unit) unit tests/strtab.cho: test test_every_field_out_of_its_range_is_refused_with_its_reason ... FAILED
+b-na-bound                               KILLED   (unit) unit tests/strtab.cho: test test_the_markers_are_bounded_and_a_table_over_its_size_is_refused ... FAILED
+b-markers-bound                          KILLED   (unit) unit tests/strtab.cho: test test_the_size_of_the_table_and_the_markers_are_bounded_exactly ... FAILED
+b-marker-length                          KILLED   (unit) unit tests/strtab.cho: test test_the_size_of_the_table_and_the_markers_are_bounded_exactly ... FAILED
+b-size-compared-with-less-or-equal       KILLED   (unit) unit tests/strtab.cho: test test_the_size_of_the_table_and_the_markers_are_bounded_exactly ... FAILED
+b-digest-unchecked                       KILLED   (unit,fuzz) unit tests/strtab.cho: test test_the_digest_is_checked_first_and_every_flip_and_cut_is_refused ... FAILED; fuzz: DIFF li
+b-step-order                             KILLED   (unit,cli) unit tests/strtab.cho: test test_every_field_out_of_its_range_is_refused_with_its_reason ... FAILED; cli: FAILED (failur
+b-utf8-names                             KILLED   (unit,fuzz) unit tests/strtab.cho: test test_utf8_duplicate_names_totals_and_the_limits_of_the_fit_are_checked ... FAILED; fuzz: DIF
+b-utf8-strings                           KILLED   (unit,fuzz) unit tests/strtab.cho: test test_utf8_duplicate_names_totals_and_the_limits_of_the_fit_are_checked ... FAILED
+b-duplicate-names                        KILLED   (unit,fuzz) unit tests/strtab.cho: test test_utf8_duplicate_names_totals_and_the_limits_of_the_fit_are_checked ... FAILED; fuzz: DIF
+b-limit-categories                       KILLED   (unit) unit tests/strtab.cho: test test_utf8_duplicate_names_totals_and_the_limits_of_the_fit_are_checked ... FAILED
+b-limit-string-bytes                     KILLED   (unit) unit tests/strtab.cho: test test_utf8_duplicate_names_totals_and_the_limits_of_the_fit_are_checked ... FAILED
+b-totals                                 KILLED   (unit) unit tests/strtab.cho: test test_utf8_duplicate_names_totals_and_the_limits_of_the_fit_are_checked ... FAILED
+b-limit-pool                             KILLED   (unit) unit tests/strtab.cho: test test_utf8_duplicate_names_totals_and_the_limits_of_the_fit_are_checked ... FAILED
+b-limit-columns                          KILLED   (unit) unit tests/strtab.cho: test test_utf8_duplicate_names_totals_and_the_limits_of_the_fit_are_checked ... FAILED
+b-limit-columns-in-the-loop              SURVIVED, explained: equivalent in verdict: the final comparison gives the same reason; the check in the loop exists to stop the quadratic comparison of names be
+b-join-step-of-the-entry                 KILLED   (unit) unit tests/strtab.cho: test test_the_stubs_must_be_at_the_steps_of_the_entries ... FAILED
+b-join-kind                              KILLED   (unit) unit tests/strtab.cho: test test_a_stub_without_its_entry_or_an_entry_without_its_stub_is_refused ... FAILED
+b-join-left-over-entries                 KILLED   (unit) unit tests/strtab.cho: test test_a_stub_without_its_entry_or_an_entry_without_its_stub_is_refused ... FAILED
+f-six-sections-routing                   KILLED   (cli) cli: FAILED (failures=1)
+f-type3-without-table                    KILLED   (cli) cli: FAILED (failures=1)
+f-table-without-type3                    SURVIVED, explained: equivalent in verdict: the comparison of the names of the table with the type 3 columns refuses the same file with the same reason (schema);
+f-schema-names-against-table             KILLED   (cli,fuzz) cli: FAILED (failures=1)
+f-plan-against-steps-skipped             KILLED   (cli) cli: FAILED (errors=2)
+f-plan-missing-mode                      KILLED   (cli) cli: FAILED (errors=1)
+f-plan-min-count                         KILLED   (cli) cli: FAILED (errors=2)
+f-plan-max-categories                    KILLED   (cli) cli: FAILED (errors=1)
+f-plan-listed-columns                    KILLED   (cli) cli: FAILED (errors=1)
+f-label-range                            KILLED   (cli) cli: FAILED (failures=1)
+r-hash-mode-off                          KILLED   (predict,cli) predict: DIFF table 23 unknown_categories 15, the oracle counts 0; plan 'hash column=c0 buckets=16'; cli: FAILED (failur
+r-hash-bucket-wrong                      KILLED   (predict,unit) predict: DIFF hash model string b'a b' bucket 19: predicted 1.0690074379850882, intercept + coefficient -0.6204546401776
+r-hash-id-range                          KILLED   (predict,unit) unit tests/strtab.cho: test test_the_ids_of_a_hashed_column_are_buckets_and_none_outside_them_is_placed ... FAILED
+r-hash-buckets-check                     KILLED   (predict,cli) predict: DIFF table 21 the oracle says p-refused ml.input.unknown-category 3 -1 2, the tool {'code': 'PRECONDITION_FAILE
+r-markers-ignored                        KILLED   (predict,cli) predict: DIFF table 35 the oracle says p-refused ml.input.unknown-category 4 -2 2, the tool {'code': 'PRECONDITION_FAILE
+r-string-limit-ignored                   KILLED   (cli) cli: FAILED (failures=1)
+r-by-position                            KILLED   (roundtrip,cli) roundtrip: DIFF tree reordered eval of the held-out rows as a file {'rmse': '2.0883938137083433', 'mae': '1.712932226652
+r-numeric-by-position                    KILLED   (align) align: DIFF linear onehot permutation 5 the answer differs from the file in the fitted order ([])
+r-missing-column-is-a-reader-refusal     KILLED   (align,cli) align: DIFF logistic dropped categorical answered {'code': 'PRECONDITION_FAILED', 'rule': 'ml.schema.mismatch', 'message
+r-unseen-hash-counted                    KILLED   (predict) predict: DIFF table 23 unknown_categories 15, the oracle counts 0; plan 'hash column=c0 buckets=16'
+r-set-hash-minimum                       KILLED   (cli,predict) cli: FAILED (failures=1); predict: DIFF table 173 unknown_categories 20, the oracle counts 0; plan 'hash\tcolumn=c0,c1,c
+r-decode-duplicate-names                 KILLED   (unit) unit tests/strtab.cho: test test_a_payload_with_one_name_twice_is_refused_by_the_decoder ... FAILED
+p-hash-stores-strings                    KILLED   (privacy) privacy: DIFF tree 'encode column=c0 kind=onehot min-count=3; hash column=c1,c2 buckets=3' fit refused: ['ml.model.strin
+t-code-reused                            KILLED   (unit,registry) unit tests/strtab.cho: test test_the_reasons_have_words_and_the_codes_are_registered ... FAILED
+60 killed, 2 survived and explained, 0 unexplained or invalid
+EXIT 0
+Wed Oct 14 13:12:27 CEST 2026

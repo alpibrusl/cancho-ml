@@ -546,7 +546,7 @@ fn main(world: World) -> [] int {
             borrow mut io as &!ip in {
                 borrow fs as &fr in {
                     if mode == 3 {
-                        let cc = csv.CatCfg { cols: cats, na: nas, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols };
+                        let cc = csv.CatCfg { cols: cats, na: nas, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
                         code = cat_mode(hp, ip, fr, file, file2, skip2, cfg, cc, target);
                     } else if mode == 0 {
                         code = shape_only(hp, ip, fr, file, cfg);

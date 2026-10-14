@@ -63,7 +63,7 @@ M = [
     ("log-proba-branch", LOG, "    if z >= 0.0 {\n        return 1.0 / (1.0 + e);\n    }\n    return e / (1.0 + e);", "    if z >= 0.0 {\n        return e / (1.0 + e);\n    }\n    return 1.0 / (1.0 + e);"),
     ("log-exp-table", MX, "return y * pow2tab[k + 1075];", "return y * pow2tab[k + 1074];"),
     # ---- the logistic payload and its labels (docs/wiring.md section 4, added at W1)
-    ("rec-labels-equal-accepted", RC, "    if a == b {\n        return decoded(1, 0, 0, at);", "    if a == b {\n        return decoded(0, a, b, at + 32);"),
+    ("rec-labels-equal-accepted", RC, "    if a == b || a < 0 - label_max()", "    if a < 0 - label_max()"),
     ("rec-labels-dtype-unchecked", RC, "    if get32(src, at) != dtype_i64() || get32(src, at + 4) != 1 ||", "    if get32(src, at + 4) != 1 ||"),
     ("rec-labels-swapped", RC, "    return decoded(0, a, b, at + 32);", "    return decoded(0, b, a, at + 32);"),
     ("rec-payload-trailing-bytes-ok", RC, "    if !labels {\n        if r2.end != len(src) {", "    if !labels {\n        if false {"),

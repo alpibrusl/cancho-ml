@@ -9,7 +9,7 @@ Stage 1 of four. This stage reads **declared** text columns into a bounded dicti
 encode anything (stage 2), store anything in a model file (stage 3) or split on categories (stage 4). *Stage 2 is built (`docs/categorical-encoders.md`): the steps
 `encode`, `freq` and `hash` read these columns, and the sections below that say "until stage 2" describe stage 1 as it was merged; `ml.input.categorical-not-encoded` now
 names the declared columns that no step of a planned model reads, and is still what `--model constant` answers (it has no steps).* The dictionary and the ids are reached
-through the library, the loader API (section 7) and `reader-check`, which is how the gates see them.
+through the library, the loader API (section 7) and `reader-check`, which is how the gates see them. *Stage 3 is built (`docs/stringtable.md`): the model file stores the vocabulary of every categorical step in a string table, `fit` writes it, and `predict` and `eval` read the text columns from it; sections that say "until stage 3" or "this stage writes no file" describe stage 1 as it was merged.*
 
 ## 1. The gates (fixed before the code; each can fail, section 9 shows it failing)
 
@@ -50,9 +50,9 @@ declared, or it is refused.** The same mechanism is extended: a flag that takes 
 
 `--na-values` and the four limits without `--cat` are `args.conflict` (a limit that governs nothing is a mistake the caller should hear about). They are **fit
 flags**: `predict` and `eval` take none of them. The reason is the same for all: what a model needs to read a text column again (which columns, which
-strings, which markers) is stored with it from stage 3, and a flag on `predict` would be a second source of truth that could differ from the fit's
-(`docs/wiring.md` W2 for the same rule about plans). Until stage 3 no model holds a categorical column, and `predict`/`eval` of a file with a text column are
-refused as before (`ml.input.non-numeric`, whose repair is `--drop`).
+strings, which markers) is stored with it in the string table (`docs/stringtable.md`), and a flag on `predict` would be a second source of truth that could differ from the fit's
+(`docs/wiring.md` W2 for the same rule about plans). A model file with a string table holds the categorical columns, and `predict`/`eval` read them from it; a model
+file without one takes no text column (`ml.input.non-numeric`, whose repair is `--drop`).
 
 **Why not a type suffix in the header or a `NAME:cat` spelling [choice].** cancho-table types a column in its `--agg` and `--where` operands (`c0:float`).
 `ml` has never typed columns in a header or in an operand; it names them in a flag (`--float`, `--drop`). A new spelling would be a second mechanism for
@@ -83,7 +83,7 @@ unchanged, in file order. Beside it:
   forgets the bitmap meets a negative index and traps in a test, not a valid category.
 
 The shape's kind of a categorical column is **4** (`csv.kind`; 0 none, 1 int, 2 dec, 3 float; the 4 the reader reserved, `docs/wiring.md` section 3). The schema type
-code 3, reserved by the same section, is the file's code for it and stage 3 writes it; this stage writes no file. Both numbers are in `lib/core/kinds.cho`
+code 3, reserved by the same section, is the file's code for it; the model file of a categorical fit writes it (`docs/stringtable.md` section 3). Both numbers are in `lib/core/kinds.cho`
 (`column_*`) so two stages cannot claim them.
 
 **Interning is a sorted array, not a hash [choice].** A column's dictionary during the first pass is a sorted array of at most `--max-categories` entries
@@ -184,7 +184,7 @@ load_cat(heap, fs, root, rel, full, cfg, cat: csv.CatCfg, target, skip, vocab: O
 ```
 
 * **Fit** (`vocab` none): the categorical columns are those named in `cat.cols`. Pass 1 builds the dictionaries; `dict.freeze` returns the `Vocab`; pass 2
-  fills the matrix and the ids. The `Vocab` is returned to the caller: the one fit-time value stage 3 stores.
+  fills the matrix and the ids. The `Vocab` is returned to the caller: the fit-time value from which the string table is made (as the `FitVocab` of each step).
 * **Predict** (`vocab` given): the categorical columns are the vocabulary's **by name**, whatever `cat.cols` says; the cells are checked as at fit (steps 1 to
   5 of section 5.1, so invalid UTF-8 and a long cell are refused the same way) and then looked up in the **stored** vocabulary: a string it holds is its id; a string
   it does not is **-2, counted per column, never added**; the vocabulary is read-only and the columns may be in another order than at fit. A vocabulary column
@@ -193,7 +193,7 @@ load_cat(heap, fs, root, rel, full, cfg, cat: csv.CatCfg, target, skip, vocab: O
 * The **in-memory round trip** is tested: fit on `FILE`, read `FILE` through its own vocabulary and get the ids of the fit; read `FILE2` and get Python's.
 * `Vocab` has the accessors a serialiser needs (`ncols`, `name`, `count`, `string`) and `dict.dump`, the **canonical byte form used by the gates**
   (`u32` column count; per column `u32` name length, name, `u32` category count, per category `u32` length, bytes; little endian). It is a dump for hashing and
-  diffing. **It is not the model file format and does not decide it**: stage 3 owns the section, its checksum and its bounds.
+  diffing. **It is not the model file format and does not decide it**: the string table (`docs/stringtable.md`) owns the section, its checksum and its bounds.
 
 ## 8. The command line in this stage
 
@@ -244,8 +244,8 @@ mutant was redefined to keep the lookups consistent and the first definition was
 **What the gates do not claim.** The oracle is written by the same author from the same document, with its own reading of RFC 4180 but the same understanding of the cell rules: it checks the
 code against the document, not the document against the world. Python's `bytes` order and strict UTF-8 decoder are the outside references for sorting and validity. The numeric columns beside the categorical ones are
 compared only for ints and short decimals (the numeric reader has its own gates, RD2 to RD9, all re-run by `scripts/check.sh` and unchanged). Nothing was run on a second machine, with more than one
-thread (the reader is single-threaded), or on data that ships with the tools (stage 5 of the issue). The command line never writes a model for a categorical column in this stage, so a model file with a
-vocabulary does not exist to be damaged: the damaged-file fuzz is stage 3.
+thread (the reader is single-threaded), or on data that ships with the tools (stage 5 of the issue). The command line writes no model for a categorical column in this stage, so a model file with a
+vocabulary does not exist to be damaged here: the damaged-file fuzz of the string table is gate S10 of `docs/stringtable.md`.
 
 **The one step of `scripts/check.sh` that does not exit 0 on this branch alone** is `scripts/check_docs.sh`: `scripts/site.py --check` compares the generated blocks of `README.md` and `docs/index.html`
 with the binary, and the counts they print (`flags 29`, `limits 9`, `rules 67`, and the tables of limits and rules in the page) are now 35, 13 and 72. This branch does not edit those two pages (another
@@ -260,5 +260,17 @@ branch does); after they are merged, `python3 scripts/site.py` rewrites exactly 
    be a categorical column (the schema has the kind 4 for it); `--cat` is the only way a column becomes categorical.
 2. **Whether `encode`'s own `max-categories` should remain** now that the reader holds a bound of the same name. *Answered at stage 2 (`categorical-encoders.md` section 3.1): both stay and they compose. The reader's bound limits the distinct strings it will intern; the step's bound limits the effective categories after the rare bucket, so `min-count` can bring a column of 500 strings under a step bound of 32.*
 3. **Empty as a category** (the issue's "unless declared otherwise") is not built (section 2).
-4. **`--na-values` for numeric columns** is not built: the stored model cannot carry markers until stage 3, and a marker honoured at fit and not at predict would skew silently.
+4. **`--na-values` for numeric columns** is not built: the string table stores the markers of the categorical columns of a fit, a numeric column has no place for them in the file, and a marker honoured at fit and not at predict would skew silently.
 5. **Speed of the sorted array** is not measured.
+
+## 11. Privacy of a stored vocabulary
+
+The model file of a fit with categorical steps holds the **raw category strings of the training rows**, each with its count, in the string table (`docs/stringtable.md`),
+together with the column names and the `--na-values` markers: whoever has the file has those values. This is the decision of the issue (alpibrusl/cancho-ml#21: raw
+strings may be stored, documented as a privacy point). The options:
+
+* `hash` stores no string: its entry holds the column's name and the number of buckets, and `predict` and `eval` hash the cells they read (gate S9 searches the file for every
+  category of a hashed column and finds none).
+* `encode min-count=N` and `freq` still store every distinct string, the merged ones too, because the counts that decide the bucket are part of the fitted state.
+* The reader's own dictionary exists only while `fit` reads the file; a hashed column is interned there, so `--max-categories` bounds it, though the file stores none of its strings.
+* A pipeline that must not carry its category values hashes them, or removes the column with `--drop`.

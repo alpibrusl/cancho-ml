@@ -197,7 +197,12 @@ pub fn encode_labels[&d](dst: &!d [byte], at: int, c0: int, c1: int) -> [] int {
     return at + 32;
 }
 
-// the labels record at `at`: (ok, c0, c1, end). The two labels differ.
+// the largest class label: 999,999,999,999
+pub fn label_max() -> [] int {
+    return 999999999999;
+}
+
+// the labels record at `at`: (ok, c0, c1, end). The two labels differ and are within +- label_max().
 pub fn decode_labels[&s](src: &s [byte], at: int) -> [] Decoded {
     if at < 0 || len(src) - at < 32 {
         return decoded(1, 0, 0, at);
@@ -207,7 +212,9 @@ pub fn decode_labels[&s](src: &s [byte], at: int) -> [] Decoded {
     }
     let a = fbits.get64(src, at + 16);
     let b = fbits.get64(src, at + 24);
-    if a == b {
+    // a label is an integer column's value: at most 12 digits (a longer integer column is a float and is no class label), so a file with a label past that was not written by fit
+    // and its printing (which negates the label) cannot overflow
+    if a == b || a < 0 - label_max() || a > label_max() || b < 0 - label_max() || b > label_max() {
         return decoded(1, 0, 0, at);
     }
     return decoded(0, a, b, at + 32);

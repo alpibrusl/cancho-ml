@@ -403,9 +403,35 @@ EBASE = BASE + [("write", "enc.csv", ENCT)]
 FIT_ENC = ["fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", "sex,port", "--output", "m.cml"]
 
 
+WIDE_N = 129
+WIDE_NAMES = ",".join("c%03d" % j for j in range(WIDE_N))
+WIDE_CSV = "id," + WIDE_NAMES + ",y\n" + "".join("%d,%s,%d\n" % (r, ",".join("v%04d" % r for _ in range(WIDE_N)), r % 7) for r in range(1024))
+
+
+def table_digest_off(d):
+    """a byte of the string table changed and the checksum of the file repaired: the digest of the table no longer matches (reason digest)"""
+    s = sections(d)[5]
+    return fix_checksum(set_bytes(d, s[1] + 40, bytes([d[s[1] + 40] ^ 1])))
+
+
 def _enc_cases():
     return [
-        case("ml-model-vocabulary-not-stored", FIT_ENC + ["--step", "encode column=sex,port kind=onehot", "enc.csv"], bad("ml.model.vocabulary-not-stored"), setup=EBASE),
+        case("fit-linear-categorical-writes-the-file", FIT_ENC + ["--step", "encode column=sex,port kind=onehot", "enc.csv"],
+             ok({"model": "linear", "written": True, "path": "m.cml", "summary": {"steps": 1, "string_table": {"entries": 1, "strings": 6}}}), setup=EBASE),
+        case("predict-from-a-categorical-model-file", ["predict", "--model-file", "m.cml", "--drop", "id", "enc.csv"],
+             ok({"model": "linear", "columns": ["prediction"], "row_count": 8, "total_rows": 8, "unknown_categories": 0}),
+             setup=EBASE + [("fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", "sex,port", "--drop", "id", "--step", "encode column=sex,port kind=onehot", "--output", "m.cml", "enc.csv")]),
+        case("eval-from-a-categorical-model-file", ["eval", "--model-file", "m.cml", "--drop", "id", "enc.csv"],
+             ok({"model": "linear", "task": "regression", "rows": 8, "unknown_categories": 0}),
+             setup=EBASE + [("fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", "sex,port", "--drop", "id", "--step", "encode column=sex,port kind=onehot", "--output", "m.cml", "enc.csv")]),
+        case("ml-schema-mismatch-categorical-column-missing", ["predict", "--model-file", "m.cml", "--drop", "id", "nocat.csv"], bad("ml.schema.mismatch"),
+             setup=EBASE + [("write", "nocat.csv", "id,sex,age\n1,male,20\n2,female,30\n"),
+                            ("fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", "sex,port", "--drop", "id", "--step", "encode column=sex,port kind=onehot", "--output", "m.cml", "enc.csv")]),
+        case("ml-model-string-table-digest", ["predict", "--model-file", "bad.cml", "--drop", "id", "enc.csv"], bad("ml.model.string-table"),
+             setup=EBASE + [("fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", "sex,port", "--drop", "id", "--step", "encode column=sex,port kind=onehot", "--output", "m.cml", "enc.csv"),
+                            ("mutate", "m.cml", "bad.cml", table_digest_off)]),
+        case("ml-limit-string-table", ["fit", "--model", "tree", "--task", "regression", "--target", "y", "--cat", WIDE_NAMES, "--max-categories", "1024", "--max-cat-columns", "200",
+                                       "--step", "freq column=* max-categories=1024", "--output", "m.cml", "wide.csv"], bad("ml.limit.string-table"), setup=BASE + [("write", "wide.csv", WIDE_CSV)]),
         case("ml-plan-column-kind-numeric-step-on-a-categorical-column", FIT_ENC + ["--step", "scale column=sex kind=standard", "enc.csv"], bad("ml.plan.column-kind"), setup=EBASE),
         case("ml-plan-column-kind-freq-on-a-numeric-column", FIT_ENC + ["--step", "freq column=age", "enc.csv"], bad("ml.plan.column-kind"), setup=EBASE),
         case("ml-input-reserved-category", FIT_ENC + ["--step", "encode column=sex,port kind=onehot min-count=2", "--split", "train=0.75", "enc.csv"], bad("ml.input.reserved-category"), setup=EBASE),
@@ -496,18 +522,20 @@ ENC_STEP = ["--cat", "sex,port", "--step", "encode column=sex,port kind=onehot"]
 
 def _enc_tree_cases():
     return [
-        case("ml-model-vocabulary-not-stored-tree", ["fit", "--model", "tree", "--target", "y"] + ENC_STEP + ["--output", "m.cml", "encc.csv"],
-             bad("ml.model.vocabulary-not-stored"), setup=ECBASE),
-        case("ml-model-vocabulary-not-stored-forest", ["fit", "--model", "forest", "--task", "classification", "--target", "y"] + ENC_STEP + ["--output", "m.cml", "encc.csv"],
-             bad("ml.model.vocabulary-not-stored"), setup=ECBASE),
+        case("fit-tree-categorical-writes-the-file", ["fit", "--model", "tree", "--target", "y"] + ENC_STEP + ["--output", "m.cml", "encc.csv"],
+             ok({"model": "tree", "written": True, "path": "m.cml", "summary": {"steps": 1, "features": 7, "string_table": {"entries": 1, "strings": 5}}}), setup=ECBASE),
+        case("fit-forest-categorical-writes-the-file", ["fit", "--model", "forest", "--task", "classification", "--target", "y"] + ENC_STEP + ["--output", "m.cml", "encc.csv"],
+             ok({"model": "forest", "task": "classification", "written": True, "path": "m.cml", "summary": {"string_table": {"entries": 1, "strings": 5}}}), setup=ECBASE),
         case("fit-forest-categorical-split-scores-held-out-rows", ["fit", "--model", "forest", "--task", "classification", "--trees", "5", "--target", "y"] + ENC_STEP
              + ["--split", "train=0.67", "--output", "m.cml", "encc.csv"],
-             ok({"model": "forest", "task": "classification", "written": False,
+             ok({"model": "forest", "task": "classification", "written": True, "path": "m.cml",
                  "summary": {"steps": 1, "features": 7, "classes": [0, 1], "forest": {"trees": 5}, "split": {"train": 8, "test": 4}, "holdout": {"rows": 4}}}), setup=ECBASE),
         case("fit-tree-categorical-split-takes-a-missing-cell", ["fit", "--model", "tree", "--target", "y"] + ENC_STEP + ["--split", "train=0.5", "--output", "m.cml", "encm.csv"],
-             ok({"model": "tree", "task": "regression", "written": False, "summary": {"split": {"train": 4, "test": 4}}}), setup=ECBASE),
+             ok({"model": "tree", "task": "regression", "written": True, "summary": {"split": {"train": 4, "test": 4}}}), setup=ECBASE),
         case("fit-tree-categorical-dry-run", ["fit", "--model", "tree", "--target", "y"] + ENC_STEP + ["--dry-run", "--output", "m.cml", "encc.csv"],
              ok({"model": "tree", "written": False}, exit=9, dry_run=True, no_file="m.cml"), setup=ECBASE),
+        case("predict-from-a-categorical-tree-file", ["predict", "--model-file", "m.cml", "--drop", "id", "encc.csv"],
+             ok({"model": "tree", "row_count": 12, "unknown_categories": 0}), setup=ECBASE + [("fit", "--model", "tree", "--target", "y", "--drop", "id", "--cat", "sex,port", "--step", "encode column=sex,port kind=onehot", "--output", "m.cml", "encc.csv")]),
     ]
 
 

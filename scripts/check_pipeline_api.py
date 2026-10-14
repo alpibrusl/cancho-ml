@@ -2,7 +2,7 @@
 """Gate P5(a) and (b) (docs/pipeline.md): there is no code path that applies a plan without its stored parameters.
 
 Read from the sources (no compiler):
-  1. a `pub fn` that takes a `plan.Plan` is one of the allow-list: the fit (`run.fit`), the check that a plan describes stored steps (`run.agrees`),
+  1. a `pub fn` that takes a `plan.Plan` is one of the allow-list: the fit (`run.fit`), the check that a plan describes stored steps (`run.agrees`, `run.agrees_step`, `mixed.agrees`),
      the plan's own accessors (module `pipeline.plan`) -- nothing else, in particular no function that also takes steps bytes or a Step and returns a matrix;
   2. the apply functions (`transforms.apply.apply`, `run.apply_steps`) do not mention `plan.`, `fit.` or `Plan` in their bodies, and their modules do
      not import `transforms.fit` or `pipeline.plan` (apply.cho) -- the parameters of an apply can only come from the stored bytes it is given;
@@ -33,7 +33,7 @@ def pub_fns(path):
 
 files = {"transforms/apply.cho": "apply", "transforms/fit.cho": "fit", "transforms/steps.cho": "steps", "pipeline/run.cho": "run", "pipeline/file.cho": "file", "pipeline/plan.cho": "plan", "pipeline/schema.cho": "schema", "pipeline/names.cho": "names", "pipeline/mixed.cho": "mixed", "transforms/catenc.cho": "catenc"}
 # the mixed pipeline (docs/categorical-encoders.md) has its own fit, and the numeric fit's column resolver is shared with it
-ALLOW_PLAN_PARAM = {("run", "fit"), ("run", "agrees"), ("run", "resolve"), ("mixed", "fit")}
+ALLOW_PLAN_PARAM = {("run", "fit"), ("run", "agrees"), ("run", "agrees_step"), ("run", "resolve"), ("mixed", "fit"), ("mixed", "agrees")}
 # result holds a matrix: (module, function) -> kind
 MATRIX_FNS = {("apply", "apply"): "apply", ("run", "apply_steps"): "apply", ("run", "fit"): "fit", ("run", "clone"): "copy", ("run", "permute"): "copy",
              ("mixed", "fit"): "fit", ("mixed", "apply_steps"): "apply", ("mixed", "hstack"): "copy", ("catenc", "apply"): "apply"}

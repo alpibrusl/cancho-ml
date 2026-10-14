@@ -148,6 +148,12 @@ pub fn cat_load_parts(l: CatLoad) -> [] (matrix.Matrix, catmat.Ids, dict.Vocab, 
 // string it does not hold is id -2 and counted, nothing is added to it. Either way the vocabulary comes back in the answer (an empty one when the read
 // was refused). `skip` is as in load_t (the target is not a column of the matrix).
 pub fn load_cat[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], skip: bool, vocab: dict.Vocab, given: bool) -> [heap, fs_read(""), dir_read, file_read] CatLoad {
+    return load_cat_with(heap, fs, root, rel, full, cfg, cc, target, skip, vocab, given, "");
+}
+
+// The same for a stored model (given true): `na` are the markers of the model file (docs/stringtable.md section 2), applied beside cc.na, and a column of the
+// vocabulary that is marked as hashed (ml.dict.hash_buckets) is read by hashing its cells (section 5).
+pub fn load_cat_with[&h, &f, &r, &pf, &pq, &t, &n](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], skip: bool, vocab: dict.Vocab, given: bool, na: &n [byte]) -> [heap, fs_read(""), dir_read, file_read] CatLoad {
     var m1 = 0;
     var m2 = 8;
     if skip {
@@ -158,7 +164,7 @@ pub fn load_cat[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &
     var st1 = csv.build_state(heap);
     if given {
         csv.drop_state(heap, st1);
-        st1 = csv.lookup_state(heap, 3, vocab, box_slice(heap, 1, 0), box_slice(heap, 1, 0), box_slice(heap, 1, 0), 0, 0, 0);
+        st1 = csv.set_markers(heap, csv.lookup_state(heap, 3, vocab, box_slice(heap, 1, 0), box_slice(heap, 1, 0), box_slice(heap, 1, 0), 0, 0, 0), na);
     } else {
         dict.drop_vocab(heap, vocab);
     }
@@ -169,7 +175,7 @@ pub fn load_cat[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &
         return CatLoad { x: matrix.empty(heap), ids: catmat.empty(heap), voc: dict.empty_vocab(heap), sh: sh, rep: rep, code: 0 };
     }
     // the vocabulary: built from the dictionary (fit), or taken back from the state (predict)
-    let (kind1, bld, voc0, ia, ib, ic) = csv.state_parts(s1);
+    let (kind1, bld, voc0, ia, ib, ic) = csv.state_parts(heap, s1);
     unbox_slice(heap, ia);
     unbox_slice(heap, ib);
     unbox_slice(heap, ic);
@@ -219,13 +225,16 @@ pub fn load_cat[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &
     if given {
         kind2 = 3;
     }
-    let st2 = csv.lookup_state(heap, kind2, voc, ids, cmiss, unseen, icols, irows, iwpc);
+    var st2 = csv.lookup_state(heap, kind2, voc, ids, cmiss, unseen, icols, irows, iwpc);
+    if given {
+        st2 = csv.set_markers(heap, st2, na);
+    }
     let (sh2, rep2, sk2, s2) = pass_cat(heap, fs, root, rel, full, c2, cc, target, csv.sinks(heap, 8, false, data, miss), st2);
     csv.drop_shape(heap, sh2);
     let (a2, f2, d2, m2s) = csv.sink_parts(sk2);
     unbox_slice(heap, a2);
     vec.drop(heap, f2);
-    let (kind3, bld3, voc3, ids3, cmiss3, unseen3) = csv.state_parts(s2);
+    let (kind3, bld3, voc3, ids3, cmiss3, unseen3) = csv.state_parts(heap, s2);
     dict.drop(heap, bld3);
     return CatLoad { x: matrix.assemble(t, d2, m2s, mrows, mcols, wpc), ids: catmat.assemble(it, ids3, cmiss3, unseen3, irows, icols, iwpc), voc: voc3, sh: sh, rep: rep2, code: 0 };
 }

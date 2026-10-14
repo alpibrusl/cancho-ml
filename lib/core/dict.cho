@@ -83,6 +83,8 @@ pub res struct Vocab {
     // total entries: where each string ends in the pool (it starts where the one before ends)
     ends: Box[[int]],
     pool: Box[[byte]],
+    // per column: 0 for a column of strings, else the number of buckets of a column the reader hashes without interning (docs/stringtable.md section 5)
+    hashb: Box[[int]],
 }
 
 // ---------------------------------------------------------------- UTF-8
@@ -247,17 +249,18 @@ pub fn intern[&d, &c](d: &!d Dict, col: int, cell: &c [byte]) -> [] int {
 // ---------------------------------------------------------------- the vocabulary
 
 pub fn empty_vocab[&h](heap: &!h Heap) -> [heap] Vocab {
-    return Vocab { ncols: 0, total: 0, names: box_slice(heap, 1, byte_of(0)), nends: box_slice(heap, 1, 0), counts: box_slice(heap, 1, 0), first: box_slice(heap, 1, 0), ends: box_slice(heap, 1, 0), pool: box_slice(heap, 1, byte_of(0)) };
+    return Vocab { ncols: 0, total: 0, names: box_slice(heap, 1, byte_of(0)), nends: box_slice(heap, 1, 0), counts: box_slice(heap, 1, 0), first: box_slice(heap, 1, 0), ends: box_slice(heap, 1, 0), pool: box_slice(heap, 1, byte_of(0)), hashb: box_slice(heap, 1, 0) };
 }
 
 pub fn drop_vocab[&h](heap: &!h Heap, v: Vocab) -> [heap] int {
-    let Vocab { ncols, total, names, nends, counts, first, ends, pool } = v;
+    let Vocab { ncols, total, names, nends, counts, first, ends, pool, hashb } = v;
     unbox_slice(heap, names);
     unbox_slice(heap, nends);
     unbox_slice(heap, counts);
     unbox_slice(heap, first);
     unbox_slice(heap, ends);
     unbox_slice(heap, pool);
+    unbox_slice(heap, hashb);
     return ncols;
 }
 
@@ -324,7 +327,7 @@ pub fn freeze[&h](heap: &!h Heap, d: Dict) -> [heap] Vocab {
             }
         }
         drop_vocab(heap, v);
-        v = Vocab { ncols: dr.ncols, total: total, names: names, nends: nends, counts: counts, first: first, ends: ends, pool: pool };
+        v = Vocab { ncols: dr.ncols, total: total, names: names, nends: nends, counts: counts, first: first, ends: ends, pool: pool, hashb: box_slice(heap, dr.ncols + 1, 0) };
     }
     drop(heap, d);
     return v;
@@ -336,6 +339,20 @@ pub fn ncols[&v](v: &v Vocab) -> [] int {
 
 pub fn total[&v](v: &v Vocab) -> [] int {
     return v.total;
+}
+
+// the number of buckets of column c when the reader hashes its cells (0: the column holds strings)
+pub fn hash_buckets[&v](v: &v Vocab, c: int) -> [] int {
+    return contents(v.hashb)[c];
+}
+
+// make column c (which holds no string) a hashed column of b buckets; false if c is out of range or the column holds strings
+pub fn set_hash[&v](v: &!v Vocab, c: int, b: int) -> [] bool {
+    if c < 0 || c >= v.ncols || contents(v.counts)[c] != 0 || b < 2 {
+        return false;
+    }
+    contents(v.hashb)[c] = b;
+    return true;
 }
 
 pub fn count[&v](v: &v Vocab, c: int) -> [] int {
@@ -392,7 +409,7 @@ pub fn find[&v, &w](v: &v Vocab, c: int, cell: &w [byte]) -> [] int {
 }
 
 // Whether the pieces are what `freeze` writes: counts non-negative and adding up, ends non-decreasing inside the pool, names inside theirs, every column
-// strictly ascending and with no empty string. A vocabulary read from a file (stage 3) is checked with this before it is used.
+// strictly ascending and with no empty string. The vocabulary of a stored model is built from its string table by pipeline.mixed.vocab_of, whose strings the table decoder has already checked.
 pub fn valid[&v](v: &v Vocab) -> [] bool {
     var c = 0;
     var e = 0;

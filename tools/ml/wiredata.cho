@@ -25,6 +25,7 @@ import metrics.rules;
 import pipeline.names;
 import pipeline.schema;
 import transforms.codes;
+import transforms.strtab;
 import tree.deny;
 import tree.params;
 import toolbox.fail;
@@ -117,6 +118,22 @@ pub fn code_error[&h](heap: &!h Heap, errs: fail.Errors, code: int, a: int, b: i
         if a == 3 {
             w = fail.detail_int(heap, w, "step", b);
         }
+    } else if code == codes.string_table() {
+        w = fail.detail_str(heap, w, "reason", strtab.reason_word(a));
+        w = fail.detail_int(heap, w, "section", 6);
+        if b > 0 {
+            w = fail.detail_int(heap, w, "step", b);
+        }
+    } else if code == codes.limit_string_table() {
+        var what: &static [byte] = "bytes";
+        if a == 1 {
+            what = "strings";
+        } else if a == 2 {
+            what = "pool_bytes";
+        }
+        w = fail.detail_str(heap, w, "what", what);
+        w = fail.detail_int(heap, w, "size", b);
+        w = fail.detail_int(heap, w, "max", c);
     }
     return fail.add(heap, errs, w);
 }
@@ -534,6 +551,13 @@ pub fn file_fault[&h, &p](heap: &!h Heap, errs: fail.Errors, f: codes.Fault, sho
     }
     if f.code == codes.malformed() {
         w = fail.detail_int(heap, w, "section", f.a);
+    }
+    if f.code == codes.string_table() {
+        w = fail.detail_str(heap, w, "reason", strtab.reason_word(f.a));
+        w = fail.detail_int(heap, w, "section", 6);
+        if f.b > 0 {
+            w = fail.detail_int(heap, w, "step", f.b);
+        }
     }
     return fail.add(heap, errs, w);
 }

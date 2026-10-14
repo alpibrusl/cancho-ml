@@ -39,6 +39,7 @@ import pipeline.plan;
 import pipeline.run;
 import pipeline.schema;
 import transforms.codes;
+import transforms.strtab;
 import tree.params;
 import toolbox.built;
 import toolbox.cli;
@@ -877,7 +878,7 @@ fn put_forest[&h, &b](heap: &!h Heap, w0: json.Writer, blob: &b [byte]) -> [heap
     return w;
 }
 
-fn fit_summary[&h, &pp, &dd, &sp](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.Plan, kind: int, task: int, c0: int, c1: int, split: &sp buffer.Buffer, ntest: int, o: verbs.Opts, cat: bool) -> [heap] buffer.Buffer {
+fn fit_summary[&h, &pp, &dd, &sp, &tb](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.Plan, kind: int, task: int, c0: int, c1: int, split: &sp buffer.Buffer, ntest: int, o: verbs.Opts, cat: bool, table: &tb [byte]) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 512);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "plan");
@@ -886,6 +887,7 @@ fn fit_summary[&h, &pp, &dd, &sp](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.
     w = json.put_int(heap, w, tr.fitted.n);
     if cat {
         w = catwire.put_categorical(heap, w, buffer.bytes(tr.fitted.payload));
+        w = catwire.put_table(heap, w, table);
     }
     w = json.put_key(heap, w, "features");
     w = json.put_int(heap, w, tr.d);
@@ -1045,22 +1047,53 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, 
             end = est.encode(kind, contents(mw), 0, tr.d, contents(tr.wv), ds.c0, ds.c1);
         }
     }
-    let sp = schema.encode(heap, ds.sc);
     var fbytes = buffer.empty(heap, 1);
-    if !ds.cat {
-        // a fit with categorical columns writes no file before stage 3 of issue 21 (docs/categorical-encoders.md section 6): the bytes are not even made
+    var table = buffer.empty(heap, 1);
+    var go = true;
+    if ds.cat {
+        // the schema of every column the model reads, the categorical ones with type 3; the steps become stubs and the vocabularies the string table (docs/stringtable.md)
+        let fsc = catwire.full_schema(heap, ds.sh, o.target);
+        var spf = buffer.empty(heap, 1);
+        var fcols = 0;
+        borrow fsc as &fsr in {
+            buffer.drop(heap, spf);
+            spf = schema.encode(heap, fsr);
+            fcols = schema.columns(fsr);
+        }
+        let (section, tbl, pf) = strtab.pack(heap, buffer.bytes(tr.fitted.payload), o.na, o.max_cats, o.max_str, o.max_pool, o.max_catcols);
+        if pf.code != 0 {
+            e = wiredata.code_error(heap, e, pf.code, pf.a, pf.b, pf.c);
+            go = false;
+        } else {
+            borrow spf as &spr in {
+                borrow section as &sr in {
+                    borrow tbl as &tr2 in {
+                        borrow mp as &mr in {
+                            buffer.drop(heap, fbytes);
+                            fbytes = file.encode_with_table(heap, plan.text(pls.pl), buffer.bytes(spr), buffer.bytes(sr), buffer.bytes(tr2), contents(mr)[0..end], tr.rows, fcols, o.seed, built.compiler());
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, section);
+        buffer.drop(heap, table);
+        table = tbl;
+        buffer.drop(heap, spf);
+        schema.drop(heap, fsc);
+    } else {
+        let sp = schema.encode(heap, ds.sc);
         borrow sp as &spr in {
             borrow mp as &mr in {
                 buffer.drop(heap, fbytes);
                 fbytes = file.encode(heap, plan.text(pls.pl), buffer.bytes(spr), buffer.bytes(tr.fitted.payload), contents(mr)[0..end], tr.rows, schema.columns(ds.sc), o.seed, built.compiler());
             }
         }
+        buffer.drop(heap, sp);
     }
-    buffer.drop(heap, sp);
     unbox_slice(heap, mp);
     var split = buffer.empty(heap, 1);
-    var go = true;
-    if o.split_given {
+    if go && o.split_given {
         let (sp2, ok6, e6) = holdout(heap, args, ds, cids, cvoc, pls, tr, sel, ntest, o, e);
         buffer.drop(heap, split);
         split = sp2;
@@ -1071,10 +1104,13 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, 
     if go {
         buffer.drop(heap, summary);
         borrow split as &spq in {
-            summary = fit_summary(heap, tr, pls.pl, kind, est.task_of(kind, contents(pls.ip)), ds.c0, ds.c1, spq, ntest, o, ds.cat);
+            borrow table as &tbr in {
+                summary = fit_summary(heap, tr, pls.pl, kind, est.task_of(kind, contents(pls.ip)), ds.c0, ds.c1, spq, ntest, o, ds.cat, buffer.bytes(tbr));
+            }
         }
     }
     buffer.drop(heap, split);
+    buffer.drop(heap, table);
     return (fbytes, summary, go, e);
 }
 
@@ -1172,17 +1208,6 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         tr = t2;
         go = ok3;
     }
-    // no model file holds a vocabulary before stage 3 of issue 21: a categorical fit that is neither held out nor a dry run is refused after the data and the plan were checked
-    var ds_cat = false;
-    borrow ds as &dcr in {
-        ds_cat = dcr.cat;
-    }
-    if go && ds_cat && !o.split_given && !o.dry {
-        borrow cvoc as &cvr in {
-            e = catwire.not_stored(heap, e, cvr);
-        }
-        go = false;
-    }
     var fbytes = buffer.empty(heap, 1);
     var summary = buffer.empty(heap, 1);
     if go {
@@ -1224,11 +1249,9 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
             borrow cvoc as &cvr in {
                 cols = cols + dict.ncols(cvr);
             }
-            result = catwire.answer(heap, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, summary, e, lg);
-        } else {
-            borrow fbytes as &fb in {
-                result = answer_fit(heap, fs, root, out, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, buffer.bytes(fb), summary, e, lg);
-            }
+        }
+        borrow fbytes as &fb in {
+            result = answer_fit(heap, fs, root, out, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, buffer.bytes(fb), summary, e, lg);
         }
     } else {
         buffer.drop(heap, summary);

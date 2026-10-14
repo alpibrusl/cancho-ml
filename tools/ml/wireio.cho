@@ -9,13 +9,17 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import std.vec;
+import ml.catmat;
+import ml.catwire;
 import ml.csv;
 import ml.csvcell;
 import ml.csvload;
+import ml.dict;
 import ml.est;
 import ml.exact;
 import ml.fbits;
 import ml.fsio;
+import ml.kinds;
 import ml.logrec;
 import ml.matrix;
 import ml.mfile;
@@ -26,12 +30,14 @@ import ml.wiredata;
 import metrics.rules;
 import metrics.splits;
 import models.record;
+import pipeline.mixed;
 import pipeline.file;
 import pipeline.names;
 import pipeline.plan;
 import pipeline.run;
 import pipeline.schema;
 import transforms.codes;
+import transforms.strtab;
 import flt;
 import toolbox.fail;
 
@@ -46,7 +52,7 @@ fn names_tree[&p](plan: &p [byte]) -> [] bool {
 // allow it. The old reader gives the real error for such a file.
 pub fn peek_kind[&d](data: &d [byte]) -> [] int {
     let n = len(data);
-    if n < 44 || !bytes.equal(data[0..4], "CML1") || record.get32(data, 8) != 5 {
+    if n < 44 || !bytes.equal(data[0..4], "CML1") || record.get32(data, 8) != 5 && record.get32(data, 8) != 6 {
         return 0;
     }
     let body = n - 32;
@@ -83,6 +89,12 @@ pub fn peek_kind[&d](data: &d [byte]) -> [] int {
     return 0;
 }
 
+// whether the file says it has six sections: the file of a model with a string table (docs/stringtable.md). The constant models never have one, so such a file is
+// this module's whatever its model section says, and its refusals are the pipeline's, in the order of design.md 4.1
+fn six_sections[&d](data: &d [byte]) -> [] bool {
+    return len(data) >= 12 && bytes.equal(data[0..4], "CML1") && record.get32(data, 8) == 6;
+}
+
 // ---------------------------------------------------------------- the stored model
 
 // A model file of a planned kind, decoded and checked: the file (kept: the stored steps are views into it), the schema, the estimator's parameters and labels,
@@ -98,10 +110,12 @@ res struct Stored {
     // 1 regression, 2 classification: the estimator's for the linear models, the payload's for the tree and the forest
     task: int,
     view: mfile.Model,
+    // whether the file has a string table: the categorical columns are then read through the vocabulary of its steps (docs/stringtable.md section 5)
+    cat: bool,
 }
 
 fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
-    let Stored { lo, sc, kind, wv, c0, c1, d, task, view } = s;
+    let Stored { lo, sc, kind, wv, c0, c1, d, task, view, cat } = s;
     file.drop(heap, lo);
     schema.drop(heap, sc);
     unbox_slice(heap, wv);
@@ -110,7 +124,7 @@ fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
 }
 
 fn empty_stored[&h](heap: &!h Heap) -> [heap] Stored {
-    return Stored { lo: file.empty(heap), sc: schema.empty(heap), kind: 0, wv: box_slice(heap, 2, 0.0), c0: 0, c1: 0, d: 0, task: 0, view: mfile.empty_model(heap) };
+    return Stored { lo: file.empty(heap), sc: schema.empty(heap), kind: 0, wv: box_slice(heap, 2, 0.0), c0: 0, c1: 0, d: 0, task: 0, view: mfile.empty_model(heap), cat: false };
 }
 
 // the schema as an mfile.Model without statistics
@@ -243,12 +257,18 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
         mfile.drop_model(heap, view);
         view = view_of(heap, scr, rows);
     }
-    return (Stored { lo: lo, sc: sc, kind: kind, wv: wv, c0: c0, c1: c1, d: width, task: task, view: view }, true, e);
+    var is_cat = false;
+    borrow lo as &lr in {
+        is_cat = file.has_table(lr);
+    }
+    return (Stored { lo: lo, sc: sc, kind: kind, wv: wv, c0: c0, c1: c1, d: width, task: task, view: view, cat: is_cat }, true, e);
 }
 
 // ---------------------------------------------------------------- the input of predict and eval
 
-// The CSV aligned to the fitted features by name: the matrix of the fitted features in the fitted order (`xa`), the matrix as read (`x`) and the shape (`sh`)
+// The CSV aligned to the fitted features by name: the matrix of the fitted features in the fitted order (`xa`), the matrix as read (`x`) and the shape (`sh`).
+// For a model with a string table `x` holds the NUMERIC columns only, `ids` the categorical ones (read through `voc`, the vocabulary of the stored steps: by name,
+// in any order of the file's columns) and `cols` the numeric features' places in `x`
 res struct Input {
     x: matrix.Matrix,
     sh: csv.Shape,
@@ -256,34 +276,78 @@ res struct Input {
     cols: Box[[int]],
     // the target's column in x (eval), -1 when the matrix has none
     tj: int,
+    ids: catmat.Ids,
+    voc: dict.Vocab,
 }
 
 fn drop_input[&h](heap: &!h Heap, i: Input) -> [heap] int {
-    let Input { x, sh, cols, tj } = i;
+    let Input { x, sh, cols, tj, ids, voc } = i;
     matrix.drop(heap, x);
     csv.drop_shape(heap, sh);
     unbox_slice(heap, cols);
+    catmat.drop(heap, ids);
+    dict.drop_vocab(heap, voc);
     return tj;
 }
 
 fn empty_input[&h](heap: &!h Heap) -> [heap] Input {
-    return Input { x: matrix.empty(heap), sh: csv.empty_shape(heap), cols: box_slice(heap, 2, 0), tj: 0 - 1 };
+    return Input { x: matrix.empty(heap), sh: csv.empty_shape(heap), cols: box_slice(heap, 2, 0), tj: 0 - 1, ids: catmat.empty(heap), voc: dict.empty_vocab(heap) };
 }
 
 // Read the CSV (predict: the target column is skipped; eval: it is a column) and check it against the stored schema: the old schema check (ml.schema.mismatch,
 // named columns, --drop as the repair), then the place in the matrix of each fitted feature
-fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, st: &ss Stored, o: verbs.Opts, need_target: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Input, bool, fail.Errors, buffer.Buffer) {
+fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, st: &ss Stored, o: verbs.Opts, need_target: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Input, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
     let tname = schema.name(st.sc, schema.target(st.sc));
-    let (x, sh, rep, code) = csvload.load_t(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), tname, !need_target);
+    var x = matrix.empty(heap);
+    var sh = csv.empty_shape(heap);
+    var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
+    var code = 0;
+    var ids = catmat.empty(heap);
+    var voc = dict.empty_vocab(heap);
+    if st.cat {
+        let payload = file.steps_bytes(st.lo);
+        let tbl = file.table_bytes(st.lo);
+        let (v0, vcode) = mixed.vocab_of(heap, payload);
+        if vcode != 0 {
+            dict.drop_vocab(heap, v0);
+            matrix.drop(heap, x);
+            csv.drop_shape(heap, sh);
+            catmat.drop(heap, ids);
+            dict.drop_vocab(heap, voc);
+            e = wiredata.file_fault(heap, e, codes.fault(codes.malformed(), 3, 0, 0), paths.shown(datafile));
+            return (empty_input(heap), false, e, lg);
+        }
+        let cc = csv.CatCfg { cols: "", na: "", max_cats: strtab.limit_of(tbl, 0), max_str: strtab.limit_of(tbl, 1), max_pool: strtab.limit_of(tbl, 2), max_catcols: strtab.limit_of(tbl, 3), lenient: true };
+        let l = csvload.load_cat_with(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), cc, tname, !need_target, v0, true, strtab.na_of(tbl));
+        let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
+        matrix.drop(heap, x);
+        csv.drop_shape(heap, sh);
+        catmat.drop(heap, ids);
+        dict.drop_vocab(heap, voc);
+        x = x2;
+        ids = ids2;
+        voc = voc2;
+        sh = sh2;
+        rep = rep2;
+        code = code2;
+    } else {
+        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), tname, !need_target);
+        matrix.drop(heap, x);
+        csv.drop_shape(heap, sh);
+        x = x2;
+        sh = sh2;
+        rep = rep2;
+        code = code2;
+    }
     borrow sh as &sr in {
         if rep.status == 99 {
-            e = fail.io_error(heap, e, rep.aux, false, paths.shown(file));
+            e = fail.io_error(heap, e, rep.aux, false, paths.shown(datafile));
             go = false;
         } else if rep.status != 0 {
-            e = verbs.explain(heap, args, e, rep, sr, o, paths.shown(file));
+            e = verbs.explain(heap, args, e, rep, sr, o, paths.shown(datafile));
             go = false;
         } else if code != 0 {
             e = wiredata.code_error(heap, e, code, 0, 0, 0);
@@ -298,25 +362,23 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
     if !go {
         csv.drop_shape(heap, sh);
         matrix.drop(heap, x);
+        catmat.drop(heap, ids);
+        dict.drop_vocab(heap, voc);
         return (empty_input(heap), false, e, lg);
     }
-    // the matrix columns are the kept columns of the file in order, the target's left out when it is skipped
+    // the matrix columns are the kept (numeric) columns of the file in order, the target's left out when it is skipped
     var cols = box_slice(heap, schema.columns(st.sc) + 1, 0);
     var tj = 0 - 1;
     borrow sh as &sr in {
         var gn = names.empty(heap);
-        var gidx = box_slice(heap, csv.cols(sr) + 1, 0);
         var m = 0;
         var i = 0;
-        borrow mut gidx as &!gw in {
-            while i < csv.cols(sr) {
-                if !csv.dropped(sr, i) && (need_target || i != csv.tcol(sr)) {
-                    gn = names.add(heap, gn, csv.name(sr, i));
-                    contents(gw)[m] = m;
-                    m = m + 1;
-                }
-                i = i + 1;
+        while i < csv.cols(sr) {
+            if !csv.dropped(sr, i) && (need_target || i != csv.tcol(sr)) && csv.catplace(sr, i) == 0 {
+                gn = names.add(heap, gn, csv.name(sr, i));
+                m = m + 1;
             }
+            i = i + 1;
         }
         borrow gn as &gq in {
             tj = names.find(gq, tname);
@@ -328,7 +390,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             var f2 = 0;
             var j = 0;
             while j < schema.columns(st.sc) {
-                if j != schema.target(st.sc) {
+                if j != schema.target(st.sc) && schema.type_of(st.sc, j) != kinds.schema_type_categorical() {
                     borrow gn as &gq2 in {
                         contents(cw)[f2] = names.find(gq2, schema.name(st.sc, j));
                     }
@@ -338,9 +400,8 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             }
         }
         names.drop(heap, gn);
-        unbox_slice(heap, gidx);
     }
-    return (Input { x: x, sh: sh, cols: cols, tj: tj }, true, e, lg);
+    return (Input { x: x, sh: sh, cols: cols, tj: tj, ids: ids, voc: voc }, true, e, lg);
 }
 
 // the names of the columns the steps left: the features' when the width is the same, else the positions (`#0`, `#1`, ...)
@@ -363,29 +424,86 @@ fn output_names[&h, &s](heap: &!h Heap, sc: &s schema.Schema, width: int) -> [he
     return nm;
 }
 
+// the names of the numeric feature columns of the schema (not the target, not a categorical column), in order
+fn numeric_names[&h, &s](heap: &!h Heap, sc: &s schema.Schema) -> [heap] names.Names {
+    var nm = names.empty(heap);
+    var j = 0;
+    while j < schema.columns(sc) {
+        if j != schema.target(sc) && schema.type_of(sc, j) != kinds.schema_type_categorical() {
+            nm = names.add(heap, nm, schema.name(sc, j));
+        }
+        j = j + 1;
+    }
+    return nm;
+}
+
 // the rows of the input that `want` selects, through the stored steps: (the matrix the estimator takes, the unknown categories met, ok, errors)
 fn through_steps[&h, &g, &ii, &ss, &s](heap: &!h Heap, args: &g Args, inp: &ii Input, st: &ss Stored, sel: &s [int], want: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (matrix.Matrix, int, bool, fail.Errors) {
     var e = errs;
     var go = true;
     var unknown = 0;
     var xs = matrix.empty(heap);
-    let nfeat = schema.columns(st.sc) - 1;
-    if true {
+    let nfeat = schema.columns(st.sc) - 1 - file.categorical_columns(st.lo);
+    if st.cat {
+        // the numeric features in the fitted order, the ids of the same rows, and the stored steps over both
+        var xa = matrix.empty(heap);
+        if nfeat > 0 {
+            let (xa2, code) = wiredata.take(heap, inp.x, sel, want, contents(inp.cols), nfeat, o.max_rows, o.max_cols, o.max_cells);
+            matrix.drop(heap, xa);
+            xa = xa2;
+            if code != 0 {
+                e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                go = false;
+            }
+        }
+        var idt = catmat.empty(heap);
+        if go {
+            let (idt2, icode) = catwire.take_ids(heap, inp.ids, sel, want, o.max_rows, o.max_cols, o.max_cells);
+            catmat.drop(heap, idt);
+            idt = idt2;
+            if icode != 0 {
+                e = wiredata.code_error(heap, e, icode, 0, 0, 0);
+                go = false;
+            }
+        }
+        if go {
+            var trows = 0;
+            borrow idt as &itr in {
+                trows = catmat.rows(itr);
+            }
+            borrow xa as &xr in {
+                borrow idt as &itr in {
+                    let (x2, u2, f2) = mixed.apply_steps(heap, file.steps_bytes(st.lo), xr, trows, itr, inp.voc, o.max_rows, o.max_cols, o.max_cells);
+                    matrix.drop(heap, xs);
+                    xs = x2;
+                    unknown = u2;
+                    if f2.code != 0 {
+                        let epl = plan.empty(heap);
+                        borrow epl as &eplr in {
+                            e = catwire.fault_error(heap, args, e, f2, eplr, inp.voc, false);
+                        }
+                        plan.drop(heap, epl);
+                        go = false;
+                    }
+                }
+            }
+        }
+        matrix.drop(heap, xa);
+        catmat.drop(heap, idt);
+    } else {
         let (xa, code) = wiredata.take(heap, inp.x, sel, want, contents(inp.cols), nfeat, o.max_rows, o.max_cols, o.max_cells);
         if code != 0 {
             e = wiredata.code_error(heap, e, code, 0, 0, 0);
             go = false;
         } else {
             borrow xa as &xr in {
-                if true {
-                    let (x2, u2, f2) = run.apply_steps(heap, file.steps_bytes(st.lo), xr, o.max_rows, o.max_cols, o.max_cells);
-                    matrix.drop(heap, xs);
-                    xs = x2;
-                    unknown = u2;
-                    if f2.code != 0 {
-                        e = wiredata.code_error(heap, e, f2.code, f2.a, f2.b, f2.c);
-                        go = false;
-                    }
+                let (x2, u2, f2) = run.apply_steps(heap, file.steps_bytes(st.lo), xr, o.max_rows, o.max_cols, o.max_cells);
+                matrix.drop(heap, xs);
+                xs = x2;
+                unknown = u2;
+                if f2.code != 0 {
+                    e = wiredata.code_error(heap, e, f2.code, f2.a, f2.b, f2.c);
+                    go = false;
                 }
             }
         }
@@ -397,7 +515,18 @@ fn through_steps[&h, &g, &ii, &ss, &s](heap: &!h Heap, args: &g Args, inp: &ii I
         borrow xs as &xw in {
             width = matrix.cols(xw);
         }
-        let onames = output_names(heap, st.sc, width);
+        var onames = names.empty(heap);
+        if st.cat {
+            let nn = numeric_names(heap, st.sc);
+            borrow nn as &nnr in {
+                names.drop(heap, onames);
+                onames = mixed.output_names(heap, nnr, file.steps_bytes(st.lo));
+            }
+            names.drop(heap, nn);
+        } else {
+            names.drop(heap, onames);
+            onames = output_names(heap, st.sc, width);
+        }
         var mc = 0;
         var mlist = buffer.empty(heap, 1);
         borrow xs as &xq in {
@@ -575,7 +704,7 @@ fn peek_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], m
     }
     var mine = false;
     borrow data as &dr in {
-        mine = est.wired(peek_kind(buffer.bytes(dr)));
+        mine = est.wired(peek_kind(buffer.bytes(dr))) || six_sections(buffer.bytes(dr));
     }
     return (data, mine);
 }

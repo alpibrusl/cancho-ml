@@ -215,8 +215,10 @@ def split_columns(L, target):
     return nnames, nvals, cnames, ccells
 
 
-def run_plan(data, cfg, plan, data2=None, skip2=True):
-    """The expected stdout lines of `enc-check` for these files and this plan, and its exit status."""
+def run_plan(data, cfg, plan, data2=None, skip2=True, hash_mode=False):
+    """The expected stdout lines of `enc-check` for these files and this plan, and its exit status. hash_mode: the predict side reads a hashed column by hashing the
+    cell (docs/stringtable.md section 5), as `ml predict` does from a model file, so that an unseen string is in its bucket and is not counted; `enc-check` reads a
+    stored vocabulary and counts it (False)."""
     try:
         L = oracle_cat.load(data, cfg)
     except oracle_cat.Refused as r:
@@ -340,7 +342,7 @@ def run_plan(data, cfg, plan, data2=None, skip2=True):
                     cur2[c] = [None if v is None else (v - lo) / d for v in cur2[c]]
             else:
                 step = s[1]
-                block, unk = apply(step, si, cells2, rows2, reader_sets)
+                block, unk = apply(step, si, cells2, rows2, None if hash_mode else reader_sets)
                 unknown_total += unk
                 for j in range(len(block[0]) if block else 0):
                     cur2.append([block[r][j] for r in range(rows2)])

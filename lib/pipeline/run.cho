@@ -391,9 +391,71 @@ pub fn apply_steps[&h, &s, &m](heap: &!h Heap, payload: &s [byte], x: &m matrix.
 
 // ---------------------------------------------------------------- the plan and the steps agree
 
-// Does the plan describe the stored steps? For every step i, in order: the kind the line asks for is the step's, the options the line states (the
-// strategy, ddof, unknown mode, bins, method; the category bound) are the ones stored, and the columns the line names, resolved against the names the
-// previous steps leave, are the columns stored. `nm` are the names of the feature columns. (agree, the first step (1-based) that does not).
+// Does the line i of the plan describe the stored numeric step `sr`? The kind the line asks for is the step's, the options the line states (the strategy, ddof,
+// unknown mode, bins, method; the category bound) are the ones stored, and the columns the line names, resolved against the names `cur` (consumed), are the
+// columns stored. (agree, the names after the step: `cur` again when they do not agree).
+pub fn agrees_step[&h, &p, &s](heap: &!h Heap, pl: &p plan.Plan, i: int, cur0: names.Names, sr: &s steps.Step) -> [heap] (bool, names.Names) {
+    var cur = cur0;
+    var ok = true;
+    let sp = plan.spec_of(pl, i);
+    let kind = steps.kind(sr);
+    let k = steps.int_at(sr, 0);
+    let base = 2 + k;
+    if kind != sp.kind {
+        ok = false;
+    }
+    if ok && (kind == 1 || kind == 3 || kind == 4 || kind == 5) && steps.int_at(sr, base) != sp.a {
+        ok = false;
+    }
+    if ok && kind == 6 && (steps.int_at(sr, base) != sp.b || steps.int_at(sr, base + 1) != sp.a) {
+        ok = false;
+    }
+    if ok && (kind == 4 || kind == 5) {
+        var j = 0;
+        while j < k {
+            if steps.int_at(sr, base + 1 + j) > sp.b {
+                ok = false;
+            }
+            j = j + 1;
+        }
+    }
+    if ok {
+        borrow cur as &cr in {
+            let (want, rc) = resolve(heap, pl, i, cr);
+            if rc != 0 {
+                ok = false;
+            } else {
+                borrow want as &wr in {
+                    if len(contents(wr)) != k {
+                        ok = false;
+                    } else {
+                        var j = 0;
+                        while j < k {
+                            if contents(wr)[j] != steps.int_at(sr, 2 + j) {
+                                ok = false;
+                            }
+                            j = j + 1;
+                        }
+                    }
+                }
+            }
+            unbox_slice(heap, want);
+        }
+    }
+    if ok {
+        var nn = names.empty(heap);
+        borrow cur as &cr in {
+            names.drop(heap, nn);
+            nn = next_names(heap, cr, sr);
+        }
+        names.drop(heap, cur);
+        cur = nn;
+    }
+    return (ok, cur);
+}
+
+// Does the plan describe the stored steps? For every step i, in order: see agrees_step. `nm` are the names of the feature columns. (agree, the first step
+// (1-based) that does not).
 pub fn agrees[&h, &p, &n, &s](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Names, payload: &s [byte]) -> [heap] (bool, int) {
     let ns = plan.steps(pl);
     if len(payload) < 4 || get32(payload, 0) != ns {
@@ -427,60 +489,9 @@ pub fn agrees[&h, &p, &n, &s](heap: &!h Heap, pl: &p plan.Plan, nm: &n names.Nam
                     ok = false;
                 } else {
                     borrow st as &sr in {
-                        let sp = plan.spec_of(pl, i);
-                        let kind = steps.kind(sr);
-                        let k = steps.int_at(sr, 0);
-                        let base = 2 + k;
-                        if kind != sp.kind {
-                            ok = false;
-                        }
-                        if ok && (kind == 1 || kind == 3 || kind == 4 || kind == 5) && steps.int_at(sr, base) != sp.a {
-                            ok = false;
-                        }
-                        if ok && kind == 6 && (steps.int_at(sr, base) != sp.b || steps.int_at(sr, base + 1) != sp.a) {
-                            ok = false;
-                        }
-                        if ok && (kind == 4 || kind == 5) {
-                            var j = 0;
-                            while j < k {
-                                if steps.int_at(sr, base + 1 + j) > sp.b {
-                                    ok = false;
-                                }
-                                j = j + 1;
-                            }
-                        }
-                        if ok {
-                            borrow cur as &cr in {
-                                let (want, rc) = resolve(heap, pl, i, cr);
-                                if rc != 0 {
-                                    ok = false;
-                                } else {
-                                    borrow want as &wr in {
-                                        if len(contents(wr)) != k {
-                                            ok = false;
-                                        } else {
-                                            var j = 0;
-                                            while j < k {
-                                                if contents(wr)[j] != steps.int_at(sr, 2 + j) {
-                                                    ok = false;
-                                                }
-                                                j = j + 1;
-                                            }
-                                        }
-                                    }
-                                }
-                                unbox_slice(heap, want);
-                            }
-                        }
-                        if ok {
-                            var nn = names.empty(heap);
-                            borrow cur as &cr in {
-                                names.drop(heap, nn);
-                                nn = next_names(heap, cr, sr);
-                            }
-                            names.drop(heap, cur);
-                            cur = nn;
-                        }
+                        let (ok2, cur2) = agrees_step(heap, pl, i, cur, sr);
+                        ok = ok2;
+                        cur = cur2;
                     }
                 }
                 steps.drop(heap, st);

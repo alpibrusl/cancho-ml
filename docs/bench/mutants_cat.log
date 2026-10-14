@@ -1,4 +1,4 @@
-Tue Oct 13 14:43:47 CEST 2026
+frozen copy of commit ea9ff28, arm64
 control (unmutated): passes every gate
 c2-first-appearance                          KILLED   (order) order: DIFF ids or cells of a row (1, 1, {0: (-1, 1), 1: (0, 0)}, {0: (-1, 1), 1: (1, 0)})
 c1-first-appearance-diff                     KILLED   (diff) diff: DIFF adversarial duplicate-looking strings status 0 vs oracle 0; first difference at line 22: got ['id 0 0 0 0'] w
@@ -40,8 +40,8 @@ c11-invalid-utf8-reported-as-a-length        KILLED   (cli) cli: FAILED (failure
 c11-target-may-be-categorical                KILLED   (cli,diff) cli: FAILED (failures=2); diff: DIFF adversarial cat names the target status 8 vs oracle 8; first difference at line 0: 
 c11-limit-flag-without-cat-accepted          KILLED   (cli) cli: FAILED (failures=2)
 c11-na-values-list-not-checked               KILLED   (cli) cli: FAILED (failures=2)
-c11-cat-fit-writes-a-model                   KILLED   (cli) cli: FAILED (failures=10, errors=3)
+c11-cat-fit-writes-a-model                   KILLED   (cli) cli: FAILED (failures=9, errors=3)
 c11-unknown-cat-name-ignored                 KILLED   (cli) cli: FAILED (failures=2)
 40 killed, 2 survived and explained, 0 unexplained or invalid
 EXIT 0
-Tue Oct 13 14:47:40 CEST 2026
+Wed Oct 14 11:46:58 CEST 2026

@@ -77,6 +77,10 @@ python3 scripts/mutants_paths.py --check
 # (E1 to E6, E11, E13; the mutants, scripts/mutants_enc.py, run on request)
 python3 scripts/mutants_enc.py --check
 sh scripts/gate_enc.sh
+# the string table of the model file (docs/stringtable.md, stage 3 of issue 21): the unit program, the Python gates against scripts/oracle_st.py and scikit-learn (S1 to S11;
+# the damaged-file gate flips every fifth byte outside the table here, ST_STRIDE=1 flips every byte; the mutants, scripts/mutants_st.py, run on request)
+python3 scripts/mutants_st.py --check
+ST_STRIDE=5 sh scripts/gate_st.sh
 # stage M3/M4: lib/transforms and lib/pipeline (docs/transforms.md, docs/pipeline.md): unit, fixture and fuzz programs, the driver, the API scan, the
 # registries and the Python oracles (scripts/oracle_pipe.py --sklearn and scripts/mutants_pipe.py run on request, as the other mutants do)
 python3 scripts/mutants_pipe.py --check

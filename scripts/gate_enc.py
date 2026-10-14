@@ -416,7 +416,7 @@ def gate_threads():
         step = "impute column=x strategy=constant value=0; " + "; ".join("encode column=%s kind=onehot unknown=ignore min-count=%d missing=zero" % (c, rnd.choice([1, 2, 3])) for c in cfg.cats) + "; scale column=* kind=standard"
         outs = []
         for t in (1, 2, 4, 8, 16):
-            args = ["fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", cats, "--max-categories", "1024", "--step", step, "--split", "train=0.7", "--seed", str(tries), "--threads", str(t), "--output", str(WORK / "never.cml"), str(p)]
+            args = ["fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", cats, "--max-categories", "1024", "--step", step, "--split", "train=0.7", "--seed", str(tries), "--threads", str(t), "--output", str(WORK / "e3.cml"), "--overwrite", str(p)]
             if cfg.na:
                 args += ["--na-values", b",".join(cfg.na).decode("latin-1")]
             outs.append(ml_run(args))
@@ -470,11 +470,11 @@ def gate_sklearn():
             tr, te = mask == 0, mask == 1
             step = "scale column=* kind=standard; encode column=c1,c2,c3 kind=onehot unknown=ignore"
             p = subprocess.run([ML, "--root", td, "fit", "--target", "y", "--model", "logistic", "--l2", str(l2), "--iterations", "100", "--cat", "c1,c2,c3", "--step", step,
-                                "--split", "train=" + frac, "--seed", str(seed), "--output", "never.cml", "d.csv"], capture_output=True, text=True)
+                                "--split", "train=" + frac, "--seed", str(seed), "--output", "m.cml", "d.csv"], capture_output=True, text=True)
             d = json.loads(p.stdout)
             assert d["ok"], d
             summ = d["data"]["summary"]
-            assert not (pathlib.Path(td) / "never.cml").exists()
+            assert (pathlib.Path(td) / "m.cml").exists()
             names = [c["name"] for c in summ["coefficients"]]
             w = np.array([float(c["value"]) for c in summ["coefficients"]])
             b0 = float(summ["intercept"])
