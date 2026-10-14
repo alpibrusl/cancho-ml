@@ -187,14 +187,14 @@ class Sandbox:
 
 # --------------------------------------------------------------------------------------------------- the model file
 
-SECTION_TAGS = (1, 2, 3, 4, 5)
+SECTION_TAGS = (1, 2, 3, 4, 5, 6)
 
 
 def sections(data):
-    """[(tag, payload_start, payload_len)] of a model file's five sections."""
+    """[(tag, payload_start, payload_len)] of a model file's sections: five, or six when the file has a string table."""
     out = []
     pos = 12
-    for _ in range(5):
+    for _ in range(int.from_bytes(data[8:12], "little")):
         tag = int.from_bytes(data[pos:pos + 4], "little")
         n = int.from_bytes(data[pos + 4:pos + 12], "little")
         out.append((tag, pos + 12, n))

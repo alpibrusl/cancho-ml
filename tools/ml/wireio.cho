@@ -89,6 +89,12 @@ pub fn peek_kind[&d](data: &d [byte]) -> [] int {
     return 0;
 }
 
+// whether the file says it has six sections: the file of a model with a string table (docs/stringtable.md). The constant models never have one, so such a file is
+// this module's whatever its model section says, and its refusals are the pipeline's, in the order of design.md 4.1
+fn six_sections[&d](data: &d [byte]) -> [] bool {
+    return len(data) >= 12 && bytes.equal(data[0..4], "CML1") && record.get32(data, 8) == 6;
+}
+
 // ---------------------------------------------------------------- the stored model
 
 // A model file of a planned kind, decoded and checked: the file (kept: the stored steps are views into it), the schema, the estimator's parameters and labels,
@@ -314,7 +320,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             e = wiredata.file_fault(heap, e, codes.fault(codes.malformed(), 3, 0, 0), paths.shown(datafile));
             return (empty_input(heap), false, e, lg);
         }
-        let cc = csv.CatCfg { cols: "", na: "", max_cats: strtab.limit_of(tbl, 0), max_str: strtab.limit_of(tbl, 1), max_pool: strtab.limit_of(tbl, 2), max_catcols: strtab.limit_of(tbl, 3) };
+        let cc = csv.CatCfg { cols: "lenient", na: "", max_cats: strtab.limit_of(tbl, 0), max_str: strtab.limit_of(tbl, 1), max_pool: strtab.limit_of(tbl, 2), max_catcols: strtab.limit_of(tbl, 3) };
         let l = csvload.load_cat_with(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), cc, tname, !need_target, v0, true, strtab.na_of(tbl));
         let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
         matrix.drop(heap, x);
@@ -339,12 +345,6 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
     borrow sh as &sr in {
         if rep.status == 99 {
             e = fail.io_error(heap, e, rep.aux, false, paths.shown(datafile));
-            go = false;
-        } else if rep.status == 29 && st.cat {
-            // a categorical column of the model is not in the file: a missing column, as for a numeric one
-            borrow voc as &vr in {
-                e = catwire.missing_columns_error(heap, e, vr, sr);
-            }
             go = false;
         } else if rep.status != 0 {
             e = verbs.explain(heap, args, e, rep, sr, o, paths.shown(datafile));
@@ -704,7 +704,7 @@ fn peek_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], m
     }
     var mine = false;
     borrow data as &dr in {
-        mine = est.wired(peek_kind(buffer.bytes(dr)));
+        mine = est.wired(peek_kind(buffer.bytes(dr))) || six_sections(buffer.bytes(dr));
     }
     return (data, mine);
 }

@@ -79,7 +79,8 @@ pub struct Report {
 }
 
 // The categorical part of a scan (docs/categorical.md): `cols` the names given to --cat (fit; ignored when a vocabulary is given), `na` the
-// markers of --na-values (comma separated, none empty), and the four limits. `no_cats()` is the numeric-only reader.
+// markers of --na-values (comma separated, none empty), and the four limits. `no_cats()` is the numeric-only reader. With a stored vocabulary `cols` is empty, or
+// not empty to say that a column of the vocabulary the file lacks (or drops) is not a refusal of the reader but of the caller's schema check (docs/stringtable.md section 5).
 pub struct CatCfg {
     cols: &static [byte],
     na: &static [byte],
@@ -636,14 +637,17 @@ fn cat_header[&h, &s, &n, &e](heap: &!h Heap, flags: &!s [int], names: &n [byte]
         borrow cs as &cr in {
             j = column_of(names, ends, cols, dict.name(cr.voc, c));
         }
-        if j < 0 || flags[3 * cols + j] != 0 {
+        let absent = j < 0 || flags[3 * cols + j] != 0;
+        if absent && len(cc.cols) == 0 {
             return (cs, 29, 0, c + 1);
         }
-        if j == tcol {
-            return (cs, 27, j, 0);
+        if !absent {
+            if j == tcol {
+                return (cs, 27, j, 0);
+            }
+            flags[4 * cols + j] = c + 1;
+            flags[j] = 4;
         }
-        flags[4 * cols + j] = c + 1;
-        flags[j] = 4;
         c = c + 1;
     }
     return (cs, 0, 0, 0);

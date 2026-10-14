@@ -409,29 +409,3 @@ pub fn put_table[&h, &t](heap: &!h Heap, w0: json.Writer, table: &t [byte]) -> [
     buffer.drop(heap, hex);
     return json.end_object(heap, w);
 }
-
-// ml.schema.mismatch for categorical columns of a stored model that the file lacks (or drops): the names of the vocabulary that the shape does not keep, in detail
-pub fn missing_columns_error[&h, &v, &s](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab, sh: &s csv.Shape) -> [heap] fail.Errors {
-    var list = buffer.empty(heap, 32);
-    var first = true;
-    var c = 0;
-    while c < dict.ncols(voc) {
-        let at = csv.find(sh, dict.name(voc, c));
-        if at < 0 || csv.dropped(sh, at) {
-            if !first {
-                list = buffer.append(heap, list, ", ");
-            }
-            list = buffer.append(heap, list, dict.name(voc, c));
-            first = false;
-        }
-        c = c + 1;
-    }
-    var w = fail.open_in(heap, spec.extra(), "ml.schema.mismatch", "the input columns differ from the columns the model was fitted on", "add the missing columns, retype the mistyped ones, and ignore the extra ones with --drop");
-    w = fail.no_repair(heap, w);
-    w = fail.detail_open(heap, w);
-    borrow list as &lr in {
-        w = fail.detail_text(heap, w, "missing", buffer.bytes(lr));
-    }
-    buffer.drop(heap, list);
-    return fail.add(heap, errs, w);
-}

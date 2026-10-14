@@ -1,0 +1,863 @@
+import std.test;
+import std.buffer;
+import std.bytes;
+import std.crypto;
+import ml.dict;
+import ml.kinds;
+import ml.rng;
+import transforms.catenc;
+import transforms.codes;
+import transforms.strtab;
+import pt;
+
+// Unit tests of lib/transforms/strtab.cho (docs/stringtable.md gates S6, S7 and S10 at the decoder): the table written by hand and compared byte for byte, the
+// bounds at the limit and one past it, every field out of its range, every flipped byte and truncation with the digest repaired and not, counts of 2^63 - 1, and
+// the steps section joined back to the payload of a fit. Every payload here is written by hand with put32 and put64, not by catenc, so a change of the
+// layout of either side is seen. A test answers the number of things that were wrong (0 to pass). `sh scripts/gate_st.sh` runs it.
+
+fn p32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+fn p64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < 8 {
+        o = buffer.push(heap, o, byte_of(v >> 8 * k & 255));
+        k = k + 1;
+    }
+    return o;
+}
+
+fn g32[&s](d: &s [byte], at: int) -> [] int {
+    return int_of(d[at]) | int_of(d[at + 1]) << 8 | int_of(d[at + 2]) << 16 | int_of(d[at + 3]) << 24;
+}
+
+// the decimal number in t (digits only)
+fn nat[&s](t: &s [byte]) -> [] int {
+    var v = 0;
+    var i = 0;
+    while i < len(t) {
+        v = v * 10 + int_of(t[i]) - '0';
+        i = i + 1;
+    }
+    return v;
+}
+
+// the head of a step payload (docs/categorical-encoders.md section 5.2)
+fn head[&h](heap: &!h Heap, kind: int, k: int, unknown: int, missing: int, par: int, rows: int) -> [heap] buffer.Buffer {
+    var o = p32(heap, buffer.empty(heap, 64), kind);
+    o = p32(heap, o, 1);
+    o = p32(heap, o, k);
+    o = p32(heap, o, unknown);
+    o = p32(heap, o, missing);
+    o = p32(heap, o, par);
+    return p64(heap, o, rows);
+}
+
+// one column: its name and the list "a=3,b=4" of strings and counts (empty for a hash step)
+fn col[&h](heap: &!h Heap, b: buffer.Buffer, name: &static [byte], list: &static [byte]) -> [heap] buffer.Buffer {
+    var o = p32(heap, b, len(name));
+    o = buffer.append(heap, o, name);
+    var n = 0;
+    if len(list) > 0 {
+        n = pt.count_byte(list, ',') + 1;
+    }
+    o = p32(heap, o, n);
+    var k = 1;
+    while k <= n {
+        let item = bytes.field(list, ',', k);
+        let eq = bytes.find(item, "=");
+        o = p32(heap, o, eq);
+        o = buffer.append(heap, o, item[0..eq]);
+        o = p64(heap, o, nat(item[eq + 1..len(item)]));
+        k = k + 1;
+    }
+    return o;
+}
+
+// a one-hot step over the column c "x=3,y=1,z=2" (6 rows) and a hash step over h with 4 buckets, after a numeric step, as the payload of a fit
+fn sample_payload[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var numeric = buffer.empty(heap, 16);
+    numeric = p32(heap, numeric, 2);
+    numeric = buffer.append(heap, numeric, "ABCDEFGHIJKL");
+    var a = head(heap, 7, 1, 0, 0, 1, 6);
+    a = col(heap, a, "c", "x=3,y=1,z=2");
+    var b = head(heap, 10, 1, 0, 1, 4, 6);
+    b = col(heap, b, "h", "");
+    var o = p32(heap, buffer.empty(heap, 256), 3);
+    borrow numeric as &nr in {
+        o = p64(heap, o, len(buffer.bytes(nr)));
+        o = buffer.append(heap, o, buffer.bytes(nr));
+    }
+    borrow a as &ar in {
+        o = p64(heap, o, len(buffer.bytes(ar)));
+        o = buffer.append(heap, o, buffer.bytes(ar));
+    }
+    borrow b as &br in {
+        o = p64(heap, o, len(buffer.bytes(br)));
+        o = buffer.append(heap, o, buffer.bytes(br));
+    }
+    buffer.drop(heap, numeric);
+    buffer.drop(heap, a);
+    buffer.drop(heap, b);
+    return o;
+}
+
+fn sha[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] buffer.Buffer {
+    let state = box_slice(heap, crypto.sha256_state_len(), 0);
+    let dg = box_slice(heap, 32, byte_of(0));
+    var sw = state;
+    var dw = dg;
+    var o = buffer.empty(heap, 32);
+    borrow mut sw as &!s in {
+        crypto.sha256_init(contents(s));
+        crypto.sha256_update(contents(s), data);
+        borrow mut dw as &!x in {
+            crypto.sha256_final(contents(s), contents(x));
+        }
+    }
+    borrow dw as &r in {
+        o = buffer.append(heap, o, contents(r));
+    }
+    unbox_slice(heap, sw);
+    unbox_slice(heap, dw);
+    return o;
+}
+
+// the same bytes with the digest at the end recomputed
+fn reseal[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] buffer.Buffer {
+    var o = buffer.empty(heap, len(data) + 32);
+    if len(data) < 32 {
+        return buffer.append(heap, o, data);
+    }
+    o = buffer.append(heap, o, data[0..len(data) - 32]);
+    let dg = sha(heap, data[0..len(data) - 32]);
+    borrow dg as &dr in {
+        o = buffer.append(heap, o, buffer.bytes(dr));
+    }
+    buffer.drop(heap, dg);
+    return o;
+}
+
+// the table the document gives for sample_payload with na "NA,?" and the limits 64, 255, 1048576, 128, written by hand
+fn expected_table[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var a = head(heap, 7, 1, 0, 0, 1, 6);
+    a = col(heap, a, "c", "x=3,y=1,z=2");
+    var b = head(heap, 10, 1, 0, 1, 4, 6);
+    b = col(heap, b, "h", "");
+    var o = p32(heap, buffer.empty(heap, 256), 1);
+    o = p32(heap, o, 2);
+    o = p64(heap, o, 3);
+    o = p64(heap, o, 3);
+    o = p32(heap, o, 4);
+    o = buffer.append(heap, o, "NA,?");
+    o = p32(heap, o, 64);
+    o = p32(heap, o, 255);
+    o = p32(heap, o, 1048576);
+    o = p32(heap, o, 128);
+    borrow a as &ar in {
+        o = p32(heap, o, 2);
+        o = p64(heap, o, len(buffer.bytes(ar)));
+        o = buffer.append(heap, o, buffer.bytes(ar));
+    }
+    borrow b as &br in {
+        o = p32(heap, o, 3);
+        o = p64(heap, o, len(buffer.bytes(br)));
+        o = buffer.append(heap, o, buffer.bytes(br));
+    }
+    buffer.drop(heap, a);
+    buffer.drop(heap, b);
+    var dg = buffer.empty(heap, 32);
+    borrow o as &or in {
+        buffer.drop(heap, dg);
+        dg = sha(heap, buffer.bytes(or));
+    }
+    borrow dg as &dr in {
+        o = buffer.append(heap, o, buffer.bytes(dr));
+    }
+    buffer.drop(heap, dg);
+    return o;
+}
+
+// ---------------------------------------------------------------- pack, validate, join
+
+fn test_pack_writes_the_bytes_of_the_document_and_join_gives_the_payload_back[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let payload = sample_payload(heap);
+    let want = expected_table(heap);
+    borrow payload as &pr in {
+        let (section, table, f) = strtab.pack(heap, buffer.bytes(pr), "NA,?", 64, 255, 1048576, 128);
+        if f.code != 0 {
+            bad = bad + 1000;
+        }
+        borrow table as &tr in {
+            borrow want as &wr in {
+                if !bytes.equal(buffer.bytes(tr), buffer.bytes(wr)) {
+                    bad = bad + 1;
+                }
+            }
+            if strtab.validate(heap, buffer.bytes(tr)).code != 0 {
+                bad = bad + 10;
+            }
+            // the section: the numeric step as it was, two stubs of 8 bytes
+            borrow section as &sr in {
+                let s = buffer.bytes(sr);
+                if g32(s, 0) != 3 || len(s) != 4 + 8 + 16 + 8 + 8 + 8 + 8 {
+                    bad = bad + 100;
+                }
+                let (full, jf) = strtab.join(heap, s, buffer.bytes(tr));
+                if jf.code != 0 {
+                    bad = bad + 1000;
+                }
+                borrow full as &fr in {
+                    if !bytes.equal(buffer.bytes(fr), buffer.bytes(pr)) {
+                        bad = bad + 10000;
+                    }
+                }
+                buffer.drop(heap, full);
+            }
+            // accessors
+            if strtab.entries(buffer.bytes(tr)) != 2 || strtab.strings(buffer.bytes(tr)) != 3 || strtab.pool_bytes(buffer.bytes(tr)) != 3 {
+                bad = bad + 100000;
+            }
+            if !bytes.equal(strtab.na_of(buffer.bytes(tr)), "NA,?") || strtab.limit_of(buffer.bytes(tr), 0) != 64 || strtab.limit_of(buffer.bytes(tr), 1) != 255 || strtab.limit_of(buffer.bytes(tr), 2) != 1048576 || strtab.limit_of(buffer.bytes(tr), 3) != 128 {
+                bad = bad + 1000000;
+            }
+            if strtab.entry_step(buffer.bytes(tr), 0) != 2 || strtab.entry_step(buffer.bytes(tr), 1) != 3 || g32(strtab.entry_payload(buffer.bytes(tr), 1), 0) != 10 {
+                bad = bad + 10000000;
+            }
+        }
+        buffer.drop(heap, section);
+        buffer.drop(heap, table);
+    }
+    buffer.drop(heap, payload);
+    buffer.drop(heap, want);
+    return bad;
+}
+
+fn test_a_payload_without_a_categorical_step_has_no_table[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var p = p32(heap, buffer.empty(heap, 16), 1);
+    p = p64(heap, p, 12);
+    p = p32(heap, p, 2);
+    p = buffer.append(heap, p, "ABCDEFGH");
+    borrow p as &pr in {
+        let (section, table, f) = strtab.pack(heap, buffer.bytes(pr), "", 64, 255, 1048576, 128);
+        borrow table as &t0 in {
+            if f.code != 0 || buffer.size(t0) != 0 {
+                bad = bad + 1;
+            }
+        }
+        borrow section as &sr in {
+            if !bytes.equal(buffer.bytes(sr), buffer.bytes(pr)) {
+                bad = bad + 10;
+            }
+            // an empty table joins nothing
+            let (full, jf) = strtab.join(heap, buffer.bytes(sr), "");
+            borrow full as &fr in {
+                if jf.code != 0 || !bytes.equal(buffer.bytes(fr), buffer.bytes(pr)) {
+                    bad = bad + 100;
+                }
+            }
+            buffer.drop(heap, full);
+        }
+        buffer.drop(heap, section);
+        buffer.drop(heap, table);
+    }
+    buffer.drop(heap, p);
+    return bad;
+}
+
+// the table of sample_payload as an owned buffer
+fn sample_table[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    return expected_table(heap);
+}
+
+// one edit of the table: the byte at `at` set to `v`, the digest repaired when `fix`; the reason strtab.validate answers (0 when it accepts)
+fn edit_reason[&h, &d](heap: &!h Heap, base: &d [byte], at: int, v: int, fix: bool) -> [heap] int {
+    var cp = buffer.empty(heap, len(base));
+    var i = 0;
+    while i < len(base) {
+        if i == at {
+            cp = buffer.push(heap, cp, byte_of(v & 255));
+        } else {
+            cp = buffer.push(heap, cp, base[i]);
+        }
+        i = i + 1;
+    }
+    var out = 0;
+    if fix {
+        borrow cp as &cpr in {
+            out = code_a(heap, reseal(heap, buffer.bytes(cpr)));
+        }
+    } else {
+        borrow cp as &cpr in {
+            out = strtab.validate(heap, buffer.bytes(cpr)).a;
+        }
+    }
+    buffer.drop(heap, cp);
+    return out;
+}
+
+// a 32-bit field set to v (little endian) and the digest repaired
+fn set32[&h, &d](heap: &!h Heap, base: &d [byte], at: int, v: int) -> [heap] buffer.Buffer {
+    var cp = buffer.empty(heap, len(base));
+    var i = 0;
+    while i < len(base) {
+        if i >= at && i < at + 4 {
+            cp = buffer.push(heap, cp, byte_of(v >> 8 * (i - at) & 255));
+        } else {
+            cp = buffer.push(heap, cp, base[i]);
+        }
+        i = i + 1;
+    }
+    var r = buffer.empty(heap, 1);
+    borrow cp as &cpr in {
+        buffer.drop(heap, r);
+        r = reseal(heap, buffer.bytes(cpr));
+    }
+    buffer.drop(heap, cp);
+    return r;
+}
+
+fn set64[&h, &d](heap: &!h Heap, base: &d [byte], at: int, v: int) -> [heap] buffer.Buffer {
+    var cp = buffer.empty(heap, len(base));
+    var i = 0;
+    while i < len(base) {
+        if i >= at && i < at + 8 {
+            cp = buffer.push(heap, cp, byte_of(v >> 8 * (i - at) & 255));
+        } else {
+            cp = buffer.push(heap, cp, base[i]);
+        }
+        i = i + 1;
+    }
+    var r = buffer.empty(heap, 1);
+    borrow cp as &cpr in {
+        buffer.drop(heap, r);
+        r = reseal(heap, buffer.bytes(cpr));
+    }
+    buffer.drop(heap, cp);
+    return r;
+}
+
+fn reason_of[&h, &d](heap: &!h Heap, t: &d [byte]) -> [heap] int {
+    return strtab.validate(heap, t).a;
+}
+
+// 1 when the owned table does not give `want` (consumed)
+fn chk[&h](heap: &!h Heap, t: buffer.Buffer, want: int) -> [heap] int {
+    var r = 0 - 1;
+    borrow t as &tr in {
+        r = strtab.validate(heap, buffer.bytes(tr)).a;
+    }
+    buffer.drop(heap, t);
+    if r != want {
+        return 1;
+    }
+    return 0;
+}
+
+// the reason of the Fault of an owned table (consumed)
+fn code_a[&h](heap: &!h Heap, t: buffer.Buffer) -> [heap] int {
+    var r = 0 - 1;
+    borrow t as &tr in {
+        r = strtab.validate(heap, buffer.bytes(tr)).a;
+    }
+    buffer.drop(heap, t);
+    return r;
+}
+
+// the code of the Fault of an owned table (consumed)
+fn code_own[&h](heap: &!h Heap, t: buffer.Buffer) -> [heap] int {
+    var r = 0 - 1;
+    borrow t as &tr in {
+        r = strtab.validate(heap, buffer.bytes(tr)).code;
+    }
+    buffer.drop(heap, t);
+    return r;
+}
+
+fn test_every_field_out_of_its_range_is_refused_with_its_reason[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let base = sample_table(heap);
+    borrow base as &br in {
+        let b = buffer.bytes(br);
+        // the offsets of sample_table: 0 layout, 4 entries, 8 pool, 16 strings, 24 na_len, 28 "NA,?", 32 max_categories, 36 max_string_bytes, 40 max_pool_bytes,
+        // 44 max_cat_columns, 48 the first entry (step u32, length u64, payload)
+        bad = bad + chk(heap, set32(heap, b, 0, 2), strtab.r_layout());
+        bad = bad + 2 * chk(heap, set32(heap, b, 0, 0), strtab.r_layout());
+        bad = bad + 4 * chk(heap, set32(heap, b, 4, 0), strtab.r_entries());
+        bad = bad + 8 * chk(heap, set32(heap, b, 4, 65), strtab.r_entries());
+        // header fields: pool_bytes over 8 MiB and 2^63 - 1, strings over 2^17 and negative, na_len over 16,383 and 2^32 - 1
+        bad = bad + 16 * chk(heap, set64(heap, b, 8, 8388609), strtab.r_header());
+        bad = bad + 32 * chk(heap, set64(heap, b, 8, 9223372036854775807), strtab.r_header());
+        bad = bad + 64 * chk(heap, set64(heap, b, 16, 131073), strtab.r_header());
+        bad = bad + 128 * chk(heap, set64(heap, b, 16, 0 - 1), strtab.r_header());
+        bad = bad + 256 * chk(heap, set32(heap, b, 24, 16384), strtab.r_header());
+        bad = bad + 512 * chk(heap, set32(heap, b, 24, 4294967295), strtab.r_header());
+        // the four limits: 0 and past the ceiling
+        var lim = 0;
+        while lim < 4 {
+            bad = bad + 1024 * chk(heap, set32(heap, b, 32 + 4 * lim, 0), strtab.r_header());
+            bad = bad + 1024 * chk(heap, set32(heap, b, 32 + 4 * lim, 8388610), strtab.r_header());
+            lim = lim + 1;
+        }
+        // a marker list with an empty marker: "NA,,"
+        bad = bad + 8192 * chk(heap, set32(heap, b, 28, 741097806), strtab.r_header());
+        // entry steps: zero and over 64; a length of 2^63 - 1, 31 and -1
+        bad = bad + 16384 * chk(heap, set32(heap, b, 48, 0), strtab.r_step());
+        bad = bad + 32768 * chk(heap, set32(heap, b, 48, 65), strtab.r_step());
+        bad = bad + 65536 * chk(heap, set64(heap, b, 52, 9223372036854775807), strtab.r_length());
+        bad = bad + 131072 * chk(heap, set64(heap, b, 52, 31), strtab.r_length());
+        bad = bad + 262144 * chk(heap, set64(heap, b, 52, 0 - 1), strtab.r_length());
+        // the second entry's step equal to the first's, and below it
+        bad = bad + 524288 * chk(heap, set32(heap, b, 48 + 12 + g32(b, 52), 2), strtab.r_step());
+    }
+    buffer.drop(heap, base);
+    return bad;
+}
+
+fn test_the_digest_is_checked_first_and_every_flip_and_cut_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let base = sample_table(heap);
+    var accepted = 0;
+    var refused = 0;
+    borrow base as &br in {
+        let b = buffer.bytes(br);
+        // every byte flipped three ways with the digest left alone: always the digest
+        var i = 0;
+        while i < len(b) {
+            var m = 0;
+            while m < 3 {
+                var v = int_of(b[i]) ^ 1;
+                if m == 1 {
+                    v = int_of(b[i]) ^ 128;
+                } else if m == 2 {
+                    v = 255 - int_of(b[i]);
+                }
+                if v != int_of(b[i]) {
+                    if edit_reason(heap, b, i, v, false) != strtab.r_digest() {
+                        bad = bad + 1;
+                    }
+                    // the digest repaired: any reason, or acceptance of what the layout allows (a count that changes with its string, a name byte)
+                    let r = edit_reason(heap, b, i, v, true);
+                    if r == 0 {
+                        accepted = accepted + 1;
+                    } else {
+                        refused = refused + 1;
+                    }
+                }
+                m = m + 1;
+            }
+            i = i + 1;
+        }
+        // every truncation: refused, with the digest unrepaired and repaired
+        var cut = 0;
+        while cut < len(b) {
+            if strtab.validate(heap, b[0..cut]).code == 0 {
+                bad = bad + 1000;
+            }
+            if code_own(heap, reseal(heap, b[0..cut])) == 0 {
+                bad = bad + 1000;
+            }
+            cut = cut + 1;
+        }
+        // 4,000 seeded damages of 1 to 6 bytes with the digest repaired: no trap
+        var seed = 88172645463325252;
+        var k = 0;
+        while k < 4000 {
+            seed = rng.advance(seed);
+            var cp = buffer.empty(heap, len(b));
+            var j = 0;
+            while j < len(b) {
+                cp = buffer.push(heap, cp, b[j]);
+                j = j + 1;
+            }
+            seed = rng.advance(seed);
+            let n = 1 + rng.uniform(rng.output(seed), 6);
+            var q = 0;
+            while q < n {
+                seed = rng.advance(seed);
+                let at = rng.uniform(rng.output(seed), len(b) - 32);
+                seed = rng.advance(seed);
+                let nv = rng.uniform(rng.output(seed), 256);
+                var damaged = buffer.empty(heap, len(b));
+                var t = 0;
+                borrow cp as &cr in {
+                    while t < len(b) {
+                        if t == at {
+                            damaged = buffer.push(heap, damaged, byte_of(nv));
+                        } else {
+                            damaged = buffer.push(heap, damaged, buffer.bytes(cr)[t]);
+                        }
+                        t = t + 1;
+                    }
+                }
+                buffer.drop(heap, cp);
+                cp = damaged;
+                q = q + 1;
+            }
+            borrow cp as &cpr in {
+                let c = code_own(heap, reseal(heap, buffer.bytes(cpr)));
+                if c != 0 && c != codes.string_table() {
+                    bad = bad + 100000;
+                }
+            }
+            buffer.drop(heap, cp);
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, base);
+    // a vacuous test would refuse everything or accept everything
+    if refused < 100 || accepted < 1 {
+        bad = bad + 1000000;
+    }
+    return bad;
+}
+
+// u32 and u64 fields set to the largest values: no field of the table can make the decoder allocate or add past what it checks
+fn test_counts_of_two_to_the_sixty_three_minus_one_and_other_extremes_are_refused[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let base = sample_table(heap);
+    borrow base as &br in {
+        let b = buffer.bytes(br);
+        // the payload of the first entry starts at 48 + 12 = 60: kind, layout, k, unknown, missing, param (u32 each), rows (u64), then the column: name_len, name, ncat, then the strings
+        var at = 0;
+        while at + 4 <= len(b) - 32 {
+            var q = 0;
+            while q < 6 {
+                var v = 4294967295;
+                if q == 1 {
+                    v = 2147483648;
+                } else if q == 2 {
+                    v = 2147483647;
+                } else if q == 3 {
+                    v = 65536;
+                } else if q == 4 {
+                    v = 65537;
+                } else if q == 5 {
+                    v = 1073741824;
+                }
+                let c = code_own(heap, set32(heap, b, at, v));
+                if c != 0 && c != codes.string_table() {
+                    bad = bad + 1;
+                }
+                q = q + 1;
+            }
+            if at + 8 <= len(b) - 32 {
+                let c1 = code_own(heap, set64(heap, b, at, 9223372036854775807));
+                if c1 != 0 && c1 != codes.string_table() {
+                    bad = bad + 1;
+                }
+                let c2 = code_own(heap, set64(heap, b, at, 0 - 1));
+                if c2 != 0 && c2 != codes.string_table() {
+                    bad = bad + 1;
+                }
+            }
+            at = at + 1;
+        }
+    }
+    buffer.drop(heap, base);
+    return bad;
+}
+
+// ---------------------------------------------------------------- bounds of pack
+
+fn zero_pad[&h](heap: &!h Heap, b: buffer.Buffer, v: int, width: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var digits = box_slice(heap, width + 1, byte_of('0'));
+    var dw = digits;
+    borrow mut dw as &!x in {
+        var r = v;
+        var i = width - 1;
+        while i >= 0 {
+            contents(x)[i] = byte_of('0' + r % 10);
+            r = r / 10;
+            i = i - 1;
+        }
+    }
+    borrow dw as &dr in {
+        o = buffer.append(heap, o, contents(dr)[0..width]);
+    }
+    unbox_slice(heap, dw);
+    return o;
+}
+
+// a step payload (kind 7) of `ncols` columns of `per` strings each, the strings 4 digits wide (distinct, ascending), the names c000 ...
+fn wide_step[&h](heap: &!h Heap, ncols: int, per: int) -> [heap] buffer.Buffer {
+    var o = head(heap, 7, ncols, 0, 0, 1, 2147483647);
+    var c = 0;
+    while c < ncols {
+        var nm = zero_pad(heap, buffer.push(heap, buffer.empty(heap, 8), byte_of('c')), c, 3);
+        o = p32(heap, o, 4);
+        borrow nm as &nr in {
+            o = buffer.append(heap, o, buffer.bytes(nr));
+        }
+        buffer.drop(heap, nm);
+        o = p32(heap, o, per);
+        var i = 0;
+        while i < per {
+            o = p32(heap, o, 4);
+            var s = zero_pad(heap, buffer.empty(heap, 4), i, 4);
+            borrow s as &sr in {
+                o = buffer.append(heap, o, buffer.bytes(sr));
+            }
+            buffer.drop(heap, s);
+            o = p64(heap, o, 1);
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    return o;
+}
+
+// the payload of a fit with the one step (consumed)
+fn one_step_payload[&h](heap: &!h Heap, step: buffer.Buffer) -> [heap] buffer.Buffer {
+    var o = p32(heap, buffer.empty(heap, 64), 1);
+    borrow step as &sr in {
+        o = p64(heap, o, len(buffer.bytes(sr)));
+        o = buffer.append(heap, o, buffer.bytes(sr));
+    }
+    buffer.drop(heap, step);
+    return o;
+}
+
+fn test_the_bound_on_strings_is_two_to_the_seventeen[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    // 128 columns of 1,024 strings: 131,072, accepted
+    let ok = wide_step(heap, 128, 1024);
+    let okp = one_step_payload(heap, ok);
+    borrow okp as &pr in {
+        let (section, table, f) = strtab.pack(heap, buffer.bytes(pr), "", 1024, 4, 8388608, 4096);
+        if f.code != 0 {
+            bad = bad + 1;
+        } else {
+            borrow table as &tr in {
+                if strtab.strings(buffer.bytes(tr)) != 131072 || strtab.validate(heap, buffer.bytes(tr)).code != 0 {
+                    bad = bad + 10;
+                }
+            }
+        }
+        buffer.drop(heap, section);
+        buffer.drop(heap, table);
+    }
+    buffer.drop(heap, okp);
+    // 129 columns: 132,096, refused with what = 1, before a table exists
+    let over = wide_step(heap, 129, 1024);
+    let overp = one_step_payload(heap, over);
+    borrow overp as &pr2 in {
+        let (section, table, f) = strtab.pack(heap, buffer.bytes(pr2), "", 1024, 4, 8388608, 4096);
+        borrow table as &t1 in {
+            if f.code != codes.limit_string_table() || f.a != 1 || f.b != 132096 || f.c != 131072 || buffer.size(t1) != 0 {
+                bad = bad + 100;
+            }
+        }
+        buffer.drop(heap, section);
+        buffer.drop(heap, table);
+    }
+    buffer.drop(heap, overp);
+    return bad;
+}
+
+// 128 columns with one string of 65,536 bytes each: 8 MiB of string bytes
+fn big_strings[&h](heap: &!h Heap, ncols: int) -> [heap] buffer.Buffer {
+    var o = head(heap, 7, ncols, 0, 0, 1, 2147483647);
+    var c = 0;
+    while c < ncols {
+        var nm = zero_pad(heap, buffer.push(heap, buffer.empty(heap, 8), byte_of('c')), c, 3);
+        o = p32(heap, o, 4);
+        borrow nm as &nr in {
+            o = buffer.append(heap, o, buffer.bytes(nr));
+        }
+        buffer.drop(heap, nm);
+        o = p32(heap, o, 1);
+        o = p32(heap, o, 65536);
+        var i = 0;
+        while i < 65536 {
+            o = buffer.push(heap, o, byte_of('a'));
+            i = i + 1;
+        }
+        o = p64(heap, o, 1);
+        c = c + 1;
+    }
+    return o;
+}
+
+fn test_the_bound_on_string_bytes_is_eight_mebibytes[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let ok = big_strings(heap, 128);
+    let okp = one_step_payload(heap, ok);
+    borrow okp as &pr in {
+        let (section, table, f) = strtab.pack(heap, buffer.bytes(pr), "", 1, 65536, 8388608, 4096);
+        if f.code != 0 {
+            bad = bad + 1;
+        } else {
+            borrow table as &tr in {
+                if strtab.pool_bytes(buffer.bytes(tr)) != 8388608 || strtab.validate(heap, buffer.bytes(tr)).code != 0 || len(buffer.bytes(tr)) > strtab.max_bytes() {
+                    bad = bad + 10;
+                }
+            }
+        }
+        buffer.drop(heap, section);
+        buffer.drop(heap, table);
+    }
+    buffer.drop(heap, okp);
+    let over = big_strings(heap, 129);
+    let overp = one_step_payload(heap, over);
+    borrow overp as &pr2 in {
+        let (section, table, f) = strtab.pack(heap, buffer.bytes(pr2), "", 1, 65536, 8388608, 4096);
+        if f.code != codes.limit_string_table() || f.a != 2 || f.b != 8454144 || f.c != 8388608 {
+            bad = bad + 100;
+        }
+        buffer.drop(heap, section);
+        buffer.drop(heap, table);
+    }
+    buffer.drop(heap, overp);
+    return bad;
+}
+
+fn test_the_markers_are_bounded_and_a_table_over_its_size_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let payload = sample_payload(heap);
+    var na = buffer.empty(heap, 16400);
+    var i = 0;
+    while i < 16384 {
+        na = buffer.push(heap, na, byte_of('a'));
+        i = i + 1;
+    }
+    borrow payload as &pr in {
+        borrow na as &nr in {
+            let (section, table, f) = strtab.pack(heap, buffer.bytes(pr), buffer.bytes(nr), 64, 255, 1048576, 128);
+            if f.code != codes.limit_string_table() || f.a != 3 {
+                bad = bad + 1;
+            }
+            buffer.drop(heap, section);
+            buffer.drop(heap, table);
+            // 16,383 bytes is within the table bound; its markers are what the decoder judges: one marker of 16,383 bytes is over 255
+            let (s2, t2, f2) = strtab.pack(heap, buffer.bytes(pr), buffer.bytes(nr)[0..16383], 64, 255, 1048576, 128);
+            if f2.code != 0 {
+                bad = bad + 10;
+            }
+            borrow t2 as &t2r in {
+                if strtab.validate(heap, buffer.bytes(t2r)).a != strtab.r_header() {
+                    bad = bad + 100;
+                }
+            }
+            buffer.drop(heap, s2);
+            buffer.drop(heap, t2);
+        }
+    }
+    buffer.drop(heap, payload);
+    buffer.drop(heap, na);
+    return bad;
+}
+
+// ---------------------------------------------------------------- join against the stubs
+
+fn test_a_stub_without_its_entry_or_an_entry_without_its_stub_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let payload = sample_payload(heap);
+    borrow payload as &pr in {
+        let (section, table, f) = strtab.pack(heap, buffer.bytes(pr), "", 64, 255, 1048576, 128);
+        borrow section as &sr in {
+            borrow table as &tr in {
+                let s = buffer.bytes(sr);
+                // the numeric step in place of the first stub: an entry is left over
+                var cp = buffer.empty(heap, len(s));
+                var i = 0;
+                while i < len(s) {
+                    cp = buffer.push(heap, cp, s[i]);
+                    i = i + 1;
+                }
+                // stub 1 is at 4 + 8 + 16 = 28 (u64 length 8, kind, layout): the layout 2 changed to 1 or 3, the kind to another
+                let at = 28 + 8 + 4;
+                var m = 0;
+                while m < 4 {
+                    var d = buffer.empty(heap, len(s));
+                    var j = 0;
+                    while j < len(s) {
+                        if j == at && m == 0 {
+                            d = buffer.push(heap, d, byte_of(1));
+                        } else if j == at && m == 1 {
+                            d = buffer.push(heap, d, byte_of(3));
+                        } else if j == at - 4 && m == 2 {
+                            d = buffer.push(heap, d, byte_of(8));
+                        } else if j == at - 4 && m == 3 {
+                            d = buffer.push(heap, d, byte_of(10));
+                        } else {
+                            d = buffer.push(heap, d, s[j]);
+                        }
+                        j = j + 1;
+                    }
+                    borrow d as &dr in {
+                        let (full, jf) = strtab.join(heap, buffer.bytes(dr), buffer.bytes(tr));
+                        if jf.code != codes.string_table() || jf.a != strtab.r_stub() {
+                            bad = bad + 1;
+                        }
+                        buffer.drop(heap, full);
+                    }
+                    buffer.drop(heap, d);
+                    m = m + 1;
+                }
+                buffer.drop(heap, cp);
+                // a section with only the numeric step and the table with two entries
+                var only = p32(heap, buffer.empty(heap, 32), 1);
+                only = p64(heap, only, 12);
+                only = buffer.append(heap, only, "ABCDEFGHIJKL");
+                borrow only as &onr in {
+                    let (full2, jf2) = strtab.join(heap, buffer.bytes(onr), buffer.bytes(tr));
+                    if jf2.a != strtab.r_stub() || jf2.code != codes.string_table() {
+                        bad = bad + 10;
+                    }
+                    buffer.drop(heap, full2);
+                }
+                buffer.drop(heap, only);
+                // a section that ends early, a count of 2^32 - 1 steps
+                let (full3, jf3) = strtab.join(heap, s[0..20], buffer.bytes(tr));
+                if jf3.code == 0 {
+                    bad = bad + 100;
+                }
+                buffer.drop(heap, full3);
+                var huge = buffer.empty(heap, 8);
+                huge = p32(heap, huge, 4294967295);
+                borrow huge as &hur in {
+                    let (full4, jf4) = strtab.join(heap, buffer.bytes(hur), buffer.bytes(tr));
+                    if jf4.code == 0 {
+                        bad = bad + 1000;
+                    }
+                    buffer.drop(heap, full4);
+                }
+                buffer.drop(heap, huge);
+            }
+        }
+        buffer.drop(heap, section);
+        buffer.drop(heap, table);
+    }
+    buffer.drop(heap, payload);
+    return bad;
+}
+
+fn test_the_reasons_have_words_and_the_codes_are_registered[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var r = 1;
+    while r <= 14 {
+        if len(strtab.reason_word(r)) == 0 {
+            bad = bad + 1;
+        }
+        r = r + 1;
+    }
+    let probe = buffer.empty(heap, 1);
+    buffer.drop(heap, probe);
+    if codes.string_table() != 328 || codes.limit_string_table() != 329 || len(codes.tag(328)) == 0 || len(codes.tag(329)) == 0 || codes.exit_code(328) != 8 || codes.exit_code(329) != 8 {
+        bad = bad + 100;
+    }
+    if kinds.section_strings() != 6 || kinds.table_layout() != 1 || kinds.stub_layout() != 2 {
+        bad = bad + 1000;
+    }
+    return bad;
+}

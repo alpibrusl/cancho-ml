@@ -1,15 +1,16 @@
-"""E8, E9, E10 -- the encoders of categorical columns on the command line (docs/categorical-encoders.md sections 2, 4, 6 and 7).
+"""E8, E9, E10 -- the encoders of categorical columns on the command line (docs/categorical-encoders.md sections 2, 4, 6 and 7, docs/stringtable.md section 6).
 
 The matrices and the payload are judged bit for bit by scripts/gate_enc.py against scripts/oracle_enc.py; these tests judge what only the command line has: the canonical
-plan, the resolution of columns and its refusals with their repairs, the files that are NOT written before stage 3, the vocabulary of the training rows only, and that a
+plan, the resolution of columns and its refusals with their repairs, the file a categorical fit writes, the vocabulary of the training rows only, and that a
 numeric plan keeps its text.
 """
 
+import hashlib
 import json
 import sys
 import unittest
 
-from harness import ROOT, Sandbox
+from harness import ROOT, Sandbox, sections
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import oracle_metrics as OM  # noqa: E402
@@ -25,7 +26,7 @@ def fit(sb, *extra, step=ENC, file="t.csv"):
 
 
 class Files(unittest.TestCase):
-    """E9: no file before stage 3"""
+    """E9: the file of a categorical fit (docs/stringtable.md section 6)"""
 
     def setUp(self):
         self.sb = Sandbox()
@@ -34,40 +35,57 @@ class Files(unittest.TestCase):
     def tearDown(self):
         self.sb.cleanup()
 
-    def test_a_categorical_fit_that_would_write_is_refused_and_writes_nothing(self):
+    def test_a_categorical_fit_writes_the_file_and_says_what_it_holds(self):
         r = fit(self.sb)
-        self.assertEqual((r.first_rule(), r.status), ("ml.model.vocabulary-not-stored", 8))
-        self.assertEqual(r.error()["detail"], {"columns": "sex,port"})
-        self.assertEqual(r.error()["repair"], None)
-        self.assertIn("--split", r.error()["hint"])
-        self.assertFalse((self.sb.dir / "m.cml").exists())
+        self.assertEqual(r.status, 0, r)
+        d = r.data()
+        self.assertIs(d["written"], True)
+        self.assertEqual(d["path"], "m.cml")
+        data = self.sb.read("m.cml")
+        self.assertEqual(d["bytes"], len(data))
+        self.assertEqual(d["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(int.from_bytes(data[8:12], "little"), 6)
+        st = d["summary"]["string_table"]
+        self.assertEqual((st["entries"], st["strings"], st["pool_bytes"]), (1, 5, 13))
+        table = sections(data)[5]
+        raw = data[table[1]:table[1] + table[2]]
+        self.assertEqual((st["bytes"], st["sha256"]), (len(raw), hashlib.sha256(raw).hexdigest()))
 
-    def test_an_existing_file_is_untouched_with_and_without_overwrite(self):
+    def test_an_existing_file_is_kept_without_overwrite_and_replaced_with_it(self):
         self.sb.write("m.cml", b"keep")
-        for extra in ([], ["--overwrite"], ["--split", "train=0.7"], ["--split", "train=0.7", "--overwrite"], ["--dry-run", "--overwrite"]):
-            fit(self.sb, *extra)
-            self.assertEqual(self.sb.read("m.cml"), b"keep", extra)
+        r = fit(self.sb)
+        self.assertEqual((r.first_rule(), self.sb.read("m.cml")), ("conflict.exists", b"keep"))
+        r = fit(self.sb, "--overwrite")
+        self.assertEqual(r.status, 0, r)
+        self.assertNotEqual(self.sb.read("m.cml"), b"keep")
+        self.sb.write("m.cml", b"keep")
+        fit(self.sb, "--dry-run", "--overwrite")
+        self.assertEqual(self.sb.read("m.cml"), b"keep")
 
-    def test_a_split_fits_and_scores_without_a_file(self):
+    def test_a_split_fits_scores_and_writes_the_file(self):
         r = fit(self.sb, "--split", "train=0.7", "--seed", "3")
         self.assertEqual(r.status, 0, r)
         d = r.data()
-        self.assertIs(d["written"], False)
-        for k in ("path", "bytes", "sha256"):
-            self.assertNotIn(k, d)
+        self.assertIs(d["written"], True)
+        self.assertEqual(d["path"], "m.cml")
         s = d["summary"]
         self.assertEqual(s["split"], {"train": 7, "test": 3, "seed": 3})
         self.assertEqual(s["holdout"]["rows"], 3)
         self.assertEqual(len(s["steps_sha256"]), 64)
         self.assertEqual([(c["column"], c["categories"], c["output_columns"]) for c in s["categorical"]], [("sex", 2, 2), ("port", 3, 3)])
-        self.assertFalse((self.sb.dir / "m.cml").exists())
+        self.assertTrue((self.sb.dir / "m.cml").exists())
 
-    def test_a_dry_run_fits_reports_and_writes_nothing(self):
+    def test_a_dry_run_fits_reports_the_file_it_would_write_and_writes_nothing(self):
         r = fit(self.sb, "--dry-run")
         self.assertEqual(r.status, 9, r)
         self.assertIs(r.data()["written"], False)
-        self.assertEqual(r.doc()["planned_actions"], [])
+        acts = r.doc()["planned_actions"]
+        self.assertEqual([(a["op"], a["path"]) for a in acts], [("create", "m.cml")])
+        self.assertEqual(len(acts[0]["sha256"]), 64)
         self.assertFalse((self.sb.dir / "m.cml").exists())
+        real = fit(self.sb)
+        self.assertEqual(real.data()["sha256"], acts[0]["sha256"])
+        self.assertEqual(real.data()["bytes"], acts[0]["bytes"])
 
     def test_the_vocabulary_is_the_training_rows_only(self):
         """a category only the held-out rows hold is unseen for the step: it is not in the fitted vocabulary and unknown=refuse names its row"""

@@ -367,7 +367,8 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.limit.categorical-columns` | 8 | `--cat` names more columns than `--max-cat-columns` (default 128, ceiling 4,096), seen at the header | none |
 | `ml.input.invalid-utf8` | 8 | a cell of a categorical column is not well-formed UTF-8; line, column, name and byte offset in `detail` | none: re-encode the file, or remove the column from `--cat` and drop it |
 | `ml.input.categorical-not-encoded` | 8 | a column named by `--cat` is read by no step of the plan (since stage 2; at stage 1 no step could); names, category counts and the SHA-256 of the canonical vocabulary dump in `detail` | none: an `encode`, `freq` or `hash` step, or `--drop` |
-| `ml.model.vocabulary-not-stored` | 8 | a fit with a categorical step would write a model file and the file cannot hold the vocabulary (stage 3 of issue 21); nothing is written; the columns in `detail` | none: `--split train=F` fits and scores without a file, or `--dry-run` |
+| `ml.model.string-table` | 8 | the string table of a model file is damaged, passes a bound of `docs/stringtable.md` section 4, or disagrees with the steps, the plan or the schema of its own file (`reason`, `step` and `section` in `detail`) | none: refit |
+| `ml.limit.string-table` | 8 | a fit would write a string table over 131,072 strings, 8 MiB of string bytes or 12 MiB (`what`, `size`, `max` in `detail`) | none: fewer or shorter categories, or a `hash` step |
 
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
 
@@ -450,6 +451,8 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 325 | `ml.input.non-finite` | 8 | `transforms.codes` |
 | 326 | `ml.plan.column-kind` | 8 | `transforms.codes` |
 | 327 | `ml.input.reserved-category` | 8 | `transforms.codes` |
+| 328 | `ml.model.string-table` | 8 | `transforms.codes` |
+| 329 | `ml.limit.string-table` | 8 | `transforms.codes` |
 
 ## 9. Limits and sizes — waits for M0
 
