@@ -153,7 +153,7 @@ def gate(tool, authority, ceilings):
         return ["%s: no ceiling in tools.toml" % tool]
     allowed = set(ceiling.get("allow", []))
     reasons = ceiling.get("reasons", {})
-    if tool == "ml":
+    if tool in ("ml", "ml-predict"):
         # a label beyond the base row is allowed only with a stated reason (docs/wiring.md section 6)
         for text in sorted(allowed - base_row()):
             if not reasons.get(text.split("(")[0]):
@@ -205,7 +205,7 @@ def main():
         tool = entry["name"]
         files = sources(entry, tree) + deps
         first = derive(files)
-        schema = json.loads((ROOT / "schemas" / ("%s.v1.json" % tool)).read_text())
+        schema = json.loads((ROOT / "schemas" / ("%s.v1.json" % ceilings[tool].get("schema", tool))).read_text())
         record = ROOT / "manifests" / ("%s.authority.json" % tool)
         built = ROOT / "generated" / tool / "built.cho"
         record_text = json.dumps(first, indent=2) + "\n"

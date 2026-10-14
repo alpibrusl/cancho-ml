@@ -100,3 +100,11 @@ name = "ml"
 sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml", "generated/ml"]
 std = true
 out = "build/ml"
+
+# the prediction half of `ml` (docs/serving.md section 3): the same sources and its own entry point. The files of tools/ml other than its main.cho are listed
+# one by one because a directory would bring in the main of `ml`; scripts/check_bins.py fails when this list and the directory disagree.
+[[bin]]
+name = "ml-predict"
+sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml/app.cho", "tools/ml/catcli.cho", "tools/ml/catwire.cho", "tools/ml/csv.cho", "tools/ml/csvcell.cho", "tools/ml/csvload.cho", "tools/ml/est.cho", "tools/ml/fsio.cho", "tools/ml/logrec.cho", "tools/ml/mdesc.cho", "tools/ml/mfile.cho", "tools/ml/paths.cho", "tools/ml/spec.cho", "tools/ml/verbs.cho", "tools/ml/wire.cho", "tools/ml/wiredata.cho", "tools/ml/wireio.cho", "tools/ml-predict", "generated/ml-predict"]
+std = true
+out = "build/ml-predict"

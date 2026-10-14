@@ -11,6 +11,7 @@
     "file_write",
     "fs_read",
     "heap",
+    "io_read",
     "io_write"
   ],
   "labels": [
@@ -56,6 +57,11 @@
     },
     {
       "name": "heap",
+      "argument": null,
+      "bounded": true
+    },
+    {
+      "name": "io_read",
       "argument": null,
       "bounded": true
     },
@@ -215,6 +221,7 @@
     "distinct_labels",
     "done",
     "double",
+    "drop_source",
     "dropped",
     "dtype_f64",
     "dtype_i64",
@@ -359,6 +366,7 @@
     "is_missing",
     "is_model_flag",
     "is_print",
+    "is_stdin",
     "is_tail",
     "is_utf8",
     "is_valid",
@@ -483,6 +491,7 @@
     "max_tokens",
     "mean_of",
     "mean_scaled",
+    "mem",
     "message_of",
     "message_of",
     "min2",
@@ -808,5 +817,5 @@
   ],
   "folded_operators": 163,
   "folded_calls": 2,
-  "functions": 1316
+  "functions": 1326
 }
