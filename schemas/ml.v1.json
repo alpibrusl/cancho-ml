@@ -1981,6 +1981,417 @@
             "unknown_categories"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "enum": [
+                "constant",
+                "linear",
+                "logistic",
+                "tree",
+                "forest"
+              ]
+            },
+            "task": {
+              "enum": [
+                "regression",
+                "classification"
+              ]
+            },
+            "kind": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 7
+            },
+            "plan": {
+              "$ref": "#/$defs/text_or_bytes"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "file": {
+              "type": "object",
+              "properties": {
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "format": {
+                  "const": "CML1"
+                },
+                "version": {
+                  "const": 1
+                },
+                "sections": {
+                  "enum": [
+                    5,
+                    6
+                  ]
+                },
+                "compiler": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "sum_order": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "bytes",
+                "sha256",
+                "format",
+                "version",
+                "sections",
+                "compiler",
+                "sum_order"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "type": {
+                  "enum": [
+                    "int",
+                    "dec",
+                    "float"
+                  ]
+                },
+                "scale": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "type",
+                "scale"
+              ],
+              "additionalProperties": false
+            },
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  },
+                  "type": {
+                    "enum": [
+                      "int",
+                      "dec",
+                      "float",
+                      "categorical"
+                    ]
+                  },
+                  "scale": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    ]
+                  },
+                  "role": {
+                    "enum": [
+                      "feature",
+                      "target"
+                    ]
+                  },
+                  "required": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "type",
+                  "scale",
+                  "role",
+                  "required"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "request": {
+              "type": "object",
+              "properties": {
+                "header": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  }
+                },
+                "optional": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  }
+                },
+                "extra_columns": {
+                  "const": "refused"
+                },
+                "missing_cells": {
+                  "enum": [
+                    "refused",
+                    "needs_impute",
+                    "handled"
+                  ]
+                }
+              },
+              "required": [
+                "header",
+                "optional",
+                "extra_columns",
+                "missing_cells"
+              ],
+              "additionalProperties": false
+            },
+            "categorical": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "column": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  },
+                  "encoder": {
+                    "enum": [
+                      "onehot",
+                      "label",
+                      "freq",
+                      "hash"
+                    ]
+                  },
+                  "categories": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "buckets": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    ]
+                  },
+                  "listed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "values": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "$ref": "#/$defs/text_or_bytes"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "count"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "column",
+                  "encoder",
+                  "categories",
+                  "buckets",
+                  "listed",
+                  "truncated",
+                  "values"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "na_values": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/text_or_bytes"
+              }
+            },
+            "reader": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "max_categories": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "max_string_bytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "max_pool_bytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "max_cat_columns": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "max_categories",
+                    "max_string_bytes",
+                    "max_pool_bytes",
+                    "max_cat_columns"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "classes": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              ]
+            },
+            "positive": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "maxItems": 2
+                },
+                "with_proba": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "label_threshold": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "columns",
+                "with_proba",
+                "label_threshold"
+              ],
+              "additionalProperties": false
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "values_per_column": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "values_per_column",
+                "max_bytes"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "kind",
+            "plan",
+            "rows",
+            "file",
+            "target",
+            "columns",
+            "request",
+            "categorical",
+            "na_values",
+            "reader",
+            "classes",
+            "positive",
+            "output",
+            "limits"
+          ],
+          "additionalProperties": false
         }
       ]
     }

@@ -59,7 +59,11 @@ class Result:
         return "<ml %r -> %d %r %r>" % (self.argv[1:], self.status, self.stdout[:300], self.stderr[:120])
 
 
-def run(*args, cwd=None, timeout=120, close_stdin=False, close_stdout=False, binary_path=None):
+PREDICT_BIN = os.environ.get("ML_PREDICT_BIN") or str(ROOT / "build" / "ml-predict")
+
+
+def run(*args, cwd=None, timeout=120, close_stdin=False, close_stdout=False, binary_path=None, stdin=None):
+    """stdin: the bytes to give the process on standard input (None: the process gets an empty one, /dev/null)."""
     argv = [binary_path or BIN, *[str(a) for a in args]]
 
     def child():
@@ -68,7 +72,8 @@ def run(*args, cwd=None, timeout=120, close_stdin=False, close_stdout=False, bin
         if close_stdout:
             os.close(1)
 
-    p = subprocess.run(argv, capture_output=True, cwd=cwd, timeout=timeout, preexec_fn=child if (close_stdin or close_stdout) else None)
+    p = subprocess.run(argv, capture_output=True, cwd=cwd, timeout=timeout, preexec_fn=child if (close_stdin or close_stdout) else None,
+                       input=stdin if stdin is not None else (None if close_stdin else b""))
     return Result(argv, p.returncode, p.stdout, p.stderr)
 
 
