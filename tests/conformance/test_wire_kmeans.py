@@ -422,6 +422,19 @@ class KMeansWire(unittest.TestCase):
             r = self.ml("fit", "--model", "kmeans", "--k", "2", "--threads", t, "--output", "m.cml", "--overwrite", "full.csv")
             self.assertEqual((r.status, r.first_rule()), (2, "ml.param.threads"), (t, r))
 
+    def test_sums_that_overflow(self):
+        # the sums of the update overflow a double: a fit is refused; a score that overflows has no value (null), as a metric with none does everywhere
+        self.sb.write("huge.csv", "x\n1e200\n-1e200\n3e200\n5e200\n")
+        r = self.ml("fit", "--model", "kmeans", "--k", "2", "--output", "h.cml", "--overwrite", "huge.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.fit.non-finite"), r)
+        self.sb.write("mid.csv", "x\n1e154\n-1e154\n2e154\n")
+        self.fit("mid.csv", "mid.cml", "--k", "2")
+        e = self.ml("eval", "--model-file", "mid.cml", "huge.csv")
+        self.assertEqual(e.status, 0, e)
+        self.assertIsNone(e.data()["metrics"]["inertia"])
+        self.assertEqual(e.data()["metrics"]["sizes"], [4, 0])
+        self.assertEqual(e.data()["metrics"]["mean_distance"], [None, None])
+
     def test_a_refused_fit_writes_nothing(self):
         self.sb.write("keep.cml", b"x")
         r = self.ml("fit", "--model", "kmeans", "--k", "7", "--output", "keep.cml", "--overwrite", "six.csv")
