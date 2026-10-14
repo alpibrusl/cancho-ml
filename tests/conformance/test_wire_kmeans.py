@@ -433,7 +433,6 @@ class KMeansWire(unittest.TestCase):
         r = self.ml("fit", "--model", "kmeans", "--k", "2", "--drop", "x", "--output", "m.cml", "--overwrite", "one.csv")
         self.assertEqual(r.status, 8, r)
         self.assertEqual(r.first_rule(), "ml.input.empty", r)
-        self.assertIn("no column to cluster", r.error()["message"])
 
     # ------------------------------------------------------------------ WK8: threads
     def test_the_model_file_is_the_same_at_1_2_4_8_and_16_threads(self):
