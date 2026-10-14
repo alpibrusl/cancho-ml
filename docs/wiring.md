@@ -69,7 +69,7 @@ repair for extras); the columns are aligned to the fitted features by name; `pip
 the estimator predicts. `eval` reads the target too, applies `--split` to the file if asked, and computes the metrics of `lib/metrics`.
 
 **Matrices and column types.** The reader builds the matrix of all kept columns in file order; text and non-numeric cells are `ml.input.non-numeric` with the `--drop` repair, as before. *The hook for W2
-(text categories) was used by stage 1 of issue 21 (`docs/categorical.md`):* the reader's shape has a kind per column (0 none, 1 int, 2 dec, 3 float, **4 categorical**; the schema type code 3 is the file's code for it,
+(text categories) was used by stage 1 of issue 21 (`docs/categorical.md`):* the reader's shape has a kind per column (0 none, 1 int, 2 dec, 3 float, **4 categorical**; the schema type code 3 is reserved for it and
 written by the model file of a categorical fit, both registered in `lib/core/kinds.cho`), a text column is **declared** with `fit --cat NAMES` and never inferred, it is not a column of the float matrix but
 of an `i64` id tensor beside it (`lib/core/catmat.cho`, ids from the bytewise-sorted dictionary of `lib/core/dict.cho`, -1 missing, -2 unseen at predict), and the only place that reads a cell as a
 string is `read_row` through `cat_cell` in `tools/ml/csv.cho`. **Nothing in the estimators looks at a cell, and they did not change:** the wired models still see only the float matrix.

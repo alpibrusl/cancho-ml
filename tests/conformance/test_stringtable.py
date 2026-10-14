@@ -257,6 +257,24 @@ class Reading(Base):
         # NA is missing (not unseen) in both columns; "?" is an unseen string
         self.assertEqual(p.data()["unknown_categories"], 1)
 
+    def test_a_model_with_no_numeric_feature_at_all(self):
+        rows = ["c0,c1,y"]
+        for i in range(40):
+            a, b = ("a", "b", "c")[i % 3], ("x", "y")[i % 2]
+            rows.append("%s,%s,%d" % (a, b, 1 if (a == "a") != (b == "x") else 0))
+        self.sb.write("o.csv", "\n".join(rows) + "\n")
+        for model, extra in (("linear", ["--l2", "0.5"]), ("logistic", ["--l2", "0.5"]), ("tree", ["--task", "classification"]), ("forest", ["--task", "classification", "--trees", "5"])):
+            r = self.sb.run("fit", "o.csv", "--target", "y", "--model", model, *extra, "--cat", "c0,c1", "--step", "encode column=c0,c1 kind=onehot", "--output", "o.cml", "--overwrite")
+            self.assertEqual(r.status, 0, (model, r))
+            p = self.sb.run("predict", "o.csv", "--model-file", "o.cml", "--limit", "4")
+            self.assertEqual((p.status, p.data()["total_rows"]), (0, 40), (model, p))
+            e = self.sb.run("eval", "o.csv", "--model-file", "o.cml")
+            self.assertEqual((e.status, e.data()["rows"]), (0, 40), (model, e))
+            # the same file with its columns the other way round, and without the target
+            self.sb.write("o2.csv", "c1,c0\n" + "".join("%s,%s\n" % (r_.split(",")[1], r_.split(",")[0]) for r_ in rows[1:5]))
+            q = self.sb.run("predict", "o2.csv", "--model-file", "o.cml")
+            self.assertEqual((q.status, q.data()["total_rows"]), (0, 4), (model, q))
+
     def test_a_cell_longer_than_the_limit_of_the_fit_is_refused_as_at_fit(self):
         r = self.sb.run("fit", "--target", "y", "--model", "linear", "--l2", "1", "--cat", "sex,port", "--drop", "id", "--max-string-bytes", "6", "--output", "s.cml", "--step",
                         "encode column=sex,port kind=onehot", "t.csv")
