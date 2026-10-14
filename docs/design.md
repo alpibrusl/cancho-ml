@@ -173,12 +173,12 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 9 | frequency encoding of a categorical column | `freq` |
 | 10 | hashing of a categorical column | `hash` |
 
-**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta. The next step kind is 11. Kinds 7 to 10 are the categorical steps of stage 2 of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them and no model file holds one before stage 3.
+**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta, and **6 strings (the string table, present only when a step of kind 7 to 10 needs it; `sections` is then 6, and 5 otherwise: a file without a categorical step has the bytes it always had)**. The byte layout of the table, its bounds (pool at most 8 MiB, strings at most 2^17, the section at most 12 MiB), its SHA-256, the 8-byte stub that stands for a categorical step in the `steps` section (kind, layout 2), the schema type 3 (a categorical input column) and the refusals `ml.model.string-table` (code 328) and `ml.limit.string-table` (code 329) are in `docs/stringtable.md`. The next step kind is 11. Kinds 7 to 10 are the categorical steps of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them, and in a model file each is an 8-byte stub whose payload is an entry of the string table (`docs/stringtable.md`).
 
 Kinds 4 and 5 are built by `ml` since W1 (`tools/ml/wire.cho`, through `lib/pipeline/file.cho` and the adapters of `lib/models`; the logistic payload gained a labels record, `docs/wiring.md` section 4); kinds 6 and 7 are written by libraries only, and `mfile.cho` (the reader of the constant kinds)
 refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
 dtypes: 1 = i64, 2 = f64 (one table for every record, the same in `mfile.cho`, `record.cho` and `tree/model.cho`). Section tags of the
-file: 1 plan, 2 schema, 3 steps, 4 model, 5 meta, in that order. The column types in `schema` (0 int, 1 dec, 2 float) are not dtypes.
+file: 1 plan, 2 schema, 3 steps, 4 model, 5 meta, in that order. The column types in `schema` (0 int, 1 dec, 2 float, 3 categorical) are not dtypes.
 The stream kinds of the random generator have their own registry in `docs/rng.md`; the numeric refusal codes of the libraries are in
 section 8.1.
 
