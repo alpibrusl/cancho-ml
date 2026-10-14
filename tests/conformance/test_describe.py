@@ -65,9 +65,9 @@ class Oracle(unittest.TestCase):
 
     def test_the_corpus_covers_the_kinds_the_encoders_and_the_columns(self):
         docs = {mid: describe(mf).data() for mid, (mf, kind, fam) in MODELS.items()}
-        self.assertEqual({d["kind"] for d in docs.values()}, {1, 2, 3, 4, 5, 7})
-        self.assertEqual({d["model"] for d in docs.values()}, {"constant", "linear", "logistic", "tree", "forest"})
-        self.assertEqual({d["task"] for d in docs.values()}, {"regression", "classification"})
+        self.assertEqual({d["kind"] for d in docs.values()}, {1, 2, 3, 4, 5, 6, 7})
+        self.assertEqual({d["model"] for d in docs.values()}, {"constant", "linear", "logistic", "kmeans", "tree", "forest"})
+        self.assertEqual({d["task"] for d in docs.values()}, {"regression", "classification", "clustering"})
         self.assertEqual({c["encoder"] for d in docs.values() for c in d["categorical"]}, {"onehot", "label", "freq", "hash"})
         self.assertEqual({c["type"] for d in docs.values() for c in d["columns"]}, {"int", "dec", "float", "categorical"})
         self.assertEqual({d["file"]["sections"] for d in docs.values()}, {5, 6})
@@ -75,7 +75,16 @@ class Oracle(unittest.TestCase):
         self.assertTrue(any(d["na_values"] for d in docs.values()))
         self.assertTrue(any(c["truncated"] for d in (describe(mf, "--limit", "3").data() for mf, _, _ in MODELS.values()) for c in d["categorical"]))
         self.assertTrue(any(c["scale"] is not None for d in docs.values() for c in d["columns"]))
-        self.assertTrue(any(d["target"]["type"] == "float" for d in docs.values()))
+        self.assertTrue(any(d["target"] and d["target"]["type"] == "float" for d in docs.values()))
+        # a clustering has no target: no column has the role, a request holds every column and asks for no optional one, and an answer has a cluster and a distance
+        for mid in ("kmeans", "kmeans_random", "cat_kmeans_onehot"):
+            d = docs[mid]
+            self.assertEqual((d["task"], d["kind"], d["target"], d["request"]["optional"], d["classes"], d["positive"]), ("clustering", 6, None, [], None, None), mid)
+            self.assertEqual({c["role"] for c in d["columns"]}, {"feature"}, mid)
+            self.assertTrue(all(c["required"] for c in d["columns"]), mid)
+            self.assertEqual(d["request"]["header"], [c["name"] for c in d["columns"]], mid)
+            self.assertEqual((d["output"]["columns"], d["output"]["with_proba"], d["output"]["with_distance"], d["output"]["label_threshold"]), (["cluster"], None, ["cluster", "distance"], None), mid)
+            self.assertEqual(d["request"]["missing_cells"], "needs_impute", mid)
 
     def test_the_text_format_names_the_columns(self):
         r = SB.run("describe", "--model-file", MODELS["linear"][0], "--format", "text")
@@ -85,9 +94,17 @@ class Oracle(unittest.TestCase):
         self.assertIn("column a: int, required\n", text)
         self.assertIn("column y: dec(1), target (optional in an input)\n", text)
 
+    def test_the_text_format_of_a_clustering_has_no_target(self):
+        r = SB.run("describe", "--model-file", MODELS["kmeans"][0], "--format", "text")
+        self.assertEqual(r.status, 0, r)
+        text = r.stdout.decode()
+        self.assertTrue(text.startswith("model kmeans, clustering, 60 training rows\n"), text)
+        self.assertIn("column a: int, required\n", text)
+        self.assertNotIn("target", text)
+
     def test_a_request_built_from_describe_is_accepted_by_predict(self):
         # the use the contract is for: the header and the types of the answer are a CSV the model takes
-        for mid in ("linear", "logistic", "tree_cls", "cat_forest_hash", "cat_linear_onehot", "cat_wide_tree", "const_cls"):
+        for mid in ("linear", "logistic", "tree_cls", "cat_forest_hash", "cat_linear_onehot", "cat_wide_tree", "const_cls", "kmeans", "cat_kmeans_onehot"):
             mf = MODELS[mid][0]
             d = describe(mf).data()
             head = ",".join(d["request"]["header"])

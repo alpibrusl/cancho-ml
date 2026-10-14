@@ -112,10 +112,12 @@ class StdinEqualsFile(unittest.TestCase):
 
     def test_the_text_format_the_probability_the_page_and_the_dropped_columns(self):
         data = (SB.dir / "num_plain.csv").read_bytes()
-        for mid in ("linear", "logistic", "tree_cls", "forest_reg", "const_cls", "const_reg_dec"):
+        for mid in ("linear", "logistic", "tree_cls", "forest_reg", "const_cls", "const_reg_dec", "kmeans", "cat_kmeans_onehot"):
             mf = MODELS[mid][0]
             for extra in (["--format", "text"], ["--limit", "3", "--from", "2"], ["--limit", "2", "--format", "text"], ["--from", "50"], ["--proba"],
-                          ["--proba", "--limit", "4", "--from", "1"]):
+                          ["--proba", "--limit", "4", "--from", "1"], ["--distance"], ["--distance", "--format", "text", "--limit", "3"]):
+                if mid == "cat_kmeans_onehot":
+                    continue
                 f = ml("predict", "num_plain.csv", "--model-file", mf, *extra)
                 s = ml("predict", "-", "--model-file", mf, *extra, stdin=data)
                 self.assertEqual((f.status, f.stdout, f.stderr), (s.status, s.stdout, s.stderr), (mid, extra))
@@ -273,12 +275,33 @@ class MlPredict(unittest.TestCase):
 
     def test_the_flags_of_predict(self):
         data = (SB.dir / "num_plain.csv").read_bytes()
-        for mid in ("linear", "logistic", "tree_cls", "const_cls", "forest_reg"):
+        for mid in ("linear", "logistic", "tree_cls", "const_cls", "forest_reg", "kmeans", "kmeans_random"):
             mf = MODELS[mid][0]
-            for extra in (["--format", "text"], ["--limit", "3", "--from", "2"], ["--proba"], ["--max-rows", "4"], ["--max-line-bytes", "5"], ["--max-bytes", "10"]):
+            for extra in (["--format", "text"], ["--limit", "3", "--from", "2"], ["--proba"], ["--distance"], ["--max-rows", "4"], ["--max-line-bytes", "5"], ["--max-bytes", "10"]):
                 a = ml("predict", "-", "--model-file", mf, *extra, stdin=data)
                 b = mp("predict", "-", "--model-file", mf, *extra, stdin=data)
                 self.assertEqual((a.status, as_predict(a), a.stderr), (b.status, b.stdout, b.stderr), (mid, extra))
+
+    def test_a_clustering_through_standard_input_and_ml_predict(self):
+        # k-means has no target and its answer is the cluster, and with --distance the squared distance: the same bytes from a file, from standard input and from either binary
+        cat = (SB.dir / "cat_seen.csv").read_bytes()
+        num = (SB.dir / "num_plain.csv").read_bytes()
+        for mid, data, name in (("kmeans", num, "num_plain.csv"), ("kmeans_random", num, "num_plain.csv"), ("cat_kmeans_onehot", cat, "cat_seen.csv")):
+            mf = MODELS[mid][0]
+            for extra in ([], ["--distance"], ["--distance", "--format", "text"], ["--distance", "--limit", "2", "--from", "1"]):
+                f = ml("predict", name, "--model-file", mf, *extra)
+                self.assertEqual(f.status, 0, (mid, extra, f))
+                if "text" not in extra:
+                    d = f.data()
+                    self.assertEqual(d["task"], "clustering")
+                    self.assertEqual(d["columns"], ["cluster", "distance"] if "--distance" in extra else ["cluster"], (mid, extra))
+                for r in (ml("predict", "-", "--model-file", mf, *extra, stdin=data), mp("predict", name, "--model-file", mf, *extra), mp("predict", "-", "--model-file", mf, *extra, stdin=data)):
+                    self.assertEqual((r.status, r.stdout, r.stderr), (f.status, f.stdout, f.stderr), (mid, extra))
+            # --proba is a refusal for a clustering, and --distance for the others, in both binaries
+            for argv in (["predict", name, "--model-file", mf, "--proba"], ["predict", "num_plain.csv", "--model-file", MODELS["linear"][0], "--distance"]):
+                a, b = ml(*argv), mp(*argv)
+                self.assertEqual(a.first_rule(), "args.conflict", (argv, a))
+                self.assertEqual((a.status, as_predict(a)), (b.status, b.stdout), argv)
 
     def test_describe_prints_the_same_bytes(self):
         for mid, (mf, kind, fam) in MODELS.items():
@@ -317,7 +340,7 @@ class MlPredictSurface(unittest.TestCase):
 
     def test_the_flags_it_has(self):
         tool = {f["name"] for f in json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)["flags"]}
-        self.assertEqual(tool, {"--" + n for n in ("root", "proba", "drop", "model-file", "limit", "from", "max-rows", "max-columns", "max-cells", "max-line-bytes", "max-bytes", "format")})
+        self.assertEqual(tool, {"--" + n for n in ("root", "proba", "distance", "drop", "model-file", "limit", "from", "max-rows", "max-columns", "max-cells", "max-line-bytes", "max-bytes", "format")})
 
     def test_introspect_and_skill_name_the_binary(self):
         i = json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)

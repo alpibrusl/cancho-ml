@@ -78,6 +78,8 @@ def describe(data, limit=1000, max_bytes=16777216):
         task = "regression"
     elif model == "logistic":
         task = "classification"
+    elif model == "kmeans":
+        task = "clustering"
     rows = struct.unpack_from("<q", meta, 0)[0]
     cl = struct.unpack_from("<I", meta, 28)[0]
     pin = meta[32:32 + cl]
@@ -96,9 +98,10 @@ def describe(data, limit=1000, max_bytes=16777216):
         classes = [c0, c1]
         positive = None if kind == 2 else c1
     columns = []
+    # a clustering has no target: the schema's target index is the number of columns, so every column is a feature (docs/wiring-kmeans.md section 4)
+    has_target = target < len(cols)
     for j, (name, ty, scale) in enumerate(cols):
         columns.append({"name": tb(name), "type": TYPES[ty], "scale": scale if ty == 1 else None, "role": "target" if j == target else "feature", "required": j != target})
-    tname, tty, tscale = cols[target]
     if kind <= 3:
         missing = "refused"
     elif model in ("tree", "forest"):
@@ -120,18 +123,26 @@ def describe(data, limit=1000, max_bytes=16777216):
                     "listed": listed, "truncated": listed < len(strs), "values": [{"value": tb(s), "count": c} for s, c in strs[:listed]],
                 })
     if task == "regression":
-        output = {"columns": ["prediction"], "with_proba": None, "label_threshold": None}
+        output = {"columns": ["prediction"], "with_proba": None, "with_distance": None, "label_threshold": None}
+    elif task == "clustering":
+        output = {"columns": ["cluster"], "with_proba": None, "with_distance": ["cluster", "distance"], "label_threshold": None}
     elif kind <= 3:
-        output = {"columns": ["label", "probability"], "with_proba": None, "label_threshold": None}
+        output = {"columns": ["label", "probability"], "with_proba": None, "with_distance": None, "label_threshold": None}
     else:
-        output = {"columns": ["label"], "with_proba": ["label", "probability"], "label_threshold": "0.5"}
+        output = {"columns": ["label"], "with_proba": ["label", "probability"], "with_distance": None, "label_threshold": "0.5"}
+    target_obj = None
+    optional = []
+    if has_target:
+        tname, tty, tscale = cols[target]
+        target_obj = {"name": tb(tname), "type": TYPES[tty], "scale": tscale if tty == 1 else None}
+        optional = [tb(tname)]
     return {
         "model": model, "task": task, "kind": kind, "plan": ptext, "rows": rows,
         "file": {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "format": "CML1", "version": struct.unpack_from("<I", data, 4)[0],
                  "sections": struct.unpack_from("<I", data, 8)[0], "compiler": tb(pin), "sum_order": sum_order},
-        "target": {"name": tb(tname), "type": TYPES[tty], "scale": tscale if tty == 1 else None},
+        "target": target_obj,
         "columns": columns,
-        "request": {"header": [c["name"] for c in columns if c["role"] == "feature"], "optional": [tb(tname)], "extra_columns": "refused", "missing_cells": missing},
+        "request": {"header": [c["name"] for c in columns if c["role"] == "feature"], "optional": optional, "extra_columns": "refused", "missing_cells": missing},
         "categorical": categorical, "na_values": na_values, "reader": reader,
         "classes": classes, "positive": positive, "output": output,
         "limits": {"values_per_column": limit, "max_bytes": max_bytes},

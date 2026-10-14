@@ -1,4 +1,4 @@
-"""The corpus of the serving gates (docs/serving.md section 1): stored models of every kind, 1 to 7, with categorical steps, missing cells, unseen categories and hash
+"""The corpus of the serving gates (docs/serving.md section 1): stored models of every kind, 1 to 7 (k-means is 6), with categorical steps, missing cells, unseen categories and hash
 steps, and the inputs to predict from. Everything is written in a sandbox by `ml fit`, from data a seeded generator makes, so a gate can rebuild it.
 
     build(sb)  ->  MODELS (id -> file name in the sandbox), INPUTS (id -> (file name, model ids it suits))
@@ -23,6 +23,11 @@ FITS = {
     "tree_cls": (["--model", "tree", "--task", "classification", "--target", "lab", "--drop", "y"], NUM, 7),
     "forest_reg": (["--model", "forest", "--task", "regression", "--trees", "5", "--seed", "3", "--target", "y", "--drop", "lab"], NUM, 7),
     "forest_cls": (["--model", "forest", "--task", "classification", "--trees", "5", "--seed", "3", "--target", "lab", "--drop", "y"], NUM, 7),
+    # kind 6: k-means, which has no target (docs/wiring-kmeans.md): numeric with steps, numeric with the other initialisation and no step, categorical with a string table
+    "kmeans": (["--model", "kmeans", "--k", "3", "--seed", "2", "--step", "impute column=* strategy=mean;scale column=* kind=standard", "--drop", "y,lab"], NUM, 6),
+    "kmeans_random": (["--model", "kmeans", "--k", "4", "--init", "random", "--iterations", "7", "--seed", "9", "--drop", "y,lab"], NUM, 6),
+    "cat_kmeans_onehot": (["--model", "kmeans", "--k", "3", "--seed", "4", "--cat", "c0,c1", "--na-values", "NA", "--step",
+                           "impute column=n strategy=mean;encode column=c0,c1 kind=onehot missing=zero", "--drop", "y,lab"], CAT, 6),
     # categorical steps: a string table (six sections)
     "cat_linear_onehot": (["--model", "linear", "--l2", "1", "--cat", "c0,c1", "--na-values", "NA,?", "--step",
                            "impute column=n strategy=mean;encode column=c0,c1 kind=onehot missing=zero", "--target", "y", "--drop", "lab"], CAT, 4),
