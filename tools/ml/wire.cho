@@ -66,7 +66,7 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             while k <= 5 {
                 let f = bytes.field(needing, ',', k);
                 if cli.has(parsed, table, f) {
-                    e = wiredata.conflict(heap, e, f, "this flag needs a model other than constant: --model linear, logistic, tree or forest, or --plan");
+                    e = wiredata.conflict(heap, e, f, "this flag needs a model other than constant: --model linear, logistic, kmeans, tree or forest, or --plan");
                 }
                 k = k + 1;
             }
@@ -107,7 +107,15 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
                 }
                 i = i + 1;
             }
-            if cli.has(parsed, table, "task") && est.task(kind) != 3 {
+            if est.task(kind) == 4 {
+                if cli.has(parsed, table, "target") {
+                    e = wiredata.conflict(heap, e, "target", "kmeans has no target: it clusters the rows by their features, so a label column is dropped with --drop");
+                }
+                if cli.has(parsed, table, "task") {
+                    e = wiredata.conflict(heap, e, "task", "kmeans is a clustering: its task is fixed and no flag changes it");
+                }
+            }
+            if cli.has(parsed, table, "task") && est.task(kind) != 3 && est.task(kind) != 4 {
                 var want: &static [byte] = "regression";
                 if est.task(kind) == 2 {
                     want = "classification";
@@ -126,6 +134,9 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             }
             if ptask == 1 && cli.has(parsed, table, "positive") {
                 e = wiredata.conflict(heap, e, "positive", "a regression has no positive label");
+            }
+            if ptask == 4 && cli.has(parsed, table, "positive") {
+                e = wiredata.conflict(heap, e, "positive", "a clustering has no positive label");
             }
         }
     }
@@ -358,7 +369,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
         } else if code != 0 {
             e = wiredata.code_error(heap, e, code, 0, 0, 0);
             go = false;
-        } else if tcol < 0 {
+        } else if tcol < 0 && task != 4 {
             var w = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--target names a column that is not in the header", "names are compared exactly, byte for byte");
             w = fail.no_repair(heap, w);
             w = fail.detail_open(heap, w);
@@ -367,7 +378,9 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
             e = fail.add(heap, e, w);
             go = false;
         } else {
-            tkind = csv.kind(sr, tcol);
+            if tcol >= 0 {
+                tkind = csv.kind(sr, tcol);
+            }
             lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
         }
     }
@@ -403,14 +416,17 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
     if task == 2 && tkind != 1 {
         e = verbs.problem(heap, e, "ml.label.not-integer", "a classification target must be an integer column", "label the classes with integers", "", "");
         go = false;
-    } else if ncols + ncat < 2 {
+    } else if task == 4 && ncols + ncat < 1 {
+        e = verbs.problem(heap, e, "ml.input.empty", "the file has no column to cluster", "give a file with at least one column that is not dropped", "", "");
+        go = false;
+    } else if task != 4 && ncols + ncat < 2 {
         e = verbs.problem(heap, e, "ml.input.empty", "the file has no feature column besides the target", "give a file with at least one more column", "", "");
         go = false;
     }
     var yall = box_slice(heap, 2, 0.0);
     var c0 = 0;
     var c1 = 0;
-    if go {
+    if go && task != 4 {
         let none = box_slice(heap, 1, 0);
         var bad = 0;
         borrow x as &xr in {
@@ -521,25 +537,36 @@ res struct Trained {
     blob: Box[[byte]],
     d: int,
     rows: int,
+    // a clustering: the metrics of the training rows as a JSON object (docs/wiring-kmeans.md section 3), else empty
+    report: buffer.Buffer,
 }
 
 fn drop_trained[&h](heap: &!h Heap, t: Trained) -> [heap] int {
-    let Trained { fitted, wv, blob, d, rows } = t;
+    let Trained { fitted, wv, blob, d, rows, report } = t;
     run.drop_fitted(heap, fitted);
     unbox_slice(heap, wv);
     unbox_slice(heap, blob);
+    buffer.drop(heap, report);
     return rows;
 }
 
 fn empty_trained[&h](heap: &!h Heap) -> [heap] Trained {
-    return Trained { fitted: run.empty_fitted(heap), wv: box_slice(heap, 2, 0.0), blob: box_slice(heap, 1, byte_of(0)), d: 0, rows: 0 };
+    return Trained { fitted: run.empty_fitted(heap), wv: box_slice(heap, 2, 0.0), blob: box_slice(heap, 1, byte_of(0)), d: 0, rows: 0, report: buffer.empty(heap, 1) };
+}
+
+// the feature columns of a table read for a fit: all of them, but the target when there is one
+fn feature_count[&d](ds: &d Data) -> [] int {
+    if ds.tj >= 0 {
+        return ds.ncols - 1;
+    }
+    return ds.ncols;
 }
 
 // Fit the steps on the training rows (those of `sel` equal to `want`, all when want < 0), then the estimator on what the steps leave
 fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
     var e = errs;
     var go = true;
-    let nfeat = ds.ncols - 1;
+    let nfeat = feature_count(ds);
     let featcols = indices_but(heap, ds.ncols, ds.tj);
     var xtr = matrix.empty(heap);
     var ytr = box_slice(heap, 2, 0.0);
@@ -554,7 +581,7 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
             }
         }
     }
-    if go {
+    if go && ds.tj >= 0 {
         let (y2, bad) = wiredata.take_col(heap, ds.x, sel, want, ds.tj);
         unbox_slice(heap, ytr);
         ytr = y2;
@@ -621,7 +648,7 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
         borrow xt as &xq in {
             borrow fitted as &fq in {
                 let (mc, mlist) = wiredata.missing_columns(heap, xq, fq.nm);
-                if mc > 0 && !est.is_blob(pls.kind) {
+                if mc > 0 && !est.takes_missing(pls.kind) {
                     borrow mlist as &lr in {
                         e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), retry_ok);
                     }
@@ -635,6 +662,7 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
     var rows = 0;
     var wv = box_slice(heap, 2, 0.0);
     var blob = box_slice(heap, 1, byte_of(0));
+    var report = buffer.empty(heap, 1);
     if go && est.is_blob(pls.kind) {
         // the tree and the forest: the fitted model is a payload; missing cells go to the library with their bitmap (docs/wiring-trees.md section 5)
         borrow xt as &xq in {
@@ -642,10 +670,18 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
             rows = matrix.rows(xq);
             var yfit = box_slice(heap, rows + 1, 0.0);
             let ptask = est.task_of(pls.kind, contents(pls.ip));
+            if ptask == 4 {
+                // k-means: the bounds on k, the features and the diagnostics are compared with the data before anything is allocated (docs/wiring-kmeans.md section 7)
+                let which = wiredata.cluster_bound(contents(pls.ip)[0], contents(pls.ip)[1], rows, d);
+                if which != 0 {
+                    e = wiredata.cluster_error(heap, e, which, contents(pls.ip)[0], contents(pls.ip)[1], rows, d);
+                    go = false;
+                }
+            }
             borrow mut yfit as &!yw in {
                 borrow ytr as &yr in {
                     var i = 0;
-                    while i < rows {
+                    while i < rows && ptask != 4 && go {
                         if ptask == 2 {
                             if truncate(contents(yr)[i]) == ds.c1 {
                                 contents(yw)[i] = 1.0;
@@ -657,13 +693,33 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
                     }
                 }
             }
-            borrow yfit as &yfr in {
-                let (b2, code) = est.fit_blob(heap, pls.kind, o.threads, matrix.shape(xq), contents(xq.data), contents(xq.miss), matrix.wpc(xq), contents(yfr)[0..rows], contents(pls.ip), contents(pls.fp), o.seed, ds.c0, ds.c1, o.max_rows, o.max_cols, o.max_cells);
-                unbox_slice(heap, blob);
-                blob = b2;
-                if code != 0 {
-                    e = wiredata.code_error(heap, e, code, 0, 0, 0);
-                    go = false;
+            if go {
+                borrow yfit as &yfr in {
+                    let (b2, code) = est.fit_blob(heap, pls.kind, o.threads, matrix.shape(xq), contents(xq.data), contents(xq.miss), matrix.wpc(xq), contents(yfr)[0..rows], contents(pls.ip), contents(pls.fp), o.seed, ds.c0, ds.c1, o.max_rows, o.max_cols, o.max_cells);
+                    unbox_slice(heap, blob);
+                    blob = b2;
+                    if code != 0 {
+                        e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                        go = false;
+                    }
+                }
+            }
+            if go && ptask == 4 {
+                // the metrics of the training rows, through the same code as eval (the inertia is the library's final inertia: docs/wiring-kmeans.md section 3)
+                borrow yfit as &yfr in {
+                    borrow wv as &wr in {
+                        borrow blob as &bq in {
+                            let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, 4, xq, contents(yfr)[0..rows], contents(wr), contents(bq), contents(pls.ip)[0], 0, 0, o.max_rows);
+                            buffer.drop(heap, report);
+                            report = mo;
+                            buffer.drop(heap, mplain);
+                            buffer.drop(heap, mund);
+                            if fl.code != 0 {
+                                e = wiredata.bad_metric(heap, e, fl);
+                                go = false;
+                            }
+                        }
+                    }
                 }
             }
             unbox_slice(heap, yfit);
@@ -731,7 +787,7 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
     unbox_slice(heap, ytr);
     unbox_slice(heap, featcols);
     names.drop(heap, fnames);
-    return (Trained { fitted: fitted, wv: wv, blob: blob, d: d, rows: rows }, go, e);
+    return (Trained { fitted: fitted, wv: wv, blob: blob, d: d, rows: rows, report: report }, go, e);
 }
 
 // the answer of a fit that wrote (or planned) the file `data`
@@ -769,7 +825,13 @@ fn answer_fit[&h, &f, &r, &po, &d, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [
             w = json.put_int(heap, w, rows);
             w = json.put_key(heap, w, "columns");
             w = json.put_int(heap, w, cols);
-            w = verbs.put_name(heap, w, "target", tname);
+            if len(tname) == 0 {
+                // a clustering has no target
+                w = json.put_key(heap, w, "target");
+                w = json.put_null(heap, w);
+            } else {
+                w = verbs.put_name(heap, w, "target", tname);
+            }
             w = verbs.put_name(heap, w, "path", paths.shown(out));
             w = json.put_key(heap, w, "bytes");
             w = json.put_int(heap, w, len(data));
@@ -878,7 +940,26 @@ fn put_forest[&h, &b](heap: &!h Heap, w0: json.Writer, blob: &b [byte]) -> [heap
     return w;
 }
 
-fn fit_summary[&h, &pp, &dd, &sp, &tb](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.Plan, kind: int, task: int, c0: int, c1: int, split: &sp buffer.Buffer, ntest: int, o: verbs.Opts, cat: bool, table: &tb [byte]) -> [heap] buffer.Buffer {
+// what the fit of a clustering says about itself: the hyperparameters (k, the iterations, the initialisation) and the metrics of the training rows
+fn put_clusters[&h, &pp, &ip](heap: &!h Heap, w0: json.Writer, tr: &pp Trained, ip: &ip [int]) -> [heap] json.Writer {
+    var w = w0;
+    w = json.put_key(heap, w, "clusters");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "k");
+    w = json.put_int(heap, w, ip[0]);
+    w = json.put_key(heap, w, "iterations");
+    w = json.put_int(heap, w, ip[1]);
+    w = json.put_key(heap, w, "init");
+    w = json.put_string(heap, w, wiredata.init_word(ip[2]));
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, tr.rows);
+    w = json.put_key(heap, w, "metrics");
+    w = json.put_fragment(heap, w, buffer.bytes(tr.report));
+    w = json.end_object(heap, w);
+    return w;
+}
+
+fn fit_summary[&h, &pp, &dd, &sp, &tb, &ii](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.Plan, kind: int, task: int, c0: int, c1: int, split: &sp buffer.Buffer, ntest: int, o: verbs.Opts, cat: bool, table: &tb [byte], ip: &ii [int]) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 512);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "plan");
@@ -891,7 +972,9 @@ fn fit_summary[&h, &pp, &dd, &sp, &tb](heap: &!h Heap, tr: &pp Trained, pl: &dd 
     }
     w = json.put_key(heap, w, "features");
     w = json.put_int(heap, w, tr.d);
-    if est.is_blob(kind) {
+    if task == 4 {
+        w = put_clusters(heap, w, tr, ip);
+    } else if est.is_blob(kind) {
         w = put_forest(heap, w, contents(tr.blob));
     } else {
         w = put_coefficients(heap, w, tr);
@@ -935,7 +1018,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
     var e = errs;
     var go = true;
     var w = json.writer(heap, 256);
-    let nfeat = ds.ncols - 1;
+    let nfeat = feature_count(ds);
     let featcols = indices_but(heap, ds.ncols, ds.tj);
     var xte = matrix.empty(heap);
     if nfeat > 0 {
@@ -975,7 +1058,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
                     } else {
                         borrow xs as &xq in {
                             let (mc, mlist) = wiredata.missing_columns(heap, xq, tr.fitted.nm);
-                            if mc > 0 && !est.is_blob(pls.kind) {
+                            if mc > 0 && !est.takes_missing(pls.kind) {
                                 borrow mlist as &lr in {
                                     e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), false);
                                 }
@@ -985,10 +1068,19 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
                         }
                     }
                     if go {
-                        let (yte, bad) = wiredata.take_col(heap, ds.x, sel, 1, ds.tj);
+                        // a clustering has no target: the scores read no y, and c0 carries k
+                        var yte = box_slice(heap, ntest + 1, 0.0);
+                        var hc0 = ds.c0;
+                        if ds.tj >= 0 {
+                            let (y2, bad) = wiredata.take_col(heap, ds.x, sel, 1, ds.tj);
+                            unbox_slice(heap, yte);
+                            yte = y2;
+                        } else {
+                            hc0 = contents(pls.ip)[0];
+                        }
                         borrow yte as &yr in {
                             borrow xs as &xq2 in {
-                                let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), ds.c0, ds.c1, ds.c1, o.max_rows);
+                                let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, ds.c1, o.max_rows);
                                 buffer.drop(heap, mobj);
                                 mobj = mo;
                                 buffer.drop(heap, mplain);
@@ -1105,7 +1197,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, 
         buffer.drop(heap, summary);
         borrow split as &spq in {
             borrow table as &tbr in {
-                summary = fit_summary(heap, tr, pls.pl, kind, est.task_of(kind, contents(pls.ip)), ds.c0, ds.c1, spq, ntest, o, ds.cat, buffer.bytes(tbr));
+                summary = fit_summary(heap, tr, pls.pl, kind, est.task_of(kind, contents(pls.ip)), ds.c0, ds.c1, spq, ntest, o, ds.cat, buffer.bytes(tbr), contents(pls.ip));
             }
         }
     }
@@ -1127,6 +1219,16 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
     var task = est.task(kind);
     borrow pls as &pq2 in {
         task = est.task_of(kind, contents(pq2.ip));
+    }
+    // --target: a clustering has none and every other model needs one. The flag check of a command line with --model knows the model; with --plan it is the plan's
+    if go && o.plan_given {
+        if task == 4 && o.target_given {
+            e = wiredata.conflict(heap, e, "target", "kmeans has no target: it clusters the rows by their features, so a label column is dropped with --drop");
+            go = false;
+        } else if task != 4 && !o.target_given {
+            e = verbs.problem(heap, e, "args.required-flag", "fit needs --target, the column to predict", "ml fit --target NAME --output MODEL FILE", "flag", "--target");
+            go = false;
+        }
     }
     var mixed_plan = false;
     borrow pls as &mpq in {
@@ -1174,7 +1276,7 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         }
     }
     // a tree or forest fit takes at most params.rows_max() training rows (docs/wiring-trees.md section 6): counted here, before any copy of the rows is made
-    if go && est.is_blob(kind) {
+    if go && est.is_blob(kind) && task != 4 {
         var ntrain = 0;
         borrow sel as &sq0 in {
             ntrain = wiredata.count_rows(contents(sq0), dn, want);

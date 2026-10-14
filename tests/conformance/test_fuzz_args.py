@@ -18,7 +18,7 @@ FLAGS = ["--" + f["name"] for f in T["flags"]] + ["--", "-", "-x", "---", "--=",
 VALUES = ["1", "0", "-1", "1000", "99999999999999999999", "18446744073709551616", "", "..", "../x", "a/../b", "./x", "a//b", "a/",
           "/etc/passwd", "/dev/null", "/nonexistent", "a" * 5000, "reg.csv", "cls.csv", "m.cml", "c.cml", "bad.cml", "sub", "sub/reg.csv",
           "missing", "y", "lab", "id", "x", "id,x", "y,y", ",", ",,", "\n", "\x01", "\xe9", "\xff", "constant", "regression", "classification",
-          "linear", "logistic", "tree", "forest", "31", "4194305", "999999999", "4096", "1025", "256", "train=0.8", "train=2", "train=.5", "train=0.123456789", "train=", "0.5", "-0.5", "1e400", "nan", "1e-5", "p.txt", "lin.csv",
+          "linear", "logistic", "kmeans", "kmeans++", "random", "tree", "forest", "31", "4194305", "999999999", "4096", "1025", "256", "train=0.8", "train=2", "train=.5", "train=0.123456789", "train=", "0.5", "-0.5", "1e400", "nan", "1e-5", "p.txt", "lin.csv",
           "lcls.csv", "lin.cml", "log.cml", "impute column=* strategy=mean", "scale column=a kind=standard;impute column=b strategy=median",
           "scale column=zzz kind=minmax", "model kind=linear", ";", ";;;", "encode column=a kind=onehot max-categories=0", "bucket column=a kind=quantile bins=300",
           "impute column=a strategy=constant", "scale column= kind=minmax", "a=b=c", "# c", "\n",
@@ -45,6 +45,7 @@ def sandbox():
     assert sb.run("fit", "--task", "classification", "--target", "lab", "--output", "c.cml", "cls.csv").status == 0
     assert sb.run("fit", "--model", "tree", "--target", "y", "--output", "tree.cml", "lin.csv").status == 0
     assert sb.run("fit", "--model", "forest", "--task", "classification", "--trees", "5", "--target", "lab", "--output", "forest.cml", "lcls.csv").status == 0
+    assert sb.run("fit", "--model", "kmeans", "--k", "3", "--seed", "2", "--output", "km.cml", "lin.csv").status == 0
     sb.write("bad.cml", sb.read("m.cml")[:100])
     return sb
 
@@ -153,6 +154,41 @@ class Fuzz(unittest.TestCase):
                 for v in values:
                     self.check([*base, flag, v])
                     self.check([*base, flag + "=" + v])
+
+    def test_every_flag_of_kmeans_every_mistake(self):
+        # the 4 bases: a fit by flags, a fit by a plan, predict and eval; the flags of k-means and the flags that mean nothing to it
+        self.sb.write("km.txt", "scale column=* kind=standard\nmodel kind=kmeans k=3 iterations=4 init=random\n")
+        bases = (["fit", "--model", "kmeans", "--k", "3", "--output", "o.cml", "lin.csv"], ["fit", "--plan", "km.txt", "--output", "o.cml", "lin.csv"],
+                 ["fit", "--model", "kmeans", "--output", "o.cml", "lcls.csv"], ["predict", "--model-file", "km.cml", "lin.csv"], ["eval", "--model-file", "km.cml", "lin.csv"])
+        values = ("", "0", "1", "2", "3", "8", "9", "-1", "1024", "1025", "1000", "1001", "4097", "131072", "99999999999999999999", "0.5", "nan", "kmeans++", "random", "kmeans", "plusplus",
+                  "train=0.5", "lab", "y", "..")
+        for base in bases:
+            for flag in ("--k", "--init", "--iterations", "--distance", "--target", "--task", "--positive", "--proba", "--seed", "--threads", "--split", "--drop", "--model", "--l2", "--trees"):
+                self.check([*base, flag])
+                self.check([*base, flag, flag])
+                for v in values:
+                    self.check([*base, flag, v])
+                    self.check([*base, flag + "=" + v])
+
+    def test_seeded_vectors_with_kmeans(self):
+        rng = random.Random(int(os.environ.get("FUZZ_SEED", "20261012")) + 2)
+        flags = ["--k", "--init", "--iterations", "--distance", "--target", "--task", "--positive", "--proba", "--seed", "--threads", "--split", "--drop", "--step", "--plan", "--cat", "--max-rows"]
+        values = ["1", "2", "3", "7", "8", "9", "1024", "1025", "1000", "1001", "0", "-1", "kmeans++", "random", "y", "lab", "a", "train=0.5", "km.txt", "impute column=* strategy=mean",
+                  "scale column=* kind=standard", "bucket column=a kind=width bins=3", "", "..", "99999999999999999999"]
+        self.sb.write("km.txt", "scale column=* kind=standard\nmodel kind=kmeans k=3 iterations=4 init=random\n")
+        for _ in range(int(os.environ.get("FUZZ_N", "2500")) // 2):
+            verb = rng.choice(["fit", "fit", "predict", "eval"])
+            if verb == "fit":
+                argv = ["fit", "--model", "kmeans", "--k", rng.choice(["2", "3", "9"]), "--output", "o.cml", rng.choice(["lin.csv", "lcls.csv", "reg.csv"])]
+            else:
+                argv = [verb, "--model-file", "km.cml", rng.choice(["lin.csv", "lcls.csv", "reg.csv"])]
+            for _ in range(rng.randint(1, 5)):
+                argv.insert(rng.randrange(1, len(argv)), rng.choice(values) if rng.random() < 0.5 else rng.choice(flags))
+                if rng.random() < 0.7:
+                    i = rng.randrange(1, len(argv))
+                    argv.insert(i, rng.choice(flags))
+                    argv.insert(i + 1, rng.choice(values))
+            self.check(argv, rooted=rng.random() < 0.6)
 
     def test_seeded_vectors_with_the_tree_and_the_forest(self):
         rng = random.Random(int(os.environ.get("FUZZ_SEED", "20261012")) + 1)

@@ -55,6 +55,9 @@ pub struct Opts {
     threads: int,
     threads_given: bool,
     proba: bool,
+    // predict: --distance (a k-means model's second column); fit: whether --target was given
+    distance: bool,
+    target_given: bool,
     task_given: bool,
     // the categorical columns of fit (docs/categorical.md section 2)
     cats: &static [byte],

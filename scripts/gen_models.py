@@ -72,10 +72,14 @@ def parse_manifest(path):
     m.setdefault("shape", "vector")
     if m["shape"] not in SHAPES:
         raise ManifestError("%s: shape %r (vector or blob)" % (where, m["shape"]))
-    if m["shape"] == "blob" and (m["task"] != "both" or not any(h.get("name") == "task" and h.get("type") == "enum" for h in m.get("hyperparameter", []))):
-        raise ManifestError("%s: a blob model serves both tasks and has a `task` enum hyperparameter" % where)
+    if m["shape"] == "blob" and m["task"] not in ("both", "clustering"):
+        raise ManifestError("%s: a blob model serves both tasks or is a clustering" % where)
+    if m["shape"] == "blob" and m["task"] == "both" and not any(h.get("name") == "task" and h.get("type") == "enum" for h in m.get("hyperparameter", [])):
+        raise ManifestError("%s: a blob model of both tasks has a `task` enum hyperparameter" % where)
     if m["task"] == "both" and m["shape"] != "blob":
         raise ManifestError("%s: task = both needs shape = blob" % where)
+    if m["task"] == "clustering" and m["wired"] and m["shape"] != "blob":
+        raise ManifestError("%s: a wired clustering is a blob model (its payload size depends on k)" % where)
     for k in ("emits",):
         if k not in m["tags"]:
             raise ManifestError("%s: [tags] needs %r" % (where, k))
@@ -123,8 +127,10 @@ def parse_manifest(path):
             raise ManifestError("%s: hyperparameter %s: only nonneg floats exist in the plan grammar" % (where, h["name"]))
         if h["type"] == "enum" and not h.get("values"):
             raise ManifestError("%s: hyperparameter %s: an enum has values" % (where, h["name"]))
-        if h["type"] == "enum" and h["name"] != "task":
-            raise ManifestError("%s: an enum hyperparameter has no flag of its own yet: only `task` (the existing --task)" % where)
+        if h["type"] == "enum" and h["name"] != "task" and not all(re.fullmatch(r"[a-z0-9+-]+", v) for v in h["values"]):
+            raise ManifestError("%s: hyperparameter %s: a value of an enum is a flag value: lower-case letters, digits, + and -" % (where, h["name"]))
+        if h["type"] == "enum" and has_default and h["default"] not in h["values"]:
+            raise ManifestError("%s: hyperparameter %s: default %r is not one of its values" % (where, h["name"], h["default"]))
         if ";" in h["doc"] or "|" in h["doc"] or "\"" in h["doc"] or "\\" in h["doc"]:
             raise ManifestError("%s: hyperparameter %s: the doc holds a character of the table syntax" % (where, h["name"]))
         hps.append(h)
@@ -207,27 +213,47 @@ def lit(text):
     return '"' + "".join(out) + '"'
 
 
+def flag_hps(m):
+    """the hyperparameters of a model that have a flag: every one but the `task` of a model of both tasks (the existing --task)"""
+    return [h for h in m["hyperparameter"] if not (h["type"] == "enum" and h["name"] == "task")]
+
+
+def hp_shape(h):
+    """what two models must agree on to share a flag: type, range or values"""
+    return (h["type"], h.get("min"), h.get("max"), tuple(h.get("values", ())), h.get("nonneg"))
+
+
 def hp_flag_entries(models):
-    """name|short|kind|role|default|help of every hyperparameter flag of a wired model (one entry per name; two models may share a flag
-    when its type, range, default and doc agree)."""
+    """name|short|kind|role|default|help of every hyperparameter flag of a wired model (one entry per name; two models may share a flag when its type,
+    range and values agree: the flag table then has no default of its own when they differ, and the help names each model's)."""
     seen = {}
     for m in wired(models):
-        for h in m["hyperparameter"]:
-            if h["type"] == "enum":
-                continue
-            kind = "nat" if h["type"] == "int" else "text"
-            default = h["default"]
-            entry = "%s||%s|none|%s|%s" % (h["name"], kind, default, h["doc"])
-            if h["name"] in seen and seen[h["name"]][0] != entry:
-                raise ManifestError("hyperparameter %s is declared differently by two models" % h["name"])
-            seen.setdefault(h["name"], (entry, []))[1].append(m["name"])
-    return [seen[k][0] for k in sorted(seen)], {k: seen[k][1] for k in seen}
+        for h in flag_hps(m):
+            seen.setdefault(h["name"], []).append((m, h))
+    out, users = [], {}
+    for name in sorted(seen):
+        group = seen[name]
+        if any(hp_shape(h) != hp_shape(group[0][1]) for _, h in group):
+            raise ManifestError("hyperparameter %s is declared differently by two models" % name)
+        h0 = group[0][1]
+        kind = {"int": "nat", "float": "text"}.get(h0["type"]) or "choice:" + "/".join(h0["values"])
+        defaults = {h.get("default", "") for _, h in group}
+        default = defaults.pop() if len(defaults) == 1 else ""
+        docs = {h["doc"] for _, h in group}
+        if len(docs) == 1:
+            doc = docs.pop()
+        else:
+            doc = ". ".join("%s: %s" % (m["name"], h["doc"].rstrip(".")) + (" (default %s)" % h["default"] if "default" in h else "") for m, h in group)
+        out.append("%s||%s|none|%s|%s" % (name, kind, default, doc))
+        users[name] = [m["name"] for m, _ in group]
+    return out, users
 
 
 def model_flag_entry(models):
     names = [m["name"] for m in models if m["wired"]]
     tiers = ", ".join("%s (%s)" % (m["name"], m["tier"]) for m in models if m["wired"])
     how = {"linear": "linear fits by least squares", "logistic": "logistic by Newton's method",
+           "kmeans": "kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed)",
            "tree": "tree is a CART decision tree with histogram splits (--task chooses classification or regression)",
            "forest": "forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed)"}
     sentences = [how[n] for n in names if n in how]
@@ -238,12 +264,13 @@ def model_flag_entry(models):
 
 
 def limit_entries(models):
-    out = {}
+    out, defaults = {}, {}
     for m in wired(models):
         for h in m["hyperparameter"]:
             if h["type"] == "int":
-                out[h["name"]] = "%s|%s|%d" % (h["name"], h["default"], h["max"])
-    return [out[k] for k in sorted(out)]
+                defaults.setdefault(h["name"], set()).add(h.get("default", str(h["min"])))
+                out[h["name"]] = (h["name"], h["max"])
+    return ["%s|%s|%d" % (n, next(iter(defaults[n])) if len(defaults[n]) == 1 else str(min(int(v) for v in defaults[n])), out[n][1]) for n in sorted(out)]
 
 
 # the flags of `ml-predict` (docs/serving.md section 3.2): those of `predict` and `describe` that write nothing, taken by name from the table of `ml`
@@ -277,7 +304,7 @@ def render_spec(models, root):
         "LIMITS_HYPER": "".join(";" + e for e in limit_entries(models)),
         "MODEL_LIST": ", ".join("%s (%s)" % (m["name"], m["tier"]) for m in models if m["wired"]),
         "MODEL_CHOICES": "|".join(m["name"] for m in models if m["wired"]),
-        "HYPER_USAGE": " ".join("[--%s %s]" % (n, "N" if next(h for m in wired(models) for h in m["hyperparameter"] if h["name"] == n)["type"] == "int" else "X") for n in hyper_names),
+        "HYPER_USAGE": " ".join("[--%s %s]" % (n, {"int": "N", "float": "X", "enum": "NAME"}[next(h for m in wired(models) for h in flag_hps(m) if h["name"] == n)["type"]]) for n in hyper_names),
         "HYPER_FLAG_NAMES": ", ".join("--" + n for n in hyper_names),
     }
     out = tmpl
@@ -392,8 +419,8 @@ def render_est(models):
 
     o += simple("name", "&static [byte]", lambda m: lit(m["name"]), '""')
     o += simple("tier", "&static [byte]", lambda m: lit(m["tier"]), '""')
-    o += ["// 1 regression, 2 classification, 3 either (the `task` of the model line, task_of), 0 not a wired model"]
-    o += simple("task", "int", lambda m: {"regression": "1", "classification": "2", "both": "3"}.get(m["task"], "0"), "0")
+    o += ["// 1 regression, 2 classification, 3 either (the `task` of the model line, task_of), 4 clustering (no target), 0 not a wired model"]
+    o += simple("task", "int", lambda m: {"regression": "1", "classification": "2", "both": "3", "clustering": "4"}.get(m["task"], "0"), "0")
     o += simple("nints", "int", lambda m: str(len(int_like(m))), "0")
     o += simple("nfloats", "int", lambda m: str(sum(1 for h in m["hyperparameter"] if h["type"] == "float")), "0")
     o += ["// 1 regression or 2 classification: the task of the model whose integer hyperparameters are `ip` (a model of both tasks has it in `task`)",
@@ -408,20 +435,21 @@ def render_est(models):
           "pub fn takes[&f](kind: int, flag: &f [byte]) -> [] bool {"]
     for m in ws:
         o.append("    if kind == %d {" % keys[m["name"]])
-        for h in m["hyperparameter"]:
-            if h["type"] == "enum":
-                continue
+        for h in flag_hps(m):
             o += ["        if bytes.equal(flag, %s) {" % lit(h["name"]), "            return true;", "        }"]
         o.append("    }")
     o += ["    return false;", "}", ""]
     o += ["// whether `flag` is a hyperparameter of some wired model (its flag is then a flag of fit)", "pub fn hparam_flag[&f](flag: &f [byte]) -> [] bool {"]
-    names = sorted({h["name"] for m in ws for h in m["hyperparameter"] if h["type"] != "enum"})
+    names = sorted({h["name"] for m in ws for h in flag_hps(m)})
     for n in names:
         o += ["    if bytes.equal(flag, %s) {" % lit(n), "        return true;", "    }"]
     o += ["    return false;", "}", ""]
     o += ["// whether the model keeps its fitted state as a byte payload that its adapter builds and reads (the blob interface), not as a vector of floats",
           "pub fn is_blob(kind: int) -> [] bool {"]
     o += ["    return %s;" % (" || ".join("kind == %d" % keys[m["name"]] for m in blob) or "false"), "}", ""]
+    o += ["// whether the model takes a cell that is still missing after the steps (a blob model of both tasks: the tree and the forest); the others are refused with ml.input.missing-value",
+          "pub fn takes_missing(kind: int) -> [] bool {"]
+    o += ["    return %s;" % (" || ".join("kind == %d" % keys[m["name"]] for m in blob if m["task"] == "both") or "false"), "}", ""]
 
     # the least value of an integer hyperparameter flag (1 unless its manifest says 0: the generic check of the nat flags is 1 to the ceiling)
     mins = {}
@@ -484,11 +512,13 @@ def render_est(models):
     seen = set()
     for m in ws:
         for h in m["hyperparameter"]:
-            if h["type"] == "enum" or h["name"] in seen:
+            if (h["type"] == "enum" and h["name"] == "task") or h["name"] in seen:
                 continue
             seen.add(h["name"])
             o.append("    if bytes.equal(name, %s) {" % lit(h["name"]))
-            if h["type"] == "int":
+            if h["type"] == "enum":
+                o += ["        // a value of an enum is checked by the choice kind of its flag (args.bad-value)", "        return true;"]
+            elif h["type"] == "int":
                 o += ["        // the range of an integer is checked by the nat check of the command line (ml.param.out-of-range)", "        return true;"]
             else:
                 o += ["        return float_value(value) >= 0.0;"]

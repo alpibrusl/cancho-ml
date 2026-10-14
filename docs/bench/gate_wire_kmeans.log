@@ -1,0 +1,24 @@
+oracle_wire_kmeans covered: cases 292, with_missing 122, missing_cells 20186, split 117, steps 248, label_dropped 105, empty_clusters 89, refused 8
+oracle_wire_kmeans: 300 cases (both initialisations, k 1 to 12, 30 to 700 rows), all agree byte for byte
+oracle_wire_kmeans covered: cases 4, with_missing 3, missing_cells 160283, split 0, steps 4, label_dropped 3, empty_clusters 0, refused 0
+oracle_wire_kmeans: 4 cases (both initialisations, k 1 to 12, 100,000 rows), all agree byte for byte
+iris           random    seed 0  k 3  centroids observed 1.924e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+iris           random    seed 7  k 3  centroids observed 3.728e-16 (bound 1e-09)  inertia observed 1.245e-16 (bound 1e-09)  rows with another cluster 0  PASS
+iris           kmeans++  seed 0  k 3  centroids observed 3.728e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+iris           kmeans++  seed 7  k 3  centroids observed 3.728e-16 (bound 1e-09)  inertia observed 1.245e-16 (bound 1e-09)  rows with another cluster 0  PASS
+wine           random    seed 0  k 3  centroids observed 5.143e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+wine           random    seed 7  k 3  centroids observed 1.702e-16 (bound 1e-09)  inertia observed 1.892e-16 (bound 1e-09)  rows with another cluster 0  PASS
+wine           kmeans++  seed 0  k 3  centroids observed 1.702e-16 (bound 1e-09)  inertia observed 1.892e-16 (bound 1e-09)  rows with another cluster 0  PASS
+wine           kmeans++  seed 7  k 3  centroids observed 5.143e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+breast_cancer  random    seed 0  k 2  centroids observed 3.827e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+breast_cancer  random    seed 7  k 2  centroids observed 3.827e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+breast_cancer  kmeans++  seed 0  k 2  centroids observed 3.730e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+breast_cancer  kmeans++  seed 7  k 2  centroids observed 3.730e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+blobs          random    seed 0  k 5  centroids observed 3.114e-16 (bound 1e-09)  inertia observed 2.006e-16 (bound 1e-09)  rows with another cluster 0  PASS
+blobs          random    seed 7  k 5  centroids observed 2.318e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+blobs          kmeans++  seed 0  k 5  centroids observed 3.114e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+blobs          kmeans++  seed 7  k 5  centroids observed 1.898e-16 (bound 1e-09)  inertia observed 0.000e+00 (bound 1e-09)  rows with another cluster 0  PASS
+control (one iteration): outside the bounds on at least one data set, as it must be
+control (other initialisation): outside the bounds on at least one data set, as it must be
+worst of the 16 configurations: centroids 5.143e-16 (bound 1e-09), inertia 2.006e-16 (bound 1e-09)
+sklearn gate (kmeans, initial centres fixed): all PASS

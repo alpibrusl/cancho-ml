@@ -300,7 +300,7 @@ CASES = [
     case("ml-limit-plan", ["fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "lin.csv"], bad("ml.limit.plan"),
          setup=LBASE + [("write", "p.txt", "# " + "x" * 70000 + "\nmodel kind=linear\n")]),
     case("ml-plan-model-not-built", ["fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "lin.csv"], bad("ml.plan.model-not-built"),
-         setup=LBASE + [("write", "p.txt", "model kind=kmeans k=2\n")]),
+         setup=LBASE + [("write", "p.txt", "model kind=constant task=regression\n")]),
     case("ml-fit-all-missing", ["fit", "--model", "linear", "--step", "impute column=* strategy=mean", "--target", "y", "--output", "m.cml", "am.csv"],
          bad("ml.fit.all-missing"), setup=LBASE + [("write", "am.csv", "a,b,y\n1,,3\n2,,4\n3,,5\n")]),
     case("ml-limit-categories", ["fit", "--model", "linear", "--step", "encode column=a kind=onehot max-categories=3", "--target", "y", "--output", "m.cml", "lin.csv"],
@@ -560,6 +560,69 @@ def _max_bytes_cases():
 
 CASES += _max_bytes_cases()
 
+
+# ------------------------------------------------------------------ k-means (docs/wiring-kmeans.md): no target, the cluster of each row, the inertia
+FIT_KM = ["fit", "--model", "kmeans", "--k", "2", "--seed", "3", "--output", "k.cml", "lin.csv"]
+WITH_KM = LBASE + [("fit", "--model", "kmeans", "--k", "2", "--seed", "3", "--output", "k.cml", "lin.csv")]
+
+
+def _kmeans_cases():
+    return [
+        case("fit-kmeans-every-flag", ["fit", "--model", "kmeans", "--k", "2", "--iterations", "5", "--init", "random", "--seed", "3", "--threads", "2", "--output", "k.cml", "lin.csv"],
+             ok({"model": "kmeans", "task": "clustering", "rows": 8, "columns": 3, "target": None, "written": True, "path": "k.cml",
+                 "summary": {"features": 3, "clusters": {"k": 2, "iterations": 5, "init": "random", "rows": 8}}}), setup=LBASE),
+        case("fit-kmeans-default-initialisation", FIT_KM, ok({"model": "kmeans", "summary": {"clusters": {"k": 2, "iterations": 10, "init": "kmeans++"}}}), setup=LBASE),
+        case("fit-kmeans-with-steps", FIT_KM[:-1] + ["--step", "scale column=* kind=standard", "lin.csv"], ok({"model": "kmeans", "summary": {"steps": 1, "features": 3}}), setup=LBASE),
+        case("fit-kmeans-from-a-plan", ["fit", "--plan", "p.txt", "--output", "k.cml", "lin.csv"],
+             ok({"model": "kmeans", "task": "clustering", "summary": {"steps": 1, "clusters": {"k": 3, "iterations": 4, "init": "random"}}}),
+             setup=LBASE + [("write", "p.txt", "scale column=* kind=minmax\nmodel kind=kmeans k=3 iterations=4 init=random\n")]),
+        case("fit-kmeans-text", ["--format", "text"] + FIT_KM, ok(None, stdout_starts="fit: kmeans clustering, 8 rows, wrote k.cml"), setup=LBASE),
+        case("fit-kmeans-drops-the-label", ["fit", "--model", "kmeans", "--k", "2", "--drop", "lab", "--output", "k.cml", "lcls.csv"], ok({"model": "kmeans", "columns": 2}), setup=LBASE),
+        case("fit-kmeans-split-holdout", FIT_KM[:-1] + ["--split", "train=0.75", "lin.csv"],
+             ok({"model": "kmeans", "summary": {"split": {"train": 6, "test": 2}, "holdout": {"rows": 2}}}), setup=LBASE),
+        case("fit-kmeans-dry-run", FIT_KM[:-1] + ["--dry-run", "lin.csv"], ok({"model": "kmeans", "written": False}, exit=9, dry_run=True, no_file="k.cml"), setup=LBASE),
+        case("fit-kmeans-categorical", ["fit", "--model", "kmeans", "--k", "2", "--seed", "1"] + ENC_STEP + ["--drop", "id", "--output", "k.cml", "encc.csv"],
+             ok({"model": "kmeans", "task": "clustering", "written": True, "summary": {"string_table": {"entries": 1}}}), setup=ECBASE),
+        case("predict-kmeans-cluster", ["predict", "--model-file", "k.cml", "--limit", "3", "lin.csv"], ok({"model": "kmeans", "task": "clustering", "columns": ["cluster"], "row_count": 3}), setup=WITH_KM),
+        case("predict-kmeans-distance", ["predict", "--model-file", "k.cml", "--distance", "--limit", "3", "lin.csv"], ok({"columns": ["cluster", "distance"], "row_count": 3}), setup=WITH_KM),
+        case("predict-kmeans-without-the-label-column", ["predict", "--model-file", "k.cml", "--drop", "lab", "lcls.csv"], ok({"row_count": 12}),
+             setup=LBASE + [("fit", "--model", "kmeans", "--k", "3", "--drop", "lab", "--output", "k.cml", "lcls.csv")]),
+        case("eval-kmeans", ["eval", "--model-file", "k.cml", "lin.csv"], ok({"model": "kmeans", "task": "clustering", "rows": 8, "clusters": 2}), setup=WITH_KM),
+        case("eval-kmeans-text", ["--format", "text", "eval", "--model-file", "k.cml", "lin.csv"], ok(None, stdout_starts="inertia "), setup=WITH_KM),
+        case("eval-kmeans-split", ["eval", "--model-file", "k.cml", "--split", "train=0.75", "--seed", "1", "--threads", "3", "lin.csv"], ok({"rows": 2, "split": {"train": 6, "test": 2, "seed": 1}}),
+             setup=WITH_KM),
+        # ---- refusals
+        case("args-conflict-target-with-kmeans", ["fit", "--model", "kmeans", "--k", "2", "--target", "y", "--output", "k.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-target-with-a-kmeans-plan", ["fit", "--plan", "p.txt", "--target", "y", "--output", "k.cml", "lin.csv"], bad("args.conflict"),
+             setup=LBASE + [("write", "p.txt", "model kind=kmeans k=2\n")]),
+        case("args-required-flag-target-with-a-plan", ["fit", "--plan", "p.txt", "--output", "m.cml", "lin.csv"], bad("args.required-flag"),
+             setup=LBASE + [("write", "p.txt", "model kind=linear\n")]),
+        case("args-conflict-task-with-kmeans", ["fit", "--model", "kmeans", "--k", "2", "--task", "regression", "--output", "k.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-positive-with-kmeans", ["fit", "--model", "kmeans", "--k", "2", "--positive", "1", "--output", "k.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-k-with-linear", ["fit", "--model", "linear", "--k", "2", "--target", "y", "--output", "m.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-init-with-a-tree", ["fit", "--model", "tree", "--init", "random", "--target", "y", "--output", "m.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-k-without-a-model", ["fit", "--k", "2", "--target", "y", "--output", "m.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-proba-of-kmeans", ["predict", "--model-file", "k.cml", "--proba", "lin.csv"], bad("args.conflict"), setup=WITH_KM),
+        case("args-conflict-distance-of-linear", ["predict", "--model-file", "lin.cml", "--distance", "lin.csv"], bad("args.conflict"), setup=WITH_LIN),
+        case("args-conflict-distance-of-constant", ["predict", "--model-file", "m.cml", "--distance", "reg.csv"], bad("args.conflict"), setup=WITH_MODEL),
+        case("args-conflict-positive-at-eval-of-kmeans", ["eval", "--model-file", "k.cml", "--positive", "1", "lin.csv"], bad("args.conflict"), setup=WITH_KM),
+        case("args-bad-value-init", ["fit", "--model", "kmeans", "--k", "2", "--init", "forgy", "--output", "k.cml", "lin.csv"], bad("args.bad-value"), setup=LBASE),
+        case("ml-plan-missing-key-k", ["fit", "--model", "kmeans", "--output", "k.cml", "lin.csv"], bad("ml.plan.missing-key"), setup=LBASE),
+        case("ml-param-out-of-range-k-zero", ["fit", "--model", "kmeans", "--k", "0", "--output", "k.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-k-above-the-ceiling", ["fit", "--model", "kmeans", "--k", "1025", "--output", "k.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-k-above-the-rows", ["fit", "--model", "kmeans", "--k", "9", "--output", "k.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-kmeans-iterations", ["fit", "--model", "kmeans", "--k", "2", "--iterations", "1001", "--output", "k.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-threads-kmeans", ["fit", "--model", "kmeans", "--k", "2", "--threads", "0", "--output", "k.cml", "lin.csv"], bad("ml.param.threads"), setup=LBASE),
+        case("ml-input-too-many-rows-kmeans", ["fit", "--model", "kmeans", "--k", "2", "--max-rows", "4", "--output", "k.cml", "lin.csv"], bad("ml.input.too-many-rows"), setup=LBASE),
+        case("ml-input-missing-value-kmeans", ["fit", "--model", "kmeans", "--k", "2", "--output", "k.cml", "linmis.csv"], bad("ml.input.missing-value", repair_retry=True), setup=LBASE),
+        case("ml-input-missing-value-predict-kmeans", ["predict", "--model-file", "k.cml", "holes.csv"], bad("ml.input.missing-value"),
+             setup=WITH_KM + [("write", "holes.csv", "a,b,y\n1,,3\n2,2,4\n")]),
+        case("ml-model-malformed-kmeans-with-a-target", ["predict", "--model-file", "bad.cml", "lin.csv"], bad("ml.model.malformed"),
+             setup=WITH_KM + [("mutate", "k.cml", "bad.cml", lambda d: fix_checksum(set_bytes(d, sections(d)[1][1] + 4, (0).to_bytes(4, "little"))))]),
+    ]
+
+
+CASES += _kmeans_cases()
 
 def log_cases():
     return [c for c in CASES if c.get("log")]

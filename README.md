@@ -4,7 +4,7 @@
 
 **Classical machine learning on tabular data, as a command line an agent can read.** `ml` fits, applies and scores a model on a CSV with explicit semantics, exact sums where a sum decides the result, bounded resources, structured refusals and a machine-verifiable authority. It is a command line, not a chat box: you (or an agent) give it flags, it gives back one JSON line, or a named refusal with a repair. One small binary, written in [cancho](https://github.com/alpibrusl/cancho), built the way [cancho-table](https://github.com/alpibrusl/cancho-table) is. The [project page](https://alpibrusl.github.io/cancho-ml/) has the same in pages.
 
-**Status: early, alpha, not for production.** `ml` builds five models. `--model constant` is the baseline: the training mean for a regression, the majority class for a classification. `--model linear` (least squares, ridge with `--l2`), `--model logistic` (binary, Newton's method), `--model tree` (a CART decision tree with histogram splits) and `--model forest` (bagged trees, threaded over trees; `--task`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes`) go through a pipeline of steps (`impute`, `scale`, `encode`, `bucket`, and `freq` and `hash` for text) that `--step` or `--plan` describes and that is fitted on the training rows and stored, with the model, in **one** file: `predict` and `eval` apply the stored steps, and no flag can apply another transformation. `ml` reads integer, decimal and float CSV columns, takes an empty cell as a missing value that the plan must impute, holds rows out with a seeded `--split`, threads `fit` with `--threads`, gives probabilities with `predict --proba`, and scores with accuracy, precision, recall, F1, ROC-AUC, log-loss, RMSE, MAE and R2. Text columns declared with `--cat` are read into a bounded dictionary, and the steps `encode` (one-hot, label), `freq` (the share of the training rows) and `hash` (SHA-256, a fixed number of buckets) turn them into numbers, with a rare-category bucket (`min-count`, the category `__other__`) and rules for an unseen string (`unknown`) and an empty cell (`missing`). The model file of such a fit holds a **string table**: the fitted vocabulary of every categorical step, with the training strings and their counts, so `predict` and `eval` read the text columns by name from the file alone, count a string the training rows never held, and hash it into its bucket under a `hash` step. A declared column that no step reads is refused (`ml.input.categorical-not-encoded`). A tree or forest takes a missing cell itself and learns a side for it at each split, where linear and logistic refuse a missing cell that no `impute` step covers (`ml.input.missing-value`); a tree or forest fit takes at most 2^20 (1,048,576) training rows (`ml.input.too-many-rows`). A tree or forest file is model kind 7, with the summation order 3 (sequential sums: no lane sum reaches its bytes). k-means is a tested library that no verb calls. A model is a module (a manifest, a fixed adapter, generated glue, an admission script) so that the next one cannot add a float order, a capability or an unregistered refusal: [docs/modules.md](docs/modules.md). One pre-registered gate is red (tree regression against scikit-learn, below). The whole list, with what each item was measured as: [docs/status.md](docs/status.md).
+**Status: early, alpha, not for production.** `ml` builds six models. `--model constant` is the baseline: the training mean for a regression, the majority class for a classification. `--model linear` (least squares, ridge with `--l2`), `--model logistic` (binary, Newton's method), `--model tree` (a CART decision tree with histogram splits) and `--model forest` (bagged trees, threaded over trees; `--task`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes`) and `--model kmeans` (a clustering with no target: `--k` centres, a fixed number of Lloyd `--iterations`, a seeded `--init`) go through a pipeline of steps (`impute`, `scale`, `encode`, `bucket`, and `freq` and `hash` for text) that `--step` or `--plan` describes and that is fitted on the training rows and stored, with the model, in **one** file: `predict` and `eval` apply the stored steps, and no flag can apply another transformation. `ml` reads integer, decimal and float CSV columns, takes an empty cell as a missing value that the plan must impute, holds rows out with a seeded `--split`, threads `fit` with `--threads`, gives probabilities with `predict --proba`, and scores with accuracy, precision, recall, F1, ROC-AUC, log-loss, RMSE, MAE and R2 (and, for k-means, the inertia). Text columns declared with `--cat` are read into a bounded dictionary, and the steps `encode` (one-hot, label), `freq` (the share of the training rows) and `hash` (SHA-256, a fixed number of buckets) turn them into numbers, with a rare-category bucket (`min-count`, the category `__other__`) and rules for an unseen string (`unknown`) and an empty cell (`missing`). The model file of such a fit holds a **string table**: the fitted vocabulary of every categorical step, with the training strings and their counts, so `predict` and `eval` read the text columns by name from the file alone, count a string the training rows never held, and hash it into its bucket under a `hash` step. A declared column that no step reads is refused (`ml.input.categorical-not-encoded`). A tree or forest takes a missing cell itself and learns a side for it at each split, where linear and logistic refuse a missing cell that no `impute` step covers (`ml.input.missing-value`); a tree or forest fit takes at most 2^20 (1,048,576) training rows (`ml.input.too-many-rows`). A tree or forest file is model kind 7, with the summation order 3 (sequential sums: no lane sum reaches its bytes). k-means has no target: `fit` needs no `--target` and refuses one, the file's schema has no target column, `predict` prints the cluster of each row (and with `--distance` the squared distance to its centre) and `eval` the inertia, the rows of each cluster and the mean distance of each; a missing cell is refused as for linear and logistic. A k-means file is model kind 6, with the summation order 2. A model is a module (a manifest, a fixed adapter, generated glue, an admission script) so that the next one cannot add a float order, a capability or an unregistered refusal: [docs/modules.md](docs/modules.md). One pre-registered gate is red (tree regression against scikit-learn, below). The whole list, with what each item was measured as: [docs/status.md](docs/status.md).
 
 This repository has no CI workflow. `scripts/check.sh` runs every gate, and `scripts/check_docs.sh` checks this README and the project pages (see Contributing).
 
@@ -54,6 +54,37 @@ $ ml eval --model-file shop2.ml shop2.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":12,"positive":1,"metrics":{"accuracy":"0.8333333333333334","precision":"0.8333333333333334","recall":"0.8333333333333334","f1":"0.8333333333333334","roc_auc":"0.9444444444444444","log_loss":"0.4012542324769021"},"unknown_categories":0},"meta":{"version":"0.1.0"}}
 ```
 <!-- /gen:pflow -->
+
+## k-means: clusters, and no target
+
+k-means has no target: `fit` needs no `--target` and refuses one, `--k` (1 to 1,024) is required, `--iterations` (default 10) is a fixed number of Lloyd iterations, `--init kmeans++|random` draws the first centres from `--seed`. A file with a label column is used without it (`--drop`), the features are standardised by a step, and a cell that is still missing after the steps is refused, as for linear and logistic. `fit` prints the inertia, the rows of each cluster and the mean distance of each; `predict` prints the cluster of each row (`--distance` adds the squared distance to its centre); `eval` prints the same three numbers for another file, or for the rows `--split` holds out. The inertia is a sum of squared distances in the package's lane order, so the same data, plan and seed give the same bytes at every `--threads`. On the committed `docs/examples/data/iris_train.csv` and `iris_test.csv` (copy them next to where you run it):
+
+<!-- gen:kmflow -->
+```console
+# k-means has no target: it clusters the rows by their features. The label column of iris is not given as one
+$ ml fit --model kmeans --k 3 --target virginica --output iris-km.ml iris_train.csv
+{"rule": "args.conflict", "hint": "see the verbs and their flags in introspect usage", "detail": {"flag": "target"}}
+# exit status 2; the rule, hint, detail of the JSON line it prints
+# k is required
+$ ml fit --model kmeans --drop virginica --output iris-km.ml iris_train.csv
+{"rule": "ml.plan.missing-key", "hint": "add the key.", "detail": {"line": 1, "column": 1}}
+# exit status 8; the rule, hint, detail of the JSON line it prints
+# Drop the label, standardise the four measurements, fit three clusters (seed 1): the answer holds the inertia, the rows of each cluster and the mean distance of each
+$ ml fit --model kmeans --k 3 --seed 1 --drop virginica --step 'scale column=* kind=standard' --output iris-km.ml iris_train.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"kmeans","task":"clustering","rows":75,"columns":4,"target":null,"path":"iris-km.ml","bytes":680,"sha256":"4e7a8d015633c85983368d852dc16576ef21dec611137628c1aca3367574f775","written":true,"summary":{"plan":"scale column=* kind=standard ddof=0\nmodel kind=kmeans k=3 iterations=10 init=kmeans++\n","steps":1,"features":4,"clusters":{"k":3,"iterations":10,"init":"kmeans++","rows":75,"metrics":{"inertia":"114.01824275090962","sizes":[26,31,18],"mean_distance":["1.2398733702280837","1.0644974060896137","1.1737313271562995"]}}}},"meta":{"version":"0.1.0"}}
+# The cluster of five test rows and the squared distance of each to its centre
+$ ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"kmeans","task":"clustering","columns":["cluster","distance"],"rows":[["0","9.531664854091233"],["0","2.5630208525939238"],["1","2.976542017495812"],["1","0.887839091686247"],["2","0.33871718188300526"]],"row_count":5,"total_rows":25,"truncated":true,"next":{"from":5},"unknown_categories":0},"meta":{"version":"0.1.0"}}
+# The inertia of the 25 test rows, the rows of each cluster and the mean distance of each
+$ ml eval --model-file iris-km.ml --drop virginica iris_test.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"kmeans","task":"clustering","rows":25,"clusters":3,"metrics":{"inertia":"47.3765627878906","sizes":[9,11,5],"mean_distance":["1.568635332727916","1.1181940244601365","0.6890412730032826"]},"unknown_categories":0},"meta":{"version":"0.1.0"}}
+# The same, as text, on the training rows
+$ ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv
+inertia 114.01824275090962
+sizes 26 31 18
+mean_distance 1.2398733702280837 1.0644974060896137 1.1737313271562995
+```
+<!-- /gen:kmflow -->
 
 ## Worked examples
 
@@ -107,11 +138,11 @@ The headline numbers of every example, `ml` against scikit-learn on the same tes
 
 ## Why cancho-ml?
 
-Most ML tools optimise for how many models they offer. `ml` is built to be predictable first, and offers five models and a pipeline.
+Most ML tools optimise for how many models they offer. `ml` is built to be predictable first, and offers six models and a pipeline.
 
 * **Explicit types.** A column is an integer, a decimal (an exact mantissa and a scale) or a float (the nearest double, ties to even, read by cancho-table's exact reader). `nan`, `inf`, an empty cell and a cell that is not a number are refused, with the line and the column; `--drop` ignores a column. [docs/reader.md](docs/reader.md), [docs/cli.md](docs/cli.md)
 * **Exact where a sum decides.** The mean of an integer or decimal target and the sum of squared errors are exact integers, kept in limbs, not floats; a float target is summed exactly and rounded once. A test compares every digit with Python's `fractions.Fraction`. The one step that is not exact, the `rmse` (three IEEE operations after the exact sum), is said so in the document. [docs/cli.md](docs/cli.md) section 3
-* **The same bytes.** A model file holds no timestamp, host or path. The same data, plan and seed give the same model bytes whatever the working directory, the spelling of the path or the repetition, and at every `--threads` from 1 to 16 (tested on one Mac, for linear, logistic, tree and forest); across machines it is **not tested**. [docs/cli.md](docs/cli.md) section 6, [docs/linalg.md](docs/linalg.md) section 5.4
+* **The same bytes.** A model file holds no timestamp, host or path. The same data, plan and seed give the same model bytes whatever the working directory, the spelling of the path or the repetition, and at every `--threads` from 1 to 16 (tested on one Mac, for linear, logistic, k-means, tree and forest); across machines it is **not tested**. [docs/cli.md](docs/cli.md) section 6, [docs/linalg.md](docs/linalg.md) section 5.4
 * **Bounded resource use.** Rows, columns, cells, line length, model file size, log size and the categorical dictionary each have a flag, a default and a ceiling, checked before anything sized by the input is allocated. Peak memory is measured for one case, the reader's refusal of a 200 MB file (1.5 MB, `docs/reader.md` section 6); no gate measures the memory of a fit. `ml introspect` lists the limits. [docs/cli.md](docs/cli.md) section 2.2
 * **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, no standard input, and no write by path. `scripts/manifest.py --check` fails if the binary differs from the committed [`manifests/ml.authority.json`](manifests/ml.authority.json). [docs/cli.md](docs/cli.md) section 6
 * **Machine-readable errors.** One JSON line against a schema (`ml.v1`); a refusal is `{code, rule, message, hint, repair, detail}` with a stable `<area>.<name>` rule tag. [docs/design.md](docs/design.md) section 8
@@ -260,8 +291,8 @@ The `--model` list is the list of what is built. There are no stand-in models, a
 
 <!-- gen:t-honest -->
 ```console
-$ ml fit --model kmeans --target price --output kmeans.ml houses.csv
-{"rule": "args.bad-value", "detail": {"flag": "--model", "value": "kmeans", "expected": "constant/linear/logistic/tree/forest"}}
+$ ml fit --model knn --target price --output knn.ml houses.csv
+{"rule": "args.bad-value", "detail": {"flag": "--model", "value": "knn", "expected": "constant/linear/logistic/kmeans/tree/forest"}}
 # exit status 2; the rule, detail of the JSON line it prints
 $ ml fit --target prize --output typo.ml houses.csv
 {"rule": "ml.input.unknown-column", "hint": "names are compared exactly, byte for byte", "detail": {"flag": "--target", "name": "prize"}}
@@ -349,14 +380,14 @@ $ ml-predict predict --model-file houses.ml --log run.ndjson new.csv
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler a4572ea3)
-flags       42, for example
+flags       45, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
   --model-file  path             predict, eval, describe: the model file to read
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
-limits      20, for example
+limits      21, for example
   --max-rows         default 10,000,000   ceiling 1,000,000,000
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
@@ -408,7 +439,7 @@ ml-predict  args, dir_read, err_write, file_read, fs_read(""), heap, io_read, io
 
 ## What it cannot do
 
-* **Five models are reachable.** `constant`, `linear`, `logistic`, `tree` and `forest` ([docs/wiring-trees.md](docs/wiring-trees.md)). k-means exists as a library (`lib/models`, [docs/models-linear.md](docs/models-linear.md)), gated against an independent oracle, with a manifest and `wired = false`: a plan naming it is `ml.plan.model-not-built`. Wiring one takes its adapter and `wired = true`; the admission script is what checks it ([docs/modules.md](docs/modules.md)). A tree or forest fit takes at most 1,048,576 training rows, the bound of the library's exact Gini comparison; a forest of many trees can write a file longer than the 16 MiB default of `--max-bytes`, which `fit` then refuses to write (`limit.input-too-large`) because `predict` could not read it. `--seed` is one flag: it is the seed of `--split` and of a forest's bootstrap. Linear and logistic report a prediction column that is empty in every row as a missing column (`ml.schema.mismatch`); a tree or forest predicts with it missing.
+* **Six models are reachable.** `constant`, `linear`, `logistic`, `kmeans`, `tree` and `forest` ([docs/wiring-trees.md](docs/wiring-trees.md), [docs/wiring-kmeans.md](docs/wiring-kmeans.md)). A model is wired by its adapter and `wired = true`; the admission script is what checks it ([docs/modules.md](docs/modules.md)). k-means is not scored against a label, runs a fixed number of iterations with no stopping rule, scales nothing by itself (add a `scale` step), refuses a missing cell, and keeps the centroid of a cluster that empties where scikit-learn moves the farthest point to it. A tree or forest fit takes at most 1,048,576 training rows, the bound of the library's exact Gini comparison; a forest of many trees can write a file longer than the 16 MiB default of `--max-bytes`, which `fit` then refuses to write (`limit.input-too-large`) because `predict` could not read it. `--seed` is one flag: it is the seed of `--split` and of a forest's bootstrap. Linear and logistic report a prediction column that is empty in every row as a missing column (`ml.schema.mismatch`); a tree or forest predicts with it missing.
 * **The model file of a categorical step holds the training strings, within bounds.** `fit --cat NAMES` reads declared text columns into a dictionary sorted bytewise and an id matrix, with limits and refusals ([docs/categorical.md](docs/categorical.md)), and `encode`, `freq` and `hash` turn them into numbers ([docs/categorical-encoders.md](docs/categorical-encoders.md)). The file stores them in a string table ([docs/stringtable.md](docs/stringtable.md)): at most 131,072 strings, 8 MiB of string bytes and 12 MiB, else `ml.limit.string-table`; only the strings bound is reachable from the command line, because the reader's own limits refuse the others first. A hashed column is still interned while the fit reads the file, so `--max-categories` bounds it there; the file stores none of its strings. `predict` and `eval` take no `--cat`, `--na-values` or limit flag. A declared column that no step reads is `ml.input.categorical-not-encoded`; `--model constant` has no steps, so it refuses every declared column; a text column that is not declared is `ml.input.non-numeric`, with `--drop` as the repair. The same rows in any order give the same string table, the same schema and the same categorical steps; the numeric steps that sum (standardise, mean imputation) and the estimator's section follow the order of the rows, as the sums of the libraries do. Target encoding, native categorical splits in trees and free text are not built.
 * **Binary classification only.** More than two labels is `ml.label.not-binary`.
 * **`--threads` is for `fit` only, in effect.** `eval` accepts and checks the flag, and nothing in it is threaded. The scores of `linear` and `logistic` are single-threaded.
@@ -417,7 +448,7 @@ ml-predict  args, dir_read, err_write, file_read, fs_read(""), heap, io_read, io
 * **No CI workflow.** The reader is a pinned dependency on cancho-table's stores ([docs/reader.md](docs/reader.md) section 1), so the build needs no sibling clone, but `cancho install` needs the network and nothing in this repository runs `scripts/check.sh` automatically.
 * **No serving, no MCP server.** `ml-serve` (issue #16) and an MCP server are not built.
 * **No neural networks and no GPU.** They need matrix kernels, a GPU path and automatic differentiation, which cancho does not have. Inference of small exported models may come later; it is not planned in v1.
-* **Not built, not promised here:** multiclass, boosting, naive Bayes, k-NN, feature importance, out-of-bag scores, a model file for k-means (kind 6 is written by the library, not by `ml`).
+* **Not built, not promised here:** multiclass, boosting, naive Bayes, k-NN, feature importance, out-of-bag scores, a stopping rule or a choice of k for k-means.
 
 ## How fast
 
@@ -451,7 +482,7 @@ The tables, the load of each cell and how to rerun them: [project page](https://
 | [docs/examples.md](docs/examples.md) | the gate of the worked examples: what is compared, the `--l2` mapping, the tolerances and why |
 | [docs/design.md](docs/design.md) | the plan, the promises in tiers, the model file, the refusals and the registries |
 | [docs/cli.md](docs/cli.md) | the command line: gates, reference, arithmetic of the constant model, model file, log, authority |
-| [docs/wiring.md](docs/wiring.md), [docs/wiring-trees.md](docs/wiring-trees.md), [docs/modules.md](docs/modules.md), [docs/models.md](docs/models.md) | linear and logistic, then tree and forest, through the pipeline; the module contract and the admission script; the table of models |
+| [docs/wiring.md](docs/wiring.md), [docs/wiring-trees.md](docs/wiring-trees.md), [docs/wiring-kmeans.md](docs/wiring-kmeans.md), [docs/modules.md](docs/modules.md), [docs/models.md](docs/models.md) | linear and logistic, then tree and forest, then k-means (no target), through the pipeline; the module contract and the admission script; the table of models |
 | [docs/linalg.md](docs/linalg.md), [docs/rng.md](docs/rng.md) | the tensor and linear-algebra package and its summation order; the random generator |
 | [docs/reader.md](docs/reader.md) | the float and decimal CSV reader and the dependency on cancho-table |
 | [docs/metrics.md](docs/metrics.md) | metrics and splits |

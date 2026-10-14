@@ -1,4 +1,3 @@
-frozen copy of commit ea9ff28, arm64
 KILLED    wt-forest-min-leaf-from-the-bins                 WT4  tests: test_forest_classification, test_forest_regression, test_the_oracle_is_sensitive_to_the_sum_order_field, test_a_tree_is_a_forest_of_one
 KILLED    wt-forest-bins-from-the-mtry                     WT4  tests: test_the_task_of_a_plan_is_the_plans, test_forest_classification, test_forest_regression, test_the_oracle_is_sensitive_to_the_sum_order_field
 KILLED    wt-forest-mtry-from-the-bootstrap                WT4  tests: test_forest_classification, test_forest_regression, test_the_oracle_is_sensitive_to_the_sum_order_field, test_a_tree_is_a_forest_of_one
@@ -61,5 +60,3 @@ SURVIVOR wt-regression-proba-allowed: a second line of defence: predict --proba 
 SURVIVOR wt-plan-key-not-checked-against-the-kind: pipeline.file.decode has already refused a plan whose model family is not the payload's (model_family_ok): this comparison is a second line of defence that no file reaches
 SURVIVOR wt-tree-threads-reach-the-seed: an equivalent mutant: a tree has no bootstrap and tries every column at every node, so no draw of its streams decides anything and its nodes do not depend on the seed at all (the seed in the file's meta is the command line's, not this one)
 SURVIVOR wt-threads-not-passed-to-the-fit: an equivalent mutant by design: no thread count changes a byte of the model (the property this gate asserts), so a fit that ignores the flag writes the same file; nothing a test reads from the file or the answer tells the two apart
-EXIT 0
-Wed Oct 14 12:39:07 CEST 2026

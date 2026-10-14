@@ -3,6 +3,7 @@ module pt;
 import ml.matrix;
 import ml.csvcell;
 import std.buffer;
+import std.bytes;
 import pipeline.plan;
 import pipeline.names;
 import pipeline.schema;
@@ -194,7 +195,16 @@ pub fn estimator[&h](heap: &!h Heap) -> [heap] Box[[byte]] {
 
 // the schema of a target `y` then the features named in `feats`, all floats
 pub fn make_schema[&h, &s](heap: &!h Heap, feats: &s [byte]) -> [heap] schema.Schema {
-    var nm = names.from_list(heap, "y");
+    return make_schema_for(heap, feats, true);
+}
+
+// the same, or the schema of a model with no target (k-means): the features only, and the target index is the number of columns
+pub fn make_schema_for[&h, &s](heap: &!h Heap, feats: &s [byte], target: bool) -> [heap] schema.Schema {
+    var nm = names.empty(heap);
+    if target {
+        names.drop(heap, nm);
+        nm = names.from_list(heap, "y");
+    }
     let fl = names.from_list(heap, feats);
     borrow fl as &flr in {
         var i = 0;
@@ -217,6 +227,9 @@ pub fn make_schema[&h, &s](heap: &!h Heap, feats: &s [byte]) -> [heap] schema.Sc
         }
     }
     names.drop(heap, fl);
+    if !target {
+        return schema.make(nm, tw, nc);
+    }
     return schema.make(nm, tw, 0);
 }
 
@@ -244,7 +257,7 @@ pub fn make_file_with[&h, &a, &b, &c, &m](heap: &!h Heap, plan_src: &a [byte], f
                 borrow x as &xr in {
                     let (fd, y, f) = run.fit(heap, pr, nr, xr, 1000, 100, 100000);
                     if f.code == 0 {
-                        let sc = make_schema(heap, feats);
+                        let sc = make_schema_for(heap, feats, bytes.find(plan_src, "kind=kmeans") < 0);
                         var sp = buffer.empty(heap, 1);
                         borrow sc as &scr in {
                             buffer.drop(heap, sp);
@@ -253,7 +266,11 @@ pub fn make_file_with[&h, &a, &b, &c, &m](heap: &!h Heap, plan_src: &a [byte], f
                         borrow fd as &fr in {
                             borrow sp as &spr in {
                                 buffer.drop(heap, out);
-                                out = file.encode(heap, plan.text(pr), buffer.bytes(spr), buffer.bytes(fr.payload), model_payload, 6, 1 + names.count(nr), 0, "pin");
+                                var ncols = 1 + names.count(nr);
+                                if bytes.find(plan_src, "kind=kmeans") >= 0 {
+                                    ncols = names.count(nr);
+                                }
+                                out = file.encode(heap, plan.text(pr), buffer.bytes(spr), buffer.bytes(fr.payload), model_payload, 6, ncols, 0, "pin");
                             }
                         }
                         buffer.drop(heap, sp);

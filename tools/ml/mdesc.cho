@@ -174,7 +174,7 @@ fn put_categorical[&h, &s](heap: &!h Heap, w0: json.Writer, payload: &s [byte], 
 }
 
 // the description of a decoded file: (the data object, the plain text). `steps` is the (effective) steps payload and `tbl` the string table, empty when the file has none.
-fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byte], kind: int, task: int, c0: int, c1: int, sc: &c schema.Schema, steps: &s [byte], tbl: &t [byte], has_table: bool, blob: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer) {
+fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byte], kind: int, task: int, c0: int, c1: int, sc: &c schema.Schema, steps: &s [byte], tbl: &t [byte], has_table: bool, takes_missing: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer) {
     let (pat, plen) = section_at(data, 1);
     let (mat, mlen) = section_at(data, 5);
     var plan_bytes = data[0..0];
@@ -195,7 +195,12 @@ fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byt
         }
     }
     let cols = schema.columns(sc);
-    let tcol = schema.target(sc);
+    // a clustering has no target: every column is a feature and the description says so (the target object is null, `optional` is empty)
+    let has_t = schema.has_target(sc);
+    var tcol = 0 - 1;
+    if has_t {
+        tcol = schema.target(sc);
+    }
     var w = json.writer(heap, 1024);
     var plain = buffer.empty(heap, 256);
     w = json.begin_object(heap, w);
@@ -235,12 +240,16 @@ fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byt
     w = json.end_object(heap, w);
     // target
     w = json.put_key(heap, w, "target");
-    w = json.begin_object(heap, w);
-    w = put_key_text(heap, w, "name", schema.name(sc, tcol));
-    w = json.put_key(heap, w, "type");
-    w = json.put_string(heap, w, type_word(schema.type_of(sc, tcol)));
-    w = put_scale(heap, w, schema.type_of(sc, tcol), schema.scale_of(sc, tcol));
-    w = json.end_object(heap, w);
+    if has_t {
+        w = json.begin_object(heap, w);
+        w = put_key_text(heap, w, "name", schema.name(sc, tcol));
+        w = json.put_key(heap, w, "type");
+        w = json.put_string(heap, w, type_word(schema.type_of(sc, tcol)));
+        w = put_scale(heap, w, schema.type_of(sc, tcol), schema.scale_of(sc, tcol));
+        w = json.end_object(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
     // columns
     w = json.put_key(heap, w, "columns");
     w = json.begin_array(heap, w);
@@ -294,12 +303,14 @@ fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byt
     w = json.end_array(heap, w);
     w = json.put_key(heap, w, "optional");
     w = json.begin_array(heap, w);
-    w = text.put(heap, w, schema.name(sc, tcol));
+    if has_t {
+        w = text.put(heap, w, schema.name(sc, tcol));
+    }
     w = json.end_array(heap, w);
     w = json.put_key(heap, w, "extra_columns");
     w = json.put_string(heap, w, "refused");
     w = json.put_key(heap, w, "missing_cells");
-    if blob {
+    if takes_missing {
         w = json.put_string(heap, w, "handled");
     } else if kind <= 3 {
         w = json.put_string(heap, w, "refused");
@@ -360,6 +371,8 @@ fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byt
     w = json.begin_array(heap, w);
     if task == 1 {
         w = json.put_string(heap, w, "prediction");
+    } else if task == 4 {
+        w = json.put_string(heap, w, "cluster");
     } else {
         w = json.put_string(heap, w, "label");
         if kind <= 3 {
@@ -373,6 +386,16 @@ fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byt
         w = json.begin_array(heap, w);
         w = json.put_string(heap, w, "label");
         w = json.put_string(heap, w, "probability");
+        w = json.end_array(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    // `--distance` adds the squared distance of a row to the centre of its cluster; only a clustering has it
+    w = json.put_key(heap, w, "with_distance");
+    if task == 4 {
+        w = json.begin_array(heap, w);
+        w = json.put_string(heap, w, "cluster");
+        w = json.put_string(heap, w, "distance");
         w = json.end_array(heap, w);
     } else {
         w = json.put_null(heap, w);
@@ -438,7 +461,7 @@ pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte],
             if ok {
                 borrow stored as &sr in {
                     let lr = wireio.stored_file(sr);
-                    let (p2, t2) = emit(heap, bytes_of, est.name(wireio.stored_kind(sr)), est.kind_of(wireio.stored_kind(sr)), wireio.stored_task(sr), wireio.stored_c0(sr), wireio.stored_c1(sr), wireio.stored_schema(sr), file.steps_bytes(lr), file.table_bytes(lr), file.has_table(lr), est.is_blob(wireio.stored_kind(sr)), o);
+                    let (p2, t2) = emit(heap, bytes_of, est.name(wireio.stored_kind(sr)), est.kind_of(wireio.stored_kind(sr)), wireio.stored_task(sr), wireio.stored_c0(sr), wireio.stored_c1(sr), wireio.stored_schema(sr), file.steps_bytes(lr), file.table_bytes(lr), file.has_table(lr), est.takes_missing(wireio.stored_kind(sr)), o);
                     buffer.drop(heap, payload);
                     buffer.drop(heap, plain);
                     payload = p2;

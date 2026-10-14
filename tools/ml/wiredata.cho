@@ -10,6 +10,7 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import ml.csv;
+import ml.csvcell;
 import ml.est;
 import ml.mfile;
 import ml.matrix;
@@ -22,12 +23,14 @@ import metrics.logloss;
 import metrics.rank;
 import metrics.regress;
 import metrics.rules;
+import metrics.sums;
 import pipeline.names;
 import pipeline.schema;
 import transforms.codes;
 import transforms.strtab;
 import tree.deny;
 import tree.params;
+import flt;
 import toolbox.fail;
 import toolbox.text;
 
@@ -262,7 +265,8 @@ pub fn schema_of_shape[&h, &s, &t](heap: &!h Heap, sh: &s csv.Shape, tname: &t [
         i = i + 1;
     }
     var types = box_slice(heap, 2 * kept + 2, 0);
-    var target = 0;
+    // no column is called `tname` for a model with no target: the target index is then the number of columns (pipeline.schema)
+    var target = kept;
     borrow mut types as &!tw in {
         var at = 0;
         i = 0;
@@ -647,6 +651,220 @@ pub fn proba_into[&h, &x, &w, &b, &o](heap: &!h Heap, kind: int, xs: &x matrix.M
     return est.proba(kind, matrix.shape(xs), contents(xs.data), wv, out);
 }
 
+// the name of the initialisation of the model line: the index in the manifest (0 random, 1 kmeans++)
+pub fn init_word(i: int) -> [] &static [byte] {
+    if i == 0 {
+        return "random";
+    }
+    return "kmeans++";
+}
+
+// Which bound of a k-means fit the data break, 0 when none: 1 k above the training rows, 2 k * features + k + 1 above 131072, 3 the diagnostics of the fit above 2^24 floats.
+// Compared before the fit allocates anything; the products are made after the divisions that keep them inside an int.
+pub fn cluster_bound(k: int, iterations: int, rows: int, d: int) -> [] int {
+    if k > rows {
+        return 1;
+    }
+    if d < 1 || d > common.max_slot() || k > common.max_slot() / d || k * d + k + 1 > common.max_slot() {
+        return 2;
+    }
+    if iterations + 1 > 16777216 / (k * d + k + 1) {
+        return 3;
+    }
+    return 0;
+}
+
+// ml.param.out-of-range for a k-means fit that breaks a bound of cluster_bound, with the numbers
+pub fn cluster_error[&h](heap: &!h Heap, errs: fail.Errors, which: int, k: int, iterations: int, rows: int, d: int) -> [heap] fail.Errors {
+    var msg: &static [byte] = "k is above the number of training rows";
+    var hint: &static [byte] = "give a k of at most the number of rows the model is fitted on";
+    if which == 2 {
+        msg = "k times the features plus k plus 1 is above 131072";
+        hint = "fewer clusters or fewer feature columns (bucket or drop columns, encode fewer categories)";
+    } else if which == 3 {
+        msg = "the diagnostics of the iterations need more than 16777216 floats";
+        hint = "fewer iterations, fewer clusters or fewer feature columns";
+    }
+    var w = fail.open_in(heap, spec.extra(), "ml.param.out-of-range", msg, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "k", k);
+    w = fail.detail_int(heap, w, "iterations", iterations);
+    w = fail.detail_int(heap, w, "rows", rows);
+    w = fail.detail_int(heap, w, "features", d);
+    return fail.add(heap, errs, w);
+}
+
+// One double of a list of the plain text: the shortest decimal that reads back, or `null` for a value that is not a number
+fn list_double[&h](heap: &!h Heap, plain: buffer.Buffer, v: float, ok: bool) -> [heap] buffer.Buffer {
+    if !ok {
+        return buffer.append(heap, plain, "null");
+    }
+    return flt.put_float(heap, plain, csvcell.bits_of_key(bits_of(v)));
+}
+
+// The metrics of a clustering of the rows of xs by the model (payload `blob`, `k` clusters): the inertia, the rows of each cluster and the mean distance of each cluster
+// (docs/wiring-kmeans.md section 3), as members of the object `w` and lines of `plain`. The inertia is the sum of the squared distances of the rows to the centres of their
+// clusters in row order, and the mean distance of a cluster the sum of the Euclidean distances of its rows in the order of those rows divided by their number: both through
+// metrics.sums, the one order of the package (blocks of 256 terms, four lanes, the fixed tree). A value that is not a number (an overflow) and the mean of an empty cluster are `null`.
+pub fn cluster_metrics[&h, &x, &w, &b](heap: &!h Heap, w0: json.Writer, plain: buffer.Buffer, undefined: buffer.Buffer, kind: int, xs: &x matrix.Matrix, wv: &w [float], blob: &b [byte], k: int) -> [heap] (json.Writer, buffer.Buffer, buffer.Buffer, Failed) {
+    var o = w0;
+    var t = plain;
+    var u = undefined;
+    let n = matrix.rows(xs);
+    var lab = box_slice(heap, n + 1, 0.0);
+    var d2 = box_slice(heap, n + 1, 0.0);
+    var code = 0;
+    borrow mut lab as &!lw in {
+        code = predict_into(heap, kind, xs, wv, blob, contents(lw));
+    }
+    var which: &static [byte] = "predict";
+    if code == 0 {
+        which = "distance";
+        borrow mut d2 as &!dw in {
+            code = proba_into(heap, kind, xs, wv, blob, contents(dw));
+        }
+    }
+    if code != 0 || n < 1 || k < 1 {
+        unbox_slice(heap, lab);
+        unbox_slice(heap, d2);
+        if code == 0 {
+            code = rules.input_empty();
+        }
+        return (o, t, u, Failed { code: code, name: which });
+    }
+    // the rows of each cluster, and the position where the rows of a cluster start in the array of distances grouped by cluster, in row order within a cluster
+    var sizes = box_slice(heap, k + 1, 0);
+    var start = box_slice(heap, k + 2, 0);
+    var fill = box_slice(heap, k + 1, 0);
+    var grouped = box_slice(heap, n + 1, 0.0);
+    var buf = box_slice(heap, 257, 0.0);
+    var stk = box_slice(heap, 41, 0.0);
+    var lvl = box_slice(heap, 41, 0);
+    var inertia = 0.0;
+    var means = box_slice(heap, k + 1, 0.0);
+    borrow lab as &lr in {
+        borrow d2 as &dr in {
+            borrow mut sizes as &!sw in {
+                var i = 0;
+                while i < n {
+                    let c = truncate(contents(lr)[i]);
+                    if c >= 0 && c < k {
+                        contents(sw)[c] = contents(sw)[c] + 1;
+                    }
+                    i = i + 1;
+                }
+            }
+            borrow sizes as &sr in {
+                borrow mut start as &!tw in {
+                    var c = 0;
+                    while c < k {
+                        contents(tw)[c + 1] = contents(tw)[c] + contents(sr)[c];
+                        c = c + 1;
+                    }
+                }
+            }
+            borrow start as &tr in {
+                borrow mut fill as &!fw in {
+                    borrow mut grouped as &!gw in {
+                        var i = 0;
+                        while i < n {
+                            let c = truncate(contents(lr)[i]);
+                            if c >= 0 && c < k {
+                                contents(gw)[contents(tr)[c] + contents(fw)[c]] = sqrt(contents(dr)[i]);
+                                contents(fw)[c] = contents(fw)[c] + 1;
+                            }
+                            i = i + 1;
+                        }
+                    }
+                }
+            }
+            borrow mut buf as &!bw in {
+                borrow mut stk as &!kw in {
+                    borrow mut lvl as &!vw in {
+                        inertia = sums.reduce(sums.kind_val(), contents(dr)[0..n], contents(dr)[0..n], 0.0, n, contents(bw), contents(kw), contents(vw));
+                        borrow sizes as &sr in {
+                            borrow start as &tr in {
+                                borrow grouped as &gr in {
+                                    borrow mut means as &!mw in {
+                                        var c = 0;
+                                        while c < k {
+                                            let cnt = contents(sr)[c];
+                                            if cnt > 0 {
+                                                let a = contents(tr)[c];
+                                                let total = sums.reduce(sums.kind_val(), contents(gr)[a..a + cnt], contents(gr)[a..a + cnt], 0.0, cnt, contents(bw), contents(kw), contents(vw));
+                                                contents(mw)[c] = total / float_of(cnt);
+                                            }
+                                            c = c + 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let inertia_ok = common.is_finite(inertia);
+    o = json.put_key(heap, o, "inertia");
+    if inertia_ok {
+        o = verbs.put_double(heap, o, bits_of(inertia));
+    } else {
+        o = json.put_null(heap, o);
+        u = buffer.append(heap, u, "inertia,");
+    }
+    t = buffer.append(heap, t, "inertia ");
+    t = list_double(heap, t, inertia, inertia_ok);
+    t = buffer.push(heap, t, byte_of(10));
+    o = json.put_key(heap, o, "sizes");
+    o = json.begin_array(heap, o);
+    t = buffer.append(heap, t, "sizes");
+    borrow sizes as &sr in {
+        var c = 0;
+        while c < k {
+            o = json.put_int(heap, o, contents(sr)[c]);
+            t = buffer.push(heap, t, byte_of(' '));
+            t = buffer.push_nat(heap, t, contents(sr)[c]);
+            c = c + 1;
+        }
+    }
+    o = json.end_array(heap, o);
+    t = buffer.push(heap, t, byte_of(10));
+    o = json.put_key(heap, o, "mean_distance");
+    o = json.begin_array(heap, o);
+    t = buffer.append(heap, t, "mean_distance");
+    borrow sizes as &sr in {
+        borrow means as &mr in {
+            var c = 0;
+            while c < k {
+                let ok = contents(sr)[c] > 0 && common.is_finite(contents(mr)[c]);
+                if ok {
+                    o = verbs.put_double(heap, o, bits_of(contents(mr)[c]));
+                } else {
+                    o = json.put_null(heap, o);
+                }
+                t = buffer.push(heap, t, byte_of(' '));
+                t = list_double(heap, t, contents(mr)[c], ok);
+                c = c + 1;
+            }
+        }
+    }
+    o = json.end_array(heap, o);
+    t = buffer.push(heap, t, byte_of(10));
+    unbox_slice(heap, lab);
+    unbox_slice(heap, d2);
+    unbox_slice(heap, sizes);
+    unbox_slice(heap, start);
+    unbox_slice(heap, fill);
+    unbox_slice(heap, grouped);
+    unbox_slice(heap, buf);
+    unbox_slice(heap, stk);
+    unbox_slice(heap, lvl);
+    unbox_slice(heap, means);
+    return (o, t, u, fine());
+}
+
 // The predictions of the model (weights `wv` or payload `blob`, labels c0 and c1, task 1 regression or 2 classification) on xs, a matrix the stored steps produced,
 // and the metrics against `yv` (the targets as doubles). (the object of the metrics as JSON, the lines for --format text, the refusal, if any). `pos` is the label
 // precision and the rest are about.
@@ -664,6 +882,13 @@ pub fn metrics_block[&h, &x, &y, &w, &b](heap: &!h Heap, kind: int, task: int, x
     }
     if code != 0 {
         fl = Failed { code: code, name: "predict" };
+    } else if task == 4 {
+        // a clustering has no target: yv is not read; the number of clusters is in c0
+        let (o2, p2, u2, f2) = cluster_metrics(heap, obj, plain, und, kind, xs, wv, blob, c0);
+        obj = o2;
+        plain = p2;
+        und = u2;
+        fl = f2;
     } else if task == 1 {
         borrow pred as &pr in {
             let (o2, p2, u2, f2) = regression_metrics(heap, obj, plain, und, yv[0..n], contents(pr)[0..n], cap);
@@ -756,6 +981,9 @@ pub fn empty_target[&h, &n](heap: &!h Heap, errs: fail.Errors, name: &n [byte], 
 pub fn task_word(task: int) -> [] &static [byte] {
     if task == 2 {
         return "classification";
+    }
+    if task == 4 {
+        return "clustering";
     }
     return "regression";
 }

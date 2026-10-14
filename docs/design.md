@@ -133,7 +133,7 @@ rule is a function of the model kind, which a reader knows before it reads `meta
 * **kinds 4 and above** (every kind whose row of the table below says so; today 4 to 7): the payload is that, then **`u32 sum_order`**, the last four bytes of `meta`:
   `meta` is exactly `36 + length` bytes, else `ml.model.malformed` (a `meta` of any other length is not looked at for the order: the ordinary field checks refuse it). `sum_order` = **2** for the order of `docs/linalg.md` section 2
   (`K = 256`, `L = 4`, `(l0 + l1) + (l2 + l3)`, the fixed tree, panels of 32). **1** is the order before `v1-lanes` (one chain per block): retired,
-  never written by a model file, refused if found. **3 is the order of kind 7** (a tree or a forest: every float sum is a sequential left fold in a fixed row or tree order and no lane sum is made, `docs/models-tree.md` 3.2; `docs/wiring-trees.md` section 4): a reader requires exactly the value of the kind, 2 for kinds 4 to 6 and 3 for kind 7. 0 and 4 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
+  never written by a model file, refused if found. **3 is the order of kind 7** (a tree or a forest: every float sum is a sequential left fold in a fixed row or tree order and no lane sum is made, `docs/models-tree.md` 3.2; `docs/wiring-trees.md` section 4): a reader requires exactly the value of the kind, 2 for kinds 4 to 6 and 3 for kind 7. **Kind 6 (k-means) records 2**: its decisive sums, the sums of the Lloyd update and the metrics of `eval`, are the lane order; the one sum that is not is the k-means++ total of the initialisation, a left fold in row order on one thread that picks the initial rows (`docs/wiring-kmeans.md` section 6). 0 and 4 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
   of a kind is fixed by the kind.
 * **A reader refuses a file whose `sum_order` it does not implement with `ml.model.version`** (detail `sum_order` found, `known` the order of the kind: 2, or 3 for kind 7): it cannot reproduce the
   parameters' arithmetic, and the same refusal tag as an unknown format version says "refit with this version". The order of the checks is bad-magic, version,
@@ -155,7 +155,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 3 | constant regression of a float target | one i64 record, shape [2] | reader stage | yes |
 | 4 | linear regression | `coef` f64 rank 1 `d`; `intercept` f64 rank 1 `1` | `lib/models/record.cho` | no (`pipeline.file`, since W1) |
 | 5 | logistic regression | the same two records, then `labels` i64 rank 1 `2`: the negative and the positive label (payload version 2, W1) | `lib/models/record.cho` | no (`pipeline.file`, since W1) |
-| 6 | k-means | `centroids` f64 rank 2 `k x d` | `lib/models/record.cho` | no |
+| 6 | k-means | `centroids` f64 rank 2 `k x d`; the schema section of the file has no target (its target index is the number of columns) | `lib/models/record.cho`, `lib/models/kmeans/adapter.cho` | no (`pipeline.file`, `docs/wiring-kmeans.md` section 6) |
 | 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
 
 **Step kinds** (the `u32` that opens one step in the `steps` section; `lib/core/kinds.cho` `step_*`, `docs/transforms.md` section 4; the `steps` payload is `u32 n` then `n` times `u64 length | step`, and `n = 0` is the four bytes `mfile.cho` writes):
@@ -356,7 +356,7 @@ The library also answers, with its own codes in its band, tags that exist above:
 | tag | exit | when | repair |
 |---|---|---|---|
 | `ml.input.missing-value` | 8 | a feature cell is empty after the steps of the plan (no `impute` covers its column); the columns are in `detail` | `retry` with `--step "impute column=NAMES strategy=mean"` when the plan came from no flag, else `none` with the step to add |
-| `ml.plan.model-not-built` | 8 | the `model` line of a plan names a model `ml` does not build (`kmeans`, `tree`, `forest`, `constant`) | none |
+| `ml.plan.model-not-built` | 8 | the `model` line of a plan names a model `ml` does not build (`constant`, which takes no plan) | none |
 
 *Added by stage 1 of issue 21, categorical columns (`docs/categorical.md` section 5; `tools/ml/spec.tmpl`, `lib/core/refuse.cho` codes 16 to 20, one fixture per tag in `tests/conformance/fixtures.py`):*
 

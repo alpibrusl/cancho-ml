@@ -1,4 +1,3 @@
-frozen copy of commit ea9ff28, arm64
 KILLED    t1-flag-without-fixture                      T1  tests: test_embedded_schema_is_the_committed_one, test_flags_in_schema
 KILLED    t1-flag-missing-from-the-schema              T1  tests: test_embedded_schema_is_the_committed_one, test_flags_in_schema, test_schemas_are_the_regeneration_of_the_tables
 KILLED    t1-rule-without-fixture                      T1  tests: test_embedded_schema_is_the_committed_one, test_rules_in_a_fixture
@@ -16,7 +15,7 @@ KILLED    m1-checksum-not-compared                     M1  tests: test_checksum_
 KILLED    m1-section-length-not-checked                M1  tests: test_truncated_at_every_length
 KILLED    m1-sum-order-not-compared                    M1  tests: test_the_sum_order_of_kinds_4_to_7
 KILLED    m1-sum-order-implemented-is-3                M1  tests: test_the_sum_order_of_kinds_4_to_7
-KILLED    m1-sum-order-from-kind-7                     M1  tests: test_the_sum_order_of_kinds_4_to_7
+KILLED    m1-sum-order-for-no-kind                     M1  tests: test_the_sum_order_of_kinds_4_to_7
 KILLED    m1-sum-order-to-kind-6                       M1  tests: test_the_sum_order_of_kinds_4_to_7
 KILLED    m1-sum-order-meta-longer-ok                  M1  tests: test_a_meta_of_the_wrong_length_for_its_kind_is_malformed_never_a_sum_order
 KILLED    m1-sum-order-offset                          M1  tests: test_the_sum_order_of_kinds_4_to_7
@@ -36,8 +35,8 @@ KILLED    o1-accuracy-counts-the-wrong-rows            O1  tests: test_classific
 KILLED    o1-eval-ignores-the-cell-scale               O1  tests: test_regression_extremes, test_regression_seeded
 KILLED    d1-model-holds-the-byte-count                D1  tests: test_line_endings_bom_and_blank_lines_do_not_change_the_model
 KILLED    d1-thread-count-changes-a-byte               D1  tests: test_no_thread_count_changes_a_byte
-KILLED    a1-reads-standard-input                      A1  manifest.py --tree: FAIL ml: manifests/ml.authority.json is not the compiler's report | FAIL ml: generated/ml/built.cho is stale | FAIL ml: io_read is not within the ceiling in tools.toml
-KILLED    a1-reads-the-clock                           A1  manifest.py --tree: FAIL ml: manifests/ml.authority.json is not the compiler's report | FAIL ml: generated/ml/built.cho is stale | FAIL ml: clock is forbidden to every tool | FAIL ml: clock is not within the ceiling in tools.toml
+KILLED    a1-reads-standard-input                      A1  manifest.py --tree: FAIL ml: manifests/ml.authority.json is not the compiler's report | FAIL ml: generated/ml/built.cho is stale | FAIL ml: build/ml introspect prints an authority that is not the compiler's (a stale build?) | FAIL ml: io_read is not within the ceiling in tools.toml
+KILLED    a1-reads-the-clock                           A1  manifest.py --tree: FAIL ml: manifests/ml.authority.json is not the compiler's report | FAIL ml: generated/ml/built.cho is stale | FAIL ml: build/ml introspect prints an authority that is not the compiler's (a stale build?) | FAIL ml: clock is forbidden to every tool | FAIL ml: clock is not within the ceiling in tools.
 KILLED    a1-manifest-is-stale                         A1  manifest.py --check: FAIL ml: manifests/ml.authority.json is not the compiler's report
 KILLED    h1-a-model-in-the-table-that-is-not-built    H1  tests: test_another_model_name_is_refused, test_the_models_are_exactly_the_built_ones, test_the_models_in_the_flag_table_are_the_built_ones
 KILLED    h1-an-exponent-is-read-as-a-prefix           H1  tests: test_float_text_is_read_exactly_not_approximated
@@ -55,5 +54,3 @@ KILLED    rd7-float-model-kind-checked-as-int          RD7  tests: test_a_float_
 PASSED    baseline (the unchanged tree)                -  
 
 53 mutants: 53 killed, 0 survived, 0 invalid
-EXIT 0
-Wed Oct 14 11:59:59 CEST 2026
