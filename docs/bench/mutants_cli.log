@@ -35,7 +35,6 @@ KILLED    o1-accuracy-counts-the-wrong-rows            O1  tests: test_classific
 KILLED    o1-eval-ignores-the-cell-scale               O1  tests: test_regression_extremes, test_regression_seeded
 KILLED    d1-model-holds-the-byte-count                D1  tests: test_line_endings_bom_and_blank_lines_do_not_change_the_model
 KILLED    d1-thread-count-changes-a-byte               D1  tests: test_no_thread_count_changes_a_byte
-KILLED    a1-reads-standard-input                      A1  manifest.py --tree: FAIL ml: manifests/ml.authority.json is not the compiler's report | FAIL ml: generated/ml/built.cho is stale | FAIL ml: build/ml introspect prints an authority that is not the compiler's (a stale build?) | FAIL ml: io_read is not within the ceiling in tools.toml
 KILLED    a1-reads-the-clock                           A1  manifest.py --tree: FAIL ml: manifests/ml.authority.json is not the compiler's report | FAIL ml: generated/ml/built.cho is stale | FAIL ml: build/ml introspect prints an authority that is not the compiler's (a stale build?) | FAIL ml: clock is forbidden to every tool | FAIL ml: clock is not within the ceiling in tools.
 KILLED    a1-manifest-is-stale                         A1  manifest.py --check: FAIL ml: manifests/ml.authority.json is not the compiler's report
 KILLED    h1-a-model-in-the-table-that-is-not-built    H1  tests: test_another_model_name_is_refused, test_the_models_are_exactly_the_built_ones, test_the_models_in_the_flag_table_are_the_built_ones
@@ -51,6 +50,16 @@ KILLED    rd7-float-column-fits-an-int-model           RD7  tests: test_a_float_
 KILLED    rd7-int-model-bytes-change                   RD7  tests: test_a_model_of_ints_and_decimals_is_byte_for_byte_what_the_cli_slice_wrote
 KILLED    rd7-float-target-as-class-label              RD7  tests: test_a_float_target_is_not_a_class_label
 KILLED    rd7-float-model-kind-checked-as-int          RD7  tests: test_a_float_regression_model_is_checked_field_by_field
-PASSED    baseline (the unchanged tree)                -  
+FAILED    baseline (the unchanged tree)                -                     start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/ml-mutant-san0go_7/tree/build/ml-predict'
 
-53 mutants: 53 killed, 0 survived, 0 invalid
+----------------------------------------------------------------------
+Ran 343 tests in 736.196s
+
+FAILED (errors=15)
+
+
+52 mutants: 52 killed, 0 survived, 0 invalid

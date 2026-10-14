@@ -38,7 +38,17 @@ KILLED    w-gen-hyperparameter-token-off-by-one            W3  tests: test_retry
 KILLED    w-gen-takes-says-yes-to-every-flag               W8  tests: test_every_fixture
 KILLED    w-table-lets-predict-take-a-plan                 W2  tests: test_predict_and_eval_take_no_plan_step_or_model_flag, test_the_flags_of_predict_and_eval_in_the_tool_do_not_include_a_plan
 KILLED    w-table-model-choice-lists-a-library             W8  tests: test_the_models_in_the_flag_table_are_the_built_ones, test_another_model_name_is_refused, test_the_models_are_exactly_the_built_ones
-PASSED    baseline (the unchanged tree)                    -  
+FAILED    baseline (the unchanged tree)                    -                     start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/ml-mutant-ycosshm_/tree/build/ml-predict'
+
+----------------------------------------------------------------------
+Ran 343 tests in 724.062s
+
+FAILED (errors=15)
+
 
 40 mutants: 39 killed, 1 survived, 0 invalid
 SURVIVOR w-bad-hyperparameter-token-ignored: the plan parser has already refused every token that hparams would (its grammar is the same table): this check is a second line of defence that no input reaches

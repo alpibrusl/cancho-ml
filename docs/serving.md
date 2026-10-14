@@ -172,21 +172,21 @@ No tool holds `ffi`, `net_out`, `net_in` or `clock` (`tools.toml`). `max_tools` 
 
 ## 9. Results
 
-Machine: Mac, arm64, Apple M4 Max, macOS 26.2, compiler `a4572ea`, load about 8 while the suites ran. `scripts/check.sh` exits 0: 288 conformance tests pass in 524 seconds, none skipped.
+Machine: Mac, arm64, Apple M4 Max, macOS 26.2, compiler `a4572ea`, load about 8 while the suites ran. `scripts/check.sh` exits 0: 343 conformance tests pass in 1,474 seconds (the mutant suites ran beside it, load 8 to 9), none skipped.
 
 | gate | result | script |
 |---|---|---|
-| V1 to V4 | 16 models x 30 inputs, from a file and from standard input: same status, same bytes on standard output and standard error (a refusal differs only where it names the file); inputs of 181,486 bytes (three 64 KiB chunks) equal; the bound exact at `--max-bytes` and one below; `-`, `./-`, no operand, empty and closed standard input as section 2 says; a refused command line answers while standard input stays open | `tests/conformance/test_serving.py` (28 tests, with P1, P2, P5, D3, T1) |
-| P1, P2, P5, D3, T1 | `ml-predict` equals `ml` over the same pairs from a file and from standard input (the program name inside a `retry` repair is the one difference) and for `describe` of every model; it refuses `fit`, `eval` and 19 flags of them; its 12 flags are those of `predict` and `describe` without the log, each with the kind, role and default of `ml`'s; a run in a directory nobody can write to leaves it as it was | the same |
+| V1 to V4 | 19 models x 30 inputs, from a file and from standard input: same status, same bytes on standard output and standard error (a refusal differs only where it names the file); inputs of 181,486 bytes (three 64 KiB chunks) equal; the bound exact at `--max-bytes` and one below; `-`, `./-`, no operand, empty and closed standard input as section 2 says; a refused command line answers while standard input stays open | `tests/conformance/test_serving.py` (29 tests, with P1, P2, P5, D3, T1) |
+| P1, P2, P5, D3, T1 | `ml-predict` equals `ml` over the same pairs from a file and from standard input (the program name inside a `retry` repair is the one difference) and for `describe` of every model; it refuses `fit`, `eval` and 19 flags of them; its 13 flags are those of `predict` and `describe` without the log, each with the kind, role and default of `ml`'s; a run in a directory nobody can write to leaves it as it was | the same |
 | V5, P3 | the derived rows are committed and embedded; the ceilings are exact; a derived row with `conc`, `file_write`, `dir_write`, `net_out`, `clock`, `ffi` or `fs_write` added fails `manifest.gate`; a source change that appends to a log from the `main` of `ml-predict` fails `manifest.py --tree` | `test_authority.py`, `mutants_serve.py` |
 | P4 | the lists agree; 7 mutants refused | `scripts/check_bins.py` |
-| D1 | 16 models x 3 page sizes (1,000, 5 and 1 strings per column): every field equal to `scripts/oracle_describe.py`; the corpus covers kinds 1, 2, 3, 4, 5 and 7, the four encoders, the four column types, 5 and 6 sections, the three `missing_cells` values, markers, truncated vocabularies, a float target | `tests/conformance/test_describe.py` |
-| D2 | 28,718 damaged files, 0 traps; 1,763 with a repaired checksum are another valid file, equal to the oracle's description of it | the same, `ST_STRIDE=1`; `check.sh` runs it at that stride |
-| D4 | schema, table of section 5 and answer agree on 16 fields in one order; golden answers of the 16 models | the same, `scripts/golden_describe.py` |
-| mutants | 55 patterns of `scripts/mutants_serve.py`: 55 killed. A first run killed 53: a chunk that skips a byte (a small input never reached a chunk boundary: the multi-chunk input was added) and a ceiling wider than the row (the mutant ran only the manifest check: it now runs the tests) | `scripts/mutants_serve.py` |
+| D1 | 19 models x 3 page sizes (1,000, 5 and 1 strings per column): every field equal to `scripts/oracle_describe.py`; the corpus covers kinds 1 to 7 (k-means included: no target, `cluster` and `distance`), the four encoders, the four column types, 5 and 6 sections, the three `missing_cells` values, markers, truncated vocabularies, a float target | `tests/conformance/test_describe.py` |
+| D2 | 36,473 damaged files, 0 traps; 2,527 with a repaired checksum are another valid file, equal to the oracle's description of it | the same, `ST_STRIDE=1`; `check.sh` runs it at that stride |
+| D4 | schema, table of section 5 and answer agree on 16 fields in one order; golden answers of the 19 models | the same, `scripts/golden_describe.py` |
+| mutants | 59 patterns of `scripts/mutants_serve.py`: 59 killed (four of them judge the description of a clustering). A first run of the first 55 killed 53: a chunk that skips a byte (a small input never reached a chunk boundary: the multi-chunk input was added) and a ceiling wider than the row (the mutant ran only the manifest check: it now runs the tests) | `scripts/mutants_serve.py` |
 | existing fixtures | every fixture and golden unchanged but `args-missing-verb` and `args-unknown-command` of `golden_constant.json` and `golden_numeric.json`, whose messages list the verbs and now name `describe`; re-recorded in one commit | `tests/conformance` |
-| binary size | `ml` 1,062,592 bytes, `ml-predict` 706,296 bytes (66.5 percent), `cancho build` on the Mac. Linux not measured | `ls -l build/` |
-| standard input throughput | a 10,182,226-byte CSV, `predict --limit 1` with a constant model: 0.06 s from a file, 0.20 s from standard input (`getchar`), minimum of 3, load about 8. A figure of this run, no claim | `/usr/bin/time` |
+| binary size | `ml` 1,097,920 bytes, `ml-predict` 724,216 bytes (66.0 percent), `cancho build` on the Mac. Linux not measured | `ls -l build/` |
+| standard input throughput | a 10,182,226-byte CSV, `predict --limit 1` with a constant model: 0.06 s from a file, 0.20 s from standard input (`getchar`), minimum of 3, load about 8, on a build without k-means. Not repeated for this build; a figure of that run, no claim | `/usr/bin/time` |
 
 ## 10. Open for the server
 

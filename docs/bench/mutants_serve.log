@@ -1,0 +1,62 @@
+KILLED    v-bound-allows-one-more                          V3  tests: test_the_bound_is_exact
+KILLED    v-bound-one-short                                V3  tests: test_the_bound_is_exact
+KILLED    v-size-in-the-refusal                            V3  tests: test_the_bound_is_exact
+KILLED    v-nul-ends-the-input                             V1  tests: test_a_cell_that_is_not_utf8_and_a_nul_byte_are_the_files_refusals, test_every_model_and_every_input_give_the_same_bytes
+KILLED    v-chunk-repeats-a-byte                           V1  tests: test_a_byte_order_mark_a_missing_final_newline_blank_lines_and_crlf, test_an_input_of_many_chunks, test_every_model_and_every_input_give_the_same_bytes, test_no_operand_is_standard_input
+KILLED    v-chunk-drops-a-byte                             V1  tests: test_an_input_of_many_chunks
+KILLED    v-eval-reads-standard-input                      V4  tests: test_fit_and_eval_read_a_file_named_dash
+KILLED    v-dash-is-not-standard-input                     V4  tests: test_a_file_named_dash_is_dot_slash_dash, test_root_does_not_apply_to_standard_input_and_is_still_checked
+KILLED    v-dot-slash-dash-is-standard-input               V4  tests: test_a_file_named_dash_is_dot_slash_dash
+KILLED    v-no-operand-is-an-error                         V4  tests: test_no_operand_is_standard_input, test_an_empty_standard_input_and_a_closed_one_are_an_empty_file
+KILLED    v-stdin-read-before-the-command-line-is-checked  V3  tests: test_a_refused_command_line_does_not_wait_for_standard_input
+KILLED    v-limit-not-applied-to-stdin                     V2  tests: test_the_reader_limits_apply_to_standard_input_as_to_a_file
+KILLED    v-constant-model-reads-the-file-name             V1  tests: test_an_input_of_many_chunks, test_every_model_and_every_input_give_the_same_bytes, test_the_text_format_the_probability_the_page_and_the_dropped_columns
+KILLED    v-planned-model-reads-the-file-name              V1  tests: test_a_byte_order_mark_a_missing_final_newline_blank_lines_and_crlf, test_an_input_of_many_chunks, test_every_model_and_every_input_give_the_same_bytes, test_the_reader_limits_apply_to_standard_input_as_to_a_file
+KILLED    p-fit-is-a-verb                                  P2  tests: test_the_verbs_of_fit_and_eval_are_unknown_commands
+KILLED    p-eval-is-a-verb                                 P2  tests: test_the_verbs_of_fit_and_eval_are_unknown_commands
+KILLED    p-a-fit-flag-in-the-table                        P2  tests: test_the_flags_it_has, test_the_flags_of_fit_eval_and_the_log_are_unknown_flags, test_the_verbs_the_binary_takes_are_the_flags_of_predict_and_describe
+KILLED    p-log-flag-in-the-table                          P2  tests: test_the_flags_it_has, test_the_flags_of_fit_eval_and_the_log_are_unknown_flags, test_the_verbs_the_binary_takes_are_the_flags_of_predict_and_describe
+KILLED    p-predict-flag-with-another-default              T1  tests: test_every_flag_of_ml_predict_is_a_flag_of_ml_with_the_same_kind_role_and_default
+KILLED    p-describe-takes-proba                           T1  tests: test_describe_is_a_verb_of_ml_with_its_own_flags
+KILLED    p-ml-predict-describes-another-model             D3  tests: test_describe_prints_the_same_bytes
+KILLED    p-ml-predict-drops-the-page                      P1  tests: test_a_clustering_through_standard_input_and_ml_predict, test_a_missing_model_a_directory_and_a_damaged_model, test_describe_prints_the_same_bytes, test_every_model_and_every_input_from_a_file_and_from_standard_input
+KILLED    p-ml-predict-calls-the-log                       P3  manifest.py --tree: FAIL ml-predict: manifests/ml-predict.authority.json is not the compiler's report | FAIL ml-predict: generated/ml-predict/built.cho is stale | FAIL ml-predict: dir_write is not within the ceiling in tools.toml | FAIL ml-predict: file_write is not within the ceiling in tools.toml
+KILLED    p-ceiling-without-io-read                        V5  manifest.py --tree: FAIL ml-predict: io_read is not within the ceiling in tools.toml
+KILLED    p-ceiling-too-wide                               P3  tests: test_the_ceiling_check_fails_for_a_capability_added_to_the_derived_row, test_the_ceiling_is_exact_and_every_label_beyond_the_base_row_has_a_reason
+KILLED    p-no-reason-for-io-read                          V5  manifest.py --tree: FAIL ml: io_read is allowed beyond the base row and has no reason in [ml.reasons] of tools.toml
+KILLED    p-ml-without-io-read-in-the-ceiling              V5  manifest.py --tree: FAIL ml: io_read is not within the ceiling in tools.toml
+KILLED    d-encoder-name                                   D1  tests: test_every_field_of_every_model, test_the_corpus_covers_the_kinds_the_encoders_and_the_columns
+KILLED    d-required-target                                D1  tests: test_every_field_of_every_model
+KILLED    d-scale-of-a-float                               D1  tests: test_every_field_of_every_model
+KILLED    d-truncated-at-equal                             D1  tests: test_every_field_of_every_model
+KILLED    d-listed-one-short                               D1  tests: test_every_field_of_every_model
+KILLED    d-count-of-the-first-string                      D1  tests: test_every_field_of_every_model
+KILLED    d-positive-is-the-negative-label                 D1  tests: test_every_field_of_every_model
+KILLED    d-classes-swapped                                D1  tests: test_every_field_of_every_model
+KILLED    d-missing-cells-of-linear                        D1  tests: test_every_field_of_every_model
+KILLED    d-sum-order-of-linear                            D1  tests: test_every_field_of_every_model
+KILLED    d-digest-of-a-prefix                             D1  tests: test_every_field_of_every_model
+KILLED    d-markers                                        D1  tests: test_every_field_of_every_model
+KILLED    d-reader-limits-swapped                          D1  tests: test_every_field_of_every_model
+KILLED    d-proba-columns-for-all                          D1  tests: test_every_field_of_every_model
+KILLED    d-target-type-of-the-first-column                D1  tests: test_every_field_of_every_model, test_the_corpus_covers_the_kinds_the_encoders_and_the_columns
+KILLED    d-clustering-has-a-target                        D1  tests: test_a_request_built_from_describe_is_accepted_by_predict, test_every_field_of_every_model, test_the_corpus_covers_the_kinds_the_encoders_and_the_columns, test_the_text_format_of_a_clustering_has_no_target
+KILLED    d-clustering-output-label                        D1  tests: test_a_request_built_from_describe_is_accepted_by_predict, test_every_field_of_every_model, test_the_corpus_covers_the_kinds_the_encoders_and_the_columns
+KILLED    d-clustering-without-distance                    D1  tests: test_every_field_of_every_model, test_the_corpus_covers_the_kinds_the_encoders_and_the_columns
+KILLED    d-clustering-takes-missing                       D1  tests: test_every_field_of_every_model, test_the_corpus_covers_the_kinds_the_encoders_and_the_columns
+KILLED    d-header-with-the-target                         D1  tests: test_every_field_of_every_model
+KILLED    d-plan-empty                                     D1  tests: test_every_field_of_every_model
+KILLED    d-pin-one-late                                   D1  tests: test_every_field_of_every_model
+KILLED    d-buckets-plus-one                               D1  tests: test_every_field_of_every_model
+KILLED    d-kind-is-the-dispatch-key                       D1  tests: test_every_field_of_every_model, test_the_corpus_covers_the_kinds_the_encoders_and_the_columns
+KILLED    d-sections                                       D1  tests: test_every_field_of_every_model, test_the_corpus_covers_the_kinds_the_encoders_and_the_columns
+KILLED    d-max-bytes-is-the-limit                         D1  tests: test_every_field_of_every_model
+KILLED    d-field-renamed                                  D4  tests: test_every_field_of_every_model, test_every_answer_is_valid_against_the_schema_and_the_nested_fields_are_closed, test_the_golden_answers
+KILLED    d-field-renamed-in-the-schema                    D4  tests: test_every_answer_is_valid_against_the_schema_and_the_nested_fields_are_closed
+KILLED    d-field-order                                    D4  tests: test_every_field_of_every_model, test_the_golden_answers
+KILLED    d-bound-read-after-allocation                    D2  tests: test_a_file_over_max_bytes_is_refused_before_it_is_read_whole
+KILLED    d-damaged-file-described-anyway                  D2  tests: test_every_truncation_and_every_flipped_byte, test_extreme_numbers_in_every_field_of_the_structure_and_the_table
+KILLED    d-golden-changed                                 D4  tests: test_the_golden_answers
+PASSED    baseline (the unchanged tree)                    -  
+
+59 mutants: 59 killed, 0 survived, 0 invalid

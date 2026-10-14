@@ -53,7 +53,17 @@ KILLED    wt-fit-threads-from-the-seed                     WT7  tests: test_fore
 KILLED    wt-summary-trees-from-the-wrong-field            WT2  tests: test_every_fixture
 KILLED    wt-name-of-a-forest-is-the-trees                 WT2  tests: test_the_plan_of_the_file_decides_the_name_predict_prints
 KILLED    wt-limit-depth-tag-missing                       WT6  tests: test_every_fixture, test_a_refused_fit_writes_nothing, test_the_limit_tags_of_the_library_have_their_exit_codes
-PASSED    baseline (the unchanged tree)                    -  
+FAILED    baseline (the unchanged tree)                    -                     start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/ml-mutant-hr7hu1_t/tree/build/ml-predict'
+
+----------------------------------------------------------------------
+Ran 343 tests in 713.653s
+
+FAILED (errors=15)
+
 
 55 mutants: 51 killed, 4 survived, 0 invalid
 SURVIVOR wt-regression-proba-allowed: a second line of defence: predict --proba on a regression is args.conflict before the adapter is called and eval calls proba for a classification only; no command line reaches the adapter's refusal
