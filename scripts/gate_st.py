@@ -651,6 +651,34 @@ def gate_align(seed):
             cnt.runs += 1
             if s7 == 0:
                 cnt.note("%s retyped" % model, "text in a numeric column was accepted")
+    # the numeric models: the same rule for a file with no categorical column (the numeric features found by name, in any order)
+    for model in ("linear", "logistic", "tree", "forest"):
+        cls = model == "logistic"
+        rows = []
+        for r in range(80):
+            a, b, c = round(rnd.uniform(-2, 2), 3), round(rnd.uniform(0, 5), 2), rnd.randint(0, 9)
+            score = a - 0.3 * b + 0.2 * c + rnd.gauss(0, 0.3)
+            y = (b"1" if score > 0 else b"0") if cls else ("%.4f" % score).encode()
+            rows.append([repr(a).encode(), repr(b).encode(), str(c).encode(), y])
+        header = [b"a", b"b", b"c", b"y"]
+        put("an.csv", csv_bytes(header, rows))
+        flags = {"linear": ["--model", "linear"], "logistic": ["--model", "logistic", "--l2", "0.1"], "tree": ["--model", "tree", "--task", "regression"],
+                 "forest": ["--model", "forest", "--task", "regression", "--trees", "5"]}[model]
+        st, doc, _ = ml("fit", "an.csv", "--root", WORK, "--target", "y", *flags, "--output", "an.cml", "--overwrite")
+        cnt.runs += 1
+        if st != 0:
+            cnt.note("numeric %s" % model, "fit refused: %r" % (rules(doc),))
+            continue
+        test_rows = rows[:20]
+        def pred(order):
+            put("ap.csv", csv_bytes([header[i] for i in order], [[r[i] for i in order] for r in test_rows]))
+            return ml("predict", "ap.csv", "--root", WORK, "--model-file", "an.cml", "--limit", 100, *(["--proba"] if cls else []))
+        s0, d0, base = pred([0, 1, 2])
+        for k, order in enumerate(([2, 1, 0], [1, 2, 0], [3, 2, 0, 1], [1, 0, 2, 3])):
+            s1, d1, raw = pred(order)
+            cnt.runs += 1
+            if s1 != 0 or raw != base:
+                cnt.note("numeric %s order %r" % (model, order), "the answer differs from the file in the fitted order (%r)" % (rules(d1),))
     return cnt.report()
 
 

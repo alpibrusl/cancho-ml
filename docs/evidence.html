@@ -197,7 +197,7 @@
       <tr><th>mutants</th><td>42: 40 killed, 2 survive and are explained.</td></tr>
     </tbody>
   </table></div>
-  <p class="note"><strong>Not shown:</strong> the string table in the model file and categorical splits are not built, so no gate judges them.</p>
+  <p class="note"><strong>Not shown:</strong> categorical splits in trees are not built, so no gate judges them; the string table is judged <a href="#stringtable">below</a>.</p>
 </section>
 
 <section id="encoders">
@@ -212,14 +212,14 @@
       <tr><th>E6 hash</th><td>6 values of B, 36 tables of 900 or more strings each (random UTF-8, strings that differ in one byte, emoji): the matrix equals the oracle&rsquo;s and the position of the 1 equals <code>int.from_bytes(sha256(s)[:8], "big") % B</code> read by hand. 72 runs, 0 differences; the known answers of SHA-256 are in <code>tests/enc.cho</code>.</td></tr>
       <tr><th>E7 payload</th><td>12 tests in <code>tests/enc.cho</code>: hand-computed matrices, the rare bucket, the bytes of a step written by hand and decoded again, 40 fields edited out of their bound, every truncation, every flipped byte three ways and 3,000 seeded damages: each is refused or encodes back to the same bytes.</td></tr>
       <tr><th>E8 plan</th><td>The plan grammar against Python on 1,500 respelled plans, 1,500 fixed points, 1,194 float spellings and 1,500 garbage plans with the same verdict and position (<code>oracle_pipe.py</code>); 16 tests of the pipeline; 20 conformance tests of the command line (<code>test_enc.py</code>).</td></tr>
-      <tr><th>E9 no model file</th><td>A fit with a categorical step and no <code>--split</code> is <code>ml.model.vocabulary-not-stored</code> and writes nothing; with <code>--split</code> it scores the held-out rows and reports <code>written: false</code>; <code>--dry-run</code> exits 9. An existing output file is untouched, with and without <code>--overwrite</code>.</td></tr>
+      <tr><th>E9 the file of a categorical fit</th><td>A fit with a categorical step writes the model file with its string table; <code>--split</code> scores the held-out rows and writes the file too; <code>--dry-run</code> exits 9 and reports the file it would write; an existing output file is refused without <code>--overwrite</code>.</td></tr>
       <tr><th>E10 numeric inputs</th><td>160 of the 161 numeric fixtures of <code>golden_numeric.json</code> give the recorded status, output and files. The 161st, <code>ml-plan-unknown-step</code>, prints the list of plan verbs, which holds <code>freq</code> and <code>hash</code>; the SHA-256 of its output is pinned beside the record, with the reason.</td></tr>
       <tr><th>E11 no trap</th><td>3,024 runs of hostile plans and files through <code>enc-check</code> and <code>ml fit --cat</code> (4,097 categorical columns, a 70,000-byte cell, 2<sup>20</sup> distinct values, invalid UTF-8): 0 traps, 0 malformed answers; plus the damage tests of E7.</td></tr>
       <tr><th>E13 scikit-learn</th><td>3 generated datasets (1,500 rows, 3 categorical columns of 4, 6 and 3 values, 2 numeric ones), the library&rsquo;s seeded split, <code>--l2 0.1</code> against <code>LogisticRegression</code> on <code>StandardScaler</code> and <code>OneHotEncoder</code> of the same rows. Bounds fixed before the run, all met: held-out accuracy equal, ROC-AUC equal to the digits shown, log-loss relative difference at most 1.4e-8 against 1e-6, 15 coefficients and intercept at most 7.4e-8 apart against 1e-5.</td></tr>
       <tr><th>mutants</th><td>57: 56 killed, 1 survives and is explained (<code>e8-numeric-first-lookup-reversed</code> changes the order of two lookups that no plan can tell apart: a name is both a numeric column and an unencoded categorical one only if an encoder wrote a numeric column with another declared column&rsquo;s name, and the encoders write <code>NAME</code> or <code>NAME#i</code>). The mutant the gates were written to kill, a vocabulary in the order the rows meet the strings, is killed by the row-order gate alone (<code>docs/bench/mutants_enc.log</code>).</td></tr>
     </tbody>
   </table></div>
-  <p class="note"><strong>Not shown:</strong> the oracle is written from the same document, so it checks the code against the document; scikit-learn is the outside check for one-hot encoding with a penalty only (it has no equivalent of the rare bucket, the frequency or this hash). The hash is checked against Python&rsquo;s <code>hashlib</code>, not a second SHA-256 in this repository. No model file with a categorical column exists, so the damaged-file fuzz of a string table has nothing to judge. No timing was taken; one machine.</p>
+  <p class="note"><strong>Not shown:</strong> the oracle is written from the same document, so it checks the code against the document; scikit-learn is the outside check for one-hot encoding with a penalty only (it has no equivalent of the rare bucket, the frequency or this hash). The hash is checked against Python&rsquo;s <code>hashlib</code>, not a second SHA-256 in this repository. No timing was taken; one machine.</p>
 </section>
 
 <section id="metrics">
