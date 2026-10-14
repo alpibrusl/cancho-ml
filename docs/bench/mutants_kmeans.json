@@ -1,0 +1,74 @@
+{
+ "model": "kmeans",
+ "machine": "Mac arm64 (Darwin 25.2.0), cancho a4572ea",
+ "suites": [
+  {
+   "script": "scripts/mutants_models.py",
+   "log": "docs/bench/mutants_models.log",
+   "patterns": 93,
+   "killed": 91,
+   "survivors": [
+    {
+     "id": "log-sigmoid-boundary",
+     "why": "z == 0 happens only at the first iteration (w = 0), where e = 1 and 1/(1+e) = e/(1+e) = 0.5 with the same bits; no other row has z exactly 0"
+    },
+    {
+     "id": "par-models-ragged",
+     "why": "without the clamp the last chunk runs blocks past the end; each is an all-zero partial (m <= 0 rows), and x + 0.0 = x, so the tree of the real blocks keeps its bits: an equivalent mutant (the clamp is kept so that no block is made of nothing)"
+    }
+   ]
+  },
+  {
+   "script": "scripts/mutants_wire.py",
+   "log": "docs/bench/mutants_wire.log",
+   "patterns": 40,
+   "killed": 39,
+   "survivors": [
+    {
+     "id": "w-bad-hyperparameter-token-ignored",
+     "why": "the plan parser has already refused every token that hparams would (its grammar is the same table): this check is a second line of defence that no input reaches"
+    }
+   ]
+  },
+  {
+   "script": "scripts/mutants_wire_kmeans.py",
+   "log": "docs/bench/mutants_wire_kmeans.log",
+   "patterns": 68,
+   "killed": 60,
+   "survivors": [
+    {
+     "id": "wk-empty-file-lower-bound",
+     "why": "a second line of defence: the reader refuses a file whose every column is dropped (ml.input.empty, 'a header and no data rows') before load_data counts the columns, so the check is reached by no input; it stays for the day the reader keeps a zero-column table"
+    },
+    {
+     "id": "wk-features-bound-message",
+     "why": "the boundary k * d + k + 1 = 131072 needs k * (d + 1) = 131071, a prime larger than the 8,192 columns and the 1,024 clusters the flags allow: no input reaches the exact boundary; p_models.cho tests the library at it"
+    },
+    {
+     "id": "wk-adapter-k-above-the-rows",
+     "why": "a second line of defence: the wiring compares k with the training rows first (wk-k-above-the-rows-by-one), and the library compares it again in kmeans.fit with the same tag"
+    },
+    {
+     "id": "wk-payload-width-not-compared",
+     "why": "a second line of defence: with the width unchecked the size comparison uses the caller's width, and the record reader then compares the width it read (s1) with it and refuses the file with the same tag"
+    },
+    {
+     "id": "wk-payload-k-ceiling",
+     "why": "a k above 1,024 in a payload cannot have the size the header announces for any width below 131072 / k, and the size comparison that follows refuses the file with the same tag: two checks of one bound"
+    },
+    {
+     "id": "wk-payload-size-not-compared",
+     "why": "the record reader (decode_f64) refuses a payload shorter than the record, and the comparison of its end with the length of the payload refuses a longer one: the size comparison before the allocation is a second line of defence that keeps the allocation bounded by the file, and no input reaches a case where only it refuses"
+    },
+    {
+     "id": "wk-payload-end-not-compared",
+     "why": "the size comparison before the allocation refuses a payload of another length first (see wk-payload-size-not-compared, whose reason is the same pair)"
+    },
+    {
+     "id": "wk-payload-values-not-finite-checked",
+     "why": "record.decode_f64 answers a bad value with the end offset of the record's start, so the comparison of the end with the length refuses the file all the same: the code check is a second line of defence"
+    }
+   ]
+  }
+ ]
+}

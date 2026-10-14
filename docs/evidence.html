@@ -69,12 +69,13 @@
       <tr><th><code>mutants_cli.py</code></th><td class="num">53</td><td class="num">53</td><td class="num">0</td><td class="num">0</td></tr>
       <tr><th><code>mutants_wire.py</code></th><td class="num">40</td><td class="num">39</td><td class="num">1</td><td class="num">0</td></tr>
       <tr><th><code>mutants_wire_trees.py</code></th><td class="num">55</td><td class="num">51</td><td class="num">4</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_wire_kmeans.py</code></th><td class="num">68</td><td class="num">60</td><td class="num">8</td><td class="num">0</td></tr>
       <tr><th><code>mutants_pipe.py</code></th><td class="num">73</td><td class="num">72</td><td class="num">1</td><td class="num">0</td></tr>
       <tr><th><code>mutants_st.py</code></th><td class="num">62</td><td class="num">60</td><td class="num">2</td><td class="num">0</td></tr>
-      <tr class="us"><th>total</th><td class="num">965</td><td class="num">930</td><td class="num">35</td><td class="num">0</td></tr>
+      <tr class="us"><th>total</th><td class="num">1,033</td><td class="num">990</td><td class="num">43</td><td class="num">0</td></tr>
     </tbody>
   </table></div>
-  <p class="note">The total is the sum of the rows. Beside them: 11 pin mutants of RD1 (in <code>mutants_reader.py</code>), 11 deliberately wrong oracles of the linear algebra (in <code>mutants_linalg.py</code>), 6 mutant modules of the admission script and 27 mutants of the prose lint (<code>scripts/check_prose.py --mutants</code>), all caught. A survivor is usually an equivalent mutant: the change cannot alter a result (an addition is commutative, a clamp removes only all-zero partials). The argument for each is in the script that holds it.</p>
+  <p class="note">The total is the sum of the rows. The suites for core, paths, linear algebra, metrics, trees and the reader were not run again on this tree (their code is unchanged): their rows are the counts of commit <code>01c7bee</code>, 2026-10-14. The others were run in copies of this tree. Beside them: 11 pin mutants of RD1 (in <code>mutants_reader.py</code>), 11 deliberately wrong oracles of the linear algebra (in <code>mutants_linalg.py</code>), 6 mutant modules of the admission script and 27 mutants of the prose lint (<code>scripts/check_prose.py --mutants</code>), all caught. A survivor is usually an equivalent mutant: the change cannot alter a result (an addition is commutative, a clamp removes only all-zero partials). The argument for each is in the script that holds it.</p>
 </section>
 
 <section id="cli">

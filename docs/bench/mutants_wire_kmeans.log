@@ -1,0 +1,79 @@
+KILLED    wk-k-from-the-iterations                         WK5  tests: test_categorical_columns_reach_k_means_through_the_encoders, test_columns_are_matched_by_name, test_predict_has_one_column_without_distance_and_two_with, test_the_held_out_rows_are_scored_and_eval_with_the_same_split_agrees
+KILLED    wk-iterations-from-k                             WK5  tests: test_the_diagnostics_of_the_iterations_are_bounded, test_kmeans_plus_plus, test_random_initialisation, test_the_oracle_is_sensitive_to_the_sum_order_field_and_to_the_target_index
+KILLED    wk-init-inverted                                 WK5  tests: test_kmeans_plus_plus, test_random_initialisation, test_the_oracle_is_sensitive_to_the_sum_order_field_and_to_the_target_index
+KILLED    wk-init-always-random                            WK5  tests: test_kmeans_plus_plus, test_the_oracle_is_sensitive_to_the_sum_order_field_and_to_the_target_index
+KILLED    wk-init-index-of-the-enum                        WK1  tests: test_a_fit_needs_no_target_and_says_what_it_did, test_kmeans_plus_plus, test_random_initialisation, test_the_oracle_is_sensitive_to_the_sum_order_field_and_to_the_target_index
+KILLED    wk-init-word-reversed                            WK3  tests: test_a_fit_needs_no_target_and_says_what_it_did
+KILLED    wk-init-has-no-flag                              WK1  tests: test_k_equal_to_the_rows_gives_zero_inertia, test_the_file, test_the_flags_k_means_does_not_take, test_the_model_file_is_the_same_at_1_2_4_8_and_16_threads
+KILLED    wk-k-optional                                    WK7  tests: test_a_fit_without_k_is_a_missing_plan_key, test_every_fixture
+KILLED    wk-k-ceiling-2048                                WK7  tests: test_the_range_of_k_and_of_the_iterations
+KILLED    wk-task-number-of-a-clustering                   WK3  tests: test_a_plan_decides_after_it_is_read, test_categorical_columns_reach_k_means_through_the_encoders, test_retry_repairs_work_and_widen_nothing, test_a_consistent_file_that_disagrees_about_the_target_is_malformed
+KILLED    wk-kmeans-takes-missing-cells                    WK6  tests: test_retry_repairs_work_and_widen_nothing, test_a_missing_cell_is_refused_with_the_impute_repair, test_the_held_out_rows_of_a_split_fit_are_refused_too, test_every_fixture
+KILLED    wk-target-required-for-kmeans                    WK2  tests: test_categorical_columns_reach_k_means_through_the_encoders, test_retry_repairs_work_and_widen_nothing, test_a_consistent_file_that_disagrees_about_the_target_is_malformed, test_a_dry_run_writes_nothing
+KILLED    wk-target-never-required                         WK2  tests: test_a_target_is_refused_for_kmeans_and_still_needed_for_the_others
+KILLED    wk-target-allowed-with-kmeans                    WK2  tests: test_a_target_is_refused_for_kmeans_and_still_needed_for_the_others, test_every_fixture
+KILLED    wk-task-allowed-with-kmeans                      WK2  tests: test_the_flags_k_means_does_not_take, test_every_fixture
+KILLED    wk-positive-allowed-with-kmeans                  WK2  tests: test_the_flags_k_means_does_not_take, test_every_fixture
+KILLED    wk-plan-target-conflict-dropped                  WK2  tests: test_a_plan_decides_after_it_is_read, test_every_fixture
+KILLED    wk-plan-target-required-dropped                  WK2  tests: test_a_plan_decides_after_it_is_read, test_every_fixture
+KILLED    wk-load-demands-the-target                       WK2  tests: test_a_plan_decides_after_it_is_read, test_categorical_columns_reach_k_means_through_the_encoders, test_retry_repairs_work_and_widen_nothing, test_a_consistent_file_that_disagrees_about_the_target_is_malformed
+KILLED    wk-features-lose-a-column                        WK5  tests: test_a_plan_decides_after_it_is_read, test_categorical_columns_reach_k_means_through_the_encoders, test_columns_are_matched_by_name, test_predict_has_one_column_without_distance_and_two_with
+KILLED    wk-schema-target-is-column-zero                  WK4  tests: test_an_empty_cluster_has_a_null_mean_distance, test_columns_are_matched_by_name, test_predict_has_one_column_without_distance_and_two_with, test_six_points_by_hand
+KILLED    wk-numeric-schema-target-is-column-zero          WK4  tests: test_categorical_columns_reach_k_means_through_the_encoders
+KILLED    wk-full-schema-target-is-column-zero             WK4  tests: test_categorical_columns_reach_k_means_through_the_encoders
+SURVIVED  wk-empty-file-lower-bound                        WK7  
+KILLED    wk-schema-and-model-kind-not-compared            WK4  tests: test_a_consistent_file_that_disagrees_about_the_target_is_malformed
+KILLED    wk-schema-target-above-columns                   WK4  tests: test_the_schema_and_the_model_must_agree_on_the_target, test_the_schema_target_index_and_the_kind_agree
+KILLED    wk-meta-columns                                  WK4  tests: test_an_empty_cluster_has_a_null_mean_distance, test_categorical_columns_reach_k_means_through_the_encoders, test_columns_are_matched_by_name, test_predict_has_one_column_without_distance_and_two_with
+KILLED    wk-task-word                                     WK3  tests: test_a_fit_needs_no_target_and_says_what_it_did, test_a_plan_decides_after_it_is_read, test_categorical_columns_reach_k_means_through_the_encoders, test_six_points_by_hand
+KILLED    wk-predict-column                                WK3  tests: test_categorical_columns_reach_k_means_through_the_encoders, test_predict_has_one_column_without_distance_and_two_with, test_six_points_by_hand, test_kmeans_plus_plus
+KILLED    wk-distance-column                               WK3  tests: test_categorical_columns_reach_k_means_through_the_encoders, test_predict_has_one_column_without_distance_and_two_with, test_six_points_by_hand, test_kmeans_plus_plus
+KILLED    wk-distance-not-computed                         WK3  tests: test_six_points_by_hand, test_the_tie_of_two_equal_distances_goes_to_the_lowest_cluster, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-cluster-index-plus-one                        WK3  tests: test_six_points_by_hand, test_the_tie_of_two_equal_distances_goes_to_the_lowest_cluster, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-distance-accepted-by-linear                   WK3  tests: test_distance_is_for_kmeans_only, test_every_fixture
+KILLED    wk-distance-accepted-by-constant                 WK3  tests: test_distance_is_for_kmeans_only, test_every_fixture
+KILLED    wk-proba-accepted-by-kmeans                      WK3  tests: test_predict_has_one_column_without_distance_and_two_with, test_every_fixture
+KILLED    wk-eval-positive-accepted                        WK3  tests: test_eval_has_no_label_to_score_and_takes_none, test_every_fixture
+KILLED    wk-eval-reads-a-target                           WK3  tests: test_kmeans_plus_plus, test_random_initialisation, test_a_missing_cell_is_refused_with_the_impute_repair, test_an_empty_cluster_has_a_null_mean_distance
+KILLED    wk-eval-clusters-field                           WK3  tests: test_categorical_columns_reach_k_means_through_the_encoders, test_six_points_by_hand, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-distance-to-the-first-centre                  WK3  tests: test_k_equal_to_the_rows_gives_zero_inertia, test_six_points_by_hand, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-predict-and-distance-swapped                  WK3  tests: test_a_fit_needs_no_target_and_says_what_it_did, test_an_empty_cluster_has_a_null_mean_distance, test_eval_has_no_label_to_score_and_takes_none, test_k_equal_to_the_rows_gives_zero_inertia
+KILLED    wk-eval-metrics-of-the-fit-rows                  WK3  tests: test_the_held_out_rows_are_scored_and_eval_with_the_same_split_agrees, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-holdout-k                                     WK3  tests: test_the_held_out_rows_are_scored_and_eval_with_the_same_split_agrees, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-summary-k                                     WK3  tests: test_a_fit_needs_no_target_and_says_what_it_did
+KILLED    wk-inertia-of-absolute-differences               WK5  tests: test_an_empty_cluster_has_a_null_mean_distance, test_six_points_by_hand, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-inertia-drops-the-last-row                    WK5  tests: test_six_points_by_hand, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-mean-distance-divides-by-the-rows             WK5  tests: test_six_points_by_hand, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-mean-of-squared-distances                     WK5  tests: test_six_points_by_hand, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-sizes-count-twice                             WK5  tests: test_kmeans_plus_plus, test_random_initialisation, test_a_consistent_file_that_disagrees_about_the_target_is_malformed, test_a_dry_run_writes_nothing
+KILLED    wk-grouping-offsets                              WK5  tests: test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-empty-cluster-has-a-mean                      WK5  tests: test_an_empty_cluster_has_a_null_mean_distance, test_sums_that_overflow
+KILLED    wk-k-above-the-rows-by-one                       WK7  tests: test_k_above_the_rows_is_refused
+KILLED    wk-features-bound                                WK7  tests: test_k_times_the_features_is_bounded
+SURVIVED  wk-features-bound-message                        WK7  
+KILLED    wk-diagnostics-bound                             WK7  tests: test_the_diagnostics_of_the_iterations_are_bounded
+KILLED    wk-diagnostics-bound-by-one                      WK7  tests: test_the_diagnostics_of_the_iterations_are_bounded
+SURVIVED  wk-adapter-k-above-the-rows                      WK7  
+SURVIVED  wk-payload-width-not-compared                    WK12  
+SURVIVED  wk-payload-k-ceiling                             WK12  
+SURVIVED  wk-payload-size-not-compared                     WK12  
+SURVIVED  wk-payload-end-not-compared                      WK12  
+SURVIVED  wk-payload-values-not-finite-checked             WK12  
+KILLED    wk-decode-says-regression                        WK12  tests: test_categorical_columns_reach_k_means_through_the_encoders, test_columns_are_matched_by_name, test_six_points_by_hand, test_the_tie_of_two_equal_distances_goes_to_the_lowest_cluster
+KILLED    wk-decode-forgets-k                              WK12  tests: test_an_empty_cluster_has_a_null_mean_distance, test_categorical_columns_reach_k_means_through_the_encoders, test_columns_are_matched_by_name, test_predict_has_one_column_without_distance_and_two_with
+KILLED    wk-plan-k-and-payload-not-compared               WK12  tests: test_the_plan_and_the_payload_agree_on_k, test_the_plan_and_the_payload_must_agree_on_k
+KILLED    wk-sum-order-of-kind-6-is-3                      WK4  tests: test_the_file, test_the_payload_is_checked_before_it_is_used, test_the_sum_order_is_two_for_kmeans, test_kmeans_plus_plus
+KILLED    wk-threads-minus-one                             WK8  tests: test_a_plan_decides_after_it_is_read, test_categorical_columns_reach_k_means_through_the_encoders, test_a_consistent_file_that_disagrees_about_the_target_is_malformed, test_a_dry_run_writes_nothing
+KILLED    wk-threads-reach-the-seed                        WK8  tests: test_the_model_file_is_the_same_at_1_2_4_8_and_16_threads, test_kmeans_plus_plus, test_random_initialisation
+KILLED    wk-seed-ignored                                  WK5  tests: test_kmeans_plus_plus, test_random_initialisation, test_the_oracle_is_sensitive_to_the_sum_order_field_and_to_the_target_index
+PASSED    baseline (the unchanged tree)                    -  
+
+68 mutants: 60 killed, 8 survived, 0 invalid
+SURVIVOR wk-empty-file-lower-bound: a second line of defence: the reader refuses a file whose every column is dropped (ml.input.empty, 'a header and no data rows') before load_data counts the columns, so the check is reached by no input; it stays for the day the reader keeps a zero-column table
+SURVIVOR wk-features-bound-message: the boundary k * d + k + 1 = 131072 needs k * (d + 1) = 131071, a prime larger than the 8,192 columns and the 1,024 clusters the flags allow: no input reaches the exact boundary; p_models.cho tests the library at it
+SURVIVOR wk-adapter-k-above-the-rows: a second line of defence: the wiring compares k with the training rows first (wk-k-above-the-rows-by-one), and the library compares it again in kmeans.fit with the same tag
+SURVIVOR wk-payload-width-not-compared: a second line of defence: with the width unchecked the size comparison uses the caller's width, and the record reader then compares the width it read (s1) with it and refuses the file with the same tag
+SURVIVOR wk-payload-k-ceiling: a k above 1,024 in a payload cannot have the size the header announces for any width below 131072 / k, and the size comparison that follows refuses the file with the same tag: two checks of one bound
+SURVIVOR wk-payload-size-not-compared: the record reader (decode_f64) refuses a payload shorter than the record, and the comparison of its end with the length of the payload refuses a longer one: the size comparison before the allocation is a second line of defence that keeps the allocation bounded by the file, and no input reaches a case where only it refuses
+SURVIVOR wk-payload-end-not-compared: the size comparison before the allocation refuses a payload of another length first (see wk-payload-size-not-compared, whose reason is the same pair)
+SURVIVOR wk-payload-values-not-finite-checked: record.decode_f64 answers a bad value with the end offset of the record's start, so the comparison of the end with the length refuses the file all the same: the code check is a second line of defence
