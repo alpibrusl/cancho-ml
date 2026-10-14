@@ -354,6 +354,8 @@ class KMeansWire(unittest.TestCase):
             r = self.ml("fit", "--model", "kmeans", *other, flag, value, "--output", "m.cml", "--overwrite", "full.csv")
             self.assertEqual((r.status, r.first_rule()), (2, "ml.param.out-of-range"), (flag, value, r))
             self.assertEqual(validate(r), [], (flag, value))
+            d = r.error()["detail"]
+            self.assertEqual((d["flag"], d["value"], d["min"], d["max"]), (flag[2:], int(value), 1, 1024 if flag == "--k" else 1000), (flag, value, r))
         self.assertEqual(self.ml("fit", "--model", "kmeans", "--k", "1024", "--iterations", "1000", "--output", "m.cml", "--overwrite", "full.csv").first_rule(), "ml.param.out-of-range")
 
     def test_k_above_the_rows_is_refused(self):

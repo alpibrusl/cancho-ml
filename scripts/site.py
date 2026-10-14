@@ -27,6 +27,8 @@ generated:
                                           float CSV with an empty cell, a refusal with its repair,
                                           impute + standardise + logistic, predict --proba, eval
     qs            README.md, index.html   the quick start's commands and output
+    kmflow        README.md, index.html   k-means on docs/examples/data/iris_train.csv and iris_test.csv: no target (a --target is refused), k required, the label dropped,
+                                          the features standardised, three clusters, predict with the squared distance, eval
     catflow       README.md, index.html   the categorical flow on docs/examples/data/pets.csv: a declared column that no step
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
@@ -101,7 +103,7 @@ DEMOS = [
     ("exists", "ml fit --target price --output houses.ml houses.csv"),
     ("dry", "ml fit --dry-run --overwrite --target price --output houses.ml houses.csv"),
     ("damaged", "ml eval --model-file damaged.ml houses.csv"),
-    ("other_model", "ml fit --model kmeans --target price --output kmeans.ml houses.csv"),
+    ("other_model", "ml fit --model knn --target price --output knn.ml houses.csv"),
     ("typo", "ml fit --target prize --output typo.ml houses.csv"),
     # the models that go through the pipeline (docs/wiring.md): a refusal with its repair first, then the plan written out
     ("p_bad", "ml fit --model logistic --target bought --output shop2.ml shop2.csv"),
@@ -117,6 +119,13 @@ DEMOS = [
     ("c_eval", "ml eval --model-file pets.ml --drop id pets.csv"),
     ("c_hash", "ml fit --model logistic --cat species,city --step 'hash column=species buckets=8 missing=zero;encode column=city kind=label missing=zero;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets-hash.ml pets.csv"),
     ("c_hash_new", "ml predict --model-file pets-hash.ml --proba newpets.csv"),
+    # k-means (docs/wiring-kmeans.md) on docs/examples/data/iris_train.csv and iris_test.csv: no target, the label column dropped, the features standardised
+    ("k_target", "ml fit --model kmeans --k 3 --target virginica --output iris-km.ml iris_train.csv"),
+    ("k_nok", "ml fit --model kmeans --drop virginica --output iris-km.ml iris_train.csv"),
+    ("k_fit", "ml fit --model kmeans --k 3 --seed 1 --drop virginica --step 'scale column=* kind=standard' --output iris-km.ml iris_train.csv"),
+    ("k_predict", "ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv"),
+    ("k_eval", "ml eval --model-file iris-km.ml --drop virginica iris_test.csv"),
+    ("k_text", "ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 SUMMARY = {
@@ -127,6 +136,8 @@ SUMMARY = {
     "typo": ["rule", "hint", "detail"],
     "p_bad": ["rule", "hint", "repair"],
     "c_bad": ["rule", "hint", "detail"],
+    "k_target": ["rule", "hint", "detail"],
+    "k_nok": ["rule", "hint", "detail"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -164,6 +175,9 @@ def make_context(binary, tmp):
         (Path(tmp) / name).write_text(text)
     # the categorical example is a committed file, as the worked examples' CSVs are
     (Path(tmp) / "pets.csv").write_bytes((ROOT / "docs" / "examples" / "data" / "pets.csv").read_bytes())
+    # the k-means example: the iris files of the worked examples
+    for part in ("train", "test"):
+        (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
     results = {}
 
     def run(words):
@@ -258,6 +272,22 @@ def catflow_items(ctx):
             ("# species hashed to 8 columns and city as a label: the file holds no string of species, and an unseen species lands in the bucket it hashes to", None, 0, None),
             item(ctx, "c_hash"),
             item(ctx, "c_hash_new")]
+
+
+def kmflow_items(ctx):
+    """k-means: no target, a refusal that says so, a fit without k refused, the iris features standardised and clustered, the cluster and the distance of each test row, the metrics."""
+    return [("# k-means has no target: it clusters the rows by their features. The label column of iris is not given as one", None, 0, None),
+            item(ctx, "k_target"),
+            ("# k is required", None, 0, None),
+            item(ctx, "k_nok"),
+            ("# Drop the label, standardise the four measurements, fit three clusters (seed 1): the answer holds the inertia, the rows of each cluster and the mean distance of each", None, 0, None),
+            item(ctx, "k_fit"),
+            ("# The cluster of five test rows and the squared distance of each to its centre", None, 0, None),
+            item(ctx, "k_predict"),
+            ("# The inertia of the 25 test rows, the rows of each cluster and the mean distance of each", None, 0, None),
+            item(ctx, "k_eval"),
+            ("# The same, as text, on the training rows", None, 0, None),
+            item(ctx, "k_text")]
 
 
 def render(items, html_mode):
@@ -414,11 +444,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

@@ -155,7 +155,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 3 | constant regression of a float target | one i64 record, shape [2] | reader stage | yes |
 | 4 | linear regression | `coef` f64 rank 1 `d`; `intercept` f64 rank 1 `1` | `lib/models/record.cho` | no (`pipeline.file`, since W1) |
 | 5 | logistic regression | the same two records, then `labels` i64 rank 1 `2`: the negative and the positive label (payload version 2, W1) | `lib/models/record.cho` | no (`pipeline.file`, since W1) |
-| 6 | k-means | `centroids` f64 rank 2 `k x d` | `lib/models/record.cho` | no |
+| 6 | k-means | `centroids` f64 rank 2 `k x d`; the schema section of the file has no target (its target index is the number of columns) | `lib/models/record.cho`, `lib/models/kmeans/adapter.cho` | no (`pipeline.file`, `docs/wiring-kmeans.md` section 6) |
 | 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
 
 **Step kinds** (the `u32` that opens one step in the `steps` section; `lib/core/kinds.cho` `step_*`, `docs/transforms.md` section 4; the `steps` payload is `u32 n` then `n` times `u64 length | step`, and `n = 0` is the four bytes `mfile.cho` writes):
@@ -356,7 +356,7 @@ The library also answers, with its own codes in its band, tags that exist above:
 | tag | exit | when | repair |
 |---|---|---|---|
 | `ml.input.missing-value` | 8 | a feature cell is empty after the steps of the plan (no `impute` covers its column); the columns are in `detail` | `retry` with `--step "impute column=NAMES strategy=mean"` when the plan came from no flag, else `none` with the step to add |
-| `ml.plan.model-not-built` | 8 | the `model` line of a plan names a model `ml` does not build (`kmeans`, `tree`, `forest`, `constant`) | none |
+| `ml.plan.model-not-built` | 8 | the `model` line of a plan names a model `ml` does not build (`constant`, which takes no plan) | none |
 
 *Added by stage 1 of issue 21, categorical columns (`docs/categorical.md` section 5; `tools/ml/spec.tmpl`, `lib/core/refuse.cho` codes 16 to 20, one fixture per tag in `tests/conformance/fixtures.py`):*
 
