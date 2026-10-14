@@ -155,7 +155,7 @@ def main():
                     bad += 1
                 for item in m["edits"]:
                     shutil.copy(ROOT / item[0], tree / item[0])
-        print("%d k-means mutants, %d with an edit that does not apply" % (len(MUTANTS), bad))
+        print("%d kmeans mutants, %d with an edit that does not apply" % (len(MUTANTS), bad))
         return 1 if bad else 0
     only = argv[argv.index("--only") + 1] if "--only" in argv else None
     results = []
