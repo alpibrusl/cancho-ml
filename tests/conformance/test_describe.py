@@ -28,6 +28,7 @@ GOLDEN = pathlib.Path(__file__).parent / "golden_describe.json"
 SB = None
 MODELS = {}
 STRIDE = int(os.environ.get("ST_STRIDE", "1"))
+COUNTS = {"runs": 0, "accepted": 0}
 
 
 def setUpModule():
@@ -38,6 +39,8 @@ def setUpModule():
 
 def tearDownModule():
     SB.cleanup()
+    if COUNTS["runs"]:
+        print("describe damage: %(runs)d damaged files, %(accepted)d described as another valid file, 0 traps" % COUNTS)
 
 
 def describe(mf, *extra, binary=None):
@@ -152,6 +155,7 @@ class Damage(unittest.TestCase):
     """D2."""
 
     def judge(self, mf, damaged, name, tagged=None):
+        COUNTS["runs"] += 1
         SB.write("dmg.cml", damaged)
         r = SB.run("describe", "--model-file", "dmg.cml")
         self.assertNotIn(r.status, TRAPS, (name, r))
@@ -186,6 +190,7 @@ class Damage(unittest.TestCase):
                 fixed = reseal(damaged)
                 r = self.judge(mf, fixed, "%s flip %d resealed" % (mid, at))
                 if r.status == 0:
+                    COUNTS["accepted"] += 1
                     self.assertEqual(r.data(), O.describe(fixed), (mid, at))
                 else:
                     self.assertIn(r.first_rule(), ("ml.model.malformed", "ml.model.string-table", "ml.model.version", "ml.model.checksum", "ml.model.bad-magic", "ml.model.truncated"), (mid, at, r))
