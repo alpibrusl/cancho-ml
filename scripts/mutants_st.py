@@ -121,7 +121,7 @@ MUTANTS = [
     # ------------------------------------------------------------------ reading a file with a table (S2, S5, S8)
     M("r-hash-mode-off", ["predict", "cli"], "the reader of a model file looks a hashed column's cells up as strings", [(CSV, "        if cs.kind == 3 && dict.hash_buckets(cs.voc, cj) > 0 {", "        if false {")]),
     M("r-hash-bucket-wrong", ["predict", "unit"], "the bucket adds the halves of the digest without the weight of the high one", [("lib/core/bucket.cho", "    return (hi % b * (4294967296 % b) + lo % b) % b;", "    return (hi % b + lo % b) % b;")]),
-    M("r-hash-id-range", ["predict"], "a bucket equal to the number of buckets is a bucket", [(CAT, "                                                    if id >= 0 && id < direct {", "                                                    if id >= 0 && id <= direct {")]),
+    M("r-hash-id-range", ["predict", "unit"], "a bucket equal to the number of buckets is a bucket", [(CAT, "                                                    if id >= 0 && id < direct {", "                                                    if id >= 0 && id <= direct {")]),
     M("r-hash-buckets-check", ["predict", "cli"], "a hashed column is accepted by a step of another number of buckets, and refused by the right one", [(CAT, "dict.hash_buckets(rv, rc) != st.param)", "dict.hash_buckets(rv, rc) == st.param)")]),
     M("r-markers-ignored", ["predict", "cli"], "the markers stored in the file are not applied", [(CSV, " && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1])", "")]),
     M("r-string-limit-ignored", ["cli"], "the string limit of the fit is not applied at predict", [(WIO, "max_str: strtab.limit_of(tbl, 1)", "max_str: 255")]),
