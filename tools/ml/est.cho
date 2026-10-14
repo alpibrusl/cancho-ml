@@ -11,6 +11,7 @@ import std.bytes;
 import linalg.tensor;
 import ml.csvcell;
 import models.adapter_forest;
+import models.adapter_kmeans;
 import models.adapter_linear;
 import models.adapter_logistic;
 import models.adapter_tree;
@@ -18,7 +19,7 @@ import models.record;
 
 // whether a file whose model section opens with this kind is one `ml` builds
 pub fn wired(kind: int) -> [] bool {
-    return kind == 4 || kind == 5 || kind == 7;
+    return kind == 4 || kind == 5 || kind == 6 || kind == 7;
 }
 
 // the kind a file has for the dispatch key of a model (0 if there is none)
@@ -28,6 +29,9 @@ pub fn kind_of(kind: int) -> [] int {
     }
     if kind == 5 {
         return 5;
+    }
+    if kind == 6 {
+        return 6;
     }
     if kind == 7 {
         return 7;
@@ -46,6 +50,9 @@ pub fn kind_named[&n](name: &n [byte]) -> [] int {
     if bytes.equal(name, "logistic") {
         return 5;
     }
+    if bytes.equal(name, "kmeans") {
+        return 6;
+    }
     if bytes.equal(name, "tree") {
         return 7;
     }
@@ -61,6 +68,9 @@ pub fn name(kind: int) -> [] &static [byte] {
     }
     if kind == 5 {
         return "logistic";
+    }
+    if kind == 6 {
+        return "kmeans";
     }
     if kind == 7 {
         return "tree";
@@ -78,6 +88,9 @@ pub fn tier(kind: int) -> [] &static [byte] {
     if kind == 5 {
         return "supported";
     }
+    if kind == 6 {
+        return "experimental";
+    }
     if kind == 7 {
         return "supported";
     }
@@ -87,13 +100,16 @@ pub fn tier(kind: int) -> [] &static [byte] {
     return "";
 }
 
-// 1 regression, 2 classification, 3 either (the `task` of the model line, task_of), 0 not a wired model
+// 1 regression, 2 classification, 3 either (the `task` of the model line, task_of), 4 clustering (no target), 0 not a wired model
 pub fn task(kind: int) -> [] int {
     if kind == 4 {
         return 1;
     }
     if kind == 5 {
         return 2;
+    }
+    if kind == 6 {
+        return 4;
     }
     if kind == 7 {
         return 3;
@@ -111,6 +127,9 @@ pub fn nints(kind: int) -> [] int {
     if kind == 5 {
         return 1;
     }
+    if kind == 6 {
+        return 3;
+    }
     if kind == 7 {
         return 5;
     }
@@ -126,6 +145,9 @@ pub fn nfloats(kind: int) -> [] int {
     }
     if kind == 5 {
         return 1;
+    }
+    if kind == 6 {
+        return 0;
     }
     if kind == 7 {
         return 0;
@@ -165,6 +187,17 @@ pub fn takes[&f](kind: int, flag: &f [byte]) -> [] bool {
             return true;
         }
         if bytes.equal(flag, "l2") {
+            return true;
+        }
+    }
+    if kind == 6 {
+        if bytes.equal(flag, "k") {
+            return true;
+        }
+        if bytes.equal(flag, "iterations") {
+            return true;
+        }
+        if bytes.equal(flag, "init") {
             return true;
         }
     }
@@ -216,7 +249,13 @@ pub fn hparam_flag[&f](flag: &f [byte]) -> [] bool {
     if bytes.equal(flag, "bootstrap") {
         return true;
     }
+    if bytes.equal(flag, "init") {
+        return true;
+    }
     if bytes.equal(flag, "iterations") {
+        return true;
+    }
+    if bytes.equal(flag, "k") {
         return true;
     }
     if bytes.equal(flag, "l2") {
@@ -242,6 +281,11 @@ pub fn hparam_flag[&f](flag: &f [byte]) -> [] bool {
 
 // whether the model keeps its fitted state as a byte payload that its adapter builds and reads (the blob interface), not as a vector of floats
 pub fn is_blob(kind: int) -> [] bool {
+    return kind == 6 || kind == 7 || kind == 107;
+}
+
+// whether the model takes a cell that is still missing after the steps (a blob model of both tasks: the tree and the forest); the others are refused with ml.input.missing-value
+pub fn takes_missing(kind: int) -> [] bool {
     return kind == 7 || kind == 107;
 }
 
@@ -305,6 +349,14 @@ pub fn hparam_ok[&n, &v](name: &n [byte], value: &v [byte]) -> [] bool {
     }
     if bytes.equal(name, "iterations") {
         // the range of an integer is checked by the nat check of the command line (ml.param.out-of-range)
+        return true;
+    }
+    if bytes.equal(name, "k") {
+        // the range of an integer is checked by the nat check of the command line (ml.param.out-of-range)
+        return true;
+    }
+    if bytes.equal(name, "init") {
+        // a value of an enum is checked by the choice kind of its flag (args.bad-value)
         return true;
     }
     if bytes.equal(name, "max-depth") {
@@ -421,6 +473,9 @@ pub fn decode[&s, &q](kind: int, src: &s [byte], d: int, out: &!q [float]) -> []
 
 // 0, or a code of ml.refuse or of the library (the payload is then empty; ml.param.out-of-range for a kind that has no blob adapter)
 pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    if kind == 6 {
+        return adapter_kmeans.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+    }
     if kind == 7 {
         return adapter_tree.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
     }
@@ -431,6 +486,9 @@ pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, kind: int, threads: int,
 }
 
 pub fn predict_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!q [float]) -> [heap] int {
+    if kind == 6 {
+        return adapter_kmeans.predict_blob(heap, blob, xt, xd, miss, wpc, out);
+    }
     if kind == 7 {
         return adapter_tree.predict_blob(heap, blob, xt, xd, miss, wpc, out);
     }
@@ -441,6 +499,9 @@ pub fn predict_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byt
 }
 
 pub fn proba_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!q [float]) -> [heap] int {
+    if kind == 6 {
+        return adapter_kmeans.proba_blob(heap, blob, xt, xd, miss, wpc, out);
+    }
     if kind == 7 {
         return adapter_tree.proba_blob(heap, blob, xt, xd, miss, wpc, out);
     }
@@ -452,6 +513,9 @@ pub fn proba_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte]
 
 // the payload read and checked: the code, the two labels and in `end` the task (1 regression, 2 classification)
 pub fn decode_blob[&h, &s](heap: &!h Heap, kind: int, src: &s [byte], d: int) -> [heap] record.Decoded {
+    if kind == 6 {
+        return adapter_kmeans.decode_blob(heap, src, d);
+    }
     if kind == 7 {
         return adapter_tree.decode_blob(heap, src, d);
     }
@@ -479,6 +543,24 @@ pub fn hparams[&l, &i, &f](kind: int, line: &l [byte], ip: &!i [int], fp: &!f [f
         fp[0] = float_value(value_of(bytes.field(line, ' ', 4)));
         if fp[0] < 0.0 {
             return 2;
+        }
+        return 0;
+    }
+    if kind == 6 {
+        ip[0] = int_value(value_of(bytes.field(line, ' ', 3)));
+        if ip[0] < 0 {
+            return 1;
+        }
+        ip[1] = int_value(value_of(bytes.field(line, ' ', 4)));
+        if ip[1] < 0 {
+            return 2;
+        }
+        if bytes.equal(value_of(bytes.field(line, ' ', 5)), "random") {
+            ip[2] = 0;
+        } else if bytes.equal(value_of(bytes.field(line, ' ', 5)), "kmeans++") {
+            ip[2] = 1;
+        } else {
+            return 3;
         }
         return 0;
     }

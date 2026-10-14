@@ -1,17 +1,27 @@
-# k-means (docs/models-linear.md): a library, not wired into the verbs in this stage.
+# k-means (docs/models-linear.md section 3.3), wired into the verbs by docs/wiring-kmeans.md. A clustering: it has no target, so its file has a schema without one.
 name = "kmeans"
 kind = 6
 kind_fn = "model_kmeans"
 task = "clustering"
 tier = "experimental"
-wired = false
+wired = true
+shape = "blob"
+adapter = "models.adapter_kmeans"
 payload_version = 1
 doc = "docs/models-linear.md"
-files = ["lib/models/kmeans/kmeans.cho", "lib/models/kmeans/kpass.cho"]
+files = ["lib/models/kmeans/kmeans.cho", "lib/models/kmeans/kpass.cho", "lib/models/kmeans/adapter.cho"]
 plan_order = 3
 
+[limits]
+max_k = 1024
+max_slot = 131072
+max_diag_floats = 16777216
+
 [tags]
-emits = ["ml.input.non-finite", "ml.param.out-of-range", "ml.param.threads"]
+emits = [
+  "ml.input.empty", "ml.input.non-finite", "ml.input.too-many-rows", "ml.input.too-many-columns", "ml.input.too-many-cells", "ml.input.missing-value",
+  "ml.fit.non-finite", "ml.param.out-of-range", "ml.param.threads", "ml.model.truncated", "ml.model.malformed", "ml.schema.mismatch",
+]
 
 [authority]
 adds = []
@@ -20,13 +30,18 @@ reason = ""
 [sums]
 decisive = ["lib/models/kmeans/kpass.cho"]
 
+[oracle]
+script = "scripts/oracle_wire_kmeans.py"
+args = "kmeans"
+tolerance = "bits"
+
 [[hyperparameter]]
 name = "k"
 type = "int"
 min = 1
 max = 1024
 required = true
-doc = "the number of clusters"
+doc = "the number of clusters, at most the number of training rows"
 
 [[hyperparameter]]
 name = "iterations"
@@ -34,4 +49,11 @@ type = "int"
 min = 1
 max = 1000
 default = "10"
-doc = "the Lloyd iterations"
+doc = "the Lloyd iterations, a fixed number: 1 to 1000"
+
+[[hyperparameter]]
+name = "init"
+type = "enum"
+values = ["random", "kmeans++"]
+default = "kmeans++"
+doc = "how the initial centres are drawn from the seed: random (seeded rows without repetition) or kmeans++ (each next centre drawn in proportion to its squared distance to the nearest chosen)"

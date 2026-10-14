@@ -1,0 +1,161 @@
+module models.adapter_kmeans;
+
+import linalg.tensor;
+import ml.fbits;
+import ml.refuse;
+import models.common;
+import models.kmeans;
+import models.kpass;
+import models.record;
+
+// The adapter of the `kmeans` module (docs/modules.md section 4b, docs/wiring-kmeans.md): the blob interface over models.kmeans, for a model with no target.
+// Hyperparameters, in manifest order: ints [k, iterations, init] (init: 0 random, 1 kmeans++, the library's numbers). The payload is the library's
+// (`u32 kind = 6`, the record `centroids`, rank 2, k x d: docs/models-linear.md section 3.4). No arithmetic of its own: the Lloyd sums are the library's,
+// through linalg.order, and a squared distance is kpass.dist2, the left fold the library forms.
+
+// the floats the diagnostics of a fit may take: (iterations + 1) slots of k * d + k + 1 sums, capped at 2^24 floats (128 MiB)
+pub fn diag_cap() -> [] int {
+    return 16777216;
+}
+
+// the slice of rows of a prediction is checked by the library; the descriptor must be a matrix of `d` columns
+fn width_ok(xt: tensor.Tensor, d: int) -> [] bool {
+    return xt.rank == 2 && xt.s1 == d && d >= 1;
+}
+
+// The centroids of a payload for a model fitted on `d` columns: (the k x d values, k, 0), or (nothing, 0, 1) when the payload is not one: the size the header
+// announces is compared with the bytes there BEFORE anything is allocated; every failure is malformed.
+fn read_centroids[&h, &b](heap: &!h Heap, blob: &b [byte], d: int) -> [heap] (Box[[float]], int, int) {
+    let none = box_slice(heap, 1, 0.0);
+    if d < 1 || len(blob) < 28 || record.get32(blob, 0) != record.kind_kmeans() || record.get32(blob, 4) != record.dtype_f64() || record.get32(blob, 8) != 2 {
+        return (none, 0, 1);
+    }
+    let k = fbits.get64(blob, 12);
+    let w = fbits.get64(blob, 20);
+    if k < 1 || k > common.max_k() || w != d || d > common.max_slot() || k > common.max_slot() / d || k * d + k + 1 > common.max_slot() {
+        return (none, 0, 1);
+    }
+    if len(blob) != record.kmeans_size(k, d) {
+        return (none, 0, 1);
+    }
+    unbox_slice(heap, none);
+    var cen = box_slice(heap, k * d + 1, 0.0);
+    var code = 0;
+    borrow mut cen as &!cw in {
+        let r = record.decode_f64(blob, 4, k * d, contents(cw));
+        if r.code != 0 || r.rank != 2 || r.s0 != k || r.s1 != d || r.end != len(blob) {
+            code = 1;
+        }
+    }
+    return (cen, k, code);
+}
+
+// Fit: the library payload. The bounds are compared with the data BEFORE the labels and the diagnostics are allocated: k at most the training rows and 1,024,
+// k * d + k + 1 at most 131,072, (iterations + 1) * that at most 2^24 floats. yd is empty (there is no target). miss is not read: a cell left missing is
+// refused by the wiring. (the payload, 0) or (an empty payload, the refusal of the library)
+pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    let nothing = box_slice(heap, 1, byte_of(0));
+    let n = xt.s0;
+    let d = xt.s1;
+    let k = ip[0];
+    let iters = ip[1];
+    let init = ip[2];
+    if xt.rank != 2 || n < 1 || d < 1 {
+        return (nothing, refuse.input_empty());
+    }
+    if k < 1 || k > common.max_k() || k > n || iters < 1 || iters > common.max_iters() || init < 0 || init > 1 {
+        return (nothing, refuse.param_out_of_range());
+    }
+    if d > common.max_slot() || k > common.max_slot() / d {
+        return (nothing, refuse.param_out_of_range());
+    }
+    let ww = k * d + k + 1;
+    if ww > common.max_slot() || iters + 1 > diag_cap() / ww {
+        return (nothing, refuse.param_out_of_range());
+    }
+    var cen = box_slice(heap, k * d + 1, 0.0);
+    var diag = box_slice(heap, (iters + 1) * ww + 1, 0.0);
+    var lab = box_slice(heap, n + 1, 0);
+    var code = 0;
+    borrow mut cen as &!cw in {
+        borrow mut diag as &!dw in {
+            borrow mut lab as &!lw in {
+                code = kmeans.fit(heap, threads, xt, xd, k, iters, seed, init, contents(cw)[0..k * d], contents(dw)[0..(iters + 1) * ww], contents(lw)[0..n]);
+            }
+        }
+    }
+    unbox_slice(heap, diag);
+    unbox_slice(heap, lab);
+    if code != 0 {
+        unbox_slice(heap, cen);
+        return (nothing, code);
+    }
+    unbox_slice(heap, nothing);
+    var out = box_slice(heap, record.kmeans_size(k, d), byte_of(0));
+    borrow mut out as &!ow in {
+        borrow cen as &cr in {
+            record.encode_kmeans(contents(ow), 0, k, d, contents(cr));
+        }
+    }
+    unbox_slice(heap, cen);
+    return (out, 0);
+}
+
+// The cluster of each row (the integer, as a double) with mode 0, the squared distance of the row to the centre of its cluster with mode 1. One thread.
+fn rows_of[&h, &b, &x, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], out: &!o [float], mode: int) -> [heap] int {
+    let n = xt.s0;
+    let d = xt.s1;
+    if !width_ok(xt, d) || len(out) < n {
+        return refuse.param_out_of_range();
+    }
+    let (cen, k, bad) = read_centroids(heap, blob, d);
+    if bad != 0 {
+        unbox_slice(heap, cen);
+        return refuse.param_out_of_range();
+    }
+    var lab = box_slice(heap, n + 1, 0);
+    var rc = 0;
+    borrow cen as &cr in {
+        borrow mut lab as &!lw in {
+            rc = kmeans.predict(heap, xt, xd, k, contents(cr)[0..k * d], contents(lw)[0..n]);
+        }
+        if rc == 0 {
+            borrow lab as &lr in {
+                let xs = xd[xt.off..len(xd)];
+                var i = 0;
+                while i < n {
+                    let c = contents(lr)[i];
+                    if mode == 0 {
+                        out[i] = float_of(c);
+                    } else {
+                        out[i] = kpass.dist2(xs[i * xt.t0..i * xt.t0 + d], contents(cr)[c * d..c * d + d], d);
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, cen);
+    unbox_slice(heap, lab);
+    return rc;
+}
+
+// the cluster of each row, as a double
+pub fn predict_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
+    return rows_of(heap, blob, xt, xd, out, 0);
+}
+
+// the second output of a clustering: the squared distance of each row to the centre of its cluster
+pub fn proba_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
+    return rows_of(heap, blob, xt, xd, out, 1);
+}
+
+// code (0 or 1, malformed), k in c0, 0 in c1, and in `end` the task: 4 clustering (1 regression, 2 classification)
+pub fn decode_blob[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] record.Decoded {
+    let (cen, k, bad) = read_centroids(heap, src, d);
+    unbox_slice(heap, cen);
+    if bad != 0 {
+        return record.decoded(1, 0, 0, 0);
+    }
+    return record.decoded(0, k, 0, 4);
+}
