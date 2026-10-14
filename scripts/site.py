@@ -28,9 +28,9 @@ generated:
                                           impute + standardise + logistic, predict --proba, eval
     qs            README.md, index.html   the quick start's commands and output
     catflow       README.md, index.html   the categorical flow on docs/examples/data/pets.csv: a declared column that no step
-                                          reads is refused, a fit with a categorical step and no --split writes no file, two plans
-                                          fitted and scored with --split (one-hot, rare bucket, frequency; hashing, label), and the
-                                          absence of a model file
+                                          reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
+                                          frequency), predict and eval read it, new rows with unseen categories in another column
+                                          order, and a hashed column that stores no string
     hero          index.html              the first example
     agentio       README.md, index.html   excerpts of `ml introspect`
     skill         index.html              the first lines of `ml skill`
@@ -82,6 +82,8 @@ FILES = {
     # the pipeline flow: float columns, an empty cell, two classes that overlap (so a logistic regression has a finite fit)
     "shop2.csv": "id,visits,spend,bought\n1,3,12.5,1\n2,1,0.0,0\n3,7,,1\n4,2,5.25,0\n5,5,22.75,1\n6,4,18.0,1\n7,1,3.5,0\n8,6,9.75,0\n9,2,14.0,1\n10,3,2.25,0\n11,4,6.0,1\n12,5,4.5,0\n",
     "new2.csv": "id,visits,spend\n13,3,\n14,6,20.0\n15,1,1.5\n",
+    # new rows for the model fitted on pets.csv: the columns in another order, a city and a species the training rows never held, and an empty city cell
+    "newpets.csv": "city,species,age,visits\nOslo,rabbit,2,3\nLyon,axolotl,4,1\n,cat,1,2\n",
 }
 
 # What is shown is what is typed; the argv run is shlex.split of it. The order is the order of running.
@@ -107,12 +109,14 @@ DEMOS = [
     ("p_predict", "ml predict --model-file shop2.ml --proba new2.csv"),
     ("p_eval", "ml eval --model-file shop2.ml shop2.csv"),
     ("p_split", "ml fit --model linear --l2 0.1 --split train=0.8 --seed 3 --target price --output houses-lin.ml houses.csv"),
-    # text columns declared with --cat (docs/categorical.md, docs/categorical-encoders.md) on docs/examples/data/pets.csv
+    # text columns declared with --cat (docs/categorical.md, docs/categorical-encoders.md, docs/stringtable.md) on docs/examples/data/pets.csv
     ("c_bad", "ml fit --model logistic --cat species,city --target adopted --output pets.ml pets.csv"),
-    ("c_nofile", "ml fit --model logistic --cat species,city --step 'encode column=species kind=onehot min-count=4;freq column=city' --drop id --l2 0.1 --target adopted --output pets.ml pets.csv"),
-    ("c_fit", "ml fit --model logistic --cat species,city --step 'encode column=species kind=onehot min-count=4;freq column=city;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets.ml pets.csv"),
-    ("c_hash", "ml fit --model logistic --cat species,city --step 'hash column=species buckets=8;encode column=city kind=label;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets.ml pets.csv"),
-    ("c_predict", "ml predict --model-file pets.ml pets.csv"),
+    ("c_fit", "ml fit --model logistic --cat species,city --step 'encode column=species kind=onehot min-count=4;freq column=city missing=zero;scale column=age,visits kind=standard' --drop id --iterations 50 --l2 0.1 --target adopted --output pets.ml pets.csv"),
+    ("c_predict", "ml predict --model-file pets.ml --drop id --proba --limit 3 pets.csv"),
+    ("c_new", "ml predict --model-file pets.ml --proba newpets.csv"),
+    ("c_eval", "ml eval --model-file pets.ml --drop id pets.csv"),
+    ("c_hash", "ml fit --model logistic --cat species,city --step 'hash column=species buckets=8 missing=zero;encode column=city kind=label missing=zero;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets-hash.ml pets.csv"),
+    ("c_hash_new", "ml predict --model-file pets-hash.ml --proba newpets.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 SUMMARY = {
@@ -123,8 +127,6 @@ SUMMARY = {
     "typo": ["rule", "hint", "detail"],
     "p_bad": ["rule", "hint", "repair"],
     "c_bad": ["rule", "hint", "detail"],
-    "c_nofile": ["rule", "hint", "detail"],
-    "c_predict": ["rule", "hint"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -175,8 +177,10 @@ def make_context(binary, tmp):
             (Path(tmp) / "damaged.ml").write_bytes(bytes(b))
         out, status = run(shlex.split(typed))
         results[key] = (typed, out, status)
-        if key.startswith("c_") and key != "c_predict" and (Path(tmp) / "pets.ml").exists():
-            raise Drift("the demo `%s` wrote pets.ml: a fit with a categorical step writes no model file" % key)
+        if key == "c_bad" and (Path(tmp) / "pets.ml").exists():
+            raise Drift("the demo `c_bad` wrote pets.ml: a declared column that no step reads is refused")
+        if key in ("c_fit", "c_hash") and not (Path(tmp) / ("pets.ml" if key == "c_fit" else "pets-hash.ml")).exists():
+            raise Drift("the demo `%s` wrote no model file" % key)
         if key in REPAIRED:
             doc = json.loads(out)
             repair = doc["error"]["repair"]
@@ -239,17 +243,21 @@ def pflow_items(ctx):
 
 
 def catflow_items(ctx):
-    """The categorical flow: two refusals, two fits that are scored with --split, and the model file that is not there."""
+    """The categorical flow: a refusal, a fit that writes the model file with the strings of its categories, predict and eval from the file alone, new rows with unseen
+    categories in another column order, and a hashed column that stores no string."""
     return [("# pets.csv: 76 rows; species and city are text. Declared with --cat but read by no step, they are refused", None, 0, None),
             item(ctx, "c_bad"),
-            ("# Encoded, the fit is refused unless it is held out: no model file can hold the vocabulary", None, 0, None),
-            item(ctx, "c_nofile"),
-            ("# --split fits on 75% of the rows and scores the rest in the same call. species is one-hot (the categories seen fewer than 4 times share __other__), city is its frequency", None, 0, None),
+            ("# Encoded, the fit writes the model file. species is one-hot (the categories seen fewer than 4 times share __other__), city is its frequency; the file holds the training strings", None, 0, None),
             item(ctx, "c_fit"),
-            ("# The same split with species hashed to 8 columns and city as a label", None, 0, None),
+            ("# predict reads the model file and nothing else; the text columns are found by name", None, 0, None),
+            item(ctx, "c_predict"),
+            ("# New rows: the columns in another order, a city and a species the training rows never held (counted, not guessed), an empty city cell that missing=zero accepts", None, 0, None),
+            item(ctx, "c_new"),
+            ("# eval scores the file it was fitted on", None, 0, None),
+            item(ctx, "c_eval"),
+            ("# species hashed to 8 columns and city as a label: the file holds no string of species, and an unseen species lands in the bucket it hashes to", None, 0, None),
             item(ctx, "c_hash"),
-            ("# Neither fit wrote pets.ml, so there is nothing to predict with", None, 0, None),
-            item(ctx, "c_predict")]
+            item(ctx, "c_hash_new")]
 
 
 def render(items, html_mode):

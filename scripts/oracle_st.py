@@ -315,6 +315,35 @@ def table_verdict(t):
     return None
 
 
+def table_fields(t):
+    """[(offset, width)] of every u32 and u64 field of a valid table (the header, the limits, each entry's step and length, its head, the name lengths, the category
+    counts, the string lengths and the counts), so a damage can be aimed at a field"""
+    out = [(0, 4), (4, 4), (8, 8), (16, 8), (24, 4)]
+    nal = struct.unpack_from("<I", t, 24)[0]
+    out += [(28 + nal + 4 * i, 4) for i in range(4)]
+    pos = 44 + nal
+    for _ in range(struct.unpack_from("<I", t, 4)[0]):
+        out += [(pos, 4), (pos + 4, 8)]
+        ln = struct.unpack_from("<q", t, pos + 4)[0]
+        p = pos + 12
+        out += [(p + 4 * i, 4) for i in range(6)] + [(p + 24, 8)]
+        k = struct.unpack_from("<I", t, p + 8)[0]
+        q = p + 32
+        for _ in range(k):
+            nl = struct.unpack_from("<I", t, q)[0]
+            out.append((q, 4))
+            q += 4 + nl
+            m = struct.unpack_from("<I", t, q)[0]
+            out.append((q, 4))
+            q += 4
+            for _ in range(m):
+                sl = struct.unpack_from("<I", t, q)[0]
+                out += [(q, 4), (q + 4 + sl, 8)]
+                q += 4 + sl + 8
+        pos = p + ln
+    return out
+
+
 def reseal_table(t):
     return t[:-32] + sha(t[:-32])
 

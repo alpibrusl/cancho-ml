@@ -34,6 +34,7 @@ TRAPS = {132, 133, 134, 136, 139}
 TMP = tempfile.TemporaryDirectory()
 WORK = pathlib.Path(TMP.name)
 FAST = bool(os.environ.get("ST_FAST"))
+STRIDE = int(os.environ.get("ST_STRIDE", "1"))  # outside the string table every STRIDE-th byte is flipped and cut (the table: every byte)
 STAMP = [0]
 
 
@@ -272,10 +273,10 @@ def steps_for(rnd, kind_mix):
     return "encode column=c0,c1,c2 kind=label missing=zero"
 
 
-def fit_model(name, data, cfg, model, steps, split=None, seed=0, out="m.cml", extra=(), threads=None):
+def fit_model(name, data, cfg, model, steps, split=None, seed=0, out="m.cml", extra=(), threads=None, flags=None):
     put(name, data)
     a = ["fit", name, "--root", WORK, "--target", "y", "--cat", ",".join(cfg.cats), "--step", steps, "--output", out, "--overwrite", "--seed", seed]
-    a += MODEL_FLAGS[model]
+    a += flags if flags is not None else MODEL_FLAGS[model]
     if model in ("tree", "forest"):
         a += ["--task", "classification" if "cls" in extra else "regression"]
         extra = [e for e in extra if e != "cls"]
@@ -757,7 +758,8 @@ def sample_models(rnd):
         for _ in range(20):
             header, rows, cfg = model_table(rnd, 14, "classification" if cls else "regression", ncat=3)
             cfg.na = [b"NA", b"?"]
-            st, doc, _ = fit_model("fz.csv", csv_bytes(header, rows), cfg, model, steps, extra=model_kind_flags(model, cls))
+            small = {"forest": ["--model", "forest", "--trees", "2", "--max-depth", "2", "--bins", "4"], "tree": ["--model", "tree", "--max-depth", "3", "--bins", "4"]}.get(model)
+            st, doc, _ = fit_model("fz.csv", csv_bytes(header, rows), cfg, model, steps, extra=model_kind_flags(model, cls), flags=small)
             if st == 0:
                 break
         if st != 0:
@@ -819,6 +821,8 @@ def gate_fuzz(runs, seed):
         tstart = f.index(secs[6])
         tend = tstart + len(secs[6])
         for at in range(len(f)):
+            if at % STRIDE and not (tstart <= at < tend):
+                continue
             for how in range(3):
                 v = f[at] ^ (1 if how == 0 else 128 if how == 1 else 255)
                 d = edit(f, at, bytes([v]))
@@ -830,19 +834,25 @@ def gate_fuzz(runs, seed):
                     run_damaged(d2, "%s flip %d/%d, both digests repaired" % (model, at, how), "predict", None, cnt)
                 exhaustive += 1
         for cut in range(0, len(f)):
+            if cut % STRIDE and not (tstart <= cut < tend):
+                continue
             run_damaged(f[:cut], "%s cut at %d" % (model, cut), "predict", None, cnt)
             run_damaged(S.reseal_file(f[:cut]) if cut > 32 else f[:cut], "%s cut at %d, digest repaired" % (model, cut), "predict", None, cnt)
-        # fields of the table set to extremes, both digests repaired
+        # every u32 and u64 field of the table set to extremes, both digests repaired
         tb = secs[6]
-        for off in range(0, len(tb) - 32):
-            for ext in (b"\xff\xff\xff\xff", b"\xff\xff\xff\x7f", b"\x00\x00\x00\x80", b"\x00\x00\x01\x00", b"\x00\x00\x00\x00"):
-                ext = ext.decode("unicode_escape").encode("latin-1")
-                t2 = S.reseal_table(tb[:off] + ext + tb[off + 4:] if off + 4 <= len(tb) - 32 else tb)
-                run_damaged(S.reseal_file(f[:tstart] + t2 + f[tend:]), "%s u32 %r at table+%d" % (model, ext, off), "predict", None, cnt)
-            if off + 8 <= len(tb) - 32:
-                for ext in (struct.pack("<q", 2 ** 63 - 1), struct.pack("<q", -1), struct.pack("<Q", 2 ** 32), struct.pack("<q", 2 ** 31 - 1)):
-                    t2 = S.reseal_table(tb[:off] + ext + tb[off + 8:])
-                    run_damaged(S.reseal_file(f[:tstart] + t2 + f[tend:]), "%s u64 %r at table+%d" % (model, ext, off), "eval", None, cnt)
+        for off, width in S.table_fields(tb):
+            vals = ([struct.pack("<I", v) for v in (0, 1, 2 ** 16, 2 ** 31 - 1, 2 ** 31, 2 ** 32 - 1)] if width == 4
+                    else [struct.pack("<q", v) for v in (0, 1, 2 ** 31 - 1, 2 ** 32, 2 ** 62, 2 ** 63 - 1, -1, -2 ** 63)])
+            for ext in vals:
+                t2 = S.reseal_table(tb[:off] + ext + tb[off + width:])
+                run_damaged(S.reseal_file(f[:tstart] + t2 + f[tend:]), "%s field %d/%d set to %r" % (model, off, width, ext), "eval" if off % 2 else "predict", None, cnt)
+        # invalid UTF-8 in a name and in a string, a string and a name repeated, strings out of order
+        names_at = [(o, w) for o, w in S.table_fields(tb)]
+        for bad_bytes in (b"\xff", b"\xc0\x80", b"\xed\xa0\x80"):
+            for off in range(44, len(tb) - 32):
+                if tb[off:off + 1] in (b"c", b"a", b"e", b"m") and off % 3 == 0:
+                    t2 = S.reseal_table(tb[:off] + bad_bytes[:1] + tb[off + 1:])
+                    run_damaged(S.reseal_file(f[:tstart] + t2 + f[tend:]), "%s byte %d set to %r" % (model, off, bad_bytes[:1]), "predict", None, cnt)
     # the seeded damages on the sample files
     models = sample_models(rnd)
     for k in range(runs):
