@@ -284,7 +284,9 @@
 
     <li><b>House Prices</b> (a regression) has many columns of text categories, where an empty cell often means none. The same pieces: each text column named in <code>--cat</code> (up to 128 by default, 4,096 at most) and read by a step (<code>hash column=*</code> reads every declared column that no other step reads, and stores none of their strings), <code>fit</code> writing the model file and <code>predict</code> reading it for the rows to predict. Not run.</li>
 
-    <li><b>Digit Recognizer</b> (handwritten digits) has ten classes and images with many columns. <code>ml</code> is binary only (a third label is <code>ml.label.not-binary</code>), and how large images would be read has not been looked at.</li>
+    <li><b>Clustering</b> (iris without its label, a customer segmentation) has no target. <code>ml --model kmeans</code> fits it, and <a href="./#kmeans">the project page</a> runs it on the committed iris files. It is not one of the four examples above because there is no label to score against: its gate against scikit-learn gives scikit-learn the initial centres of <code>ml</code>, since the two programs draw different ones (<code>scripts/gate_wire_sklearn.py kmeans</code>, <a href="evidence.html#wiring">the evidence page</a>).</li>
+
+        <li><b>Digit Recognizer</b> (handwritten digits) has ten classes and images with many columns. <code>ml</code> is binary only (a third label is <code>ml.label.not-binary</code>), and how large images would be read has not been looked at.</li>
   </ul>
 </section>
 
