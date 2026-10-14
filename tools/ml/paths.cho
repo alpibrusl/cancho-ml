@@ -35,6 +35,13 @@ pub fn drop[&h](heap: &!h Heap, r: Rp) -> [heap] int {
     return buffer.drop(heap, full);
 }
 
+// an Rp for a path given as text: `full` is what to open, `rel` the part to show (the tail of it); the test drivers and the fits name their file this way
+pub fn of_path[&h, &f, &s](heap: &!h Heap, rel: &s [byte], full: &f [byte]) -> [heap] Rp {
+    var copy = buffer.empty(heap, len(full) + 1);
+    copy = buffer.append(heap, copy, full);
+    return Rp { full: copy, shown: len(full) - len(rel), present: true, mem: buffer.empty(heap, 1), stdin: false };
+}
+
 pub fn is_stdin[&r](r: &r Rp) -> [] bool {
     return r.stdin;
 }
