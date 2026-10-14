@@ -7,7 +7,7 @@ maintainer can overturn, **[estimate]** is not measured, **[read]** is read from
 corrected in place and marked.
 
 The library is **internal**: it is not wired into the `ml` command line yet. It productionises spike F
-(`cancho-ml-forest`, `docs/spikes.md` sections 10 and 11) and keeps its algorithm where this document does not say otherwise.
+(`scripts/spikes/spike_f.cho`, `docs/spikes.md` sections 13 and 14) and keeps its algorithm where this document does not say otherwise.
 
 ## 1. Scope
 
@@ -388,7 +388,7 @@ sends the missing rows left):
 So the tie rule is exercised (C3 at 100,000 rows has none; the others have many) and so is the missing rule (`v1` > 0 wherever
 there are missing cells). Not exercised by the oracle configurations: an exact tie between the two sides for the missing rows that is
 also the winner (the mutant "variant 1 first" survives the oracle alone); the unit test `tie_variants` covers it with a three-row case.
-The identity at 1,000,000 rows was not run (the oracle's cost; spike F ran it for C1, `docs/spikes.md` 11.1).
+The identity at 1,000,000 rows was not run (the oracle's cost; spike F ran it for C1, `docs/spikes.md` 14.1).
 
 ### 10.3 The port of spike F: identical (`scripts/gate_tree.py --spike`)
 

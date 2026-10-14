@@ -1,0 +1,46 @@
+{"header": true, "n": 100000, "start_load": 5.18798828125, "end_load": 5.56494140625, "time": "2026-10-12 23:50:54"}
+{"n": 100000, "cell": "A/1", "min_ms": 46, "max_ms": 48, "spread": 1.043, "samples": [47, 47, 48, 47, 46, 48, 46], "max_load": 5.19, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "B/1", "min_ms": 636, "max_ms": 643, "spread": 1.011, "samples": [643, 637, 643, 639, 636, 638, 642], "max_load": 5.48, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "C/1", "min_ms": 46, "max_ms": 48, "spread": 1.043, "samples": [47, 46, 48, 46, 47, 47, 47], "max_load": 5.48, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "N/1", "min_ms": 16, "max_ms": 17, "spread": 1.062, "samples": [16, 16, 17, 16, 17, 16, 16], "max_load": 5.48, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "B/1/phase2", "min_ms": 639, "max_ms": 646, "spread": 1.011, "samples": [640, 644, 641, 641, 646, 639, 643], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "C/1/phase2", "min_ms": 46, "max_ms": 48, "spread": 1.043, "samples": [46, 47, 47, 47, 47, 47, 48], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "B/2", "min_ms": 326, "max_ms": 333, "spread": 1.021, "samples": [329, 328, 330, 333, 330, 331, 326], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "C/2", "min_ms": 25, "max_ms": 26, "spread": 1.04, "samples": [25, 25, 25, 25, 26, 25, 25], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "B/4", "min_ms": 167, "max_ms": 170, "spread": 1.018, "samples": [169, 167, 168, 170, 168, 169, 168], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "C/4", "min_ms": 13, "max_ms": 16, "spread": 1.231, "samples": [14, 14, 14, 14, 13, 16, 14], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "B/8", "min_ms": 87, "max_ms": 94, "spread": 1.08, "samples": [88, 89, 89, 94, 91, 90, 87], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "C/8", "min_ms": 8, "max_ms": 12, "spread": 1.5, "samples": [9, 9, 9, 9, 8, 9, 12], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": true, "bytes_distinct": 1}
+{"n": 100000, "cell": "B/16", "min_ms": 86, "max_ms": 90, "spread": 1.047, "samples": [89, 89, 90, 88, 89, 88, 86], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "C/16", "min_ms": 8, "max_ms": 10, "spread": 1.25, "samples": [10, 9, 8, 8, 9, 8, 9], "max_load": 5.56, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 100000, "cell": "overhead/B/2", "min_ms": 3}
+{"n": 100000, "cell": "overhead/C/2", "min_ms": 3}
+{"n": 100000, "cell": "overhead/B/4", "min_ms": 3}
+{"n": 100000, "cell": "overhead/C/4", "min_ms": 2}
+{"n": 100000, "cell": "overhead/B/8", "min_ms": 4}
+{"n": 100000, "cell": "overhead/C/8", "min_ms": 2}
+{"n": 100000, "cell": "overhead/B/16", "min_ms": 6}
+{"n": 100000, "cell": "overhead/C/16", "min_ms": 3}
+{"header": true, "n": 1000000, "start_load": 6.31787109375, "end_load": 8.408203125, "time": "2026-10-12 23:54:42"}
+{"n": 1000000, "cell": "A/1", "min_ms": 468, "max_ms": 480, "spread": 1.026, "samples": [480, 471, 473, 468, 478, 469, 478], "max_load": 6.28, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "B/1", "min_ms": 6350, "max_ms": 6386, "spread": 1.006, "samples": [6379, 6350, 6370, 6386, 6383, 6355, 6370], "max_load": 6.28, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "C/1", "min_ms": 466, "max_ms": 472, "spread": 1.013, "samples": [466, 466, 472, 468, 466, 469, 466], "max_load": 6.28, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "N/1", "min_ms": 165, "max_ms": 168, "spread": 1.018, "samples": [168, 165, 166, 166, 167, 167, 167], "max_load": 6.28, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "B/1/phase2", "min_ms": 6370, "max_ms": 6429, "spread": 1.009, "samples": [6374, 6374, 6429, 6370, 6390, 6393, 6374], "max_load": 8.49, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "C/1/phase2", "min_ms": 456, "max_ms": 470, "spread": 1.031, "samples": [465, 456, 467, 463, 470, 470, 470], "max_load": 8.29, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "B/2", "min_ms": 3216, "max_ms": 3244, "spread": 1.009, "samples": [3222, 3239, 3244, 3230, 3233, 3223, 3216], "max_load": 8.29, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "C/2", "min_ms": 252, "max_ms": 261, "spread": 1.036, "samples": [252, 253, 258, 259, 261, 260, 260], "max_load": 8.27, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "B/4", "min_ms": 1630, "max_ms": 1662, "spread": 1.02, "samples": [1630, 1643, 1646, 1641, 1649, 1662, 1647], "max_load": 8.27, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "C/4", "min_ms": 141, "max_ms": 174, "spread": 1.234, "samples": [144, 141, 147, 143, 145, 145, 174], "max_load": 8.27, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "B/8", "min_ms": 851, "max_ms": 906, "spread": 1.065, "samples": [851, 881, 885, 855, 851, 865, 906], "max_load": 8.49, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "C/8", "min_ms": 83, "max_ms": 89, "spread": 1.072, "samples": [83, 85, 87, 89, 87, 88, 87], "max_load": 8.49, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "B/16", "min_ms": 604, "max_ms": 734, "spread": 1.215, "samples": [636, 604, 664, 688, 667, 674, 734], "max_load": 8.49, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "C/16", "min_ms": 67, "max_ms": 81, "spread": 1.209, "samples": [67, 68, 81, 70, 74, 75, 72], "max_load": 8.49, "flagged_load_ge_2": true, "spread_gt_1_25": false, "bytes_distinct": 1}
+{"n": 1000000, "cell": "overhead/B/2", "min_ms": 21}
+{"n": 1000000, "cell": "overhead/C/2", "min_ms": 22}
+{"n": 1000000, "cell": "overhead/B/4", "min_ms": 24}
+{"n": 1000000, "cell": "overhead/C/4", "min_ms": 23}
+{"n": 1000000, "cell": "overhead/B/8", "min_ms": 24}
+{"n": 1000000, "cell": "overhead/C/8", "min_ms": 24}
+{"n": 1000000, "cell": "overhead/B/16", "min_ms": 27}
+{"n": 1000000, "cell": "overhead/C/16", "min_ms": 25}

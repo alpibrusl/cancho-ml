@@ -80,7 +80,7 @@ cancho#251; not re-checked at `a4572ea`]**. Consequences:
 
 **Every reduction has a normative summation order, and it is part of the API.** A reduction over an axis adds in ascending index
 order inside a block of a fixed length `K`; block partials are combined in a fixed binary tree by block index. `K` and the tree
-shape are constants of the package, never functions of the thread count. This is the fixed-reduction arm C of `docs/spikes.md`,
+shape are constants of the package, never functions of the thread count. This is the fixed-reduction arm C of `docs/spikes.md` (section 15),
 or its exact-accumulator alternative; which one is **[M0]**. Each kernel's document says its order, and its test compares it to
 a reference written in that order (as spikes L and S do with numpy). Threading only decides which thread runs which block.
 **Decided at `v1-lanes` (section 17):** inside a block the order is 4 lanes (term `i` to lane `i mod 4`, lanes combined as
@@ -531,7 +531,7 @@ is not called by the command line yet.
 
 ## 17. `v1-lanes`: one summation order with four lanes (and what it does to bytes)
 
-**Decision [choice, from `cancho-ml-simd/docs/simd-ceiling.md` section 11].** `K = 256`, `L = 4`, tree across blocks, Cholesky panels of
+**Decision [choice, from `docs/simd-ceiling.md` section 11].** `K = 256`, `L = 4`, tree across blocks, Cholesky panels of
 `NB = 32`; one definition, `docs/linalg.md` section 2, one set of constants, `lib/linalg/order.cho` (`block`, `lanes`, `lane_combine`,
 `block_partial`, `panel`, `group`). The two conventions that existed (`order.cho`: one chain per block; `sums.cho`: 4 lanes) are one.
 `docs/lanes.md` has the gates, the mutants and the list of gates whose expected values had to change.

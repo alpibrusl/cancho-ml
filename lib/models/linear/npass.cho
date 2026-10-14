@@ -8,7 +8,7 @@ import models.mexp;
 // block to lane i mod 4, each lane ascending from +0.0 in the rows' order, the partial of a sum (l0 + l1) + (l2 + l3). The partials of
 // the blocks are combined by the package's tree (linalg.order), by the caller.
 //
-// The loop is the tuned one of cancho-ml-opt and cancho-ml-armb (docs/spikes.md 8.3) with one change of shape: instead of a
+// The loop is the tuned one of scripts/spikes/spike_l_tuned.cho and scripts/spikes/q_det/spike_q.cho (docs/spikes.md 8.3, 15) with one change of shape: instead of a
 // rank-1 update of 231 accumulators per row (a load and a store each), the block is staged. Phase 1 reads the rows once, eight at
 // a time (eight independent chains of z, eight independent exps), copies each row into the scratch A (zero padded to pd columns,
 // a multiple of 4), and keeps r, s and the loss term of each row. Phase 2 makes SX = s * A and the gradient and bias-row

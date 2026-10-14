@@ -1,0 +1,63 @@
+G-A  n=100000: arm A coefficients == spike S bit for bit: True
+G-B-exact n=100000: 253/253 sums of arm B bit-identical to math.fsum of the dumped terms (80000 rows)
+G-C-order n=100000: 253/253 sums of arm C bit-identical to block rule (K=256) + tree on the dumped terms
+G-A-order n=100000: 253/253 sums of arm A bit-identical to rows ascending from +0.0 on the dumped terms
+info: max ulps over the 253 sums: A vs exact 781, C vs exact 48
+ALL GATES PASSED
+G-det  arm B n=100000: model bytes identical at threads [1, 2, 4, 8, 16]: True; 253 raw sums from W0 identical: True
+G-mutants arm B n=100000: thread-order mutant differs from the real model bytes at threads [2, 4, 8, 16] (equal at [1]); raw sums differ at [2, 4, 8, 16]
+        mutant killed: True; fails at every thread count > 1 (raw sums): True; (model bytes: True); coefficients alone differ at [2, 16]
+G-det  arm C n=100000: model bytes identical at threads [1, 2, 4, 8, 16]: True; 253 raw sums from W0 identical: True
+G-mutants arm C n=100000: thread-order mutant differs from the real model bytes at threads [2, 4, 8, 16] (equal at [1]); raw sums differ at [2, 4, 8, 16]
+        mutant killed: True; fails at every thread count > 1 (raw sums): True; (model bytes: True); coefficients alone differ at [2, 4, 16]
+G-det / G-mutants PASSED
+n=100000: train 80000 rows, test 20000 rows
+ulps A vs B: max 13, per coefficient [1, 2, 2, 2, 0, 4, 1, 0, 13, 0, 2, 3, 2, 2, 1, 0, 0, 1, 0, 0, 1]
+ulps A vs C: max 13, per coefficient [1, 2, 1, 2, 0, 4, 1, 0, 13, 0, 2, 3, 2, 2, 1, 0, 1, 1, 0, 0, 0]
+ulps B vs C: max 1, per coefficient [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1]
+max relative distance of A to the numpy Newton oracle: 2.193e-15
+max relative distance of B to the numpy Newton oracle: 1.911e-16
+max relative distance of C to the numpy Newton oracle: 1.762e-16
+A: test AUC 0.8855675278341977  test log-loss 0.4234154629542849
+B: test AUC 0.8855675278341977  test log-loss 0.4234154629542849
+C: test AUC 0.8855675278341977  test log-loss 0.4234154629542849
+A - B: dAUC 0.000e+00  dlogloss 0.000e+00
+C - B: dAUC 0.000e+00  dlogloss 0.000e+00
+A - C: dAUC 0.000e+00  dlogloss 0.000e+00
+max |B - C| absolute over coefficients: 5.551e-17
+G-A  n=1000000: arm A coefficients == spike S bit for bit: True
+G-B-exact n=1000000: 253/253 sums of arm B bit-identical to math.fsum of the dumped terms (800000 rows)
+G-C-order n=1000000: 253/253 sums of arm C bit-identical to block rule (K=256) + tree on the dumped terms
+G-A-order n=1000000: 253/253 sums of arm A bit-identical to rows ascending from +0.0 on the dumped terms
+info: max ulps over the 253 sums: A vs exact 2023, C vs exact 111
+ALL GATES PASSED
+G-det  arm B n=1000000: model bytes identical at threads [1, 2, 4, 8, 16]: True; 253 raw sums from W0 identical: True
+G-mutants arm B n=1000000: thread-order mutant differs from the real model bytes at threads [2, 4, 8, 16] (equal at [1]); raw sums differ at [2, 4, 8, 16]
+        mutant killed: True; fails at every thread count > 1 (raw sums): True; (model bytes: True); coefficients alone differ at []
+G-det  arm C n=1000000: model bytes identical at threads [1, 2, 4, 8, 16]: True; 253 raw sums from W0 identical: True
+G-mutants arm C n=1000000: thread-order mutant differs from the real model bytes at threads [2, 8, 16] (equal at [1, 4]); raw sums differ at [2, 4, 8, 16]
+        mutant killed: True; fails at every thread count > 1 (raw sums): True; (model bytes: False); coefficients alone differ at []
+G-det / G-mutants PASSED
+n=1000000: train 800000 rows, test 200000 rows
+ulps A vs B: max 7, per coefficient [0, 2, 1, 7, 1, 4, 2, 0, 4, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1]
+ulps A vs C: max 7, per coefficient [0, 2, 1, 7, 1, 4, 2, 0, 4, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1]
+ulps B vs C: max 0, per coefficient [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+max relative distance of A to the numpy Newton oracle: 8.193e-16
+max relative distance of B to the numpy Newton oracle: 2.206e-16
+max relative distance of C to the numpy Newton oracle: 2.206e-16
+A: test AUC 0.8866827408632275  test log-loss 0.42042014227342633
+B: test AUC 0.8866827408632275  test log-loss 0.42042014227342633
+C: test AUC 0.8866827408632275  test log-loss 0.42042014227342633
+A - B: dAUC 0.000e+00  dlogloss 0.000e+00
+C - B: dAUC 0.000e+00  dlogloss 0.000e+00
+A - C: dAUC 0.000e+00  dlogloss 0.000e+00
+max |B - C| absolute over coefficients: 0.000e+00
+control (unmutated): oracle gates pass = True
+mutant C-block-255: KILLED  ['G-C-order n=100000: 0/253 sums of arm C bit-identical to block rule (K=256) + tree on the dumped terms']
+mutant C-tree-leftfold (order.cho: merge the two top slots whatever their level): KILLED  ['G-C-order n=100000: 22/253 sums of arm C bit-identical to block rule (K=256) + tree on the dumped terms']
+mutant B-key-sign: KILLED  ['G-B-exact n=100000: 139/253 sums of arm B bit-identical to math.fsum of the dumped terms (80000 rows)']
+mutant B-wrong-accumulator: KILLED  ['G-B-exact n=100000: 251/253 sums of arm B bit-identical to math.fsum of the dumped terms (80000 rows)']
+mutant B-term-perturbed: KILLED  ['G-B-exact n=100000: 28/253 sums of arm B bit-identical to math.fsum of the dumped terms (80000 rows)']
+mutant A-hessian-t-order: KILLED  ['G-A  n=100000: arm A coefficients == spike S bit for bit: False', 'G-C-order n=100000: 64/253 sums of arm C bit-identical to block rule (K=256) + tree on the dumped terms']
+mutant A-loss-term-perturbed: KILLED  ['G-C-order n=100000: 252/253 sums of arm C bit-identical to block rule (K=256) + tree on the dumped terms', 'G-A-order n=100000: 252/253 sums of arm A bit-identical to rows ascending from +0.0 on the dumped terms']
+survivors: none

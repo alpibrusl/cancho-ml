@@ -1,0 +1,1 @@
+rerun of C/8 at n=100000 (spread > 1.25 in the first run), 15 samples: [12, 12, 13, 12, 12, 13, 11, 12, 12, 15, 12, 11, 13, 12, 14] min 11 spread 1.364 load before 8.89697265625 after 8.89697265625

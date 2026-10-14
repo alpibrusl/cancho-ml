@@ -191,8 +191,8 @@ def fuzz(exe, verbose=True, timeout=180):
 
 
 def spike_gate(cancho, verbose=True):
-    """C1 against spike F's own program (cancho-ml-forest, read-only): heap numbers recomputed from the preorder"""
-    sp = os.path.join(os.path.dirname(ROOT), "cancho-ml-forest", "scripts", "spikes", "spike_f.cho")
+    """C1 against spike F's own program (scripts/spikes/spike_f.cho): heap numbers recomputed from the preorder"""
+    sp = os.path.join(ROOT, "scripts", "spikes", "spike_f.cho")
     exe = f"{ROOT}/build/spike_f"
     r = subprocess.run([cancho, "build", sp, "--std", "-o", exe], capture_output=True, text=True)
     if r.returncode:

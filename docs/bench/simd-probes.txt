@@ -1,0 +1,30 @@
+ 0:00  up 7 days,  3:12, 5 users, load averages: 4.99 6.51 5.95
+vadd (1 op)                                 15.57 G chains-steps/s  =  15.57 G vector ops/s
+vmul (1 op, +1 add of consts, see note)     15.60 G chains-steps/s  =  15.60 G vector ops/s
+vfma (1 op)                                 11.97 G chains-steps/s  =  11.97 G vector ops/s
+unfused pair vmul+vadd (2 ops)               7.47 G chains-steps/s  =  14.94 G vector ops/s
+N=2000000 (16.0 MB)  plain 16B loads      133.0 us   120.3 GB/s
+N=2000000 (16.0 MB)  x4 64B loads         152.0 us   105.3 GB/s
+N=2000000 (16.0 MB)  x4 + prefetch        169.0 us    94.7 GB/s
+N=2000000 (16.0 MB)  2 streams            143.0 us   111.9 GB/s
+N=2000000 (16.0 MB)  4 streams            132.0 us   121.2 GB/s
+N=2000000 (16.0 MB)  8 streams            133.0 us   120.3 GB/s
+N=6400000 (51.2 MB)  plain 16B loads      466.0 us   109.9 GB/s
+N=6400000 (51.2 MB)  x4 64B loads         477.0 us   107.3 GB/s
+N=6400000 (51.2 MB)  x4 + prefetch        527.0 us    97.2 GB/s
+N=6400000 (51.2 MB)  2 streams            434.0 us   118.0 GB/s
+N=6400000 (51.2 MB)  4 streams            431.0 us   118.8 GB/s
+N=6400000 (51.2 MB)  8 streams            443.0 us   115.6 GB/s
+N=25600000 (204.8 MB)  plain 16B loads     2188.0 us    93.6 GB/s
+N=25600000 (204.8 MB)  x4 64B loads        2139.0 us    95.7 GB/s
+N=25600000 (204.8 MB)  x4 + prefetch       2271.0 us    90.2 GB/s
+N=25600000 (204.8 MB)  2 streams           1795.0 us   114.1 GB/s
+N=25600000 (204.8 MB)  4 streams           1845.0 us   111.0 GB/s
+N=25600000 (204.8 MB)  8 streams           1891.0 us   108.3 GB/s
+N=256000000 (2048.0 MB)  plain 16B loads    22790.0 us    89.9 GB/s
+N=256000000 (2048.0 MB)  x4 64B loads       22918.0 us    89.4 GB/s
+N=256000000 (2048.0 MB)  x4 + prefetch      23901.0 us    85.7 GB/s
+N=256000000 (2048.0 MB)  2 streams          18044.0 us   113.5 GB/s
+N=256000000 (2048.0 MB)  4 streams          18455.0 us   111.0 GB/s
+N=256000000 (2048.0 MB)  8 streams          21088.0 us    97.1 GB/s
+ 0:00  up 7 days,  3:12, 5 users, load averages: 4.99 6.51 5.95
