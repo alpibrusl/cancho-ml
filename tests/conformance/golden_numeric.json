@@ -188,7 +188,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 2,
-  "stdout": "84aac05c68128f1f3bf2587e6da9548299b2af103d8ed1ec769e460dd4a5a307"
+  "stdout": "dad184f95940515f2c7461d947205f5beca85753e4c87b7e4c43a2fd1ef089b3"
  },
  "args-required-flag": {
   "files": {
@@ -220,7 +220,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 2,
-  "stdout": "cc7ad1565c19a59cdae6a0686578e9423a8dded95c1f5448ccb657bc44d0079c"
+  "stdout": "a59205c14035fd20639c776eeedad0c86364286313289625a17cbe5b69314a11"
  },
  "args-unknown-flag": {
   "files": {
