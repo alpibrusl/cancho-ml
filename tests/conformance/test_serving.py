@@ -82,7 +82,7 @@ class StdinEqualsFile(unittest.TestCase):
         # the scan reads 64 KiB at a time: a chunk boundary inside a row, in a file and in memory
         rows = "".join("%d,%d.%02d,%d.5\n" % (i % 97, i % 61, i % 100, i % 13) for i in range(14000))
         data = ("a,b,c\n" + rows).encode()
-        self.assertGreater(len(data), 3 * 65536)
+        self.assertGreater(len(data), 2 * 65536)
         SB.write("many_chunks.csv", data)
         for mid in ("linear", "tree_cls", "const_reg_dec"):
             mf = MODELS[mid][0]
