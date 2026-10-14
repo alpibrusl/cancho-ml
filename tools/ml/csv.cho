@@ -782,10 +782,69 @@ fn report(status: int, line: int, col: int, aux: int) -> [] Report {
 // Read the whole file once. Memory: one 64 KiB chunk, the record being read (at most cfg.cap bytes), the header, the offsets of one
 // record's fields and four ints a column. Stops at the first problem (a cell that is not a number is not followed by more cells that
 // are not). The sinks come back with what the mode wrote into them.
-pub fn scan[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, target: &t [byte], sk: Sinks) -> [heap, file_read] (Shape, Report, Sinks) {
-    let (sh, rep, k2, cs) = scan_cat(heap, file, cfg, no_cats(), target, sk, off_state(heap));
+pub fn scan[&h, &m, &t](heap: &!h Heap, src: Source, mem: &m [byte], cfg: Cfg, target: &t [byte], sk: Sinks) -> [heap, file_read] (Source, Shape, Report, Sinks) {
+    let (s2, sh, rep, k2, cs) = scan_cat(heap, src, mem, cfg, no_cats(), target, sk, off_state(heap));
     drop_state(heap, cs);
-    return (sh, rep, k2);
+    return (s2, sh, rep, k2);
+}
+
+// ---------------------------------------------------------------- the source of the chunks
+
+// Where the 64 KiB chunks of the scan come from (docs/serving.md section 2.2): an open file, or the bytes of standard input kept in memory (a pipe cannot be read
+// twice, the scan makes two passes). `Mem` holds the offset of the next chunk; the bytes are given beside it (`mem`, empty for a file).
+pub res enum Source {
+    Disk(File),
+    Mem(int),
+}
+
+// close what a source holds: the file, or nothing
+pub fn drop_source(src: Source) -> [] int {
+    match src {
+        Source::Disk(f) => {
+            file_close(f);
+            return 0;
+        }
+        Source::Mem(at) => {
+            return at;
+        }
+    }
+}
+
+// the next chunk of `src` into the reader `r`: the one step of `lines.fill_file`, from a file or from memory
+fn fill_source[&h, &m](heap: &!h Heap, r: lines.Lines, src: Source, mem: &m [byte]) -> [heap, file_read] (lines.Lines, Source) {
+    match src {
+        Source::Disk(f) => {
+            var handle = f;
+            var r2 = r;
+            borrow mut handle as &!fh in {
+                r2 = lines.fill_file(r2, fh);
+            }
+            return (r2, Source::Disk(handle));
+        }
+        Source::Mem(at) => {
+            let lines.Lines { chunk, pos, held, cap, seen, begin, count, over, ended, newline, ready, read, nul, failed, viewing, view_from, view_to } = r;
+            var c = chunk;
+            borrow mut c as &!cw in {
+                buffer.clear(cw);
+            }
+            var n = len(mem) - at;
+            if n > lines.chunk_size() {
+                n = lines.chunk_size();
+            }
+            var e = ended;
+            var z = nul;
+            if n <= 0 {
+                e = true;
+                n = 0;
+            } else {
+                c = buffer.append(heap, c, mem[at..at + n]);
+                if index_of_byte(mem[at..at + n], byte_of(0)) >= 0 {
+                    z = true;
+                }
+            }
+            return (lines.Lines { chunk: c, pos: 0, held: held, cap: cap, seen: seen, begin: begin, count: count, over: over, ended: e, newline: newline, ready: ready, read: read + n, nul: z, failed: failed, viewing: false, view_from: 0, view_to: 0 }, Source::Mem(at + n));
+        }
+    }
 }
 
 // the number of categorical columns the state holds
@@ -798,7 +857,8 @@ fn cat_columns[&k](cs: &k CatState) -> [] int {
 
 // `scan` with categorical columns (docs/categorical.md): the state says what is done with them (CatState), `cc` how. With the state off and `no_cats()` this is
 // the numeric scan, the same steps in the same order.
-pub fn scan_cat[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, cc: CatCfg, target: &t [byte], sk: Sinks, cs0: CatState) -> [heap, file_read] (Shape, Report, Sinks, CatState) {
+pub fn scan_cat[&h, &m, &t](heap: &!h Heap, src0: Source, mem: &m [byte], cfg: Cfg, cc: CatCfg, target: &t [byte], sk: Sinks, cs0: CatState) -> [heap, file_read] (Source, Shape, Report, Sinks, CatState) {
+    var src = src0;
     var cs = cs0;
     var sc = box_slice(heap, 1, byte_of(0));
     let (acc0, fv0, data0, miss0) = sink_parts(sk);
@@ -829,7 +889,9 @@ pub fn scan_cat[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, cc: CatCfg
         r = stepped;
         var complete = false;
         if answer == lines.need() {
-            r = lines.fill_file(r, file);
+            let (r2, s2) = fill_source(heap, r, src, mem);
+            r = r2;
+            src = s2;
         } else if answer == lines.done() {
             going = false;
             borrow r as &rr in {
@@ -1032,5 +1094,5 @@ pub fn scan_cat[&h, &f, &t](heap: &!h Heap, file: &!f File, cfg: Cfg, cc: CatCfg
     if rep.status == 0 && !have_header {
         rep = report(1, 0, 0, 0);
     }
-    return (Shape { names: names, ends: ends, cells: cells, cols: cols, rows: rows, tcol: tcol, bytes: total }, rep, sink_join(acc, fv, data, miss), cs);
+    return (src, Shape { names: names, ends: ends, cells: cells, cols: cols, rows: rows, tcol: tcol, bytes: total }, rep, sink_join(acc, fv, data, miss), cs);
 }

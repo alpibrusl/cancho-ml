@@ -1,0 +1,15 @@
+edition 5;
+
+module ml.mdesc;
+
+import std.buffer;
+import ml.fsio;
+import ml.paths;
+import ml.verbs;
+import toolbox.fail;
+
+pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    let (data, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(model), paths.full(model), o.max_bytes);
+    buffer.drop(heap, data);
+    return verbs.nothing(heap, errs, log);
+}

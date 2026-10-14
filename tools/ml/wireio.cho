@@ -321,7 +321,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             return (empty_input(heap), false, e, lg);
         }
         let cc = csv.CatCfg { cols: "", na: "", max_cats: strtab.limit_of(tbl, 0), max_str: strtab.limit_of(tbl, 1), max_pool: strtab.limit_of(tbl, 2), max_catcols: strtab.limit_of(tbl, 3), lenient: true };
-        let l = csvload.load_cat_with(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), cc, tname, !need_target, v0, true, strtab.na_of(tbl));
+        let l = csvload.load_cat_with(heap, fs, root, datafile, verbs.config(o, 0, 0, 0), cc, tname, !need_target, v0, true, strtab.na_of(tbl));
         let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
@@ -334,7 +334,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
         rep = rep2;
         code = code2;
     } else {
-        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), tname, !need_target);
+        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, datafile, verbs.config(o, 0, 0, 0), tname, !need_target);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
         x = x2;
