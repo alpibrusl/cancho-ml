@@ -175,6 +175,22 @@ class StdinBounds(unittest.TestCase):
                 s = ml("predict", "-", "--model-file", MODELS[mid][0], stdin=(SB.dir / name).read_bytes())
                 self.assertTrue(same_bytes(f, s, name), (iid, mid))
 
+    def test_a_refused_command_line_does_not_wait_for_standard_input(self):
+        # standard input is an open pipe that nobody writes to or closes: a command line that is refused answers anyway
+        for argv in (["predict", "-", "--model-file", MODELS["linear"][0], "--bogus"], ["predict", "--model-file"], ["predict", "-", "--model-file", MODELS["linear"][0], "--max-rows", "0"]):
+            p = subprocess.Popen([BIN, "--root", str(SB.dir), *argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                p.wait(timeout=10)
+                self.assertNotEqual(p.returncode, 0, argv)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                self.fail("waited for standard input after a refused command line: %r" % (argv,))
+            finally:
+                p.stdin.close()
+                p.stdout.close()
+                p.stderr.close()
+                p.wait()
+
     def test_the_command_line_is_checked_before_standard_input_is_read(self):
         # a refused command line answers with no input at all: nothing to wait for
         r = SB.run("predict", "-", "--model-file", MODELS["linear"][0], "--bogus", close_stdin=True)
