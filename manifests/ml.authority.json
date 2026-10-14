@@ -389,6 +389,7 @@
     "kind_train_test",
     "kind_val",
     "kind_word",
+    "label_max",
     "label_not_binary",
     "label_single_class",
     "lane_combine",
@@ -807,5 +808,5 @@
   ],
   "folded_operators": 163,
   "folded_calls": 2,
-  "functions": 1315
+  "functions": 1316
 }
