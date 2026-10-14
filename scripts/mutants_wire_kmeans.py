@@ -114,7 +114,8 @@ MUTANTS = [
     M("wk-adapter-k-above-the-rows", "WK7", "the adapter does not compare k with the rows", [(A, "iters < 1 || iters > common.max_iters() || init < 0 || init > 1 {", "iters < 1 || iters > common.max_iters() || init < 0 || init > 1 || false {"), (A, " || k > n ||", " ||")], KM,
       why="a second line of defence: the wiring compares k with the training rows first (wk-k-above-the-rows-by-one), and the library compares it again in kmeans.fit with the same tag"),
     # ------------------------------------------------------------------ the kind 6 reader
-    M("wk-payload-width-not-compared", "WK12", "the payload's width is not compared with the schema's", [(A, "|| w != d ||", "||")], KM + FILES),
+    M("wk-payload-width-not-compared", "WK12", "the payload's width is not compared with the schema's", [(A, "|| w != d ||", "||")], KM + FILES,
+      why="a second line of defence: with the width unchecked the size comparison uses the caller's width, and the record reader then compares the width it read (s1) with it and refuses the file with the same tag"),
     M("wk-payload-k-ceiling", "WK12", "the payload's k is not bounded by 1,024", [(A, "k > common.max_k() || w != d", "w != d")], FILES,
       why="a k above 1,024 in a payload cannot have the size the header announces for any width below 131072 / k, and the size comparison that follows refuses the file with the same tag: two checks of one bound"),
     M("wk-payload-size-not-compared", "WK12", "the payload's length is not compared with the size its header announces", [(A, "    if len(blob) != record.kmeans_size(k, d) {", "    if false {")], FILES,
