@@ -85,7 +85,10 @@ class Tables(unittest.TestCase):
         by = {f["name"]: f for f in T["flags"]}
         for name, (default, ceiling) in T["limits"].items():
             self.assertIn(name, by, "limit %s is not a flag" % name)
-            self.assertEqual(int(by[name]["default"]), default, name)
+            # a flag without one default of its own (k is required; iterations has one for each model it serves) says so with an empty default, and the limit then
+            # names the least value the flag accepts or the smallest default among its models
+            if by[name]["default"] != "":
+                self.assertEqual(int(by[name]["default"]), default, name)
             self.assertLessEqual(default, ceiling)
 
     def test_schemas_are_the_regeneration_of_the_tables(self):
@@ -126,7 +129,7 @@ class Tables(unittest.TestCase):
         import gen_models
         built = [m["name"] for m in gen_models.load_manifests(ROOT) if m["wired"]]
         self.assertEqual(by["model"]["kind"], "choice:" + "/".join(built))
-        self.assertEqual(built, ["constant", "linear", "logistic", "tree", "forest"])
+        self.assertEqual(built, ["constant", "linear", "logistic", "kmeans", "tree", "forest"])
 
 
 if __name__ == "__main__":
