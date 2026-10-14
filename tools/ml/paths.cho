@@ -14,7 +14,6 @@ import toolbox.cli;
 import toolbox.fail;
 import toolbox.path;
 import ml.pathcheck;
-import ml.spec;
 
 // a checked path: the whole path to open, and where the part below --root starts in it. The CSV of `predict` can also be standard input
 // (docs/serving.md section 2): `stdin` is then true, `mem` holds the bytes that were read, and the path is shown as `-`.
@@ -46,8 +45,8 @@ pub fn mem[&r](r: &r Rp) -> [] &r [byte] {
 }
 
 // Read standard input up to `cap` bytes, one `getchar` at a time (the compiler of the pin has no bulk read, docs/serving.md section 2.3). More than `cap` bytes
-// is limit.input-too-large, found as soon as byte cap + 1 arrives, so nothing is kept past the bound. The end of the input, and a read that fails, both end it.
-pub fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, cap: int, errs: fail.Errors) -> [heap, io_read] (Rp, fail.Errors) {
+// is reported to the caller (limit.input-too-large), found as soon as byte cap + 1 arrives, so nothing is kept past the bound. The end of the input, and a read that fails, both end it.
+pub fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, cap: int) -> [heap, io_read] (Rp, bool) {
     var data = buffer.empty(heap, 65536);
     var n = 0;
     var going = true;
@@ -64,18 +63,9 @@ pub fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, cap: int, errs: fail.Error
             n = n + 1;
         }
     }
-    var e = errs;
-    if over {
-        var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "standard input is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names, or read a file");
-        w = fail.no_repair(heap, w);
-        w = fail.detail_open(heap, w);
-        w = fail.detail_int(heap, w, "size", cap + 1);
-        w = fail.detail_int(heap, w, "max", cap);
-        e = fail.add(heap, e, w);
-    }
     var shown = buffer.empty(heap, 2);
     shown = buffer.push(heap, shown, byte_of('-'));
-    return (Rp { full: shown, shown: 0, present: true, mem: data, stdin: true }, e);
+    return (Rp { full: shown, shown: 0, present: true, mem: data, stdin: true }, over);
 }
 
 pub fn present[&r](r: &r Rp) -> [] bool {

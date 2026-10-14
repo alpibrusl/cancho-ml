@@ -33,7 +33,7 @@ MUTANTS = [
     # ------------------------------------------------------------------ V: standard input
     M("v-bound-allows-one-more", "V3", "standard input may hold cap + 1 bytes", [("tools/ml/paths.cho", "} else if n >= cap {", "} else if n > cap {", 1)], ["test_serving.StdinBounds"]),
     M("v-bound-one-short", "V3", "standard input is refused at cap - 1 bytes", [("tools/ml/paths.cho", "} else if n >= cap {", "} else if n >= cap - 1 {", 1)], ["test_serving.StdinBounds"]),
-    M("v-size-in-the-refusal", "V3", "the refusal says size cap, not cap + 1", [("tools/ml/paths.cho", 'w = fail.detail_int(heap, w, "size", cap + 1);', 'w = fail.detail_int(heap, w, "size", cap);', 1)],
+    M("v-size-in-the-refusal", "V3", "the refusal says size cap, not cap + 1", [("tools/ml/app.cho", 'w = fail.detail_int(heap, w, "size", cap + 1);', 'w = fail.detail_int(heap, w, "size", cap);', 1)],
       ["test_serving.StdinBounds"]),
     M("v-nul-ends-the-input", "V1", "a NUL byte ends standard input", [("tools/ml/paths.cho", "if c < 0 {\n            going = false;", "if c <= 0 {\n            going = false;", 1)], ["test_serving.StdinBounds", "test_serving.StdinEqualsFile"]),
     M("v-chunk-repeats-a-byte", "V1", "the next chunk of memory starts one byte early", [("tools/ml/csv.cho", "Source::Mem(at + n));", "Source::Mem(at + n - 1));", 1)], ["test_serving.StdinEqualsFile"]),

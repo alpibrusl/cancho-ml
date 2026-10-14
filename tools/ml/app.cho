@@ -367,6 +367,16 @@ pub fn stdin_into[&h, &g, &p, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.
     }
     let Paths { file, model, out, logp, planp } = ps;
     paths.drop(heap, file);
-    let (f2, e1) = paths.read_stdin(heap, io, cli.nat(args, parsed, table, "max-bytes"), e0);
+    let cap = cli.nat(args, parsed, table, "max-bytes");
+    let (f2, over) = paths.read_stdin(heap, io, cap);
+    var e1 = e0;
+    if over {
+        var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "standard input is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names, or read a file");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", cap + 1);
+        w = fail.detail_int(heap, w, "max", cap);
+        e1 = fail.add(heap, e1, w);
+    }
     return (Paths { file: f2, model: model, out: out, logp: logp, planp: planp }, e1);
 }
