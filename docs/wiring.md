@@ -69,14 +69,14 @@ repair for extras); the columns are aligned to the fitted features by name; `pip
 the estimator predicts. `eval` reads the target too, applies `--split` to the file if asked, and computes the metrics of `lib/metrics`.
 
 **Matrices and column types.** The reader builds the matrix of all kept columns in file order; text and non-numeric cells are `ml.input.non-numeric` with the `--drop` repair, as before. *The hook for W2
-(text categories) was used by stage 1 of issue 21 (`docs/categorical.md`):* the reader's shape has a kind per column (0 none, 1 int, 2 dec, 3 float, **4 categorical**; the schema type code 3 is reserved for it
-until stage 3 writes it, both registered in `lib/core/kinds.cho`), a text column is **declared** with `fit --cat NAMES` and never inferred, it is not a column of the float matrix but
+(text categories) was used by stage 1 of issue 21 (`docs/categorical.md`):* the reader's shape has a kind per column (0 none, 1 int, 2 dec, 3 float, **4 categorical**; the schema type code 3 is the file's code for it,
+written by the model file of a categorical fit, both registered in `lib/core/kinds.cho`), a text column is **declared** with `fit --cat NAMES` and never inferred, it is not a column of the float matrix but
 of an `i64` id tensor beside it (`lib/core/catmat.cho`, ids from the bytewise-sorted dictionary of `lib/core/dict.cho`, -1 missing, -2 unseen at predict), and the only place that reads a cell as a
 string is `read_row` through `cat_cell` in `tools/ml/csv.cho`. **Nothing in the estimators looks at a cell, and they did not change:** the wired models still see only the float matrix.
 *Stage 2 of issue 21 (`docs/categorical-encoders.md`) built what this paragraph awaited: a planned model with `--cat` reads the table with `csvload.load_cat`, `pipeline.mixed`
 fits the plan over the float matrix and the ids (a step reads numeric columns or categorical ones, decided by its verb and by `ml.plan.column-kind`), the encoders append their numeric columns, and the estimator
-sees only the float matrix, as before. `tools/ml/catcli.cho` still answers a fit of `--model constant` with a declared column. The fit writes NO file while the model file cannot hold a vocabulary
-(`ml.model.vocabulary-not-stored`, or `--split` / `--dry-run` for a fit and a score in one invocation); `predict` and `eval` take no categorical column. A numeric plan does not enter `pipeline.mixed`.*
+sees only the float matrix, as before. `tools/ml/catcli.cho` still answers a fit of `--model constant` with a declared column. A fit with categorical steps writes the model file with a
+string table (`docs/stringtable.md`), and `predict` and `eval` read the categorical columns from it by name. A numeric plan does not enter `pipeline.mixed`.*
 
 ## 4. The model file
 
@@ -155,4 +155,4 @@ Machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python 3.14.5, numpy 2.4.6
 
 1. `--step` takes several steps in one value because the parser refuses a repeated flag. A repeatable flag kind would be a change to the pinned contract package.
 2. `eval --threads` is inert. If a threaded predict is ever added the flag already exists.
-3. Text categories: stage 1 of issue 21 reads and bounds them (`docs/categorical.md`); stage 2 encodes them (`docs/categorical-encoders.md`: a fit with them writes no file); the string table in the model file is stage 3.
+3. Text categories: stage 1 of issue 21 reads and bounds them (`docs/categorical.md`); stage 2 encodes them (`docs/categorical-encoders.md`); stage 3 stores the vocabulary in the model file (`docs/stringtable.md`).

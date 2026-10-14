@@ -230,16 +230,14 @@ $ ml fit --model tree --target progression --output d.cml diabetes_train.csv ; m
 features and the ids of the same training rows; the steps leave a numeric matrix and the blob estimator is fitted on it exactly as in a numeric plan. The behaviour is the one of
 linear and logistic, and `docs/categorical-encoders.md` section 6 holds the table:
 
-* no `--split`, no `--dry-run`: `ml.model.vocabulary-not-stored` (exit 8, no repair), nothing is written, after the plan and the data were checked;
-* `--split train=F`: the held-out rows go through the stored steps and the fitted payload; the answer has `written: false`, no `path`, `bytes` or `sha256`, the `categorical` list, the
-  `forest` header in place of coefficients, and the held-out metrics of the task;
-* `--dry-run`: reported, exit 9, nothing written.
+* a fit writes the model file, the string table of `docs/stringtable.md` with it; the answer has the `categorical` list, `string_table`, the `forest` header in place of coefficients, and the path, bytes and SHA-256 of the file;
+* `--split train=F`: the held-out rows go through the stored steps and the fitted payload, and the answer adds the held-out metrics of the task; the file is written too, and `eval --split` on it with the same seed gives the same metrics;
+* `--dry-run`: reported with `planned_actions`, exit 9, nothing written.
 
-The model file of a tree or forest holds no string table, so a categorical fit has no file; `predict` and `eval` of a tree or forest take a numeric file only. The combination
-needed no new code in the library: the wiring takes the categorical path of `fit` (`load_data` with the ids, `mixed.fit`, `apply_any`) and the blob path of the estimator, and the missing-cell
-rule of section 5 applies to the numeric matrix the steps leave. Fixtures: `ml-model-vocabulary-not-stored-tree`, `ml-model-vocabulary-not-stored-forest`,
-`fit-forest-categorical-split-scores-held-out-rows`, `fit-tree-categorical-split-takes-a-missing-cell`, `fit-tree-categorical-dry-run`. A declared `--cat` column that no step reads is
-`ml.input.categorical-not-encoded`, as for the other models.
+`predict` and `eval` of a tree or forest with a string table read the categorical columns from the file by name (`docs/stringtable.md` section 5). The combination needed no new code in the library: the wiring
+takes the categorical path of `fit` (`load_data` with the ids, `mixed.fit`, `apply_any`) and the blob path of the estimator, and the missing-cell rule of section 5 applies to the numeric matrix the steps leave.
+Fixtures: `fit-tree-categorical-writes-the-file`, `fit-forest-categorical-writes-the-file`, `fit-forest-categorical-split-scores-held-out-rows`, `fit-tree-categorical-split-takes-a-missing-cell`,
+`fit-tree-categorical-dry-run`, `predict-from-a-categorical-tree-file`. A declared `--cat` column that no step reads is `ml.input.categorical-not-encoded`, as for the other models.
 
 **The seed.** `--seed` is one flag. It is the seed of `--split` (stream kind 4) and of the bootstrap and feature draws of a forest (kinds 1 and 2), stored in `meta`. A forest fitted with
 `--split` draws its bootstrap from the seed that chose the split; another bootstrap on the same split is not available. The help of the flag says so.

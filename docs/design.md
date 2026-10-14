@@ -573,8 +573,8 @@ generated from the manifests). The summation order, the registry of kinds and th
 
 Text columns are **declared** (`--cat NAMES` of `fit`, never inferred), read into a dictionary sorted bytewise (`lib/core/dict.cho`: a sorted array with binary search, no hash) and an `i64` id
 tensor beside the float matrix (`lib/core/catmat.cho`), with a missing bitmap, `--na-values`, and five limits each refused before the thing it limits exists (categories 64/1,024, bytes 255/65,536,
-pool 1 MiB/8 MiB, columns 128/4,096, and the id cells in `--max-cells`). Stage 2 (`docs/categorical-encoders.md`) built the steps that read them: `encode` on a categorical column (one-hot or label, with the rare bucket `min-count`, `missing`, `unknown`), `freq` and `hash`, in `lib/transforms/catenc.cho` and `lib/pipeline/mixed.cho`; a declared column that no step reads is refused with `ml.input.categorical-not-encoded`, and a fit that would write a file is refused with `ml.model.vocabulary-not-stored` until stage 3.
-The reader's column kind 4 and the schema type code 3 are registered in `lib/core/kinds.cho`. No model file changes. Stages 2 to 4 of the issue are not built.
+pool 1 MiB/8 MiB, columns 128/4,096, and the id cells in `--max-cells`). Stage 2 (`docs/categorical-encoders.md`) built the steps that read them: `encode` on a categorical column (one-hot or label, with the rare bucket `min-count`, `missing`, `unknown`), `freq` and `hash`, in `lib/transforms/catenc.cho` and `lib/pipeline/mixed.cho`; a declared column that no step reads is refused with `ml.input.categorical-not-encoded`.
+The reader's column kind 4 and the schema type code 3 are registered in `lib/core/kinds.cho`. Stage 3 (`docs/stringtable.md`) stores the vocabulary of the categorical steps in a sixth section of the model file. Stage 4 of the issue (native categorical splits in trees) is not built.
 
 ## 21. Stage W3a: the tree and the forest in `ml fit | predict | eval` (`docs/wiring-trees.md`)
 

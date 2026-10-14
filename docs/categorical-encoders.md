@@ -7,10 +7,7 @@ The decisions of the issue (alpibrusl/cancho-ml#21) are binding and are quoted w
 vocabulary, the ids and the limits; this stage gives the **steps that read them**: one-hot and label encoding of a text column, a rare-category bucket,
 frequency encoding and hashing, with a plan grammar, a fitted state that carries the vocabulary, and a byte layout for that state.
 
-**What this stage does not do.** It does not write a categorical column into a model file: stage 3 (the string table in `CML1`) is not here. Until stage 3
-`ml fit` fits and scores categorical plans in one invocation and writes **nothing** (section 6), so that no file exists that `predict` could not reproduce.
-Stage 3 is designed to be a mechanical addition (section 5.4): everything it has to store is already one explicit object, `FitVocab`, with an encoder and a decoder
-tested here. Target encoding, native categorical splits in trees and free text are not in this stage.
+**What this stage does not do.** It does not write a categorical column into a model file: the string table (`docs/stringtable.md`) does, and the sections below that say "before stage 3" describe this stage as it was merged. `FitVocab`, the one explicit object that holds everything a categorical step has to store, has an encoder and a decoder here; the string table stores it as it is. Target encoding, native categorical splits in trees and free text are not in this stage.
 
 ## 1. The gates (fixed before the code; each can fail, section 9 shows it failing)
 
@@ -27,7 +24,7 @@ repository, built and run in a copy of the tree). A survivor is listed with its 
 | E6 | **Hashing.** The bucket of a string is the first 8 bytes of SHA-256, read big-endian as an unsigned 64-bit integer, modulo B. Known answers (SHA-256 of `abc`, of the empty string and of a 1,000-byte string; the bucket of each at B = 2, 7, 1024); 5,000 random byte strings (including strings that differ in one byte, multi-byte UTF-8, NUL, 65,536 bytes) against `hashlib` at B in {2, 3, 7, 16, 1000, 1024}; strings whose top bit of the 8-byte value is set (the unsigned modulo); the output does not depend on the vocabulary, the row order or the training rows | `scripts/gate_enc.py hash`, `tests/enc.cho` | little-endian read; a signed modulo; the first 4 bytes; B-1 for B; the last 8 bytes |
 | E7 | **The payload.** `encode` of a fitted step equals the bytes of section 5.2 written by hand in the test; `decode` of them returns the same vocabulary, counts and parameters, bit for bit; `apply` of the decoded step equals `apply` of the fitted one; every truncation and every field out of its bound (section 5.3) is refused with `ml.model.malformed`, before anything sized by the bytes is allocated; unsorted strings, a count of 0, counts over the rows, a duplicate name, a bad layout number are all refused | `tests/enc.cho` | a bound removed; a field order changed; the strict ascending check removed |
 | E8 | **The plan.** The canonical form (section 4.1): equivalent spellings give one text (key order, blanks, CRLF, `min-count=01`, an explicit default `min-count=1` or `missing=pass` on `encode` is dropped), canonicalising twice changes nothing, every malformed line is refused with its tag, line and column. Column resolution (section 4.2): a numeric-only step on a categorical column, `freq` or `hash` on a numeric column and a mixed list are `ml.plan.column-kind` with a repair, an encoded column cannot be encoded again, the declared columns that no step reads are `ml.input.categorical-not-encoded` | `tests/t_pipeline.cho`, `scripts/gate_enc.py plan`, `tests/conformance/test_enc.py` | a default written; `*` of `encode` reaching a categorical column; the kind check removed |
-| E9 | **No file before stage 3.** A fit with a categorical step and no `--split` and no `--dry-run` is refused with `ml.model.vocabulary-not-stored` and writes nothing; with `--split` it fits, scores the held-out rows through the fitted steps, reports `written: false` and writes nothing (the output path does not exist afterwards, an existing file is untouched); `--dry-run` fits, reports and writes nothing. `predict` and `eval` of a model that was fitted without a categorical step are unchanged | `tests/conformance/test_enc.py` | the file written; the refusal removed; `--overwrite` touching an existing file |
+| E9 | **The file of a categorical fit.** A fit with a categorical step writes the model file (the string table with it); with `--split` it scores the held-out rows in process and writes the file too; `--dry-run` fits, reports the file it would write (`planned_actions`) and writes nothing; an existing file is refused without `--overwrite`. `predict` and `eval` of a model fitted without a categorical step are unchanged | `tests/conformance/test_enc.py`, `test_stringtable.py` | the file not written; `--overwrite` ignored; a dry run that writes |
 | E10 | **Numeric inputs do not change.** The 161 fixtures of `tests/conformance/golden_numeric.json` and the constant golden of W1 give the same status, standard output and files; the canonical text of a numeric `encode` line is the text of before; a numeric plan's model file has the same bytes | `test_cat_baseline.py`, `test_wire_baseline.py`, `tests/t_pipeline.cho` | a default written into a numeric `encode`; a step number moved |
 | E11 | **No trap.** A seeded fuzz of `ml fit --cat` with random plans and files (at least 2,000 runs: random bytes in plans, hostile keys and values, `*` everywhere, a column in two steps, all cells missing, one category, 1,025 categories, 2^20 distinct values, invalid UTF-8) and of `decode` of damaged payloads (`tests/enc.cho`: every truncation, every flipped byte, 3,000 seeded damages): no trap status, one valid JSON answer each time | `scripts/gate_enc.py fuzz`, `tests/enc.cho` | a bound removed in the encoders or the decoder |
 | E12 | **Tables.** The new rules, the new verbs and the step kinds are in `spec.cho`, `introspect`, the schemas, the registries and the fixtures once (T1 of `cli.md` and the registry gates stay green) | `test_tables.py`, `t_registry.cho`, `check_registry.py` | as T1 |
@@ -116,11 +113,11 @@ for `B` much smaller than the number of distinct strings most columns hold sever
 is the birthday count; the step does not report it. No randomness anywhere: the result is a function of the bytes of the cell and of `B`, independent of the vocabulary, the training
 rows, the row order, the thread count and the machine.
 * **Missing**: `pass` (default): the whole block is missing; `zero`: all `0.0`. There is no unknown rule (every string has a bucket); a string whose bytes the reader could not give
-  (id -2 of a stored vocabulary) cannot be hashed and is an all-zero block that **counts as unknown** (stage 2 never meets this in `ml`, which hashes through the reader's full vocabulary
-  at fit; stage 3 must read hashed columns with a mode that hashes the cell, section 5.4).
+  (id -2 of a stored vocabulary) cannot be hashed and is an all-zero block that **counts as unknown** (`enc-check` meets this; `ml predict` does not: the reader of a model file hashes the cell itself,
+  `docs/stringtable.md` section 5, so an unseen string is in its bucket and is not counted).
 * A hashed column still passes through the reader's dictionary at stage 2, so the reader's bounds (`--max-categories` up to 1,024, the pool) apply to it. The privacy point of the issue
   ("the hashing encoder is the option that does not store strings") holds for the **step**: its fitted state is `B` and the column's name and **holds no category** (section 5). The reader
-  change that hashes without interning is stage 3's.
+  mode that hashes without interning is the reader of a model file (`docs/stringtable.md` section 5); the reader of a fit still interns.
 
 ## 4. The plan
 
@@ -172,8 +169,7 @@ FitVocab, k times:
   u32 ncat        kinds 7 to 9: 1 .. 1,024;  kind 10: 0
   ncat times:  u32 len (1 .. 65,536)  bytes  u64 count (1 .. rows)
 ```
-The file section is not touched: a step of kind 7 to 10 is outside `transforms.steps.decode` (kinds 1 to 6 only), so `pipeline.file.decode` refuses a `steps` section that holds one with
-`ml.model.malformed`, and nothing writes one. The bytes exist so that stage 3 stores them; they are the payload of `Fitted` and are what `enc-check` prints and `oracle_enc.py` writes again.
+A step of kind 7 to 10 is outside `transforms.steps.decode` (kinds 1 to 6 only). In a model file the bytes are an entry of the string table and the `steps` section holds a stub (`docs/stringtable.md` sections 2 and 3); they are the payload of `Fitted` and are what `enc-check` prints and `oracle_enc.py` writes again.
 
 ### 5.3 What `decode` checks (before anything sized by the bytes is allocated)
 
@@ -181,14 +177,12 @@ The layout number, `k`, every length against the bytes that remain, the paramete
 strings strictly ascending bytewise within a column, each count between 1 and `rows`, the sum of a column's counts at most `rows`, `ncat` zero exactly for kind 10, and no trailing byte. Anything
 else is `ml.model.malformed`.
 
-### 5.4 What stage 3 must serialise (and do)
+### 5.4 What the string table serialises
 
-1. The `FitVocab` of every categorical step, **as section 5.2 writes it** (or the same object moved to a string-table section: `FitVocab.encode` is the one function either way).
-2. The schema type code 3 (`kinds.schema_type_categorical`) for each categorical input column, and the `--na-values` markers and the reader limits that built the vocabulary (a marker honoured at fit and not at predict skews silently).
-3. At predict, the reader's vocabulary is built **from the steps' `FitVocab`s** (by name): the loader's `given` mode already does this, and `apply` already maps ids by string, so a stored vocabulary is
-   used as it is.
-4. For `hash` columns, a loader mode that hashes the cell bytes and interns nothing (so that an unseen string, which has no id, still has a bucket and the bounds of the dictionary do not apply).
-5. The checksum, the bounds and the damaged-file fuzz of the string table (stage 3's gates), and `pipeline.file.decode`'s knowledge of kinds 7 to 10 (the chain of widths: a categorical step adds columns).
+`docs/stringtable.md` stores: (1) the `FitVocab` of every categorical step as section 5.2 writes it; (2) the schema type code 3 (`kinds.schema_type_categorical`) for each categorical input column, and the `--na-values`
+markers and the reader limits that built the vocabulary (a marker honoured at fit and not at predict would skew silently); (3) nothing else, the reader's vocabulary at predict being built from the steps' `FitVocab`s by
+name, and `apply` mapping ids by string. For `hash` columns the reader of a model file has a mode that hashes the cell bytes and interns nothing (section 3.5). The checksum, the bounds and the damaged-file fuzz of the table
+are its own gates (S1 to S13); `pipeline.file.decode` knows kinds 7 to 10 through the stubs and the chain of widths (a categorical step adds columns).
 
 ## 6. The command line, and what `fit` does about files
 
@@ -196,19 +190,18 @@ else is `ml.model.malformed`.
 the `--split` train side) with the categorical steps, and fits the estimator on the numeric matrix the steps leave. `--model constant` has no steps: it is refused as before
 (`ml.input.categorical-not-encoded`).
 
-**No model file with a categorical step before stage 3 [choice, the honest option]:** the file format cannot hold the vocabulary, so a file would not reproduce the fit.
+**With a categorical step `fit` writes the model file** (`docs/stringtable.md` section 6), under the rules of every fit (`--output`, `--overwrite`, `--dry-run`, `--max-bytes`, atomic write):
 
 | invocation | result |
 |---|---|
-| a categorical step, no `--split`, no `--dry-run` | `ml.model.vocabulary-not-stored` (exit 8), repair `none`, hint: add `--split train=F` to fit and score in one invocation without writing a model; nothing is written. The refusal comes **after** the plan and the data have been checked, so a plan error is reported first |
-| a categorical step and `--split train=F [--seed N]` | the fit on the train rows, the held-out metrics from the **fitted steps** applied to the test rows (the same `apply` that stage 3's predict will use), `written: false` in the answer, no `path`, `bytes` or `sha256`, the summary with `steps_sha256` (SHA-256 of the steps payload, so the fitted vocabulary and counts can be compared) and the categorical columns' sizes. `--output` is still required by the command line (the flag table is unchanged) and is **not** touched: an existing file stays, a missing one is not created |
-| a categorical step and `--dry-run` | as above without a split; exit 9 as every dry run |
+| a categorical step | the fit on all the rows, the file written with its string table, `written: true`, `path`, `bytes`, `sha256`, and in the summary `steps_sha256`, the `categorical` columns' sizes and `string_table` (entries, strings, pool bytes, bytes, SHA-256 of the section) |
+| a categorical step and `--split train=F [--seed N]` | the fit on the train rows, the held-out metrics from the **fitted steps** applied to the test rows (the same `apply` that `predict` uses), and the file written; `eval --split` with the same seed on the file gives the same metrics string for string |
+| a categorical step and `--dry-run` | as the first row without writing; exit 9 as every dry run, with `planned_actions` |
 | a plan with no categorical step (and no `--cat`) | unchanged: `pipeline.run`, the model file and every byte as before (E10); a declared column that no step reads is `ml.input.categorical-not-encoded` |
 
-**A tree or a forest follows the same table.** The steps leave a numeric matrix, and the estimator of the blob interface (`docs/wiring-trees.md` section 13) is fitted on it: with no `--split` and no `--dry-run` the answer is `ml.model.vocabulary-not-stored`, nothing is written; with `--split train=F` the held-out rows go through the stored steps and the fitted payload, and the answer has `written: false`, the `categorical` list and the `forest` header (`trees`, `nodes`, `bins`, `max_depth`, `min_leaf`, `mtry`) in place of the coefficients. A missing numeric cell is accepted by the tree and forest as in a numeric plan (the encoders handle a missing text cell by their own `missing` rule). The five fixtures `ml-model-vocabulary-not-stored-tree`, `-forest`, `fit-forest-categorical-split-scores-held-out-rows`, `fit-tree-categorical-split-takes-a-missing-cell` and `fit-tree-categorical-dry-run` hold it.
+**A tree or a forest follows the same table.** The steps leave a numeric matrix, and the estimator of the blob interface (`docs/wiring-trees.md` section 13) is fitted on it; the answer has the `categorical` list, `string_table` and the `forest` header (`trees`, `nodes`, `bins`, `max_depth`, `min_leaf`, `mtry`) in place of the coefficients. A missing numeric cell is accepted by the tree and forest as in a numeric plan (the encoders handle a missing text cell by their own `missing` rule). The fixtures `fit-tree-categorical-writes-the-file`, `fit-forest-categorical-writes-the-file`, `fit-forest-categorical-split-scores-held-out-rows`, `fit-tree-categorical-split-takes-a-missing-cell` and `fit-tree-categorical-dry-run` hold it.
 
-The held-out metrics path is `fit`'s own (`wiring.md` W7): the test side is `ceil(n * (1 - F))` rows, the same split as `eval --split`. `predict` and `eval` take no categorical column
-before stage 3 (`ml.input.non-numeric` as before).
+The held-out metrics path is `fit`'s own (`wiring.md` W7): the test side is `ceil(n * (1 - F))` rows, the same split as `eval --split`. `predict` and `eval` read the categorical columns from the string table (`docs/stringtable.md` section 5).
 
 ## 7. Refusals
 
@@ -216,7 +209,7 @@ before stage 3 (`ml.input.non-numeric` as before).
 |---|---|---|---|---|
 | `ml.plan.column-kind` (new) | 8 | section 4.2 | `step`, `column` (the name), `needs` (`numeric` or `categorical`) | `retry` with `--step "encode column=NAME kind=onehot; ..."` for a numeric-only verb on a categorical column from `--step`; else none |
 | `ml.input.reserved-category` (new) | 8 | `min-count` >= 2 and the vocabulary holds `__other__` | `step`, `column` | none: rename the value or use `min-count=1` |
-| `ml.model.vocabulary-not-stored` (new, wiring) | 8 | section 6 | `columns` (the encoded categorical columns) | none |
+| `ml.model.string-table`, `ml.limit.string-table` (the string table) | 8 | `docs/stringtable.md` section 7 | | |
 | `ml.input.categorical-not-encoded` (stage 1) | 8 | a declared column that no step reads | `columns`, `categories`, `vocabulary_sha256` (of the reader's whole vocabulary, as stage 1) | none |
 | `ml.limit.categories` (reused) | 8 | effective categories > `max-categories` | `step`, `column` (the name) | none |
 | `ml.input.unknown-category` (reused) | 8 | unseen string with `unknown=refuse` | `step`, `column` (the name), `row` | none |
@@ -245,10 +238,10 @@ of the appended columns is therefore not measured.
 | E6 hash | 6 values of B, 36 tables of 900+ strings each (random UTF-8, strings that differ in one byte, `\u00a0`, emoji): the matrix equals the oracle's and the position of the 1 equals `int.from_bytes(sha256(s)[:8], "big") % B` read by hand: **72 runs, 0 differences**; `tests/enc.cho` has the known answers (`abc`, the empty string, `a`) |
 | E7 payload | `tests/enc.cho`, 12 tests: hand-computed matrices for one-hot, label and frequency, the unseen and missing rules, the rare bucket (threshold, place, collision, bound), the bytes of a step written by hand and decoded again, 40 fields edited out of their bound, every truncation, every byte flipped three ways and 3,000 seeded damages (each is refused or encodes back to the same bytes), name and category bounds exactly, the fit against columns that are not there, and the mixed pipeline fitted, stored and applied again to the same bits |
 | E8 plan | `tests/t_pipeline.cho` (2 new tests), `oracle_pipe.py --plans` (the Python grammar now knows `freq`, `hash`, `min-count`, `missing` and the `~default` rule: 1,500 respelled plans, 1,500 fixed points, 1,194 float spellings, 1,500 garbage plans with the same verdict and position), `tests/conformance/test_enc.py` (20 tests) |
-| E9 no file before stage 3 | `test_enc.py`: refused without `--split`, nothing created, an existing file untouched with and without `--overwrite`, `--split` reports `written: false`, `--dry-run` exits 9; the vocabulary of a split fit is the training rows' only (a port only a held-out row holds is unseen and `unknown=refuse` names its row) |
+| E9 the file of a categorical fit | `test_enc.py` (class `Files`: the file written and what the summary says of it, an existing file kept without `--overwrite`, `--split` writes and scores, a dry run reports the file and writes nothing) and the fixtures of `docs/stringtable.md` section 10 |
 | E10 numeric inputs | the 161 fixtures of `golden_numeric.json` and `golden_constant.json`: status, standard output and files are the record's, **but one**: see "the one change of a numeric case" below |
 | E11 no trap | `gate_enc.py fuzz`: **3,024 runs** (hostile plans and files through `enc-check` and `ml fit --cat`, 4,097 categorical columns, a 70,000-byte cell, 2^20 distinct values, 1,025 distinct values at the ceiling, a million empty cells, a plan of 70 lines, invalid UTF-8): 0 traps, 0 malformed answers; the damage tests of E7 |
-| E12 tables | 3 new rules (`ml.plan.column-kind`, `ml.input.reserved-category`, `ml.model.vocabulary-not-stored`), 75 rules in all, 35 flags (none new), 13 limits; every one reached by a fixture (`test_tables.py`); the registries (66 refusal codes in 4 bands, 10 step kinds) agree with the sources and with `design.md` |
+| E12 tables | 2 new rules (`ml.plan.column-kind`, `ml.input.reserved-category`), 35 flags (none new), 13 limits; every one reached by a fixture (`test_tables.py`); the registries (66 refusal codes in 4 bands, 10 step kinds) agree with the sources and with `design.md` |
 | E13 scikit-learn | 3 generated datasets (1,500 rows, 3 categorical columns of 4, 6 and 3 values and 2 numeric ones), the library's seeded split (`--split train=0.75 --seed 7`, 1,125 and 375 rows; the rows from `oracle_metrics.py`), `l2` 0.1 against `LogisticRegression(C = 1 / (0.1 * 1125), lbfgs, tol 1e-12)` on `StandardScaler` + `OneHotEncoder(handle_unknown="ignore")` of the same rows. **Tolerances were fixed in section 1 before the run, and all PASS**: held-out accuracy equal (0.776, 0.7467, 0.76), ROC-AUC equal to the last digit shown (0.86667, 0.82407, 0.86184), log-loss relative difference 3.1e-10, 1.4e-8 and 2.8e-9 (bound 1e-6), coefficients and intercept (15 numbers) at most 1.7e-8, 7.4e-8 and 1.5e-8 apart (bound 1e-5) |
 
 **Mutants** (`scripts/mutants_enc.py`, `docs/bench/mutants_enc.log`): **57 patterns, 56 killed, 1 survivor explained, 0 unexplained**; the unmutated control passes every gate. They are on the order of the
@@ -272,12 +265,12 @@ list is that one case. The other 160 fixtures, and the model files among them, a
 **What the gates do not claim.** The oracle is written by the same author from the same document, with its own counting and its own payload writer, but the same understanding of the rules: it checks the code against the document, not the
 document against the world; scikit-learn is the outside check, within bounds, for one-hot encoding with a penalty (not for the rare bucket, the frequency, the hash or the label encoding, which scikit-learn has no equivalent for, or not the same one).
 The reading of the CSV is the stage-1 oracle's (judged against the reader by C1). The hash is checked against Python's `hashlib`, not against a second implementation of SHA-256 in this repository (`std.crypto`'s is the compiler's). Nothing was run on
-a second machine or with more than the threads the kernels use (no step here is threaded; E3 says the answer does not change with the flag). No model file with a categorical column exists, so the damaged-file fuzz of the string table is stage 3's.
-Predict-time alignment of the numeric columns by name is the schema's job and stage 3's: `pipeline.mixed.apply_steps` takes the numeric matrix in the fitted order.
+a second machine or with more than the threads the kernels use (no step here is threaded; E3 says the answer does not change with the flag). The damaged-file fuzz of the string table is gate S10 of `docs/stringtable.md`.
+Predict-time alignment of the numeric columns by name is the reader's and the schema's job (`docs/stringtable.md` gate S8): `pipeline.mixed.apply_steps` takes the numeric matrix in the fitted order.
 
 ## 10. Open questions
 
 1. A second encoding of one column (section 2) and a plan key to name the outputs.
 2. A distinct missing indicator (section 3.2), if a use needs it.
-3. The hashing reader mode and the string table (stage 3, section 5.4).
+3. The hashing reader mode and the string table are `docs/stringtable.md`.
 4. The speed of the per-cell remap tables is not measured; no speed is claimed.
