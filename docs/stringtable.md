@@ -160,7 +160,7 @@ read through it.
 * `peek_kind` (the router between the constant reader and the pipeline) reads five or six sections.
 * `mfile.cho` (constant models) still requires five.
 * `pipeline.schema.decode` accepts type 3. `pipeline.mixed` gains `check_steps` and `agrees` for kinds 7 to 10 (width chain, and the plan against the stored steps), and `vocab_of` (the reader vocabulary of a payload).
-* `csv.cho` / `dict.cho`: the hash mode of the predict reader (a per-column bucket count in the vocabulary and scratch for the digest in the state).
+* `csv.cho` / `dict.cho` / `bucket.cho`: the hash mode of the predict reader (a per-column bucket count in the vocabulary, scratch for the digest and the stored markers in the state, one `bucket_of` shared with the encoder), and `CatCfg.lenient`, with which a vocabulary column the file lacks is the schema check's `ml.schema.mismatch` (missing, extra and mistyped columns in one answer, `--drop` as the repair) and not the reader's status 29.
 * **Golden records.** `golden_numeric.json`, `golden_constant.json`, `golden_planned.json` and the model files they pin keep their bytes. The fixtures that pinned `ml.model.vocabulary-not-stored`
   (`ml-model-vocabulary-not-stored`, `-tree`, `-forest`) and the ones that pinned `written: false` after `--split` with a categorical step become fixtures of the new behaviour; they are listed in section 10.
 

@@ -79,8 +79,9 @@ pub struct Report {
 }
 
 // The categorical part of a scan (docs/categorical.md): `cols` the names given to --cat (fit; ignored when a vocabulary is given), `na` the
-// markers of --na-values (comma separated, none empty), and the four limits. `no_cats()` is the numeric-only reader. With a stored vocabulary `cols` is empty, or
-// not empty to say that a column of the vocabulary the file lacks (or drops) is not a refusal of the reader but of the caller's schema check (docs/stringtable.md section 5).
+// markers of --na-values (comma separated, none empty), the four limits, and `lenient`: with a stored vocabulary, a column of the vocabulary that the file lacks (or drops) is
+// not a refusal of the reader (status 29) but of the caller's schema check, which names it with the other missing and extra columns (docs/stringtable.md section 5).
+// `no_cats()` is the numeric-only reader.
 pub struct CatCfg {
     cols: &static [byte],
     na: &static [byte],
@@ -88,10 +89,11 @@ pub struct CatCfg {
     max_str: int,
     max_pool: int,
     max_catcols: int,
+    lenient: bool,
 }
 
 pub fn no_cats() -> [] CatCfg {
-    return CatCfg { cols: "", na: "", max_cats: dict.default_categories(), max_str: dict.default_string_bytes(), max_pool: dict.default_pool_bytes(), max_catcols: dict.default_columns() };
+    return CatCfg { cols: "", na: "", max_cats: dict.default_categories(), max_str: dict.default_string_bytes(), max_pool: dict.default_pool_bytes(), max_catcols: dict.default_columns(), lenient: false };
 }
 
 // What the categorical part of a scan holds. kind: 0 none (the numeric reader), 1 BUILD (pass 1 of a fit: the strings go into `bld`), 2 LOOKUP (pass 2
@@ -638,7 +640,7 @@ fn cat_header[&h, &s, &n, &e](heap: &!h Heap, flags: &!s [int], names: &n [byte]
             j = column_of(names, ends, cols, dict.name(cr.voc, c));
         }
         let absent = j < 0 || flags[3 * cols + j] != 0;
-        if absent && len(cc.cols) == 0 {
+        if absent && !cc.lenient {
             return (cs, 29, 0, c + 1);
         }
         if !absent {

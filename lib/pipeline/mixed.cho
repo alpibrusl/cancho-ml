@@ -771,6 +771,7 @@ pub fn vocab_of[&h, &s](heap: &!h Heap, payload: &s [byte]) -> [heap] (dict.Voca
     // first pass: the sizes
     var ncols = 0;
     var nbytes = 0;
+    var pbytes = 0;
     var maxc = 1;
     var pos = 4;
     var k = 0;
@@ -796,6 +797,11 @@ pub fn vocab_of[&h, &s](heap: &!h Heap, payload: &s [byte]) -> [heap] (dict.Voca
                     nbytes = nbytes + len(catenc.name(sr, c));
                     if catenc.ncat(sr, c) > maxc {
                         maxc = catenc.ncat(sr, c);
+                    }
+                    var i = 0;
+                    while i < catenc.ncat(sr, c) {
+                        pbytes = pbytes + len(catenc.string(sr, c, i));
+                        i = i + 1;
                     }
                     c = c + 1;
                 }
@@ -846,7 +852,7 @@ pub fn vocab_of[&h, &s](heap: &!h Heap, payload: &s [byte]) -> [heap] (dict.Voca
     var code = 0;
     borrow nm as &nr in {
         borrow ends as &er in {
-            let (d, c) = dict.make(heap, ncols, dict.ceiling_columns(), maxc, dict.ceiling_string_bytes(), dict.ceiling_pool_bytes(), buffer.bytes(nr), contents(er));
+            let (d, c) = dict.make(heap, ncols, dict.ceiling_columns(), maxc, dict.ceiling_string_bytes(), pbytes + 1, buffer.bytes(nr), contents(er));
             dict.drop(heap, made);
             made = d;
             code = c;

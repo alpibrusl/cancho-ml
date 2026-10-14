@@ -320,7 +320,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             e = wiredata.file_fault(heap, e, codes.fault(codes.malformed(), 3, 0, 0), paths.shown(datafile));
             return (empty_input(heap), false, e, lg);
         }
-        let cc = csv.CatCfg { cols: "lenient", na: "", max_cats: strtab.limit_of(tbl, 0), max_str: strtab.limit_of(tbl, 1), max_pool: strtab.limit_of(tbl, 2), max_catcols: strtab.limit_of(tbl, 3) };
+        let cc = csv.CatCfg { cols: "", na: "", max_cats: strtab.limit_of(tbl, 0), max_str: strtab.limit_of(tbl, 1), max_pool: strtab.limit_of(tbl, 2), max_catcols: strtab.limit_of(tbl, 3), lenient: true };
         let l = csvload.load_cat_with(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), cc, tname, !need_target, v0, true, strtab.na_of(tbl));
         let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
         matrix.drop(heap, x);

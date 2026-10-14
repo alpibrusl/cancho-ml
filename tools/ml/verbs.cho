@@ -386,7 +386,7 @@ fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte]
 }
 
 pub fn cat_config(o: Opts) -> [] csv.CatCfg {
-    return csv.CatCfg { cols: o.cats, na: o.na, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols };
+    return csv.CatCfg { cols: o.cats, na: o.na, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols, lenient: false };
 }
 
 pub fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {
