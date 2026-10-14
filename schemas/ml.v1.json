@@ -137,7 +137,9 @@
         "--step",
         "--bins",
         "--bootstrap",
+        "--init",
         "--iterations",
+        "--k",
         "--l2",
         "--max-depth",
         "--max-nodes",
@@ -149,6 +151,7 @@
         "--seed",
         "--threads",
         "--proba",
+        "--distance",
         "--task",
         "--target",
         "--drop",
@@ -665,6 +668,7 @@
               "enum": [
                 "linear",
                 "logistic",
+                "kmeans",
                 "tree",
                 "forest"
               ]
@@ -1670,6 +1674,7 @@
               "enum": [
                 "linear",
                 "logistic",
+                "kmeans",
                 "tree",
                 "forest"
               ]
@@ -1751,6 +1756,7 @@
               "enum": [
                 "linear",
                 "logistic",
+                "kmeans",
                 "tree",
                 "forest"
               ]
@@ -1850,6 +1856,7 @@
               "enum": [
                 "linear",
                 "logistic",
+                "kmeans",
                 "tree",
                 "forest"
               ]
