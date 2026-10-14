@@ -33,6 +33,10 @@ CW = "tools/ml/catwire.cho"
 KIND = "lib/core/kinds.cho"
 
 
+sys.path.insert(0, str(ROOT / "scripts"))
+from mutants_enc import FIRST_APPEARANCE  # noqa: E402  (the vocabulary in the order the rows meet the strings: the mutant the issue requires the row-order gate to kill)
+
+
 def compiler():
     here = ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"
     return os.environ.get("CANCHO") or (str(here) if here.exists() else "cancho")
@@ -62,6 +66,7 @@ GATES = {
 
 MUTANTS = [
     # ------------------------------------------------------------------ the layout of the table (S1)
+    M("s4-first-appearance", ["order"], "the fitted vocabulary keeps the strings in the order the rows meet them (the lookups still succeed): the table follows the order of the rows", FIRST_APPEARANCE),
     M("l-table-layout-number", ["diff", "unit"], "the layout number written is 2", [fn_returns(KIND, "table_layout", "1", "2")]),
     M("l-entries-count", ["diff", "unit"], "the header says one entry more than the table holds", [(STR, "    table = put32(heap, table, cats);", "    table = put32(heap, table, cats + 1);")]),
     M("l-pool-field", ["diff", "unit"], "the pool bytes of the header are one too many", [(STR, "    table = put64(heap, table, pool);", "    table = put64(heap, table, pool + 1);")]),
