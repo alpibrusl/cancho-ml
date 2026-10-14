@@ -95,6 +95,7 @@ Speed, every cell at `load >= 2` and none a claim. **The linear-algebra and mode
 | log-loss, 1,000,000 probabilities | 16.0 ms; 3.0 times slower than a thin numpy version, 3.2 times faster than `sklearn.log_loss` (51.9 ms) | the same |
 | forest, 10 trees, 100,000 rows | fit 0.0516 s at 1 thread and 0.0100 s at 16. scikit-learn's exact-split forest: 1.06 s and 0.132 s. **Different algorithms; not a speed claim.** | [models-tree.md](models-tree.md) section 10.9 |
 | the reader, float17 file, pass 1 | 17.1 M cells/s against cancho-table's own 19.6 M/s (13% slower) | [reader.md](reader.md) section 6, `bench/bench_reader.log` |
+| what was measured while deciding the design | logistic regression and a forest against scikit-learn, the cost of an exact sum against a fixed-order sum, and the ceiling of SIMD kernels in C, each with machine, load and minimum of N; the record of the decision, not a speed claim for `ml` | [spikes.md](spikes.md), [simd-ceiling.md](simd-ceiling.md) |
 | the command line | not timed | |
 
 ## Open items

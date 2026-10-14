@@ -11,6 +11,9 @@ prose. A trailing `.`, `,`, `;`, `:` or `)` is not part of the path. A path with
 a placeholder and is not checked. A path that names a directory is satisfied by the directory. Fenced code blocks are read too: a command
 that names a file of this repository has to name one that is there.
 
+A document other than docs/spikes.md and docs/simd-ceiling.md that names one of the sibling clones the experiments were run in
+(`cancho-ml-opt`, `-solver`, `-forest`, `-armb`, `-simd`, `-det`, `-core`) fails too: a local clone is not a reference a reader can follow.
+
 ALLOW lists the paths that are not files of this repository, each with the document and the reason. Adding one is a decision to be argued
 in review.
 """
@@ -35,6 +38,11 @@ ALLOW = [
     ("docs/reader.md", "docs/readers.md", "cancho-table's document on readers"),
 ]
 
+# The sibling clones in which the experiments were run are not places a reader can follow. Their names appear only in the two documents
+# that record where each part came from (docs/spikes.md, the provenance table, and docs/simd-ceiling.md, its record note).
+CLONES = re.compile(r"cancho-ml-(?:opt|solver|forest|armb|simd|det|core|chk|m0rec)\b")
+CLONE_DOCS = {"docs/spikes.md", "docs/simd-ceiling.md"}
+
 PATH = re.compile(r"(?<![A-Za-z0-9_./-])docs/[A-Za-z0-9_./-]*[A-Za-z0-9_/-]")
 PLACEHOLDER = re.compile(r"[*<>{}$]|\.\.\.")
 
@@ -49,17 +57,22 @@ def references(text):
     for n, line in enumerate(text.splitlines(), 1):
         for m in PATH.finditer(line):
             tail = line[m.end():m.end() + 3]
-            if PLACEHOLDER.search(m.group(0)) or re.match(r"[*<>{}$]", tail[:1]) or tail.startswith("..."):
+            if PLACEHOLDER.search(m.group(0)) or re.match(r"\.?[*<>{}$]", tail) or tail.startswith("..."):
                 continue
             out.append((n, m.group(0)))
     return out
 
 
 def check(texts):
-    """texts: (document name as 'README.md' or 'docs/x.md', its text). The list of (document, line, path) that does not resolve."""
+    """texts: (document name as 'README.md' or 'docs/x.md', its text). The list of (document, line, path) that does not resolve,
+    and of (document, line, clone name) for a sibling clone named outside the documents of CLONE_DOCS."""
     allow = {(d, p) for d, p, _ in ALLOW}
     bad = []
     for rel, text in texts:
+        if rel not in CLONE_DOCS:
+            for n, line in enumerate(text.splitlines(), 1):
+                for m in CLONES.finditer(line):
+                    bad.append((rel, n, m.group(0) + " (a local clone, not a place a reader can follow)"))
         for n, p in references(text):
             if (rel, p) in allow:
                 continue
@@ -80,6 +93,7 @@ def mutants():
         ("a bare path", "The numbers are in docs/spikes-missing.md and nowhere else."),
         ("a name that extends a real file", "See `docs/design.md.bak`."),
         ("a missing file in a real directory", "See `docs/bench/no-such-log.txt`."),
+        ("a local clone path", "See `cancho-ml-simd/docs/simd-ceiling.md` section 11."),
     ]
     texts = texts_of_repo()
     if check(texts):
@@ -107,7 +121,7 @@ def main(argv):
     bad = check(texts_of_repo())
     total = sum(len(references(d.read_text())) for d in docs)
     for rel, n, p in bad:
-        print(f"{rel}:{n}: {p} is not in the repository")
+        print(f"{rel}:{n}: {p}" if "clone" in p else f"{rel}:{n}: {p} is not in the repository")
     print(f"check_doc_refs: {len(docs)} documents, {total} references, {len(bad)} unresolved")
     return 1 if bad else 0
 

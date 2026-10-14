@@ -10,7 +10,7 @@ import linalg.tensor;
 // (scripts/check.sh). A test answers 0 to pass.
 
 // ---------------------------------------------------------------- SplitMix64 and derive (docs/rng.md)
-// vectors: Vigna's C reference (spikes/splitmix64_ref.c, run again for this file) and the numpy emulation of spike F. int
+// vectors: Vigna's C reference (scripts/spikes/splitmix64_ref.c, run again for this file) and the numpy emulation of spike F. int
 // literals are signed, so a 64-bit value is compared as two 32-bit halves.
 fn expect(v: int, h: int, l: int) -> [] int {
     if v >> 32 & 0xFFFFFFFF == h && v & 0xFFFFFFFF == l {

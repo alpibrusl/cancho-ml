@@ -123,9 +123,9 @@ The explained survivors that remain are the same ones as before the change, plus
 
 ## 6. Not done, unresolved, and things to know
 
-* **No benchmark was run** (a serial rerun comes later). Every figure in `linalg.md` section 5 and `models-linear.md` 6 is from the old order. What the lane order costs or buys in scalar cancho is **unmeasured**; the only evidence for the lane count is the C experiment of `simd-ceiling.md`.
+* **No benchmark was run** (a serial rerun comes later). Every figure in `linalg.md` section 5 and `models-linear.md` 6 is from the old order. What the lane order costs or buys in scalar cancho is **unmeasured**; the only evidence for the lane count is the C experiment of `docs/simd-ceiling.md`.
 * `scripts/ablate/` (variants that edit the old kernels) and the benchmark scripts were not touched or run; `scripts/c_parity/parity.c` was brought to the lane order and its hashes checked against `linalg-check` on 12 shapes (dot, gemv_n, gemv_t, syrk, chol), but it is not in `check.sh`.
-* Cholesky's panel width `NB = 32` is the one `simd-ceiling.md` fixed; no other width was evaluated (only 16, as a mutant). The scalar cancho Cholesky is not faster for it: nothing was measured.
+* Cholesky's panel width `NB = 32` is the one `docs/simd-ceiling.md` fixed; no other width was evaluated (only 16, as a mutant). The scalar cancho Cholesky is not faster for it: nothing was measured.
 * The proposal for a "sum order" field in the model file (`design.md` 17) needs the maintainer; the format was not changed.
 * *(Resolved at `v1-post`.)* Equal columns with `l2 = 0` were not refused by the linear fit under the lane order (section 3); the pivot test is now relative (`s > 2^-40 * a_jj`), `models-linear.md` 3.1. It is a threshold, not a rank computation: a column explained by the earlier ones to within `2^-40` of its own sum of squares is refused, and noise above that (not seen in 960 fits, `n` up to 20,000) would not be.
 * Two-dots check: the `ml` tool's own fuzz (`test_fuzz_args.py`) still passes through the shared helper; `tree-check` still answers a bad argument or file size with `#error` and exit 0 (a test driver; only the paths and the missing operands were in scope).

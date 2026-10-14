@@ -30,7 +30,7 @@ exactly `0.0` or `1.0` (the CLI will map its integer column to that).
   inertia line. Shapes: row counts on both sides of 256 and 2048 (ragged and aligned blocks and chunks), `d` odd and even, `l2`
   zero and positive, `k` 1 to 9.
 * **G-det** the same comparison at **1, 2, 4, 8 and 16 threads**; all outputs, **the raw sums and the loss lines included**
-  (the coefficients alone do not always separate a thread-order mistake: `docs/linalg.md` 6.7 of `cancho-ml-armb` found a
+  (the coefficients alone do not always separate a thread-order mistake: `docs/spikes.md` 15.7 found a
   mutant that changed no coefficient at 1,000,000 rows). The gate is void unless the thread-order mutant (section 5) fails it.
 * **G-sklearn** (a tolerance, stated now, explained in section 6): on the M0 data (`ml-data`, first `n - n/5` rows to fit, the rest
   to test, as spike S) and on a generated regression problem and a generated clustering problem,
@@ -335,18 +335,18 @@ least squares by an SVD-based `lstsq` with centring, which is the slower algorit
 (`docs/linalg.md` 5.2). Logistic regression: **it does not match** the default scikit-learn call (1.9 to 2.2 times slower) or numpy's same algorithm (1.4 to 1.5 times slower); it is at parity (1.06) with scikit-learn run to `tol=1e-12`
 at 1,000,000 rows, but that is not the comparison the user makes. Pass counts: cancho 6 Newton passes; scikit-learn's default 6 iterations, 7 (100,000) and 8 (1,000,000)
 evaluations (`scipy` `nfev`, measured here; each evaluation reads `X` twice), 11 iterations and 12 or 15 evaluations at `tol=1e-12`. Per pass, cancho 39 ms against scikit-learn's 15.7 ms per
-evaluation at 1,000,000 rows. Spike S (`cancho-ml-solver` `docs/spikes.md` 11.2) measured its Newton at 3.5 times scikit-learn; this is 1.9, and the data and the loop differ (80% of the rows there, the loss was not summed).
+evaluation at 1,000,000 rows. Spike S (`docs/spikes.md` 11.2) measured its Newton at 3.5 times scikit-learn; this is 1.9, and the data and the loop differ (80% of the rows there, the loss was not summed).
 
 ### 6.6 What the tuned loop did to the Newton pass (1,000,000 rows, K = 6, same session, min of 5, load 3.5 / 6.5 / 6.5; all four binaries print the same parameters and sums)
 
 | variant | fit time |
 |---|---|
-| per-row rank-1 update of the 253 sums (the loop of `cancho-ml-armb`), branchy `row_terms`, `std` `log1p` | 621 ms |
+| per-row rank-1 update of the 253 sums (the loop of `docs/spikes.md` section 15), branchy `row_terms`, `std` `log1p` | 621 ms |
 | the same with the branch-free `row_terms` and `mexp.log1p` | 588 ms |
 | the block staged: rows read eight at a time (eight chains of `z` and eight `exp`), copied to a padded scratch, `SX = s * A`, the Hessian in 4 x 4 register tiles held across the 256 rows of the block (the tiles of `linalg.syrk`); branchy `row_terms` | 293 ms |
 | **staged, branch-free `row_terms`, `mexp.log1p`** (what is in the tree) | **234 ms** |
 
-2.65 times in all (for scale: `cancho-ml-armb` measured its per-row arm C at 466 ms for 800,000 rows, 583 ms per 1,000,000, in another session). Ablations of the staged loop before the branch-free terms
+2.65 times in all (for scale: `docs/spikes.md` 15.7 measured its per-row arm C at 466 ms for 800,000 rows, 583 ms per 1,000,000, in another session). Ablations of the staged loop before the branch-free terms
 (subtractive: wrong outputs, time kept, 1,000,000 rows, six passes, a different session at load 7 to 8, so only the proportions of the then 305 ms): removing `log1p` (the loss) took 100 ms, removing `exp` 85 ms,
 and the Hessian tiles are about 90 of 256 ms (a run with a large l2, so that the zeroed Hessian still factorises).
 A two-pass version (all `z` first, then all `exp` in a separate loop) was 336 ms against 245 ms: the interleaving of eight rows is what hides the latency of `exp`. Four rows in flight

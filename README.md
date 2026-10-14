@@ -427,6 +427,7 @@ The tables, the load of each cell and how to rerun them: [project page](https://
 | [docs/reader.md](docs/reader.md) | the float and decimal CSV reader and the dependency on cancho-table |
 | [docs/metrics.md](docs/metrics.md) | metrics and splits |
 | [docs/models-linear.md](docs/models-linear.md), [docs/models-tree.md](docs/models-tree.md) | linear and logistic regression and k-means; trees and forests; the red gate |
+| [docs/spikes.md](docs/spikes.md), [docs/simd-ceiling.md](docs/simd-ceiling.md) | what was measured while deciding the design, with machine, load and minimum of N; the record of the decision, not a speed claim for `ml` |
 | [docs/upstream/](docs/upstream/) | reproducers for what cancho lacks, and the proposal to cancho-table |
 
 ## Contributing

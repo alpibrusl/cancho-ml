@@ -3,7 +3,7 @@ module models.mexp;
 import std.math;
 
 // exp and log1p of the models (docs/models-linear.md 3.2). `exp` is std/math.cho's exp with the same operations; 2^k is read from
-// an exact table instead of being built by pow2's loop (the "tuned exp" of cancho-ml-opt, docs/spikes.md 8.3: identical bits on
+// an exact table instead of being built by pow2's loop (the "tuned exp" of scripts/spikes/spike_l_tuned.cho, docs/spikes.md 8.3: identical bits on
 // 114M points there; here tests/t_models.cho and the oracle check it again). Outside |x| <= 660, and for NaN, std's exp is called.
 
 // 2^(e - 1075) for e = 1..2046 (index 0 unused)
