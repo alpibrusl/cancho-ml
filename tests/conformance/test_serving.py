@@ -78,6 +78,24 @@ class StdinEqualsFile(unittest.TestCase):
         self.assertGreater(n_ok, 60)
         self.assertGreater(n_refused, 100)
 
+    def test_an_input_of_many_chunks(self):
+        # the scan reads 64 KiB at a time: a chunk boundary inside a row, in a file and in memory
+        rows = "".join("%d,%d.%02d,%d.5\n" % (i % 97, i % 61, i % 100, i % 13) for i in range(14000))
+        data = ("a,b,c\n" + rows).encode()
+        self.assertGreater(len(data), 3 * 65536)
+        SB.write("many_chunks.csv", data)
+        for mid in ("linear", "tree_cls", "const_reg_dec"):
+            mf = MODELS[mid][0]
+            f = ml("predict", "many_chunks.csv", "--model-file", mf, "--limit", "1000000")
+            s = ml("predict", "-", "--model-file", mf, "--limit", "1000000", stdin=data)
+            self.assertEqual(f.status, 0, f)
+            self.assertEqual(f.data()["total_rows"], 14000)
+            self.assertEqual((f.status, f.stdout), (s.status, s.stdout), mid)
+        # one byte more or less would change a row at a boundary; so does the last byte of a file with no final newline
+        s = ml("predict", "-", "--model-file", MODELS["linear"][0], stdin=data[:-1])
+        f = ml("predict", "many_chunks.csv", "--model-file", MODELS["linear"][0], "--limit", "5", "--from", "13995")
+        self.assertEqual(s.data()["total_rows"], 14000)
+
     def test_no_operand_is_standard_input(self):
         for mid, mf, iid, name in pairs():
             if not INPUTS[iid][0].startswith(("num_plain", "cat_seen", "cat0_seen")):

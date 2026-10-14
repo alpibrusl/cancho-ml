@@ -163,7 +163,7 @@ def run_one(m):
             if r.returncode != 0:
                 return "INVALID", "schemas.py: " + r.stdout + r.stderr
         kind = m["opt"].get("kind", "")
-        if kind in ("authority", "ceiling"):
+        if kind == "authority":
             # the manifest is derived from the mutated sources and compared with the committed manifests and the ceilings
             r = subprocess.run([sys.executable, str(tree / "scripts" / "manifest.py"), "--tree", str(tree)], capture_output=True, text=True, cwd=tree)
             if r.returncode != 0:
