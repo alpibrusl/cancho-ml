@@ -270,6 +270,9 @@ def steps_for(rnd, kind_mix):
         return "encode column=c0 kind=onehot missing=zero; freq column=c1 missing=zero; hash column=c2 buckets=5 missing=zero; scale column=x1,x2 kind=standard"
     if kind_mix == "hash":
         return "hash column=c0,c1,c2 buckets=7 missing=zero; scale column=x1,x2 kind=standard"
+    if kind_mix == "reordered":
+        # the steps read the columns in an order that is not the order of the header, so the table and the reader's vocabulary list them differently
+        return "freq column=c2 missing=zero; scale column=x1,x2 kind=standard; encode column=c0,c1 kind=onehot missing=zero"
     return "encode column=c0,c1,c2 kind=label missing=zero"
 
 
@@ -314,7 +317,7 @@ def gate_roundtrip(files, seed):
     rnd = random.Random(seed)
     made = 0
     for model in ("linear", "logistic", "tree", "forest"):
-        for mix in ("onehot", "mixed", "hash", "label"):
+        for mix in ("onehot", "mixed", "hash", "label", "reordered"):
             for rep in range(max(1, files // 16)):
                 cls = model in ("logistic",) or (model in ("tree", "forest") and rep % 2 == 1)
                 task = "classification" if cls else "regression"
