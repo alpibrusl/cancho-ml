@@ -269,6 +269,30 @@ class KMeansWire(unittest.TestCase):
         r = self.ml("predict", "--model-file", "bad.cml", "reg.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.model.malformed"), r)
 
+    def test_a_consistent_file_that_disagrees_about_the_target_is_malformed(self):
+        # a kind 6 file whose schema marks the last column as the target, with the payload rewritten for the two features that leaves: every size agrees, only the schema and the kind do not
+        from test_model_file import write_file
+        self.fit("full.csv", "m.cml", "--k", "3")
+        d = self.sb.read("m.cml")
+        secs = payloads(d)
+        k, dim, vals = centroids(d)
+        secs[2] = secs[2][:4] + struct.pack("<I", 2) + secs[2][8:]
+        keep = [vals[i * dim + j] for i in range(k) for j in range(dim - 1)]
+        secs[4] = struct.pack("<I", 6) + struct.pack("<IIQQ", 2, 2, k, dim - 1) + struct.pack("<%dd" % len(keep), *keep)
+        self.sb.write("target.cml", write_file(secs))
+        r = self.ml("predict", "--model-file", "target.cml", "full.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.model.malformed"), r)
+        # and a linear file whose schema says it has no target, with the payload written for all three columns
+        self.sb.write("reg.csv", "a,b,y\n1,2,3\n2,1,4\n3,5,9\n4,3,8\n5,7,12\n")
+        self.assertEqual(self.ml("fit", "--model", "linear", "--target", "y", "--output", "lin.cml", "--overwrite", "reg.csv").status, 0)
+        lin = payloads(self.sb.read("lin.cml"))
+        lin[2] = lin[2][:4] + struct.pack("<I", 3) + lin[2][8:]
+        w = [0.5, 0.25, 1.0]
+        lin[4] = struct.pack("<I", 4) + struct.pack("<IIQ", 2, 1, 3) + struct.pack("<3d", *w) + struct.pack("<IIQ", 2, 1, 1) + struct.pack("<d", 0.0)
+        self.sb.write("notarget.cml", write_file(lin))
+        r = self.ml("predict", "--model-file", "notarget.cml", "reg.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.model.malformed"), r)
+
     def test_the_plan_and_the_payload_must_agree_on_k(self):
         self.fit("full.csv", "m.cml", "--k", "3")
         d = self.sb.read("m.cml")
@@ -408,7 +432,8 @@ class KMeansWire(unittest.TestCase):
         self.sb.write("one.csv", "x\n1\n2\n3\n")
         r = self.ml("fit", "--model", "kmeans", "--k", "2", "--drop", "x", "--output", "m.cml", "--overwrite", "one.csv")
         self.assertEqual(r.status, 8, r)
-        self.assertIn(r.first_rule(), ("ml.input.empty",), r)
+        self.assertEqual(r.first_rule(), "ml.input.empty", r)
+        self.assertIn("no column to cluster", r.error()["message"])
 
     # ------------------------------------------------------------------ WK8: threads
     def test_the_model_file_is_the_same_at_1_2_4_8_and_16_threads(self):
@@ -453,6 +478,9 @@ class KMeansWire(unittest.TestCase):
         e = self.ml("eval", "--model-file", "c.cml", "cat.csv")
         self.assertEqual((e.status, e.data()["clusters"]), (0, 3), e)
         self.assertEqual(self.ml("fit", "--model", "kmeans", "--k", "3", "--cat", "city", "--output", "c.cml", "--overwrite", "cat.csv").first_rule(), "ml.input.categorical-not-encoded")
+        # a numeric step beside the encoder reads the numeric column by its name: the schema of the numeric columns marks no target
+        r = self.ml("fit", "--model", "kmeans", "--k", "2", "--cat", "city", "--step", "encode column=city kind=label;scale column=x kind=standard", "--output", "c2.cml", "--overwrite", "cat.csv")
+        self.assertEqual((r.status, r.data()["summary"]["steps"]), (0, 2), r)
 
     def test_a_dry_run_writes_nothing(self):
         r = self.ml("fit", "--model", "kmeans", "--k", "3", "--dry-run", "--output", "dry.cml", "full.csv")
