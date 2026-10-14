@@ -813,7 +813,7 @@ pub fn fit[&h, &g, &f, &r, &pf, &po](heap: &!h Heap, args: &g Args, fs: &f Fs(""
 
 // ---------------------------------------------------------------- the stored model
 
-fn model_error[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
+pub fn model_error[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
     var rule: &static [byte] = "ml.model.malformed";
     var message: &static [byte] = "a section of the model file is not what the format allows";
     var hint: &static [byte] = "refit the model";
