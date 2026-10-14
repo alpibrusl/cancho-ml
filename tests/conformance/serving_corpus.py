@@ -9,12 +9,13 @@ import random
 # id -> (the `fit` command line without the output and the file, the csv it reads, the kind of the model section)
 NUM = "num.csv"
 CAT = "cat.csv"
+WIDE = "wide.csv"
 
 FITS = {
     # kinds 1 to 3: the constant models
     "const_reg_dec": (["--target", "y", "--drop", "lab"], NUM, 1),
     "const_reg_float": (["--target", "y", "--float", "y", "--drop", "lab"], NUM, 3),
-    "const_cls": (["--target", "lab", "--drop", "y"], NUM, 2),
+    "const_cls": (["--task", "classification", "--target", "lab", "--drop", "y"], NUM, 2),
     # kind 4: linear, kind 5: logistic, kind 7: tree and forest, each through the pipeline
     "linear": (["--model", "linear", "--l2", "0.5", "--step", "impute column=* strategy=mean;scale column=a,b kind=standard", "--target", "y", "--drop", "lab"], NUM, 4),
     "logistic": (["--model", "logistic", "--iterations", "30", "--l2", "0.5", "--step", "impute column=* strategy=mean;scale column=* kind=minmax", "--target", "lab", "--drop", "y"], NUM, 5),
@@ -31,6 +32,9 @@ FITS = {
     "cat_forest_hash": (["--model", "forest", "--task", "regression", "--trees", "4", "--seed", "5", "--cat", "c0,c1", "--max-categories", "9", "--step",
                          "hash column=c0 buckets=8;encode column=c1 kind=onehot unknown=refuse", "--target", "y", "--drop", "lab"], CAT, 7),
     "cat_tree_ignore": (["--model", "tree", "--task", "regression", "--cat", "c0", "--step", "encode column=c0 kind=onehot unknown=ignore", "--target", "y", "--drop", "lab,c1"], CAT, 7),
+    # no numeric feature at all, and a vocabulary larger than a small --limit
+    "cat_only_forest": (["--model", "forest", "--task", "classification", "--trees", "3", "--cat", "c0,c1", "--step", "encode column=c0,c1 kind=onehot", "--target", "lab", "--drop", "y,n"], CAT, 7),
+    "cat_wide_tree": (["--model", "tree", "--task", "classification", "--cat", "w0,w1,w2", "--max-categories", "64", "--na-values", "-,none", "--step", "freq column=*", "--target", "lab", "--drop", "y"], WIDE, 7),
 }
 
 C0 = ["red", "green", "blue", "yellow", "a,b", "q\"uote", "multi\nline", "café"]
@@ -46,6 +50,17 @@ def num_csv(rng, n=60):
         y = round(1.5 * a - 0.7 * b + 4 * c + rng.uniform(-2, 2), 1)
         lab = 1 if a + b > 10 else 0
         rows.append("%d,%.2f,%r,%.1f,%d" % (a, b, c, y, lab))
+    return "\n".join(rows) + "\n"
+
+
+def wide_csv(rng, n=90):
+    rows = ["w0,w1,w2,y,lab"]
+    for i in range(n):
+        w0 = "s%02d" % rng.randint(0, 29)
+        w1 = "t%d" % rng.randint(0, 11)
+        w2 = rng.choice(["p", "q", "-", "none", "r"])
+        y = rng.randint(0, 20)
+        rows.append("%s,%s,%s,%d,%d" % (w0, w1, w2, y, 1 if y > 10 else 0))
     return "\n".join(rows) + "\n"
 
 
@@ -90,6 +105,8 @@ def inputs(rng):
     out["cat_reordered"] = ("cat_reordered.csv", "n,c1,c0,y\n10,x,red,9.5\n5,y,green,2\n", "cat")
     out["cat_unicode_quoted"] = ("cat_quoted.csv", "c0,c1,n\n\"café\",x,1\n\"multi\nline\",y,2\n\"q\"\"uote\",z,3\n", "cat")
     out["cat_bom_crlf"] = ("cat_bom.csv", b"\xef\xbb\xbfc0,c1,n\r\nred,x,10\r\nblue,y,20\r\n", "cat")
+    out["wide_seen"] = ("wide_seen.csv", "w0,w1,w2,y\ns01,t3,p,5\ns99,t0,none,1\n,-,q,2\n", "wide")
+    out["catonly_seen"] = ("catonly_seen.csv", "c0,c1\nred,x\nviolet,y\n,\n", "catonly")
     out["cat0_seen"] = ("cat0_seen.csv", "c0,n\nred,10\nblue,2\nnew,3\n", "cat0")
     return out
 
@@ -119,11 +136,12 @@ def build(sb, seed=17):
     rng = random.Random(seed)
     sb.write(NUM, num_csv(rng))
     sb.write(CAT, cat_csv(rng))
+    sb.write(WIDE, wide_csv(rng))
     models = {}
     for mid, (args, csv, kind) in FITS.items():
         r = sb.run("fit", *args, "--output", mid + ".cml", csv)
         assert r.status == 0, (mid, r)
-        family = "num" if csv == NUM else ("cat0" if mid == "cat_tree_ignore" else "cat")
+        family = {NUM: "num", WIDE: "wide"}.get(csv) or {"cat_tree_ignore": "cat0", "cat_only_forest": "catonly"}.get(mid, "cat")
         models[mid] = (mid + ".cml", kind, family)
     ins = {}
     for iid, (name, data, family) in inputs(rng).items():
