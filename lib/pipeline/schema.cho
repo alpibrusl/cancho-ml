@@ -7,7 +7,7 @@ import pipeline.names;
 import transforms.codes;
 
 // The fitted schema (docs/pipeline.md section 3.1) and its section (`schema`, section 2 of the file, the layout of tools/ml/mfile.cho):
-//     u32 columns | u32 target | per column: u32 name length | name | u32 type (0 int, 1 dec, 2 float, 3 categorical) | u32 scale (0 for int, float and categorical)
+//     u32 columns | u32 target (the index of the target, or `columns` when the model has none) | per column: u32 name length | name | u32 type (0 int, 1 dec, 2 float, 3 categorical) | u32 scale (0 for int, float and categorical)
 // The FEATURES are the columns but the target, in order. An input is aligned to them by name, never by position.
 
 pub fn max_columns() -> [] int {
@@ -42,6 +42,19 @@ pub fn columns[&s](sc: &s Schema) -> [] int {
 
 pub fn target[&s](sc: &s Schema) -> [] int {
     return sc.target;
+}
+
+// whether the schema has a target column. A model with no target (k-means) has the target index `columns`: no column has it, so every column is a feature
+pub fn has_target[&s](sc: &s Schema) -> [] bool {
+    return sc.target < names.count(sc.nm);
+}
+
+// the number of features: the columns but the target, or all of them when there is no target
+pub fn features[&s](sc: &s Schema) -> [] int {
+    if sc.target < names.count(sc.nm) {
+        return names.count(sc.nm) - 1;
+    }
+    return names.count(sc.nm);
 }
 
 pub fn name[&s](sc: &s Schema, i: int) -> [] &s [byte] {
@@ -93,7 +106,7 @@ pub fn decode[&h, &d](heap: &!h Heap, sc: &d [byte]) -> [heap] (Schema, int) {
     }
     let cols = get32(sc, 0);
     let target = get32(sc, 4);
-    if cols < 1 || cols > max_columns() || target >= cols {
+    if cols < 1 || cols > max_columns() || target > cols {
         return (empty(heap), bad);
     }
     var nm = names.empty(heap);
@@ -159,7 +172,7 @@ fn add_name[&h, &s](heap: &!h Heap, out: buffer.Buffer, first: bool, s: &s [byte
 // in the input of feature j, or code ml.schema.mismatch and detail the text `missing: a,b; extra: c; mistyped: d; duplicate: e`
 // (names sorted by position, at most 8 KiB). The input may hold the columns in any order; it must hold exactly the features.
 pub fn align[&h, &s, &g, &t](heap: &!h Heap, sc: &s Schema, given: &g names.Names, given_types: &t [int]) -> [heap] (Box[[int]], buffer.Buffer, int) {
-    let nf = columns(sc) - 1;
+    let nf = features(sc);
     let ng = names.count(given);
     let perm = box_slice(heap, nf + 1, 0 - 1);
     let used = box_slice(heap, ng + 1, 0);

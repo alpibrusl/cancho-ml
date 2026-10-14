@@ -349,6 +349,8 @@ def sample_csv(task, n=1500, missing=False):
     """a seeded data set; with `missing`, about one cell in 17 of the last feature is empty (the models that take missing cells, docs/wiring-trees.md section 5)"""
     rng = random.Random(1234)
     rows = []
+    if task == "clustering":
+        task = "regression"           # a clustering has no target: the columns of the regression layout are all features (y included)
     for i in range(n):
         x = [rng.uniform(-3, 3) for _ in range(5)]
         z = x[0] * 1.5 - x[1] + 0.5 * x[2] + rng.gauss(0, 0.7)
@@ -374,8 +376,17 @@ def tasks_of(c):
     return ["regression", "classification"] if c.model["task"] == "both" else [c.model["task"]]
 
 
+def takes_missing(c):
+    """whether the model takes a cell still missing after the steps (a blob model of both tasks): the others are given a file with none"""
+    return gen_models.is_blob(c.model) and c.model["task"] == "both"
+
+
 def fit_args(c, out, extra=(), task=None):
     task = task or tasks_of(c)[0]
+    if c.model["task"] == "clustering":
+        # no target and no task: the required hyperparameters of the manifest (k) are given a small value
+        req = [x for h in c.model["hyperparameter"] if h.get("required") for x in ("--" + h["name"], "4")]
+        return ["fit", "--model", c.name, *req, "--output", out, "--step", "scale column=* kind=standard", *extra, "d.csv"]
     more = ["--task", task] if c.model["task"] == "both" else []
     return ["fit", "--model", c.name, *more, "--target", "y" if task == "regression" else "lab", "--output", out, "--step", "scale column=* kind=standard", *extra, "d.csv"]
 
@@ -390,7 +401,7 @@ def q6(c):
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for task in tasks_of(c):
-            (tmp / "d.csv").write_text(sample_csv(task, missing=gen_models.is_blob(c.model)))
+            (tmp / "d.csv").write_text(sample_csv(task, missing=takes_missing(c)))
             files, stdouts = {}, {}
             for t in c.contract["limits"]["thread_counts"]:
                 rc, out, err = c.ml("--root", tmp, *fit_args(c, "m%d.cml" % t, ["--threads", t, "--overwrite"], task))
@@ -411,7 +422,7 @@ def q6(c):
 
 def small_model_flags(c):
     """a small model for the damaged-file check: the files of a forest of 100 trees would take minutes to damage byte by byte"""
-    if not gen_models.is_blob(c.model):
+    if not gen_models.is_blob(c.model) or c.model["task"] == "clustering":
         return []
     extra = ["--max-depth", "4"]
     if any(h["name"] == "trees" for h in c.model["hyperparameter"]):
@@ -436,7 +447,7 @@ def q7(c):
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for task in tasks_of(c):
-            (tmp / "d.csv").write_text(sample_csv(task, 200, missing=gen_models.is_blob(c.model)))
+            (tmp / "d.csv").write_text(sample_csv(task, 200, missing=takes_missing(c)))
             rc, out, err = c.ml("--root", tmp, *fit_args(c, "m.cml", small_model_flags(c) + ["--overwrite"], task))
             if rc != 0:
                 return "FAIL", "fit exited %d: %s" % (rc, out[:200].decode(errors="replace"))

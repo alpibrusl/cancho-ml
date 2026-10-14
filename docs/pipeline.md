@@ -38,7 +38,7 @@ ascending.
 | `freq` | `column` `max-categories` `unknown` `min-count` `missing` | categorical columns only (stage 2 of issue 21): a list or `*`; as `encode`; every key written |
 | `hash` | `column` `buckets` `missing` | categorical columns only: a list or `*`; `2 .. 1024` (required); `pass` `zero` (default `pass`) |
 | `bucket` | `column` `kind` `bins` | list or `*`; `width` `quantile`; `2 .. 256` (required) |
-| `model` | `kind`, then the keys of the kind (generated from the manifests of `lib/models`, `docs/modules.md` section 3, into `lib/pipeline/modeldefs.cho`) | `constant` (`task`), `linear` (`l2`), `logistic` (`iterations` `l2`), `kmeans` (`k` `iterations`), `tree` / `forest` (`task`, `max-depth` ...) |
+| `model` | `kind`, then the keys of the kind (generated from the manifests of `lib/models`, `docs/modules.md` section 3, into `lib/pipeline/modeldefs.cho`) | `constant` (`task`), `linear` (`l2`), `logistic` (`iterations` `l2`), `kmeans` (`k` `iterations` `init`), `tree` / `forest` (`task`, `max-depth` ...) |
 
 * **Numbers.** An int is `[0-9]+` (at most 9 digits, leading zeros allowed and dropped). A float is read by `ml.csvcell.read` /
   `double` (cancho-table's `flt.parse_float` underneath: correctly rounded, ties to even; an exponent, a leading or trailing point and more

@@ -58,7 +58,8 @@ pub fn numeric_schema[&h, &s, &t](heap: &!h Heap, sh: &s csv.Shape, tname: &t [b
         i = i + 1;
     }
     var types = box_slice(heap, 2 * kept + 2, 0);
-    var target = 0;
+    // no column is called `tname` for a model with no target: the target index is then the number of columns (pipeline.schema)
+    var target = kept;
     borrow mut types as &!tw in {
         var at = 0;
         i = 0;
@@ -357,7 +358,8 @@ pub fn full_schema[&h, &s, &t](heap: &!h Heap, sh: &s csv.Shape, tname: &t [byte
         i = i + 1;
     }
     var types = box_slice(heap, 2 * kept + 2, 0);
-    var target = 0;
+    // no column is called `tname` for a model with no target: the target index is then the number of columns (pipeline.schema)
+    var target = kept;
     borrow mut types as &!tw in {
         var at = 0;
         i = 0;

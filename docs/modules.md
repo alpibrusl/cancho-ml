@@ -7,8 +7,7 @@ Section 8 holds the results; a number or a verdict is in it only if a script of 
 A model that `ml` can fit is a *module*: a directory under `lib/models/`, a manifest in it, an adapter with a fixed interface, and a document with
 its gates. Nothing else in the tree names the model by hand: the dispatch, the flags, the plan keys, the schemas and the documentation tables
 are generated from the manifests, and a module cannot add a float order, a capability, an unregistered refusal or a kind number of its own
-without `scripts/admit.py` failing. The five models of the libraries (constant, linear, logistic, k-means, tree and forest) are the first users:
-three are wired in this stage (`docs/wiring.md`), two have a manifest and `wired = false`. *(The tree and the forest were wired afterwards, through a second adapter interface, section 4b: `docs/wiring-trees.md`; k-means is the one library left unwired.)*
+without `scripts/admit.py` failing. The six models (constant, linear, logistic, k-means, tree and forest) are the first users: linear and logistic are wired by `docs/wiring.md`, the tree and the forest through a second adapter interface (section 4b) by `docs/wiring-trees.md`, and k-means, a clustering with no target, through the same second interface by `docs/wiring-kmeans.md`.
 
 ## 1. Function values and traits: tried, and not relied on [read]
 
@@ -32,10 +31,10 @@ One file per model, parsed by `scripts/gen_models.py` with Python's `tomllib`. A
 | `extra_kinds` | list of int, optional | more kinds the model writes (`constant` writes 1, 2 and 3: regression, classification, float regression) |
 | `kind_fn` | string | the function of `kinds.cho` that returns it (`model_linear`); the generator checks the body |
 | `shares_kind_with` | string, optional | `tree` and `forest` share kind 7 (the task is a field of the payload); both name each other, no other pair may |
-| `task` | `regression`, `classification` or `both` | what the model predicts (`clustering` for k-means, which is never wired). `both`: the task is the model line's `task` hyperparameter (the existing `--task` flag), which the model must declare as an `enum` (tree, forest) |
+| `task` | `regression`, `classification` or `both` | what the model predicts. `clustering` (k-means) is a model with no target: its file has a schema without a target column, `fit` needs no `--target`, and a wired clustering is a `blob` model. `both`: the task is the model line's `task` hyperparameter (the existing `--task` flag), which the model must declare as an `enum` (tree, forest) |
 | `tier` | `experimental` or `supported` | section 6 |
 | `wired` | bool | callable from `ml`. `false`: the manifest holds the kind and the plan keys, the dispatch has no branch |
-| `shape` | `vector` (default) or `blob` | which adapter interface the module implements: section 4 (a fixed vector of floats) or section 4b (a payload of bytes the adapter builds and reads; needed when the size of the fitted model is known only after the fit). A `blob` model has `task = "both"` |
+| `shape` | `vector` (default) or `blob` | which adapter interface the module implements: section 4 (a fixed vector of floats) or section 4b (a payload of bytes the adapter builds and reads; needed when the size of the fitted model is known only after the fit). A `blob` model has `task = "both"` or `task = "clustering"` |
 | `adapter` | string | the module that implements the interface of section 4 or 4b (required when `wired`); `builtin` for `constant`, which `tools/ml/verbs.cho` builds exactly and which has no adapter |
 | `plan_order` | int | the place of the model in the plan grammar's list (`0 .. n-1`, once each): `constant`, `linear`, `logistic`, `kmeans`, `tree`, `forest` are 0 to 5 |
 | `payload_version` | int | the version of the records after the `u32 kind` (linear 1, logistic 2: it gained the labels record, `docs/wiring.md` section 4) |
@@ -99,11 +98,18 @@ pub fn proba_blob(heap, blob: &[byte], xt: Tensor, xd: &[float], miss: &[int], w
 pub fn decode_blob(heap, src: &[byte], d: int) -> [heap] Decoded                                                              // code, c0, c1 and in `end` the task: 1 regression, 2 classification
 ```
 
-`miss` and `wpc` are the missing-cell bitmap of `ml.matrix` (a model that takes missing cells reads it; the others are not blob models). `ip` holds the integer hyperparameters
+`miss` and `wpc` are the missing-cell bitmap of `ml.matrix` (a model that takes missing cells reads it; the generated `est.takes_missing(kind)` is true for the blob models of both tasks, and the wiring refuses a cell still missing after the steps, with `ml.input.missing-value`, for every other model, k-means included). `ip` holds the integer hyperparameters
 in manifest order and an enum as the index of its value (`task`: 0 classification, 1 regression, the library's numbers); `c0` and `c1` are the labels of a classification. The row
 is `[heap, conc]` for the fit and `[heap]` for the others: the prediction is made with one thread. **The dispatch key.** A fit must tell `tree` from `forest` (different
 hyperparameters) while a file has only the kind, so the generated `est` dispatches on a key: the kind, plus 100 for the second model of a declared pair that shares a kind
 (`forest` = 107). `est.kind_of(key)` gives the kind of a file; the plan stored in the file names the model, and `predict` prints that name.
+
+**A clustering (`task = "clustering"`, k-means).** The model has no target, so `fit_blob` takes an empty `yd` and the labels `c0` and `c1` are 0. The results of the four functions are
+`predict_blob` the cluster of each row (the integer as a double), `proba_blob` **the squared distance of the row to the centre of that cluster** (the second output of a model: the
+probability of the positive class for a classification, a refusal for a regression, the squared distance for a clustering; the name of the function is the interface's),
+`decode_blob` the code, `k` in `c0`, 0 in `c1` and in `end` the task 4 (`est.task` answers 4 for a clustering; 1 and 2 stay the regression and the classification of the tree and forest).
+The file's schema has no target column, and an hyperparameter of type `enum` other than `task` has a flag of its own (`choice:` values), as an integer has. A flag that two models share
+(`iterations`) must agree on type and range, may differ in default, and then has no default of its own in the flag table. `docs/wiring-kmeans.md` is the document of the first clustering.
 
 ## 5. Admission: `python3 scripts/admit.py <model>`
 
@@ -157,9 +163,10 @@ Machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python 3.14.5, numpy 2.4.6
 |---|---|---|
 | `linear` | **ADMITTED, 12 of 12 PASS** | Q0 the doc `docs/models-linear.md` was committed before both files; Q1 manifest, generated files, the eight functions of the adapter; Q2 kind 4; Q3 10 tags; Q4 2 files scanned; Q5 the derived authority equals the committed one, the module adds `conc`; Q6 `--threads` 1 to 16, one file of 616 bytes; Q7 764 damaged files; Q8 4 files under 2,000 lines; Q9 30 oracle cases, byte for byte; Q10 133 mutant patterns in 2 suites (`mutants_models.py` 93, `mutants_wire.py` 40), 3 survivors, each explained; Q11 6 comparisons with scikit-learn |
 | `logistic` | **ADMITTED, 12 of 12 PASS** | the same; kind 5, 12 tags, 3 files, a file of 667 bytes, 807 damaged files, 5 of 30 oracle cases not judged (only checked not to trap), 9 comparisons |
+| `kmeans` | **ADMITTED, 12 of 12 PASS** (`docs/wiring-kmeans.md` section 12); a clustering through the blob interface: Q6 and Q7 fit without a target, Q9 runs `scripts/oracle_wire_kmeans.py`, Q10 reads 201 patterns in 3 suites, Q11 runs the comparison with the initial centres given to scikit-learn |
 | `constant` | ADMITTED, 9 PASS, 3 SKIP | Q6 and Q7 skip (no threaded fit, no model file of its own beyond the CLI slice's, whose damaged-file gate is M1), Q11 skips (exact integers against `fractions.Fraction` is Q9); Q10 is the 53 patterns of `mutants_cli.py` |
 
-So `linear` and `logistic` are `supported` by the rule of section 6 (their manifests say so), and k-means, the tree and the forest are `experimental` and `wired = false`.
+So `linear` and `logistic` are `supported` by the rule of section 6 (their manifests say so); the tier of the tree, the forest and k-means is in sections 8 of `docs/wiring-trees.md` and `docs/wiring-kmeans.md`.
 
 **The mutant modules** (`python3 tests/modules/run.py`, 13 s): the control (an honest twin of `linear` under another name and kind 8) is **ADMITTED**; each of the six defects is **REFUSED on the check it was written for**:
 

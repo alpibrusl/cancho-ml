@@ -251,5 +251,5 @@ is written, also with `--dry-run`, for every model. A forest of 1,024 trees on a
 the prediction is made. For linear and logistic it is reported as a missing column of the schema (`ml.schema.mismatch`, `verbs.schema_check`, the missing column in `detail`), a behaviour of the
 reader that the oracle found and that is kept: the linear models need every column of the schema. A column that is absent from the header is `ml.schema.mismatch` for every model.
 
-**The texts that name the models.** The summary of `ml.plan.model-not-built` (kmeans, a library with no wiring, or constant, which takes no plan) and the message of `args.conflict` for a flag
-that needs a model other than constant name the five models.
+**The texts that name the models.** The summary of `ml.plan.model-not-built` (constant, which takes no plan; the text first named kmeans too, which `docs/wiring-kmeans.md` wires) and the message of `args.conflict` for a flag
+that needs a model other than constant name the models that can take the flag: five when this stage was written, six with k-means.

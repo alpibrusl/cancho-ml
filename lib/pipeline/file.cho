@@ -379,13 +379,17 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
         return (mal(2, 0), 0, 0, 0, 0, 0, 0);
     }
     var feats = 0;
+    var scols = 0;
+    var has_target = true;
     var ncat = 0;
     var target_cat = false;
     var cnames = names.empty(heap);
     var nnames = names.empty(heap);
     var fnames = names.empty(heap);
     borrow sc as &sr in {
-        feats = schema.columns(sr) - 1;
+        feats = schema.features(sr);
+        scols = schema.columns(sr);
+        has_target = schema.has_target(sr);
         var j = 0;
         while j < schema.columns(sr) {
             if schema.type_of(sr, j) == 3 {
@@ -515,6 +519,10 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
     if mk < 1 || mk > kinds.model_count() || !model_family_ok(pkind, mk) {
         return (mal(4, 0), 0, 0, 0, 0, 0, 0);
     }
+    // a clustering has no target and every other model has one: the schema and the model must agree
+    if mk == kinds.model_kmeans() == has_target {
+        return (mal(2, 0), 0, 0, 0, 0, 0, 0);
+    }
     // 5 meta
     let me = data[places[8]..places[8] + places[9]];
     if len(me) < 32 {
@@ -529,7 +537,7 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
     if mk >= kinds.first_ordered_model() {
         tail = 4;
     }
-    if rows < 1 || rows > 1000000000 || mc != feats + 1 || nh != 0 || cl < 0 || cl > 255 || len(me) != 32 + cl + tail {
+    if rows < 1 || rows > 1000000000 || mc != scols || nh != 0 || cl < 0 || cl > 255 || len(me) != 32 + cl + tail {
         return (mal(5, 0), 0, 0, 0, 0, 0, 0);
     }
     return (none, feats, width, nsteps, rows, seed, mk);
@@ -613,5 +621,10 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Loaded, codes.
             full = fb;
         }
     }
-    return (Loaded { data: keep, places: pw, nsteps: nsteps, features: feats, width: width, columns: feats + 1, rows: rows, seed: seed, model_kind: mk, ncat: ncat, full: full }, codes.none());
+    // the columns of the schema: the features and the target, if the model has one
+    var ncolumns = feats + 1;
+    if mk == kinds.model_kmeans() {
+        ncolumns = feats;
+    }
+    return (Loaded { data: keep, places: pw, nsteps: nsteps, features: feats, width: width, columns: ncolumns, rows: rows, seed: seed, model_kind: mk, ncat: ncat, full: full }, codes.none());
 }

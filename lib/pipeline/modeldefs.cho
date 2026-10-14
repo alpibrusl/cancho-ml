@@ -45,7 +45,7 @@ pub fn defs[&s](verb: &s [byte]) -> [] &static [byte] {
         return "iterations:int=1,1000:=100 l2:fnn:=0.0";
     }
     if bytes.equal(verb, "model:kmeans") {
-        return "k:int=1,1024:req iterations:int=1,1000:=10";
+        return "k:int=1,1024:req iterations:int=1,1000:=10 init:enum=random,kmeans++:=kmeans++";
     }
     if bytes.equal(verb, "model:tree") {
         return "task:enum=classification,regression:req max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 max-nodes:int=1,999999999:=4194304";
@@ -68,7 +68,7 @@ pub fn model_defs[&s](name: &s [byte]) -> [] &static [byte] {
         return "iterations:int=1,1000:=100 l2:fnn:=0.0";
     }
     if bytes.equal(name, "kmeans") {
-        return "k:int=1,1024:req iterations:int=1,1000:=10";
+        return "k:int=1,1024:req iterations:int=1,1000:=10 init:enum=random,kmeans++:=kmeans++";
     }
     if bytes.equal(name, "tree") {
         return "task:enum=classification,regression:req max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 max-nodes:int=1,999999999:=4194304";

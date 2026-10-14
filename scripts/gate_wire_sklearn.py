@@ -111,6 +111,10 @@ def main():
         sys.argv = [sys.argv[0]] + models
         import gate_wire_sklearn_trees
         return gate_wire_sklearn_trees.main()
+    if models == ["kmeans"]:
+        # k-means: docs/wiring-kmeans.md section 10, scripts/gate_wire_sklearn_kmeans.py (the initial centres are given to scikit-learn)
+        import gate_wire_sklearn_kmeans
+        return gate_wire_sklearn_kmeans.main()
     ok = True
     for model in models:
         for seed in (1, 2, 3):

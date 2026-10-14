@@ -174,11 +174,13 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
     var key = kind;
     // the task the plan's model line names (a model of both tasks); 0 for the others
     var plan_task = 0;
+    // the k of the plan's model line (a clustering); 0 for the others
+    var plan_k = 0;
     borrow lo as &lr in {
         let (pl, pf) = plan.parse(heap, file.plan_bytes(lr));
         borrow pl as &pr in {
             key = est.kind_named(plan.model_name(plan.model_kind(pr)));
-            if est.task(key) == 3 {
+            if est.task(key) == 3 || est.task(key) == 4 {
                 var ip = box_slice(heap, est.nints(key) + 1, 0);
                 var fp = box_slice(heap, est.nfloats(key) + 1, 0.0);
                 var bad = 1;
@@ -189,7 +191,11 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
                 }
                 if bad == 0 {
                     borrow ip as &ir in {
-                        plan_task = est.task_of(key, contents(ir));
+                        if est.task(key) == 3 {
+                            plan_task = est.task_of(key, contents(ir));
+                        } else {
+                            plan_k = contents(ir)[0];
+                        }
                     }
                 }
                 unbox_slice(heap, ip);
@@ -246,6 +252,10 @@ fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], er
         // the plan says classification and the payload is a regression, or the other way: a file that disagrees with itself
         dcode = 1;
     }
+    if dcode == 0 && plan_k != 0 && plan_k != c0 {
+        // the plan says k clusters and the payload holds another number of centroids
+        dcode = 1;
+    }
     if dcode != 0 {
         file.drop(heap, lo);
         schema.drop(heap, sc);
@@ -300,7 +310,18 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
     var e = errs;
     var lg = log;
     var go = true;
-    let tname = schema.name(st.sc, schema.target(st.sc));
+    // the target's name, or the empty name of a model with no target (a clustering: every column is a feature, and eval needs no target column)
+    var tidx = 0;
+    if schema.has_target(st.sc) {
+        tidx = schema.target(st.sc);
+    }
+    let tfull = schema.name(st.sc, tidx);
+    var tlen = 0;
+    if schema.has_target(st.sc) {
+        tlen = len(tfull);
+    }
+    let tname = tfull[0..tlen];
+    let want_target = need_target && schema.has_target(st.sc);
     var x = matrix.empty(heap);
     var sh = csv.empty_shape(heap);
     var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
@@ -321,7 +342,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             return (empty_input(heap), false, e, lg);
         }
         let cc = csv.CatCfg { cols: "", na: "", max_cats: strtab.limit_of(tbl, 0), max_str: strtab.limit_of(tbl, 1), max_pool: strtab.limit_of(tbl, 2), max_catcols: strtab.limit_of(tbl, 3), lenient: true };
-        let l = csvload.load_cat_with(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), cc, tname, !need_target, v0, true, strtab.na_of(tbl));
+        let l = csvload.load_cat_with(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), cc, tname, !want_target, v0, true, strtab.na_of(tbl));
         let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
@@ -334,7 +355,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
         rep = rep2;
         code = code2;
     } else {
-        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), tname, !need_target);
+        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), tname, !want_target);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
         x = x2;
@@ -354,7 +375,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             go = false;
         } else {
             lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
-            let (e2, same) = verbs.schema_check(heap, args, e, st.view, sr, o, need_target, est.is_blob(st.kind));
+            let (e2, same) = verbs.schema_check(heap, args, e, st.view, sr, o, need_target, est.takes_missing(st.kind));
             e = e2;
             go = same;
         }
@@ -374,7 +395,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
         var m = 0;
         var i = 0;
         while i < csv.cols(sr) {
-            if !csv.dropped(sr, i) && (need_target || i != csv.tcol(sr)) && csv.catplace(sr, i) == 0 {
+            if !csv.dropped(sr, i) && (want_target || i != csv.tcol(sr)) && csv.catplace(sr, i) == 0 {
                 gn = names.add(heap, gn, csv.name(sr, i));
                 m = m + 1;
             }
@@ -383,7 +404,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
         borrow gn as &gq in {
             tj = names.find(gq, tname);
         }
-        if !need_target {
+        if !want_target {
             tj = 0 - 1;
         }
         borrow mut cols as &!cw in {
@@ -406,7 +427,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
 
 // the names of the columns the steps left: the features' when the width is the same, else the positions (`#0`, `#1`, ...)
 fn output_names[&h, &s](heap: &!h Heap, sc: &s schema.Schema, width: int) -> [heap] names.Names {
-    if width == schema.columns(sc) - 1 {
+    if width == schema.features(sc) {
         return wiredata.feature_names(heap, sc);
     }
     var nm = names.empty(heap);
@@ -443,7 +464,7 @@ fn through_steps[&h, &g, &ii, &ss, &s](heap: &!h Heap, args: &g Args, inp: &ii I
     var go = true;
     var unknown = 0;
     var xs = matrix.empty(heap);
-    let nfeat = schema.columns(st.sc) - 1 - file.categorical_columns(st.lo);
+    let nfeat = schema.features(st.sc) - file.categorical_columns(st.lo);
     if st.cat {
         // the numeric features in the fitted order, the ids of the same rows, and the stored steps over both
         var xa = matrix.empty(heap);
@@ -538,7 +559,7 @@ fn through_steps[&h, &g, &ii, &ss, &s](heap: &!h Heap, args: &g Args, inp: &ii I
             }
         }
         names.drop(heap, onames);
-        if mc > 0 && !est.is_blob(st.kind) {
+        if mc > 0 && !est.takes_missing(st.kind) {
             borrow mlist as &lr in {
                 e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), false);
             }
@@ -577,7 +598,7 @@ fn put_label[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: int) -
 }
 
 // the page of predictions: (the data object, the text, the refusal code of the estimator)
-fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w2 [float], blob: &bl [byte], c0: int, c1: int, unknown: int, with_proba: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w2 [float], blob: &bl [byte], c0: int, c1: int, unknown: int, with_proba: bool, with_distance: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
     let total = matrix.rows(xs);
     var start = o.from;
     if start > total {
@@ -593,7 +614,7 @@ fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x m
     borrow mut pred as &!pw in {
         code = wiredata.predict_into(heap, kind, xs, wv, blob, contents(pw));
     }
-    if code == 0 && task == 2 {
+    if code == 0 && (task == 2 || task == 4 && with_distance) {
         borrow mut prob as &!qw in {
             code = wiredata.proba_into(heap, kind, xs, wv, blob, contents(qw));
         }
@@ -612,6 +633,11 @@ fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x m
                 w = json.begin_array(heap, w);
                 if task == 1 {
                     w = json.put_string(heap, w, "prediction");
+                } else if task == 4 {
+                    w = json.put_string(heap, w, "cluster");
+                    if with_distance {
+                        w = json.put_string(heap, w, "distance");
+                    }
                 } else {
                     w = json.put_string(heap, w, "label");
                     if with_proba {
@@ -628,6 +654,16 @@ fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x m
                         let (w2, p2) = put_cell(heap, w, plain, contents(pq)[k]);
                         w = w2;
                         plain = p2;
+                    } else if task == 4 {
+                        let (w2, p2) = put_label(heap, w, plain, truncate(contents(pq)[k]));
+                        w = w2;
+                        plain = p2;
+                        if with_distance {
+                            plain = buffer.push(heap, plain, byte_of(9));
+                            let (w3, p3) = put_cell(heap, w, plain, contents(qq)[k]);
+                            w = w3;
+                            plain = p3;
+                        }
                     } else {
                         var label = c0;
                         if contents(pq)[k] > 0.5 {
@@ -693,6 +729,9 @@ fn constant_conflict[&h](heap: &!h Heap, errs: fail.Errors, o: verbs.Opts, verb:
     if verb == 2 && o.proba {
         e = wiredata.conflict(heap, e, "proba", "a constant classification always prints its probability, and a constant regression has none");
     }
+    if verb == 2 && o.distance {
+        e = wiredata.conflict(heap, e, "distance", "only a kmeans model has a distance to a cluster centre");
+    }
     return e;
 }
 
@@ -737,11 +776,26 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
     buffer.drop(heap, data);
     if go && o.proba {
         var is_reg = false;
+        var is_clu = false;
         borrow st as &sq0 in {
             is_reg = sq0.task == 1;
+            is_clu = sq0.task == 4;
         }
         if is_reg {
             e = wiredata.conflict(heap, e, "proba", "a regression has no probability");
+            go = false;
+        } else if is_clu {
+            e = wiredata.conflict(heap, e, "proba", "a clustering has no probability: --distance adds the squared distance of a row to the centre of its cluster");
+            go = false;
+        }
+    }
+    if go && o.distance {
+        var is_clu = false;
+        borrow st as &sq0 in {
+            is_clu = sq0.task == 4;
+        }
+        if !is_clu {
+            e = wiredata.conflict(heap, e, "distance", "only a kmeans model has a distance to a cluster centre");
             go = false;
         }
     }
@@ -767,7 +821,7 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
                     e = e4;
                     if ok4 {
                         borrow xs as &xq in {
-                            let (p2, t2, code) = predict_page(heap, sr.kind, sr.task, xq, contents(sr.wv), file.model_bytes(sr.lo), sr.c0, sr.c1, unk, o.proba, o);
+                            let (p2, t2, code) = predict_page(heap, sr.kind, sr.task, xq, contents(sr.wv), file.model_bytes(sr.lo), sr.c0, sr.c1, unk, o.proba, o.distance, o);
                             buffer.drop(heap, payload);
                             buffer.drop(heap, plain);
                             payload = p2;
@@ -846,7 +900,11 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
         }
         // the labels the model knows
         var pos = c1;
-        if task == 2 && o.positive_given {
+        if task == 4 && o.positive_given {
+            e = wiredata.conflict(heap, e, "positive", "a clustering has no positive label");
+            go = false;
+        }
+        if go && task == 2 && o.positive_given {
             let (pok, pv) = wiredata.parse_label(o.positive);
             if pv == c0 || pv == c1 {
                 pos = pv;
@@ -889,10 +947,13 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
             var bad = 0;
             borrow inp as &ir in {
                 borrow sel as &sr2 in {
-                    let (y2, b2) = wiredata.take_col(heap, ir.x, contents(sr2), want, ir.tj);
-                    unbox_slice(heap, yv);
-                    yv = y2;
-                    bad = b2;
+                    // a clustering has no target column to read
+                    if ir.tj >= 0 {
+                        let (y2, b2) = wiredata.take_col(heap, ir.x, contents(sr2), want, ir.tj);
+                        unbox_slice(heap, yv);
+                        yv = y2;
+                        bad = b2;
+                    }
                 }
             }
             if bad > 0 {
@@ -952,6 +1013,10 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                                                 w = json.put_string(heap, w, wiredata.task_word(task));
                                                 w = json.put_key(heap, w, "rows");
                                                 w = json.put_int(heap, w, rows);
+                                                if task == 4 {
+                                                    w = json.put_key(heap, w, "clusters");
+                                                    w = json.put_int(heap, w, c0);
+                                                }
                                                 if task == 2 {
                                                     w = json.put_key(heap, w, "positive");
                                                     w = json.put_int(heap, w, pos);

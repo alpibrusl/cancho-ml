@@ -137,7 +137,9 @@
         "--step",
         "--bins",
         "--bootstrap",
+        "--init",
         "--iterations",
+        "--k",
         "--l2",
         "--max-depth",
         "--max-nodes",
@@ -149,6 +151,7 @@
         "--seed",
         "--threads",
         "--proba",
+        "--distance",
         "--task",
         "--target",
         "--drop",
@@ -665,6 +668,7 @@
               "enum": [
                 "linear",
                 "logistic",
+                "kmeans",
                 "tree",
                 "forest"
               ]
@@ -672,7 +676,8 @@
             "task": {
               "enum": [
                 "regression",
-                "classification"
+                "classification",
+                "clustering"
               ]
             },
             "rows": {
@@ -684,7 +689,14 @@
               "minimum": 0
             },
             "target": {
-              "$ref": "#/$defs/text_or_bytes"
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "path": {
               "$ref": "#/$defs/text_or_bytes"
@@ -1645,6 +1657,259 @@
                     "positive"
                   ],
                   "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string"
+                    },
+                    "steps": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "features": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "clusters": {
+                      "type": "object",
+                      "properties": {
+                        "k": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "iterations": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "init": {
+                          "enum": [
+                            "random",
+                            "kmeans++"
+                          ]
+                        },
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "inertia": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "sizes": {
+                              "type": "array",
+                              "items": {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            },
+                            "mean_distance": {
+                              "type": "array",
+                              "items": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "inertia",
+                            "sizes",
+                            "mean_distance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "k",
+                        "iterations",
+                        "init",
+                        "rows",
+                        "metrics"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "steps_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "categorical": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "kind": {
+                            "enum": [
+                              "onehot",
+                              "label",
+                              "freq",
+                              "hash"
+                            ]
+                          },
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "categories": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "output_columns": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "kind",
+                          "column",
+                          "categories",
+                          "output_columns"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "string_table": {
+                      "type": "object",
+                      "properties": {
+                        "entries": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "strings": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "pool_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "entries",
+                        "strings",
+                        "pool_bytes",
+                        "bytes",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "split": {
+                      "type": "object",
+                      "properties": {
+                        "train": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "test": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "seed": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "train",
+                        "test",
+                        "seed"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "holdout": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "inertia": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "sizes": {
+                              "type": "array",
+                              "items": {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            },
+                            "mean_distance": {
+                              "type": "array",
+                              "items": {
+                                "oneOf": [
+                                  {
+                                    "type": "string",
+                                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "inertia",
+                            "sizes",
+                            "mean_distance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "metrics"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "plan",
+                    "steps",
+                    "features",
+                    "clusters"
+                  ],
+                  "additionalProperties": false
                 }
               ]
             }
@@ -1670,6 +1935,7 @@
               "enum": [
                 "linear",
                 "logistic",
+                "kmeans",
                 "tree",
                 "forest"
               ]
@@ -1677,7 +1943,8 @@
             "task": {
               "enum": [
                 "regression",
-                "classification"
+                "classification",
+                "clustering"
               ]
             },
             "columns": {
@@ -1751,6 +2018,7 @@
               "enum": [
                 "linear",
                 "logistic",
+                "kmeans",
                 "tree",
                 "forest"
               ]
@@ -1850,6 +2118,7 @@
               "enum": [
                 "linear",
                 "logistic",
+                "kmeans",
                 "tree",
                 "forest"
               ]
@@ -1977,6 +2246,110 @@
             "task",
             "rows",
             "positive",
+            "metrics",
+            "unknown_categories"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "enum": [
+                "linear",
+                "logistic",
+                "kmeans",
+                "tree",
+                "forest"
+              ]
+            },
+            "task": {
+              "const": "clustering"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "clusters": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "metrics": {
+              "type": "object",
+              "properties": {
+                "inertia": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sizes": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "mean_distance": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "inertia",
+                "sizes",
+                "mean_distance"
+              ],
+              "additionalProperties": false
+            },
+            "unknown_categories": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "split": {
+              "type": "object",
+              "properties": {
+                "train": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "test": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "seed": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "train",
+                "test",
+                "seed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "rows",
+            "clusters",
             "metrics",
             "unknown_categories"
           ],
