@@ -50,7 +50,7 @@ and the split uses kind 4, so the two never share a stream), `--threads N` (the 
 `--drop`, `--cat`. A plan names the model on its model line, `model kind=kmeans k=3 iterations=10 init=kmeans++`; the canonical text always lists every key in the order of
 the manifest (`k`, `iterations`, `init`).
 
-An enum hyperparameter other than `task` had no flag; the generator now gives `init` one (kind `choice:random/kmeans++`, an unknown value is `args.bad-value` from the
+An enum hyperparameter other than `task` has a flag of its own, generated from the manifest (`--init`, kind `choice:random/kmeans++`; an unknown value is `args.bad-value` from the
 flag parser). A flag that two models share (`iterations`) must agree on type and range and may differ in default; the flag table's default is documentation (an absent flag
 leaves the key out of the model line and the plan parser writes the model's own default).
 
