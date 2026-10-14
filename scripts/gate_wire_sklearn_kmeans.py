@@ -158,7 +158,7 @@ def main():
     for c, outside in control_out.items():
         print("control (%s): %s" % (c, "outside the bounds on at least one data set, as it must be" if outside else "INSIDE the bounds on every data set: the gate cannot fail"))
         ok &= outside
-    print("worst observed: centroids %.3e (bound %.0e), inertia %.3e (bound %.0e)" % (worst["centroids"], CENTROIDS, worst["inertia"], INERTIA))
+    print("worst of the 16 configurations: centroids %.3e (bound %.0e), inertia %.3e (bound %.0e)" % (worst["centroids"], CENTROIDS, worst["inertia"], INERTIA))
     print("sklearn gate (kmeans, initial centres fixed): %s" % ("all PASS" if ok else "FAILED"))
     return 0 if ok else 1
 
