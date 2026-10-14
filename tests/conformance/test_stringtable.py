@@ -186,7 +186,7 @@ class Refusals(Base):
         plan = d[secs[1][0]:secs[1][0] + secs[1][1]]
         self.assertIn(b"freq column=sex max-categories=3 unknown=ignore min-count=2 missing=zero", plan)
         for old, new in ((b"missing=zero", b"missing=pass"), (b"min-count=2", b"min-count=3"), (b"unknown=ignore", b"unknown=refuse"), (b"max-categories=3", b"max-categories=1"),
-                         (b"freq column=sex", b"freq column=port")):
+                         (b"freq column=sex", b"freq column=port"), (b"freq column=sex", b"freq column=age,sex")):
             p2 = plan.replace(old, new, 1)
             body = b"CML1" + struct.pack("<II", 1, 6)
             for t in (1, 2, 3, 4, 5, 6):

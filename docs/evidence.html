@@ -42,7 +42,7 @@
   <p class="lead">What each gate checks, against what, how it was shown able to fail, and what it does not prove.</p>
   <p class="sub">A gate is written before the code it judges. To show a gate can fail there is a <em>mutant</em>: a one-line change to the source (or to a table, a schema or the fixtures) that the gate must catch. A mutant that survives is explained or it is a gap. The oracles are programs written for the purpose, mostly in Python; they check the code against the document, not the document against anything outside it, and the page says where that matters.</p>
   <ul class="toc">
-    <li><a href="#conditions">Conditions</a></li><li><a href="#mutants">The mutants</a></li><li><a href="#cli">The command line</a></li><li><a href="#reader">The reader</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#models">Linear models, k-means</a></li><li><a href="#wiring">The wired models</a></li><li><a href="#pipeline">Transforms and pipeline</a></li><li><a href="#categorical">Categorical columns</a></li><li><a href="#encoders">Encoders of text columns</a></li><li><a href="#metrics">Metrics and splits</a></li><li><a href="#trees">Trees and forests</a></li><li><a href="#red">The red gate</a></li><li><a href="#determinism">Determinism</a></li><li><a href="#registries">The registries</a></li><li><a href="#notprove">What this does not prove</a></li>
+    <li><a href="#conditions">Conditions</a></li><li><a href="#mutants">The mutants</a></li><li><a href="#cli">The command line</a></li><li><a href="#reader">The reader</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#models">Linear models, k-means</a></li><li><a href="#wiring">The wired models</a></li><li><a href="#pipeline">Transforms and pipeline</a></li><li><a href="#categorical">Categorical columns</a></li><li><a href="#encoders">Encoders of text columns</a></li><li><a href="#stringtable">String table</a></li><li><a href="#metrics">Metrics and splits</a></li><li><a href="#trees">Trees and forests</a></li><li><a href="#red">The red gate</a></li><li><a href="#determinism">Determinism</a></li><li><a href="#registries">The registries</a></li><li><a href="#notprove">What this does not prove</a></li>
   </ul>
 </div>
 
@@ -220,6 +220,28 @@
     </tbody>
   </table></div>
   <p class="note"><strong>Not shown:</strong> the oracle is written from the same document, so it checks the code against the document; scikit-learn is the outside check for one-hot encoding with a penalty only (it has no equivalent of the rare bucket, the frequency or this hash). The hash is checked against Python&rsquo;s <code>hashlib</code>, not a second SHA-256 in this repository. No timing was taken; one machine.</p>
+</section>
+
+<section id="stringtable">
+  <h2>The string table of the model file</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/stringtable.md">docs/stringtable.md</a> sections 9 and 10; <code>sh scripts/gate_st.sh</code>. The model file of a fit with categorical steps stores the fitted vocabulary (the training strings and their counts) in a bounded, checksummed section, and <code>predict</code> and <code>eval</code> read the text columns from it. Judged against <code>scripts/oracle_st.py</code>, which writes the table, the stubs, the schema and the whole file again with <code>struct</code> and <code>hashlib</code> from the cells of the CSV, and reads a table and a file independently.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>S1, S6 the file, byte for byte</th><td>@@S1@@</td></tr>
+      <tr><th>S2 round trip</th><td>@@S2@@</td></tr>
+      <tr><th>S4 row order and threads</th><td>@@S4@@</td></tr>
+      <tr><th>S5 unseen, missing, markers, hashing</th><td>@@S5@@</td></tr>
+      <tr><th>S7 bounds</th><td>@@S7@@</td></tr>
+      <tr><th>S8 alignment by name</th><td>@@S8@@</td></tr>
+      <tr><th>S9 privacy</th><td>@@S9@@</td></tr>
+      <tr><th>S10 damaged files</th><td>@@S10@@</td></tr>
+      <tr><th>unit programs</th><td>@@UNIT@@</td></tr>
+      <tr><th>S11 scikit-learn, from the file</th><td>@@S11@@</td></tr>
+      <tr><th>mutants</th><td>@@MUT@@</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note"><strong>Not shown:</strong> the oracle is written from the same document, so it checks the code against the document; scikit-learn is the outside check for the logistic regression and for the accuracy of the forest, not for the bytes of the file. One machine, never quiet (load average 3 to 7 during the runs); no timing was taken. A hashed column is still interned while the fit reads the file, and the file holds the raw category strings of every other encoded column: the privacy point is documented, not removed.</p>
 </section>
 
 <section id="metrics">

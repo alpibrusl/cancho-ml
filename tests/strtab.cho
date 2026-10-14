@@ -2,8 +2,10 @@ import std.test;
 import std.buffer;
 import std.bytes;
 import std.crypto;
+import ml.catmat;
 import ml.dict;
 import ml.kinds;
+import ml.matrix;
 import ml.rng;
 import transforms.catenc;
 import transforms.codes;
@@ -1095,5 +1097,125 @@ fn test_the_stubs_must_be_at_the_steps_of_the_entries[&h](heap: &!h Heap) -> [he
         buffer.drop(heap, table);
     }
     buffer.drop(heap, payload);
+    return bad;
+}
+
+// ---------------------------------------------------------------- the payload and the hashed ids
+
+fn test_a_payload_with_one_name_twice_is_refused_by_the_decoder[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var a = head(heap, 7, 2, 0, 0, 1, 6);
+    a = col(heap, a, "c", "x=3,y=1");
+    a = col(heap, a, "c", "x=1");
+    var b = head(heap, 7, 2, 0, 0, 1, 6);
+    b = col(heap, b, "c", "x=3,y=1");
+    b = col(heap, b, "d", "x=1");
+    borrow a as &ar in {
+        let (st, code) = catenc.decode(heap, buffer.bytes(ar));
+        if code != codes.malformed() {
+            bad = bad + 1;
+        }
+        catenc.drop(heap, st);
+    }
+    borrow b as &br in {
+        let (st, code) = catenc.decode(heap, buffer.bytes(br));
+        if code != 0 {
+            bad = bad + 10;
+        }
+        catenc.drop(heap, st);
+    }
+    buffer.drop(heap, a);
+    buffer.drop(heap, b);
+    return bad;
+}
+
+// A hashed column of the reader (dict.set_hash) is read by a hash step as buckets: the id is the column of the block, an id outside 0 .. B-1 is a string the step cannot place
+// (unseen, counted, an all-zero block), a missing id follows the step's missing rule, and a step of another number of buckets refuses the vocabulary.
+fn test_the_ids_of_a_hashed_column_are_buckets_and_none_outside_them_is_placed[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var s = head(heap, 10, 1, 0, 1, 4, 10);
+    s = col(heap, s, "h", "");
+    let names = box_slice(heap, 2, byte_of('h'));
+    let ends = box_slice(heap, 2, 1);
+    var dm = dict.empty_dict(heap);
+    borrow names as &nr0 in {
+        borrow ends as &er0 in {
+            let (d2, dc) = dict.make(heap, 1, 4096, 1, 255, 1, contents(nr0), contents(er0));
+            dict.drop(heap, dm);
+            dm = d2;
+        }
+    }
+    unbox_slice(heap, names);
+    unbox_slice(heap, ends);
+    var voc = dict.freeze(heap, dm);
+    borrow mut voc as &!vw in {
+        let set = dict.set_hash(vw, 0, 4);
+        if !set || dict.hash_buckets(vw, 0) != 4 {
+            bad = bad + 1;
+        }
+    }
+    let (ids, ic) = catmat.make(heap, 5, 1, 1000, 100, 1000);
+    let (t, data, miss, unseen, rows, cols, wpc) = catmat.parts(ids);
+    var dw = data;
+    var mw = miss;
+    borrow mut dw as &!x in {
+        borrow mut mw as &!y in {
+            catmat.put(contents(x), cols, 0, 0, 0);
+            catmat.put(contents(x), cols, 1, 0, 3);
+            catmat.put(contents(x), cols, 2, 0, 4);
+            catmat.put(contents(x), cols, 3, 0, 0 - 2);
+            catmat.put(contents(x), cols, 4, 0, 0 - 1);
+            catmat.mark_missing(contents(y), wpc, 4, 0);
+        }
+    }
+    let idm = catmat.assemble(t, dw, mw, unseen, rows, cols, wpc);
+    borrow s as &sr in {
+        let (st, code) = catenc.decode(heap, buffer.bytes(sr));
+        if code != 0 {
+            bad = bad + 10;
+        }
+        borrow st as &fr in {
+            borrow idm as &ir in {
+                borrow voc as &vr in {
+                    let (m, u, f) = catenc.apply(heap, fr, ir, vr, 1, 1000, 100, 100000);
+                    if f.code != 0 {
+                        bad = bad + 100;
+                    } else {
+                        // rows: bucket 0, bucket 3, id 4 (outside), id -2 (unseen), missing with missing=zero (the step says zero): four columns each
+                        borrow m as &mr in {
+                            bad = bad + pt.diff(mr, "1,0,0,0;0,0,0,1;0,0,0,0;0,0,0,0;0,0,0,0");
+                        }
+                        if u != 2 {
+                            bad = bad + 1000;
+                        }
+                    }
+                    matrix.drop(heap, m);
+                }
+            }
+        }
+        catenc.drop(heap, st);
+    }
+    // a step of another number of buckets refuses the vocabulary
+    var s5 = head(heap, 10, 1, 0, 1, 5, 10);
+    s5 = col(heap, s5, "h", "");
+    borrow s5 as &s5r in {
+        let (st, code) = catenc.decode(heap, buffer.bytes(s5r));
+        borrow st as &fr in {
+            borrow idm as &ir in {
+                borrow voc as &vr in {
+                    let (m, u, f) = catenc.apply(heap, fr, ir, vr, 1, 1000, 100, 100000);
+                    if f.code != codes.schema_mismatch() {
+                        bad = bad + 10000;
+                    }
+                    matrix.drop(heap, m);
+                }
+            }
+        }
+        catenc.drop(heap, st);
+    }
+    catmat.drop(heap, idm);
+    dict.drop_vocab(heap, voc);
+    buffer.drop(heap, s);
+    buffer.drop(heap, s5);
     return bad;
 }
