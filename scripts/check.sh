@@ -3,7 +3,8 @@
 # package-mode build of `ml`, the schemas and the authority manifest checked against the sources, the conformance gates, and a
 # check that every edit of the mutant list still applies. The gates of lib/metrics and
 # lib/models/tree and the registry check are run here too. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
-# once per pattern, 53 of them, and run on request, as the stage 1 mutants do (the wiring stage's are scripts/mutants_wire.py: 40 patterns).
+# once per pattern, 52 of them, and run on request, as the stage 1 mutants do (the wiring stage's are scripts/mutants_wire.py: 40 patterns; the serving mutants, standard input,
+# ml-predict and describe, are scripts/mutants_serve.py).
 set -e
 cd "$(dirname "$0")/.."
 # absolute, because the conformance tests run from tests/conformance
@@ -44,6 +45,10 @@ sh scripts/gate_metrics.sh
 sh scripts/check_tree.sh
 # stage 2: the command line. Package mode: `cancho install` fetches the pinned contract modules into build/deps (not committed).
 $CANCHO build --bin ml
+# the prediction binary (docs/serving.md): the same sources, its own main
+$CANCHO build --bin ml-predict
+python3 scripts/check_bins.py
+python3 scripts/check_bins.py --mutants
 # the reader's gates (docs/reader.md section 5): reader-check against Python on millions of cells, the matrix and bitmap, the limits,
 # the CSV shape and the fuzz
 sh scripts/build_reader.sh
@@ -54,9 +59,11 @@ python3 scripts/mutants_cat.py --check
 python3 scripts/gate_cat.py all
 python3 scripts/gen_models.py --check
 python3 scripts/schemas.py --check
+python3 scripts/golden_describe.py --check
 python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
+python3 scripts/mutants_serve.py --check
 # the model module contract and the wiring (docs/modules.md, docs/wiring.md): the admission script on the wired models, the mutant modules it must refuse,
 # the byte-for-byte oracle (also run by the conformance tests above, with its own cases) and the patterns of the wiring mutants. The mutants and the
 # scikit-learn comparison (scripts/mutants_wire.py, scripts/gate_wire_sklearn.py, scripts/admit.py without --fast) run on request.

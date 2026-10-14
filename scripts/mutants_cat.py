@@ -182,11 +182,11 @@ MUTANTS = [
     M("c11-target-may-be-categorical", ["cli", "diff"], "--cat on the target is accepted",
       [("tools/ml/csv.cho", "                if j == tcol {\n                    return (cs, 27, j, 0);\n                }\n                if flags[j] == 3 {", "                if flags[j] == 3 {")]),
     M("c11-limit-flag-without-cat-accepted", ["cli"], "a limit flag without --cat is accepted",
-      [("tools/ml/main.cho", """    if cli.has(parsed, table, "max-categories") {
+      [("tools/ml/app.cho", """    if cli.has(parsed, table, "max-categories") {
         e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-categories");
     }""", "")]),
     M("c11-na-values-list-not-checked", ["cli"], "an empty marker in --na-values is accepted",
-      [("tools/ml/main.cho", "                if len(m) == 0 || len(m) > 255 {", "                if len(m) > 255 {")]),
+      [("tools/ml/app.cho", "                if len(m) == 0 || len(m) > 255 {", "                if len(m) > 255 {")]),
     M("c11-cat-fit-writes-a-model", ["cli"], "the refusal is not reached: --cat with a read that succeeds falls through to the numeric fit",
       [("tools/ml/main.cho", "        if o.cat_given && !wire.planned(o.plan_given, o.model) {\n            return (catcli.fit(heap, args, fs, root, ps.file, o, e3, lg), log_ok);\n        }", "")]),
     M("c11-unknown-cat-name-ignored", ["cli"], "--cat naming a column that is not in the header is not an error",

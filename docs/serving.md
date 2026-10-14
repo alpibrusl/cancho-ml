@@ -39,7 +39,7 @@ The mutants of the new code are in `scripts/mutants_serve.py`; each is killed or
 ### 2.1 What the command does
 
 `ml predict [flags] -` and `ml predict [flags]` (no file operand) read the CSV from standard input. **[choice]** Both spellings are accepted, as in `cancho-table`
-(`docs/readers.md` section 3 there): `-` is explicit, no operand is what a forgotten operand of an agent's subprocess does (an empty standard input, which is the refusal of an
+(the design of its standard input, section 3 of its readers document): `-` is explicit, no operand is what a forgotten operand of an agent's subprocess does (an empty standard input, which is the refusal of an
 empty file, `ml.input.empty`, not a hang on a terminal that no agent has). A file named `-` is `./-`. Only `predict` reads standard input: `fit` and `eval` need to read the
 file twice or more and keep their operand a file; `ml fit ... -` is the file named `-`, as it always was.
 
