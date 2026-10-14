@@ -153,7 +153,7 @@ def eval_oracle(case, ctx, rows_idx):
 
 
 # ---------------------------------------------------------------- the data
-def gen_case(seed, rows=None):
+def gen_case(seed, rows=None, force_impute=False):
     rng = random.Random(seed)
     n = rows or rng.choice([30, 64, 101, 257, 300, 513, 700])
     d = rng.randint(1, 6)
@@ -190,7 +190,7 @@ def gen_case(seed, rows=None):
             ok_cols.append(j)
     missing = [j for j in ok_cols if any(c == "" for c in cols[j])]
     steps, text = [], []
-    if missing and rng.random() < 0.93:
+    if missing and (force_impute or rng.random() < 0.93):
         st = {"kind": 1, "a": rng.choice([0, 0, 1, 2]), "b": 0, "value": rng.choice([0.0, 1.5, -2.0]), "cols": missing}
         steps.append(st)
         text.append(op.plan_line(st, names, None) + "\n")
@@ -355,14 +355,13 @@ def main():
         tmp = pathlib.Path(td)
         for init in INITS:
             for seed in range(1, n + 1):
-                case = gen_case(seed * 7919 + (101 if init == "random" else 0), rows=rows)
+                case = gen_case(seed * 7919 + (101 if init == "random" else 0), rows=rows, force_impute=large)
                 case.init = init
                 case.init_flag = True
                 if large:
                     case.k = 2 + (seed * 5) % 11
                     case.iters = 10
                     case.split = None
-                    case.steps = [s for s in case.steps if s["kind"] != 1] if False else case.steps
                 pr = run_case(case, tmp, threads=1 + seed % 4, all_threads=large)
                 cases += 1
                 (tmp / "m.cml").unlink(missing_ok=True)

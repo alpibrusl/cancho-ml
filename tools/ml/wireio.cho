@@ -729,6 +729,9 @@ fn constant_conflict[&h](heap: &!h Heap, errs: fail.Errors, o: verbs.Opts, verb:
     if verb == 2 && o.proba {
         e = wiredata.conflict(heap, e, "proba", "a constant classification always prints its probability, and a constant regression has none");
     }
+    if verb == 2 && o.distance {
+        e = wiredata.conflict(heap, e, "distance", "only a kmeans model has a distance to a cluster centre");
+    }
     return e;
 }
 

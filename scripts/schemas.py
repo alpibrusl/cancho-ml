@@ -77,6 +77,12 @@ def metrics_defs():
     return reg, cls
 
 
+def cluster_metrics_def():
+    """the metrics of a clustering: the inertia, the rows of each cluster and the mean distance of each (null for an empty cluster): docs/wiring-kmeans.md section 3"""
+    val = {"oneOf": [FLT, {"type": "null"}]}
+    return obj({"inertia": val, "sizes": {"type": "array", "items": NAT}, "mean_distance": {"type": "array", "items": val}})
+
+
 def data_defs():
     fit_summary = {"oneOf": [
         obj({"mean": DEC}),
@@ -127,12 +133,17 @@ def data_defs():
     summary_cls = obj({**summary_keys, **cat_keys, **classes, "split": split, "holdout": holdout_cls}, list(summary_keys) + ["classes", "positive"])
     summary_forest_reg = obj({**forest_keys, **cat_keys, "split": split, "holdout": holdout_reg}, list(forest_keys))
     summary_forest_cls = obj({**forest_keys, **cat_keys, **classes, "split": split, "holdout": holdout_cls}, list(forest_keys) + ["classes", "positive"])
+    # a clustering has no target (the target of its fit answer is null) and its summary says what the fit did (docs/wiring-kmeans.md section 3)
+    mclu = cluster_metrics_def()
+    cluster_keys = {"plan": {"type": "string"}, "steps": NAT, "features": NAT,
+                    "clusters": obj({"k": NAT, "iterations": NAT, "init": {"enum": ["random", "kmeans++"]}, "rows": NAT, "metrics": mclu})}
+    summary_clu = obj({**cluster_keys, **cat_keys, "split": split, "holdout": obj({"rows": NAT, "metrics": mclu})}, list(cluster_keys))
     fit_p = obj({
-        "model": names, "task": {"enum": ["regression", "classification"]}, "rows": NAT, "columns": NAT, "target": TB, "path": TB,
-        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls]},
+        "model": names, "task": {"enum": ["regression", "classification", "clustering"]}, "rows": NAT, "columns": NAT, "target": {"oneOf": [TB, {"type": "null"}]}, "path": TB,
+        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls, summary_clu]},
     })
     predict_p = obj({
-        "model": names, "task": {"enum": ["regression", "classification"]},
+        "model": names, "task": {"enum": ["regression", "classification", "clustering"]},
         "columns": {"type": "array", "items": {"type": "string"}},
         "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
         "row_count": NAT, "total_rows": NAT, "truncated": {"type": "boolean"},
@@ -142,7 +153,9 @@ def data_defs():
                      ["model", "task", "rows", "metrics", "unknown_categories"])
     eval_cls_p = obj({"model": names, "task": {"const": "classification"}, "rows": NAT, "positive": {"type": "integer"}, "metrics": mcls,
                       "unknown_categories": NAT, "split": split}, ["model", "task", "rows", "positive", "metrics", "unknown_categories"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p]}
+    eval_clu_p = obj({"model": names, "task": {"const": "clustering"}, "rows": NAT, "clusters": NAT, "metrics": mclu, "unknown_categories": NAT, "split": split},
+                     ["model", "task", "rows", "clusters", "metrics", "unknown_categories"])
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p]}
 
 
 def planned():
