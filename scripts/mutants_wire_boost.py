@@ -37,7 +37,7 @@ BOOST = ["test_wire_boost"]
 ORACLE = ["test_wire_boost_oracle"]
 FILES = ["test_wire_boost_file"]
 RULES = ["test_rules"]
-DESC = ["test_describe"]
+DESC = ["test_describe.Oracle", "test_describe.Contract"]
 BASE = ["test_wire_baseline", "test_cat_baseline", "test_planned_baseline"]
 
 
