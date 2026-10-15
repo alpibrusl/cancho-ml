@@ -415,7 +415,7 @@ pub fn run_name[&h, &i](heap: &!h Heap, id: &i [byte]) -> [heap] buffer.Buffer {
     return buffer.append(heap, buffer.append(heap, buffer.empty(heap, 80), id), ".json");
 }
 
-// `<run id>.eval-<scored sha256>.json`
+// `<run id>.eval-<key>.json`: the key is the scored file's SHA-256, or for an eval with a split the SHA-256 of that digest, a line break and the text of the split
 pub fn eval_name[&h, &i, &s](heap: &!h Heap, run: &i [byte], scored: &s [byte]) -> [heap] buffer.Buffer {
     var b = buffer.append(heap, buffer.empty(heap, 160), run);
     b = buffer.append(heap, b, ".eval-");
@@ -882,7 +882,23 @@ pub fn eval_after[&h, &f, &r, &pd, &pf, &pm, &pa](heap: &!h Heap, fs: &f Fs(""),
                                         buffer.drop(heap, rec);
                                         rec = eval_record(heap, buffer.bytes(ridr), buffer.bytes(mhr), paths.shown(file), size, buffer.bytes(shr), rows, buffer.bytes(onr), buffer.bytes(splr), o.seed, o.positive_v, o.positive_given, buffer.bytes(fr));
                                         buffer.drop(heap, name);
-                                        name = eval_name(heap, buffer.bytes(ridr), buffer.bytes(shr));
+                                        // the name carries the SHA-256 of the scored file; an eval with a split carries the SHA-256 of that digest, a line break and the text of the split, so that the same
+                                        // file scored under two splits is two records (docs/tracking.md section 5.3)
+                                        var key = buffer.append(heap, buffer.empty(heap, 65), buffer.bytes(shr));
+                                        if !bytes.equal(buffer.bytes(splr), "none") {
+                                            key = buffer.append(heap, buffer.push(heap, key, byte_of(10)), buffer.bytes(splr));
+                                            var kh = buffer.empty(heap, 1);
+                                            borrow key as &kr in {
+                                                buffer.drop(heap, kh);
+                                                kh = mfile.sha256_hex(heap, buffer.bytes(kr));
+                                            }
+                                            buffer.drop(heap, key);
+                                            key = kh;
+                                        }
+                                        borrow key as &kr2 in {
+                                            name = eval_name(heap, buffer.bytes(ridr), buffer.bytes(kr2));
+                                        }
+                                        buffer.drop(heap, key);
                                     }
                                 }
                             }

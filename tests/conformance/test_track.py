@@ -624,6 +624,97 @@ class Serve(Base):
             self.assertEqual(far.json()["out_of_range"]["columns"][0]["name"], "a")
 
 
+class Splits(Base):
+    """The split of a record is the canonical spec text of tools/ml/splitspec.cho (docs/tracking.md section 5.2, docs/splits.md section 2), for every strategy: the run id changes with
+    the strategy and the column, the eval record carries the text, `runs verify` replays the split at 1 and 8 threads, and `ml cv` takes no `--track`."""
+
+    def table(self):
+        rows = "".join("%d,g%d,%d.5,%d\n" % (i, i % 7, i * 3 % 11, i % 2) for i in range(60))
+        self.sb.write("sp.csv", "t,my grp,x,y\n" + rows.replace(",g", ",G ").replace("G 0", "G 0"))
+
+    def fit_sp(self, strategy_flags, name="sp.cml"):
+        r = self.sb.run("fit", "--model", "linear", "--target", "y", "--drop", "t,my grp", "--split", "train=0.75", "--seed", "3", *strategy_flags, "--output", name, "--overwrite", "--track", "runs", "sp.csv")
+        self.assertEqual(r.status, 0, r)
+        return r.data()["run"]["id"]
+
+    def test_the_record_holds_the_text_of_the_split_and_each_strategy_is_another_run(self):
+        self.table()
+        ids = {}
+        want = {"plain": ([], "holdout train=0.75 seed=3"), "group": (["--split-group", "my grp"], "holdout train=0.75 group=my%20grp seed=3"),
+                "time": (["--split-by", "time:t"], "holdout train=0.75 time=t seed=3")}
+        for k, (flags, text) in want.items():
+            ids[k] = self.fit_sp(flags)
+            rec = json.loads((self.sb.dir / "runs" / (ids[k] + ".json")).read_text())
+            self.assertEqual(rec["inputs"]["split"], text)
+            self.assertEqual(O.split_text("train=0.75", k if k != "plain" else "plain", {"plain": None, "group": "my grp", "time": "t"}[k], 3), text)
+        self.assertEqual(len(set(ids.values())), 3)
+        r = self.sb.run("fit", "--model", "linear", "--target", "y", "--drop", "t,my grp", "--output", "n.cml", "--track", "runs", "sp.csv")
+        nid = r.data()["run"]["id"]
+        self.assertEqual(json.loads((self.sb.dir / "runs" / (nid + ".json")).read_text())["inputs"]["split"], "none")
+        c = self.sb.run("runs", "compare", "runs", ids["plain"], ids["group"]).data()
+        self.assertEqual([x["key"] for x in c["inputs"]], ["split"])
+
+    def test_a_stratified_split_is_recorded_for_a_classification(self):
+        self.table()
+        r = self.sb.run("fit", "--model", "logistic", "--l2", "1", "--target", "y", "--drop", "t,my grp", "--split", "train=0.8", "--stratify", "--seed", "5", "--output", "st.cml", "--track", "runs", "sp.csv")
+        self.assertEqual(r.status, 0, r)
+        rid = r.data()["run"]["id"]
+        self.assertEqual(json.loads((self.sb.dir / "runs" / (rid + ".json")).read_text())["inputs"]["split"], "holdout train=0.8 stratify seed=5")
+        for th in ("1", "8"):
+            v = self.sb.run("--threads", th, "runs", "verify", "runs", rid)
+            self.assertEqual(v.status, 0, v)
+            self.assertTrue(v.data()["verified"])
+
+    def test_every_strategy_replays_at_one_and_eight_threads_to_the_same_model(self):
+        self.table()
+        for flags in ([], ["--split-group", "my grp"], ["--split-by", "time:t"]):
+            rid = self.fit_sp(flags)
+            sha = hashlib.sha256((self.sb.dir / "sp.cml").read_bytes()).hexdigest()
+            for th in ("1", "8"):
+                v = self.sb.run("--threads", th, "runs", "verify", "runs", rid)
+                self.assertEqual(v.status, 0, (flags, th, v))
+                self.assertEqual(v.data()["model_sha256"], sha)
+
+    def test_the_eval_record_carries_the_text_of_the_split_of_the_eval(self):
+        self.table()
+        rid = self.fit_sp([])
+        r = self.sb.run("eval", "--model-file", "sp.cml", "--drop", "t,my grp", "--split", "train=0.5", "--split-group", "my grp", "--seed", "2", "--track", "runs", "sp.csv")
+        self.assertEqual(r.status, 0, r)
+        self.assertEqual(r.data()["split"]["spec"], "holdout train=0.5 group=my%20grp seed=2")
+        evals = [n for n in os.listdir(self.sb.dir / "runs") if ".eval-" in n]
+        self.assertEqual(len(evals), 1)
+        scored = hashlib.sha256((self.sb.dir / "sp.csv").read_bytes()).hexdigest()
+        # the key of an eval with a split: the SHA-256 of the scored file's digest, a line break and the text of the split
+        self.assertEqual(evals[0], rid + ".eval-" + hashlib.sha256((scored + "\nholdout train=0.5 group=my%20grp seed=2").encode()).hexdigest() + ".json")
+        doc = json.loads((self.sb.dir / "runs" / evals[0]).read_text())
+        self.assertEqual((doc["run"], doc["split"]), (rid, "holdout train=0.5 group=my%20grp seed=2"))
+        self.assertEqual(self.sb.run("eval", "--model-file", "sp.cml", "--drop", "t,my grp", "--track", "runs", "sp.csv").status, 0)
+        plain = [n for n in os.listdir(self.sb.dir / "runs") if ".eval-" in n and n != evals[0]]
+        self.assertEqual(plain, [rid + ".eval-" + scored + ".json"])
+        self.assertEqual(json.loads((self.sb.dir / "runs" / plain[0]).read_text())["split"], "none")
+
+    def test_a_split_text_that_is_not_the_canonical_one_is_a_damaged_record(self):
+        self.table()
+        rid = self.fit_sp([])
+        p = self.sb.dir / "runs" / (rid + ".json")
+        old = json.loads(p.read_text())
+        # the record of a hand: the same inputs with `train=0.75` spelled 0.750, sealed again with the id and the check made again
+        text = p.read_text().replace("holdout train=0.75 seed=3", "holdout train=0.750 seed=3")
+        inputs = text.split('"inputs":')[1].split(',"threads"')[0]
+        new_id = hashlib.sha256(inputs.encode()).hexdigest()
+        body = text.split(',"check"')[0].replace(old["id"], new_id)
+        (self.sb.dir / "runs" / (new_id + ".json")).write_text(body + ',"check":"%s"}\n' % hashlib.sha256(body.encode()).hexdigest())
+        v = self.sb.run("runs", "verify", "runs", new_id)
+        self.assertEqual(v.first_rule(), "ml.runs.damaged", v)
+
+    def test_cv_takes_no_track_flag(self):
+        self.table()
+        r = self.sb.run("cv", "--model", "linear", "--target", "y", "--drop", "t,my grp", "--track", "runs", "sp.csv")
+        self.assertEqual((r.status, r.first_rule()), (2, "args.conflict"), r)
+        self.assertEqual(r.error()["detail"], {"flag": "track", "verb": "cv"})
+        self.assertEqual(os.listdir(self.sb.dir / "runs"), [])
+
+
 class Replay(Base):
     """T3: `runs verify` reproduces the model's SHA-256 for every kind, at 1 and at 8 threads (the cases of the oracle: constants, linear, logistic, tree, forest, kmeans, categorical, split)."""
 

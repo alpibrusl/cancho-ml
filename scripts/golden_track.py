@@ -9,6 +9,10 @@ This script does two things.
         explained: the status is the same; the files are the same except that a model file of the new binary is the old file with section 7 added (removing the section, repairing the count and
         the checksum, gives the old bytes exactly); the standard output is the same once the members of this stage are removed (bytes and sha256 of a model file, on, out_of_range,
         ignored_columns, provenance, run, the section count). It prints the files and the cases that changed, with the reason.
+    python3 scripts/golden_track.py --xplat OLD_BIN_DIR [NEW_BIN_DIR]
+        the same proof for the 22 fits of the cross-platform golden (docs/bench/xplat_fp.txt, scripts/xplat_check.py): each model file of the new binary is the old file with section 7 added, each
+        predict and eval answer is the old one once the members of this stage are removed, the exit codes are the old ones; it prints which lines of the golden change and which do not. The lines
+        `fit-exit` and the list of cases are the old golden's by construction.
     python3 scripts/golden_track.py --write
         rewrites golden_constant.json, golden_numeric.json, golden_planned.json and golden_describe.json with the binary under test (ML_BIN).
 
@@ -206,6 +210,71 @@ def verify(old_bin, new_bin):
     return 1 if bad else 0
 
 
+def xplat(old_dir, new_dir):
+    """the 22 cases of scripts/xplat_check.py with an old and a new build: (problems, changed lines by kind, unchanged lines by kind)"""
+    import shutil
+    import tempfile
+    import xplat_check as X
+
+    data = str(ROOT / "docs" / "examples" / "data")
+    works, bad = [], []
+    changed = {"model-file": 0, "predict": 0, "eval": 0}
+    same = {"fit-exit": 0, "model-file": 0, "predict": 0, "eval": 0}
+    try:
+        for d in (old_dir, new_dir):
+            w = tempfile.mkdtemp(prefix="xplat-proof-")
+            for f in os.listdir(data):
+                if f.endswith(".csv"):
+                    shutil.copy(os.path.join(data, f), w)
+            works.append(w)
+        for name, train, test, fit_args, pred_args in X.cases():
+            tf, sf, out = train + ".csv", test + ".csv", name + ".ml"
+            fa = ["fit"] + fit_args
+            if fit_args[fit_args.index("--model") + 1] != "kmeans":
+                fa += ["--target", X.last_column(os.path.join(works[0], tf))]
+            fa += ["--overwrite", "--output", out, tf]
+            steps = [("predict", ["predict", "--model-file", out, "--limit", "100000"] + pred_args + [sf])]
+            ev = ["eval", "--model-file", out] + (["--drop", pred_args[pred_args.index("--drop") + 1]] if "--drop" in pred_args else [])
+            steps.append(("eval", ev + [sf]))
+            res = []
+            for d, w in zip((old_dir, new_dir), works):
+                binary = os.path.join(os.path.abspath(d), "ml")
+                rc, so = X.run(binary, w, fa)
+                got = {"fit": (rc, so), "model": pathlib.Path(w, out).read_bytes() if rc == 0 else b""}
+                for what, args in steps:
+                    got[what] = X.run(binary, w, args)
+                res.append(got)
+            o, n = res
+            if o["fit"][0] != n["fit"][0]:
+                bad.append("%s: fit exit %d -> %d" % (name, o["fit"][0], n["fit"][0]))
+            same["fit-exit"] += o["fit"][0] == n["fit"][0]
+            if o["model"] == n["model"]:
+                same["model-file"] += 1
+            elif strip_provenance(n["model"]) == o["model"]:
+                changed["model-file"] += 1
+            else:
+                bad.append("%s: the model file differs by more than section 7" % name)
+            for what in ("predict", "eval"):
+                (r0, b0), (r1, b1) = o[what], n[what]
+                if r0 != r1:
+                    bad.append("%s %s: exit %d -> %d" % (name, what, r0, r1))
+                elif b0 == b1:
+                    same[what] += 1
+                else:
+                    try:
+                        ok = normalise(json.loads(b0)) == normalise(json.loads(b1))
+                    except Exception:  # noqa: BLE001
+                        ok = False
+                    if ok:
+                        changed[what] += 1
+                    else:
+                        bad.append("%s %s: the answer differs beyond the new members" % (name, what))
+    finally:
+        for w in works:
+            shutil.rmtree(w, ignore_errors=True)
+    return bad, changed, same
+
+
 def write():
     for name, script in (("golden_constant.json", "golden_constant.py"), ("golden_numeric.json", "golden_numeric.py"), ("golden_planned.json", "golden_planned.py")):
         out = subprocess.run([sys.executable, str(HERE / script)], capture_output=True, text=True, check=True).stdout
@@ -220,6 +289,13 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["--verify"]:
         sys.exit(verify(a[1], a[2] if len(a) > 2 else str(ROOT / "build" / "ml")))
+    if a[:1] == ["--xplat"]:
+        nd = a[2] if len(a) > 2 else str(ROOT / "build")
+        problems, ch, sm = xplat(a[1], nd)
+        for p in problems:
+            print("UNEXPLAINED " + p)
+        print("xplat: lines that change: %s; lines that stay: %s; unexplained: %d" % (ch, sm, len(problems)))
+        sys.exit(1 if problems else 0)
     if a[:1] == ["--write"]:
         sys.exit(write())
     print(__doc__)

@@ -690,6 +690,9 @@ def _tracking_cases():
         case("ml-runs-model-differs", ["runs", "verify", "runs", "@ID"], bad("ml.runs.model-differs"), setup=WITH_RUN + [("raw", _reseal_model_sha)]),
         case("ml-runs-not-replayable", ["runs", "verify", "runs", "@ID"], bad("ml.runs.not-replayable"),
              setup=[("mkdir", "runs"), ("raw", _wide), ("fit", "--model", "tree", "--task", "regression", "--target", "c00", "--drop", "c69", "--output", "w.cml", "--track", "runs", "wide.csv")]),
+        case("ml-cv-track-refused", ["cv", "--model", "linear", "--target", "y", "--track", "runs", "lin.csv"], bad("args.conflict"), setup=LBASE + [("mkdir", "runs")]),
+        case("ml-runs-fit-track-split-group", ["fit", "--model", "linear", "--target", "y", "--drop", "g", "--split", "train=0.75", "--split-group", "g", "--output", "lin.cml", "--track", "runs", "grp.csv"],
+             ok({"run": {"written": True}, "summary": {"split": {"spec": "holdout train=0.75 group=g seed=0"}}}), setup=[("mkdir", "runs"), ("write", "grp.csv", "g,a,y\n" + "".join("%s,%d,%d\n" % ("abcd"[i % 4], i, 2 * i + 1) for i in range(20)))]),
         case("ml-runs-list", ["runs", "list", "runs"], ok({"count": 1}), setup=WITH_RUN),
         case("ml-runs-verify", ["runs", "verify", "runs", "@ID"], ok({"verified": True}), setup=WITH_RUN),
     ]

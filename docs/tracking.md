@@ -21,6 +21,8 @@ data in the model file (section 2) and to write a run record that is a pure func
 | D7 | where runs live | a directory given by `--track DIR`, which must exist and lie under `--root` | the pinned compiler has no directory-creation primitive (`dir_*` has open, enter, list, stat, rename, remove, no make): the directory of `--output` must exist too; the issue's "created if absent" is **not done**, and the refusal is `io.not-found` with the path |
 | D8 | the eval record | a separate file `DIR/<run id>.eval-<scored sha256>.json` | one record is immutable once written, so an eval is never an edit of it; the same eval twice is the same file |
 | D9 | authority | none added (section 7) | `ml` already reads and writes files beneath `--root`; `ml-predict` and `ml-serve` only read the new section |
+| D10 | how a record names the split | the **canonical split text** of `tools/ml/splitspec.cho` (`docs/splits.md` section 2): `none`, or `holdout train=F [stratify \| group=C \| time=C] seed=S`, as one string, in the run record's `inputs` and in the eval record | one function writes the text of a split for the answers of `fit`, `eval` and `cv` and for the records, so the same split has the same words everywhere; the strategy and the column are inputs the fraction alone does not carry |
+| D11 | `ml cv --track` | **not offered**: `cv` refuses `--track` with `args.conflict` (`detail.flag` `track`, `detail.verb` `cv`) | section 5.7 |
 
 ## 2. The provenance section
 
@@ -162,7 +164,9 @@ determines the model bytes and nothing else:
 
 * the training file's name as given, SHA-256, size and row count (the name is an input: the same bytes under another name are another run, and `verify` finds the file by the name);
 * the target column name (null for a clustering), the canonical plan text (which holds the model and every hyperparameter), the task;
-* the seed, the positive label (null when `--positive` is not given) and the split as `{num, den}`, **the fraction that trains** in lowest terms (`train=0.8` and `train=0.80` are one split), or null;
+* the seed, the positive label (null when `--positive` is not given) and the split as its **canonical text** (D10): `none` without `--split`, else `holdout train=F` with the strategy of `--stratify`, `--split-group C` or
+  `--split-by time:C` and `seed=S`, written by `splitspec.text` (`train=0.8`, `train=0.80` and `train=.8` are the one text `holdout train=0.8 ...`; a column name is written with `%` and two upper-case hex digits for every byte outside `A-Za-z0-9_.-`). The seed is
+  recorded twice, in its own member and in the text, and the two are equal;
 * the lists `--drop`, `--float` and `--cat` as given, `--na-values` and the four reader limits of `--cat` (they are stored in the string table, so they change bytes);
 * the compiler pin (`meta` stores it, so another compiler is another model file) and the `sum_order` of the model kind.
 
@@ -175,7 +179,7 @@ bytes), `--output`, `--overwrite`, `--log`, `--format`. `verify` reads with the 
 {"schema":"ml.run.v1","id":"<64 hex>",
  "inputs":{"data":{"path":"iris_train.csv","bytes":N,"sha256":"..","rows":N},
            "target":"virginica"|null,"task":"classification"|"regression"|"clustering",
-           "plan":"<canonical plan text>","seed":0,"positive":null|N,"split":{"num":4,"den":5}|null,
+           "plan":"<canonical plan text>","seed":0,"positive":null|N,"split":"none"|"holdout train=0.8 [stratify|group=C|time=C] seed=0",
            "drop":"..","float":"..","cat":"..","na_values":"..","reader":{"max_categories":64,"max_string_bytes":255,"max_pool_bytes":1048576,"max_cat_columns":128}|null,
            "compiler":"<pin>","sum_order":2|3|null},
  "threads":1,
@@ -187,12 +191,14 @@ bytes), `--output`, `--overwrite`, `--log`, `--format`. `verify` reads with the 
 
 (`drop`, `float`, `cat`, `na_values` are the strings as given, empty when absent; `reader` is null when `--cat` was not given. `sum_order` is null for the constant kinds.)
 
-`check` is the SHA-256 of every byte of the record before `,"check":"`; a reader recomputes it and the id, so a record that was edited by one byte is `ml.runs.damaged`. `metrics` is the metric object `eval` prints for the same rows: the **held-out rows** when `--split` was given (`"on":"held-out"`), else the **training rows** (`"on":"train"`, scored through the stored steps by the same
+`check` is the SHA-256 of every byte of the record before `,"check":"`; a reader recomputes it and the id, so a record that was edited by one byte is `ml.runs.damaged`. `metrics` is the metric object `eval` prints for the same rows: the **held-out rows** (chosen by the strategy of `split`) when `--split` was given (`"on":"held-out"`), else the **training rows** (`"on":"train"`, scored through the stored steps by the same
 code as `eval`). A constant model has `metrics` null (its summary, the mean or the classes, is in the answer of `fit`; scoring a constant on its training rows is `ml eval`).
 The record is built from numbers `fit` already holds; it never contains a row, a cell or a category string.
 
-`ml eval --track DIR` writes `DIR/<run id>.eval-<scored sha256>.json`, schema `ml.eval.v1`: `{"schema":"ml.eval.v1","run":"<id>","model_sha256":"..","data":{"path":..,"bytes":..,"sha256":..,"rows":..},"on":"train"|"other"|"unknown","split":{"num":..,"den":..,"seed":..}|null,"positive":..|null,"metrics":{...},"check":".."}`. The `answer` of `fit --track` names the record in `data.run` (`id`, `dir`, `file`, `written`, `sha256`).
-The run is found by the model file's SHA-256 among the records of `DIR`; none is `ml.runs.unknown-model`. The same eval twice writes the same bytes (idempotent as above).
+`ml eval --track DIR` writes `DIR/<run id>.eval-<scored sha256>.json`, schema `ml.eval.v1`: `{"schema":"ml.eval.v1","run":"<id>","model_sha256":"..","data":{"path":..,"bytes":..,"sha256":..,"rows":..},"on":"train"|"other"|"unknown","split":"none"|"holdout ...","positive":..|null,"metrics":{...},"check":".."}`, where `split` is the `split.spec` of the answer of `eval` (`none` without `--split`). The `answer` of `fit --track` names the record in `data.run` (`id`, `dir`, `file`, `written`, `sha256`).
+The run is found by the model file's SHA-256 among the records of `DIR`; none is `ml.runs.unknown-model`. The same eval twice writes the same bytes (idempotent as above). The file name is
+`DIR/<run id>.eval-<key>.json` where the key is the scored file's SHA-256 for an eval without a split and, for an eval with `--split`, the SHA-256 of that digest in lowercase hex, a line break and the split text, so that one file scored under two
+splits is two records and not a conflict (`runs list` counts both).
 
 ### 5.4 The verbs (`ml runs ...`)
 
@@ -205,12 +211,16 @@ All four go through the flag table, `introspect`, `skill`, the schemas and the m
 * `ml runs compare DIR ID ID`: `{"a":..,"b":..,"inputs":[{"key":"seed","a":0,"b":1},...],"metrics":[{"name":"rmse","a":"..","b":"..","equal":false}],"model_equal":bool}`: the `inputs` members that differ (a
   dotted key for the nested ones) and the metrics side by side (a member missing on one side is null there).
 * `ml runs verify DIR ID`: reads the record, checks the SHA-256 of the training file named in it (`ml.runs.data-changed` if it differs, detail: recorded and found), **refits in memory** (the fit code of `fit`, with
-  the inputs of the record, at `--threads`, default 1; no file is written) and compares the SHA-256 of the resulting model file bytes with the record's: equal gives `{"verified":true,...}`; different is
+  the inputs of the record, at `--threads`, default 1; no file is written; the split text is read back by `splitspec.parse`, which accepts a text only when `splitspec.text` writes it back from the parts it read, and a record whose split is not that
+  text is `ml.runs.damaged`) and compares the SHA-256 of the resulting model file bytes with the record's: equal gives `{"verified":true,...}`; different is
   `ml.runs.model-differs` with the two hashes and the two compiler pins (the usual cause) in detail.
 
 The columns that a fit read as `--drop`, `--float` or `--cat` are replayed from the lists of the record by position in the header of the training file, which the replay reads first. **Limit [choice]**: the replay of a
 column that carries one of these three flags needs its header position below 62 (a bit mask in the reader's configuration, because the reader's configuration is a plain structure that cannot hold a runtime
 string at the pinned compiler); a record that needs more is refused with `ml.runs.not-replayable` (detail: the column). Fits with such a flag on a column past the 62nd are not replayable by `verify`.
+
+The split of a replay is the split of the record for every strategy: the plain, the stratified, the group and the time holdout choose the same rows, because the replay uses the code of `fit` (`splitwire.holdout_sel`) with the strategy and the column of the text. A
+group or time column is found by its name in the header of the training file, so the limit of the 62nd position above does not apply to it. The model's SHA-256 is reproduced at 1 and at 8 threads for each strategy (`scripts/oracle_track.py --suite`, the cases `stratified`, `group` and `time`).
 
 ### 5.5 Rule tags
 
@@ -224,6 +234,14 @@ unrepresentable statistic, `ml.model.malformed` for a damaged section 7.
 A record holds hashes, counts, flags, the plan and the names the plan and the schema hold. It never holds a row, a cell, a category string (the vocabulary lives in the model file, not in the record) or a path outside
 `--root`. The training file's **name as given** (relative to `--root`) is stored, so that `verify` can find the file; an absolute path is refused at the command line already (`path.absolute`). A test scans the
 records of every fixture for every cell and every category of its training file.
+
+### 5.7 `ml cv` is not tracked **[choice]**
+
+`ml cv` (`docs/splits.md` section 6) writes no model file: it fits each fold in memory and prints the fold metrics and their aggregate. A record of a cross-validation would not be a variant of the record above but another kind
+(no `model`, no `counts` of one fit, a list of fold results and a summary instead; its id over the inputs and the split text `cv folds=K repeats=R ... seed=S`), and `runs list`, `show`, `compare` and `verify` would each need a second path:
+`verify` would run `cv` again (its own code, `tools/ml/cv.cho`) and compare the aggregates, `compare` would place two summaries side by side. That is a second record schema, a second replay and the tests for both, so it is not done here:
+`ml cv` takes no `--track` and refuses it as `args.conflict` like any flag a verb does not take (fixture `ml-cv-track-refused`, test `Splits.test_cv_takes_no_track_flag`). A cross-validated fit is tracked by tracking the fit that follows it, whose record names its own split.
+The canonical text of a `cv` already exists (`splitspec.text` with `cv` true), so a later record of a cross-validation has its words.
 
 ## 6. Where the fit is computed
 
