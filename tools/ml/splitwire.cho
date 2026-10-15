@@ -1,0 +1,269 @@
+edition 6;
+
+module ml.splitwire;
+
+// The rows of a holdout and the folds of a cross-validation, for a table that is already read (docs/splits.md sections 3 and 4): the labels of a classification, the second reading of
+// the group or time column, the plan of ml.splitplan and the refusals. `fit --split`, `eval --split` and `cv` all come here, so there is one assignment.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.fsio;
+import ml.paths;
+import ml.spec;
+import ml.splitcol;
+import ml.splitplan;
+import ml.splitspec;
+import ml.verbs;
+import ml.wiredata;
+import metrics.splits;
+import toolbox.fail;
+
+// what the strategies read besides the matrix
+res struct Keys {
+    gid: Box[[int]],
+    groups: int,
+    order: Box[[int]],
+    labels: Box[[int]],
+}
+
+fn drop_keys[&h](heap: &!h Heap, k: Keys) -> [heap] int {
+    let Keys { gid, groups, order, labels } = k;
+    unbox_slice(heap, gid);
+    unbox_slice(heap, order);
+    unbox_slice(heap, labels);
+    return groups;
+}
+
+fn flag_of(strategy: int) -> [] &static [byte] {
+    if strategy == 2 {
+        return "--split-group";
+    }
+    return "--split-by";
+}
+
+// the group ranks or the time order of the column, read from the file again. (keys, ok, errors)
+fn load_keys[&h, &f, &r, &pf, &y](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, sp: splitspec.SplitOpts, o: verbs.Opts, n: int, task: int, yall: &y [float], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Keys, bool, fail.Errors) {
+    var e = errs;
+    var go = true;
+    let strategy = splitspec.strategy(sp);
+    var labels = box_slice(heap, n + 1, 0);
+    if task == 2 {
+        borrow mut labels as &!lw in {
+            var i = 0;
+            while i < n {
+                contents(lw)[i] = truncate(yall[i]);
+                i = i + 1;
+            }
+        }
+    }
+    var gid = box_slice(heap, 2, 0);
+    var order = box_slice(heap, 2, 0);
+    var groups = 0;
+    if strategy == 2 || strategy == 3 {
+        let col = splitspec.column(sp);
+        if bytes.equal(col, o.target) {
+            e = splitspec.column_target(heap, e, flag_of(strategy), col);
+            go = false;
+        }
+        var data = buffer.empty(heap, 1);
+        if go {
+            let (d2, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(file), paths.full(file), o.max_bytes);
+            buffer.drop(heap, data);
+            data = d2;
+            if st == 1 || st == 2 {
+                e = fail.io_error(heap, e, aux, false, paths.shown(file));
+                go = false;
+            } else if st == 3 {
+                var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "the file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_int(heap, w, "size", aux);
+                w = fail.detail_int(heap, w, "max", o.max_bytes);
+                e = fail.add(heap, e, w);
+                go = false;
+            }
+        }
+        if go {
+            borrow data as &dr in {
+                let (text, off, rows, st) = splitcol.extract(heap, buffer.bytes(dr), col, n);
+                if st == 1 {
+                    var w = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "the column of --split-by or --split-group is not in the header", "names are compared exactly, byte for byte");
+                    w = fail.no_repair(heap, w);
+                    w = fail.detail_open(heap, w);
+                    w = fail.detail_str(heap, w, "flag", flag_of(strategy));
+                    w = fail.detail_text(heap, w, "name", col);
+                    e = fail.add(heap, e, w);
+                    go = false;
+                } else if st != 0 || rows != n {
+                    // the reader read this file and found n rows; a second reading that disagrees is reported as the ragged row it would be
+                    var w = fail.open_in(heap, spec.extra(), "parse.csv-ragged-row", "a data row has a different number of fields from the header", "fix the row");
+                    w = fail.no_repair(heap, w);
+                    w = fail.detail_open(heap, w);
+                    w = fail.detail_int(heap, w, "rows", rows);
+                    e = fail.add(heap, e, w);
+                    go = false;
+                }
+                if go {
+                    borrow text as &tr in {
+                        borrow off as &ordr in {
+                            if strategy == 2 {
+                                let (g2, count, miss) = splitcol.group_ranks(heap, buffer.bytes(tr), contents(ordr), n);
+                                unbox_slice(heap, gid);
+                                gid = g2;
+                                groups = count;
+                                if miss > 0 {
+                                    e = splitspec.missing_cell(heap, e, col, miss);
+                                    go = false;
+                                }
+                            } else {
+                                let (k1, k2, tst, trow, reason) = splitcol.time_keys(heap, buffer.bytes(tr), contents(ordr), n);
+                                if tst == 1 {
+                                    e = splitspec.missing_cell(heap, e, col, trow);
+                                    go = false;
+                                } else if tst == 2 {
+                                    e = splitspec.time_format(heap, e, col, trow, splitcol.reason_word(reason));
+                                    go = false;
+                                } else {
+                                    borrow k1 as &ar in {
+                                        borrow k2 as &br in {
+                                            let o2 = splitcol.time_order(heap, contents(ar), contents(br), n);
+                                            unbox_slice(heap, order);
+                                            order = o2;
+                                        }
+                                    }
+                                }
+                                unbox_slice(heap, k1);
+                                unbox_slice(heap, k2);
+                            }
+                        }
+                    }
+                }
+                buffer.drop(heap, text);
+                unbox_slice(heap, off);
+            }
+        }
+        buffer.drop(heap, data);
+    }
+    return (Keys { gid: gid, groups: groups, order: order, labels: labels }, go, e);
+}
+
+// the entries --emit-folds may put in an answer, compared before anything is allocated
+fn emit_ok(sp: splitspec.SplitOpts, entries: int) -> [] bool {
+    return !sp.emit || entries <= splitspec.emit_max();
+}
+
+// `[a,b,..]` of vals[lo .. hi]
+pub fn json_vector[&h, &v](heap: &!h Heap, vals: &v [int], lo: int, hi: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 2 * (hi - lo) + 4);
+    b = buffer.push(heap, b, byte_of('['));
+    var i = lo;
+    while i < hi {
+        if i > lo {
+            b = buffer.push(heap, b, byte_of(','));
+        }
+        if vals[i] < 0 {
+            b = buffer.push(heap, b, byte_of('-'));
+            b = buffer.push_nat(heap, b, 0 - vals[i]);
+        } else {
+            b = buffer.push_nat(heap, b, vals[i]);
+        }
+        i = i + 1;
+    }
+    b = buffer.push(heap, b, byte_of(']'));
+    return b;
+}
+
+// The holdout of `--split train=F` by the strategy of `sp`: (sel, test rows, ok, errors); sel[i] is 1 for a held-out row, 0 for a train row.
+pub fn holdout_sel[&h, &g, &f, &r, &pf, &y](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, sp: splitspec.SplitOpts, o: verbs.Opts, n: int, task: int, yall: &y [float], errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (Box[[int]], int, bool, fail.Errors) {
+    var e = errs;
+    var sel = box_slice(heap, n + 1, 0);
+    let strategy = splitspec.strategy(sp);
+    let (sok, num, den) = wiredata.parse_split(o.split);
+    let nt = splits.n_test_for(n, num, den);
+    if strategy == 1 && task != 2 {
+        return (sel, 0, false, splitspec.stratify_target(heap, e, args, task));
+    }
+    if !emit_ok(sp, n) {
+        return (sel, 0, false, splitspec.emit_too_large(heap, e, args, n));
+    }
+    if nt < 1 || n < 2 || nt > n - 1 {
+        return (sel, 0, false, splitspec.plan_error(heap, e, args, false, 1, 0, 0, 2));
+    }
+    let (keys, go, e2) = load_keys(heap, fs, root, file, sp, o, n, task, yall, e);
+    e = e2;
+    var ok = go;
+    if go {
+        var kind = 0;
+        var a = 0;
+        var b = 0;
+        borrow keys as &kr in {
+            borrow mut sel as &!sw in {
+                let (k3, a3, b3) = splitplan.holdout(heap, strategy, n, nt, o.seed, o.max_rows, contents(kr.labels), contents(kr.gid), kr.groups, contents(kr.order), contents(sw)[0..n]);
+                kind = k3;
+                a = a3;
+                b = b3;
+            }
+        }
+        if kind != 0 {
+            e = splitspec.plan_error(heap, e, args, false, kind, a, b, 2);
+            ok = false;
+        }
+    }
+    drop_keys(heap, keys);
+    // the rows held out: nt for every strategy but the group one, which holds out whole groups
+    var held = 0;
+    borrow sel as &cr in {
+        var i = 0;
+        while i < n {
+            held = held + contents(cr)[i];
+            i = i + 1;
+        }
+    }
+    return (sel, held, ok, e);
+}
+
+// The folds of `cv`: (assignment, ok, errors); the fold of row i in repeat r is assignment[r * n + i] (a time split: the block minus 1)
+pub fn cv_assign[&h, &g, &f, &r, &pf, &y](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, sp: splitspec.SplitOpts, o: verbs.Opts, n: int, task: int, yall: &y [float], errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (Box[[int]], bool, fail.Errors) {
+    var e = errs;
+    let strategy = splitspec.strategy(sp);
+    let reps = sp.repeats;
+    var assign = box_slice(heap, 2, 0);
+    if strategy == 1 && task != 2 {
+        return (assign, false, splitspec.stratify_target(heap, e, args, task));
+    }
+    if reps > 0 && n > splitspec.emit_max() / reps && sp.emit {
+        return (assign, false, splitspec.emit_too_large(heap, e, args, n * reps));
+    }
+    if n < 2 || sp.folds > n {
+        return (assign, false, splitspec.plan_error(heap, e, args, true, 1, 0, 0, sp.folds));
+    }
+    let (keys, go, e2) = load_keys(heap, fs, root, file, sp, o, n, task, yall, e);
+    e = e2;
+    var ok = go;
+    if go {
+        unbox_slice(heap, assign);
+        assign = box_slice(heap, n * reps + 1, 0);
+        var kind = 0;
+        var a = 0;
+        var b = 0;
+        borrow keys as &kr in {
+            borrow mut assign as &!aw in {
+                var rep = 0;
+                while rep < reps && kind == 0 {
+                    let (k3, a3, b3) = splitplan.folds(heap, strategy, n, sp.folds, rep, o.seed, o.max_rows, contents(kr.labels), contents(kr.gid), kr.groups, contents(kr.order), contents(aw)[rep * n..rep * n + n]);
+                    kind = k3;
+                    a = a3;
+                    b = b3;
+                    rep = rep + 1;
+                }
+            }
+        }
+        if kind != 0 {
+            e = splitspec.plan_error(heap, e, args, true, kind, a, b, sp.folds);
+            ok = false;
+        }
+    }
+    drop_keys(heap, keys);
+    return (assign, ok, e);
+}

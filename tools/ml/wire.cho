@@ -28,6 +28,8 @@ import ml.spec;
 import ml.verbs;
 import ml.wiredata;
 import ml.refuse;
+import ml.splitspec;
+import ml.splitwire;
 import metrics.rules;
 import metrics.splits;
 import models.common;
@@ -199,14 +201,14 @@ pub fn model_tokens[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Pa
 // ---------------------------------------------------------------- fit
 
 // the plan, parsed, the wired model it names and that model's hyperparameters (integers and floats, in manifest order)
-res struct Planned {
+pub res struct Planned {
     pl: plan.Plan,
     kind: int,
     ip: Box[[int]],
     fp: Box[[float]],
 }
 
-fn drop_planned[&h](heap: &!h Heap, p: Planned) -> [heap] int {
+pub fn drop_planned[&h](heap: &!h Heap, p: Planned) -> [heap] int {
     let Planned { pl, kind, ip, fp } = p;
     plan.drop(heap, pl);
     unbox_slice(heap, ip);
@@ -249,7 +251,7 @@ fn plan_source[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byt
     return (b, true, e);
 }
 
-fn make_plan[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Planned, bool, fail.Errors) {
+pub fn make_plan[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Planned, bool, fail.Errors) {
     var e = errs;
     var go = true;
     let (ptxt, ok1, e1) = plan_source(heap, fs, root, planp, o, tokens, e);
@@ -296,7 +298,7 @@ fn make_plan[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte]
 }
 
 // the CSV as a matrix of all its kept columns, the schema, the target's place and, for a classification, the two labels (c0 the negative, c1 the positive)
-res struct Data {
+pub res struct Data {
     x: matrix.Matrix,
     sh: csv.Shape,
     sc: schema.Schema,
@@ -311,7 +313,7 @@ res struct Data {
     cat: bool,
 }
 
-fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
+pub fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
     let Data { x, sh, sc, tj, nrows, ncols, c0, c1, yall, cat } = d;
     matrix.drop(heap, x);
     csv.drop_shape(heap, sh);
@@ -320,11 +322,11 @@ fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
     return nrows;
 }
 
-fn empty_data[&h](heap: &!h Heap) -> [heap] Data {
+pub fn empty_data[&h](heap: &!h Heap) -> [heap] Data {
     return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, yall: box_slice(heap, 2, 0.0), cat: false };
 }
 
-fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, mixed_plan: bool, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
+pub fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, mixed_plan: bool, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
@@ -530,7 +532,7 @@ fn indices_but[&h](heap: &!h Heap, cols: int, skip: int) -> [heap] Box[[int]] {
 }
 
 // the fitted steps and the estimator's parameters
-res struct Trained {
+pub res struct Trained {
     fitted: run.Fitted,
     wv: Box[[float]],
     // the payload of the model section of a model of the blob interface (the tree and the forest), else one byte
@@ -541,7 +543,7 @@ res struct Trained {
     report: buffer.Buffer,
 }
 
-fn drop_trained[&h](heap: &!h Heap, t: Trained) -> [heap] int {
+pub fn drop_trained[&h](heap: &!h Heap, t: Trained) -> [heap] int {
     let Trained { fitted, wv, blob, d, rows, report } = t;
     run.drop_fitted(heap, fitted);
     unbox_slice(heap, wv);
@@ -550,12 +552,12 @@ fn drop_trained[&h](heap: &!h Heap, t: Trained) -> [heap] int {
     return rows;
 }
 
-fn empty_trained[&h](heap: &!h Heap) -> [heap] Trained {
+pub fn empty_trained[&h](heap: &!h Heap) -> [heap] Trained {
     return Trained { fitted: run.empty_fitted(heap), wv: box_slice(heap, 2, 0.0), blob: box_slice(heap, 1, byte_of(0)), d: 0, rows: 0, report: buffer.empty(heap, 1) };
 }
 
 // the feature columns of a table read for a fit: all of them, but the target when there is one
-fn feature_count[&d](ds: &d Data) -> [] int {
+pub fn feature_count[&d](ds: &d Data) -> [] int {
     if ds.tj >= 0 {
         return ds.ncols - 1;
     }
@@ -563,7 +565,7 @@ fn feature_count[&d](ds: &d Data) -> [] int {
 }
 
 // Fit the steps on the training rows (those of `sel` equal to `want`, all when want < 0), then the estimator on what the steps leave
-fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
+pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
     var e = errs;
     var go = true;
     let nfeat = feature_count(ds);
@@ -901,7 +903,7 @@ fn answer_fit[&h, &f, &r, &po, &d, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [
 
 // the summary of a fit as JSON: the plan, the coefficients, the labels, the split and the held-out metrics
 // the coefficients and the intercept of a vector model
-fn put_coefficients[&h, &pp](heap: &!h Heap, w0: json.Writer, tr: &pp Trained) -> [heap] json.Writer {
+pub fn put_coefficients[&h, &pp](heap: &!h Heap, w0: json.Writer, tr: &pp Trained) -> [heap] json.Writer {
     var w = w0;
     w = json.put_key(heap, w, "coefficients");
     w = json.begin_array(heap, w);
@@ -959,7 +961,7 @@ fn put_clusters[&h, &pp, &ip](heap: &!h Heap, w0: json.Writer, tr: &pp Trained, 
     return w;
 }
 
-fn fit_summary[&h, &pp, &dd, &sp, &tb, &ii](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.Plan, kind: int, task: int, c0: int, c1: int, split: &sp buffer.Buffer, ntest: int, o: verbs.Opts, cat: bool, table: &tb [byte], ip: &ii [int]) -> [heap] buffer.Buffer {
+fn fit_summary[&h, &pp, &dd, &sp, &tb, &ii, &xs, &xa](heap: &!h Heap, tr: &pp Trained, pl: &dd plan.Plan, kind: int, task: int, c0: int, c1: int, split: &sp buffer.Buffer, ntest: int, o: verbs.Opts, cat: bool, table: &tb [byte], ip: &ii [int], spec_text: &xs [byte], assign_json: &xa [byte]) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 512);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "plan");
@@ -997,6 +999,12 @@ fn fit_summary[&h, &pp, &dd, &sp, &tb, &ii](heap: &!h Heap, tr: &pp Trained, pl:
         w = json.put_int(heap, w, ntest);
         w = json.put_key(heap, w, "seed");
         w = json.put_int(heap, w, o.seed);
+        w = json.put_key(heap, w, "spec");
+        w = json.put_string(heap, w, spec_text);
+        if len(assign_json) > 0 {
+            w = json.put_key(heap, w, "assignment");
+            w = json.put_fragment(heap, w, assign_json);
+        }
         w = json.end_object(heap, w);
         w = json.put_key(heap, w, "holdout");
         w = json.put_fragment(heap, w, buffer.bytes(split));
@@ -1014,7 +1022,7 @@ fn apply_any[&h, &p, &m, &i, &v](heap: &!h Heap, cat: bool, payload: &p [byte], 
 }
 
 // ,"split":{...},"holdout":{...} for the rows --split held out, scored through the STORED steps and the fitted model
-fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, bool, fail.Errors) {
+pub fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     var go = true;
     var w = json.writer(heap, 256);
@@ -1119,7 +1127,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
 }
 
 // the model file's bytes and the summary of the answer
-fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
+fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &xs, &xa](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, spec_text: &xs [byte], assign_json: &xa [byte], errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     let kind = pls.kind;
     var mp = box_slice(heap, 8, byte_of(0));
@@ -1197,7 +1205,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, 
         buffer.drop(heap, summary);
         borrow split as &spq in {
             borrow table as &tbr in {
-                summary = fit_summary(heap, tr, pls.pl, kind, est.task_of(kind, contents(pls.ip)), ds.c0, ds.c1, spq, ntest, o, ds.cat, buffer.bytes(tbr), contents(pls.ip));
+                summary = fit_summary(heap, tr, pls.pl, kind, est.task_of(kind, contents(pls.ip)), ds.c0, ds.c1, spq, ntest, o, ds.cat, buffer.bytes(tbr), contents(pls.ip), spec_text, assign_json);
             }
         }
     }
@@ -1206,7 +1214,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, 
     return (fbytes, summary, go, e);
 }
 
-pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
+pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
     var e = errs;
     var lg = log;
     let (pls, ok1, e1) = make_plan(heap, fs, root, planp, tokens, o, e);
@@ -1256,23 +1264,36 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
     var sel = box_slice(heap, dn + 1, 0);
     var want = 0 - 1;
     var ntest = 0;
+    var spec_buf = buffer.empty(heap, 1);
+    var assign_buf = buffer.empty(heap, 1);
     if go && o.split_given {
-        let (sok, num, den) = wiredata.parse_split(o.split);
-        let nt = splits.n_test_for(dn, num, den);
-        var code = 0;
-        if nt < 1 {
-            code = rules.empty_fold();
-        } else {
-            borrow mut sel as &!sw in {
-                code = splits.train_test(heap, dn, nt, o.seed, 0, o.max_rows, contents(sw)[0..dn]);
-            }
+        var okh = false;
+        var nt = 0;
+        var sel2 = box_slice(heap, 2, 0);
+        borrow ds as &dq1 in {
+            let (s3, nt3, ok3, e3) = splitwire.holdout_sel(heap, args, fs, root, file, sp, o, dn, task, contents(dq1.yall), e);
+            unbox_slice(heap, sel2);
+            sel2 = s3;
+            nt = nt3;
+            okh = ok3;
+            e = e3;
         }
-        if code != 0 {
-            e = wiredata.code_error(heap, e, code, 0, 0, 0);
+        if !okh {
+            unbox_slice(heap, sel2);
             go = false;
         } else {
+            unbox_slice(heap, sel);
+            sel = sel2;
             want = 0;
             ntest = nt;
+            buffer.drop(heap, spec_buf);
+            spec_buf = splitspec.text(heap, false, o.split, 0, 0, splitspec.strategy(sp), splitspec.column(sp), o.seed);
+            if sp.emit {
+                borrow sel as &sq5 in {
+                    buffer.drop(heap, assign_buf);
+                    assign_buf = splitwire.json_vector(heap, contents(sq5), 0, dn);
+                }
+            }
         }
     }
     // a tree or forest fit takes at most params.rows_max() training rows (docs/wiring-trees.md section 6): counted here, before any copy of the rows is made
@@ -1319,13 +1340,17 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
                     borrow pls as &pr in {
                         borrow tr as &tq in {
                             borrow sel as &sq in {
-                                let (fb2, sm2, ok7, e7) = assemble(heap, args, dr, cir, cvr, pr, tq, contents(sq), ntest, o, e);
-                                buffer.drop(heap, fbytes);
-                                buffer.drop(heap, summary);
-                                fbytes = fb2;
-                                summary = sm2;
-                                e = e7;
-                                go = ok7;
+                                borrow spec_buf as &spb in {
+                                    borrow assign_buf as &asb in {
+                                        let (fb2, sm2, ok7, e7) = assemble(heap, args, dr, cir, cvr, pr, tq, contents(sq), ntest, o, buffer.bytes(spb), buffer.bytes(asb), e);
+                                        buffer.drop(heap, fbytes);
+                                        buffer.drop(heap, summary);
+                                        fbytes = fb2;
+                                        summary = sm2;
+                                        e = e7;
+                                        go = ok7;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1361,6 +1386,8 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         result = verbs.nothing(heap, e, lg);
     }
     buffer.drop(heap, fbytes);
+    buffer.drop(heap, spec_buf);
+    buffer.drop(heap, assign_buf);
     unbox_slice(heap, sel);
     drop_trained(heap, tr);
     drop_data(heap, ds);
