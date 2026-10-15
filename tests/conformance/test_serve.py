@@ -508,6 +508,31 @@ class Kinds(unittest.TestCase):
         r = s.request("POST", "/predict/batch", body=b'{"rows":[{"c0":"red","n":3},{"c0":"","n":3}]}', headers=JSON)
         self.assertEqual((r.status, json.loads(r.text())["rule"]), (422, "ml.input.missing-value"))
 
+    def test_column_names_with_a_comma_a_quote_and_a_slash(self):
+        # the header of the CSV quotes them (RFC 4180), the pointer of an error escapes them (RFC 6901), the document names them
+        import random
+        rng = random.Random(3)
+        rows = ['"x,1","y""z","a/b~c",t']
+        for i in range(40):
+            a, b, c = rng.randint(0, 20), rng.randint(0, 9), rng.randint(0, 5)
+            rows.append("%d,%d,%d,%d" % (a, b, c, a * 2 + b - c))
+        SB.write("odd.csv", "\n".join(rows) + "\n")
+        fit = SB.run("fit", "--model", "linear", "--l2", "0.1", "--target", "t", "--step", "impute column=* strategy=mean", "--output", "odd.cml", "odd.csv")
+        self.assertEqual(fit.status, 0, fit)
+        s = self.serve("odd.cml")
+        r = s.request("POST", "/predict", body=json.dumps({"x,1": 3, "y\"z": 2, "a/b~c": 1}).encode(), headers=JSON)
+        self.assertEqual(r.status, 200, r)
+        SB.write("o1.csv", '"x,1","y""z","a/b~c"\n3,2,1\n')
+        cli = SB.run("predict", "--model-file", "odd.cml", "o1.csv")
+        self.assertEqual(r.json()["rows"], cli.data()["rows"])
+        r = s.request("POST", "/predict", body=json.dumps({"x,1": 3, "y\"z": 2, "a/b~c": "x"}).encode(), headers=JSON)
+        self.assertEqual(r.status, 422)
+        self.assertEqual(r.json()["errors"][0]["pointer"], "/a~1b~0c")
+        r = s.request("POST", "/predict/batch", body=json.dumps({"rows": [{"x,1": 3, "y\"z": 2, "a/b~c": 1}, {"x,1": 3, "y\"z": 2, "a/b~c": 1.5}]}).encode(), headers=JSON)
+        self.assertEqual((r.status, r.json()["rule"], r.json()["errors"][0]["pointer"]), (422, "ml.schema.mismatch", "/rows/1/a~1b~0c"))
+        doc = json.loads(s.request("GET", "/openapi.json").text())
+        self.assertEqual(list(doc["components"]["schemas"]["Record"]["properties"])[:3], ["x,1", 'y"z', "a/b~c"])
+
     def test_a_model_with_a_column_named_rows(self):
         SB.write("rows.csv", "rows,x,y\n1,2,3\n2,3,5\n3,5,8\n4,7,11\n5,11,16\n")
         fit = SB.run("fit", "--target", "y", "--output", "rowsmodel.cml", "--model", "linear", "--step", "impute column=* strategy=mean", "rows.csv")

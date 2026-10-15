@@ -198,37 +198,52 @@ the server's rows (a digit dropped, a quote added), the column order of the CSV 
 
 ### 5.1 One thread, bounded everything
 
-Single thread (the `Poller` of the loop); a request is parsed and answered before the next. Bounded: the body (`--max-body-bytes`, enforced by the loop's buffer: head plus body past it is 413), the head
-(16,384 bytes, the loop's `431`), the rows (`--max-batch-rows`), the cells (rows times columns, against `--max-cells` of the predictor, set to the product of the model's columns and the row limit), the JSON
-nesting (`std.json`'s depth), the time of an idle connection (`--idle-seconds`), the number of connections (1,024 less what the buffers need). There is **no request timeout beyond the idle one**: the pinned loop
-has no deadline per request, and a handler that runs long (a large forest over 1,000 rows) holds every other connection; the load test (section 10) measures the time of a request at the ceiling.
+Single thread (the `Poller` of the loop); a request is parsed and answered before the next. Bounded, and where each bound comes from:
+
+| what | the bound | by |
+|---|---|---|
+| the body | `--max-body-bytes` (default 1 MiB, ceiling 4 MiB): more is `413 serve.body-too-large` (problem+json) when the loop's buffer still holds the request, and the loop's own `413` when head and body past the buffer (`--max-body-bytes` plus 16 KiB); the connection is closed after the loop's | the handler, then `http.server` |
+| the head | 65,536 bytes and 64 headers (`std.http`'s `max_head` and the table of the loop): more is the loop's `400 {"error": ...}` | the pinned `std.http` **[measured]**: 17,000 bytes served, 70,000 refused; 60 headers served, 70 refused |
+| the records | `--max-batch-rows` (default 100, ceiling 1,000): more is `413 serve.batch-too-large`, judged before the records are | the handler |
+| the cells | the predictor's `--max-cells` is set to the rows times 8,192 and its `--max-columns` to 8,192 (the width of an encoded matrix, a one-hot block included), `--max-rows` to the rows of the request | the predictor |
+| the JSON | nesting past the depth `std.json` allows is `400 serve.body-not-json` | `std.json` |
+| the tape and the CSV of one request | about 24 bytes of tape for each byte of body, and the CSV (about the body's size): a body of the ceiling's 4 MiB takes about 100 MiB while it is judged and none after | the handler |
+| an idle connection | `--idle-seconds` (default 10, ceiling 3,600): a connection that makes no progress is closed | `http.server` |
+| the connections | the loop keeps one buffer of `--max-body-bytes` + 16 KiB for each connection within 256 MiB, and 1,024 at most: at the default 1 MiB about 250 are served **[measured]**; a connection past that is not served and the server goes on (S4) | `http.server` |
+
+There is **no request timeout beyond the idle one**: the pinned loop has no deadline for a request, and a handler that runs long (a large forest over 1,000 rows) holds every other connection while it runs. The
+load test (section 10) reports the time of a request of the ceiling.
 
 ### 5.2 The size of an answer
 
-See 1.3 and 3.2. A batch of the ceiling's 1,000 rows of two columns is at most 1,000 times about 56 bytes; the server checks the final length against 60,000 and answers 500 `serve.internal` otherwise (it cannot happen: the check is a
-backstop with a mutant).
+See 1.3 and 3.2. A batch of the ceiling's 1,000 rows of two columns is at most 1,000 times about 56 bytes; the server checks the final length against 60,000 and answers `500 serve.internal` otherwise (it cannot
+happen: the check is a backstop). `GET /model` and `GET /openapi.json` are chosen to fit at start (3.3, 3.5).
 
 ### 5.3 The refusals and their statuses
 
-Refusals are `application/problem+json` (RFC 9457) with a `rule` field, **except the three that the loop and the router write before the handler is reached**: `400` (malformed HTTP head), `413` (head and body past the
-buffer), `431` (head too large) are `application/json` `{"error": "..."}` from `http.server`, and `405` is `application/json` `{"error":"method not allowed"}` with `Allow` from cancho-web's `dispatch` **[read]**. Everything
-else, including the `404` for a path that is not a route (`web.dispatch`), is `problem+json`.
+Refusals are `application/problem+json` (RFC 9457) with a `rule` field and the `model_sha256`, **except the answers that the loop and the router write before the handler is reached**: `400` (malformed HTTP head), `413`
+(head and body past the buffer) and `431` are `application/json` `{"error": "..."}` from `http.server`, `405` is `application/json` `{"error":"method not allowed"}` with `Allow` from cancho-web's `dispatch`, and
+`401`/`403` are cancho-web's `guard` bodies **[read]**. They have no `rule` and (but for the loop's) the head of every answer has the `X-Model-Sha256` header. The `404` for a path that is not a route (`web.dispatch`) is
+`problem+json` without a `rule`.
 
 | status | when | `rule` |
 |---|---|---|
-| 400 | the body is not JSON (syntax, a BOM, invalid UTF-8, NaN or Infinity, a control character, nesting past the depth limit, trailing bytes), or has a duplicate key in a record | `serve.body-not-json`, `serve.duplicate-key` |
-| 401, 403 | a token is set and the request has none, or an unknown one (401), or one that does not list the scheme (403): `web.guard`'s answers | none (cancho-web's body) |
-| 404 | the path is not a route | none (cancho-web's body, `problem+json`) |
+| 400 | the body is not JSON (syntax, a BOM, invalid UTF-8, NaN or Infinity, a control character, nesting past the depth limit, trailing bytes), or has a key twice in a record or twice `rows` | `serve.body-not-json`, `serve.duplicate-key` |
+| 401, 403 | a token is set and the request has none or an unknown one (401), or one that does not list the scheme (403) | none (cancho-web's body) |
+| 404 | the path is not a route | none (cancho-web's body) |
 | 405 | the method is not allowed on the route | none (cancho-web's `{"error"}` with `Allow`) |
-| 413 | the batch has more than `--max-batch-rows` records (`serve.batch-too-large`); the body is larger than `--max-body-bytes` (the loop, no `rule`) | |
-| 415 | `Content-Type` of a predict POST is not `application/json` (parameters allowed) | `serve.media-type` |
-| 422 | the body breaks the request schema: a missing column, an unknown column, a value of the wrong type, a string outside the `enum`, an empty or missing `rows`; **all errors, each with its JSON Pointer** | `ml.schema.mismatch` |
-| 422 | a number that cannot be rendered exactly for its column (3 above), a string that cannot be rendered | `serve.number-not-exact`, `serve.string-not-renderable` |
-| 422 | the predictor refuses the CSV: `ml.input.non-numeric`, `ml.input.non-finite`, `ml.input.missing-value`, `ml.input.categorical-*`, `ml.input.unseen-category`, `ml.input.empty`, `ml.input.too-many-rows`, `ml.input.unsupported-type`, every other `ml.input.*`, `ml.label.*`, `ml.schema.*`, `parse.*` | the predictor's tag, and the predictor's error object as `error` |
-| 413 | the predictor refuses a limit: `limit.line-too-long`, `limit.input-too-large`, `limit.too-many-rows`, `limit.too-many-columns`, `limit.too-many-cells` | the predictor's tag |
-| 500 | anything the request cannot cause: `ml.model.*` (the file was checked at start), `ml.limit.*`, `ml.metric.*`, `ml.tensor.*`, `ml.linalg.*`, `io.*`, `path.*`, `args.*`, an answer the server cannot print as JSON | the predictor's tag, or `serve.internal` |
+| 413 | the batch has more than `--max-batch-rows` records; the body is longer than `--max-body-bytes` | `serve.batch-too-large`, `serve.body-too-large` |
+| 415 | `Content-Type` of a predict POST is not `application/json` (parameters allowed, case ignored) | `serve.media-type` |
+| 422 | the body breaks the request schema: a missing column, an unknown column, a value of the wrong type, a string outside the `enum`, null for a column that takes none, an empty or missing `rows`, an integer outside 12 digits; **all errors (the first 16 stored, the count of all), each with its JSON Pointer** | `ml.schema.mismatch` |
+| 422 | a number that cannot be written exactly for its column (4), a category with CR LF | `serve.number-not-exact`, `serve.string-not-renderable` |
+| 422 | the model's answer for a row is not a finite number (the command line prints it as text that is not a number: `i.nf`) | `serve.non-finite-prediction` |
+| 422 | the predictor refuses the CSV because of the data in it: `ml.schema.mismatch`, `ml.input.non-numeric`, `ml.input.non-finite`, `ml.input.missing-value`, `ml.input.unknown-category`, `ml.input.invalid-utf8`, `ml.input.reserved-category`, `ml.input.duplicate-column`, `ml.input.unknown-column`, `ml.limit.string-bytes`, `ml.limit.string-pool`, `ml.limit.categories`, `ml.limit.categorical-columns` | the predictor's tag, and its error object as `error` |
+| 413 | the predictor refuses a limit of the size of the input: `limit.line-too-long`, `limit.input-too-large`, `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.too-many-cells` | the predictor's tag, and its error object as `error` |
+| 500 | everything else, which a request cannot cause: `ml.model.*` (the file was checked at start), `ml.plan.*`, `ml.fit.*`, `ml.linalg.*`, `ml.metric.*`, `ml.tensor.*`, `ml.split.*`, `ml.label.*`, `ml.param.*`, `ml.input.empty`, `parse.*`, `io.*`, `path.*`, `args.*`, `conflict.*`, an answer the server cannot write | the predictor's tag, or `serve.internal` |
 
-The mapping is a function of the tag's prefix and is exercised by the end-to-end tests with a representative of every row; a gate (S9) checks that every tag in `ml introspect` has a row.
+The mapping is a function of the tag, two lists in `tools/ml-serve/srv.cho` (`status_of`) that gate S9 compares with this table and with the tags of `ml introspect`; the end-to-end tests reach a representative of
+each row they can (the schema, the number and the string rules, a refusal of the predictor with its status and its rule equal to the command line's, the size rules). The schema's `ml.schema.mismatch` of the
+predictor itself (a column the CSV lacks) cannot happen: the server writes every column.
 
 ### 5.4 Where it listens, and the token
 
@@ -237,7 +252,7 @@ rule "a bind that is not loopback requires a token" applies to **every** start: 
 `--no-token` is an explicit acknowledgement that every host that can reach the port can call the model; it is for a machine whose firewall is the access control. A move of the compiler pin to a
 `tcp_listen` with a host argument is the change that lets a loopback default come back (section 11).
 
-With `--token-file`: the file is read once at start, below `--root`, at most 4,096 bytes; one trailing LF (and CR) is removed; an empty token, a token with a byte outside `!` to `~` (a space inside, a control byte,
+With `--token-file`: the file is read once at start, below `--root` (a file of more than 1 MiB is `limit.input-too-large`); one trailing LF (and CR) is removed, and the rest is at most 4,096 bytes; an empty token, a token with a byte outside `!` to `~` (a space inside, a control byte,
 non-ASCII) is refused at start (`serve.token`). The token is held as data in `web.tokens` (`web.token`), compared by `web.guard` in constant time (cancho-web's `same_secret`), required by **every operation except `GET /health`**
 (`web.require`/`web.no_auth`; `web.next_undecided` must find none at start, else the server refuses to run, as cancho-web's `guarded` example does). The token is never logged and is not in `/model` or `/openapi.json`
 (the document names the scheme). Transport is plain HTTP: a bearer token on the wire is as private as the network is; TLS is for a proxy in front.
@@ -251,7 +266,7 @@ value, a token or a header. **[choice]** The clock is read for the idle timeout 
 
 `ml-serve` reads the model once and does everything that can be refused before it listens: the command line (`args.*`), the path (`path.*`), the model file (`io.*`, `limit.input-too-large`, `ml.model.*`,
 `ml.model.string-table`: a damaged file is refused with its tag and exit code, exactly the refusal of `ml describe`), the token (`serve.token`), a column name that is not UTF-8 (`serve.column-name`), the size of the
-documents (3.5), the port (`serve.listen`, exit 4, when the port is in use). Exit codes follow `docs/cli.md`: usage 2, input 3 to 8 as for `describe`, `serve.listen` 4.
+documents (3.5), the port (`serve.listen`, exit 5, when the port is in use or needs a privilege). Exit codes follow `docs/cli.md`: usage 2, a missing input 3, a limit or a refused file 8, `serve.listen` 5.
 
 ## 6. Authority
 
