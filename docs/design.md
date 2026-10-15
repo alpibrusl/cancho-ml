@@ -123,25 +123,25 @@ rank 1, `u64` shape, `i64` elements); `meta` = `u64` rows, `u64` columns, `u64` 
 compiler pin. The layout is parsed by an independent reader in `tests/conformance/test_model_file.py`, and a corrupted-file fuzz
 (every truncation, every byte flipped three ways, seeded damage with and without a repaired checksum) never traps.
 
-**The sum order in `meta` (rule written at `v1-post`, before the code; the proposal of section 17).** The arithmetic of a model of kind 4 to 7
-(linear, logistic, k-means, tree or forest) depends on the summation order of `docs/linalg.md` section 2, so the file says which order made it. The
+**The sum order in `meta` (rule written at `v1-post`, before the code; the proposal of section 17).** The arithmetic of a model of kind 4 to 8
+(linear, logistic, k-means, tree, forest or boost) depends on the summation order of `docs/linalg.md` section 2, so the file says which order made it. The
 rule is a function of the model kind, which a reader knows before it reads `meta` (the `model` section comes first):
 
 * **kinds 1 to 3** (constants: exact integer and `facc` arithmetic, no float order): the `meta` payload is exactly what it was, `u64 rows | u64 columns | u64 seed
   | u32 hyperparameters | u32 length | compiler pin`. **Their bytes do not change**, and a kind 1 to 3 file whose `meta` is longer than `32 + length` is
   `ml.model.malformed`, as before.
-* **kinds 4 and above** (every kind whose row of the table below says so; today 4 to 7): the payload is that, then **`u32 sum_order`**, the last four bytes of `meta`:
+* **kinds 4 and above** (every kind whose row of the table below says so; today 4 to 8): the payload is that, then **`u32 sum_order`**, the last four bytes of `meta`:
   `meta` is exactly `36 + length` bytes, else `ml.model.malformed` (a `meta` of any other length is not looked at for the order: the ordinary field checks refuse it). `sum_order` = **2** for the order of `docs/linalg.md` section 2
   (`K = 256`, `L = 4`, `(l0 + l1) + (l2 + l3)`, the fixed tree, panels of 32). **1** is the order before `v1-lanes` (one chain per block): retired,
-  never written by a model file, refused if found. **3 is the order of kind 7** (a tree or a forest: every float sum is a sequential left fold in a fixed row or tree order and no lane sum is made, `docs/models-tree.md` 3.2; `docs/wiring-trees.md` section 4): a reader requires exactly the value of the kind, 2 for kinds 4 to 6 and 3 for kind 7. **Kind 6 (k-means) records 2**: its decisive sums, the sums of the Lloyd update and the metrics of `eval`, are the lane order; the one sum that is not is the k-means++ total of the initialisation, a left fold in row order on one thread that picks the initial rows (`docs/wiring-kmeans.md` section 6). 0 and 4 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
+  never written by a model file, refused if found. **3 is the order of kinds 7 and 8** (a tree or a forest, and a boosted model: every float sum is a sequential left fold in a fixed row, bin or round order and no lane sum is made, `docs/models-tree.md` 3.2, `docs/models-boost.md` 3.1; `docs/wiring-trees.md` section 4): a reader requires exactly the value of the kind, 2 for kinds 4 to 6 and 3 for kinds 7 and 8. **Kind 6 (k-means) records 2**: its decisive sums, the sums of the Lloyd update and the metrics of `eval`, are the lane order; the one sum that is not is the k-means++ total of the initialisation, a left fold in row order on one thread that picks the initial rows (`docs/wiring-kmeans.md` section 6). 0 and 4 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
   of a kind is fixed by the kind.
-* **A reader refuses a file whose `sum_order` it does not implement with `ml.model.version`** (detail `sum_order` found, `known` the order of the kind: 2, or 3 for kind 7): it cannot reproduce the
+* **A reader refuses a file whose `sum_order` it does not implement with `ml.model.version`** (detail `sum_order` found, `known` the order of the kind: 2, or 3 for kinds 7 and 8): it cannot reproduce the
   parameters' arithmetic, and the same refusal tag as an unknown format version says "refit with this version". The order of the checks is bad-magic, version,
   truncated, checksum, **sum order (version)**, then malformed: the field is inside a checksummed section, so it is read after the checksum, and before the other fields,
   so a file of another order is never reported as malformed because its parameters look odd. A reader that does not build a kind (today `ml`, which builds 1 to 3) still reads
-  the sum order of a kind 4 to 7 file first: a wrong order is `ml.model.version`, a right one is `ml.model.malformed` (section 4: "not built").
+  the sum order of a kind 4 to 8 file first: a wrong order is `ml.model.version`, a right one is `ml.model.malformed` (section 4: "not built").
 * Writers: `lib/pipeline/file.cho` writes the field for the kinds it is given (4 and above); `tools/ml/mfile.cho` writes kinds 1 to 3 only and so never writes it. Tests:
-  `tests/conformance/test_model_file.py` (an independent reader and writer of the field; a file of kind 4 to 7 with order 0, 1, 3 and `0xFFFFFFFF` is `ml.model.version`, a
+  `tests/conformance/test_model_file.py` (an independent reader and writer of the field; a file of kind 4 to 8 with order 0, 1, 3 and `0xFFFFFFFF` is `ml.model.version`, a
   kind 1 to 3 file with the extra four bytes is malformed), `tests/t_pipeline.cho`, `t_pipeline_fuzz.cho`, `oracle_pipe.py --file`.
 
 **Registry of the numbers in the file (added at integration; one table, a number is never reused).** `lib/core/kinds.cho` holds the
@@ -157,6 +157,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 5 | logistic regression | the same two records, then `labels` i64 rank 1 `2`: the negative and the positive label (payload version 2, W1) | `lib/models/record.cho` | no (`pipeline.file`, since W1) |
 | 6 | k-means | `centroids` f64 rank 2 `k x d`; the schema section of the file has no target (its target index is the number of columns) | `lib/models/record.cho`, `lib/models/kmeans/adapter.cho` | no (`pipeline.file`, `docs/wiring-kmeans.md` section 6) |
 | 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
+| 8 | gradient-boosted trees | nine records, i64 and f64, rank 1 (`docs/models-boost.md` section 5); the task is a field of the first; for a classification a tenth, `labels`, as kind 5 | `lib/models/boost/model.cho` | no |
 
 **Step kinds** (the `u32` that opens one step in the `steps` section; `lib/core/kinds.cho` `step_*`, `docs/transforms.md` section 4; the `steps` payload is `u32 n` then `n` times `u64 length | step`, and `n = 0` is the four bytes `mfile.cho` writes):
 
@@ -176,7 +177,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 **Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta, and **6 strings (the string table, present only when a step of kind 7 to 10 needs it; `sections` is then 6, and 5 otherwise: a file without a categorical step has the bytes it always had)**. The byte layout of the table, its bounds (pool at most 8 MiB, strings at most 2^17, the section at most 12 MiB), its SHA-256, the 8-byte stub that stands for a categorical step in the `steps` section (kind, layout 2), the schema type 3 (a categorical input column) and the refusals `ml.model.string-table` (code 328) and `ml.limit.string-table` (code 329) are in `docs/stringtable.md`. The next step kind is 11. Kinds 7 to 10 are the categorical steps of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them, and in a model file each is an 8-byte stub whose payload is an entry of the string table (`docs/stringtable.md`).
 
 Kinds 4 and 5 are built by `ml` since W1 (`tools/ml/wire.cho`, through `lib/pipeline/file.cho` and the adapters of `lib/models`; the logistic payload gained a labels record, `docs/wiring.md` section 4); kinds 6 and 7 are written by libraries only, and `mfile.cho` (the reader of the constant kinds)
-refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
+refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 8 are unassigned; the next model takes 9. Kind 8 is built by `ml` since the boosting stage (`docs/models-boost.md`). Tensor
 dtypes: 1 = i64, 2 = f64 (one table for every record, the same in `mfile.cho`, `record.cho` and `tree/model.cho`). Section tags of the
 file: 1 plan, 2 schema, 3 steps, 4 model, 5 meta, in that order. The column types in `schema` (0 int, 1 dec, 2 float, 3 categorical) are not dtypes.
 The stream kinds of the random generator have their own registry in `docs/rng.md`; the numeric refusal codes of the libraries are in
