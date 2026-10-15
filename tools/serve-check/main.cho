@@ -1,0 +1,121 @@
+edition 5;
+
+// serve-check: the number cells of ml-serve (tools/ml-serve/num.cho) for a script to compare with Python (tests/conformance/test_serve_json.py, docs/serving-http.md gate S3).
+// Not a product: a driver for a gate, as tools/reader-check is. Standard input is lines `TYPE SCALE TEXT` (TYPE 0 int, 1 dec, 2 float; SCALE the scale of a dec; TEXT a
+// JSON number); standard output is a line for each, `ok CELL` or `refused CODE` (1 not exact, 2 out of the range of a double), and `json` or `notjson` for TYPE 3, the grammar
+// check of an answer's number.
+
+import std.buffer;
+import std.io;
+import serve.num;
+
+fn digit(c: int) -> [] int {
+    if c >= 48 && c <= 57 {
+        return c - 48;
+    }
+    return 0 - 1;
+}
+
+fn answer_line[&h, &l](heap: &!h Heap, out: buffer.Buffer, line: &l [byte]) -> [heap] buffer.Buffer {
+    var o = out;
+    if len(line) < 4 {
+        return buffer.append(heap, o, "bad\n");
+    }
+    let ty = digit(int_of(line[0]));
+    var at = 2;
+    var scale = 0;
+    while at < len(line) && digit(int_of(line[at])) >= 0 {
+        scale = scale * 10 + digit(int_of(line[at]));
+        if scale > 100 {
+            scale = 100;
+        }
+        at = at + 1;
+    }
+    if at >= len(line) || ty < 0 || ty > 3 {
+        return buffer.append(heap, o, "bad\n");
+    }
+    let text = line[at + 1..len(line)];
+    if ty == 3 {
+        if num.is_json_number(text) {
+            return buffer.append(heap, o, "json\n");
+        }
+        return buffer.append(heap, o, "notjson\n");
+    }
+    var cell = buffer.empty(heap, 32);
+    var status = 0;
+    if ty == 2 {
+        let (c2, s2) = num.float_cell(heap, cell, text);
+        cell = c2;
+        status = s2;
+    } else {
+        let (c2, s2) = num.exact_cell(heap, cell, text, scale * ty);
+        cell = c2;
+        status = s2;
+    }
+    if status == 0 {
+        o = buffer.append(heap, o, "ok ");
+        borrow cell as &cr in {
+            o = buffer.append(heap, o, buffer.bytes(cr));
+        }
+    } else {
+        o = buffer.append(heap, o, "refused ");
+        o = buffer.push_nat(heap, o, status);
+    }
+    buffer.drop(heap, cell);
+    return buffer.push(heap, o, byte_of(10));
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var line = buffer.empty(heap, 256);
+    var out = buffer.empty(heap, 65536);
+    var going = true;
+    while going {
+        let c = getchar(io);
+        if c < 0 || c == 10 {
+            borrow line as &lr in {
+                if buffer.size(lr) > 0 {
+                    out = answer_line(heap, out, buffer.bytes(lr));
+                }
+            }
+            buffer.drop(heap, line);
+            line = buffer.empty(heap, 256);
+            if c < 0 {
+                going = false;
+            }
+        } else {
+            line = buffer.push(heap, line, byte_of(c));
+        }
+        var size = 0;
+        borrow out as &orr in {
+            size = buffer.size(orr);
+        }
+        if size > 60000 || !going {
+            borrow out as &ob in {
+                io.write_all(io, buffer.bytes(ob));
+            }
+            buffer.drop(heap, out);
+            out = buffer.empty(heap, 65536);
+        }
+    }
+    buffer.drop(heap, line);
+    buffer.drop(heap, out);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(clock);
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}

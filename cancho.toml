@@ -135,3 +135,10 @@ name = "ml-serve"
 sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml/app.cho", "tools/ml/catcli.cho", "tools/ml/catwire.cho", "tools/ml/csv.cho", "tools/ml/csvcell.cho", "tools/ml/csvload.cho", "tools/ml/est.cho", "tools/ml/fsio.cho", "tools/ml/logrec.cho", "tools/ml/mdesc.cho", "tools/ml/mfile.cho", "tools/ml/paths.cho", "tools/ml/spec.cho", "tools/ml/verbs.cho", "tools/ml/wire.cho", "tools/ml/wiredata.cho", "tools/ml/wireio.cho", "tools/ml-serve", "generated/ml-serve"]
 std = true
 out = "build/ml-serve"
+
+# the driver of the number gate of ml-serve (tests/conformance/test_serve_json.py, docs/serving-http.md gate S3): the cell tools/ml-serve/num.cho makes for a number, for a script to compare with Python.
+[[bin]]
+name = "serve-check"
+sources = ["tools/ml-serve/num.cho", "tools/serve-check"]
+std = true
+out = "build/serve-check"

@@ -166,11 +166,13 @@ fn mismatch[&h, &s, &b](heap: &!h Heap, sha: &s [byte], out: buffer.Buffer, sche
 // The answer
 // ---------------------------------------------------------------------
 
-// The answer of 3.2 from the document `ml predict` made (`payload`): the same values, between no quotes. (the body, whether it could be made)
-fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) -> [heap] (buffer.Buffer, bool) {
+// The answer of 3.2 from the document `ml predict` made (`payload`): the same values, between no quotes. (the body, 0 it is made, 1 the document is not what `ml predict` writes,
+// 2 a value is not a number: the model's answer for the row is not finite, and the command line prints such a value as text such as `i.nf`)
+fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) -> [heap] (buffer.Buffer, int) {
     let tape = box_slice(heap, json.tape_len(payload), 0);
     var w = json.writer(heap, 512);
     var good = false;
+    var numeric = true;
     borrow mut tape as &!tw in {
         let tp = contents(tw);
         if json.parse(payload, tp) > 0 {
@@ -188,12 +190,15 @@ fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) ->
                 var c = 0;
                 while good && c < json.count(tp, row) {
                     let cell = json.at(tp, row, c);
-                    good = json.is_string(tp, cell) && num.is_json_number(json.string_view(payload, tp, cell));
+                    good = json.is_string(tp, cell);
+                    if good && !num.is_json_number(json.string_view(payload, tp, cell)) {
+                        numeric = false;
+                    }
                     c = c + 1;
                 }
                 r = r + 1;
             }
-            if good {
+            if good && numeric {
                 w = json.begin_object(heap, w);
                 w = json.put_key(heap, w, "model_sha256");
                 w = json.put_string(heap, w, sha);
@@ -238,11 +243,14 @@ fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) ->
         }
     }
     unbox_slice(heap, tape);
-    if !good {
+    if !good || !numeric {
         json.drop(heap, w);
-        return (buffer.empty(heap, 1), false);
+        if good {
+            return (buffer.empty(heap, 1), 2);
+        }
+        return (buffer.empty(heap, 1), 1);
     }
-    return (json.finish(w), true);
+    return (json.finish(w), 0);
 }
 
 // ---------------------------------------------------------------------
@@ -360,10 +368,12 @@ fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g 
         buffer.drop(heap, rule);
     } else {
         borrow payload as &pr in {
-            let (body_out, good) = prediction(heap, buffer.bytes(pr), api.sha_of(sv.built));
+            let (body_out, made) = prediction(heap, buffer.bytes(pr), api.sha_of(sv.built));
             borrow body_out as &bo in {
-                if good && len(buffer.bytes(bo)) <= answer_limit() {
+                if made == 0 && len(buffer.bytes(bo)) <= answer_limit() {
                     answer = server.reply_with(heap, answer, 200, buffer.bytes(bo), keep, "");
+                } else if made == 2 {
+                    answer = simple(heap, api.sha_of(sv.built), answer, 422, "serve.non-finite-prediction", "the model's answer for a row is not a finite number: the input is outside what the model can compute", keep);
                 } else {
                     answer = simple(heap, api.sha_of(sv.built), answer, 500, "serve.internal", "the answer could not be written", keep);
                 }
