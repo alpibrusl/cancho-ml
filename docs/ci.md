@@ -150,3 +150,6 @@ the SHA-256 files are for a download check, not provenance. The tag is not check
 * The runners' images change without a commit here; a red run after no commit is the first thing to read in the platform lines of the log.
 * A compiler cache hit skips the compiler build: the cache key is the revision, the operating system and the architecture, so a compiler built by another Rust than the one
   recorded in the log could be restored only if the key were reused; the Rust channel is not part of the key because it is a function of the revision.
+* A built binary is not bit-reproducible on Linux: three builds of `ml-predict` from one tree with one compiler gave three SHA-256 values [measured, Linux x86-64, 3 builds], and the bytes
+  that differ are the file name `cancho-llvm-<pid>-0.ll` in the symbol table, which holds the compiler's process id. Two builds on the Mac gave one value [measured, 2 builds]. The checksums of a release name the
+  files of one run and are not a build-reproducibility claim; the model bytes and the answers, which the gate fingerprints, do not depend on it.
