@@ -25,7 +25,7 @@ second tag for one rule would be the repurposing `design.md` section 8 forbids).
 21 of `lib/core/refuse.cho` (the band 1 to 99 of `ml.refuse`), `design.md` section 8.1 and `tools/ml/spec.tmpl` `extra()` and `rules()`.
 
 `detail` is `{"row": N, "column": C}`: `N` is the 1-based number of the first row, in the order of the file read, whose value is not finite, and `C` is the name of the
-column of the answer that holds it: `prediction` (a regression), `label` (the value a classification chose its label from), `probability` (a classification), `distance` (a clustering). For `eval` with `--split`, `N` is the
+column of the answer that holds it: `prediction` (a regression), `label` (the class a classification predicts: not reachable for the kinds built, which threshold a probability), `probability` (a classification), `distance` (a clustering). For `eval` with `--split`, `N` is the
 row of the file, not the row among the held-out ones, because the file is what the caller can open.
 
 **Not a finite number** is NaN or an infinity; the test is `v - v == 0.0`, the one `models.common.is_finite` has. NaN counts: `inf - inf` in a dot product is NaN
@@ -51,7 +51,8 @@ By model kind, for `predict` (and the same predictors under `eval`):
 * **logistic regression:** the probability is a squashing of the score into `[0, 1]`, and the label is `probability > 0.5` **[read]**. An infinite score alone gives 0 or 1, but
   a score that is the sum of two infinite terms of opposite sign is NaN, and NaN is neither: a model with coefficients in the thousands (`l2 = 0` on data that is nearly
   separated) and a row of two features of 1e308 reaches it. So the claim "a probability cannot be infinite" holds, and "a probability is always finite" does not; the check
-  reads the value the label is chosen from and the probability (gate N4 builds the model and the row).
+  reads the probability, and the class the model predicts as well (that class is a threshold of the probability, so it is 0 or 1 even for a NaN, and only the probability is named in
+  the refusal; gate N4 builds the model and the row).
 * **k-means:** the label is an argmin and always an integer. The squared distance `--distance` prints is a sum of squares and overflows for a feature past 1.3e154.
   Refused for `--distance`. Without `--distance` the distances are not computed, the label is printed as before, and the check does not run **[choice]**: nothing printed is
   not a number, and the cost of computing the distances for every `predict` is not paid. `eval` computes them for its metrics, so `eval` refuses (section 4).

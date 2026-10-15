@@ -173,7 +173,8 @@ class Nan(unittest.TestCase):
         r = ml("predict", "--model-file", "lgbig.ml", "--proba", "lgh.csv")
         self.assertEqual((r.status, r.first_rule()), (8, RULE), r)
         self.assertEqual(detail_of(r)["row"], 2)
-        self.assertIn(detail_of(r)["column"], ("label", "probability"))
+        # the class the model predicts is a threshold of the probability, so it is 0 or 1 even then: the NaN is the probability's
+        self.assertEqual(detail_of(r)["column"], "probability")
         # without --proba the label is chosen from the same value, so it is refused too
         r = ml("predict", "--model-file", "lgbig.ml", "lgh.csv")
         self.assertEqual((r.status, r.first_rule()), (8, RULE), r)
@@ -377,12 +378,13 @@ class Agreement(unittest.TestCase):
     def test_the_old_tag_is_gone(self):
         status, doc = served("lin.ml", ["x"], [["1e308"]], batch=False)
         self.assertNotIn("serve.non-finite-prediction", json.dumps(doc))
-        for binary in (BIN_PATH(), PREDICT_BIN):
-            out = subprocess.run([binary, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout.decode()
-            self.assertIn(RULE, out)
-        out = subprocess.run([__import__("serve_lib").SERVE_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout.decode()
-        self.assertIn(RULE, out)
-        self.assertNotIn("serve.non-finite-prediction", out)
+        from serve_lib import SERVE_BIN
+
+        for binary in (BIN_PATH(), PREDICT_BIN, SERVE_BIN):
+            i = json.loads(subprocess.run([binary, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)
+            names = [x["rule"] if isinstance(x, dict) else x for x in i["rules"]]
+            self.assertIn(RULE, names, binary)
+            self.assertNotIn("serve.non-finite-prediction", names, binary)
 
 
 VALUES = ["0", "-0.0", "1", "-1", "0.5", "1e-320", "5e-324", "-5e-324", "2.2250738585072014e-308", "1e154", "1.3e154", "1.4e154", "1e155", "1e200", "1.79e307", "1.8e307", "1e308",
