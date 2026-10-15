@@ -1,0 +1,191 @@
+// jsonl-check: prints the CSV that tools/ml/jsonl.cho makes of a file of JSON lines, so that a script can compare it, byte for byte, with the reference of
+// tests/conformance/jsonl_ref.py (Python's json). Not a product: a driver for gates, the way tools/reader-check is (docs/jsonl.md section 6).
+//
+//     jsonl-check --fields NAMES [--cat NAMES] [--absent empty] [--max-json-nodes N] [--max-line-bytes N] [--max-bytes N] FILE
+//
+// stdout: the CSV, exit 0; or one line `refused CODE LINE ROW COL A B C` (ml.jsonl.Fail), exit 8. Exit 2: the arguments; exit 3: the file did not open or is
+// longer than --max-bytes (the reference answers that as code 10, so it is printed as a refusal, exit 8).
+edition 5;
+
+import std.buffer;
+import std.io;
+import ml.fsio;
+import ml.jsonl;
+import ml.pathcheck;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    if len(text) == 0 || len(text) > 18 {
+        return 0 - 1;
+    }
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn put_int[&i](io: &!i Io, v: int) -> [io_write] int {
+    if v < 0 {
+        putchar(io, '-');
+        return put_int(io, 0 - v);
+    }
+    if v >= 10 {
+        put_int(io, v / 10);
+    }
+    putchar(io, '0' + v % 10);
+    return 0;
+}
+
+fn refused[&i](io: &!i Io, f: jsonl.Fail) -> [io_write] int {
+    io.write_all(io, "refused ");
+    put_int(io, f.code);
+    io.write_all(io, " ");
+    put_int(io, f.line);
+    io.write_all(io, " ");
+    put_int(io, f.row);
+    io.write_all(io, " ");
+    put_int(io, f.col);
+    io.write_all(io, " ");
+    put_int(io, f.a);
+    io.write_all(io, " ");
+    put_int(io, f.b);
+    io.write_all(io, " ");
+    put_int(io, f.c);
+    io.newline(io);
+    return 8;
+}
+
+fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &static [byte], fields: &static [byte], cats: &static [byte], absent_empty: bool, max_nodes: int, max_line: int, max_bytes: int) -> [heap, io_write, fs_read(""), dir_read, file_read] int {
+    let (st, count) = jsonl.check_fields(fields);
+    if st != 0 {
+        io.write_all(io, "usage: bad --fields\n");
+        return 2;
+    }
+    let (data, status, aux) = fsio.read_whole(heap, fs, "", file, file, max_bytes);
+    if status == 3 {
+        buffer.drop(heap, data);
+        return refused(io, jsonl.too_large(max_bytes, 0));
+    }
+    if status != 0 {
+        buffer.drop(heap, data);
+        io.write_all(io, "refused-open\n");
+        return 3;
+    }
+    let (names, ends) = jsonl.declaration(heap, fields);
+    var mask = box_slice(heap, 1, 0);
+    borrow names as &nm in {
+        borrow ends as &em in {
+            unbox_slice(heap, mask);
+            mask = jsonl.mask_by_list(heap, buffer.bytes(nm), contents(em), count, cats);
+        }
+    }
+    var code = 0;
+    borrow data as &dr in {
+        borrow names as &nr in {
+            borrow ends as &er in {
+                borrow mask as &mr in {
+                    let (csv, f) = jsonl.convert(heap, buffer.bytes(dr), buffer.bytes(nr), contents(er), count, contents(mr), absent_empty, max_nodes, max_line, max_bytes);
+                    if f.code != 0 {
+                        code = refused(io, f);
+                    } else {
+                        borrow csv as &cr in {
+                            buffer.write(io, cr);
+                        }
+                    }
+                    buffer.drop(heap, csv);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    buffer.drop(heap, names);
+    unbox_slice(heap, ends);
+    unbox_slice(heap, mask);
+    return code;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    var file: &static [byte] = "";
+    var fields: &static [byte] = "";
+    var cats: &static [byte] = "";
+    var absent_empty = false;
+    var max_nodes = 4096;
+    var max_line = 1048576;
+    var max_bytes = 16777216;
+    var bad = false;
+    borrow args as &g in {
+        var i = 1;
+        while i < arg_count(g) {
+            let a = arg(g, i);
+            if same(a, "--fields") && i + 1 < arg_count(g) {
+                fields = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--cat") && i + 1 < arg_count(g) {
+                cats = arg(g, i + 1);
+                i = i + 2;
+            } else if same(a, "--absent") && i + 1 < arg_count(g) {
+                absent_empty = same(arg(g, i + 1), "empty");
+                i = i + 2;
+            } else if same(a, "--max-json-nodes") && i + 1 < arg_count(g) {
+                max_nodes = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if same(a, "--max-line-bytes") && i + 1 < arg_count(g) {
+                max_line = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if same(a, "--max-bytes") && i + 1 < arg_count(g) {
+                max_bytes = number_of(arg(g, i + 1));
+                i = i + 2;
+            } else if len(a) > 1 && int_of(a[0]) == '-' && int_of(a[1]) == '-' {
+                bad = true;
+                i = i + 1;
+            } else {
+                file = a;
+                i = i + 1;
+            }
+        }
+    }
+    var code = 0;
+    if bad || len(file) == 0 || len(fields) == 0 || max_nodes < 1 || max_nodes > 1048576 || max_line < 1 || max_bytes < 1 || pathcheck.has_double_dot(file) {
+        borrow mut io as &!ip in {
+            io.write_all(ip, "usage: jsonl-check --fields NAMES [--cat NAMES] [--absent empty] [--max-json-nodes N] [--max-line-bytes N] [--max-bytes N] FILE\n");
+        }
+        code = 2;
+    } else {
+        borrow mut heap as &!hp in {
+            borrow mut io as &!ip in {
+                borrow fs as &fr in {
+                    code = run(hp, ip, fr, file, fields, cats, absent_empty, max_nodes, max_line, max_bytes);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return code;
+}

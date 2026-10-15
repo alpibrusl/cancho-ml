@@ -1,0 +1,424 @@
+edition 5;
+
+module ml.jsonl;
+
+// JSON lines to the CSV bytes the equivalent CSV file holds (docs/jsonl.md sections 3 and 4). A reader of `ml`'s own over `std.json.parse`: one object a line, the
+// declared fields (flat names, the keys of the top-level object) read from each, every cell written as the text the CSV reader reads. Nothing here knows a model
+// or a verb: `convert` takes bytes and a declaration and answers the CSV and a refusal as ints (`Fail`), which tools/ml/jsonlcli.cho turns into rule tags and
+// which tools/jsonl-check prints for the gates.
+//
+// Fail codes: 1 syntax (a: offset in the line, b: std.json's code)   2 not an object (a: 0 array, 1 string, 2 number, 3 boolean, 4 null)
+//   3 too many nodes (a: the limit)   4 missing field   5 not scalar (a: 0 object, 1 array)   6 duplicate key   7 type mismatch (a: 1 string, 2 boolean)
+//   8 mixed kinds (a: kind of the first value, b: its line, c: the kind that differs)   9 line too long (a: its length)
+//   10 too large (a: the cap, b: 0 the input, 1 the generated CSV). `col` is the 0-based field; `line` is the physical line, `row` the record's number.
+// Kinds of a value: 0 number, 1 string, 2 boolean.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+
+pub struct Fail {
+    code: int,
+    line: int,
+    row: int,
+    col: int,
+    a: int,
+    b: int,
+    c: int,
+}
+
+pub fn ok() -> [] Fail {
+    return Fail { code: 0, line: 0, row: 0, col: 0, a: 0, b: 0, c: 0 };
+}
+
+fn fail_at(code: int, line: int, row: int, col: int, a: int, b: int, c: int) -> [] Fail {
+    return Fail { code: code, line: line, row: row, col: col, a: a, b: b, c: c };
+}
+
+// ---------------------------------------------------------------- the declaration
+
+// A field list is names separated by commas. (0, the number of names), or (1, i) when the i-th name (from 1) is empty or repeats an earlier one.
+pub fn check_fields[&l](list: &l [byte]) -> [] (int, int) {
+    let count = bytes.count_byte(list, ',') + 1;
+    var k = 1;
+    while k <= count {
+        let name = bytes.field(list, ',', k);
+        if len(name) == 0 {
+            return (1, k);
+        }
+        var j = 1;
+        while j < k {
+            if bytes.equal(bytes.field(list, ',', j), name) {
+                return (1, k);
+            }
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    return (0, count);
+}
+
+// the names of a field list concatenated, and where each ends (check_fields said the list is good)
+pub fn declaration[&h, &l](heap: &!h Heap, list: &l [byte]) -> [heap] (buffer.Buffer, Box[[int]]) {
+    let count = bytes.count_byte(list, ',') + 1;
+    var names = buffer.empty(heap, len(list) + 1);
+    var ends = box_slice(heap, count + 1, 0);
+    var k = 1;
+    while k <= count {
+        names = buffer.append(heap, names, bytes.field(list, ',', k));
+        var size = 0;
+        borrow names as &nr in {
+            size = buffer.size(nr);
+        }
+        borrow mut ends as &!ew in {
+            contents(ew)[k - 1] = size;
+        }
+        k = k + 1;
+    }
+    return (names, ends);
+}
+
+// 1 for each name of `names` (ends: where they end, count of them) that is in the comma list `cats`, else 0
+pub fn mask_by_list[&h, &n, &e, &c](heap: &!h Heap, names: &n [byte], ends: &e [int], count: int, cats: &c [byte]) -> [heap] Box[[int]] {
+    var mask = box_slice(heap, count + 1, 0);
+    let nc = bytes.count_byte(cats, ',') + 1;
+    var j = 0;
+    while j < count {
+        var k = 1;
+        while k <= nc && len(cats) > 0 {
+            if bytes.equal(bytes.field(cats, ',', k), name_at(names, ends, j)) {
+                borrow mut mask as &!mw in {
+                    contents(mw)[j] = 1;
+                }
+            }
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+    return mask;
+}
+
+fn name_at[&n, &e](names: &n [byte], ends: &e [int], j: int) -> [] &n [byte] {
+    var from = 0;
+    if j > 0 {
+        from = ends[j - 1];
+    }
+    return names[from..ends[j]];
+}
+
+fn hash_of[&k](key: &k [byte]) -> [] int {
+    var h = 5381;
+    var i = 0;
+    while i < len(key) {
+        h = (h * 33 + int_of(key[i])) % 2147483629;
+        i = i + 1;
+    }
+    return h;
+}
+
+// the field named `key`, or -1: open addressing in `tab` (entries are field + 1, 0 is free)
+fn lookup[&k, &n, &e, &t](key: &k [byte], names: &n [byte], ends: &e [int], count: int, tab: &t [int]) -> [] int {
+    if count == 0 {
+        return 0 - 1;
+    }
+    var p = hash_of(key) % len(tab);
+    var steps = 0;
+    while steps < len(tab) {
+        let f = tab[p];
+        if f == 0 {
+            return 0 - 1;
+        }
+        if bytes.equal(name_at(names, ends, f - 1), key) {
+            return f - 1;
+        }
+        p = (p + 1) % len(tab);
+        steps = steps + 1;
+    }
+    return 0 - 1;
+}
+
+fn insert[&n, &e, &t](names: &n [byte], ends: &e [int], j: int, tab: &!t [int]) -> [] int {
+    var p = hash_of(name_at(names, ends, j)) % len(tab);
+    while tab[p] != 0 {
+        p = (p + 1) % len(tab);
+    }
+    tab[p] = j + 1;
+    return 0;
+}
+
+// ---------------------------------------------------------------- CSV cells
+
+fn needs_quote[&c](cell: &c [byte]) -> [] bool {
+    var i = 0;
+    while i < len(cell) {
+        let c = int_of(cell[i]);
+        if c == 44 || c == 34 || c == 13 || c == 10 {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// one cell as CSV: quoted when it holds a comma, a quote, a CR or an LF (a quote doubled); `force` quotes it anyway
+fn put_cell[&h, &c](heap: &!h Heap, out: buffer.Buffer, cell: &c [byte], force: bool) -> [heap] buffer.Buffer {
+    if !force && !needs_quote(cell) {
+        return buffer.append(heap, out, cell);
+    }
+    var o = buffer.push(heap, out, byte_of(34));
+    var i = 0;
+    while i < len(cell) {
+        o = buffer.push(heap, o, cell[i]);
+        if int_of(cell[i]) == 34 {
+            o = buffer.push(heap, o, byte_of(34));
+        }
+        i = i + 1;
+    }
+    return buffer.push(heap, o, byte_of(34));
+}
+
+fn is_blank[&l](line: &l [byte]) -> [] bool {
+    var i = 0;
+    while i < len(line) {
+        let c = int_of(line[i]);
+        if c != 32 && c != 9 && c != 13 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// the code of `fail` 2 for the kind of the root
+fn root_kind(k: int) -> [] int {
+    if k == 6 {
+        return 0;
+    }
+    if k == 5 {
+        return 1;
+    }
+    if k == 3 || k == 4 {
+        return 2;
+    }
+    if k == 1 || k == 2 {
+        return 3;
+    }
+    return 4;
+}
+
+// ---------------------------------------------------------------- one record
+
+// Parse `line` and write its record to `out`. `nodes` holds, for each field, the node of its value or -1; `kinds` holds, for each field, the kind of its first value
+// (-1 before it) and the line it was on. (the CSV, the refusal)
+fn record[&h, &l, &t, &nd, &kd, &sc, &n, &e, &m, &tb](heap: &!h Heap, line: &l [byte], tape: &!t [int], nodes: &!nd [int], kinds: &!kd [int], scratch: &!sc [byte], names: &n [byte], ends: &e [int], count: int, mask: &m [int], tab: &tb [int], absent_empty: bool, lineno: int, row: int, out: buffer.Buffer) -> [heap] (buffer.Buffer, Fail) {
+    let parsed = json.parse(line, tape);
+    if parsed < 0 {
+        if json.error_code(parsed) == 8 {
+            return (out, fail_at(3, lineno, row, 0, len(tape) / 3, 0, 0));
+        }
+        return (out, fail_at(1, lineno, row, 0, json.error_position(parsed), json.error_code(parsed), 0));
+    }
+    if json.kind(tape, 0) != 7 {
+        return (out, fail_at(2, lineno, row, 0, root_kind(json.kind(tape, 0)), 0, 0));
+    }
+    var j = 0;
+    while j < count {
+        nodes[j] = 0 - 1;
+        j = j + 1;
+    }
+    // the keys of the top-level object, once: the value of each declared one, and the first declared key that repeats
+    var left = json.count(tape, 0);
+    var k = 1;
+    while left > 0 {
+        let v = k + 1;
+        var f = 0 - 1;
+        if json.string_plain(tape, k) {
+            f = lookup(json.string_view(line, tape, k), names, ends, count, tab);
+        } else {
+            let size = json.string_into(line, tape, k, scratch);
+            f = lookup(scratch[0..size], names, ends, count, tab);
+        }
+        if f >= 0 {
+            if nodes[f] >= 0 {
+                return (out, fail_at(6, lineno, row, f, 0, 0, 0));
+            }
+            nodes[f] = v;
+        }
+        k = json.skip(tape, v);
+        left = left - 1;
+    }
+    var o = out;
+    j = 0;
+    while j < count {
+        let nd = nodes[j];
+        var empty = false;
+        var kind = 0;
+        // where the text is: 0 the line from a to b, 1 the scratch up to b, 2 the word false, 3 the word true
+        var which = 0;
+        var a = 0;
+        var b = 0;
+        if nd < 0 {
+            if !absent_empty {
+                return (o, fail_at(4, lineno, row, j, 0, 0, 0));
+            }
+            empty = true;
+        } else {
+            let jk = json.kind(tape, nd);
+            if jk == 0 {
+                empty = true;
+            } else if jk == 6 || jk == 7 {
+                return (o, fail_at(5, lineno, row, j, jk - 6, 0, 0));
+            } else if jk == 1 {
+                kind = 2;
+                which = 2;
+            } else if jk == 2 {
+                kind = 2;
+                which = 3;
+            } else if jk == 3 || jk == 4 {
+                a = tape[3 * nd + 1];
+                b = tape[3 * nd + 2];
+            } else {
+                kind = 1;
+                if json.string_plain(tape, nd) {
+                    a = tape[3 * nd + 1];
+                    b = tape[3 * nd + 2];
+                } else {
+                    which = 1;
+                    b = json.string_into(line, tape, nd, scratch);
+                }
+            }
+            if !empty {
+                if mask[j] == 0 && kind != 0 {
+                    return (o, fail_at(7, lineno, row, j, kind, 0, 0));
+                }
+                if kinds[2 * j] >= 0 && kinds[2 * j] != kind {
+                    return (o, fail_at(8, lineno, row, j, kinds[2 * j], kinds[2 * j + 1], kind));
+                }
+                if kinds[2 * j] < 0 {
+                    kinds[2 * j] = kind;
+                    kinds[2 * j + 1] = lineno;
+                }
+            }
+        }
+        if j > 0 {
+            o = buffer.push(heap, o, byte_of(44));
+        }
+        if empty || which == 0 && a == b || which == 1 && b == 0 {
+            if count == 1 {
+                o = buffer.append(heap, o, "\"\"");
+            }
+        } else if which == 0 {
+            o = put_cell(heap, o, line[a..b], false);
+        } else if which == 1 {
+            o = put_cell(heap, o, scratch[0..b], false);
+        } else if which == 2 {
+            o = buffer.append(heap, o, "false");
+        } else {
+            o = buffer.append(heap, o, "true");
+        }
+        j = j + 1;
+    }
+    o = buffer.push(heap, o, byte_of(10));
+    return (o, ok());
+}
+
+// ---------------------------------------------------------------- the input
+
+// The CSV of the JSON lines in `src`: the header (the names of `names`/`ends`, `count` of them), then a record for each line, a blank line staying a blank line.
+// `mask[j]` is 1 when field j is read as text (a string or a boolean is a cell), 0 when it is a number. `line_cap` bounds a line (checked before it is parsed),
+// `max_nodes` the nodes of its tape, `out_cap` the CSV; the input is the caller's to bound. On a refusal the buffer is empty and the Fail says why.
+pub fn convert[&h, &s, &n, &e, &m](heap: &!h Heap, src: &s [byte], names: &n [byte], ends: &e [int], count: int, mask: &m [int], absent_empty: bool, max_nodes: int, line_cap: int, out_cap: int) -> [heap] (buffer.Buffer, Fail) {
+    var tab = box_slice(heap, 2 * count + 3, 0);
+    borrow mut tab as &!tw in {
+        var j = 0;
+        while j < count {
+            insert(names, ends, j, contents(tw));
+            j = j + 1;
+        }
+    }
+    var out = buffer.empty(heap, 4096);
+    var h = 0;
+    while h < count {
+        if h > 0 {
+            out = buffer.push(heap, out, byte_of(44));
+        }
+        out = put_cell(heap, out, name_at(names, ends, h), false);
+        h = h + 1;
+    }
+    out = buffer.push(heap, out, byte_of(10));
+    var width = len(src);
+    if width > line_cap {
+        width = line_cap;
+    }
+    var tape = box_slice(heap, 3 * max_nodes, 0);
+    var nodes = box_slice(heap, count + 1, 0);
+    var kinds = box_slice(heap, 2 * count + 2, 0 - 1);
+    var scratch = box_slice(heap, width + 16, byte_of(0));
+    var result = ok();
+    var start = 0;
+    if len(src) >= 3 && int_of(src[0]) == 239 && int_of(src[1]) == 187 && int_of(src[2]) == 191 {
+        start = 3;
+    }
+    borrow tab as &tr in {
+        borrow mut tape as &!pw in {
+            borrow mut nodes as &!nw in {
+                borrow mut kinds as &!kw in {
+                    borrow mut scratch as &!cw in {
+                        var pos = start;
+                        var lineno = 0;
+                        var row = 0;
+                        var going = true;
+                        while going && pos < len(src) {
+                            let rest = src[pos..len(src)];
+                            let at = index_of_byte(rest, byte_of(10));
+                            var end = len(src);
+                            var next = len(src);
+                            if at >= 0 {
+                                end = pos + at;
+                                next = end + 1;
+                            }
+                            let line = src[pos..end];
+                            lineno = lineno + 1;
+                            pos = next;
+                            if len(line) > line_cap {
+                                result = fail_at(9, lineno, row, 0, len(line), 0, 0);
+                                going = false;
+                            } else if is_blank(line) {
+                                out = buffer.push(heap, out, byte_of(10));
+                            } else {
+                                row = row + 1;
+                                let (o2, f2) = record(heap, line, contents(pw), contents(nw), contents(kw), contents(cw), names, ends, count, mask, contents(tr), absent_empty, lineno, row, out);
+                                out = o2;
+                                var used = 0;
+                                borrow out as &ur in {
+                                    used = buffer.size(ur);
+                                }
+                                if f2.code != 0 {
+                                    result = f2;
+                                    going = false;
+                                } else if used > out_cap {
+                                    result = fail_at(10, lineno, row, 0, out_cap, 1, 0);
+                                    going = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, tab);
+    unbox_slice(heap, tape);
+    unbox_slice(heap, nodes);
+    unbox_slice(heap, kinds);
+    unbox_slice(heap, scratch);
+    if result.code != 0 {
+        buffer.drop(heap, out);
+        return (buffer.empty(heap, 1), result);
+    }
+    return (out, result);
+}
+
+pub fn too_large(cap: int, what: int) -> [] Fail {
+    return fail_at(10, 0, 0, 0, cap, what, 0);
+}
