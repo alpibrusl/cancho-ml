@@ -124,8 +124,8 @@ MUTANTS = [
     M("b-validation-loss-mean-over-m", "GB1", "the validation loss divides by the fit rows", [(FI, "let vl = sum / float_of(nv);", "let vl = sum / float_of(m);")], ORACLE,
       why="a constant factor of every round's loss does not change which round is best, nor the rule 'no improvement': the stopping round is the same (the loss itself is not stored)"),
     M("b-validation-loss-regression-not-squared", "GB1", "the regression validation loss is the absolute-looking (F - y)", [(FI, "return (f - y) * (f - y);", "return f - y;")], ORACLE),
-    M("b-validation-loss-classification-without-log", "GB1", "the logistic loss forgets its log1p term", [(FI, "return (mx - y * f) + mexp.log1p(mexp.exp(0.0 - af));", "return mx - y * f;")], ORACLE),
-    M("b-validation-loss-classification-sign", "GB1", "the logistic loss has y F with the wrong sign", [(FI, "return (mx - y * f) + mexp.log1p(mexp.exp(0.0 - af));", "return (mx + y * f) + mexp.log1p(mexp.exp(0.0 - af));")], ORACLE),
+    M("b-validation-loss-classification-without-log", "GB1", "the logistic loss forgets its log1p term", [(FI, "return mx - y * f + mexp.log1p(mexp.exp(0.0 - af));", "return mx - y * f;")], ORACLE),
+    M("b-validation-loss-classification-sign", "GB1", "the logistic loss has y F with the wrong sign", [(FI, "return mx - y * f + mexp.log1p(mexp.exp(0.0 - af));", "return mx + y * f + mexp.log1p(mexp.exp(0.0 - af));")], ORACLE),
     M("b-early-off-reads-the-best-round", "GB1", "without early stopping the kept rounds are the best round (0)", [(FI, "    if p.early > 0 {\n        pr[1] = best_round;", "    if true {\n        pr[1] = best_round;")], ORACLE),
     # ------------------------------------------------------------------ the checks of the fit
     M("b-target-bound-removed", "GB6", "a regression target above 1e100 is accepted", [(FI, "if !(v == v && v - v == 0.0 && v <= big && v >= 0.0 - big) {", "if !(v == v && v - v == 0.0) {")], BOOST),
