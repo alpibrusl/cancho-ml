@@ -208,7 +208,15 @@
         "ml.input.missing-value",
         "ml.plan.model-not-built",
         "ml.limit.depth",
-        "ml.limit.nodes"
+        "ml.limit.nodes",
+        "ml.jsonl.syntax",
+        "ml.jsonl.not-object",
+        "ml.jsonl.missing-field",
+        "ml.jsonl.not-scalar",
+        "ml.jsonl.duplicate-key",
+        "ml.jsonl.type-mismatch",
+        "ml.jsonl.mixed-kinds",
+        "ml.jsonl.too-many-nodes"
       ]
     }
   }

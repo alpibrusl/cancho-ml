@@ -264,6 +264,18 @@ class Equivalence(unittest.TestCase):
         sb.write("ex.csv", extra_csv)
         self.assertEqual(sb.run("predict", "--model-file", "m.cml", "ex.csv").first_rule(), "ml.schema.mismatch")
 
+    def test_predict_needs_no_target_key_and_eval_does(self):
+        sb = self.sb
+        sb.write("t.csv", read_csv("iris_train.csv"))
+        sb.run("fit", "--model", "linear", "--target", "virginica", "--output", "m.cml", "t.csv")
+        rows = ["sepal_length_cm", "sepal_width_cm", "petal_length_cm", "petal_width_cm"]
+        sb.write("nt.jsonl", "".join('{"sepal_length_cm":5.1,"sepal_width_cm":3.5,"petal_length_cm":1.4,"petal_width_cm":0.2,"other":"x"}\n' for _ in range(3)))
+        p = sb.run("predict", "--model-file", "m.cml", "--input-format", "jsonl", "nt.jsonl")
+        self.assertEqual(p.status, 0, p)
+        e = sb.run("eval", "--model-file", "m.cml", "--input-format", "jsonl", "nt.jsonl")
+        self.assertEqual(e.first_rule(), "ml.jsonl.missing-field")
+        self.assertEqual(e.error()["detail"]["name"], "virginica")
+
     def test_the_binary_ml_predict(self):
         import harness
         sb = self.sb

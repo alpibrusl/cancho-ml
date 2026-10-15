@@ -179,6 +179,22 @@ class Limits(unittest.TestCase):
         self.assertEqual(got[1][5], 1)
 
 
+    def test_the_csv_bound_is_exact(self):
+        fields = ["f%d" % i for i in range(20)]
+        data = b"{}\n" * 5
+        status, csv = jsonl_lib.jsonl_ref.expected(data, fields, absent_empty=True)
+        self.assertEqual(status, "ok")
+        self.assertGreater(len(csv), len(data))
+        self.assertEqual(check(self, data, fields, absent_empty=True, max_bytes=len(csv))[0], "ok")
+        got = check(self, data, fields, absent_empty=True, max_bytes=len(csv) - 1)
+        self.assertEqual(got[0], "refused")
+        self.assertEqual(got[1][0], 10)
+
+    def test_a_line_of_the_input_bound_is_the_inputs_not_the_csvs(self):
+        data = lines('{"a":1}')
+        self.assertEqual(check(self, data, ["a"], max_bytes=len(data))[0], "ok")
+
+
 class Random(unittest.TestCase):
     """seeded random lines: random keys, kinds and spellings; the driver and the reference agree on every one, accepted or refused"""
 
