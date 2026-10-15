@@ -415,14 +415,33 @@ pub fn line_dec[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte],
     return buffer.push(heap, p, byte_of(10));
 }
 
-// a double, given as its bits, as the shortest decimal that reads back to it (cancho-table's flt.put_float: positional from 1e-6 to 1e21,
-// scientific outside, always a point or an exponent), as a JSON string. flt's key of a double is its bits with the low 63 flipped when
-// negative, an involution, so csvcell.bits_of_key converts either way.
+// Bits of a double whose exponent field is all ones: NaN or an infinity.
+pub fn bits_finite(bits: int) -> [] bool {
+    return (bits >> 52 & 2047) != 2047;
+}
+
+// THE door to cancho-table's flt.put_float (docs/nonfinite.md section 5; scripts/check_nonfinite.py fails when another call of it is in tools/ml). The double, given as its bits, as
+// the shortest decimal that reads back to it (positional from 1e-6 to 1e21, scientific outside, always a point or an exponent), appended to `into`, and whether it was finite.
+// flt.put_float takes finite doubles only (an infinity is written as the text `i.nf`), so for bits that are not finite NOTHING is appended and the answer is false: the caller
+// raises the refusal (a prediction cell) or writes the null of a metric with no value. flt's key of a double is its bits with the low 63 flipped when negative, an involution,
+// so csvcell.bits_of_key converts either way.
+pub fn put_float_text[&h](heap: &!h Heap, into: buffer.Buffer, bits: int) -> [heap] (buffer.Buffer, bool) {
+    if !bits_finite(bits) {
+        return (into, false);
+    }
+    return (flt.put_float(heap, into, csvcell.bits_of_key(bits)), true);
+}
+
+// a double as a JSON string, or null when it is not finite (a metric with no value)
 pub fn put_double[&h](heap: &!h Heap, w: json.Writer, bits: int) -> [heap] json.Writer {
-    var b = flt.put_float(heap, buffer.empty(heap, 32), csvcell.bits_of_key(bits));
+    let (b, fin) = put_float_text(heap, buffer.empty(heap, 32), bits);
     var o = w;
-    borrow b as &r in {
-        o = json.put_string(heap, o, buffer.bytes(r));
+    if fin {
+        borrow b as &r in {
+            o = json.put_string(heap, o, buffer.bytes(r));
+        }
+    } else {
+        o = json.put_null(heap, o);
     }
     buffer.drop(heap, b);
     return o;
@@ -430,7 +449,11 @@ pub fn put_double[&h](heap: &!h Heap, w: json.Writer, bits: int) -> [heap] json.
 
 pub fn line_double[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte], bits: int) -> [heap] buffer.Buffer {
     var p = buffer.append(heap, plain, label);
-    p = flt.put_float(heap, p, csvcell.bits_of_key(bits));
+    let (p2, fin) = put_float_text(heap, p, bits);
+    p = p2;
+    if !fin {
+        p = buffer.append(heap, p, "null");
+    }
     return buffer.push(heap, p, byte_of(10));
 }
 
@@ -1150,7 +1173,12 @@ fn predict_rows[&h, &m](heap: &!h Heap, mo: &m mfile.Model, total: int, o: Opts)
     var cell = buffer.empty(heap, 32);
     var cell2 = buffer.empty(heap, 16);
     if mfile.kind(mo) == 3 {
-        cell = flt.put_float(heap, cell, csvcell.bits_of_key(mfile.stat(mo, 1)));
+        // the reader requires the mean to be a finite double (mfile), so the door always writes it; `null` is not reachable
+        let (cell3, fin) = put_float_text(heap, cell, mfile.stat(mo, 1));
+        cell = cell3;
+        if !fin {
+            cell = buffer.append(heap, cell, "null");
+        }
     } else if mfile.kind(mo) == 1 {
         cell = exact.put_scaled(heap, cell, mean_of(mo), mfile.stat(mo, 1) + 6);
     } else {

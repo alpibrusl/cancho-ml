@@ -5,7 +5,7 @@ module ml.refuse;
 // lib/ answers one of these codes; tests/core.cho has a fixture for every one (and fails if a code has no tag).
 
 pub fn count() -> [] int {
-    return 20;
+    return 21;
 }
 
 pub fn tensor_rank() -> [] int {
@@ -89,6 +89,11 @@ pub fn input_invalid_utf8() -> [] int {
     return 20;
 }
 
+// 21: a value the model computes for a row of the input (a prediction, a probability, a squared distance) is NaN or infinite (docs/nonfinite.md)
+pub fn predict_non_finite() -> [] int {
+    return 21;
+}
+
 pub fn tag(code: int) -> [] &static [byte] {
     if code == 1 {
         return "ml.tensor.rank";
@@ -150,6 +155,9 @@ pub fn tag(code: int) -> [] &static [byte] {
     if code == 20 {
         return "ml.input.invalid-utf8";
     }
+    if code == 21 {
+        return "ml.predict.non-finite";
+    }
     return "";
 }
 
@@ -158,7 +166,7 @@ pub fn exit_code(code: int) -> [] int {
     if code == 8 || code == 11 {
         return 2;
     }
-    if code >= 1 && code <= 10 || code >= 12 && code <= 20 {
+    if code >= 1 && code <= 10 || code >= 12 && code <= 21 {
         return 8;
     }
     return 0;
@@ -215,6 +223,9 @@ pub fn repair(code: int) -> [] &static [byte] {
     }
     if code == 20 {
         return "re-encode the file as UTF-8, or drop the column";
+    }
+    if code == 21 {
+        return "scale the inputs, or check or drop the row named in detail";
     }
     return "";
 }

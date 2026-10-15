@@ -143,7 +143,7 @@ fn simple[&h, &s, &d](heap: &!h Heap, sha: &s [byte], out: buffer.Buffer, status
 // the HTTP status of a rule of the predictor (docs/serving-http.md section 5.3): the request's data is 422, a limit of the request's size 413, and anything else a
 // fault of the server, 500
 fn status_of[&r](rule: &r [byte]) -> [] int {
-    if app.listed("ml.schema.mismatch,ml.input.non-numeric,ml.input.non-finite,ml.input.missing-value,ml.input.unknown-category,ml.input.invalid-utf8,ml.input.reserved-category,ml.input.duplicate-column,ml.input.unknown-column,ml.limit.string-bytes,ml.limit.string-pool,ml.limit.categories,ml.limit.categorical-columns", rule) {
+    if app.listed("ml.predict.non-finite,ml.schema.mismatch,ml.input.non-numeric,ml.input.non-finite,ml.input.missing-value,ml.input.unknown-category,ml.input.invalid-utf8,ml.input.reserved-category,ml.input.duplicate-column,ml.input.unknown-column,ml.limit.string-bytes,ml.limit.string-pool,ml.limit.categories,ml.limit.categorical-columns", rule) {
         return 422;
     }
     if app.listed("limit.line-too-long,limit.input-too-large,ml.input.too-many-rows,ml.input.too-many-columns,ml.input.too-many-cells", rule) {
@@ -171,7 +171,7 @@ fn mismatch[&h, &s, &b](heap: &!h Heap, sha: &s [byte], out: buffer.Buffer, sche
 // ---------------------------------------------------------------------
 
 // The answer of 3.2 from the document `ml predict` made (`payload`): the same values, between no quotes. (the body, 0 it is made, 1 the document is not what `ml predict` writes,
-// 2 a value is not a number: the model's answer for the row is not finite, and the command line prints such a value as text such as `i.nf`)
+// 2 a value is not a number: not reachable, `ml predict` refuses a row that is not finite with ml.predict.non-finite before it writes a cell, docs/nonfinite.md; kept as a guard that answers with the same rule)
 fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) -> [heap] (buffer.Buffer, int) {
     let tape = box_slice(heap, json.tape_len(payload), 0);
     var w = json.writer(heap, 512);
@@ -385,7 +385,7 @@ fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g 
                 if made == 0 && len(buffer.bytes(bo)) <= answer_limit() {
                     answer = server.reply_with(heap, answer, 200, buffer.bytes(bo), keep, "");
                 } else if made == 2 {
-                    answer = simple(heap, api.sha_of(sv.built), answer, 422, "serve.non-finite-prediction", "the model's answer for a row is not a finite number: the input is outside what the model can compute", keep);
+                    answer = simple(heap, api.sha_of(sv.built), answer, 422, "ml.predict.non-finite", "the model's answer for a row is not a finite number: the input is outside what the model can compute", keep);
                 } else {
                     answer = simple(heap, api.sha_of(sv.built), answer, 500, "serve.internal", "the answer could not be written", keep);
                 }

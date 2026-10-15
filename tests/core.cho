@@ -311,11 +311,15 @@ fn test_refusal_tags_are_unique_and_complete() -> [] int {
     if same(refuse.tag(refuse.limit_string_pool()), "ml.limit.string-pool") == false || same(refuse.tag(refuse.limit_categorical_columns()), "ml.limit.categorical-columns") == false {
         bad = bad + 1;
     }
-    if same(refuse.tag(refuse.input_invalid_utf8()), "ml.input.invalid-utf8") == false || refuse.count() != 20 {
+    if same(refuse.tag(refuse.input_invalid_utf8()), "ml.input.invalid-utf8") == false || refuse.count() != 21 {
+        bad = bad + 1;
+    }
+    // 21: a prediction, a probability or a squared distance that is not finite (docs/nonfinite.md)
+    if same(refuse.tag(refuse.predict_non_finite()), "ml.predict.non-finite") == false || refuse.predict_non_finite() != refuse.input_invalid_utf8() + 1 {
         bad = bad + 1;
     }
     var k = refuse.limit_categories();
-    while k <= refuse.input_invalid_utf8() {
+    while k <= refuse.predict_non_finite() {
         if refuse.exit_code(k) != 8 || len(refuse.repair(k)) == 0 {
             bad = bad + 1;
         }
