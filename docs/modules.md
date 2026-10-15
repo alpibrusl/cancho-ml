@@ -7,7 +7,7 @@ Section 8 holds the results; a number or a verdict is in it only if a script of 
 A model that `ml` can fit is a *module*: a directory under `lib/models/`, a manifest in it, an adapter with a fixed interface, and a document with
 its gates. Nothing else in the tree names the model by hand: the dispatch, the flags, the plan keys, the schemas and the documentation tables
 are generated from the manifests, and a module cannot add a float order, a capability, an unregistered refusal or a kind number of its own
-without `scripts/admit.py` failing. The six models (constant, linear, logistic, k-means, tree and forest) are the first users: linear and logistic are wired by `docs/wiring.md`, the tree and the forest through a second adapter interface (section 4b) by `docs/wiring-trees.md`, and k-means, a clustering with no target, through the same second interface by `docs/wiring-kmeans.md`.
+without `scripts/admit.py` failing. The seven models (constant, linear, logistic, k-means, tree, forest and boost) are the first users (boost is the seventh: `docs/models-boost.md`, a blob model of both tasks with its own kind, 8, and the sum order 3): linear and logistic are wired by `docs/wiring.md`, the tree and the forest through a second adapter interface (section 4b) by `docs/wiring-trees.md`, and k-means, a clustering with no target, through the same second interface by `docs/wiring-kmeans.md`.
 
 ## 1. Function values and traits: tried, and not relied on [read]
 
@@ -36,7 +36,7 @@ One file per model, parsed by `scripts/gen_models.py` with Python's `tomllib`. A
 | `wired` | bool | callable from `ml`. `false`: the manifest holds the kind and the plan keys, the dispatch has no branch |
 | `shape` | `vector` (default) or `blob` | which adapter interface the module implements: section 4 (a fixed vector of floats) or section 4b (a payload of bytes the adapter builds and reads; needed when the size of the fitted model is known only after the fit). A `blob` model has `task = "both"` or `task = "clustering"` |
 | `adapter` | string | the module that implements the interface of section 4 or 4b (required when `wired`); `builtin` for `constant`, which `tools/ml/verbs.cho` builds exactly and which has no adapter |
-| `plan_order` | int | the place of the model in the plan grammar's list (`0 .. n-1`, once each): `constant`, `linear`, `logistic`, `kmeans`, `tree`, `forest` are 0 to 5 |
+| `plan_order` | int | the place of the model in the plan grammar's list (`0 .. n-1`, once each): `constant`, `linear`, `logistic`, `kmeans`, `tree`, `forest`, `boost` are 0 to 6 |
 | `payload_version` | int | the version of the records after the `u32 kind` (linear 1, logistic 2: it gained the labels record, `docs/wiring.md` section 4) |
 | `doc` | string | the document that holds the model's gates, written before its code (`admit` checks it exists, has a `Gates` section and was committed first) |
 | `files` | list of strings | the source files of the module; `admit` applies the size, sum and tag checks to them |
@@ -168,7 +168,7 @@ Machine: Mac arm64 (Darwin 25.2.0), cancho `a4572ea`, Python 3.14.5, numpy 2.4.6
 
 So `linear` and `logistic` are `supported` by the rule of section 6 (their manifests say so); the tier of the tree, the forest and k-means is in sections 8 of `docs/wiring-trees.md` and `docs/wiring-kmeans.md`.
 
-**The mutant modules** (`python3 tests/modules/run.py`, 13 s): the control (an honest twin of `linear` under another name and kind 8) is **ADMITTED**; each of the six defects is **REFUSED on the check it was written for**:
+**The mutant modules** (`python3 tests/modules/run.py`, 13 s): the control (an honest twin of `linear` under another name and kind 9: kind 8 is `boost`'s since the boosting stage, and the defective modules that add a kind take 9 too) is **ADMITTED**; each of the six defects is **REFUSED on the check it was written for**:
 
 | mutant module | check that failed |
 |---|---|
