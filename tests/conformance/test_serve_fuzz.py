@@ -216,7 +216,7 @@ class Fuzz(unittest.TestCase):
             s.close()
 
     def test_many_connections_at_once(self):
-        with Server(SB.dir, "linear.cml", "--idle-seconds", "3") as srv:
+        with Server(SB.dir, "linear.cml", "--idle-seconds", "3", "--max-body-bytes", "4096") as srv:
             socks = []
             try:
                 for _ in range(300):
@@ -232,6 +232,38 @@ class Fuzz(unittest.TestCase):
                 for s in socks:
                     s.close()
             self.assertTrue(srv.alive())
+
+    def test_the_number_of_connections_is_bounded_by_the_buffers(self):
+        # docs/serving-http.md 5.1: the loop keeps one buffer of (--max-body-bytes + 16 KiB) for each connection within 256 MiB, so the default 1 MiB body allows about 240
+        with Server(SB.dir, "linear.cml", "--idle-seconds", "5") as srv:
+            socks = []
+            served = 0
+            try:
+                for _ in range(400):
+                    try:
+                        socks.append(socket.create_connection(("127.0.0.1", srv.port), timeout=5))
+                    except OSError:
+                        break
+                for s in socks:
+                    try:
+                        s.sendall(Conn.build("GET", "/health"))
+                    except OSError:
+                        pass
+                for s in socks:
+                    s.settimeout(3)
+                    try:
+                        if b"200 OK" in s.recv(1000):
+                            served += 1
+                    except OSError:
+                        pass
+            finally:
+                for s in socks:
+                    s.close()
+            self.assertTrue(srv.alive())
+            self.assertEqual(srv.request("GET", "/health").status, 200)
+            print("serve fuzz: %d of %d simultaneous connections served at the default --max-body-bytes" % (served, len(socks)))
+            self.assertGreaterEqual(served, 200)
+            self.assertLess(served, 400)
 
     def test_a_client_that_does_not_read(self):
         # 50 pipelined requests for the largest answer, never read: the server may close that connection, and goes on serving the others

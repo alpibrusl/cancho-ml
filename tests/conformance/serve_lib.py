@@ -95,6 +95,9 @@ class Server:
             if self.proc.stdout:
                 self.proc.stdout.close()
         self.proc = None
+        if self.log is not None:
+            self.log.close()
+            self.log = None
 
     def __enter__(self):
         return self.start()
