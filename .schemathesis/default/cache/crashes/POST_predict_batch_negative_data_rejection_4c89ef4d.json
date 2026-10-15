@@ -1,0 +1,528 @@
+{
+  "operation": "POST /predict/batch",
+  "method": "POST",
+  "path_template": "/predict/batch",
+  "fingerprint": "4c89ef4d",
+  "case_id": "QqQhSI",
+  "code_sample": "curl -X POST -H 'Content-Type: application/json' -d '{\"rows\": [{\"a\": 0, \"b\": 0.0, \"c\": 0.0, \"y\": null}, 0, {\"a\": 0, \"b\": 0.0, \"c\": 0.0}, false, {\"a\": -999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, null, {\"a\": -999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, \"AAA\", {\"a\": 999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, [null, null], {\"a\": 999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 2.5890419884777833e-42, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0, \"c\": 0.0, \"y\": null}, {\"a\": false, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0.0, \"y\": null}, 0, {\"a\": 0, \"b\": 0.0, \"c\": 0.0}, false, {\"a\": -999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, null, {\"a\": -999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, \"AAA\", {\"a\": 999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, [null, null], {\"a\": 999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 2.5890419884777833e-42, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0, \"c\": 0.0, \"y\": null}, {\"a\": false, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0.0, \"y\": null}, 0, {\"a\": 0, \"b\": 0.0, \"c\": 0.0}, false, {\"a\": -999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, null, {\"a\": -999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, \"AAA\", {\"a\": 999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, [null, null], {\"a\": 999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 2.5890419884777833e-42, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0, \"c\": 0.0, \"y\": null}, {\"a\": false, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0.0, \"y\": null}, 0, {\"a\": 0, \"b\": 0.0, \"c\": 0.0}, false, {\"a\": -999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, null, {\"a\": -999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, \"AAA\", {\"a\": 999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, [null, null], {\"a\": 999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 2.5890419884777833e-42, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0, \"c\": 0.0, \"y\": null}, {\"a\": false, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0.0, \"y\": null}, 0, {\"a\": 0, \"b\": 0.0, \"c\": 0.0}, false, {\"a\": -999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, null, {\"a\": -999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, \"AAA\", {\"a\": 999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, [null, null], {\"a\": 999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 2.5890419884777833e-42, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0, \"c\": 0.0, \"y\": null}, {\"a\": false, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0.0, \"y\": null}, 0, {\"a\": 0, \"b\": 0.0, \"c\": 0.0}, false, {\"a\": -999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, null, {\"a\": -999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, \"AAA\", {\"a\": 999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, [null, null], {\"a\": 999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 2.5890419884777833e-42, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0, \"c\": 0.0, \"y\": null}, {\"a\": false, \"b\": 0.0, \"c\": 0.0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0, \"y\": null}, {\"a\": 0, \"b\": 0.0, \"c\": 0.0, \"y\": null}, 0, {\"a\": 0, \"b\": 0.0, \"c\": 0.0}, false, {\"a\": -999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, null, {\"a\": -999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}, \"AAA\", {\"a\": 999999999999, \"b\": 0.0, \"c\": 0.0, \"y\": null}, [null, null], {\"a\": 999999999998, \"b\": 0.0, \"c\": 0.0, \"y\": null}]}' http://127.0.0.1:18090/predict/batch",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:18090/predict/batch",
+      "url_template": "http://127.0.0.1:18090/predict/batch",
+      "headers": {
+        "User-Agent": "schemathesis/4.31.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "QqQhSI",
+        "Content-Type": "application/json",
+        "Content-Length": "3346"
+      },
+      "response": {
+        "status_code": 413,
+        "headers": {
+          "x-model-sha256": "50ec9831483ce969757556a05bd57883b589a98d67c7df5e6b9004410ab8717b",
+          "content-type": "application/problem+json",
+          "content-length": "236",
+          "connection": "keep-alive"
+        },
+        "body": "{\"type\":\"about:blank\",\"title\":\"Content Too Large\",\"status\":413,\"rule\":\"serve.batch-too-large\",\"model_sha256\":\"50ec9831483ce969757556a05bd57883b589a98d67c7df5e6b9004410ab8717b\",\"detail\":\"the batch has more records than --max-batch-rows\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "negative_data_rejection",
+          "status": "failure",
+          "message": "API accepted schema-violating request\n\nInvalid data should have been rejected\nExpected: 400, 401, 403, 404, 405, 406, 409, 415, 422, 428, 429, 5xx\nInvalid component: in body - rows: Array with more items than allowed by maxItems"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.00024237495381385088,
+          "mode": "negative"
+        },
+        "components": {
+          "BODY": "negative"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "rows: Array with more items than allowed by maxItems",
+            "location": "/properties/rows/maxItems",
+            "parameter": "application/json",
+            "parameter_location": "BODY",
+            "scenario": "array_above_max_items"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/predict/batch",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "rows": [
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            0,
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0
+            },
+            false,
+            {
+              "a": -999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            null,
+            {
+              "a": -999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            "AAA",
+            {
+              "a": 999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            [
+              null,
+              null
+            ],
+            {
+              "a": 999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 2.5890419884777833e-42,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": false,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            0,
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0
+            },
+            false,
+            {
+              "a": -999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            null,
+            {
+              "a": -999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            "AAA",
+            {
+              "a": 999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            [
+              null,
+              null
+            ],
+            {
+              "a": 999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 2.5890419884777833e-42,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": false,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            0,
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0
+            },
+            false,
+            {
+              "a": -999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            null,
+            {
+              "a": -999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            "AAA",
+            {
+              "a": 999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            [
+              null,
+              null
+            ],
+            {
+              "a": 999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 2.5890419884777833e-42,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": false,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            0,
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0
+            },
+            false,
+            {
+              "a": -999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            null,
+            {
+              "a": -999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            "AAA",
+            {
+              "a": 999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            [
+              null,
+              null
+            ],
+            {
+              "a": 999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 2.5890419884777833e-42,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": false,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            0,
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0
+            },
+            false,
+            {
+              "a": -999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            null,
+            {
+              "a": -999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            "AAA",
+            {
+              "a": 999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            [
+              null,
+              null
+            ],
+            {
+              "a": 999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 2.5890419884777833e-42,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": false,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            0,
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0
+            },
+            false,
+            {
+              "a": -999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            null,
+            {
+              "a": -999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            "AAA",
+            {
+              "a": 999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            [
+              null,
+              null
+            ],
+            {
+              "a": 999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 2.5890419884777833e-42,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": false,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0,
+              "y": null
+            },
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            0,
+            {
+              "a": 0,
+              "b": 0.0,
+              "c": 0.0
+            },
+            false,
+            {
+              "a": -999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            null,
+            {
+              "a": -999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            "AAA",
+            {
+              "a": 999999999999,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            },
+            [
+              null,
+              null
+            ],
+            {
+              "a": 999999999998,
+              "b": 0.0,
+              "c": 0.0,
+              "y": null
+            }
+          ]
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null,
+      "auth_identity": null
+    }
+  ]
+}
