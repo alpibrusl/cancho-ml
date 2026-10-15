@@ -81,6 +81,25 @@ git = "https://github.com/alpibrusl/cancho-tools"
 rev = "8dab9176e521660333914dc768a80a29330a2a8e"
 path = ".cancho-vcs/toolbox.text"
 
+# `ml-serve` (docs/serving-http.md section 1): cancho-web's `web`, cancho-schema's `schema` and the compiler's `http.server` are pinned stores, one rev each, never copied.
+# Only tools/ml-serve imports them (`cancho build --bin ml` and `--bin ml-predict` are the same bytes with or without these blocks: scripts/check_web_pin.sh --bins).
+# `web` records its requirement on `schema` at the same rev; scripts/check_web_pin.sh checks the pins.
+
+[dependencies.web]
+git = "https://github.com/alpibrusl/cancho-web"
+rev = "5f404a777018cf42b5c713daa4972c938c9229f4"
+path = ".cancho-vcs"
+
+[dependencies.schema]
+git = "https://github.com/alpibrusl/cancho-schema"
+rev = "59a70285ff23af63a226bc56ff978feccb4cf8ca"
+path = ".cancho-vcs"
+
+[dependencies.server]
+git = "https://github.com/alpibrusl/cancho"
+rev = "a4572ea3b506e4bcec1c4be43deda1043c11ba9f"
+path = "packages/http-server/.cancho-vcs"
+
 [[bin]]
 name = "linalg-check"
 sources = ["lib/core", "lib/linalg", "tools/linalg-check"]

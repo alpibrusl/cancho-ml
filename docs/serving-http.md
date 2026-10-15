@@ -41,11 +41,15 @@ path = "packages/http-server/.cancho-vcs"
 ```
 
 `web` records its requirement on `schema` at `59a7028`, and a consumer must also name `schema` in its own `cancho.toml` (cancho-web's `scripts/publish.sh` says so); the two revs are the same. The module of the
-`server` store is `http.server`. `scripts/check_web_pin.sh` (gate W1) checks that the three blocks have the git URLs above, a 40-digit rev and the path, that the `schema` rev is the `SCHEMA_REV` this document
+`server` store is `http.server`. `scripts/check_web_pin.py` (gate W1) checks that the three blocks have the git URLs above, a 40-digit rev and the path, that the `schema` rev is the `SCHEMA_REV` this document
 names, that the `server` rev is the compiler pin of `[package] cancho`, that no other store of these three repositories is listed, that no `.cho` file under `lib/`, `tools/` or `tests/` declares the modules `web`,
 `schema` or `http.server`, and (`CHECK_REMOTE=1`) that GitHub has the three stores at those revs. Moving a pin is the act of editing the revs in `cancho.toml` and the lines of this section together.
 
-Pins: cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f4`; cancho-schema rev: `59a70285ff23af63a226bc56ff978feccb4cf8ca`; cancho http-server rev: `a4572ea3b506e4bcec1c4be43deda1043c11ba9f`.
+cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f4`
+
+cancho-schema rev: `59a70285ff23af63a226bc56ff978feccb4cf8ca` (the `SCHEMA_REV` `5f404a7`'s `ci.yml` names: `SCHEMA_REV` `59a70285ff23af63a226bc56ff978feccb4cf8ca`)
+
+cancho http-server rev: `a4572ea3b506e4bcec1c4be43deda1043c11ba9f`
 
 Only `ml-serve` imports these modules; `cancho build --bin ml` and `--bin ml-predict` are not changed by them (gate W2 compares the bytes of the two binaries built before and after the three blocks
 are added; the other changes of this stage that reach their sources are listed in section 10).
@@ -300,8 +304,8 @@ is an optimisation that adds a second path to the gate and is not done here.
 
 | id | gate | test or script | mutants that must be killed |
 |---|---|---|---|
-| W1 | the three dependencies are pinned, consistent and not copied | `scripts/check_web_pin.sh` | a rev edited in one block; a block removed; a copy of `web` under `lib/`; a sixth store of cancho-web |
-| W2 | the three blocks do not change the bytes of `ml` and `ml-predict` | `scripts/check_web_pin.sh --bins` (or the run recorded in section 10) | |
+| W1 | the three dependencies are pinned, consistent and not copied | `scripts/check_web_pin.py` | a rev edited in one block; a block removed; a copy of `web` under `lib/`; a sixth store of cancho-web |
+| W2 | the three blocks do not change the bytes of `ml` and `ml-predict` | `scripts/check_web_pin.py --bins` (or the run recorded in section 10) | |
 | S1 | the byte-equality of 4.1 over the 19-model corpus | `tests/conformance/test_serve_bytes.py` | number formatting, column order, null rendering, `dec` padding, category quoting |
 | S2 | end-to-end over real sockets: readiness, every endpoint, every refusal with its status and `problem+json` body, keep-alive, pipelining (5 requests in one write, answers in order), a request split across 1-byte writes, a body larger than the limit (413), wrong content type (415), invalid JSON (400), JSON with duplicate keys, NaN, Infinity, 1e999, nesting of 100,000, a BOM, invalid UTF-8; unknown, missing and extra columns; unseen categories (`enum` and no `enum`); null; one record, a batch at the limit and over | `tests/conformance/test_serve.py` | a status mapped to another; a refusal as 200; the `rule` field dropped; the row limit off by one |
 | S3 | the JSON number differential: the cell the server renders for a number equals Python's `Decimal`/`float` of the same text (int exact or refused, dec exact or refused, float correctly rounded or refused) over generated and adversarial numbers: 17-digit mantissas, subnormals, halfway cases, exponents, `-0`, `1e999` | `tests/conformance/test_serve_json.py` | the rounding of a float taken for an int; an exponent ignored; a dec scale off by one |
