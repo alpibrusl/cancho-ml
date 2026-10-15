@@ -258,8 +258,8 @@ class Http(unittest.TestCase):
                 else:
                     kind, val = expect_float(text)
                 if kind == "ok":
-                    if r.status == 422 and r.json()["rule"] == "serve.non-finite-prediction":
-                        # the model's answer is infinite: the command line prints it as text that is not a number, the server refuses
+                    if r.status == 422 and r.json()["rule"] == "ml.predict.non-finite":
+                        # the model's answer is infinite: the command line and the server refuse it with the same rule
                         nonfinite += 1
                         continue
                     self.assertEqual(r.status, 200, (col, text[:60], r))

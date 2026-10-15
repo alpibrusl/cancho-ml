@@ -77,6 +77,8 @@ FILES = {
     "houses.csv": "id,rooms,area,price\n1,2,48.5,180000\n2,3,71.25,240000\n3,3,64,215000\n4,4,98.5,335000\n5,1,31,120000\n",
     # new rows to predict for: no price column is needed
     "new.csv": "id,rooms,area\n6,2,52.5\n7,3,80\n",
+    # a row with an area no house has: the model's answer is past the largest double
+    "huge.csv": "id,rooms,area\n8,2,1e308\n",
     # no byte at all: the standard input of a forgotten operand
     "empty.csv": "",
     # the same with a column of text
@@ -109,6 +111,8 @@ DEMOS = [
     ("damaged", "ml eval --model-file damaged.ml houses.csv"),
     ("other_model", "ml fit --model knn --target price --output knn.ml houses.csv"),
     ("typo", "ml fit --target prize --output typo.ml houses.csv"),
+    ("big_fit", "ml fit --model linear --float area,price --drop id --l2 0.1 --target price --output houses-big.ml houses.csv"),
+    ("big", "ml predict --model-file houses-big.ml --drop id huge.csv"),
     # the models that go through the pipeline (docs/wiring.md): a refusal with its repair first, then the plan written out
     ("p_bad", "ml fit --model logistic --target bought --output shop2.ml shop2.csv"),
     ("p_fit", "ml fit --model logistic --overwrite --step 'impute column=spend strategy=mean;scale column=visits,spend kind=standard' --iterations 50 --l2 0.1 --target bought --output shop2.ml shop2.csv"),
@@ -147,6 +151,7 @@ SUMMARY = {
     "damaged": ["rule", "hint"],
     "other_model": ["rule", "detail"],
     "typo": ["rule", "hint", "detail"],
+    "big": ["rule", "hint", "detail"],
     "p_bad": ["rule", "hint", "repair"],
     "c_bad": ["rule", "hint", "detail"],
     "s_empty": ["rule", "hint"],
@@ -162,7 +167,7 @@ TASKS = {
     "float": ["float_fit", "float_eval"],
     "dry": ["exists", "dry"],
     "damaged": ["damaged"],
-    "honest": ["other_model", "typo"],
+    "honest": ["other_model", "typo", "big"],
     "split": ["p_split"],
 }
 QS = ["fit", "predict", "eval", "bad"]

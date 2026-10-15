@@ -102,6 +102,7 @@
     "bit_at",
     "bit_length",
     "bit_length",
+    "bits_finite",
     "bits_of_key",
     "bits_of_key",
     "block",
@@ -166,6 +167,7 @@
     "cols",
     "column_kind",
     "column_of",
+    "column_word",
     "columns",
     "columns",
     "combine",
@@ -277,6 +279,7 @@
     "feature_count",
     "features",
     "field",
+    "file_row",
     "find",
     "find",
     "find",
@@ -292,6 +295,8 @@
     "first",
     "first",
     "first_bad",
+    "first_bad_score",
+    "first_non_finite",
     "first_ordered_kind",
     "first_ordered_model",
     "fit_non_finite",
@@ -630,6 +635,7 @@
     "pow10",
     "pow2",
     "precision",
+    "predict_non_finite",
     "present",
     "proba_of",
     "proba_of",
@@ -842,7 +848,7 @@
     "writable",
     "y_max"
   ],
-  "folded_operators": 171,
+  "folded_operators": 177,
   "folded_calls": 2,
-  "functions": 1381
+  "functions": 1389
 }

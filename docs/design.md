@@ -371,6 +371,12 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.model.string-table` | 8 | the string table of a model file is damaged, passes a bound of `docs/stringtable.md` section 4, or disagrees with the steps, the plan or the schema of its own file (`reason`, `step` and `section` in `detail`) | none: refit |
 | `ml.limit.string-table` | 8 | a fit would write a string table over 131,072 strings, 8 MiB of string bytes or 12 MiB (`what`, `size`, `max` in `detail`) | none: fewer or shorter categories, or a `hash` step |
 
+*A prediction that is not a finite number (`docs/nonfinite.md`; `tools/ml/spec.tmpl`, `lib/core/refuse.cho` code 21, one fixture in `tests/conformance/fixtures.py`):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.predict.non-finite` | 8 | a prediction, a probability or a squared distance of a row scored by `predict`, `ml-predict`, `eval` or `ml-serve` is NaN or infinite; the 1-based row of the file and the column of the answer (`prediction`, `label`, `probability`, `distance`) are in `detail`; all the rows scored are checked, not only the page | none: scale the inputs, or check or drop the row |
+
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
 
 ## 8.1 The numeric codes of the libraries (added at integration)
@@ -406,6 +412,7 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 18 | `ml.limit.string-pool` | 8 | `ml.refuse` |
 | 19 | `ml.limit.categorical-columns` | 8 | `ml.refuse` |
 | 20 | `ml.input.invalid-utf8` | 8 | `ml.refuse` |
+| 21 | `ml.predict.non-finite` | 8 | `ml.refuse` |
 | 101 | `ml.input.non-finite` | 8 | `tree.deny` |
 | 102 | `ml.label.not-binary` | 8 | `tree.deny` |
 | 103 | `ml.label.single-class` | 8 | `tree.deny` |

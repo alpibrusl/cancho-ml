@@ -70,6 +70,9 @@ python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
 python3 scripts/mutants_serve.py --check
+# a prediction that is not a finite number (docs/nonfinite.md): no call of flt.put_float outside its door, and the patterns of the mutants apply (scripts/mutants_nonfinite.py rebuilds the three binaries once per pattern and runs on request)
+python3 scripts/check_nonfinite.py
+python3 scripts/mutants_nonfinite.py --check
 # ml-serve (docs/serving-http.md section 9): the documents it serves for the fixture models are the checked-in files and validate; Schemathesis runs when it is installed (build/venv);
 # the patterns of its mutants apply (scripts/mutants_http.py rebuilds the server once per pattern and runs on request); W2 builds ml and ml-predict without the three dependencies
 python3 scripts/gate_serve_openapi.py
