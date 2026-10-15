@@ -84,7 +84,7 @@ pub fn exact_cell[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], s
         return (o, inexact());
     }
     // the digits are text[ib..ie] then text[fb..fe]: position p of the stream
-    let n = (ie - ib) + (fe - fb);
+    let n = ie - ib + (fe - fb);
     var first = 0 - 1;
     var last = 0 - 1;
     var p = 0;

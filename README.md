@@ -371,6 +371,55 @@ $ ml-predict predict --model-file houses.ml --log run.ndjson new.csv
 ```
 <!-- /gen:sflow -->
 
+### Serve a model over HTTP
+
+`ml-serve` serves one model file with [cancho-web](https://github.com/alpibrusl/cancho-web) ([docs/serving-http.md](docs/serving-http.md)). It is a third binary from the same sources, with its own entry point, and it is not a subprocess of `ml predict`: it calls the same code in the same process, with the CSV and the model file as bytes in memory. It reads the model file once and decodes it once, builds the request schema from what `describe` says (one member for each column of the model, the `enum` of the categories the file lists in full, `null` only where the model takes missing cells) and the OpenAPI 3.1 document from the same declaration, and answers one request at a time on one thread.
+
+`POST /predict` takes a record, `POST /predict/batch` takes `{"rows": [...]}`, `GET /model` is the answer of `describe`, `GET /openapi.json` is the document and `GET /health` is liveness. A classification answers `label` and `probability`, a regression `prediction`, a clustering `cluster` and `distance`. Every answer carries the SHA-256 of the model file in its head (`X-Model-Sha256`).
+
+The values in an answer are the text `ml predict` prints, written as JSON numbers. A number that cannot be written exactly as the type of its column (an `int` takes a whole number of at most 12 digits, a `dec` the digits of its scale) is refused with its JSON Pointer and never rounded. A refusal is `application/problem+json` with a `rule` field (`ml.schema.mismatch` lists every error at once; a refusal of the predictor carries its own rule and error object), and the body, the number of records, the head and the idle time are bounded.
+
+The pinned compiler binds every address of the host and has no way to ask for `127.0.0.1`, so `ml-serve` refuses to start unless `--token-file FILE` (a bearer token, read once, required by every operation but `GET /health`) or `--no-token` says what the caller means. The commands below run `ml-serve` on `pets.ml`, the model of the categorical flow, and talk to it.
+
+<!-- gen:hflow -->
+```console
+# ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080)
+$ ml-serve --model-file pets.ml --no-token --port 8080 &
+listening on 8080
+# liveness, and the SHA-256 of the model file being served
+$ curl -s localhost:8080/health
+{"ok":true,"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d"}
+# one record: a member for every column of the model. The head carries the digest too
+$ curl -s -i -XPOST -H 'Content-Type: application/json' -d '{"age":3,"species":"cat","city":"Turin","visits":4}' localhost:8080/predict
+HTTP/1.1 200 OK
+X-Model-Sha256: 676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d
+Content-Type: application/json
+Content-Length: 229
+Connection: keep-alive
+
+{"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","model":"logistic","task":"classification","columns":["label","probability"],"rows":[[1,0.6996810090936468]],"row_co…
+# a batch: a row of the answer for each record, in order
+$ curl -s -XPOST -H 'Content-Type: application/json' -d '{"rows":[{"age":3,"species":"cat","city":"Turin","visits":4},{"age":1,"species":"dog","city":"Lyon","visits":7}]}' localhost:8080/predict/batch
+{"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","model":"logistic","task":"classification","columns":["label","probability"],"rows":[[1,0.6996810090936468],[1,0.915…
+# a refusal: every error at once, each with its JSON Pointer, as application/problem+json with the rule
+$ curl -s -i -XPOST -H 'Content-Type: application/json' -d '{"age":"two","species":"axolotl","city":"Lyon","visits":4,"zip":1}' localhost:8080/predict
+HTTP/1.1 422 Unprocessable Content
+X-Model-Sha256: 676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d
+Content-Type: application/problem+json
+Content-Length: 412
+Connection: keep-alive
+
+{"rule":"ml.schema.mismatch","model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","type":"about:blank","title":"Unprocessable Content","status":422,"count":3,"errors":[{"pointer":"/age","code":"type","detail":"has the wrong type"}…
+# what the model requires of a caller (excerpt), and the OpenAPI 3.1 document made from the same columns (excerpt)
+$ curl -s localhost:8080/model
+{"model":"logistic","task":"classification","request":{"header":["age","species","city","visits"],"optional":["adopted"],"extra_columns":"refused","missing_cells":"needs_impute"},"classes":[0,1],"out…
+$ curl -s localhost:8080/openapi.json
+{"openapi":"3.1.0","paths":["/health","/model","/openapi.json","/predict","/predict/batch"],"Record":{"type":"object","properties":{"age":{"type":"integer","minimum":-999999999999,"maximum":999999999…
+```
+<!-- /gen:hflow -->
+
+The model is read at start and changed by restarting. There is no TLS, no reload and no request deadline beyond the idle time. [docs/serving-http.md](docs/serving-http.md) has the endpoints, the status of every refusal, the limits and the gates.
+
 ## Built to be read by an agent
 
 `ml introspect` and `ml skill` come from the same tables the code parses its flags with, so they cannot disagree with the program: the interface, the limits, the rules and the authority can be learned from the binary itself. A test checks that every flag and every rule is in the table, in `introspect`, in `skill`, in the schema and in a fixture. [docs/cli.md](docs/cli.md) section 1.
@@ -423,14 +472,15 @@ authority   args, conc, dir_read, dir_write, err_write, file_read, file_write, f
 | 9 | `DRY_RUN` | a --dry-run completed; planned_actions lists what an apply would do |
 <!-- /gen:exit-codes -->
 
-* **The authority row.** What the compiler says the program can reach. It reads the files named on its command line and, for `predict -`, standard input (`io_read`), creates, appends to, renames and removes only beneath a directory it opened itself, and keeps its working data on the heap. `ml-predict` has the same row without `conc`, `dir_write` and `file_write`. `conc` is in the row because `fit --threads N` calls the threaded kernels of `lib/linalg`; `tools.toml` states the reason, and the test that no thread count changes a byte is in `tests/conformance` ([docs/wiring.md](docs/wiring.md) section 6).
+* **The authority row.** What the compiler says the program can reach. It reads the files named on its command line and, for `predict -`, standard input (`io_read`), creates, appends to, renames and removes only beneath a directory it opened itself, and keeps its working data on the heap. `ml-predict` has the same row without `conc`, `dir_write` and `file_write`. `ml-serve` has the row of `ml-predict` without standard input and with the sockets of a server (`net_in`, `conn_accept`, `conn_read`, `conn_write`, `poll`) and `clock` (the idle timeout and the access log): no write of any file, no thread, no process, no foreign code, no outbound connection. `conc` is in the row of `ml` because `fit --threads N` calls the threaded kernels of `lib/linalg`; `tools.toml` states the reason, and the test that no thread count changes a byte is in `tests/conformance` ([docs/wiring.md](docs/wiring.md) section 6).
 
 <!-- gen:authority -->
 ```console
-# manifests/ml.authority.json and manifests/ml-predict.authority.json
+# manifests/ml.authority.json, manifests/ml-predict.authority.json and manifests/ml-serve.authority.json
 ml          args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_read, io_write
 ml-predict  args, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write
-# bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent
+ml-serve    args, clock, conn_accept, conn_read, conn_write, dir_read, err_write, file_read, fs_read(""), heap, io_write, net_in(""), poll
+# bounded: true; foreign symbols: none; ffi, net_out: absent from all three; net_in, clock: ml-serve only
 ```
 <!-- /gen:authority -->
 
@@ -446,7 +496,7 @@ ml-predict  args, dir_read, err_write, file_read, fs_read(""), heap, io_read, io
 * **One red gate.** The regression forest against scikit-learn's: RMSE 8.1% apart where the tolerance is 3% (`docs/models-tree.md` section 10.8). The algorithms differ (histogram against exact splits) and most of the gap is attributed to that; the tolerance is kept and the maintainer has not decided. [docs/models-tree.md](docs/models-tree.md)
 * **Not tested across machines.** The bytes are verified on one Mac (arm64), at 1 to 16 threads. A Linux x86-64 run is not done.
 * **No CI workflow.** The reader is a pinned dependency on cancho-table's stores ([docs/reader.md](docs/reader.md) section 1), so the build needs no sibling clone, but `cancho install` needs the network and nothing in this repository runs `scripts/check.sh` automatically.
-* **No serving, no MCP server.** `ml-serve` (issue #16) and an MCP server are not built.
+* **`ml-serve` is one thread and has no TLS.** A long request holds the others, the idle timeout is the only deadline, the pinned compiler cannot bind one address, and a `dec` column's digits and a category's CR LF are refusals the OpenAPI document cannot state ([docs/serving-http.md](docs/serving-http.md) sections 5 and 11). An MCP server is not built.
 * **No neural networks and no GPU.** They need matrix kernels, a GPU path and automatic differentiation, which cancho does not have. Inference of small exported models may come later; it is not planned in v1.
 * **Not built, not promised here:** multiclass, boosting, naive Bayes, k-NN, feature importance, out-of-bag scores, a stopping rule or a choice of k for k-means.
 
