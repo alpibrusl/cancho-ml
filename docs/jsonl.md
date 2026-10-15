@@ -10,7 +10,7 @@ the equivalent CSV gives, with the refusals of a tool an agent can read, and wit
 
 ## 1. The decision: a reader of `ml`'s own (B), not cancho-table's reader as a store (A)
 
-cancho-table reads JSON lines since PR #47 (R2; `docs/readers.md` section 12 there). The two ways to have that in `ml` are (A) pin it as a store, as the
+cancho-table reads JSON lines since PR #47 (R2; `readers.md` section 12 in that repository). The two ways to have that in `ml` are (A) pin it as a store, as the
 five numeric modules are pinned (`docs/reader.md` section 1), or (B) a small reader of `ml` over `std.json`. **Measured** at cancho-table `0a1b7dc`
 (`main`), by reading the `import` lines of `tools/table/*.cho` and following them (a script in this section's reproduction below):
 
@@ -26,7 +26,7 @@ five numeric modules are pinned (`docs/reader.md` section 1), or (B) a small rea
   cells, rec0, a)`: `cells` is the engine's triple of ints per field, `a` is the engine's tally (`k_records`, `k_abort`, `k_err_col`... "as `engine.cho`
   names them"), and its refusals are abort codes of the engine (50 to 55). It imports `engine`, which imports `agg`, `expr`, `query`, `report`, `sorter`,
   `jout` and `writer`: the table's plan, its aggregates and its writer. `scripts/publish_numeric.py` refuses to publish a module that declares `Query` or
-  imports a module that is not published (`docs/numeric-package.md` in cancho-table, the `query` withdrawal of #44), and `jrec` would need 14 more
+  imports a module that is not published (`numeric-package.md` in cancho-table, the `query` withdrawal of #44), and `jrec` would need 14 more
   modules to be published or cut. The two modules that are free of the plan (`jfields`, `jflat`) are the declaration of dotted paths and an accelerator;
   neither holds the reading of a value.
 * **[read] The minimal interface** ("for a line and a declared list of paths, the text of each cell, or a refusal with a rule and a position") does not
@@ -35,10 +35,10 @@ five numeric modules are pinned (`docs/reader.md` section 1), or (B) a small rea
   extraction is a new module, and `ml` would pin a module written for it.
 * **[read, measured] The compiler.** `std.json.parse_with` is the call table's reader is built on. It is in cancho `e47d647` (`std/json.cho` line 594) and
   **not** in `a4572ea`, the compiler `ml` pins (`grep -c parse_with std/json.cho` is 0 there). A store of `jrec` would not type-check with `ml`'s compiler
-  (the same finding as `flt` and `float_of_bits` in `docs/numeric-package.md` there): choosing (A) moves the compiler pin of `ml`, which changes the bytes
+  (the same finding as `flt` and `float_of_bits` in `numeric-package.md` there): choosing (A) moves the compiler pin of `ml`, which changes the bytes
   of every store `ml` publishes (`docs/stores.md`) and every model file's `compiler` field, for a reader of 500 lines.
 
-**Decision: (B).** `tools/ml/jsonl.cho` is an independent reader written from table's specification (`docs/readers.md` section 12.2 to 12.5: strict RFC 8259,
+**Decision: (B).** `tools/ml/jsonl.cho` is an independent reader written from table's specification (`readers.md` section 12.2 to 12.5 of cancho-table: strict RFC 8259,
 numbers are their exact token text, strings are decoded, a duplicate key at a declared path is refused, a line that is not an object is refused, limits
 before allocation), over `std.json.parse` of `a4572ea`. **No table code is copied.** The conformance oracle is Python's `json`, not table. Nothing is
 pinned from cancho-table beyond what `ml` pins today, and no branch of cancho-table is needed (`jsonl-store` was not made).

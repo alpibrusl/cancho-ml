@@ -92,6 +92,11 @@ FILES = {
     "new2.csv": "id,visits,spend\n13,3,\n14,6,20.0\n15,1,1.5\n",
     # new rows for the model fitted on pets.csv: the columns in another order, a city and a species the training rows never held, and an empty city cell
     "newpets.csv": "city,species,age,visits\nOslo,rabbit,2,3\nLyon,axolotl,4,1\n,cat,1,2\n",
+    # JSON lines (docs/jsonl.md): the houses as objects; new rows with other keys, in another order, with a nested value ml does not read; a file with a key missing; a string where a number is read
+    "houses.jsonl": '{"id":1,"rooms":2,"area":48.5,"price":180000}\n{"id":2,"rooms":3,"area":71.25,"price":240000}\n{"id":3,"rooms":3,"area":64,"price":215000}\n{"id":4,"rooms":4,"area":98.5,"price":335000}\n{"id":5,"rooms":1,"area":31,"price":120000}\n',
+    "new.jsonl": '{"area":52.5,"id":6,"agent":{"name":"A. Costa","phones":[1,2]},"rooms":2}\n{"rooms":3,"note":"south, \\"quiet\\"","id":7,"area":80}\n',
+    "gap.jsonl": '{"id":1,"rooms":2,"area":48.5,"price":180000}\n{"id":2,"area":71.25,"price":240000}\n{"id":3,"rooms":3,"area":64,"price":215000}\n',
+    "strings.jsonl": '{"id":1,"rooms":2,"area":"48.5","price":180000}\n',
 }
 
 # What is shown is what is typed; the argv run is shlex.split of it. The order is the order of running.
@@ -141,6 +146,13 @@ DEMOS = [
     ("k_predict", "ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv"),
     ("k_eval", "ml eval --model-file iris-km.ml --drop virginica iris_test.csv"),
     ("k_text", "ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv"),
+    # JSON lines as an input (docs/jsonl.md)
+    ("j_fit", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-jl.ml houses.jsonl"),
+    ("j_predict", "ml predict --model-file houses-jl.ml --input-format jsonl new.jsonl"),
+    ("j_stdin", "ml predict --model-file houses-jl.ml --input-format jsonl -", "new.jsonl"),
+    ("j_fit_stdin", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --overwrite --output houses-jl.ml -", "houses.jsonl"),
+    ("j_bad", "ml fit --model tree --input-format jsonl --fields id,rooms,area,price --target price --output houses-gap.ml gap.jsonl"),
+    ("j_str", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-str.ml strings.jsonl"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
@@ -159,6 +171,8 @@ SUMMARY = {
     "s_mp_flag": ["rule", "hint", "detail"],
     "k_target": ["rule", "hint", "detail"],
     "k_nok": ["rule", "hint", "detail"],
+    "j_bad": ["rule", "hint", "repair"],
+    "j_str": ["rule", "hint", "detail"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -172,7 +186,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "j_bad": "j_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -404,6 +418,22 @@ def catflow_items(ctx):
             item(ctx, "c_hash_new")]
 
 
+def jflow_items(ctx):
+    """JSON lines: fit with the columns declared, predict with other keys and another order, standard input, a key missing (and the repair, run), a string where a number is read."""
+    return [("# houses.jsonl: one object a line. --fields declares the columns, in the order of the table. The model file is the same bytes as the one fitted from the CSV", None, 0, None),
+            item(ctx, "j_fit"),
+            ("# predict reads the columns of the model file by key: any order, and keys it does not read (a nested object, a note) are ignored", None, 0, None),
+            item(ctx, "j_predict"),
+            ("# standard input works for predict, and for fit and eval with the operand -", None, 0, None),
+            item(ctx, "j_stdin"),
+            item(ctx, "j_fit_stdin"),
+            ("# a line with no rooms key is refused, with the repair that reads an absent key as a missing cell (a tree takes it)", None, 0, None),
+            item(ctx, "j_bad"),
+            item(ctx, "j_fixed"),
+            ("# a JSON string is text, never a number: \"48.5\" is not read as 48.5", None, 0, None),
+            item(ctx, "j_str")]
+
+
 def sflow_items(ctx):
     """Standard input, describe and ml-predict."""
     return [("# predict reads the CSV from standard input for the operand - (or no operand): the answer is the file's answer", None, 0, None),
@@ -631,11 +661,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), jflow=lambda c: md_block(jflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), jflow=lambda c: html_pre(jflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

@@ -86,6 +86,36 @@ mean_distance 1.2398733702280837 1.0644974060896137 1.1737313271562995
 ```
 <!-- /gen:kmflow -->
 
+## JSON lines
+
+`--input-format jsonl` (or `ndjson`) reads one JSON object a line, for `fit`, `predict` and `eval`. `fit` declares the columns with `--fields` (the keys, in the order of the table); `predict` and `eval` take theirs from the model file, read each line by key in any order and ignore the keys the model does not read. A number is its exact text (never rounded through a double), a string is text (`"48.5"` is never the number 48.5), `null` is a missing cell, a key a line lacks is `ml.jsonl.missing-field` unless `--absent empty`, `true` and `false` are text in a `--cat` column and refused in a number column, and an object or an array is refused: nothing is guessed. The model file is the same bytes as the one fitted from the equivalent CSV, and `predict` and `eval` print the same answers. `fit -`, `eval -` and `predict -` read standard input up to `--max-bytes`, CSV or JSON lines, so a table of nested JSON flattens into `ml` with a pipe: `table --input-format jsonl --fields id,user.age,spend --select '#2,#3' --format csv events.jsonl | ml predict --model-file m.ml -` (cancho-table's `--fields` follows dotted and indexed paths; `ml` reads flat keys). The reader, its mapping of every JSON value to a cell and its refusals are in [docs/jsonl.md](docs/jsonl.md).
+
+<!-- gen:jflow -->
+```console
+# houses.jsonl: one object a line. --fields declares the columns, in the order of the table. The model file is the same bytes as the one fitted from the CSV
+$ ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-jl.ml houses.jsonl
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses-jl.ml","bytes":340,"sha256":"299879cc4b9be8afb5c6029aa8c635693162dc7a6d6ef564a4a1a66b83f4f1d8","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
+# predict reads the columns of the model file by key: any order, and keys it does not read (a nested object, a note) are ignored
+$ ml predict --model-file houses-jl.ml --input-format jsonl new.jsonl
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
+# standard input works for predict, and for fit and eval with the operand -
+$ ml predict --model-file houses-jl.ml --input-format jsonl - < new.jsonl
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
+$ ml fit --input-format jsonl --fields id,rooms,area,price --target price --overwrite --output houses-jl.ml - < houses.jsonl
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses-jl.ml","bytes":340,"sha256":"299879cc4b9be8afb5c6029aa8c635693162dc7a6d6ef564a4a1a66b83f4f1d8","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
+# a line with no rooms key is refused, with the repair that reads an absent key as a missing cell (a tree takes it)
+$ ml fit --model tree --input-format jsonl --fields id,rooms,area,price --target price --output houses-gap.ml gap.jsonl
+{"rule": "ml.jsonl.missing-field", "hint": "add the key, or read an absent key as a missing cell with --absent empty", "repair": {"kind": "retry", "argv": ["ml", "fit", "--model", "tree", "--input-format", "jsonl", "--fields", "id,rooms,area,price", "--target", "price", "--output", "houses-gap.ml", "gap.jsonl", "--absent", "empty"]}}
+# exit status 8; the rule, hint, repair of the JSON line it prints
+$ ml fit --model tree --input-format jsonl --fields id,rooms,area,price --target price --output houses-gap.ml gap.jsonl --absent empty
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"tree","task":"regression","rows":3,"columns":4,"target":"price","path":"houses-gap.ml","bytes":901,"sha256":"3522dcea62980ff07ea594867cfffa63ca1f636b529609b0479ea675b54788ad","written":true,"summary":{"plan":"model kind=tree task=regression max-depth=8 min-leaf=1 bins=64 max-nodes=4194304\n","steps":0,"features":3,"forest":{"trees":1,"nodes":5,"bins":64,"max_depth":8,"min_leaf":1,"mtry":3}}},"meta":{"version":"0.1.0"}}
+# a JSON string is text, never a number: "48.5" is not read as 48.5
+$ ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-str.ml strings.jsonl
+{"rule": "ml.jsonl.type-mismatch", "hint": "write numbers as JSON numbers, or declare a text column with --cat (fit); a model file fixes which columns are text", "detail": {"path": "strings.jsonl", "line": 1, "row": 1, "column": 3, "name": "area", "found": "string"}}
+# exit status 8; the rule, hint, detail of the JSON line it prints
+```
+<!-- /gen:jflow -->
+
 ## Worked examples
 
 Four classic datasets, as bundled with scikit-learn (breast cancer Wisconsin, diabetes progression, iris restricted to two species, wine), solved by the real `ml` binary and compared with scikit-learn on the **same two files** each. [docs/examples.md](docs/examples.md) fixes what is compared and the tolerances, and was written before any example was run; the commands and their output are on [the examples page](https://alpibrusl.github.io/cancho-ml/examples.html), with two failures shown (a penalty-free logistic fit on separable data; a column whose type differs between two files). The `ml` output is regenerated by `scripts/check_docs.sh`; the scikit-learn column is read from `docs/examples/reference.json`, written by `python3 scripts/examples_data.py` (needs scikit-learn), and **is not computed by the check**. Nothing here is a claim about speed.
@@ -445,19 +475,19 @@ The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`);
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler a4572ea3)
-flags       45, for example
+flags       49, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
   --model-file  path             predict, eval, describe: the model file to read
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
-limits      21, for example
+limits      22, for example
   --max-rows         default 10,000,000   ceiling 1,000,000,000
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       79, for example
+rules       87, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes
