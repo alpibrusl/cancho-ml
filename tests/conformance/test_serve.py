@@ -652,11 +652,12 @@ class Start(unittest.TestCase):
         out = p.stdout.decode()
         return p.returncode, (json.loads(out.splitlines()[0]) if out.strip() else None), p.stderr.decode()
 
-    def test_no_token_flag_is_refused(self):
-        code, d, _ = self.start("--root", str(SB.dir), "--model-file", "linear.cml")
-        self.assertEqual((code, d["error"]["rule"]), (2, "serve.no-token"))
+    def test_token_file_and_no_token_conflict(self):
         code, d, _ = self.start("--root", str(SB.dir), "--model-file", "linear.cml", "--no-token", "--token-file", "linear.cml")
         self.assertEqual((code, d["error"]["rule"]), (2, "args.conflict"))
+        # a server on every address needs a token (the sockets are tested in test_serve_bind.py)
+        code, d, _ = self.start("--root", str(SB.dir), "--model-file", "linear.cml", "--bind", "all")
+        self.assertEqual((code, d["error"]["rule"]), (2, "serve.no-token"))
 
     def test_the_token_file(self):
         for text, rule in ((b"", "serve.token"), (b"\n", "serve.token"), (b"has space\n", "serve.token"), (b"a" * 5000, "serve.token"), (b"caf\xc3\xa9\n", "serve.token"), (b"tab\there\n", "serve.token")):
@@ -705,7 +706,7 @@ class Start(unittest.TestCase):
         p = subprocess.run([SERVE_BIN, "introspect"], capture_output=True)
         d = json.loads(p.stdout)
         self.assertEqual(d["tool"], "ml-serve")
-        self.assertEqual([f["name"] for f in d["flags"]], ["--root", "--model-file", "--port", "--token-file", "--no-token", "--max-body-bytes", "--max-batch-rows", "--idle-seconds", "--max-bytes"])
+        self.assertEqual([f["name"] for f in d["flags"]], ["--root", "--model-file", "--port", "--bind", "--token-file", "--no-token", "--max-body-bytes", "--max-batch-rows", "--idle-seconds", "--max-bytes"])
         self.assertIn("serve.no-token", [r["rule"] for r in d["rules"]])
         p = subprocess.run([SERVE_BIN, "skill"], capture_output=True)
         self.assertEqual(p.returncode, 0)

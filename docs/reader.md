@@ -242,7 +242,7 @@ splitting, which table's fused reader does not (docs/readers.md of cancho-table)
 4. **`-0` reads as `0.0`** (cancho-table's rule B2). A model that wants the sign of zero needs another reader.
 5. **A float target's `mean` is a double, an int or decimal target's is a decimal with six more digits.** `--float` on an int target therefore changes the
    output form. Is that wanted, or should every regression be a double?
-6. **Compiler pins differ**: cancho-ml `a4572ea`, cancho-table `e47d647`. The committed stores (published by `e47d647`) install and build under `a4572ea` (measured, section 6), but a single
+6. **Compiler pins differ**: cancho-ml `0207556`, cancho-table `e47d647`. The committed stores (published by `e47d647`) install and build under `0207556` (measured with `cancho install` and `cancho build --bin ml`; section 6 measured the same under `a4572ea`), but a single
    pin would remove the question.
 7. **`describe`'s `integers_only: true`** is a constant of the pinned contract package. It is true of the JSON `ml` prints (every decimal is a string) and
    not of its code, which now reads and sums floats.

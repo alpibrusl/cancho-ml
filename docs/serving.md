@@ -61,7 +61,7 @@ Memory is the input plus what the file case needs. This is the price of two pass
 * **A read error of standard input is the end of the input**: `getchar` answers the same value for an error and for the end, so the bytes read so far are the input (a truncated stream is then a refusal of the reader if it ends inside a record, `parse.csv-unterminated-quote` or `parse.csv-ragged-row`, or a shorter input). A closed standard input is an empty one, so `ml.input.empty`.
 * **The order of the refusals [choice]:** the command line first (as before), then standard input is read (so a model file that is missing is found after the bytes were read), then the model file, then the parse. A caller that sends
   standard input to a command that is going to refuse its flags is not made to wait: the command line is checked before any read.
-* The reads are `getchar` calls on `Io` (`io_read`): **[read]** the compiler of the pin has no bulk read of standard input (`read_bytes` is edition 9, cancho #363, after the pin). `cancho-table` measured `getchar`
+* The reads are `getchar` calls on `Io` (`io_read`): **[read]** the sources are edition 5 and read with `getchar`; `read_bytes` (edition 9, cancho #363) is in the pinned compiler and no file of `ml` adopts edition 9 for it (only `tools/ml-serve/main.cho` is edition 9, for `tcp_listen_on`). `cancho-table` measured `getchar`
   at 71 MB/s on the Mac and 264 MB/s on Linux. The speed of standard input here is not claimed; section 9 prints what was measured. Moving the pin to a compiler with `read_bytes` is section 10.
 
 ### 2.4 The authority of `ml`
@@ -190,7 +190,7 @@ Machine: Mac, arm64, Apple M4 Max, macOS 26.2, compiler `a4572ea`, load about 8 
 
 ## 10. Open for the server
 
-1. **Bulk read of standard input.** The pinned compiler has `getchar` only. `read_bytes` (cancho #363, edition 9) is the bulk read; using it is a move of the pin of the whole repository (its sources are `edition 5`). The in-process server needs no standard input at all: it can hand the CSV text to the same library call. Whether `ml-serve` links `ml.csv` with `Source::Mem` directly (no `io_read`) is a decision for that stage.
+1. **Bulk read of standard input.** The sources read with `getchar`. `read_bytes` (cancho #363, edition 9) is the bulk read and the pinned compiler has it; using it means moving the files that read standard input to edition 9, which is not done. The in-process server needs no standard input at all: it can hand the CSV text to the same library call. Whether `ml-serve` links `ml.csv` with `Source::Mem` directly (no `io_read`) is a decision for that stage.
 2. **The library boundary.** `ml-serve` should call `wireio.predict`-level code in-process. Today that function takes `Rp` paths, `Args` and `Fs`; a memory-in, memory-out entry (a CSV text and a model file's bytes in, the document out) is the missing piece and is a small refactor of `tools/ml/wireio.cho` and `verbs.cho` (the `Source::Mem` plumbing is already there).
 3. **Single-row type inference.** Section 6 step 4: the reader types a column from its cells, so a one-row request must render `int` columns as integers and `dec` columns within their scale. The server can pre-check against `describe` or let the reader refuse.
 4. **`describe` size.** Bounded by the file (a table of 12 MiB can list about that much); `--limit` caps the strings per column. A server would call it once at start.

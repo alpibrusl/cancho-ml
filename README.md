@@ -382,7 +382,7 @@ $ ml-predict predict --model-file houses.ml --log run.ndjson new.csv
 
 The values in an answer are the text `ml predict` prints, written as JSON numbers. A number that cannot be written exactly as the type of its column (an `int` takes a whole number of at most 12 digits, a `dec` the digits of its scale) is refused with its JSON Pointer and never rounded. A refusal is `application/problem+json` with a `rule` field (`ml.schema.mismatch` lists every error at once; a refusal of the predictor carries its own rule and error object), and the body, the number of records, the head and the idle time are bounded.
 
-The pinned compiler binds every address of the host and has no way to ask for `127.0.0.1`, so `ml-serve` refuses to start unless `--token-file FILE` (a bearer token, read once, required by every operation but `GET /health`) or `--no-token` says what the caller means. The commands below run `ml-serve` on `pets.ml`, the model of the categorical flow, and talk to it.
+`ml-serve` listens on `127.0.0.1` by default, so only the host it runs on can reach it, and needs no token there (`--token-file FILE` is accepted and then enforced: a bearer token, read once, required by every operation but `GET /health`). `--bind all` listens on every address of the host and requires `--token-file`; `--bind all --no-token` is refused. The commands below run `ml-serve` on `pets.ml`, the model of the categorical flow, and talk to it.
 
 <!-- gen:hflow -->
 ```console
@@ -499,7 +499,7 @@ ml-serve    args, clock, conn_accept, conn_read, conn_write, dir_read, err_write
 * **One red gate.** The regression forest against scikit-learn's: RMSE 8.1% apart where the tolerance is 3% (`docs/models-tree.md` section 10.8). The algorithms differ (histogram against exact splits) and most of the gap is attributed to that; the tolerance is kept and the maintainer has not decided. [docs/models-tree.md](docs/models-tree.md)
 * **Not tested across machines.** The bytes are verified on one Mac (arm64), at 1 to 16 threads. A Linux x86-64 run is not done.
 * **No CI workflow.** The reader is a pinned dependency on cancho-table's stores ([docs/reader.md](docs/reader.md) section 1), so the build needs no sibling clone, but `cancho install` needs the network and nothing in this repository runs `scripts/check.sh` automatically.
-* **`ml-serve` is one thread and has no TLS.** A long request holds the others, the idle timeout is the only deadline, the pinned compiler cannot bind one address, and a `dec` column's digits and a category's CR LF are refusals the OpenAPI document cannot state ([docs/serving-http.md](docs/serving-http.md) sections 5 and 11). An MCP server is not built.
+* **`ml-serve` is one thread and has no TLS.** A long request holds the others, the idle timeout is the only deadline, the loopback default is proved by a socket test and not by the authority row (`net_in("")`), and a `dec` column's digits and a category's CR LF are refusals the OpenAPI document cannot state ([docs/serving-http.md](docs/serving-http.md) sections 5 and 11). An MCP server is not built.
 * **No neural networks and no GPU.** They need matrix kernels, a GPU path and automatic differentiation, which cancho does not have. Inference of small exported models may come later; it is not planned in v1.
 * **Not built, not promised here:** multiclass, boosting, naive Bayes, k-NN, feature importance, out-of-bag scores, a stopping rule or a choice of k for k-means.
 
