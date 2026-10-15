@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P4 (docs/serving.md section 1): `ml` and `ml-predict` are built from the same sources.
+"""P4 (docs/serving.md section 1) and A2 (docs/serving-http.md section 9): `ml`, `ml-predict` and `ml-serve` are built from the same sources.
 
 The file list of `ml-predict` in cancho.toml is the list of `ml` with the directory tools/ml replaced by its files other than main.cho (a directory would bring in the
 main of `ml`) and tools/ml-predict (its own main) in place of generated/ml's partner. This script fails when
@@ -7,7 +7,9 @@ main of `ml`) and tools/ml-predict (its own main) in place of generated/ml's par
 * a file of tools/ml other than main.cho is missing from the list of ml-predict, or the list names a file that is not there;
 * any other source directory differs between the two binaries;
 * tools/ml-predict holds anything but a main.cho of at most 150 lines (a second copy of a module would be a second definition);
-* a module is defined in two files of the union of the two lists (a copy under another name of the file).
+* a module is defined in two files of the union of the lists (a copy under another name of the file);
+* `ml-serve` lists anything but what `ml-predict` lists with tools/ml-serve and generated/ml-serve in place of tools/ml-predict and generated/ml-predict, or tools/ml-serve holds a file
+  that is not a .cho source of at most 2,000 lines.
 
     python3 scripts/check_bins.py
     python3 scripts/check_bins.py --mutants     # each failure above is injected into a copy of the tree: it must be refused
@@ -57,9 +59,29 @@ def check(root):
         problems.append("tools/ml-predict holds %s: only main.cho (the entry point) belongs there" % files)
     elif len((root / "tools" / "ml-predict" / "main.cho").read_text().splitlines()) > 150:
         problems.append("tools/ml-predict/main.cho is over 150 lines: shared code belongs in tools/ml")
-    # one definition of every module across both lists
+    # ml-serve: the list of ml-predict with its own directories
+    ms = b["ml-serve"]["sources"] if "ml-serve" in b else None
+    if ms is None:
+        problems.append("cancho.toml has no [[bin]] ml-serve")
+        ms = []
+    else:
+        want = [s.replace("tools/ml-predict", "tools/ml-serve").replace("generated/ml-predict", "generated/ml-serve") for s in mp]
+        if ms != want:
+            problems.append("the source list of ml-serve is not the list of ml-predict with tools/ml-serve and generated/ml-serve: %s" % [s for s in ms if s not in want] + str([s for s in want if s not in ms]))
+        sdir = root / "tools" / "ml-serve"
+        if not sdir.is_dir():
+            problems.append("tools/ml-serve is not a directory")
+        else:
+            for f in sorted(sdir.glob("*")):
+                if f.suffix != ".cho":
+                    problems.append("tools/ml-serve holds %s: only .cho sources belong there" % f.name)
+                elif len(f.read_text().splitlines()) > 2000:
+                    problems.append("%s is over 2,000 lines" % f.name)
+            if not (sdir / "main.cho").exists():
+                problems.append("tools/ml-serve has no main.cho")
+    # one definition of every module across all the lists
     seen = {}
-    union = list(dict.fromkeys(ml + mp))
+    union = list(dict.fromkeys(ml + mp + ms))
     for entry in union:
         p = root / entry
         if entry.startswith("generated/") or not p.exists():
@@ -77,7 +99,7 @@ def check(root):
 def mutants():
     def copy():
         d = pathlib.Path(tempfile.mkdtemp(prefix="bins-"))
-        for rel in ("cancho.toml", "tools/ml", "tools/ml-predict", "generated", "lib"):
+        for rel in ("cancho.toml", "tools/ml", "tools/ml-predict", "tools/ml-serve", "generated", "lib"):
             src = ROOT / rel
             if src.is_dir():
                 shutil.copytree(src, d / rel)
@@ -99,6 +121,10 @@ def mutants():
         ("a directory missing from ml-predict", lambda d: edit(d, "cancho.toml", '"lib/metrics", "lib/models", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml/app.cho"', '"lib/models", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml/app.cho"')),
         ("a copy of a module under tools/ml-predict", lambda d: shutil.copy(d / "tools/ml/paths.cho", d / "tools/ml-predict/paths.cho")),
         ("a copy of a module in tools/ml under another name", lambda d: shutil.copy(d / "tools/ml/paths.cho", d / "tools/ml/paths2.cho")),
+        ("a file of tools/ml left out of the list of ml-serve", lambda d: edit(d, "cancho.toml", '"tools/ml/paths.cho", "tools/ml/spec.cho", "tools/ml/verbs.cho", "tools/ml/wire.cho", "tools/ml/wiredata.cho", "tools/ml/wireio.cho", "tools/ml-serve"', '"tools/ml/spec.cho", "tools/ml/verbs.cho", "tools/ml/wire.cho", "tools/ml/wiredata.cho", "tools/ml/wireio.cho", "tools/ml-serve"')),
+        ("a copy of a module under tools/ml-serve", lambda d: shutil.copy(d / "tools/ml/paths.cho", d / "tools/ml-serve/paths.cho")),
+        ("the main of ml-predict in the list of ml-serve", lambda d: edit(d, "cancho.toml", '"tools/ml-serve", "generated/ml-serve"]', '"tools/ml-predict", "tools/ml-serve", "generated/ml-serve"]')),
+        ("a source that is not cancho in tools/ml-serve", lambda d: (d / "tools/ml-serve/notes.txt").write_text("x")),
         ("an entry point that grew", lambda d: (d / "tools/ml-predict/main.cho").write_text((d / "tools/ml-predict/main.cho").read_text() + "\n" * 200)),
     ]
     bad = 0

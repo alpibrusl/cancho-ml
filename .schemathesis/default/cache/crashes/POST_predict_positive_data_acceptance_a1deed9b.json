@@ -1,0 +1,85 @@
+{
+  "operation": "POST /predict",
+  "method": "POST",
+  "path_template": "/predict",
+  "fingerprint": "a1deed9b",
+  "case_id": "DC5vO5",
+  "code_sample": "curl -X POST -H 'Content-Type: application/json' -d '{\"a\": 14198052657.0, \"b\": -6.669102482562226e+16, \"c\": 1.7976931348623157e+308, \"y\": {}}' http://127.0.0.1:18090/predict",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:18090/predict",
+      "url_template": "http://127.0.0.1:18090/predict",
+      "headers": {
+        "User-Agent": "schemathesis/4.31.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "DC5vO5",
+        "Content-Type": "application/json",
+        "Content-Length": "88"
+      },
+      "response": {
+        "status_code": 422,
+        "headers": {
+          "x-model-sha256": "50ec9831483ce969757556a05bd57883b589a98d67c7df5e6b9004410ab8717b",
+          "content-type": "application/problem+json",
+          "content-length": "548",
+          "connection": "keep-alive"
+        },
+        "body": "{\"type\":\"about:blank\",\"title\":\"Unprocessable Content\",\"status\":422,\"rule\":\"serve.number-not-exact\",\"model_sha256\":\"50ec9831483ce969757556a05bd57883b589a98d67c7df5e6b9004410ab8717b\",\"detail\":\"the number cannot be written exactly as the type of its column: an int is a whole number of at most 12 digits, a dec has the digits of its scale\",\"count\":1,\"errors\":[{\"pointer\":\"/b\",\"code\":\"inexact\",\"detail\":\"the number cannot be written exactly as the type of its column: an int is a whole number of at most 12 digits, a dec has the digits of its scale\"}]}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "positive_data_acceptance",
+          "status": "failure",
+          "message": "API rejected schema-compliant request\n\nValid data should have been accepted\nExpected: 2xx, 3xx, 401, 403, 404, 409, 429, 5xx"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0005737500032410026,
+          "mode": "positive"
+        },
+        "components": {
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/predict",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "a": 14198052657.0,
+          "b": -6.669102482562226e+16,
+          "c": 1.7976931348623157e+308,
+          "y": {}
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null,
+      "auth_identity": null
+    }
+  ]
+}

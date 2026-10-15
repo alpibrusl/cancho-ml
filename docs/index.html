@@ -325,6 +325,43 @@ mean_distance 1.2398733702280837 1.0644974060896137 1.1737313271562995</pre>
 {"rule": "args.unknown-flag", "hint": "the tool's flags are listed by `introspect`; POSIX spellings are not promised", "detail": {"flag": "--log", "position": 4}}
 <span class="r"># exit status 2; the rule, hint, detail of the JSON line it prints</span></pre>
 <!-- /gen:sflow -->
+
+  <h3 class="task" id="http" style="margin-top:2.4rem">Serve a model over HTTP with ml-serve</h3>
+  <p class="sub"><code>ml-serve</code> serves one model file with <a href="https://github.com/alpibrusl/cancho-web">cancho-web</a> (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/serving-http.md">docs/serving-http.md</a>). It is a third binary from the same sources. It reads the model file once and decodes it once, builds the request schema from what <code>describe</code> says (a member for each column, the <code>enum</code> of the categories the file lists in full, <code>null</code> only where the model takes missing cells) and the OpenAPI 3.1 document from the same declaration, and answers one request at a time on one thread. A record becomes the CSV text <code>ml predict</code> would read and goes to the same function in the same process; the values in the answer are the text the command line prints, written as JSON numbers. A number that cannot be written exactly as the type of its column is refused with its JSON Pointer and never rounded. A refusal is <code>application/problem+json</code> with a <code>rule</code> field, and every answer carries the SHA-256 of the model file. The pinned compiler binds every address of the host, so <code>ml-serve</code> refuses to start unless it is given <code>--token-file</code> or <code>--no-token</code>.</p>
+<!-- gen:hflow -->
+<pre class="code" tabindex="0"><span class="c"># ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080)</span>
+<span class="c">$</span> ml-serve --model-file pets.ml --no-token --port 8080 &amp;
+listening on 8080
+<span class="c"># liveness, and the SHA-256 of the model file being served</span>
+<span class="c">$</span> curl -s localhost:8080/health
+{"ok":true,"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d"}
+<span class="c"># one record: a member for every column of the model. The head carries the digest too</span>
+<span class="c">$</span> curl -s -i -XPOST -H 'Content-Type: application/json' -d '{"age":3,"species":"cat","city":"Turin","visits":4}' localhost:8080/predict
+HTTP/1.1 200 OK
+X-Model-Sha256: 676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d
+Content-Type: application/json
+Content-Length: 229
+Connection: keep-alive
+
+{"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","model":"logistic","task":"classification","columns":["label","probability"],"rows":[[1,0.6996810090936468]],"row_co…
+<span class="c"># a batch: a row of the answer for each record, in order</span>
+<span class="c">$</span> curl -s -XPOST -H 'Content-Type: application/json' -d '{"rows":[{"age":3,"species":"cat","city":"Turin","visits":4},{"age":1,"species":"dog","city":"Lyon","visits":7}]}' localhost:8080/predict/batch
+{"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","model":"logistic","task":"classification","columns":["label","probability"],"rows":[[1,0.6996810090936468],[1,0.915…
+<span class="c"># a refusal: every error at once, each with its JSON Pointer, as application/problem+json with the rule</span>
+<span class="c">$</span> curl -s -i -XPOST -H 'Content-Type: application/json' -d '{"age":"two","species":"axolotl","city":"Lyon","visits":4,"zip":1}' localhost:8080/predict
+HTTP/1.1 422 Unprocessable Content
+X-Model-Sha256: 676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d
+Content-Type: application/problem+json
+Content-Length: 412
+Connection: keep-alive
+
+{"rule":"ml.schema.mismatch","model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","type":"about:blank","title":"Unprocessable Content","status":422,"count":3,"errors":[{"pointer":"/age","code":"type","detail":"has the wrong type"}…
+<span class="c"># what the model requires of a caller (excerpt), and the OpenAPI 3.1 document made from the same columns (excerpt)</span>
+<span class="c">$</span> curl -s localhost:8080/model
+{"model":"logistic","task":"classification","request":{"header":["age","species","city","visits"],"optional":["adopted"],"extra_columns":"refused","missing_cells":"needs_impute"},"classes":[0,1],"out…
+<span class="c">$</span> curl -s localhost:8080/openapi.json
+{"openapi":"3.1.0","paths":["/health","/model","/openapi.json","/predict","/predict/batch"],"Record":{"type":"object","properties":{"age":{"type":"integer","minimum":-999999999999,"maximum":999999999…</pre>
+<!-- /gen:hflow -->
 </section>
 
 <section id="agent">
@@ -432,12 +469,13 @@ printf 'id,rooms,area,city\n6,2,52.5,Lyon\n7,3,80,Porto\n' &gt; listings.csv</co
 
 <section id="cancho">
   <h2>Built in cancho, with an authority the compiler wrote</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>ml</code> that is the first line below: it can read its arguments, the files named on its command line and, for <code>predict -</code>, standard input, allocate memory, create, append to, rename and remove files beneath a directory it opened itself, and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file by path. <code>ml-predict</code>, the second line, has the same row without <code>conc</code>, <code>dir_write</code> and <code>file_write</code>: it writes nothing but its answer. <code>conc</code> is in the row because <code>fit --threads</code> calls the threaded kernels of the linear algebra. The path extent is a run-time value, so the row names the verb, not the place: <code>fs_read("")</code>.</p>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>ml</code> that is the first line below: it can read its arguments, the files named on its command line and, for <code>predict -</code>, standard input, allocate memory, create, append to, rename and remove files beneath a directory it opened itself, and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file by path. <code>ml-predict</code>, the second line, has the same row without <code>conc</code>, <code>dir_write</code> and <code>file_write</code>: it writes nothing but its answer. <code>ml-serve</code>, the third line, has the row of <code>ml-predict</code> without standard input and with the sockets of a server: <code>net_in</code> for the port, <code>conn_accept</code>, <code>conn_read</code>, <code>conn_write</code> and <code>poll</code> for the loop, and <code>clock</code> for the idle timeout and the access log. It writes no file, starts no thread and no process, calls no foreign code and opens no outbound connection. <code>conc</code> is in the row of <code>ml</code> because <code>fit --threads</code> calls the threaded kernels of the linear algebra. The path extent is a run-time value, so the row names the verb, not the place: <code>fs_read("")</code>.</p>
 <!-- gen:authority -->
-<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json and manifests/ml-predict.authority.json</span>
+<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json, manifests/ml-predict.authority.json and manifests/ml-serve.authority.json</span>
 ml          args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_read, io_write
 ml-predict  args, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write
-<span class="c"># bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>
+ml-serve    args, clock, conn_accept, conn_read, conn_write, dir_read, err_write, file_read, fs_read(""), heap, io_write, net_in(""), poll
+<span class="c"># bounded: true; foreign symbols: none; ffi, net_out: absent from all three; net_in, clock: ml-serve only</span></pre>
 <!-- /gen:authority -->
 </section>
 

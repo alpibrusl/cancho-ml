@@ -1,0 +1,281 @@
+edition 5;
+
+module serve.cols;
+
+// The request columns of the served model and how a record becomes a row of the CSV the predictor reads (docs/serving-http.md sections 3.1 and 4).
+// `Cols` is built once at start from the answer of `describe` and never changes: the names back to back, the type and scale of each, the names of
+// the optional columns (the target, which a request may hold and which is ignored) and the CSV header line.
+
+import std.buffer;
+import std.json;
+import std.vec;
+import serve.num;
+
+pub res struct Cols {
+    names: buffer.Buffer,
+    // four ints per column: where its name starts in `names`, its length, its type (0 int, 1 dec, 2 float, 3 categorical) and its scale
+    meta: vec.Vec[int],
+    count: int,
+    opts: buffer.Buffer,
+    // two ints per optional column: where its name starts in `opts` and its length
+    ometa: vec.Vec[int],
+    ocount: int,
+    // the CSV header line with its line feed
+    header: buffer.Buffer,
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Cols {
+    return Cols { names: buffer.empty(heap, 64), meta: vec.empty(heap, 16, 0), count: 0, opts: buffer.empty(heap, 16), ometa: vec.empty(heap, 4, 0), ocount: 0, header: buffer.empty(heap, 64) };
+}
+
+pub fn drop[&h](heap: &!h Heap, c: Cols) -> [heap] int {
+    let Cols { names, meta, count, opts, ometa, ocount, header } = c;
+    buffer.drop(heap, names);
+    vec.drop(heap, meta);
+    buffer.drop(heap, opts);
+    vec.drop(heap, ometa);
+    return buffer.drop(heap, header);
+}
+
+pub fn count[&c](c: &c Cols) -> [] int {
+    return c.count;
+}
+
+pub fn optional_count[&c](c: &c Cols) -> [] int {
+    return c.ocount;
+}
+
+pub fn header[&c](c: &c Cols) -> [] &c [byte] {
+    return buffer.bytes(c.header);
+}
+
+pub fn name[&c](c: &c Cols, j: int) -> [] &c [byte] {
+    let off = vec.get(c.meta, 4 * j);
+    return buffer.bytes(c.names)[off..off + vec.get(c.meta, 4 * j + 1)];
+}
+
+pub fn type_of[&c](c: &c Cols, j: int) -> [] int {
+    return vec.get(c.meta, 4 * j + 2);
+}
+
+pub fn scale_of[&c](c: &c Cols, j: int) -> [] int {
+    return vec.get(c.meta, 4 * j + 3);
+}
+
+pub fn optional_name[&c](c: &c Cols, k: int) -> [] &c [byte] {
+    let off = vec.get(c.ometa, 2 * k);
+    return buffer.bytes(c.opts)[off..off + vec.get(c.ometa, 2 * k + 1)];
+}
+
+// whether `text` needs the quotes of RFC 4180 as a CSV field
+fn needs_quotes[&t](text: &t [byte]) -> [] bool {
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c == 44 || c == 34 || c == 10 || c == 13 {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `text` as a CSV field: between double quotes, with each quote doubled, when it holds a comma, a quote, CR or LF
+fn put_field[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    var o = out;
+    if !needs_quotes(text) {
+        return buffer.append(heap, o, text);
+    }
+    o = buffer.push(heap, o, byte_of(34));
+    var i = 0;
+    while i < len(text) {
+        o = buffer.push(heap, o, text[i]);
+        if int_of(text[i]) == 34 {
+            o = buffer.push(heap, o, byte_of(34));
+        }
+        i = i + 1;
+    }
+    return buffer.push(heap, o, byte_of(34));
+}
+
+// a column of the request: its name (UTF-8), type and scale; the header line gains its field
+pub fn add[&h, &n](heap: &!h Heap, c: Cols, field: &n [byte], ty: int, scale: int) -> [heap] Cols {
+    let Cols { names, meta, count, opts, ometa, ocount, header } = c;
+    var at = 0;
+    borrow names as &nr in {
+        at = buffer.size(nr);
+    }
+    var m = vec.push(heap, meta, at);
+    m = vec.push(heap, m, len(field));
+    m = vec.push(heap, m, ty);
+    m = vec.push(heap, m, scale);
+    var h = header;
+    if count > 0 {
+        h = buffer.push(heap, h, byte_of(44));
+    }
+    h = put_field(heap, h, field);
+    return Cols { names: buffer.append(heap, names, field), meta: m, count: count + 1, opts: opts, ometa: ometa, ocount: ocount, header: h };
+}
+
+pub fn add_optional[&h, &n](heap: &!h Heap, c: Cols, field: &n [byte]) -> [heap] Cols {
+    let Cols { names, meta, count, opts, ometa, ocount, header } = c;
+    var at = 0;
+    borrow opts as &or in {
+        at = buffer.size(or);
+    }
+    var m = vec.push(heap, ometa, at);
+    m = vec.push(heap, m, len(field));
+    return Cols { names: names, meta: meta, count: count, opts: buffer.append(heap, opts, field), ometa: m, ocount: ocount + 1, header: header };
+}
+
+// the header line complete: its line feed
+pub fn close_header[&h](heap: &!h Heap, c: Cols) -> [heap] Cols {
+    let Cols { names, meta, count, opts, ometa, ocount, header } = c;
+    return Cols { names: names, meta: meta, count: count, opts: opts, ometa: ometa, ocount: ocount, header: buffer.push(heap, header, byte_of(10)) };
+}
+
+// ---------------------------------------------------------------------
+// A record to a row
+// ---------------------------------------------------------------------
+
+// the status of a render: 0 the row is appended; 1 a number that is not exactly what an int or dec column holds; 2 a number past the range of a double;
+// 3 a string that cannot be written to the CSV and read back as sent (it holds CR LF); 4 a value of a kind the schema should have refused
+pub fn rendered() -> [] int {
+    return 0;
+}
+
+pub fn inexact() -> [] int {
+    return 1;
+}
+
+pub fn out_of_range() -> [] int {
+    return 2;
+}
+
+pub fn not_renderable() -> [] int {
+    return 3;
+}
+
+pub fn unexpected() -> [] int {
+    return 4;
+}
+
+// one string cell: empty text is an empty cell
+fn string_cell[&h, &b, &t](heap: &!h Heap, out: buffer.Buffer, body: &b [byte], tape: &t [int], node: int) -> [heap] (buffer.Buffer, int) {
+    let n = json.string_length(body, tape, node);
+    if n <= 0 {
+        return (out, rendered());
+    }
+    var o = out;
+    var st = rendered();
+    let raw = box_slice(heap, n, byte_of(0));
+    borrow mut raw as &!rw in {
+        let d = contents(rw);
+        json.string_into(body, tape, node, d);
+        var i = 0;
+        // a carriage return directly before a line feed is read as the line feed (a CSV reader drops it, `ml.csv`); a lone one and U+0000 are kept, so they are written as sent
+        while i + 1 < len(d) {
+            if int_of(d[i]) == 13 && int_of(d[i + 1]) == 10 {
+                st = not_renderable();
+            }
+            i = i + 1;
+        }
+        if st == rendered() {
+            o = put_field(heap, o, d);
+        }
+    }
+    unbox_slice(heap, raw);
+    return (o, st);
+}
+
+// The row of the record at tape node `obj`, appended to `csv` with its line feed. (csv, status, the column that was refused). The record has been judged by the schema:
+// every column is there with a value of its kind, or null.
+pub fn render[&h, &c, &b, &t](heap: &!h Heap, csv: buffer.Buffer, cols: &c Cols, body: &b [byte], tape: &t [int], obj: int) -> [heap] (buffer.Buffer, int, int) {
+    var o = csv;
+    var st = rendered();
+    var bad = 0 - 1;
+    var j = 0;
+    while j < cols.count && st == rendered() {
+        if j > 0 {
+            o = buffer.push(heap, o, byte_of(44));
+        }
+        let v = json.get(body, tape, obj, name(cols, j));
+        if v >= 0 && !json.is_null(tape, v) {
+            let ty = type_of(cols, j);
+            if ty == 3 {
+                if json.is_string(tape, v) {
+                    let (o2, s2) = string_cell(heap, o, body, tape, v);
+                    o = o2;
+                    st = s2;
+                } else {
+                    st = unexpected();
+                }
+            } else if json.is_number(tape, v) {
+                let text = body[tape[3 * v + 1]..tape[3 * v + 2]];
+                if ty == 2 {
+                    let (o2, s2) = num.float_cell(heap, o, text);
+                    o = o2;
+                    if s2 != 0 {
+                        st = out_of_range();
+                    }
+                } else {
+                    let (o2, s2) = num.exact_cell(heap, o, text, scale_of(cols, j) * ty);
+                    o = o2;
+                    if s2 != 0 {
+                        st = inexact();
+                    }
+                }
+            } else {
+                st = unexpected();
+            }
+        }
+        if st != rendered() {
+            bad = j;
+        }
+        j = j + 1;
+    }
+    if st == rendered() {
+        o = buffer.push(heap, o, byte_of(10));
+    }
+    return (o, st, bad);
+}
+
+// whether the object at `obj`, which the schema accepted (every key is a column or an optional column, every column is there), has each key once: its pairs are the columns and the optional columns that are present
+pub fn each_key_once[&c, &b, &t](cols: &c Cols, body: &b [byte], tape: &t [int], obj: int) -> [] bool {
+    var present = 0;
+    var k = 0;
+    while k < cols.ocount {
+        if json.get(body, tape, obj, optional_name(cols, k)) >= 0 {
+            present = present + 1;
+        }
+        k = k + 1;
+    }
+    return json.count(tape, obj) == cols.count + present;
+}
+
+// the JSON Pointer of the value of column `j` in the record of `row` (-1: the body is the record), as RFC 6901 writes it
+pub fn pointer[&h, &c](heap: &!h Heap, cols: &c Cols, row: int, j: int) -> [heap] buffer.Buffer {
+    var o = buffer.empty(heap, 32);
+    if row >= 0 {
+        o = buffer.append(heap, o, "/rows/");
+        o = buffer.push_nat(heap, o, row);
+    }
+    if j < 0 {
+        return o;
+    }
+    o = buffer.push(heap, o, byte_of(47));
+    let field = name(cols, j);
+    var i = 0;
+    while i < len(field) {
+        let ch = int_of(field[i]);
+        if ch == 126 {
+            o = buffer.append(heap, o, "~0");
+        } else if ch == 47 {
+            o = buffer.append(heap, o, "~1");
+        } else {
+            o = buffer.push(heap, o, field[i]);
+        }
+        i = i + 1;
+    }
+    return o;
+}

@@ -12,6 +12,8 @@ CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
 export CANCHO
 # RD1: the cancho-table modules the reader compiles are a pinned package dependency and are not copied here (docs/reader.md section 1)
 sh scripts/check_table_pin.sh
+# W1 (docs/serving-http.md section 1): cancho-web, cancho-schema and http-server are pinned stores, none copied
+python3 scripts/check_web_pin.py
 # the pinned packages, fetched into build/deps (needs the network the first time; build/deps is not committed)
 $CANCHO install
 $CANCHO fmt --check lib tests tools
@@ -47,6 +49,10 @@ sh scripts/check_tree.sh
 $CANCHO build --bin ml
 # the prediction binary (docs/serving.md): the same sources, its own main
 $CANCHO build --bin ml-predict
+# the server (docs/serving-http.md): a third binary from the same sources, and the driver of the number gate
+$CANCHO build --bin ml-serve
+$CANCHO build --bin serve-check
+$CANCHO test --std tools/ml-serve/num.cho build/deps/*.cho tests/serve_num.cho
 python3 scripts/check_bins.py
 python3 scripts/check_bins.py --mutants
 # the reader's gates (docs/reader.md section 5): reader-check against Python on millions of cells, the matrix and bitmap, the limits,
@@ -64,6 +70,12 @@ python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
 python3 scripts/mutants_serve.py --check
+# ml-serve (docs/serving-http.md section 9): the documents it serves for the fixture models are the checked-in files and validate; Schemathesis runs when it is installed (build/venv);
+# the patterns of its mutants apply (scripts/mutants_http.py rebuilds the server once per pattern and runs on request); W2 builds ml and ml-predict without the three dependencies
+python3 scripts/gate_serve_openapi.py
+python3 scripts/gate_serve_schemathesis.py
+python3 scripts/mutants_http.py --check
+python3 scripts/check_web_pin.py --bins
 # the model module contract and the wiring (docs/modules.md, docs/wiring.md): the admission script on the wired models, the mutant modules it must refuse,
 # the byte-for-byte oracle (also run by the conformance tests above, with its own cases) and the patterns of the wiring mutants. The mutants and the
 # scikit-learn comparison (scripts/mutants_wire.py, scripts/gate_wire_sklearn.py, scripts/admit.py without --fast) run on request.

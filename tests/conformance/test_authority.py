@@ -12,10 +12,13 @@ import tomllib
 import unittest
 
 from harness import PREDICT_BIN, ROOT, introspect
+from serve_lib import SERVE_BIN
 
 EXPECTED = {"args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", 'fs_read("")', "heap", "io_read", "io_write"}
 # `ml-predict` (docs/serving.md section 3.3): the row of `ml` without the writes and the thread
 EXPECTED_PREDICT = {"args", "dir_read", "err_write", "file_read", 'fs_read("")', "heap", "io_read", "io_write"}
+# `ml-serve` (docs/serving-http.md section 6): a server of cancho-web. No write of any file, no thread, no exec, no foreign code, no net_out, no standard input
+EXPECTED_SERVE = {"args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", 'fs_read("")', "heap", "io_write", 'net_in("")', "poll"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock", "fs_write", "exec", "env"}
 
 
@@ -85,7 +88,7 @@ class Authority(unittest.TestCase):
     def test_the_binary_is_the_tool_in_the_manifest(self):
         # one binary per tool; the ceiling file knows only `ml` as an agent tool
         ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
-        self.assertEqual([k for k in ceilings if isinstance(ceilings[k], dict)], ["ml", "ml-predict"])
+        self.assertEqual([k for k in ceilings if isinstance(ceilings[k], dict)], ["ml", "ml-predict", "ml-serve"])
 
 
 def predict_introspect():
@@ -130,6 +133,73 @@ class AuthorityPredict(unittest.TestCase):
         mutated = json.loads(json.dumps(auth))
         mutated["labels"].append({"name": "fs_write", "argument": "", "bounded": True})
         self.assertNotEqual(manifest.gate("ml-predict", mutated, ceilings), [])
+
+
+def serve_introspect():
+    return json.loads(subprocess.run([SERVE_BIN, "introspect"], capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout)
+
+
+class AuthorityServe(unittest.TestCase):
+    """A1 (docs/serving-http.md section 9): the row of `ml-serve`, derived by the compiler, committed, embedded, within its ceiling; and what it does not hold."""
+
+    def test_the_binary_prints_the_committed_authority(self):
+        committed = json.loads((ROOT / "manifests" / "ml-serve.authority.json").read_text())
+        self.assertEqual(serve_introspect()["authority"], committed)
+
+    def test_the_row_is_exactly_these_labels_and_bounded(self):
+        a = serve_introspect()["authority"]
+        self.assertTrue(a["bounded"])
+        self.assertEqual((a["unbounded_by"], a["foreign_symbols"]), ([], []))
+        labels = {label_text(l) for l in a["labels"]}
+        self.assertEqual(labels, EXPECTED_SERVE)
+        # no write of any file, no directory write, no thread, no exec, no foreign code, no outbound network, no standard input, no environment
+        self.assertEqual(labels & {"conc", "file_write", "dir_write", "exec", "ffi", "net_out", "io_read", "env", 'fs_write("")', "fs_write"}, set())
+        self.assertFalse(any(l["name"] in ("ffi", "exec", "net_out", "fs_write", "file_write", "dir_write", "conc", "env") for l in a["labels"]))
+
+    def test_the_ceiling_is_exact_and_every_label_beyond_the_base_row_has_a_reason(self):
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        self.assertEqual(set(ceilings["ml-serve"]["allow"]), EXPECTED_SERVE)
+        base = set(tomllib.loads((ROOT / "lib" / "models" / "contract.toml").read_text())["authority"]["base"])
+        for label in set(ceilings["ml-serve"]["allow"]) - base:
+            self.assertTrue(ceilings["ml-serve"]["reasons"].get(label.split("(")[0]), label)
+
+    def test_net_in_and_clock_are_the_server_only(self):
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        for tool in ("ml", "ml-predict"):
+            self.assertFalse({a.split("(")[0] for a in ceilings[tool]["allow"]} & {"net_in", "clock", "conn_accept", "conn_read", "conn_write", "poll"}, tool)
+
+    def test_the_ceiling_check_fails_for_a_capability_added_to_the_derived_row(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import manifest
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        auth = json.loads((ROOT / "manifests" / "ml-serve.authority.json").read_text())
+        self.assertEqual(manifest.gate("ml-serve", auth, ceilings), [])
+        for extra in ("file_write", "dir_write", "conc", "net_out", "ffi", "exec", "env", "io_read"):
+            mutated = json.loads(json.dumps(auth))
+            mutated["labels"].append({"name": extra, "argument": None, "bounded": True})
+            self.assertNotEqual(manifest.gate("ml-serve", mutated, ceilings), [], extra)
+        mutated = json.loads(json.dumps(auth))
+        mutated["labels"].append({"name": "fs_write", "argument": "", "bounded": True})
+        self.assertNotEqual(manifest.gate("ml-serve", mutated, ceilings), [])
+        # net_in and clock are the server's: another tool's ceiling refuses them
+        for tool in ("ml", "ml-predict"):
+            a = json.loads((ROOT / "manifests" / (tool + ".authority.json")).read_text())
+            for extra in ("net_in", "clock"):
+                mutated = json.loads(json.dumps(a))
+                mutated["labels"].append({"name": extra, "argument": None, "bounded": True})
+                self.assertNotEqual(manifest.gate(tool, mutated, ceilings), [], (tool, extra))
+
+    def test_a_label_of_the_server_without_a_reason_fails_the_check(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import manifest
+        text = (ROOT / "tools.toml").read_text().replace('poll = "', 'pollX = "')
+        ceilings = tomllib.loads(text)
+        auth = json.loads((ROOT / "manifests" / "ml-serve.authority.json").read_text())
+        self.assertTrue(any("no reason" in p for p in manifest.gate("ml-serve", auth, ceilings)))
+        # and net_in or clock named without their reason is refused as forbidden
+        text = (ROOT / "tools.toml").read_text().replace('net_in = "', 'net_inX = "')
+        ceilings = tomllib.loads(text)
+        self.assertTrue(manifest.gate("ml-serve", auth, ceilings))
 
 
 if __name__ == "__main__":

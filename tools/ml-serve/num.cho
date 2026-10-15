@@ -1,0 +1,203 @@
+edition 5;
+
+module serve.num;
+
+// How a JSON number becomes a cell of the CSV the predictor reads (docs/serving-http.md section 4). The number is judged from its text, the digits and the
+// exponent, and never from a double: a request is never rounded to a number it did not send. An `int` and a `dec` column take the exact value or refuse; a
+// `float` column takes the nearest double (cancho-table's reader, ties to even) and refuses only what a double cannot hold.
+
+import std.buffer;
+import flt;
+
+// the status of a cell: 0 it is rendered, 1 the number is not exactly an integer (or a decimal of the column's scale) within the reader's 12 digits, 2 the number
+// is outside the range of a double (past it, or non-zero and below the smallest subnormal)
+pub fn ok() -> [] int {
+    return 0;
+}
+
+pub fn inexact() -> [] int {
+    return 1;
+}
+
+pub fn out_of_range() -> [] int {
+    return 2;
+}
+
+fn is_digit(c: int) -> [] bool {
+    return c >= 48 && c <= 57;
+}
+
+fn push_zeros[&h](heap: &!h Heap, b: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var i = 0;
+    while i < n {
+        o = buffer.push(heap, o, byte_of(48));
+        i = i + 1;
+    }
+    return o;
+}
+
+// `text` is a JSON number. The value as `scale` digits after the point (`scale` 0: an integer, no point), appended to `out`, or the status 1 with `out` unchanged.
+pub fn exact_cell[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], scale: int) -> [heap] (buffer.Buffer, int) {
+    var o = out;
+    var i = 0;
+    var neg = false;
+    if len(text) > 0 && int_of(text[0]) == 45 {
+        neg = true;
+        i = 1;
+    }
+    let ib = i;
+    while i < len(text) && is_digit(int_of(text[i])) {
+        i = i + 1;
+    }
+    let ie = i;
+    var fb = i;
+    var fe = i;
+    if i < len(text) && int_of(text[i]) == 46 {
+        i = i + 1;
+        fb = i;
+        while i < len(text) && is_digit(int_of(text[i])) {
+            i = i + 1;
+        }
+        fe = i;
+    }
+    var e = 0;
+    var eneg = false;
+    if i < len(text) && (int_of(text[i]) == 101 || int_of(text[i]) == 69) {
+        i = i + 1;
+        if i < len(text) && (int_of(text[i]) == 43 || int_of(text[i]) == 45) {
+            eneg = int_of(text[i]) == 45;
+            i = i + 1;
+        }
+        while i < len(text) && is_digit(int_of(text[i])) {
+            e = e * 10 + (int_of(text[i]) - 48);
+            if e > 100000 {
+                e = 100000;
+            }
+            i = i + 1;
+        }
+        if eneg {
+            e = 0 - e;
+        }
+    }
+    if i != len(text) || ie == ib {
+        return (o, inexact());
+    }
+    // the digits are text[ib..ie] then text[fb..fe]: position p of the stream
+    let n = ie - ib + (fe - fb);
+    var first = 0 - 1;
+    var last = 0 - 1;
+    var p = 0;
+    while p < n {
+        var c = 0;
+        if p < ie - ib {
+            c = int_of(text[ib + p]);
+        } else {
+            c = int_of(text[fb + p - (ie - ib)]);
+        }
+        if c != 48 {
+            if first < 0 {
+                first = p;
+            }
+            last = p;
+        }
+        p = p + 1;
+    }
+    if first < 0 {
+        // zero, whatever the exponent: no sign
+        if scale == 0 {
+            return (buffer.push(heap, o, byte_of(48)), ok());
+        }
+        o = buffer.append(heap, o, "0.");
+        return (push_zeros(heap, o, scale), ok());
+    }
+    let k = last - first + 1;
+    let shift = e - (fe - fb) + (n - 1 - last);
+    // M = the significant digits followed by `shift + scale` zeros: the value times 10^scale, an integer of at most 12 digits
+    let zeros = shift + scale;
+    if zeros < 0 || k + zeros > 12 {
+        return (o, inexact());
+    }
+    var m = buffer.empty(heap, 16);
+    p = first;
+    while p <= last {
+        var c = 0;
+        if p < ie - ib {
+            c = int_of(text[ib + p]);
+        } else {
+            c = int_of(text[fb + p - (ie - ib)]);
+        }
+        m = buffer.push(heap, m, byte_of(c));
+        p = p + 1;
+    }
+    m = push_zeros(heap, m, zeros);
+    if neg {
+        o = buffer.push(heap, o, byte_of(45));
+    }
+    borrow m as &mr in {
+        let digits = buffer.bytes(mr);
+        if scale == 0 {
+            o = buffer.append(heap, o, digits);
+        } else if len(digits) > scale {
+            o = buffer.append(heap, o, digits[0..len(digits) - scale]);
+            o = buffer.push(heap, o, byte_of(46));
+            o = buffer.append(heap, o, digits[len(digits) - scale..len(digits)]);
+        } else {
+            o = buffer.append(heap, o, "0.");
+            o = push_zeros(heap, o, scale - len(digits));
+            o = buffer.append(heap, o, digits);
+        }
+    }
+    buffer.drop(heap, m);
+    return (o, ok());
+}
+
+// a `float` column: the shortest decimal that reads back to the nearest double of `text` (0.0 for any zero); status 2 for a number a double cannot hold
+pub fn float_cell[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte]) -> [heap] (buffer.Buffer, int) {
+    let (key, status) = flt.parse_float(text);
+    if status != 0 {
+        return (out, out_of_range());
+    }
+    return (flt.put_float(heap, out, key), ok());
+}
+
+// whether `text` is a JSON number (RFC 8259: an optional minus, an integer part without leading zeros, an optional fraction, an optional exponent) and nothing else.
+// The values of an answer are the predictor's own decimal text and are written between no quotes only when this holds.
+pub fn is_json_number[&t](text: &t [byte]) -> [] bool {
+    var i = 0;
+    if i < len(text) && int_of(text[i]) == 45 {
+        i = i + 1;
+    }
+    if i >= len(text) || !is_digit(int_of(text[i])) {
+        return false;
+    }
+    if int_of(text[i]) == 48 {
+        i = i + 1;
+    } else {
+        while i < len(text) && is_digit(int_of(text[i])) {
+            i = i + 1;
+        }
+    }
+    if i < len(text) && int_of(text[i]) == 46 {
+        i = i + 1;
+        if i >= len(text) || !is_digit(int_of(text[i])) {
+            return false;
+        }
+        while i < len(text) && is_digit(int_of(text[i])) {
+            i = i + 1;
+        }
+    }
+    if i < len(text) && (int_of(text[i]) == 101 || int_of(text[i]) == 69) {
+        i = i + 1;
+        if i < len(text) && (int_of(text[i]) == 43 || int_of(text[i]) == 45) {
+            i = i + 1;
+        }
+        if i >= len(text) || !is_digit(int_of(text[i])) {
+            return false;
+        }
+        while i < len(text) && is_digit(int_of(text[i])) {
+            i = i + 1;
+        }
+    }
+    return i == len(text);
+}

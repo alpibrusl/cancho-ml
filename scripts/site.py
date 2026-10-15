@@ -60,9 +60,11 @@ import html
 import json
 import os
 import shlex
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -180,11 +182,109 @@ def run_words(words, binary, cwd, stdin=None):
     """The command, run as `words` say (argv[0] is what the tool prints in a repair) with `binary`, or its sibling `ml-predict` for that command;
     `stdin` is the name of a file in `cwd` given on standard input (none: an empty one)."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"}
-    exe = Path(binary).parent / "ml-predict" if words and words[0] == "ml-predict" else binary
+    exe = Path(binary).parent / words[0] if words and words[0] in ("ml-predict", "ml-serve") else binary
     data = (Path(cwd) / stdin).read_bytes() if stdin else b""
     r = subprocess.run(words, executable=str(exe), cwd=cwd, env=env, input=data,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return r.stdout.decode("utf-8"), r.returncode
+
+
+# The HTTP flow (docs/serving-http.md): `ml-serve` is started on pets.ml, written by the demo c_fit, on a free port; the requests are sent over a socket and the answer is printed as curl -i
+# prints it. The text shows port 8080 where the run used another (the one thing that differs). A person typed the commands below; the bytes after them are the server's.
+HTTP_PORT_SHOWN = 8080
+HTTP_ONE = '{"age":3,"species":"cat","city":"Turin","visits":4}'
+HTTP_BATCH = '{"rows":[{"age":3,"species":"cat","city":"Turin","visits":4},{"age":1,"species":"dog","city":"Lyon","visits":7}]}'
+HTTP_BAD = '{"age":"two","species":"axolotl","city":"Lyon","visits":4,"zip":1}'
+JSON_POST = "curl -s -i -XPOST -H 'Content-Type: application/json' -d '%s' localhost:8080%s"
+HTTP_DEMOS = [
+    ("h_health", "curl -s localhost:8080/health", "GET", "/health", None, "body"),
+    ("h_one", JSON_POST % (HTTP_ONE, "/predict"), "POST", "/predict", HTTP_ONE, "all"),
+    ("h_batch", "curl -s -XPOST -H 'Content-Type: application/json' -d '%s' localhost:8080/predict/batch" % HTTP_BATCH, "POST", "/predict/batch", HTTP_BATCH, "body"),
+    ("h_bad", JSON_POST % (HTTP_BAD, "/predict"), "POST", "/predict", HTTP_BAD, "all"),
+    ("h_model", "curl -s localhost:8080/model", "GET", "/model", None, "model"),
+    ("h_openapi", "curl -s localhost:8080/openapi.json", "GET", "/openapi.json", None, "openapi"),
+]
+
+
+def http_request(port, method, path, body):
+    """The response as curl -i prints it (status line, headers, a blank line, the body), with the line ends of a terminal: the head, and the body of the length it says."""
+    s = socket.create_connection(("127.0.0.1", port), timeout=10)
+    try:
+        head = "%s %s HTTP/1.1\r\nHost: localhost:%d\r\nAccept: */*\r\n" % (method, path, port)
+        if body is not None:
+            head += "Content-Type: application/json\r\nContent-Length: %d\r\n" % len(body.encode())
+        s.sendall((head + "\r\n").encode() + (body or "").encode())
+        got = b""
+        while b"\r\n\r\n" not in got:
+            d = s.recv(65536)
+            if not d:
+                break
+            got += d
+        raw_head, _, raw_body = got.partition(b"\r\n\r\n")
+        length = 0
+        for line in raw_head.decode().split("\r\n")[1:]:
+            k, _, v = line.partition(":")
+            if k.lower() == "content-length":
+                length = int(v.strip())
+        while len(raw_body) < length:
+            d = s.recv(65536)
+            if not d:
+                break
+            raw_body += d
+    finally:
+        s.close()
+    return raw_head.decode().replace("\r\n", "\n"), raw_body.decode()
+
+
+def run_http_demos(binary, tmp):
+    serve = Path(binary).parent / "ml-serve"
+    if not serve.exists():
+        raise Drift("%s does not exist: run `cancho build --bin ml-serve`" % serve)
+    if not (Path(tmp) / "pets.ml").exists():
+        raise Drift("the HTTP demos need pets.ml, which the demo c_fit writes")
+    s0 = socket.socket()
+    s0.bind(("127.0.0.1", 0))
+    port = s0.getsockname()[1]
+    s0.close()
+    log = open(Path(tmp) / "serve.log", "w+")
+    proc = subprocess.Popen([str(serve), "--model-file", "pets.ml", "--no-token", "--port", str(port)], cwd=tmp, stdout=subprocess.PIPE, stderr=log, stdin=subprocess.DEVNULL,
+                            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
+    out = {}
+    try:
+        for _ in range(100):
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            raise Drift("ml-serve did not listen")
+        log.seek(0)
+        started = log.read().strip().replace(str(port), str(HTTP_PORT_SHOWN))
+        out["h_start"] = ("ml-serve --model-file pets.ml --no-token --port %d &" % HTTP_PORT_SHOWN, started, 0)
+        for key, typed, method, path, body, shape in HTTP_DEMOS:
+            head, text = http_request(port, method, path, body)
+            status = int(head.split()[1])
+            if shape == "all":
+                shown = head + "\n\n" + text
+            elif shape == "model":
+                d = json.loads(text)
+                shown = json.dumps({k: d[k] for k in ("model", "task", "request", "classes", "output")}, ensure_ascii=False, separators=(",", ":"))
+            elif shape == "openapi":
+                d = json.loads(text)
+                shown = json.dumps({"openapi": d["openapi"], "paths": sorted(d["paths"]), "Record": d["components"]["schemas"]["Record"]}, ensure_ascii=False, separators=(",", ":"))
+            else:
+                shown = text
+            if status not in (200, 422):
+                raise Drift("the HTTP demo %s answered %d" % (key, status))
+            out[key] = (typed, shown, status)
+    finally:
+        proc.terminate()
+        proc.wait(5)
+        if proc.stdout:
+            proc.stdout.close()
+        log.close()
+    return out
 
 
 def make_context(binary, tmp):
@@ -223,11 +323,12 @@ def make_context(binary, tmp):
             if status2 != 0:
                 raise Drift("the repair of the demo `%s` does not run" % key)
             results[REPAIRED[key]] = (shlex.join(argv), out2, status2)
+    http_results = run_http_demos(binary, tmp)
     ref = sx.reference()
     examples = sx.run_examples(run, tmp, ref)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
-    return {"results": results, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
+    return {"results": results, "http": http_results, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
 
 
 def item(ctx, key):
@@ -326,6 +427,29 @@ def kmflow_items(ctx):
             item(ctx, "k_text")]
 
 
+def hflow_items(ctx):
+    """Serve a model over HTTP: start, a record, a batch, a refusal with every error, what the model requires, and the document."""
+    h = ctx["http"]
+
+    def one(key, width=200):
+        typed, out, status = h[key]
+        return (typed, "\n".join(cut(l, width) for l in out.splitlines()), 0, None)
+
+    return [("# ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080)", None, 0, None),
+            one("h_start"),
+            ("# liveness, and the SHA-256 of the model file being served", None, 0, None),
+            one("h_health"),
+            ("# one record: a member for every column of the model. The head carries the digest too", None, 0, None),
+            one("h_one"),
+            ("# a batch: a row of the answer for each record, in order", None, 0, None),
+            one("h_batch"),
+            ("# a refusal: every error at once, each with its JSON Pointer, as application/problem+json with the rule", None, 0, None),
+            one("h_bad", 260),
+            ("# what the model requires of a caller (excerpt), and the OpenAPI 3.1 document made from the same columns (excerpt)", None, 0, None),
+            one("h_model"),
+            one("h_openapi")]
+
+
 def render(items, html_mode):
     out = []
     for display, text, status, note in items:
@@ -377,6 +501,17 @@ def predict_authority(ctx):
     return ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in manifest["labels"])
 
 
+def serve_authority(ctx):
+    manifest = json.loads((ROOT / "manifests" / "ml-serve.authority.json").read_text())
+    out, status = ctx["run"](["ml-serve", "introspect"])
+    if status != 0 or manifest != json.loads(out)["authority"]:
+        raise Drift("manifests/ml-serve.authority.json is not what `ml-serve introspect` says: run scripts/manifest.py")
+    effects = {lab["name"] for lab in manifest["labels"]}
+    if not manifest["bounded"] or manifest["foreign_symbols"] or effects & {"ffi", "net_out", "conc", "exec", "env", "io_read", "file_write", "dir_write", "fs_write"}:
+        raise Drift("the authority of ml-serve has a write, a thread, an exec, a foreign symbol or an outbound connection, or is unbounded")
+    return ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in manifest["labels"])
+
+
 def authority_row(ctx):
     manifest = json.loads((ROOT / "manifests" / "ml.authority.json").read_text())
     if manifest != ctx["introspect"]["authority"]:
@@ -393,16 +528,16 @@ def authority_row(ctx):
 def authority_md(ctx):
     m = authority_row(ctx)
     names = ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in m["labels"])
-    return ("```console\n# manifests/ml.authority.json and manifests/ml-predict.authority.json\nml          %s\nml-predict  %s\n"
-            "# bounded: %s; foreign symbols: none; net_out, net_in, ffi, clock: absent\n```" % (names, predict_authority(ctx), str(m["bounded"]).lower()))
+    return ("```console\n# manifests/ml.authority.json, manifests/ml-predict.authority.json and manifests/ml-serve.authority.json\nml          %s\nml-predict  %s\nml-serve    %s\n"
+            "# bounded: %s; foreign symbols: none; ffi, net_out: absent from all three; net_in, clock: ml-serve only\n```" % (names, predict_authority(ctx), serve_authority(ctx), str(m["bounded"]).lower()))
 
 
 def authority(ctx):
     m = authority_row(ctx)
     names = ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in m["labels"])
-    return ('<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json and manifests/ml-predict.authority.json</span>\n'
-            'ml          %s\nml-predict  %s\n<span class="c"># bounded: %s; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>'
-            % (e(names), e(predict_authority(ctx)), str(m["bounded"]).lower()))
+    return ('<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json, manifests/ml-predict.authority.json and manifests/ml-serve.authority.json</span>\n'
+            'ml          %s\nml-predict  %s\nml-serve    %s\n<span class="c"># bounded: %s; foreign symbols: none; ffi, net_out: absent from all three; net_in, clock: ml-serve only</span></pre>'
+            % (e(names), e(predict_authority(ctx)), e(serve_authority(ctx)), str(m["bounded"]).lower()))
 
 
 def limits(ctx):
@@ -491,11 +626,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

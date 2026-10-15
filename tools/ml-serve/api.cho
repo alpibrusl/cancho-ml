@@ -1,0 +1,461 @@
+edition 5;
+
+module serve.api;
+
+// The request schema and the declared API of the served model, built once at start from the answer of `describe` (docs/serving-http.md sections 3.1 and 3.4):
+// one schema node per column, the record, the batch, the answers and the problem, and the five operations declared with cancho-web. The OpenAPI document is
+// generated from the same declaration and the same nodes the validator runs.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import schema;
+import web;
+import serve.cols;
+
+// the operations, in the order they are declared: a route's id is that order (cancho-web's `web.operation`)
+pub fn op_health() -> [] int {
+    return 1;
+}
+
+pub fn op_model() -> [] int {
+    return 2;
+}
+
+pub fn op_openapi() -> [] int {
+    return 3;
+}
+
+pub fn op_predict_one() -> [] int {
+    return 4;
+}
+
+pub fn op_predict_batch() -> [] int {
+    return 5;
+}
+
+// the ints of an int column: the 12 digits of the reader's int (docs/reader.md section 2.1)
+fn int_limit() -> [] int {
+    return 999999999999;
+}
+
+// what the build found: 0 it is built; 1 a column name that is not UTF-8; 2 `describe` could not be read
+pub res struct Built {
+    sc: schema.Schema,
+    rec: int,
+    batch: int,
+    api: web.Api,
+    doc: buffer.Buffer,
+    cols: cols.Cols,
+    sha: buffer.Buffer,
+    proba: bool,
+    distance: bool,
+    code: int,
+}
+
+fn nothing[&h](heap: &!h Heap, code: int) -> [heap] Built {
+    return Built { sc: schema.empty(heap), rec: 0, batch: 0, api: web.empty(heap), doc: buffer.empty(heap, 1), cols: cols.empty(heap), sha: buffer.empty(heap, 1), proba: false, distance: false, code: code };
+}
+
+pub fn drop[&h](heap: &!h Heap, b: Built) -> [heap] int {
+    let Built { sc, rec, batch, api, doc, cols, sha, proba, distance, code } = b;
+    schema.drop(heap, sc);
+    web.drop(heap, api);
+    buffer.drop(heap, doc);
+    cols.drop(heap, cols);
+    return buffer.drop(heap, sha);
+}
+
+pub fn code[&b](b: &b Built) -> [] int {
+    return b.code;
+}
+
+pub fn schema_of[&b](b: &b Built) -> [] &b schema.Schema {
+    return b.sc;
+}
+
+pub fn record_node[&b](b: &b Built) -> [] int {
+    return b.rec;
+}
+
+pub fn batch_node[&b](b: &b Built) -> [] int {
+    return b.batch;
+}
+
+pub fn api_of[&b](b: &b Built) -> [] &b web.Api {
+    return b.api;
+}
+
+pub fn doc_of[&b](b: &b Built) -> [] &b [byte] {
+    return buffer.bytes(b.doc);
+}
+
+pub fn cols_of[&b](b: &b Built) -> [] &b cols.Cols {
+    return b.cols;
+}
+
+pub fn sha_of[&b](b: &b Built) -> [] &b [byte] {
+    return buffer.bytes(b.sha);
+}
+
+pub fn with_proba[&b](b: &b Built) -> [] bool {
+    return b.proba;
+}
+
+pub fn with_distance[&b](b: &b Built) -> [] bool {
+    return b.distance;
+}
+
+// the string node `v` of the tape, decoded
+fn text_of[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], v: int) -> [heap] Box[[byte]] {
+    let n = json.string_length(desc, tape, v);
+    var size = n;
+    if size < 1 {
+        size = 1;
+    }
+    let raw = box_slice(heap, size, byte_of(0));
+    var used = raw;
+    borrow mut used as &!rw in {
+        if n > 0 {
+            json.string_into(desc, tape, v, contents(rw)[0..n]);
+        }
+    }
+    return used;
+}
+
+// whether member `key` of the object `obj` is the string `want`
+fn is_text[&d, &t](desc: &d [byte], tape: &t [int], obj: int, key: &static [byte], want: &static [byte]) -> [] bool {
+    let v = json.get(desc, tape, obj, key);
+    return v >= 0 && json.is_string(tape, v) && json.string_equals(desc, tape, v, want);
+}
+
+// the entry of `categorical` for the column named `field`, or -1
+fn category_entry[&d, &t, &n](desc: &d [byte], tape: &t [int], list: int, field: &n [byte]) -> [] int {
+    var k = 0;
+    while k < json.count(tape, list) {
+        let e = json.at(tape, list, k);
+        let c = json.get(desc, tape, e, "column");
+        if c >= 0 && json.is_string(tape, c) && json.string_equals(desc, tape, c, field) {
+            return e;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// whether the vocabulary of `entry` is complete in the file and every category is UTF-8 text: the column can have an `enum`
+fn listed_in_full[&d, &t](desc: &d [byte], tape: &t [int], entry: int) -> [] bool {
+    if is_text(desc, tape, entry, "encoder", "hash") {
+        return false;
+    }
+    let trunc = json.get(desc, tape, entry, "truncated");
+    if trunc < 0 || json.kind(tape, trunc) != json.kind_false() {
+        return false;
+    }
+    let values = json.get(desc, tape, entry, "values");
+    if values < 0 || !json.is_array(tape, values) || json.count(tape, values) == 0 {
+        return false;
+    }
+    var k = 0;
+    while k < json.count(tape, values) {
+        let v = json.get(desc, tape, json.at(tape, values, k), "value");
+        if v < 0 || !json.is_string(tape, v) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// the schema with the categories of `entry` as the values of string node `node`
+fn add_categories[&h, &d, &t](heap: &!h Heap, s: schema.Schema, node: int, desc: &d [byte], tape: &t [int], entry: int) -> [heap] schema.Schema {
+    var out = s;
+    let values = json.get(desc, tape, entry, "values");
+    var k = 0;
+    while k < json.count(tape, values) {
+        let v = json.get(desc, tape, json.at(tape, values, k), "value");
+        let raw = text_of(heap, desc, tape, v);
+        borrow raw as &rr in {
+            out = schema.add_choice(heap, out, node, contents(rr)[0..json.string_length(desc, tape, v)]);
+        }
+        unbox_slice(heap, raw);
+        k = k + 1;
+    }
+    return out;
+}
+
+// whether every column name of `describe` that a request carries is UTF-8 text
+fn names_are_text[&d, &t](desc: &d [byte], tape: &t [int], list: int) -> [] bool {
+    var i = 0;
+    while i < json.count(tape, list) {
+        let c = json.at(tape, list, i);
+        let nm = json.get(desc, tape, c, "name");
+        if !is_text(desc, tape, c, "role", "target") && (nm < 0 || !json.is_string(tape, nm)) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn type_code[&d, &t](desc: &d [byte], tape: &t [int], c: int) -> [] int {
+    if is_text(desc, tape, c, "type", "int") {
+        return 0;
+    }
+    if is_text(desc, tape, c, "type", "dec") {
+        return 1;
+    }
+    if is_text(desc, tape, c, "type", "float") {
+        return 2;
+    }
+    return 3;
+}
+
+// A member of an object that is the response of an operation: the fields are added in the order written.
+fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: bool, max_rows: int, guarded: bool) -> [heap] Built {
+    let col_list = json.get(desc, tape, 0, "columns");
+    let cat_list = json.get(desc, tape, 0, "categorical");
+    let request = json.get(desc, tape, 0, "request");
+    let optional = json.get(desc, tape, request, "optional");
+    let file = json.get(desc, tape, 0, "file");
+    let sha_node = json.get(desc, tape, file, "sha256");
+    let output = json.get(desc, tape, 0, "output");
+    if col_list < 0 || cat_list < 0 || request < 0 || optional < 0 || sha_node < 0 || !json.is_string(tape, sha_node) || output < 0 {
+        return nothing(heap, 2);
+    }
+    if !names_are_text(desc, tape, col_list) {
+        return nothing(heap, 1);
+    }
+    let nullable = is_text(desc, tape, request, "missing_cells", "handled");
+    var s = schema.empty(heap);
+    var cs = cols.empty(heap);
+    let (s1, rec) = schema.new_object(heap, s, true);
+    s = s1;
+    var i = 0;
+    while i < json.count(tape, col_list) {
+        let c = json.at(tape, col_list, i);
+        if !is_text(desc, tape, c, "role", "target") {
+            let nm = json.get(desc, tape, c, "name");
+            let ty = type_code(desc, tape, c);
+            var scale = 0;
+            let sc_node = json.get(desc, tape, c, "scale");
+            if sc_node >= 0 && json.is_number(tape, sc_node) {
+                scale = json.to_int(desc, tape, sc_node);
+            }
+            var node = 0;
+            if ty == 0 {
+                let (s2, n) = schema.new_int(heap, s, 0 - int_limit(), int_limit());
+                s = s2;
+                node = n;
+            } else if ty == 1 || ty == 2 {
+                let (s2, n) = schema.new_number(heap, s);
+                s = s2;
+                node = n;
+            } else {
+                let (s2, n) = schema.new_string(heap, s, 0, schema.int_max());
+                s = s2;
+                node = n;
+            }
+            let raw = text_of(heap, desc, tape, nm);
+            let nlen = json.string_length(desc, tape, nm);
+            borrow raw as &rr in {
+                let field = contents(rr)[0..nlen];
+                if ty == 3 && enums {
+                    let entry = category_entry(desc, tape, cat_list, field);
+                    if entry >= 0 && listed_in_full(desc, tape, entry) {
+                        s = add_categories(heap, s, node, desc, tape, entry);
+                    }
+                }
+                if nullable {
+                    s = schema.make_nullable(s, node);
+                }
+                s = schema.add_field(heap, s, rec, field, node, true);
+                cs = cols.add(heap, cs, field, ty, scale);
+            }
+            unbox_slice(heap, raw);
+        }
+        i = i + 1;
+    }
+    cs = cols.close_header(heap, cs);
+    let (s3, anything) = schema.new_any(heap, s);
+    s = s3;
+    i = 0;
+    while i < json.count(tape, optional) {
+        let o = json.at(tape, optional, i);
+        if json.is_string(tape, o) {
+            let raw = text_of(heap, desc, tape, o);
+            let nlen = json.string_length(desc, tape, o);
+            borrow raw as &rr in {
+                s = schema.add_field(heap, s, rec, contents(rr)[0..nlen], anything, false);
+                cs = cols.add_optional(heap, cs, contents(rr)[0..nlen]);
+            }
+            unbox_slice(heap, raw);
+        }
+        i = i + 1;
+    }
+    // the batch
+    let (s4, rows) = schema.new_array(heap, s, rec, 1, max_rows);
+    let (s5, batch) = schema.new_object(heap, s4, true);
+    s = schema.add_field(heap, s5, batch, "rows", rows, true);
+    // the answers
+    let (s6, text) = schema.new_string(heap, s, 0, schema.int_max());
+    let (s7, number) = schema.new_number(heap, s6);
+    let (s8, count) = schema.new_int(heap, s7, 0, schema.int_max());
+    let (s9, names) = schema.new_array(heap, s8, text, 0, schema.int_max());
+    let (s10, one_row) = schema.new_array(heap, s9, number, 0, schema.int_max());
+    let (s11, all_rows) = schema.new_array(heap, s10, one_row, 0, schema.int_max());
+    let (s12, prediction) = schema.new_object(heap, s11, true);
+    s = schema.add_field(heap, s12, prediction, "model_sha256", text, true);
+    s = schema.add_field(heap, s, prediction, "model", text, true);
+    s = schema.add_field(heap, s, prediction, "task", text, true);
+    s = schema.add_field(heap, s, prediction, "columns", names, true);
+    s = schema.add_field(heap, s, prediction, "rows", all_rows, true);
+    s = schema.add_field(heap, s, prediction, "row_count", count, true);
+    s = schema.add_field(heap, s, prediction, "unknown_categories", count, true);
+    let (s13, alive) = schema.new_bool(heap, s);
+    let (s14, health) = schema.new_object(heap, s13, true);
+    s = schema.add_field(heap, s14, health, "ok", alive, true);
+    s = schema.add_field(heap, s, health, "model_sha256", text, true);
+    // the description of the model: the fields of `describe` the document names, and the rest as the file has it
+    let (s15, file_obj) = schema.new_object(heap, s, false);
+    s = schema.add_field(heap, s15, file_obj, "sha256", text, true);
+    let (s16, model_obj) = schema.new_object(heap, s, false);
+    s = schema.add_field(heap, s16, model_obj, "model", text, true);
+    s = schema.add_field(heap, s, model_obj, "task", text, true);
+    s = schema.add_field(heap, s, model_obj, "plan", text, true);
+    s = schema.add_field(heap, s, model_obj, "file", file_obj, true);
+    // the problem
+    let (s17, status) = schema.new_int(heap, s, 100, 599);
+    let (s18, one_error) = schema.new_object(heap, s17, true);
+    s = schema.add_field(heap, s18, one_error, "pointer", text, true);
+    s = schema.add_field(heap, s, one_error, "code", text, true);
+    s = schema.add_field(heap, s, one_error, "detail", text, true);
+    let (s19, errors) = schema.new_array(heap, s, one_error, 0, schema.int_max());
+    let (s20, problem) = schema.new_object(heap, s19, true);
+    s = schema.add_field(heap, s20, problem, "type", text, true);
+    s = schema.add_field(heap, s, problem, "title", text, true);
+    s = schema.add_field(heap, s, problem, "status", status, true);
+    s = schema.add_field(heap, s, problem, "rule", text, false);
+    s = schema.add_field(heap, s, problem, "model_sha256", text, false);
+    s = schema.add_field(heap, s, problem, "detail", text, false);
+    s = schema.add_field(heap, s, problem, "count", count, false);
+    s = schema.add_field(heap, s, problem, "errors", errors, false);
+    s = schema.add_field(heap, s, problem, "error", anything, false);
+
+    var api = web.empty(heap);
+    var about = buffer.append(heap, buffer.empty(heap, 96), "Serves the model file with SHA-256 ");
+    about = buffer.append(heap, about, json.string_view(desc, tape, sha_node));
+    about = buffer.append(heap, about, ". The record schema is built from the columns of the file.");
+    borrow about as &ab in {
+        api = web.about(heap, api, "Serve one trained model", buffer.bytes(ab));
+    }
+    buffer.drop(heap, about);
+    if guarded {
+        api = web.bearer_scheme(heap, api, "token", "the bearer token held in the file named by --token-file");
+    }
+    let (a1, health_op) = web.operation(heap, api, "GET", "/health", "health");
+    api = a1;
+    api = web.summary(heap, api, health_op, "Liveness, and the digest of the model being served");
+    if guarded {
+        api = web.no_auth(heap, api, health_op);
+    }
+    api = web.respond(heap, api, health_op, 200, "alive", health);
+
+    let (a2, model_op) = web.operation(heap, api, "GET", "/model", "getModel");
+    api = a2;
+    api = web.summary(heap, api, model_op, "What the model file requires of a caller");
+    api = web.describe(heap, api, model_op, "The answer of `ml describe` for the served file: the model, the plan, the columns, the vocabularies and the answer's columns.");
+    if guarded {
+        api = web.require(heap, api, model_op, "token");
+        api = web.respond_problem(heap, api, model_op, 401);
+        api = web.respond_problem(heap, api, model_op, 403);
+    }
+    api = web.respond(heap, api, model_op, 200, "the description", model_obj);
+    api = web.respond_problem(heap, api, model_op, 500);
+
+    let (a3, doc_op) = web.operation(heap, api, "GET", "/openapi.json", "getOpenapi");
+    api = a3;
+    api = web.summary(heap, api, doc_op, "This document");
+    if guarded {
+        api = web.require(heap, api, doc_op, "token");
+        api = web.respond_problem(heap, api, doc_op, 401);
+        api = web.respond_problem(heap, api, doc_op, 403);
+    }
+    api = web.respond_text(heap, api, doc_op, 200, "the OpenAPI document");
+
+    let (a4, one_op) = web.operation(heap, api, "POST", "/predict", "predictOne");
+    api = a4;
+    api = web.summary(heap, api, one_op, "Predict from one record");
+    api = web.describe(heap, api, one_op, "One JSON object with a member for every column of the model. A column the model fills in itself is not a member. The answer holds the model's prediction and the digest of the model file.");
+    if guarded {
+        api = web.require(heap, api, one_op, "token");
+        api = web.respond_problem(heap, api, one_op, 401);
+        api = web.respond_problem(heap, api, one_op, 403);
+    }
+    api = web.body(heap, api, one_op, rec);
+    api = web.respond(heap, api, one_op, 200, "the prediction", prediction);
+    api = web.respond_problem(heap, api, one_op, 400);
+    api = web.respond_problem(heap, api, one_op, 413);
+    api = web.respond_problem(heap, api, one_op, 415);
+    api = web.respond_problem(heap, api, one_op, 422);
+    api = web.respond_problem(heap, api, one_op, 500);
+
+    let (a5, many_op) = web.operation(heap, api, "POST", "/predict/batch", "predictBatch");
+    api = a5;
+    api = web.summary(heap, api, many_op, "Predict from a batch of records");
+    api = web.describe(heap, api, many_op, "A JSON object with the member rows, a list of records as POST /predict takes them. The answer has a row for each record, in the order sent.");
+    if guarded {
+        api = web.require(heap, api, many_op, "token");
+        api = web.respond_problem(heap, api, many_op, 401);
+        api = web.respond_problem(heap, api, many_op, 403);
+    }
+    api = web.body(heap, api, many_op, batch);
+    api = web.respond(heap, api, many_op, 200, "the predictions", prediction);
+    api = web.respond_problem(heap, api, many_op, 400);
+    api = web.respond_problem(heap, api, many_op, 413);
+    api = web.respond_problem(heap, api, many_op, 415);
+    api = web.respond_problem(heap, api, many_op, 422);
+    api = web.respond_problem(heap, api, many_op, 500);
+
+    api = web.component(heap, api, "Record", rec);
+    api = web.component(heap, api, "Batch", batch);
+    api = web.component(heap, api, "Prediction", prediction);
+    api = web.component(heap, api, "Problem", problem);
+
+    var doc = buffer.empty(heap, 16);
+    borrow api as &ar in {
+        borrow s as &sr in {
+            buffer.drop(heap, doc);
+            doc = web.openapi(heap, ar, sr, "ml-serve", "0.1.0");
+        }
+    }
+    var sha = buffer.append(heap, buffer.empty(heap, 72), json.string_view(desc, tape, sha_node));
+    var proba = false;
+    var distance = false;
+    let wp = json.get(desc, tape, output, "with_proba");
+    if wp >= 0 && json.is_array(tape, wp) {
+        proba = true;
+    }
+    let wd = json.get(desc, tape, output, "with_distance");
+    if wd >= 0 && json.is_array(tape, wd) {
+        distance = true;
+    }
+    return Built { sc: s, rec: rec, batch: batch, api: api, doc: doc, cols: cs, sha: sha, proba: proba, distance: distance, code: 0 };
+}
+
+// Build the schema, the API and the document from the answer of `describe` (the bytes `desc`). With `enums` the categories a file lists in full are the values
+// of their column (the document says so and the validator refuses the others). `guarded`: every operation but `GET /health` needs the bearer token.
+pub fn build[&h, &d](heap: &!h Heap, desc: &d [byte], enums: bool, max_rows: int, guarded: bool) -> [heap] Built {
+    let tape = box_slice(heap, json.tape_len(desc), 0);
+    var result = nothing(heap, 2);
+    borrow mut tape as &!tw in {
+        let tp = contents(tw);
+        let nodes = json.parse(desc, tp);
+        if nodes > 0 {
+            drop(heap, result);
+            result = assemble(heap, desc, tp, enums, max_rows, guarded);
+        }
+    }
+    unbox_slice(heap, tape);
+    return result;
+}

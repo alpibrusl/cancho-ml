@@ -153,7 +153,7 @@ def gate(tool, authority, ceilings):
         return ["%s: no ceiling in tools.toml" % tool]
     allowed = set(ceiling.get("allow", []))
     reasons = ceiling.get("reasons", {})
-    if tool in ("ml", "ml-predict"):
+    if tool in ("ml", "ml-predict", "ml-serve"):
         # a label beyond the base row is allowed only with a stated reason (docs/wiring.md section 6)
         for text in sorted(allowed - base_row()):
             if not reasons.get(text.split("(")[0]):
@@ -162,9 +162,11 @@ def gate(tool, authority, ceilings):
         problems.append("%s: bounded is false" % tool)
     if authority.get("foreign_symbols"):
         problems.append("%s: foreign symbols %s" % (tool, authority["foreign_symbols"]))
+    # a server names `net_in` and `clock` in its ceiling, each with a reason (checked above); every other tool still may not hold them
+    permitted = {n for n in ("net_in", "clock") if any(a.split("(")[0] == n for a in allowed) and reasons.get(n)}
     for label in authority["labels"]:
         text = label_text(label)
-        if label["name"] in FORBIDDEN:
+        if label["name"] in FORBIDDEN - permitted:
             problems.append("%s: %s is forbidden to every tool" % (tool, text))
         if text not in allowed:
             problems.append("%s: %s is not within the ceiling in tools.toml" % (tool, text))

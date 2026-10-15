@@ -862,7 +862,7 @@ pub fn model_error[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int
 // read and decode the model file. (model, ok, errors, bytes of the file)
 fn load_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, o: Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors) {
     var e = errs;
-    let (data, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(model), paths.full(model), o.max_bytes);
+    let (data, st, aux) = fsio.read_model(heap, fs, root, model, o.max_bytes);
     var mo = mfile.empty_model(heap);
     var ok = false;
     if st == 1 || st == 2 {

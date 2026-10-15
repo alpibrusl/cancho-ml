@@ -1,0 +1,88 @@
+{
+  "operation": "POST /predict/batch",
+  "method": "POST",
+  "path_template": "/predict/batch",
+  "fingerprint": "345af410",
+  "case_id": "rZX0UH",
+  "code_sample": "curl -X POST -H 'Content-Type: application/json' -d '{\"rows\": [{\"b\": 2.2853778876298526e+76, \"c\": -1.7976931348623155e+308, \"a\": 526.0}]}' http://127.0.0.1:18090/predict/batch",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:18090/predict/batch",
+      "url_template": "http://127.0.0.1:18090/predict/batch",
+      "headers": {
+        "User-Agent": "schemathesis/4.31.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "rZX0UH",
+        "Content-Type": "application/json",
+        "Content-Length": "84"
+      },
+      "response": {
+        "status_code": 422,
+        "headers": {
+          "x-model-sha256": "50ec9831483ce969757556a05bd57883b589a98d67c7df5e6b9004410ab8717b",
+          "content-type": "application/problem+json",
+          "content-length": "555",
+          "connection": "keep-alive"
+        },
+        "body": "{\"type\":\"about:blank\",\"title\":\"Unprocessable Content\",\"status\":422,\"rule\":\"serve.number-not-exact\",\"model_sha256\":\"50ec9831483ce969757556a05bd57883b589a98d67c7df5e6b9004410ab8717b\",\"detail\":\"the number cannot be written exactly as the type of its column: an int is a whole number of at most 12 digits, a dec has the digits of its scale\",\"count\":1,\"errors\":[{\"pointer\":\"/rows/0/b\",\"code\":\"inexact\",\"detail\":\"the number cannot be written exactly as the type of its column: an int is a whole number of at most 12 digits, a dec has the digits of its scale\"}]}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "positive_data_acceptance",
+          "status": "failure",
+          "message": "API rejected schema-compliant request\n\nValid data should have been accepted\nExpected: 2xx, 3xx, 401, 403, 404, 409, 429, 5xx"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0004512079758569598,
+          "mode": "positive"
+        },
+        "components": {
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/predict/batch",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "rows": [
+            {
+              "b": 2.2853778876298526e+76,
+              "c": -1.7976931348623155e+308,
+              "a": 526.0
+            }
+          ]
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null,
+      "auth_identity": null
+    }
+  ]
+}

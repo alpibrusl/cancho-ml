@@ -8,7 +8,21 @@ module ml.fsio;
 // rename and remove beneath a directory it opened, and nowhere else (cancho docs/directory-handles.md).
 
 import std.buffer;
+import ml.paths;
 import toolbox.place;
+
+// The bytes of a model file: the file below `root` when `model` names one, or a copy of the bytes an Rp holds in memory (the server read the file once at start,
+// `paths.of_mem`). (bytes, status, aux) as `read_whole`; a copy longer than `cap` is status 3 as a file is.
+pub fn read_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, cap: int) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, int, int) {
+    if paths.is_stdin(model) {
+        let held = paths.mem(model);
+        if len(held) > cap {
+            return (buffer.empty(heap, 1), 3, len(held));
+        }
+        return (buffer.append(heap, buffer.empty(heap, len(held) + 1), held), 0, 0);
+    }
+    return read_whole(heap, fs, root, paths.shown(model), paths.full(model), cap);
+}
 
 // read the file `rel` (opened as toolbox.place says) whole. (bytes, status, aux): 0 ok; 1 the open failed (aux: errno); 2 the
 // read failed (aux: errno); 3 the file is longer than `cap` bytes (aux: its length)

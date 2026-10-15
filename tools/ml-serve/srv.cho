@@ -1,0 +1,552 @@
+edition 5;
+
+module serve.srv;
+
+// The handler of ml-serve (docs/serving-http.md section 8): one parsed request in, one response appended to `out`. `web.dispatch` judges the route, `web.guard` the token,
+// and the work is the five operations. A predict request becomes the CSV text of docs/serving-http.md section 4 and goes to the code of `ml predict` in this process, with the
+// CSV and the model file as bytes in memory; the answer is that code's document, its values written again between no quotes.
+
+import std.buffer;
+import std.bytes;
+import std.http;
+import std.json;
+import http.server;
+import schema;
+import web;
+import ml.app;
+import ml.paths;
+import ml.spec;
+import ml.verbs;
+import ml.wireio;
+import toolbox.fail;
+import serve.api;
+import serve.cols;
+import serve.num;
+
+// the most an answer may hold: the output queue of http.server is 65,536 bytes (docs/serving-http.md section 1.3)
+pub fn answer_limit() -> [] int {
+    return 60000;
+}
+
+pub res struct Served {
+    built: api.Built,
+    // the model file, read once at start
+    model: buffer.Buffer,
+    // the answer of GET /model
+    model_doc: buffer.Buffer,
+    // {"ok":true,"model_sha256":"..."}
+    health: buffer.Buffer,
+    // X-Model-Sha256: ...\r\n
+    sha_header: buffer.Buffer,
+    // the model decoded once at start, when it is a planned file (wireio.planned_file); the constant models of the older reader are decoded for each request
+    stored: wireio.Stored,
+    planned: bool,
+    tokens: web.Tokens,
+    guarded: bool,
+    max_rows: int,
+    max_model: int,
+    max_body: int,
+}
+
+pub fn make[&h](heap: &!h Heap, built: api.Built, model: buffer.Buffer, model_doc: buffer.Buffer, stored: wireio.Stored, planned: bool, tokens: web.Tokens, guarded: bool, max_rows: int, max_model: int, max_body: int) -> [heap] Served {
+    var health = buffer.append(heap, buffer.empty(heap, 96), "{\"ok\":true,\"model_sha256\":\"");
+    var header = buffer.append(heap, buffer.empty(heap, 96), "X-Model-Sha256: ");
+    borrow built as &br in {
+        health = buffer.append(heap, health, api.sha_of(br));
+        header = buffer.append(heap, header, api.sha_of(br));
+    }
+    health = buffer.append(heap, health, "\"}");
+    header = buffer.append(heap, header, "\r\n");
+    return Served { built: built, model: model, model_doc: model_doc, health: health, sha_header: header, stored: stored, planned: planned, tokens: tokens, guarded: guarded, max_rows: max_rows, max_model: max_model, max_body: max_body };
+}
+
+pub fn drop[&h](heap: &!h Heap, s: Served) -> [heap] int {
+    let Served { built, model, model_doc, health, sha_header, stored, planned, tokens, guarded, max_rows, max_model, max_body } = s;
+    api.drop(heap, built);
+    wireio.drop_stored(heap, stored);
+    buffer.drop(heap, model);
+    buffer.drop(heap, model_doc);
+    buffer.drop(heap, health);
+    buffer.drop(heap, sha_header);
+    web.tokens_drop(heap, tokens);
+    return 0;
+}
+
+// what the loop needs to size its tables
+pub fn most_params[&s](s: &s Served) -> [] int {
+    return web.most_params(api.api_of(s.built));
+}
+
+pub fn most_args[&s](s: &s Served) -> [] int {
+    return web.most_args(api.api_of(s.built));
+}
+
+// an operation nobody decided about (a token is set and the declaration says nothing about who may call it), or 0
+pub fn undecided[&s](s: &s Served) -> [] int {
+    return web.next_undecided(api.api_of(s.built), 0);
+}
+
+// ---------------------------------------------------------------------
+// Refusals
+// ---------------------------------------------------------------------
+
+// `application/problem+json` with a rule: `{"type":"about:blank","title":..,"status":..,"rule":..,"detail":..}`, and when `pointer` is not empty an `errors` list of that one
+// entry, and when `error` is not empty the predictor's error object as `error`.
+fn problem[&h, &s, &u, &d, &p, &c, &e](heap: &!h Heap, sha: &s [byte], out: buffer.Buffer, status: int, rule: &u [byte], detail: &d [byte], pointer: &p [byte], code: &c [byte], error: &e [byte], keep: bool) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 256);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "type");
+    w = json.put_string(heap, w, "about:blank");
+    w = json.put_key(heap, w, "title");
+    w = json.put_string(heap, w, http.reason(status));
+    w = json.put_key(heap, w, "status");
+    w = json.put_int(heap, w, status);
+    w = json.put_key(heap, w, "rule");
+    w = json.put_string(heap, w, rule);
+    w = json.put_key(heap, w, "model_sha256");
+    w = json.put_string(heap, w, sha);
+    w = json.put_key(heap, w, "detail");
+    w = json.put_string(heap, w, detail);
+    if len(pointer) > 0 {
+        w = json.put_key(heap, w, "count");
+        w = json.put_int(heap, w, 1);
+        w = json.put_key(heap, w, "errors");
+        w = json.begin_array(heap, w);
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "pointer");
+        w = json.put_string(heap, w, pointer);
+        w = json.put_key(heap, w, "code");
+        w = json.put_string(heap, w, code);
+        w = json.put_key(heap, w, "detail");
+        w = json.put_string(heap, w, detail);
+        w = json.end_object(heap, w);
+        w = json.end_array(heap, w);
+    }
+    if len(error) > 0 {
+        w = json.put_key(heap, w, "error");
+        w = json.put_fragment(heap, w, error);
+    }
+    w = json.end_object(heap, w);
+    let body = json.finish(w);
+    var answer = out;
+    borrow body as &bb in {
+        answer = server.reply_as(heap, answer, status, "application/problem+json", buffer.bytes(bb), keep, "");
+    }
+    buffer.drop(heap, body);
+    return answer;
+}
+
+fn simple[&h, &s, &d](heap: &!h Heap, sha: &s [byte], out: buffer.Buffer, status: int, rule: &static [byte], detail: &d [byte], keep: bool) -> [heap] buffer.Buffer {
+    return problem(heap, sha, out, status, rule, detail, "", "", "", keep);
+}
+
+// the HTTP status of a rule of the predictor (docs/serving-http.md section 5.3): the request's data is 422, a limit of the request's size 413, and anything else a
+// fault of the server, 500
+fn status_of[&r](rule: &r [byte]) -> [] int {
+    if app.listed("ml.schema.mismatch,ml.input.non-numeric,ml.input.non-finite,ml.input.missing-value,ml.input.unknown-category,ml.input.invalid-utf8,ml.input.reserved-category,ml.input.duplicate-column,ml.input.unknown-column,ml.limit.string-bytes,ml.limit.string-pool,ml.limit.categories,ml.limit.categorical-columns", rule) {
+        return 422;
+    }
+    if app.listed("limit.line-too-long,limit.input-too-large,ml.input.too-many-rows,ml.input.too-many-columns,ml.input.too-many-cells", rule) {
+        return 413;
+    }
+    return 500;
+}
+
+// the 422 of the schema: `schema.problem`'s object with the rule first
+fn mismatch[&h, &s, &b](heap: &!h Heap, sha: &s [byte], out: buffer.Buffer, schema_problem: &b [byte], keep: bool) -> [heap] buffer.Buffer {
+    var body = buffer.append(heap, buffer.empty(heap, len(schema_problem) + 120), "{\"rule\":\"ml.schema.mismatch\",\"model_sha256\":\"");
+    body = buffer.append(heap, body, sha);
+    body = buffer.append(heap, body, "\",");
+    body = buffer.append(heap, body, schema_problem[1..len(schema_problem)]);
+    var answer = out;
+    borrow body as &bb in {
+        answer = server.reply_as(heap, answer, 422, "application/problem+json", buffer.bytes(bb), keep, "");
+    }
+    buffer.drop(heap, body);
+    return answer;
+}
+
+// ---------------------------------------------------------------------
+// The answer
+// ---------------------------------------------------------------------
+
+// The answer of 3.2 from the document `ml predict` made (`payload`): the same values, between no quotes. (the body, 0 it is made, 1 the document is not what `ml predict` writes,
+// 2 a value is not a number: the model's answer for the row is not finite, and the command line prints such a value as text such as `i.nf`)
+fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) -> [heap] (buffer.Buffer, int) {
+    let tape = box_slice(heap, json.tape_len(payload), 0);
+    var w = json.writer(heap, 512);
+    var good = false;
+    var numeric = true;
+    borrow mut tape as &!tw in {
+        let tp = contents(tw);
+        if json.parse(payload, tp) > 0 {
+            let model = json.get(payload, tp, 0, "model");
+            let task = json.get(payload, tp, 0, "task");
+            let columns = json.get(payload, tp, 0, "columns");
+            let rows = json.get(payload, tp, 0, "rows");
+            let count = json.get(payload, tp, 0, "row_count");
+            let unknown = json.get(payload, tp, 0, "unknown_categories");
+            good = model >= 0 && json.is_string(tp, model) && task >= 0 && json.is_string(tp, task) && columns >= 0 && json.is_array(tp, columns) && rows >= 0 && json.is_array(tp, rows) && json.is_int(tp, count) && (unknown < 0 || json.is_int(tp, unknown));
+            var r = 0;
+            while good && r < json.count(tp, rows) {
+                let row = json.at(tp, rows, r);
+                good = json.is_array(tp, row) && json.count(tp, row) == json.count(tp, columns);
+                var c = 0;
+                while good && c < json.count(tp, row) {
+                    let cell = json.at(tp, row, c);
+                    good = json.is_string(tp, cell);
+                    if good && !num.is_json_number(json.string_view(payload, tp, cell)) {
+                        numeric = false;
+                    }
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+            if good && numeric {
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "model_sha256");
+                w = json.put_string(heap, w, sha);
+                w = json.put_key(heap, w, "model");
+                w = json.put_string(heap, w, json.string_view(payload, tp, model));
+                w = json.put_key(heap, w, "task");
+                w = json.put_string(heap, w, json.string_view(payload, tp, task));
+                w = json.put_key(heap, w, "columns");
+                w = json.begin_array(heap, w);
+                var c = 0;
+                while c < json.count(tp, columns) {
+                    w = json.put_string(heap, w, json.string_view(payload, tp, json.at(tp, columns, c)));
+                    c = c + 1;
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "rows");
+                w = json.begin_array(heap, w);
+                r = 0;
+                while r < json.count(tp, rows) {
+                    let row = json.at(tp, rows, r);
+                    w = json.begin_array(heap, w);
+                    c = 0;
+                    while c < json.count(tp, row) {
+                        w = json.put_fragment(heap, w, json.string_view(payload, tp, json.at(tp, row, c)));
+                        c = c + 1;
+                    }
+                    w = json.end_array(heap, w);
+                    r = r + 1;
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "row_count");
+                w = json.put_int(heap, w, json.to_int(payload, tp, count));
+                w = json.put_key(heap, w, "unknown_categories");
+                // the constant models count no unseen category: their document has no such member
+                var unseen = 0;
+                if unknown >= 0 {
+                    unseen = json.to_int(payload, tp, unknown);
+                }
+                w = json.put_int(heap, w, unseen);
+                w = json.end_object(heap, w);
+            }
+        }
+    }
+    unbox_slice(heap, tape);
+    if !good || !numeric {
+        json.drop(heap, w);
+        if good {
+            return (buffer.empty(heap, 1), 2);
+        }
+        return (buffer.empty(heap, 1), 1);
+    }
+    return (json.finish(w), 0);
+}
+
+// ---------------------------------------------------------------------
+// The predict operations
+// ---------------------------------------------------------------------
+
+// `application/json` at the front of a `Content-Type`, parameters allowed
+fn is_json_type[&c](value: &c [byte]) -> [] bool {
+    let want = "application/json";
+    if len(value) < len(want) {
+        return false;
+    }
+    var i = 0;
+    while i < len(want) {
+        var c = int_of(value[i]);
+        if c >= 65 && c <= 90 {
+            c = c + 32;
+        }
+        if c != int_of(want[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return len(value) == len(want) || int_of(value[len(want)]) == 59 || int_of(value[len(want)]) == 32;
+}
+
+// the options the predictor is called with: the rows of a request, as many cells as the model's columns allow, the answer's columns the model has
+fn options(columns: int, rows: int, max_bytes: int, proba: bool, distance: bool, body_cap: int, limit: int) -> [] verbs.Opts {
+    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, drops: "", floats: "", target: "", model: "", plan_given: false, step: "", step_given: false, positive: "", positive_given: false, split: "", split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cats: "", cat_given: false, na: "", max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128 };
+}
+
+// the options `describe` is called with: the most category strings listed per column, and the largest model file
+pub fn describe_opts(limit: int, max_bytes: int) -> [] verbs.Opts {
+    return options(1, 1, max_bytes, false, false, 0, limit);
+}
+
+// The CSV of the records and the predictor on it. `first` is the tape node of the first record, `n` how many, `batch` whether a pointer names the row.
+fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], first: int, n: int, batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+    let cs = api.cols_of(sv.built);
+    var csv = buffer.append(heap, buffer.empty(heap, 256), cols.header(cs));
+    var answer = out;
+    var refused = false;
+    var obj = first;
+    var k = 0;
+    while k < n && !refused {
+        let (c2, st, bad) = cols.render(heap, csv, cs, body, tape, obj);
+        csv = c2;
+        if st != cols.rendered() {
+            refused = true;
+            var row = 0 - 1;
+            if batch {
+                row = k;
+            }
+            let ptr = cols.pointer(heap, cs, row, bad);
+            borrow ptr as &pr in {
+                if st == cols.inexact() {
+                    answer = problem(heap, api.sha_of(sv.built), answer, 422, "serve.number-not-exact", "the number cannot be written exactly as the type of its column: an int is a whole number of at most 12 digits, a dec has the digits of its scale", buffer.bytes(pr), "inexact", "", keep);
+                } else if st == cols.out_of_range() {
+                    answer = problem(heap, api.sha_of(sv.built), answer, 422, "serve.number-not-exact", "the number is outside the range of a double", buffer.bytes(pr), "range", "", keep);
+                } else if st == cols.not_renderable() {
+                    answer = problem(heap, api.sha_of(sv.built), answer, 422, "serve.string-not-renderable", "a category holds a carriage return directly followed by a line feed, which a CSV reader reads as the line feed alone", buffer.bytes(pr), "string", "", keep);
+                } else {
+                    answer = problem(heap, api.sha_of(sv.built), answer, 500, "serve.internal", "a value of a kind the schema should have refused", "", "", "", keep);
+                }
+            }
+            buffer.drop(heap, ptr);
+        } else {
+            obj = json.skip(tape, obj);
+        }
+        k = k + 1;
+    }
+    if refused {
+        buffer.drop(heap, csv);
+        return answer;
+    }
+    var data = paths.absent(heap);
+    var model = paths.absent(heap);
+    borrow csv as &cr in {
+        paths.drop(heap, data);
+        data = paths.of_mem(heap, buffer.bytes(cr), "request");
+    }
+    buffer.drop(heap, csv);
+    paths.drop(heap, model);
+    if sv.planned {
+        model = paths.absent(heap);
+    } else {
+        model = paths.of_mem(heap, buffer.bytes(sv.model), "model");
+    }
+    let o = options(cols.count(cs), n, sv.max_model, api.with_proba(sv.built), api.with_distance(sv.built), sv.max_body, n);
+    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    borrow data as &dr in {
+        borrow model as &mr in {
+            verbs.drop_out(heap, result);
+            if sv.planned {
+                result = wireio.predict_loaded(heap, args, fs, root, dr, sv.stored, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+            } else {
+                result = wireio.predict(heap, args, fs, root, dr, mr, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+            }
+        }
+    }
+    paths.drop(heap, data);
+    paths.drop(heap, model);
+    let (payload, plain, extra, errs, log, dry) = verbs.parts(result);
+    buffer.drop(heap, plain);
+    buffer.drop(heap, extra);
+    buffer.drop(heap, log);
+    var failed = false;
+    borrow errs as &ec in {
+        failed = fail.count(ec) != 0;
+    }
+    if failed {
+        var rule = buffer.empty(heap, 1);
+        borrow errs as &ed in {
+            buffer.drop(heap, rule);
+            rule = app.first_rule(heap, ed);
+        }
+        borrow rule as &rr in {
+            let status = status_of(buffer.bytes(rr));
+            borrow errs as &er in {
+                answer = problem(heap, api.sha_of(sv.built), answer, status, buffer.bytes(rr), "the model refused the input: see error", "", "", fail.first(er), keep);
+            }
+        }
+        buffer.drop(heap, rule);
+    } else {
+        borrow payload as &pr in {
+            let (body_out, made) = prediction(heap, buffer.bytes(pr), api.sha_of(sv.built));
+            borrow body_out as &bo in {
+                if made == 0 && len(buffer.bytes(bo)) <= answer_limit() {
+                    answer = server.reply_with(heap, answer, 200, buffer.bytes(bo), keep, "");
+                } else if made == 2 {
+                    answer = simple(heap, api.sha_of(sv.built), answer, 422, "serve.non-finite-prediction", "the model's answer for a row is not a finite number: the input is outside what the model can compute", keep);
+                } else {
+                    answer = simple(heap, api.sha_of(sv.built), answer, 500, "serve.internal", "the answer could not be written", keep);
+                }
+            }
+            buffer.drop(heap, body_out);
+        }
+    }
+    fail.drop(heap, errs);
+    buffer.drop(heap, payload);
+    return answer;
+}
+
+// the body was judged by the schema: the records, each key once, then the rows
+fn accepted[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+    let cs = api.cols_of(sv.built);
+    if !batch {
+        if !cols.each_key_once(cs, body, tape, 0) {
+            return simple(heap, api.sha_of(sv.built), out, 400, "serve.duplicate-key", "an object holds the same key twice", keep);
+        }
+        return run_rows(heap, sv, args, fs, root, body, tape, 0, 1, false, out, keep);
+    }
+    let rows = json.get(body, tape, 0, "rows");
+    let n = json.count(tape, rows);
+    if json.count(tape, 0) != 1 {
+        return simple(heap, api.sha_of(sv.built), out, 400, "serve.duplicate-key", "an object holds the same key twice", keep);
+    }
+    var k = 0;
+    while k < n {
+        if !cols.each_key_once(cs, body, tape, json.at(tape, rows, k)) {
+            var ptr = buffer.append(heap, buffer.empty(heap, 16), "/rows/");
+            ptr = buffer.push_nat(heap, ptr, k);
+            var answer = out;
+            borrow ptr as &pr in {
+                answer = problem(heap, api.sha_of(sv.built), answer, 400, "serve.duplicate-key", "an object holds the same key twice", buffer.bytes(pr), "duplicate", "", keep);
+            }
+            buffer.drop(heap, ptr);
+            return answer;
+        }
+        k = k + 1;
+    }
+    return run_rows(heap, sv, args, fs, root, body, tape, json.at(tape, rows, 0), n, true, out, keep);
+}
+
+// the body is JSON: the size of a batch, then the schema
+fn judged[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+    let sc = api.schema_of(sv.built);
+    if batch && json.is_object(tape, 0) {
+        let rows = json.get(body, tape, 0, "rows");
+        if rows >= 0 && json.is_array(tape, rows) && json.count(tape, rows) > sv.max_rows {
+            return simple(heap, api.sha_of(sv.built), out, 413, "serve.batch-too-large", "the batch has more records than --max-batch-rows", keep);
+        }
+    }
+    var answer = out;
+    var node = api.record_node(sv.built);
+    if batch {
+        node = api.batch_node(sv.built);
+    }
+    let slots = box_slice(heap, schema.slot_count(sc), 0);
+    let errs = box_slice(heap, schema.errors_len(16), 0);
+    borrow mut slots as &!sw in {
+        borrow mut errs as &!ew in {
+            let sl = contents(sw);
+            let es = contents(ew);
+            if schema.validate(sc, node, body, tape, sl, es) > 0 {
+                let p = schema.problem(heap, sc, body, tape, es, 422, "Unprocessable Content");
+                borrow p as &pb in {
+                    answer = mismatch(heap, api.sha_of(sv.built), answer, buffer.bytes(pb), keep);
+                }
+                buffer.drop(heap, p);
+            } else {
+                answer = accepted(heap, sv, args, fs, root, body, tape, batch, answer, keep);
+            }
+        }
+    }
+    unbox_slice(heap, errs);
+    unbox_slice(heap, slots);
+    return answer;
+}
+
+fn predict_route[&h, &s, &g, &f, &r, &q, &t, &b](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], body: &b [byte], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+    if len(body) > sv.max_body {
+        return simple(heap, api.sha_of(sv.built), out, 413, "serve.body-too-large", "the body is longer than --max-body-bytes", keep);
+    }
+    if !is_json_type(http.header(request, table, "content-type")) {
+        return simple(heap, api.sha_of(sv.built), out, 415, "serve.media-type", "send Content-Type: application/json", keep);
+    }
+    var answer = out;
+    let tape = box_slice(heap, json.tape_len(body), 0);
+    borrow mut tape as &!tw in {
+        let tp = contents(tw);
+        let nodes = json.parse(body, tp);
+        if nodes < 0 {
+            var detail = buffer.append(heap, buffer.empty(heap, 64), json.error_message(json.error_code(nodes)));
+            detail = buffer.append(heap, detail, " at byte ");
+            detail = buffer.push_nat(heap, detail, json.error_position(nodes));
+            borrow detail as &db in {
+                answer = simple(heap, api.sha_of(sv.built), answer, 400, "serve.body-not-json", buffer.bytes(db), keep);
+            }
+            buffer.drop(heap, detail);
+        } else {
+            answer = judged(heap, sv, args, fs, root, body, tp, batch, answer, keep);
+        }
+    }
+    unbox_slice(heap, tape);
+    return answer;
+}
+
+// ---------------------------------------------------------------------
+// The five operations
+// ---------------------------------------------------------------------
+
+// One parsed request in, one response appended to `out`.
+fn route[&h, &s, &g, &f, &r, &q, &t, &p, &a, &x, &b](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], params: &!p [int], argv: &!a [int], scratch: &!x [byte], body: &b [byte], out: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+    let keep = http.keeps_alive(table);
+    let (routed, id) = web.dispatch(heap, api.api_of(sv.built), api.schema_of(sv.built), request, table, params, argv, scratch, out, keep);
+    if id == web.answered() {
+        return routed;
+    }
+    var gated = routed;
+    if sv.guarded {
+        let (g2, allowed) = web.guard(heap, api.api_of(sv.built), sv.tokens, request, table, id, gated, keep);
+        gated = g2;
+        if !allowed {
+            return gated;
+        }
+    }
+    if id == api.op_health() {
+        return server.reply_with(heap, gated, 200, buffer.bytes(sv.health), keep, "");
+    }
+    if id == api.op_model() {
+        return server.reply_with(heap, gated, 200, buffer.bytes(sv.model_doc), keep, "");
+    }
+    if id == api.op_openapi() {
+        return server.reply_with(heap, gated, 200, api.doc_of(sv.built), keep, "");
+    }
+    if id == api.op_predict_one() {
+        return predict_route(heap, sv, args, fs, root, request, table, body, false, gated, keep);
+    }
+    if id == api.op_predict_batch() {
+        return predict_route(heap, sv, args, fs, root, request, table, body, true, gated, keep);
+    }
+    return simple(heap, api.sha_of(sv.built), gated, 500, "serve.internal", "a route without a handler", keep);
+}
+
+// One parsed request in, one response appended to `out`, with the digest of the model in the head of every answer this handler or the router makes (the answers the loop writes
+// before a handler is reached, 400, 413 and 431, have none).
+pub fn handle[&h, &s, &g, &f, &r, &q, &t, &p, &a, &x, &b](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], params: &!p [int], argv: &!a [int], scratch: &!x [byte], body: &b [byte], out: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+    let answer = route(heap, sv, args, fs, root, request, table, params, argv, scratch, body, out);
+    var marked = buffer.empty(heap, 1);
+    borrow answer as &ar in {
+        let head = buffer.bytes(ar);
+        let at = bytes.find(head, "\r\n");
+        buffer.drop(heap, marked);
+        if at < 0 {
+            marked = buffer.append(heap, buffer.empty(heap, len(head) + 1), head);
+        } else {
+            marked = buffer.append(heap, buffer.empty(heap, len(head) + 100), head[0..at + 2]);
+            marked = buffer.append(heap, marked, buffer.bytes(sv.sha_header));
+            marked = buffer.append(heap, marked, head[at + 2..len(head)]);
+        }
+    }
+    buffer.drop(heap, answer);
+    return marked;
+}
