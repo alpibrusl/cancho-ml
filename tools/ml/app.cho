@@ -233,8 +233,11 @@ pub fn first_rule[&h, &e](heap: &!h Heap, errs: &e fail.Errors) -> [heap] buffer
     return buffer.append(heap, out, first[at + len(key)..end]);
 }
 
-// whether the command reads standard input: `predict` with `-` or with no file operand (docs/serving.md section 2)
+// whether the command reads standard input: `predict` with `-` or with no file operand (docs/serving.md section 2); `fit` and `eval` with `-` (docs/jsonl.md section 2)
 pub fn stdin_wanted[&g, &p](args: &g Args, parsed: &p cli.Parsed, verb: int) -> [args] bool {
+    if verb == 1 || verb == 3 {
+        return cli.operand_count(parsed) == 2 && bytes.equal(cli.operand(args, parsed, 1), "-");
+    }
     if verb != 2 {
         return false;
     }

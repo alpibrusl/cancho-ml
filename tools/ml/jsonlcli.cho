@@ -1,0 +1,431 @@
+edition 5;
+
+module ml.jsonlcli;
+
+// JSON lines on the command line (docs/jsonl.md sections 2 to 4): the checks of the flags --input-format, --fields, --absent and --max-json-nodes, the declaration of
+// the columns (the flag at fit, the model file at predict and eval), and the conversion of the input to the CSV bytes that the verbs then read as they read
+// standard input. `input_into` runs between the resolution of the paths and the verb, in tools/ml/main.cho and tools/ml-predict/main.cho; with the input format
+// csv it changes nothing.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.app;
+import ml.fsio;
+import ml.jsonl;
+import ml.kinds;
+import ml.mfile;
+import ml.paths;
+import ml.spec;
+import ml.wireio;
+import pipeline.schema;
+import toolbox.cli;
+import toolbox.fail;
+
+// whether the input is JSON lines: the choice flag is jsonl or ndjson
+pub fn wanted[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] bool {
+    let f = cli.text(args, parsed, table, "input-format");
+    return bytes.equal(f, "jsonl") || bytes.equal(f, "ndjson");
+}
+
+// the flags of JSON lines that mean nothing with CSV, and the flags JSON lines needs: (the errors)
+pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte], verb: int) -> [heap, args] fail.Errors {
+    var e = errs;
+    if !wanted(args, parsed, table) {
+        if cli.has(parsed, table, "fields") {
+            e = app.flag_problem(heap, e, "args.conflict", "--fields declares the columns of JSON lines input", "give --input-format jsonl, or remove --fields", "flag", "--fields");
+        }
+        if cli.has(parsed, table, "absent") {
+            e = app.flag_problem(heap, e, "args.conflict", "--absent says what a missing key of JSON lines input is", "give --input-format jsonl, or remove --absent", "flag", "--absent");
+        }
+        if cli.has(parsed, table, "max-json-nodes") {
+            e = app.flag_problem(heap, e, "args.conflict", "--max-json-nodes bounds a line of JSON lines input", "give --input-format jsonl, or remove --max-json-nodes", "flag", "--max-json-nodes");
+        }
+        return e;
+    }
+    if verb == 1 {
+        if !cli.has(parsed, table, "fields") {
+            return app.flag_problem(heap, e, "args.required-flag", "fit of JSON lines needs --fields, the keys that are the columns, in the order of the table", "ml fit --input-format jsonl --fields NAMES --target NAME --output MODEL fit FILE", "flag", "--fields");
+        }
+        let (st, at) = jsonl.check_fields(cli.text(args, parsed, table, "fields"));
+        if st != 0 {
+            var w = fail.open_in(heap, spec.extra(), "args.bad-value", "--fields is a list of names that are not empty and not repeated", "give the keys of the objects separated by commas; a name holds no comma");
+            w = fail.no_repair(heap, w);
+            w = fail.detail_open(heap, w);
+            w = fail.detail_str(heap, w, "flag", "--fields");
+            w = fail.detail_int(heap, w, "position", at);
+            e = fail.add(heap, e, w);
+        }
+    }
+    return e;
+}
+
+// ---------------------------------------------------------------- the columns of a model file
+
+// The columns that predict (with_target false) or eval (true) read from a model file: (read, names, ends, mask, count). `read` false: the model file could not be read or
+// decoded, which the verb reports itself. Text columns have mask 1.
+fn model_fields[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, cap: int, with_target: bool) -> [heap, fs_read(""), dir_read, file_read] (bool, buffer.Buffer, Box[[int]], Box[[int]], int) {
+    let (data, st, aux) = fsio.read_model(heap, fs, root, model, cap);
+    var names = buffer.empty(heap, 64);
+    var ends = box_slice(heap, 1, 0);
+    var mask = box_slice(heap, 1, 0);
+    var count = 0;
+    var read = false;
+    if st == 0 {
+        borrow data as &dr in {
+            if wireio.planned_file(buffer.bytes(dr)) {
+                let (stored, good, e2) = wireio.load_stored(heap, buffer.bytes(dr), paths.shown(model), fail.empty(heap));
+                fail.drop(heap, e2);
+                if good {
+                    borrow stored as &sr in {
+                        let sc = wireio.stored_schema(sr);
+                        let cols = schema.columns(sc);
+                        unbox_slice(heap, ends);
+                        unbox_slice(heap, mask);
+                        ends = box_slice(heap, cols + 1, 0);
+                        mask = box_slice(heap, cols + 1, 0);
+                        var i = 0;
+                        while i < cols {
+                            if with_target || !schema.has_target(sc) || i != schema.target(sc) {
+                                names = buffer.append(heap, names, schema.name(sc, i));
+                                var size = 0;
+                                borrow names as &nr in {
+                                    size = buffer.size(nr);
+                                }
+                                borrow mut ends as &!ew in {
+                                    contents(ew)[count] = size;
+                                }
+                                if schema.type_of(sc, i) == kinds.schema_type_categorical() {
+                                    borrow mut mask as &!mw in {
+                                        contents(mw)[count] = 1;
+                                    }
+                                }
+                                count = count + 1;
+                            }
+                            i = i + 1;
+                        }
+                        read = true;
+                    }
+                }
+                wireio.drop_stored(heap, stored);
+            } else {
+                let (m, code, extra) = mfile.decode(heap, buffer.bytes(dr));
+                if code == mfile.ok() {
+                    borrow m as &mq in {
+                        let cols = mfile.cols(mq);
+                        unbox_slice(heap, ends);
+                        unbox_slice(heap, mask);
+                        ends = box_slice(heap, cols + 1, 0);
+                        mask = box_slice(heap, cols + 1, 0);
+                        var i = 0;
+                        while i < cols {
+                            if with_target || i != mfile.target(mq) {
+                                names = buffer.append(heap, names, mfile.name(mq, i));
+                                var size = 0;
+                                borrow names as &nr in {
+                                    size = buffer.size(nr);
+                                }
+                                borrow mut ends as &!ew in {
+                                    contents(ew)[count] = size;
+                                }
+                                count = count + 1;
+                            }
+                            i = i + 1;
+                        }
+                        read = true;
+                    }
+                }
+                mfile.drop_model(heap, m);
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    return (read, names, ends, mask, count);
+}
+
+// ---------------------------------------------------------------- the refusals
+
+fn kind_word(k: int) -> [] &static [byte] {
+    if k == 0 {
+        return "number";
+    }
+    if k == 1 {
+        return "string";
+    }
+    return "boolean";
+}
+
+fn root_word(k: int) -> [] &static [byte] {
+    if k == 0 {
+        return "array";
+    }
+    if k == 1 {
+        return "string";
+    }
+    if k == 2 {
+        return "number";
+    }
+    if k == 3 {
+        return "boolean";
+    }
+    return "null";
+}
+
+fn code_word(code: int) -> [] &static [byte] {
+    if code == 2 {
+        return "end";
+    }
+    if code == 3 {
+        return "control";
+    }
+    if code == 4 {
+        return "escape";
+    }
+    if code == 5 {
+        return "number";
+    }
+    if code == 6 {
+        return "utf8";
+    }
+    if code == 7 {
+        return "depth";
+    }
+    if code == 9 {
+        return "trailing";
+    }
+    return "syntax";
+}
+
+// the same invocation with `--absent empty` after it, when --absent was not given
+fn absent_retry[&h, &g](heap: &!h Heap, w: json.Writer, args: &g Args) -> [heap, args] json.Writer {
+    var o = fail.retry_open(heap, w);
+    var i = 0;
+    while i < arg_count(args) {
+        o = json.put_string(heap, o, arg(args, i));
+        i = i + 1;
+    }
+    o = json.put_string(heap, o, "--absent");
+    o = json.put_string(heap, o, "empty");
+    return fail.retry_close(heap, o);
+}
+
+fn refusal[&h, &g, &n, &e, &s](heap: &!h Heap, args: &g Args, errs: fail.Errors, f: jsonl.Fail, names: &n [byte], ends: &e [int], retry_ok: bool, shown: &s [byte]) -> [heap, args] fail.Errors {
+    var colname = names[0..0];
+    if f.col >= 0 && f.col < len(ends) {
+        var from = 0;
+        if f.col > 0 {
+            from = ends[f.col - 1];
+        }
+        colname = names[from..ends[f.col]];
+    }
+    var rule: &static [byte] = "ml.jsonl.syntax";
+    var message: &static [byte] = "a line is not strict JSON";
+    var hint: &static [byte] = "fix the line, or write the file as one JSON object per line";
+    if f.code == 2 {
+        rule = "ml.jsonl.not-object";
+        message = "a line is JSON but not an object";
+        hint = "each line is one JSON object whose keys are the columns";
+    } else if f.code == 3 {
+        rule = "ml.jsonl.too-many-nodes";
+        message = "a line has more JSON nodes than --max-json-nodes";
+        hint = "raise --max-json-nodes up to 1048576, or drop the nested values from the line";
+    } else if f.code == 4 {
+        rule = "ml.jsonl.missing-field";
+        message = "a declared key is not in the object of a line";
+        hint = "add the key, or read an absent key as a missing cell with --absent empty";
+    } else if f.code == 5 {
+        rule = "ml.jsonl.not-scalar";
+        message = "the value of a declared key is an object or an array";
+        hint = "flatten the nested value first, for example with table --input-format jsonl --fields user.age --format csv";
+    } else if f.code == 6 {
+        rule = "ml.jsonl.duplicate-key";
+        message = "a declared key is twice in the object of a line";
+        hint = "remove one of them; which one counts is not guessed";
+    } else if f.code == 7 {
+        rule = "ml.jsonl.type-mismatch";
+        message = "a column read as numbers holds a JSON string or a boolean";
+        hint = "write numbers as JSON numbers, or declare a text column with --cat (fit); a model file fixes which columns are text";
+    } else if f.code == 8 {
+        rule = "ml.jsonl.mixed-kinds";
+        message = "a text column holds values of two JSON kinds in different lines";
+        hint = "write the column with one kind, for example every value as a string";
+    }
+    if f.code == 9 {
+        var w = fail.open_in(heap, spec.extra(), "limit.line-too-long", "a line is longer than --max-line-bytes", "raise --max-line-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_text(heap, w, "path", shown);
+        w = fail.detail_int(heap, w, "line", f.line);
+        w = fail.detail_int(heap, w, "length", f.a);
+        return fail.add(heap, errs, w);
+    }
+    if f.code == 10 {
+        var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "the JSON lines input, or the CSV made of it, is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_text(heap, w, "path", shown);
+        w = fail.detail_int(heap, w, "max", f.a);
+        if f.b == 1 {
+            w = fail.detail_str(heap, w, "what", "csv");
+        } else {
+            w = fail.detail_str(heap, w, "what", "input");
+        }
+        return fail.add(heap, errs, w);
+    }
+    var w = fail.open_in(heap, spec.extra(), rule, message, hint);
+    if f.code == 4 && retry_ok {
+        w = absent_retry(heap, w, args);
+    } else {
+        w = fail.no_repair(heap, w);
+    }
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_int(heap, w, "line", f.line);
+    w = fail.detail_int(heap, w, "row", f.row);
+    if f.code == 1 {
+        w = fail.detail_int(heap, w, "offset", f.a);
+        w = fail.detail_str(heap, w, "code", code_word(f.b));
+        w = fail.detail_str(heap, w, "reason", json.error_message(f.b));
+    } else if f.code == 2 {
+        w = fail.detail_str(heap, w, "kind", root_word(f.a));
+    } else if f.code == 3 {
+        w = fail.detail_int(heap, w, "limit", f.a);
+    } else {
+        w = fail.detail_int(heap, w, "column", f.col + 1);
+        w = fail.detail_text(heap, w, "name", colname);
+        if f.code == 5 {
+            if f.a == 0 {
+                w = fail.detail_str(heap, w, "kind", "object");
+            } else {
+                w = fail.detail_str(heap, w, "kind", "array");
+            }
+        } else if f.code == 7 {
+            w = fail.detail_str(heap, w, "found", kind_word(f.a));
+        } else if f.code == 8 {
+            w = fail.detail_str(heap, w, "first_kind", kind_word(f.a));
+            w = fail.detail_int(heap, w, "first_line", f.b);
+            w = fail.detail_str(heap, w, "kind", kind_word(f.c));
+        }
+    }
+    return fail.add(heap, errs, w);
+}
+
+// ---------------------------------------------------------------- the conversion
+
+// Replace the input file of `ps` by the CSV made of its JSON lines (a file of the command line, or the standard input bytes `stdin_into` read). Nothing changes when the
+// input is CSV, when the command line is already refused, or (predict, eval) when the model file cannot be read: the verb says why.
+pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], fs: &f Fs(""), root: &r [byte], verb: int, ps: app.Paths, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (app.Paths, fail.Errors) {
+    let (e0, none) = app.clean(errs);
+    if !none || !wanted(args, parsed, table) || verb == 4 {
+        return (ps, e0);
+    }
+    let max_bytes = cli.nat(args, parsed, table, "max-bytes");
+    let line_cap = cli.nat(args, parsed, table, "max-line-bytes");
+    let max_nodes = cli.nat(args, parsed, table, "max-json-nodes");
+    let absent_empty = bytes.equal(cli.text(args, parsed, table, "absent"), "empty");
+    let retry_ok = !cli.has(parsed, table, "absent");
+    var cur = ps;
+    var e = e0;
+    var names = buffer.empty(heap, 64);
+    var ends = box_slice(heap, 1, 0);
+    var mask = box_slice(heap, 1, 0);
+    var count = 0;
+    var read = false;
+    if verb == 1 {
+        let list = cli.text(args, parsed, table, "fields");
+        let (st, n) = jsonl.check_fields(list);
+        if st == 0 {
+            buffer.drop(heap, names);
+            unbox_slice(heap, ends);
+            unbox_slice(heap, mask);
+            let (nm, en) = jsonl.declaration(heap, list);
+            names = nm;
+            ends = en;
+            count = n;
+            borrow names as &nr in {
+                borrow ends as &er in {
+                    mask = jsonl.mask_by_list(heap, buffer.bytes(nr), contents(er), count, cli.text(args, parsed, table, "cat"));
+                }
+            }
+            read = true;
+        }
+    } else {
+        borrow cur as &ob in {
+            let (ok2, nm, en, mk, n) = model_fields(heap, fs, root, ob.model, max_bytes, verb == 3);
+            buffer.drop(heap, names);
+            unbox_slice(heap, ends);
+            unbox_slice(heap, mask);
+            names = nm;
+            ends = en;
+            mask = mk;
+            count = n;
+            read = ok2;
+        }
+    }
+    if read {
+        // the bytes of the input: those of standard input, or the file read whole up to --max-bytes
+        var data = buffer.empty(heap, 1);
+        var st = 0;
+        var aux = 0;
+        var shown = buffer.empty(heap, 4);
+        borrow cur as &ob in {
+            shown = buffer.append(heap, shown, paths.shown(ob.file));
+            if paths.is_stdin(ob.file) {
+                buffer.drop(heap, data);
+                data = buffer.append(heap, buffer.empty(heap, len(paths.mem(ob.file)) + 1), paths.mem(ob.file));
+            } else {
+                let (d2, st2, aux2) = fsio.read_whole(heap, fs, root, paths.shown(ob.file), paths.full(ob.file), max_bytes);
+                buffer.drop(heap, data);
+                data = d2;
+                st = st2;
+                aux = aux2;
+            }
+        }
+        var csv = buffer.empty(heap, 1);
+        var fl = jsonl.ok();
+        borrow shown as &sr in {
+            borrow names as &nr in {
+                borrow ends as &er in {
+                    borrow mask as &mr in {
+                        if st == 3 {
+                            fl = jsonl.too_large(max_bytes, 0);
+                            e = refusal(heap, args, e, fl, buffer.bytes(nr), contents(er), false, buffer.bytes(sr));
+                        } else if st != 0 {
+                            fl = jsonl.too_large(max_bytes, 0);
+                            e = fail.io_error(heap, e, aux, false, buffer.bytes(sr));
+                        } else {
+                            borrow data as &dr in {
+                                buffer.drop(heap, csv);
+                                let (c2, f2) = jsonl.convert(heap, buffer.bytes(dr), buffer.bytes(nr), contents(er), count, contents(mr), absent_empty, max_nodes, line_cap, max_bytes);
+                                csv = c2;
+                                fl = f2;
+                                if f2.code != 0 {
+                                    e = refusal(heap, args, e, f2, buffer.bytes(nr), contents(er), retry_ok, buffer.bytes(sr));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if fl.code == 0 {
+            let app.Paths { file, model, out, logp, planp } = cur;
+            var nf = paths.absent(heap);
+            borrow csv as &cr in {
+                borrow shown as &sr2 in {
+                    paths.drop(heap, nf);
+                    nf = paths.of_mem(heap, buffer.bytes(cr), buffer.bytes(sr2));
+                }
+            }
+            paths.drop(heap, file);
+            cur = app.Paths { file: nf, model: model, out: out, logp: logp, planp: planp };
+        }
+        buffer.drop(heap, csv);
+        buffer.drop(heap, shown);
+        buffer.drop(heap, data);
+    }
+    buffer.drop(heap, names);
+    unbox_slice(heap, ends);
+    unbox_slice(heap, mask);
+    return (cur, e);
+}

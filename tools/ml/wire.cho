@@ -335,7 +335,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
     var ids = catmat.empty(heap);
     var voc = dict.empty_vocab(heap);
     if o.cat_given || mixed_plan {
-        let l = csvload.load_cat(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), verbs.cat_config(o), o.target, false, dict.empty_vocab(heap), false);
+        let l = csvload.load_cat_with(heap, fs, root, file, verbs.config(o, 0, 0, 0), verbs.cat_config(o), o.target, false, dict.empty_vocab(heap), false, "");
         let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
@@ -348,7 +348,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
         rep = rep2;
         code = code2;
     } else {
-        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), o.target, false);
+        let (x2, sh2, rep2, code2) = csvload.load_t_rp(heap, fs, root, file, verbs.config(o, 0, 0, 0), o.target, false);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
         x = x2;
