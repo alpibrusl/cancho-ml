@@ -189,6 +189,12 @@ pivot written as the sum (the oracle did not read it: it compares it with the ex
 (`docs/bench/mutants_refusals.log`). The unmutated baseline of that run failed one test, the wire oracle's expectation for separable logistic data (`scripts/oracle_wire.py` and `scripts/oracle_models.py` mirror the new refusals now); the
 baseline is the full conformance suite of `scripts/check.sh`, which passes (section 6.8).
 
+### 6.8 The full run
+
+`sh scripts/check.sh` on the final tree, Mac arm64 under a load average near 100: 449 conformance tests OK (298 fixtures), every other step passes (53 minutes; no timing is claimed). `scripts/check_docs.sh`,
+`check_prose.py`, `check_links.py`, `check_doc_refs.py`, `check_bins.py`, `check_workflow.py` pass. One native run on Linux x86-64 (gram, `taskset -c 0-6`): `xplat_check.py` 88 lines equal to the golden,
+`gate_models.sh` all bits equal, `oracle_refuse.py all --n 400` every verdict agrees (the same verdicts as on the Mac), `test_refuse_fit` 8 tests OK.
+
 ### 6.6 The real session
 
 `python3 scripts/site.py` runs, in a temporary directory with `ml` on the PATH, the one-hot refusal of `pets.csv` and the separable refusal of `shop.csv`, each followed by the repair it offered, run as offered. The blocks are in the README
