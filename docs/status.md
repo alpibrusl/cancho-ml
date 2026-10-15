@@ -63,9 +63,8 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 | imputation in the constant model | `--model constant` refuses an empty cell; the pipeline models take it as a missing value |
 | neural networks, GPU | not planned in v1 |
 | other platforms | macOS arm64, Linux x86-64 and Linux aarch64 (a Raspberry Pi 5, by hand, outside the workflow) agree on 88 fingerprint lines for 22 fits (`docs/bench/xplat_fp.txt`, `scripts/xplat_check.py`; compiler `a4572ea`, commit `cb08d5b`); the workflow covers the first two; any other platform is untested |
-| the stores on a second machine | the stores and the output of the consumption proof are equal on a Mac and on a Linux x86-64 host ([stores.md](stores.md) section 7) |
-| a fetch of the stores from GitHub | the consumption proof reads them through a `file://` URL of a clone; the GitHub form is the same command with `--url` and is run once a commit holding the stores is pushed |
-| CI | `.github/workflows/ci.yml` ([ci.md](ci.md)): build, determinism gate and fast gates on `ubuntu-latest` and `macos-latest`; `scripts/check.sh` on request and nightly; binaries on a tag `v*`. Run by hand on a Mac and a Linux x86-64 workstation; no GitHub run is recorded here. `cancho install` needs the network |
+| the stores on other machines and from GitHub | the output of the consumption proof is equal on a Mac, on a Linux x86-64 host ([stores.md](stores.md) section 7) and through `--url https://github.com/alpibrusl/cancho-ml --rev 99e9b64afb4f1ca191a4209dea1306720da43b2f` (23 stores installed, output SHA-256 `87c80b90289b8189c9520612acae5291d7732ac74de20437fd6ac8ee1dc5fca0`, 2026-10-15) |
+| CI | `.github/workflows/ci.yml` ([ci.md](ci.md)): build, determinism gate and fast gates on `ubuntu-24.04`, `ubuntu-26.04`, `ubuntu-24.04-arm` and `macos-26`; `scripts/check.sh` on request and nightly; binaries on a tag `v*`. The run of the four-job matrix on GitHub (2026-10-15, run 38739883040) passed, with 88 equal fingerprint lines on `ubuntu-24.04`, `ubuntu-26.04`, `ubuntu-24.04-arm` and `macos-26`. `cancho install` needs the network |
 
 ## What was measured
 
