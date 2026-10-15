@@ -25,7 +25,7 @@ second tag for one rule would be the repurposing `design.md` section 8 forbids).
 21 of `lib/core/refuse.cho` (the band 1 to 99 of `ml.refuse`), `design.md` section 8.1 and `tools/ml/spec.tmpl` `extra()` and `rules()`.
 
 `detail` is `{"row": N, "column": C}`: `N` is the 1-based number of the first row, in the order of the file read, whose value is not finite, and `C` is the name of the
-column of the answer that holds it: `prediction` (a regression), `probability` (a classification), `distance` (a clustering). For `eval` with `--split`, `N` is the
+column of the answer that holds it: `prediction` (a regression), `label` (the value a classification chose its label from), `probability` (a classification), `distance` (a clustering). For `eval` with `--split`, `N` is the
 row of the file, not the row among the held-out ones, because the file is what the caller can open.
 
 **Not a finite number** is NaN or an infinity; the test is `v - v == 0.0`, the one `models.common.is_finite` has. NaN counts: `inf - inf` in a dot product is NaN
@@ -48,9 +48,10 @@ Every call of `flt.put_float` in `tools/ml` and `tools/ml-serve` **[read]**, and
 By model kind, for `predict` (and the same predictors under `eval`):
 
 * **linear regression:** `x . coef + intercept` is infinite when a feature is large; this is the reproducer. Refused.
-* **logistic regression:** the probability is a squashing of the score into `[0, 1]`, and the label is `probability > 0.5` **[read]**; an infinite score gives 0 or 1. The
-  check still reads the probability and the label's value, because a NaN score is the one way to a NaN probability; whether the code can produce one is tested
-  (section 6, gate N4) and the answer is written in section 7. Not claimed here.
+* **logistic regression:** the probability is a squashing of the score into `[0, 1]`, and the label is `probability > 0.5` **[read]**. An infinite score alone gives 0 or 1, but
+  a score that is the sum of two infinite terms of opposite sign is NaN, and NaN is neither: a model with coefficients in the thousands (`l2 = 0` on data that is nearly
+  separated) and a row of two features of 1e308 reaches it. So the claim "a probability cannot be infinite" holds, and "a probability is always finite" does not; the check
+  reads the value the label is chosen from and the probability (gate N4 builds the model and the row).
 * **k-means:** the label is an argmin and always an integer. The squared distance `--distance` prints is a sum of squares and overflows for a feature past 1.3e154.
   Refused for `--distance`. Without `--distance` the distances are not computed, the label is printed as before, and the check does not run **[choice]**: nothing printed is
   not a number, and the cost of computing the distances for every `predict` is not paid. `eval` computes them for its metrics, so `eval` refuses (section 4).
@@ -77,14 +78,18 @@ file, the same model, an answer that depends on the window); `total_rows` and `n
 predictions of all the rows were already computed (the page is a slice of a vector of `total` values, **[read]** `predict_page`), so the check adds one pass over `total`
 doubles, about 1 ns a row on the tested machine **[estimate]**, section 7 prints the measured one.
 
-**`eval`.** A prediction, probability or squared distance of any scored row that is not finite is refused with the same rule and the same detail, before any metric. A
-metric that overflows from finite values (`sse` past the largest double, an inertia that is a sum of finite squared distances) keeps its documented meaning: `null`,
-named in `undefined`, or `ml.metric.undefined` for a constant float regression. The test of `docs/wiring-kmeans.md` that fed a squared distance of `1e400` to the
-inertia and expected `null` is re-recorded (section 7): that row now has no finite squared distance, and a case whose rows are finite and whose sum overflows keeps the `null`.
+**`eval`.** A prediction, probability or squared distance of any scored row that is not finite is refused with the same rule and the same detail, before any metric.
+**[measured, the tree before the change]** `eval` of a regression or a classification with such a row was already a refusal, but the metrics library's (`ml.input.non-finite`,
+`detail` `{"metric": "rmse"}` or `"roc_auc"`): the right exit and no row, under a tag that says a *cell* is not finite. `eval` of k-means was the silent case: a squared
+distance past the largest double gave `"inertia": null` and `null` mean distances, exit 0. A metric that overflows from finite values (`sse` past the largest double, an
+inertia that is a sum of finite squared distances) keeps its documented meaning: `null`, named in `undefined`, or `ml.metric.undefined` for a constant float regression. The
+test of `tests/conformance/test_wire_kmeans.py` that fed a squared distance past the largest double to the inertia and expected `null` is re-recorded (section 7), and
+`test_nonfinite.py` keeps a case whose rows are finite and whose sum overflows, which is still `null`. With `--split`, `detail.row` is the row of the file.
 
-**`fit`.** A fit whose coefficients become non-finite is `ml.fit.non-finite` already, for the three fitted kinds. Unchanged; verified by the fixtures that exist
-(`ml-fit-non-finite`, `test_sums_that_overflow`). A `fit --split` scores the held-out rows through the same predictors for the `holdout` block: a held-out row whose
-prediction is not finite is the same rule, for the same reason. **[open]** if that path does not go through `metrics_block`, section 7 says where it goes.
+**`fit`.** A fit whose coefficients become non-finite is `ml.fit.non-finite` already, for the three fitted kinds. Unchanged; `test_nonfinite.FitIsUnchanged` pins it. A `fit --split`
+scores the held-out rows through `metrics_block` too, with the new check **off** (`strict = false`): a held-out row whose prediction is not finite is refused by the metrics
+library as `ml.input.non-finite` with `detail.metric`, as it was, and a k-means fit keeps its training metrics. The tag is the less exact of the two; changing it is not part of
+this change, which leaves `fit` alone **[choice]**, and the finding is in section 7.
 
 **`ml-serve`.** `serve.non-finite-prediction` is removed. A request whose row is not finite is `422` with the body field `rule` equal to `ml.predict.non-finite`, the
 `error` object of the predictor (with the row of the request's batch, 1-based, in the order of `rows`), as every other refusal of the predictor with status 422. The

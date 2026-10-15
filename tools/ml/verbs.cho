@@ -417,7 +417,7 @@ pub fn line_dec[&h](heap: &!h Heap, plain: buffer.Buffer, label: &static [byte],
 
 // Bits of a double whose exponent field is all ones: NaN or an infinity.
 pub fn bits_finite(bits: int) -> [] bool {
-    return (bits >> 52 & 2047) != 2047;
+    return bits >> 52 & 2047 != 2047;
 }
 
 // THE door to cancho-table's flt.put_float (docs/nonfinite.md section 5; scripts/check_nonfinite.py fails when another call of it is in tools/ml). The double, given as its bits, as
