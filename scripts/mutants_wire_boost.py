@@ -98,7 +98,7 @@ def main():
                     bad += 1
                 for item in m["edits"]:
                     shutil.copy(ROOT / item[0], tree / item[0])
-        print("%d boost wiring mutants, %d with an edit that does not apply" % (len(MUTANTS), bad))
+        print("%d wiring mutants, %d with an edit that does not apply" % (len(MUTANTS), bad))
         return 1 if bad else 0
     only = argv[argv.index("--only") + 1] if "--only" in argv else None
     # --slice A:B runs the mutants A to B - 1 of the list (the suites are long: slices run side by side; the baseline is run by the slice that starts at 0)
