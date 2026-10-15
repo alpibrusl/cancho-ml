@@ -124,4 +124,20 @@ The mutants of the new code are in `scripts/mutants_nonfinite.py`, on a frozen c
 
 ## 7. Results
 
-Filled after the gates run.
+**[measured]** On this tree (merged with `main` `cb08d5b`; the merge changed no content), Mac arm64, Darwin 25.2.0, compiler `a4572ea`, 2026-10-15, with other test runs on the
+machine (the load average was 18 to 45 while the checks ran). Every line below was printed by a script of this repository.
+
+| gate | result |
+|---|---|
+| `scripts/check.sh` | exit 0 in 2,390 seconds: 439 conformance tests, none skipped; `check_docs.sh`, `check_prose.py`, `check_doc_refs.py` (28 documents, 630 references, 0 unresolved), `check_nonfinite.py` |
+| N1 to N6 (`test_nonfinite.py`) | pass: the reproducer of the issue, k-means distances, tree and forest at the 1e100 boundary, logistic probabilities, paging, and the three binaries agreeing on the rule and the row |
+| N7 fuzz | 2,100 rows through 10 model and flag pairs: 1,648 answered with finite cells, 452 refused with `ml.predict.non-finite`, no trap. Through `ml-serve`: 290 records, 125 refused with the same rule |
+| N8 registry, N9 one door | the rule is in the sources and in `design.md` 8.1; one call of `flt.put_float` in `tools/ml`, behind `bits_finite`, and one in `tools/ml-serve/num.cho` after the range check of the number module |
+| mutants of this stage (`mutants_nonfinite.py`) | 28 patterns, 25 killed, 3 survived (explained in the script: the label is a threshold of a finite probability; a check of the distance vector without `--distance` has no effect; the server's guard is unreachable because `ml predict` refuses first) |
+| mutants of the server (`mutants_http.py`) | 75 patterns, 71 killed, 4 survived, each explained; the baseline passed |
+| OpenAPI documents | seven checked-in documents validate with `openapi-spec-validator` |
+| Schemathesis 4.31.1 | six fixtures, no issues, 321 to 355 generated cases each, exit 0 |
+
+**Not confirmed.** `mutants_wire.py` (40 patterns, 39 killed, 1 survivor) and `mutants_wire_kmeans.py` (68 patterns, 60 killed, 8 survivors) printed their counts, but the baseline run of
+the unmutated copy inside each was interrupted before its summary line. The unmutated copy passes its 439 tests when run alone (1,220 seconds). The two counts therefore rest on the
+targeted tests of each mutant, and they are the counts the suites printed on the first and the later runs.
