@@ -1,0 +1,204 @@
+# slice mb_0_38.log
+KILLED    b-regression-gradient-sign                       GB1  tests: test_regression, test_the_oracle_is_sensitive
+KILLED    b-regression-hessian-two                         GB1  tests: test_regression, test_the_oracle_is_sensitive
+KILLED    b-logistic-gradient-sign                         GB1  tests: test_classification
+KILLED    b-logistic-hessian-is-p                          GB1  tests: test_classification
+KILLED    b-logistic-probability-of-the-wrong-sign         GB1  tests: test_classification
+KILLED    b-base-score-regression-divides-by-n             GB1  tests: test_regression, test_the_oracle_is_sensitive
+KILLED    b-base-score-logit-inverted                      GB1  tests: test_classification
+KILLED    b-base-score-is-the-rate                         GB1  tests: test_classification
+KILLED    b-leaf-value-sign                                GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-leaf-value-without-the-penalty                 GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-no-shrinkage                                   GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-shrinkage-twice                                GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-leaf-floor-inverted                            GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+SURVIVED  b-leaf-floor-removed                             GB1  
+KILLED    b-gain-test-accepts-zero                         GB1  tests: test_classification
+KILLED    b-gain-test-removed                              GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-parent-score-without-the-penalty               GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-left-score-without-the-penalty                 GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-right-score-without-the-penalty                GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-right-gradient-wrong                           GB1  tests: test_classification, test_regression
+KILLED    b-tie-replaces                                   GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-valid-left-min-leaf                            GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-valid-right-min-leaf                           GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-valid-min-leaf-strict                          GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-hessian-floor-left-dropped                     GB1  tests: test_classification
+KILLED    b-hessian-floor-right-dropped                    GB1  tests: test_classification
+KILLED    b-variant-one-never-tried                        GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-variant-one-without-the-count                  GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-variant-one-without-the-gradient               GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-variant-one-without-the-hessian                GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-missing-gradient-from-the-last-bin             GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-missing-hessian-from-the-gradients             GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-default-side-flipped                           GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-default-side-not-stored                        GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-partition-bin-boundary                         GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-threshold-from-the-wrong-feature               GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-depth-limit-off-by-one                         GB1  tests: test_classification, test_regression
+SURVIVED  b-min-leaf-pretest                               GB1  
+FAILED    baseline (the unchanged tree)                    -  s["--model"]["kind"], "choice:constant/linear/logistic/kmeans/tree/forest")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'choice:constant/linear/logistic/kmeans/tree/forest/boost' != 'choice:constant/linear/logistic/kmeans/tree/forest'
+- choice:constant/linear/logistic/kmeans/tree/forest/boost
+?                                                   ------
++ choice:constant/linear/logistic/kmeans/tree/forest
+
+
+----------------------------------------------------------------------
+Ran 492 tests in 2453.544s
+
+FAILED (failures=1)
+
+
+38 mutants: 36 killed, 2 survived, 0 invalid
+SURVIVOR b-leaf-floor-removed: the floor matters only for a leaf whose hessian plus l2 is below 1e-3: a classification with a saturated probability and l2 = 0. A division of 0 by 0 gives NaN and the fit is refused by the non-finite check, which the oracle reports as not judged; the generated cases never saturate a probability to that degree
+SURVIVOR b-min-leaf-pretest: a node with fewer than 2 min-leaf rows has no valid candidate (each side needs min-leaf rows), so the pretest is an optimisation: the leaf is the same
+# slice mb_38_76.log
+KILLED    b-node-budget-off-by-one                         GB1  tests: test_a_boosted_fit_takes_at_most_2_to_the_20_training_rows, test_a_perfectly_separable_classification_is_not_refused_at_any_penalty, test_one_round_is_the_base_plus_the_shrunk_newton_step, test_the_subsample_is_seeded
+KILLED    b-histogram-hessian-from-the-gradient            GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-node-hessian-total-from-the-gradient           GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-histogram-sums-from-the-top                    GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+SURVIVED  b-sample-compares-with-less-or-equal             GB1  
+KILLED    b-sample-stream-kind                             GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-sample-stream-round                            GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-sample-ignores-the-seed                        GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-sample-draw-per-row-of-n                       GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+SURVIVED  b-sample-full-when-k-max                         GB1  
+SURVIVED  b-sample-rounding                                GB1  
+KILLED    b-scores-start-at-zero                           GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-only-fit-rows-take-the-leaf                    GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-walk-missing-by-bin-goes-left                  GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-walk-bin-compare                               GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-validation-rows-n-over-9                       GB1  tests: test_classification, test_regression
+KILLED    b-validation-stream-ignores-the-seed             GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-validation-draw-range                          GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-validation-stream-kind                         GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-early-stop-equal-improves                      GB1  tests: test_regression
+KILLED    b-early-stop-patience-off-by-one                 GB1  tests: test_classification, test_regression
+KILLED    b-early-stop-keeps-the-last-round                GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+SURVIVED  b-validation-loss-mean-over-m                    GB1  
+KILLED    b-validation-loss-regression-not-squared         GB1  tests: test_regression, test_the_oracle_is_sensitive
+KILLED    b-validation-loss-classification-without-log     GB1  tests: test_classification
+KILLED    b-validation-loss-classification-sign            GB1  tests: test_classification
+KILLED    b-early-off-reads-the-best-round                 GB1  tests: test_classification, test_regression
+KILLED    b-target-bound-removed                           GB6  tests: test_hostile_data
+SURVIVED  b-fit-non-finite-check-removed                   GB6  
+SURVIVED  b-single-class-after-the-validation-split        GB6  
+SURVIVED  b-label-check-removed                            GB6  
+KILLED    b-bound-rounds-inclusive                         GB6  tests: test_the_most_nodes_of_all_rounds
+KILLED    b-bound-learning-rate-one                        GB6  tests: test_a_perfectly_separable_classification_is_not_refused_at_any_penalty, test_one_round_is_the_base_plus_the_shrunk_newton_step
+KILLED    b-bound-learning-rate-zero                       GB6  tests: test_ranges_of_the_numbers
+KILLED    b-bound-l2-zero                                  GB6  tests: test_classification, test_regression, test_a_perfectly_separable_classification_is_not_refused_at_any_penalty, test_one_round_is_the_base_plus_the_shrunk_newton_step
+KILLED    b-bound-l2-max                                   GB6  tests: test_ranges_of_the_numbers
+KILLED    b-bound-subsample-one                            GB6  tests: test_a_boosted_fit_takes_at_most_2_to_the_20_training_rows, test_a_constant_feature_leaves_the_mean, test_a_file_predict_cannot_read_is_not_written, test_a_missing_cell_is_accepted_in_fit_predict_and_eval
+KILLED    b-bound-subsample-above-one                      GB6  tests: test_ranges_of_the_numbers
+
+38 mutants: 31 killed, 7 survived, 0 invalid
+SURVIVOR b-sample-compares-with-less-or-equal: NO REASON GIVEN
+SURVIVOR b-sample-full-when-k-max: a draw below K = 1,000,000 is always true (uniform(1e6) is at most 999,999), so the sample is every fit row either way, in the same order: the shortcut only saves the draws
+SURVIVOR b-sample-rounding: K differs only when subsample * 1e6 has a fractional part of 0.5 or more; the values of the suite (0.5, 0.8, 0.25, 0.999999) have none, and IEEE products like 0.8 * 1e6 = 800000.0000000001 truncate to the same K
+SURVIVOR b-validation-loss-mean-over-m: a constant factor of every round's loss does not change which round is best, nor the rule 'no improvement': the stopping round is the same (the loss itself is not stored)
+SURVIVOR b-fit-non-finite-check-removed: not reachable: a regression target is bounded by 1e100 and n by 2^20, so no score or sum overflows (docs/models-boost.md section 3.3); the check defends a bound that someone might widen
+SURVIVOR b-single-class-after-the-validation-split: the fit rows hold one class only when the validation part took the whole of the other class: the check of check_target on all rows has refused every file with one class, and a file with two classes of at least 10 rows each is not reduced to one by a tenth of its rows
+SURVIVOR b-label-check-removed: the wiring maps every label to 0.0 or 1.0 before the library sees it (ml.label.* refusals are the wiring's), so the library's own check is a second line of defence
+# slice mb_76_114.log
+KILLED    b-bound-subsample-k-zero                         GB6  tests: test_ranges_of_the_numbers
+SURVIVED  b-bound-early-needs-ten-rows                     GB6  
+KILLED    b-bound-min-leaf-above-n                         GB6  tests: test_ranges_of_the_numbers, test_every_fixture
+KILLED    b-bound-columns-4096                             GB6  tests: test_more_than_4096_columns_are_refused_at_fit_not_at_predict
+KILLED    b-bound-depth-ceiling                            GB6  tests: test_the_most_nodes_of_all_rounds
+SURVIVED  b-bound-total-nodes                              GB6  
+KILLED    b-node-cap-depth                                 GB6  tests: test_a_boosted_fit_takes_at_most_2_to_the_20_training_rows, test_a_perfectly_separable_classification_is_not_refused_at_any_penalty, test_boosting_learns_more_than_the_mean, test_categorical_columns_are_encoded_by_a_step
+SURVIVED  b-copies-ceiling                                 GB6  
+SURVIVED  b-read-rounds-ceiling                            GB6  
+SURVIVED  b-read-columns-ceiling                           GB6  
+KILLED    b-read-bins-range                                GB6  tests: test_the_header_of_the_payload
+KILLED    b-read-depth-ceiling                             GB6  tests: test_the_header_of_the_payload
+KILLED    b-read-min-leaf                                  GB6  tests: test_the_header_of_the_payload
+KILLED    b-read-early-range                               GB6  tests: test_the_header_of_the_payload
+KILLED    b-read-requested-below-rounds                    GB6  tests: test_the_header_of_the_payload
+KILLED    b-read-requested-ceiling                         GB6  tests: test_the_header_of_the_payload
+KILLED    b-read-early-off-fewer-rounds                    GB6  tests: test_the_header_of_the_payload
+KILLED    b-read-subsample-k-zero                          GB6  tests: test_the_header_of_the_payload
+KILLED    b-read-subsample-k-ceiling                       GB6  tests: test_the_header_of_the_payload
+SURVIVED  b-read-nodes-below-rounds                        GB6  
+SURVIVED  b-read-nodes-ceiling                             GB6  
+SURVIVED  b-read-truncated-is-malformed                    GB6  
+SURVIVED  b-read-longer-payload                            GB6  
+KILLED    b-read-floats-record-header                      GB6  tests: test_the_kind_and_the_record_headers
+KILLED    b-read-offsets-record-header                     GB6  tests: test_the_kind_and_the_record_headers
+KILLED    b-read-node-record-headers                       GB6  tests: test_the_kind_and_the_record_headers
+SURVIVED  b-read-kind                                      GB6  
+KILLED    b-read-header-record                             GB6  tests: test_the_kind_and_the_record_headers
+KILLED    b-read-learning-rate-range                       GB6  tests: test_the_floats_of_the_payload
+KILLED    b-read-l2-range                                  GB6  tests: test_the_floats_of_the_payload
+KILLED    b-read-base-finite                               GB6  tests: test_the_floats_of_the_payload
+SURVIVED  b-read-float-bits                                GB6  
+KILLED    b-read-offset-start                              GB6  tests: test_the_tree_offsets_and_the_nodes
+SURVIVED  b-read-offset-end                                GB6  
+SURVIVED  b-read-offsets-increase                          GB6  
+KILLED    b-read-feature-range                             GB6  tests: test_the_tree_offsets_and_the_nodes
+KILLED    b-read-bin-range                                 GB6  tests: test_the_tree_offsets_and_the_nodes
+KILLED    b-read-dleft-range                               GB6  tests: test_the_tree_offsets_and_the_nodes
+
+38 mutants: 25 killed, 13 survived, 0 invalid
+SURVIVOR b-bound-early-needs-ten-rows: NO REASON GIVEN
+SURVIVOR b-bound-total-nodes: NO REASON GIVEN
+SURVIVOR b-copies-ceiling: the smallest input that exceeds it is about 2.3e8 cells (a CSV of more than 400 MB): the tree's own gate lists it without a fixture (docs/wiring-trees.md section 6)
+SURVIVOR b-read-rounds-ceiling: NO REASON GIVEN
+SURVIVOR b-read-columns-ceiling: NO REASON GIVEN
+SURVIVOR b-read-nodes-below-rounds: NO REASON GIVEN
+SURVIVOR b-read-nodes-ceiling: NO REASON GIVEN
+SURVIVOR b-read-truncated-is-malformed: every caller maps both tags to ml.model.malformed (the wiring's decoder answers one code), so the distinction is not visible from outside; the file-level truncation is the reader of the sections
+SURVIVOR b-read-longer-payload: the adapter compares the length with the size it computed before calling the reader (a second line of defence, mutated separately): the reader's own check is never reached by a file
+SURVIVOR b-read-kind: the file reader (pipeline.file.decode) has already compared the kind with the plan's family before the adapter runs, and the adapter's own size check reads the header at fixed offsets: a payload of another kind with a valid layout cannot be built by a one-field edit
+SURVIVOR b-read-float-bits: a float whose bits are not reproduced by fbits.decode is an infinity or a NaN (decode answers NaN for them) or a subnormal; the range checks that follow refuse every NaN (a comparison is false) and the subnormal l2 or base is accepted either way: the bit check is a second line of defence for the values the comparisons let through
+SURVIVOR b-read-offset-end: NO REASON GIVEN
+SURVIVOR b-read-offsets-increase: NO REASON GIVEN
+# slice mb_114_151.log
+KILLED    b-read-left-is-next                              GB6  tests: test_the_tree_offsets_and_the_nodes
+SURVIVED  b-read-depth-of-a-tree                           GB6  
+KILLED    b-read-leaf-fields                               GB6  tests: test_the_tree_offsets_and_the_nodes
+SURVIVED  b-read-pending-children                          GB6  
+KILLED    b-read-pop-index                                 GB6  tests: test_the_tree_offsets_and_the_nodes
+KILLED    b-predict-starts-at-zero                         GB1  tests: test_classification, test_regression
+KILLED    b-predict-threshold-equal-goes-left              GB1  tests: test_classification, test_regression
+KILLED    b-predict-default-side-flipped                   GB1  tests: test_classification, test_regression
+KILLED    b-predict-skips-the-last-tree                    GB1  tests: test_classification, test_regression
+KILLED    b-predict-adds-the-wrong-node                    GB1  tests: test_classification, test_regression
+KILLED    b-predict-descends-right-first                   GB1  tests: test_classification, test_regression
+KILLED    b-predict-ignores-the-bitmap                     GB1  tests: test_classification, test_regression
+KILLED    b-adapter-rounds-from-the-depth                  GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_boosting_learns_more_than_the_mean
+KILLED    b-adapter-depth-from-the-leaf                    GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_ranges_of_the_numbers
+KILLED    b-adapter-min-leaf-from-the-bins                 GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_a_constant_feature_leaves_the_mean
+KILLED    b-adapter-bins-from-the-early                    GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_a_boosted_fit_takes_at_most_2_to_the_20_training_rows
+KILLED    b-adapter-early-from-the-nodes                   GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_a_boosted_fit_takes_at_most_2_to_the_20_training_rows
+KILLED    b-adapter-max-nodes-ignored                      GB1  tests: test_ranges_of_the_numbers, test_every_fixture
+KILLED    b-adapter-learning-rate-from-l2                  GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_a_perfectly_separable_classification_is_not_refused_at_any_penalty
+KILLED    b-adapter-l2-from-the-subsample                  GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_one_round_is_the_base_plus_the_shrunk_newton_step
+KILLED    b-adapter-subsample-from-the-rate                GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_a_constant_feature_leaves_the_mean
+KILLED    b-adapter-task-ignored                           GB1  tests: test_a_perfectly_separable_classification_is_not_refused_at_any_penalty, test_labels_probability_and_the_positive_label, test_the_default_side_is_learned_from_the_training_rows_that_miss, test_classification
+KILLED    b-adapter-seed-is-the-threads                    GB2  tests: test_classification, test_regression, test_the_oracle_is_sensitive, test_the_model_file_is_the_same_at_1_2_4_8_and_16_threads
+KILLED    b-adapter-threads-minus-one                      GB2  tests: test_a_boosted_fit_takes_at_most_2_to_the_20_training_rows, test_a_constant_feature_leaves_the_mean, test_a_file_predict_cannot_read_is_not_written, test_a_missing_cell_is_accepted_in_fit_predict_and_eval
+SURVIVED  b-adapter-threads-not-passed                     GB2  
+SURVIVED  b-adapter-class-of-one-half                      GB1  
+KILLED    b-adapter-proba-mode-is-the-class                GB1  tests: test_classification
+SURVIVED  b-adapter-proba-of-a-regression                  GB1  
+KILLED    b-adapter-labels-not-written                     GB1  tests: test_a_perfectly_separable_classification_is_not_refused_at_any_penalty, test_labels_probability_and_the_positive_label, test_the_default_side_is_learned_from_the_training_rows_that_miss, test_the_task_is_the_flag_and_never_the_target
+KILLED    b-adapter-labels-length                          GB6  tests: test_the_length_of_the_payload
+KILLED    b-adapter-labels-record-unchecked                GB6  tests: test_the_labels_record_of_a_classification
+KILLED    b-adapter-width-not-compared                     GB6  tests: test_the_header_of_the_payload
+KILLED    b-adapter-size-ceiling                           GB6  tests: test_the_header_of_the_payload
+KILLED    b-kind-number                                    GB11  tests: test_a_constant_feature_leaves_the_mean, test_a_perfectly_separable_classification_is_not_refused_at_any_penalty, test_boosting_learns_more_than_the_mean, test_columns_are_matched_by_name
+KILLED    b-sum-order-of-kind-8-is-2                       GB1  tests: test_describe_says_the_number_of_trees, test_the_file_of_a_classification, test_the_sum_order_is_three_for_kind_8, test_classification
+KILLED    b-sample-stream-number                           GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+KILLED    b-validation-stream-number                       GB1  tests: test_classification, test_regression, test_the_oracle_is_sensitive
+
+37 mutants: 32 killed, 5 survived, 0 invalid
+SURVIVOR b-read-depth-of-a-tree: NO REASON GIVEN
+SURVIVOR b-read-pending-children: the same argument as the tree library's reader (docs/models-tree.md section 7): a pending right child can never be popped by a node of the tree, and a pushed right child at the end belongs to a last node that is internal, which has its left child missing: every one-field edit that leaves a child pending also breaks the offsets or the left-is-next rule first
+SURVIVOR b-adapter-threads-not-passed: an equivalent mutant by design: no thread count changes a byte of the model (the property GB2 asserts, and the binning is the only threaded part), so a fit that ignores the flag writes the same file
+SURVIVOR b-adapter-class-of-one-half: a probability of exactly 0.5 needs a score whose sigmoid rounds to one half: |score| below 1e-16, a sum of leaf values that cancel to the last bit: the generated rows never reach it (the same tie as the tree's `wt-class-of-a-tie`)
+SURVIVOR b-adapter-proba-of-a-regression: a second line of defence: predict --proba on a regression is args.conflict before the adapter is called and eval asks for a probability only of a classification
+# re-runs of the nine mutants whose tests were strengthened after the first run (tests for the sample boundary and rounding, the wrapped counts, ten rows, the 2^22 total, the summary and describe fields)
