@@ -149,6 +149,10 @@ $ ml --root . fit --target y --output g.cml flt2.csv                # flt2.csv: 
 {"ok":true,...,"data":{...,"bytes":300,"summary":{"mean":"6.375"}},...}                       # the exact sum of the doubles over n, rounded once, the shortest decimal back
 ```
 
+### 2.5 Refusals of a fit that has no answer (issue 48)
+
+`ml fit --model linear|logistic` (with or without `--step` and `--plan`) refuses two designs by name, after the steps ran, so the columns named are the columns of the fitted matrix (`age`, `species#0`, `(intercept)`): `ml.fit.collinear` (exit 8; the column, the dependency on the columns before it, the relative pivot and the tolerance `2^-40` in `detail`) and, for logistic regression with `--l2 0`, `ml.fit.separable` (exit 8; the pass, the reason, the summed loss and its bound, the norm of the coefficients in `detail`). The repair is an argv of the same command with `--l2 X` set (the value of an explicit `--l2` is replaced, not repeated), a `choose` between that and `--drop NAME` for a collinear design when the command line names no step, plan or `--drop`; with `--plan` it is `none`, because `l2` is a key of the plan's model line. `tree`, `forest`, `kmeans` and `constant` do not answer them. The decisions and measurements: [refusals-fit.md](refusals-fit.md).
+
 ## 3. The constant model and its arithmetic
 
 `--model constant` is the model this slice built, and it is a real one (stage W1 added `linear` and `logistic`: `docs/wiring.md`): it is the baseline every other model is compared with, and the

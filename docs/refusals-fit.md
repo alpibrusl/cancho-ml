@@ -58,13 +58,21 @@ training row correctly. A `w` that does so makes the data separable (and the max
   computed `ell` (an ordered sum of terms with a relative error around `1e-15`) is far above the bound. The only way to be wrong is a rounding error of 7e-5 relative in `ell`.
 * **Free**: no pass, no storage: one comparison on a number already there. Not "exact zero loss" (never reached) and not "coefficient norm past a bound" (the bound would
   be a function of the data's scale, which is what separation makes meaningless).
-* **What it misses, stated**: separable data that the fixed passes have not yet driven under the bound (a count of `iterations` too small; with 1 or 2 passes it never fires:
-  fixture), quasi-complete separation (a margin of exactly zero on some row: the loss stays above `ln 2` for that row), and separation in a fit with `l2 > 0` (by decision not refused). For
-  the first two the late form below is the net.
-* **The late form**: a pivot failure at pass `k >= 1` with `l2 = 0` (the Hessian weights have vanished) is `ml.fit.separable` with `"reason":"pivot"`. The Hessian of pass 0 passed the
-  test, so the columns are not collinear: what remains that kills the pivots is a weight collapse, which is the numerical face of separation.
-* The detail: `reason` (`loss` or `pivot`), `pass` (0-based, the pass at the start of which it was seen), `loss_sum` and `loss_bound` (for `loss`), `coefficient_norm`
-  (the Euclidean norm of `w`, bias included, at that pass), `l2`, `iterations`. The tolerance is data in the refusal, as the issue asks.
+* **A second test, for separation with ties (quasi-complete separation), added after the first measurement of the oracle [choice, measured in 6.2].** A set where some rows of both classes
+lie on the separating plane (`x = -2 -1 0 | 0 1 2`, the classes meeting at 0) has no maximum-likelihood estimate either, but the tied rows keep a loss of `ln 2` each, so the loss
+test never fires, and Newton's coefficient grows by about one per pass for ever (99.8 after 100 passes). The test: the **predictor scale** `sqrt(w' G w / n)`, the root mean square of
+the linear predictor `z` over the training rows, with `G` the Gram matrix of the columns with the bias. It needs no pass: the Hessian of pass 0 (slot 0 of the decisive sums) is `G / (4n)`
+because every weight is 1/4 at `w = 0`. It does not depend on the units of the features. A maximum-likelihood fit saturates only as far as the data force it (a probability of 1e-9 is
+`z = -20.7`); a root mean square of **50** is a probability of 2e-22 on average: the fit is running away along a direction that separates. `reason` is `scale`. The bound is a choice.
+**[estimate, not measured]** A fit that has a maximum-likelihood estimate and a root mean square of 50 would need predictions that the data contradict by orders of magnitude; the oracle of 6.2 finds no such set among its 138 overlapping ones, and nothing larger was tried. The test does not look at single rows, so a runaway confined to one row (a column that is zero everywhere else) is seen by the loss test only.
+
+* **What it misses, stated**: separable data that the fixed passes have not yet driven under the bound (`iterations` too small: with 1 or 2 passes the loss test never fires; the scale
+  test needs about 50 passes at a scale growing by one per pass), and separation in a fit with `l2 > 0` (by decision not refused).
+* **The late form** (`reason` `pivot`): a pivot failure at pass `k >= 1` with `l2 = 0` (the Hessian weights have vanished). The Hessian of pass 0 passed the
+  test, so the columns are not collinear: what remains that kills the pivots is a weight collapse, which is the numerical face of separation. After the two tests above this fires for
+  separation with ties where the weights vanish on every row.
+* The detail: `reason` (`loss`, `scale` or `pivot`), `pass` (0-based, the pass at the start of which it was seen), `loss_sum` and `loss_bound`, `coefficient_norm`
+  (the Euclidean norm of `w`, bias included, at that pass), `predictor_scale` and `scale_bound`, `l2`, `iterations`. The tolerances are data in the refusal, as the issue asks.
 * Repair: `--l2 X` (see D5), `X` computed so that the repaired fit is well posed at every pass.
 
 ### D3. Which models, flags and verbs

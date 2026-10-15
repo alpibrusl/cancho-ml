@@ -195,7 +195,7 @@ all cases agree, `sums` 186 vectors); `scripts/check.sh` stopped at the registry
 ### 8.2 Rank deficiency (step 2)
 
 The 4-lane order made equal columns with `l2 = 0` silently fit (`docs/lanes.md` section 3): the pivot test `s > 0.0` saw rounding noise. The pivot test is now
-`s > 2^-40 * a_jj` in `lib/linalg/chol.cho` (`pivot_tol()`, `pivot_ok`), tag unchanged (`ml.linalg.not-positive-definite`, exit 8), with new repair texts in
+`s > 2^-40 * a_jj` in `lib/linalg/chol.cho` (`pivot_tol()`, `pivot_ok`), tag unchanged at the time (`ml.linalg.not-positive-definite`, exit 8; issue 48 named the cases that mean collinear columns or separable classes: `docs/refusals-fit.md`), with new repair texts in
 `lib/core/refuse.cho` `repair(9)`, `tools/ml/spec.cho` `pending()` and `design.md` section 8. The rule, the choice of `tol` and the measurements (relative pivot of
 well-conditioned data 0.96 to 0.99; of a standardised pair with correlation 0.999999, 2.0e-06; rounding noise of dependent columns at most 7.9e-16 in absolute value over 960
 fits; the pair at `1 - rho = 1e-12`, 2.0e-12, accepted) are `models-linear.md` 3.1 and `scripts/pivot_evidence.py`. Gates that changed their expectation: `tests/p_models.cho`

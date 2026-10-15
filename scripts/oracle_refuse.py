@@ -195,6 +195,13 @@ def case_rank(d, cols, y, note, stats):
         bad("%s: ml names pivot %s (%s), exact first failing pivot is %d (%s)" % (note, det["pivot"], det["column"], j, names[j]))
         return
     stats["named"] += 1
+    # the relative pivot in the detail is the exact one to the rounding of the sums (absolute 5e-15: the noise is at most 4e-16, docs/refusals-fit.md 6.1)
+    if abs(float(det["relative_pivot"]) - float(ratio)) > 5e-15:
+        bad("%s: relative pivot %s in the detail, exact %g" % (note, det["relative_pivot"], float(ratio)))
+        return
+    if det["tolerance"] != "9.094947017729282e-13":
+        bad("%s: tolerance %s in the detail" % (note, det["tolerance"]))
+        return
     big = max([abs(float(v)) for v in c] or [0.0])
     # the dependency is the solution of a system whose matrix is the leading block: its error is about the unit roundoff times that block's condition number, 1 / (the
     # smallest relative pivot before j), times the largest coefficient. A near pair before j loosens it; docs/refusals-fit.md 6.1 states it
