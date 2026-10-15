@@ -1,6 +1,6 @@
 # Continuous integration: what it runs, on which machines, and what it does not show
 
-**Status: this document was written before `.github/workflows/ci.yml`. A number appears in it only if a script of this repository printed it, with the
+**Status: the design of `.github/workflows/ci.yml`, written before it. A number appears in it only if a script of this repository printed it, with the
 conditions (section 8). Tags: [choice] a decision the maintainer can overturn, [measured] printed by a script here, [open] not decided or not tested.**
 
 The question: the claim that `ml` writes the same bytes everywhere (README, "The same bytes") was verified on one Mac. What does a workflow have to run so
@@ -97,14 +97,24 @@ The fast gates (`build-test`, in this order; each can fail, and the first failur
 4. `cancho install`, `cancho fmt --check lib tests tools`;
 5. `cancho build --bin ml`, `--bin ml-predict`, `--bin ml-serve`, then `scripts/check_bins.py` and `scripts/check_web_pin.py --bins` (the three are built from the same sources);
 6. **the determinism gate**: `scripts/xplat_check.py --require-predict` and `--mutants`;
-7. the conformance tests (`tests/conformance`) with the packages of `ci/requirements-fast.txt`; they include the `ml-serve` conformance tests, which start the server on an ephemeral
-   port and compare one POST per model kind with the command line's cell text (`docs/serving-http.md` section 9);
+7. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The five
+   modules whose import needs numpy (`test_enc`, `test_planned_baseline`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`) are listed as not run; the full gate runs
+   them. The `ml-serve` conformance tests are among those that run: they start the server on an ephemeral port and compare one POST per model kind with the command line's cell text
+   (`docs/serving-http.md` section 9), and `serve-check`, the driver of their number gate, is built for them;
 8. the documentation checks that need only the built binary: `scripts/check_docs.sh` (program output in README and pages, `check_links.py`, `check_prose.py`, `check_doc_refs.py`, their mutants);
 9. `scripts/check_workflow.py` (section 6);
 10. the binaries, the fingerprint and the logs are uploaded as artifacts.
 
 `check_links.py` fetches no address (it counts external links), so it does not depend on the network. `cancho install` and the clones do, and a GitHub outage or a rate
 limit fails the job at that step, with the step's name.
+
+### 5.1 Three cases that run on macOS only
+
+Running the conformance suite on Linux x86-64 found three cases whose answer is the platform's, not the library's: `path-symlink` and `path-symlink-dir` refuse a path through a
+symbolic link with `"errno":40` in the detail on Linux (ELOOP) where the baseline, written on macOS, holds 62; `io-read-failed` opens `/dev/stdin` with descriptor 0 closed, which on Linux is a link
+to a path that does not exist (`io.not-found`, exit 3) and on macOS a read that fails (`io.read-failed`, exit 1). The three fixtures carry `darwin_only` (`harness.runs_here`) and
+`test_rules`, `test_cat_baseline` and `test_wire_baseline` skip them elsewhere. No Linux baseline for them is recorded: the Linux answers above were read from one run on one machine
+[measured, once]. A refusal whose detail holds an `errno` is therefore not byte-equal across platforms, and no determinism claim is made for it.
 
 ## 6. The checks of the workflow itself
 

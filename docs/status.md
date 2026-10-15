@@ -61,8 +61,8 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 | boosting, naive Bayes, k-NN | in the plan ([design.md](design.md) section 1), not built |
 | imputation in the constant model | `--model constant` refuses an empty cell; the pipeline models take it as a missing value |
 | neural networks, GPU | not planned in v1 |
-| a second machine | the bytes are untested across machines |
-| CI | no workflow in this repository; `scripts/check.sh` needs the network for `cancho install` and `../ml-data` for the tree gate |
+| other platforms | macOS arm64 and Linux x86-64 agree on 88 fingerprint lines for 22 fits (`docs/bench/xplat_fp.txt`, `scripts/xplat_check.py`; compiler `a4572ea`, commit `cb08d5b`); any other platform, Linux aarch64 included, is untested |
+| CI | `.github/workflows/ci.yml` ([ci.md](ci.md)): build, determinism gate and fast gates on `ubuntu-latest` and `macos-latest`; `scripts/check.sh` on request and nightly; binaries on a tag `v*`. Run by hand on a Mac and a Linux x86-64 workstation; no GitHub run is recorded here. `cancho install` needs the network |
 
 ## What was measured
 
