@@ -637,4 +637,5 @@ split (`holdout train=0.8 stratify seed=1`, `cv folds=5 repeats=1 group=customer
 Every model file `fit` writes carries a provenance section (tag 7): the training file's SHA-256 and size, the rows, and for each numeric feature the count, minimum, maximum, exact mean and population
 standard deviation of the training cells as the reader read them. `eval` says whether it scored the training file (`on`); `predict`, `eval` and `ml-serve` count the cells outside the stored range
 (`out_of_range`, bounded by `--max-out-of-range`); `fit --track DIR` writes a canonical run record whose id is the hash of the inputs that determine the model bytes; `ml runs list|show|compare|verify`
-read the records and replay a fit in memory. The registries are unchanged except the section tag (7) and the rule tags of section 8; no model kind, step kind or stream kind is added, and no capability.
+read the records and replay a fit in memory. The split of a record is the canonical split text of section 22 (`none`, `holdout train=0.8 stratify seed=1`, ...), and a replay holds the same rows out for every strategy. `ml cv` takes no `--track`
+(`docs/tracking.md` section 5.7). The registries are unchanged except the section tag (7) and the rule tags of section 8; no model kind, step kind or stream kind is added, and no capability.

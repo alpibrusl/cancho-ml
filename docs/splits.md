@@ -41,8 +41,8 @@ nothing random to repeat).
 
 ## 2. The canonical split text **[choice]**
 
-One function, `splitspec.text` (`tools/ml/splitspec.cho`), produces one line for any split, and nothing else writes one. The tracking stage (issue 43)
-stores it in its run record; this section is the contract.
+One function, `splitspec.text` (`tools/ml/splitspec.cho`), produces one line for any split, and nothing else writes one. The run record of `fit --track` and the eval
+record of `eval --track` store it as the `split` of their inputs (`docs/tracking.md` section 5.2), and `ml runs verify` reads it back with `splitspec.parse`; this section is the contract.
 
 ```
 none

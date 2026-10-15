@@ -34,6 +34,7 @@ MFILE = "tools/ml/mfile.cho"
 WIO = "tools/ml/wireio.cho"
 WIRE = "tools/ml/wire.cho"
 RUNS = "tools/ml/runs.cho"
+SPLS = "tools/ml/splitspec.cho"
 FSIO = "tools/ml/fsio.cho"
 MDESC = "tools/ml/mdesc.cho"
 SECTION = ["test_track.Section", "test_track.Damage"]
@@ -112,8 +113,8 @@ MUTANTS = [
                                                                       (TRK, "            if !same {\n                                var w = open_error(heap, \"ml.runs.conflict\");", "            if false {\n                                var w = open_error(heap, \"ml.runs.conflict\");", 1)], TRACK),
     M("t-record-limit-off", "T10", "the 1001st record is written", [(TRK, "if go && !present && count >= max_records() {", "if go && !present && count >= max_records() + 1000 {", 1)], TRACK),
     M("t-record-size-off", "T10", "a record of any size is written", [(TRK, "if recsize > max_record_bytes() {", "if recsize > max_record_bytes() * 100 {", 1)], TRACK),
-    M("t-split-not-reduced", "T2", "the split fraction is not in lowest terms", [(TRK, "        let train = split_den - split_num;\n        let g = gcd(train, split_den);\n        w = json.begin_object(heap, w);\n        w = json.put_key(heap, w, \"num\");\n        w = json.put_int(heap, w, train / g);\n        w = json.put_key(heap, w, \"den\");\n        w = json.put_int(heap, w, split_den / g);\n        w = json.end_object(heap, w);\n    } else {\n        w = json.put_null(heap, w);\n    }\n    w = verbs.put_name(heap, w, \"drop\", drops);",
-                                                                    "        let train = split_den - split_num;\n        let g = 1;\n        w = json.begin_object(heap, w);\n        w = json.put_key(heap, w, \"num\");\n        w = json.put_int(heap, w, train / g);\n        w = json.put_key(heap, w, \"den\");\n        w = json.put_int(heap, w, split_den / g);\n        w = json.end_object(heap, w);\n    } else {\n        w = json.put_null(heap, w);\n    }\n    w = verbs.put_name(heap, w, \"drop\", drops);", 1)], TRACK),
+    M("t-split-record-drops-the-strategy", "T2", "the split text of a record is written without its strategy", [(WIRE, "spec_buf = splitspec.text_nd(heap, false, o.split_num, o.split_den, 0, 0, splitspec.strategy(sp), spcol, o.seed);", "spec_buf = splitspec.text_nd(heap, false, o.split_num, o.split_den, 0, 0, 0, spcol, o.seed);", 1)], TRACK + ["test_track.Splits"]),
+    M("t-eval-key-ignores-the-split", "T10", "one file scored under two splits is one eval record", [(TRK, 'if !bytes.equal(buffer.bytes(splr), "none") {', "if false {", 1)], ["test_track.Splits"]),
     M("t-metrics-label-swapped", "T2", "the metrics of a record without a split are labelled held-out", [(WIRE, 'holdout(heap, args, ds, cids, cvoc, pls, tr, sel, 0 - 1, ds.nrows, "train", o, e);', 'holdout(heap, args, ds, cids, cvoc, pls, tr, sel, 0 - 1, ds.nrows, "held-out", o, e);', 1)], TRACK + ["test_track.On"]),
     M("t-id-is-not-the-hash-of-the-inputs", "T2", "the id is the hash of the inputs cut by one byte", [(TRK, "        id = run_id(heap, buffer.bytes(ir));", "        id = run_id(heap, buffer.bytes(ir)[0..len(buffer.bytes(ir)) - 1]);", 1)], TRACK),
     M("t-check-not-checked", "T9", "the check at the end of a record is not compared", [(TRK, "        same = bytes.equal(buffer.bytes(hr), src[n - 67..n - 3]);", "        same = true;", 1)], TRACK),
@@ -123,11 +124,14 @@ MUTANTS = [
     M("t-verify-always-true", "T3", "verify says verified whatever the refit gave", [(RUNS, "if bytes.equal(buffer.bytes(fhr), buffer.bytes(msr)) {", "if true {", 1)], TRACK),
     M("t-verify-compares-the-data", "T3", "verify compares the refit with the hash of the data", [(RUNS, "if bytes.equal(buffer.bytes(fhr), buffer.bytes(msr)) {", "if bytes.equal(buffer.bytes(fhr), buffer.bytes(dsr)) {", 1)], TRACK + ["test_track.Replay"]),
     M("t-verify-skips-the-data-hash", "T3", "verify does not compare the training file with the record", [(RUNS, "if !bytes.equal(buffer.bytes(fdr), buffer.bytes(dsr)) {", "if false {", 1)], TRACK),
-    M("t-verify-forgets-the-split", "T3", "the refit does not hold the rows out", [(RUNS, "snum = sden - field_int(text, contents(tp), sp, \"num\", 0);", "snum = 0; sden = 0;", 1)], TRACK + ["test_track.Replay"]),
+    M("t-verify-forgets-the-split", "T3", "the refit does not hold the rows out", [(RUNS, "sden = sd;", "sden = 0;", 1)], TRACK + ["test_track.Replay", "test_track.Splits"]),
+    M("t-verify-forgets-the-strategy", "T3", "the refit holds the rows out at random whatever the strategy", [(RUNS, "sstrat = sst;", "sstrat = 0;", 1)], ["test_track.Replay", "test_track.Splits"]),
+    M("t-verify-forgets-the-split-column", "T3", "the refit has no group or time column", [(RUNS, "ro, spo, buffer.bytes(scr), false, e, lg);", 'ro, spo, "", false, e, lg);', 1)], ["test_track.Replay", "test_track.Splits"]),
+    M("t-split-text-not-canonical-is-read", "T9", "a split text that splitspec.text would not write is replayed", [(SPLS, "ok = bytes.equal(buffer.bytes(ar), text);", "ok = true;", 1)], ["test_track.Splits"]),
     M("t-verify-forgets-the-drop-list", "T3", "the refit keeps the dropped columns", [(RUNS, "dmask = m1;", "dmask = 0;", 1)], ["test_track.Replay"]),
     M("t-verify-forgets-the-float-list", "T3", "the refit infers the float columns", [(RUNS, "fmask = m2;", "fmask = 0;", 1)], ["test_track.Replay"]),
     M("t-verify-forgets-the-cat-list", "T3", "the refit declares no categorical column", [(RUNS, "cmask = m3;", "cmask = 0;", 1)], ["test_track.Replay"]),
-    M("t-verify-forgets-the-markers", "T3", "the refit has no missing-value marker", [(RUNS, "buffer.bytes(tgr), buffer.bytes(nar), ro, false, e, lg);", "buffer.bytes(tgr), \"\", ro, false, e, lg);", 1)], ["test_track.Replay"]),
+    M("t-verify-forgets-the-markers", "T3", "the refit has no missing-value marker", [(RUNS, "buffer.bytes(tgr), buffer.bytes(nar), ro, spo, buffer.bytes(scr), false, e, lg);", "buffer.bytes(tgr), \"\", ro, spo, buffer.bytes(scr), false, e, lg);", 1)], ["test_track.Replay"]),
     M("t-verify-forgets-the-seed", "T3", "the refit uses seed 0", [(RUNS, "let seed = field_int(text, contents(tp), inp, \"seed\", 0);", "let seed = 0;", 1)], ["test_track.Replay"]),
     M("t-verify-forgets-the-positive-label", "T3", "the refit takes the larger label as positive", [(RUNS, "let has_pos = pn >= 0 && json.is_int(contents(tp), pn);", "let has_pos = false;", 1)], ["test_track.Replay"]),
     M("t-list-skips-the-damaged", "T9", "list passes over a record that does not validate", [(RUNS, "                        } else {\n                            good = false;\n                        }", "                        } else {\n                            good = true;\n                        }", 1)], TRACK),
