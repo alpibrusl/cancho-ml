@@ -41,7 +41,7 @@ def M(id, gate, what, edits, tests=(), cmds=(), **opt):
 
 MUTANTS = [
     # ------------------------------------------------------------------ N1, N5: the check of predict
-    M("nf-check-removed", "N1", "predict never refuses a row that is not finite (the door still stops the cell)", [(IO, "        if badrow >= 0 {\n            code = refuse.predict_non_finite();", "        if false {\n            code = refuse.predict_non_finite();")], ["test_nonfinite.Reproducer", "test_nonfinite.Agreement"]),
+    M("nf-check-removed", "N5", "the scan before the answer is not acted on: only the print-time guard of the door is left, which sees the rows of the page and no others", [(IO, "        if badrow >= 0 {\n            code = refuse.predict_non_finite();", "        if false {\n            code = refuse.predict_non_finite();")], ALL),
     M("nf-check-and-door-removed", "N1", "no check and a door that lets an infinity through: the text of the issue again",
       [(IO, "        if badrow >= 0 {\n            code = refuse.predict_non_finite();", "        if false {\n            code = refuse.predict_non_finite();"), (V, "    if !bits_finite(bits) {\n        return (into, false);\n    }\n    return (flt.put_float", "    return (flt.put_float")],
       ["test_nonfinite.Reproducer", "test_nonfinite.Fuzz"]),

@@ -287,7 +287,7 @@ $ ml eval --model-file damaged.ml houses.csv
 
 ### It says what it does not do
 
-The `--model` list is the list of what is built. There are no stand-in models, and a test pins that.
+The `--model` list is the list of what is built. There are no stand-in models, and a test pins that. A prediction that is not a finite number (a feature near the largest double times a coefficient above 1) is a refusal too, `ml.predict.non-finite`, with the row and the column in `detail` and no cell written; `predict`, `ml-predict`, `eval` and `ml-serve` raise it from one function, over every row scored and not only the page ([docs/nonfinite.md](docs/nonfinite.md)).
 
 <!-- gen:t-honest -->
 ```console
@@ -297,6 +297,9 @@ $ ml fit --model knn --target price --output knn.ml houses.csv
 $ ml fit --target prize --output typo.ml houses.csv
 {"rule": "ml.input.unknown-column", "hint": "names are compared exactly, byte for byte", "detail": {"flag": "--target", "name": "prize"}}
 # exit status 3; the rule, hint, detail of the JSON line it prints
+$ ml predict --model-file houses-big.ml --drop id huge.csv
+{"rule": "ml.predict.non-finite", "hint": "scale the inputs, or check or drop the row.", "detail": {"row": 1, "column": "prediction"}}
+# exit status 8; the rule, hint, detail of the JSON line it prints
 ```
 <!-- /gen:t-honest -->
 
@@ -441,7 +444,7 @@ limits      21, for example
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       78, for example
+rules       79, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes
