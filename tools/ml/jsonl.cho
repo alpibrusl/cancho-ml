@@ -267,7 +267,7 @@ fn record[&h, &l, &t, &nd, &kd, &sc, &n, &e, &m, &tb](heap: &!h Heap, line: &l [
             if jk == 0 {
                 empty = true;
             } else if jk == 6 || jk == 7 {
-                return (o, fail_at(5, lineno, row, j, jk - 6, 0, 0));
+                return (o, fail_at(5, lineno, row, j, 7 - jk, 0, 0));
             } else if jk == 1 {
                 kind = 2;
                 which = 2;
