@@ -474,9 +474,17 @@ fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa](heap: &!h Heap, kind: int, task
                 w = json.put_key(heap, w, "std");
                 w = verbs.put_double(heap, w, bits_of(sd));
                 plain = buffer.append(heap, plain, " mean ");
-                plain = flt.put_float(heap, plain, csvcell.bits_of_key(bits_of(mean)));
+                let (p_mean, fin_mean) = verbs.put_float_text(heap, plain, bits_of(mean));
+                plain = p_mean;
+                if !fin_mean {
+                    plain = buffer.append(heap, plain, "null");
+                }
                 plain = buffer.append(heap, plain, " std ");
-                plain = flt.put_float(heap, plain, csvcell.bits_of_key(bits_of(sd)));
+                let (p_sd, fin_sd) = verbs.put_float_text(heap, plain, bits_of(sd));
+                plain = p_sd;
+                if !fin_sd {
+                    plain = buffer.append(heap, plain, "null");
+                }
                 plain = buffer.push(heap, plain, byte_of(10));
             } else {
                 w = json.put_key(heap, w, "mean");
