@@ -626,7 +626,7 @@ keep refusing them. The libraries are otherwise unchanged except for the order o
 
 ## 22. Issue 42: split strategies and cross-validation from the command line (`docs/splits.md`)
 
-`ml cv` is a sixth verb of `ml` (not of `ml-predict` or `ml-serve`: a split is a training-time concept, and `scripts/check_bins.py` keeps the flags out of their tables). Six flags are new
+`ml cv` is a verb of `ml` (not of `ml-predict` or `ml-serve`: a split is a training-time concept, and `scripts/check_bins.py` keeps the flags out of their tables). Six flags are new
 (`--stratify`, `--split-by`, `--split-group`, `--folds`, `--repeats`, `--emit-folds`). The stream registry takes kinds 7 (stratified holdout) and 8 (the shuffle of the groups); the plain holdout, k-fold and
 stratified k-fold keep kinds 4, 5 and 6, so every existing assignment is unchanged. Section 8 takes nine tags (above); `ml.split.stratum-too-small` moved from `pending()` to `extra()`. The canonical text of a
 split (`holdout train=0.8 stratify seed=1`, `cv folds=5 repeats=1 group=customer seed=3`) is written by one function (`tools/ml/splitspec.cho`) for the tracking record of issue 43. The answer of `fit --split` and of

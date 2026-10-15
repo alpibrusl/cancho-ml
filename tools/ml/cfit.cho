@@ -11,7 +11,6 @@ import ml.fsio;
 import ml.mfile;
 import ml.paths;
 import ml.spec;
-import ml.splitspec;
 import ml.track;
 import ml.verbs;
 import ml.wire;
@@ -48,12 +47,8 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pt](heap: &!h Heap, args: &g Args, fs: &f 
     var track_errs = fail.empty_in(heap, spec.extra());
     var track_ok = true;
     if o.track_given {
-        // the canonical text of the split of the record (docs/splits.md section 2): the constant model is held out at random
+        // the constant model takes no --split (args.conflict): its record says `none`
         var spl = buffer.append(heap, buffer.empty(heap, 8), "none");
-        if o.split_given {
-            buffer.drop(heap, spl);
-            spl = splitspec.text_nd(heap, false, o.split_num, o.split_den, 0, 0, 0, "", o.seed);
-        }
         borrow spl as &splr in {
             borrow mo as &mr in {
                 borrow fbytes as &fb in {
