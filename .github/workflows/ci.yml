@@ -46,7 +46,7 @@ jobs:
         run: |
           uname -a
           if command -v sw_vers >/dev/null; then sw_vers; fi
-          cc --version | head -1
+          cc --version | head -1 || true
           rustc --version || true
           python3 --version
 
@@ -182,7 +182,7 @@ jobs:
       - name: Platform
         run: |
           uname -a
-          cc --version | head -1
+          cc --version | head -1 || true
           python3 --version
 
       - name: The compiler revision, read from cancho.toml
