@@ -141,7 +141,6 @@
     "check",
     "check_bitmap",
     "check_common",
-    "check_fields",
     "check_input",
     "check_ints",
     "check_iters",
@@ -551,6 +550,7 @@
     "model_name",
     "model_tree",
     "model_truncated",
+    "most_fields",
     "mtry_of",
     "mul128",
     "mul_hi_lo",
@@ -576,6 +576,7 @@
     "need",
     "needs_mixed",
     "needs_quote",
+    "next_comma",
     "next_point",
     "nfloats",
     "nints",
@@ -873,5 +874,5 @@
   ],
   "folded_operators": 190,
   "folded_calls": 2,
-  "functions": 1424
+  "functions": 1426
 }

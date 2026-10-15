@@ -98,7 +98,6 @@
     "ceiling_string_bytes",
     "check",
     "check_bitmap",
-    "check_fields",
     "check_input",
     "check_ints",
     "check_len",
@@ -428,6 +427,7 @@
     "model_name",
     "model_tree",
     "model_truncated",
+    "most_fields",
     "mul128",
     "na_of",
     "name",
@@ -449,6 +449,7 @@
     "nearest",
     "need",
     "needs_quote",
+    "next_comma",
     "next_point",
     "nfloats",
     "nints",
@@ -686,5 +687,5 @@
   ],
   "folded_operators": 140,
   "folded_calls": 0,
-  "functions": 1019
+  "functions": 1021
 }

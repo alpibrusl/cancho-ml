@@ -47,13 +47,16 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
         if !cli.has(parsed, table, "fields") {
             return app.flag_problem(heap, e, "args.required-flag", "fit of JSON lines needs --fields, the keys that are the columns, in the order of the table", "ml fit --input-format jsonl --fields NAMES --target NAME --output MODEL fit FILE", "flag", "--fields");
         }
-        let (st, at) = jsonl.check_fields(cli.text(args, parsed, table, "fields"));
+        let (st, at) = jsonl.check_fields(heap, cli.text(args, parsed, table, "fields"));
         if st != 0 {
-            var w = fail.open_in(heap, spec.extra(), "args.bad-value", "--fields is a list of names that are not empty and not repeated", "give the keys of the objects separated by commas; a name holds no comma");
+            var w = fail.open_in(heap, spec.extra(), "args.bad-value", "--fields is a list of at most 8192 names that are not empty and not repeated", "give the keys of the objects separated by commas; a name holds no comma");
             w = fail.no_repair(heap, w);
             w = fail.detail_open(heap, w);
             w = fail.detail_str(heap, w, "flag", "--fields");
             w = fail.detail_int(heap, w, "position", at);
+            if st == 2 {
+                w = fail.detail_int(heap, w, "max", jsonl.most_fields());
+            }
             e = fail.add(heap, e, w);
         }
     }
@@ -333,7 +336,7 @@ pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p 
     var read = false;
     if verb == 1 {
         let list = cli.text(args, parsed, table, "fields");
-        let (st, n) = jsonl.check_fields(list);
+        let (st, n) = jsonl.check_fields(heap, list);
         if st == 0 {
             buffer.drop(heap, names);
             unbox_slice(heap, ends);

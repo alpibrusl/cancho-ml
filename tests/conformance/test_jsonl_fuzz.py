@@ -132,6 +132,21 @@ class Hostile(unittest.TestCase):
         out = jsonl_lib.run_check(line * 3, fields.split(","), absent_empty=True, max_nodes=100000, max_line=1 << 24, timeout=60)
         self.assertEqual(out[0], "ok")
 
+    def test_hostile_field_lists_cost_their_length(self):
+        import time
+        names = ",".join("n%d" % i for i in range(8192))
+        for fields, rule in ((",," * 200000, "args.bad-value"), (",".join("n%d" % i for i in range(8193)), "args.bad-value"), (names + ",n0", "args.bad-value"), ("a,,y", "args.bad-value")):
+            t0 = time.time()
+            r = self.sb.run("fit", "--input-format", "jsonl", "--fields", fields, "--target", "y", "--output", "z.cml", "good.jsonl")
+            self.assertEqual(r.first_rule(), rule, r)
+            self.assertLess(time.time() - t0, 20)
+        # 8192 names and 8192 of them in --cat: read, and refused by the reader behind (too many columns), quickly
+        t0 = time.time()
+        r = self.sb.run("fit", "--input-format", "jsonl", "--fields", names, "--cat", names, "--absent", "empty", "--target", "n1", "--output", "z.cml", "good.jsonl")
+        self.assertEqual(validate(r), [], r)
+        self.assertLess(time.time() - t0, 30)
+        self.assertEqual(r.first_rule(), "ml.input.too-many-columns")
+
     def test_closed_standard_input_and_a_missing_file(self):
         r = self.sb.run("fit", "--input-format", "jsonl", "--fields", FIELDS, "--target", "y", "--output", "z.cml", "-", close_stdin=True)
         self.assertEqual(validate(r), [], r)

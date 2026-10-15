@@ -37,23 +37,73 @@ fn fail_at(code: int, line: int, row: int, col: int, a: int, b: int, c: int) -> 
 
 // ---------------------------------------------------------------- the declaration
 
-// A field list is names separated by commas. (0, the number of names), or (1, i) when the i-th name (from 1) is empty or repeats an earlier one.
-pub fn check_fields[&l](list: &l [byte]) -> [] (int, int) {
+pub fn most_fields() -> [] int {
+    return 8192;
+}
+
+// the end of the token of a comma list that starts at `from`: the next comma, or the end of the list
+fn next_comma[&l](list: &l [byte], from: int) -> [] int {
+    if from >= len(list) {
+        return len(list);
+    }
+    let at = index_of_byte(list[from..len(list)], byte_of(44));
+    if at < 0 {
+        return len(list);
+    }
+    return from + at;
+}
+
+// A field list is names separated by commas. (0, the number of names); (1, i) when the i-th name (from 1) is empty or repeats an earlier one; (2, the number of names) when
+// there are more than most_fields(). One pass over the list and a hash table of its names, so a hostile list costs its length and not its square.
+pub fn check_fields[&h, &l](heap: &!h Heap, list: &l [byte]) -> [heap] (int, int) {
     let count = bytes.count_byte(list, ',') + 1;
-    var k = 1;
-    while k <= count {
-        let name = bytes.field(list, ',', k);
-        if len(name) == 0 {
-            return (1, k);
-        }
-        var j = 1;
-        while j < k {
-            if bytes.equal(bytes.field(list, ',', j), name) {
-                return (1, k);
+    if count > most_fields() {
+        return (2, count);
+    }
+    var st = 0;
+    var at = 0;
+    var pos = box_slice(heap, 2 * count + 2, 0);
+    var tab = box_slice(heap, 2 * count + 3, 0);
+    borrow mut pos as &!pw in {
+        borrow mut tab as &!tw in {
+            let ps = contents(pw);
+            let ts = contents(tw);
+            var from = 0;
+            var k = 0;
+            while k < count && st == 0 {
+                let to = next_comma(list, from);
+                ps[2 * k] = from;
+                ps[2 * k + 1] = to;
+                if to == from {
+                    st = 1;
+                    at = k + 1;
+                } else {
+                    var p = hash_of(list[from..to]) % len(ts);
+                    var dup = false;
+                    while ts[p] != 0 && !dup {
+                        let q = ts[p] - 1;
+                        if bytes.equal(list[ps[2 * q]..ps[2 * q + 1]], list[from..to]) {
+                            dup = true;
+                        } else {
+                            p = (p + 1) % len(ts);
+                        }
+                    }
+                    if dup {
+                        st = 1;
+                        at = k + 1;
+                    } else {
+                        ts[p] = k + 1;
+                    }
+                }
+                from = to + 1;
+                k = k + 1;
             }
-            j = j + 1;
         }
-        k = k + 1;
+    }
+    unbox_slice(heap, pos);
+    unbox_slice(heap, tab);
+    if st != 0 {
+        return (1, at);
     }
     return (0, count);
 }
@@ -63,16 +113,19 @@ pub fn declaration[&h, &l](heap: &!h Heap, list: &l [byte]) -> [heap] (buffer.Bu
     let count = bytes.count_byte(list, ',') + 1;
     var names = buffer.empty(heap, len(list) + 1);
     var ends = box_slice(heap, count + 1, 0);
-    var k = 1;
-    while k <= count {
-        names = buffer.append(heap, names, bytes.field(list, ',', k));
+    var from = 0;
+    var k = 0;
+    while k < count {
+        let to = next_comma(list, from);
+        names = buffer.append(heap, names, list[from..to]);
         var size = 0;
         borrow names as &nr in {
             size = buffer.size(nr);
         }
         borrow mut ends as &!ew in {
-            contents(ew)[k - 1] = size;
+            contents(ew)[k] = size;
         }
+        from = to + 1;
         k = k + 1;
     }
     return (names, ends);
@@ -81,20 +134,31 @@ pub fn declaration[&h, &l](heap: &!h Heap, list: &l [byte]) -> [heap] (buffer.Bu
 // 1 for each name of `names` (ends: where they end, count of them) that is in the comma list `cats`, else 0
 pub fn mask_by_list[&h, &n, &e, &c](heap: &!h Heap, names: &n [byte], ends: &e [int], count: int, cats: &c [byte]) -> [heap] Box[[int]] {
     var mask = box_slice(heap, count + 1, 0);
-    let nc = bytes.count_byte(cats, ',') + 1;
-    var j = 0;
-    while j < count {
-        var k = 1;
-        while k <= nc && len(cats) > 0 {
-            if bytes.equal(bytes.field(cats, ',', k), name_at(names, ends, j)) {
-                borrow mut mask as &!mw in {
-                    contents(mw)[j] = 1;
-                }
-            }
-            k = k + 1;
-        }
-        j = j + 1;
+    if len(cats) == 0 || count == 0 {
+        return mask;
     }
+    var tab = box_slice(heap, 2 * count + 3, 0);
+    borrow mut tab as &!tw in {
+        var j = 0;
+        while j < count {
+            insert(names, ends, j, contents(tw));
+            j = j + 1;
+        }
+    }
+    borrow tab as &tr in {
+        borrow mut mask as &!mw in {
+            var from = 0;
+            while from <= len(cats) {
+                let to = next_comma(cats, from);
+                let f = lookup(cats[from..to], names, ends, count, contents(tr));
+                if f >= 0 {
+                    contents(mw)[f] = 1;
+                }
+                from = to + 1;
+            }
+        }
+    }
+    unbox_slice(heap, tab);
     return mask;
 }
 

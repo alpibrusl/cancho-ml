@@ -76,7 +76,7 @@ fn refused[&i](io: &!i Io, f: jsonl.Fail) -> [io_write] int {
 }
 
 fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &static [byte], fields: &static [byte], cats: &static [byte], absent_empty: bool, max_nodes: int, max_line: int, max_bytes: int) -> [heap, io_write, fs_read(""), dir_read, file_read] int {
-    let (st, count) = jsonl.check_fields(fields);
+    let (st, count) = jsonl.check_fields(heap, fields);
     if st != 0 {
         io.write_all(io, "usage: bad --fields\n");
         return 2;
