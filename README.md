@@ -16,7 +16,7 @@ Fit, predict, score, get refused with a repair, run the repair. The repair is th
 ```console
 # Fit the training mean of price. area has a decimal point: it is a float column, read exactly
 $ ml fit --target price --output houses.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":340,"sha256":"299879cc4b9be8afb5c6029aa8c635693162dc7a6d6ef564a4a1a66b83f4f1d8","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":340,"sha256":"42e9ba1b21c884c5b865e8ebd159874db5ed41d73fa0f0f534e62d4defac959c","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
 # Predict for two new rows, which have no price
 $ ml predict --model-file houses.ml new.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
@@ -45,7 +45,7 @@ $ ml fit --model logistic --target bought --output shop2.ml shop2.csv
 # exit status 8; the rule, hint, repair of the JSON line it prints
 # The repair works, but a plan can say more: impute, standardise, then a logistic regression (50 Newton iterations, ridge 0.1)
 $ ml fit --model logistic --overwrite --step 'impute column=spend strategy=mean;scale column=visits,spend kind=standard' --iterations 50 --l2 0.1 --target bought --output shop2.ml shop2.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":12,"columns":4,"target":"bought","path":"shop2.ml","bytes":689,"sha256":"ad4d3f293465d2952d15e47dc1451944f944ee8ae8a9e008a52610824dae5a74","written":true,"summary":{"plan":"impute column=spend strategy=mean\nscale column=spend,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":2,"features":3,"coefficients":[{"name":"id","value":"-0.08218688808973369"},{"name":"visits","value":"0.25761586355528143"},{"name":"spend","value":"1.1474347278761494"}],"intercept":"0.6023363690462818","classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":12,"columns":4,"target":"bought","path":"shop2.ml","bytes":689,"sha256":"08ed83de300f37b80611f299226479c914a86f1c95a98355a6b1cc93c042f337","written":true,"summary":{"plan":"impute column=spend strategy=mean\nscale column=spend,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":2,"features":3,"coefficients":[{"name":"id","value":"-0.08218688808973369"},{"name":"visits","value":"0.25761586355528143"},{"name":"spend","value":"1.1474347278761494"}],"intercept":"0.6023363690462818","classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
 # Predict with probabilities for new rows (the empty cell is filled with the mean STORED in the model)
 $ ml predict --model-file shop2.ml --proba new2.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","columns":["label","probability"],"rows":[["0","0.36645031865861677"],["1","0.8502846389524489"],["0","0.0906646088784972"]],"row_count":3,"total_rows":3,"truncated":false,"next":null,"unknown_categories":0},"meta":{"version":"0.1.0"}}
@@ -71,7 +71,7 @@ $ ml fit --model kmeans --drop virginica --output iris-km.ml iris_train.csv
 # exit status 8; the rule, hint, detail of the JSON line it prints
 # Drop the label, standardise the four measurements, fit three clusters (seed 1): the answer holds the inertia, the rows of each cluster and the mean distance of each
 $ ml fit --model kmeans --k 3 --seed 1 --drop virginica --step 'scale column=* kind=standard' --output iris-km.ml iris_train.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"kmeans","task":"clustering","rows":75,"columns":4,"target":null,"path":"iris-km.ml","bytes":680,"sha256":"4e7a8d015633c85983368d852dc16576ef21dec611137628c1aca3367574f775","written":true,"summary":{"plan":"scale column=* kind=standard ddof=0\nmodel kind=kmeans k=3 iterations=10 init=kmeans++\n","steps":1,"features":4,"clusters":{"k":3,"iterations":10,"init":"kmeans++","rows":75,"metrics":{"inertia":"114.01824275090962","sizes":[26,31,18],"mean_distance":["1.2398733702280837","1.0644974060896137","1.1737313271562995"]}}}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"kmeans","task":"clustering","rows":75,"columns":4,"target":null,"path":"iris-km.ml","bytes":680,"sha256":"722304367e880d76948f121ad05ff3e24e80e8673763300d165c11606f561744","written":true,"summary":{"plan":"scale column=* kind=standard ddof=0\nmodel kind=kmeans k=3 iterations=10 init=kmeans++\n","steps":1,"features":4,"clusters":{"k":3,"iterations":10,"init":"kmeans++","rows":75,"metrics":{"inertia":"114.01824275090962","sizes":[26,31,18],"mean_distance":["1.2398733702280837","1.0644974060896137","1.1737313271562995"]}}}},"meta":{"version":"0.1.0"}}
 # The cluster of five test rows and the squared distance of each to its centre
 $ ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"kmeans","task":"clustering","columns":["cluster","distance"],"rows":[["0","9.531664854091233"],["0","2.5630208525939238"],["1","2.976542017495812"],["1","0.887839091686247"],["2","0.33871718188300526"]],"row_count":5,"total_rows":25,"truncated":true,"next":{"from":5},"unknown_categories":0},"meta":{"version":"0.1.0"}}
@@ -96,7 +96,7 @@ One complete flow, on the committed files `docs/examples/data/iris_train.csv` an
 ```console
 # Logistic regression, no penalty, on the raw features: these two species overlap, so the optimum is finite
 $ ml fit --model logistic --target virginica --iterations 25 --l2 0 --output iris_fit.ml iris_train.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":75,"columns":5,"target":"virginica","path":"iris_fit.ml","bytes":468,"sha256":"78312ce7ecdccdfa1a65326c5309804dcf4951131316cb72c1839e9c718ead4b","written":true,"summary":{"plan":"model kind=logistic iterations=25 l2=0.0\n","steps":0,"features":4,"coefficients":[{"name":"sepal_length_cm","value":"-2.346667939035462"},{"name":"sepal_width_cm","value":"-6.929972260305374"},{"name":"petal_length_cm","value":"9.539045048622665"},{"name":"petal_width_cm","value":"17.159779108027216"}],"intercept":"-41.54877417104498","classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":75,"columns":5,"target":"virginica","path":"iris_fit.ml","bytes":468,"sha256":"688a8270a9411075a94b358b008050dc32ac19623cf84069fe5487e0cdd4701d","written":true,"summary":{"plan":"model kind=logistic iterations=25 l2=0.0\n","steps":0,"features":4,"coefficients":[{"name":"sepal_length_cm","value":"-2.346667939035462"},{"name":"sepal_width_cm","value":"-6.929972260305374"},{"name":"petal_length_cm","value":"9.539045048622665"},{"name":"petal_width_cm","value":"17.159779108027216"}],"intercept":"-41.54877417104498","classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
 # Score it on the training rows first: not every one is right
 $ ml eval --model-file iris_fit.ml iris_train.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":75,"positive":1,"metrics":{"accuracy":"0.9733333333333334","precision":"0.9736842105263158","recall":"0.9736842105263158","f1":"0.9736842105263158","roc_auc":"0.9950213371266002","log_loss":"0.07256993734328859"},"unknown_categories":0},"meta":{"version":"0.1.0"}}
@@ -182,7 +182,7 @@ Fit, predict, score, and a refusal:
 <!-- gen:qs -->
 ```console
 $ ml fit --target price --output houses.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":340,"sha256":"299879cc4b9be8afb5c6029aa8c635693162dc7a6d6ef564a4a1a66b83f4f1d8","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":340,"sha256":"42e9ba1b21c884c5b865e8ebd159874db5ed41d73fa0f0f534e62d4defac959c","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
 $ ml predict --model-file houses.ml new.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
 $ ml eval --model-file houses.ml houses.csv
@@ -204,7 +204,7 @@ Every example runs on the small files above and the ones shown with it, in this 
 <!-- gen:t-fit -->
 ```console
 $ ml fit --target price --output houses.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":340,"sha256":"299879cc4b9be8afb5c6029aa8c635693162dc7a6d6ef564a4a1a66b83f4f1d8","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":340,"sha256":"42e9ba1b21c884c5b865e8ebd159874db5ed41d73fa0f0f534e62d4defac959c","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
 $ ml predict --model-file houses.ml new.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
 $ ml eval --model-file houses.ml houses.csv
@@ -229,7 +229,7 @@ id,visits,spend,bought
 <!-- gen:t-class -->
 ```console
 $ ml fit --task classification --target bought --output shop.ml shop.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"classification","rows":6,"columns":4,"target":"bought","path":"shop.ml","bytes":363,"sha256":"dc81e1ce7ff30ea56c12ec49a39cd808e55f558d049f0858ab136f213f385dbd","written":true,"summary":{"classes":[0,1],"counts":[2,4],"majority":1,"probability":"0.666667"}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"classification","rows":6,"columns":4,"target":"bought","path":"shop.ml","bytes":363,"sha256":"83327cb7702e5119b0cadec8626aca6d8bf6f4fffdb119c27ebe64d54fd58dd5","written":true,"summary":{"classes":[0,1],"counts":[2,4],"majority":1,"probability":"0.666667"}},"meta":{"version":"0.1.0"}}
 $ ml predict --model-file shop.ml shop.csv --limit 2 --from 1
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"classification","columns":["label","probability"],"rows":[["1","0.666667"],["1","0.666667"]],"row_count":2,"total_rows":6,"truncated":true,"next":{"from":3}},"meta":{"version":"0.1.0"}}
 $ ml eval --model-file shop.ml shop.csv
@@ -252,7 +252,7 @@ id,x,reading
 <!-- gen:t-float -->
 ```console
 $ ml fit --target reading --output sensor.ml sensor.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":4,"columns":3,"target":"reading","path":"sensor.ml","bytes":306,"sha256":"182d75563021836f542c0542daf74d2ddfcd9608b6e2ac769beb969d2b52ff44","written":true,"summary":{"mean":"4.6375"}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":4,"columns":3,"target":"reading","path":"sensor.ml","bytes":306,"sha256":"8e1f905900ebbf203be58797f9774b90eb4e4810a368ce90459c453bcfff88a8","written":true,"summary":{"mean":"4.6375"}},"meta":{"version":"0.1.0"}}
 $ ml eval --model-file sensor.ml sensor.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":4,"metrics":{"rmse":"3.6012801543340114","sse":"51.876875","prediction":"4.6375"}},"meta":{"version":"0.1.0"}}
 ```
@@ -268,7 +268,7 @@ $ ml fit --target price --output houses.ml houses.csv
 {"rule": "conflict.exists", "hint": "use --overwrite to replace it, or name another file", "detail": {"path": "houses.ml"}}
 # exit status 5; the rule, hint, detail of the JSON line it prints
 $ ml fit --dry-run --overwrite --target price --output houses.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":340,"sha256":"299879cc4b9be8afb5c6029aa8c635693162dc7a6d6ef564a4a1a66b83f4f1d8","written":false,"summary":{"mean":"218000.000000"}},"dry_run":true,"planned_actions":[{"op":"replace","path":"houses.ml","bytes":340,"sha256":"299879cc4b9be8afb5c6029aa8c635693162dc7a6d6ef564a4a1a66b83f4f1d8"}],"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":340,"sha256":"42e9ba1b21c884c5b865e8ebd159874db5ed41d73fa0f0f534e62d4defac959c","written":false,"summary":{"mean":"218000.000000"}},"dry_run":true,"planned_actions":[{"op":"replace","path":"houses.ml","bytes":340,"sha256":"42e9ba1b21c884c5b865e8ebd159874db5ed41d73fa0f0f534e62d4defac959c"}],"meta":{"version":"0.1.0"}}
 # exit status 9; a dry run: nothing was written
 ```
 <!-- /gen:t-dry -->
@@ -310,7 +310,7 @@ $ ml predict --model-file houses-big.ml --drop id huge.csv
 <!-- gen:t-split -->
 ```console
 $ ml fit --model linear --l2 0.1 --split train=0.8 --seed 3 --target price --output houses-lin.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"linear","task":"regression","rows":4,"columns":4,"target":"price","path":"houses-lin.ml","bytes":349,"sha256":"5ccedf38b34a2a4b24edcae27ce13c569c6bcbce4fb1b5238ad419d354ecf5b6","written":true,"summary":{"plan":"model kind=linear l2=0.1\n","steps":0,"features":3,"coefficients":[{"name":"id","value":"-1905.5649303915627"},{"name":"rooms","value":"-15667.071024324228"},{"name":"area","value":"3843.571373934476"}],"intercept":"25324.69546154733","split":{"train":4,"test":1,"seed":3},"holdout":{"rows":1,"metrics":{"rmse":"8366.812920622935","mae":"8366.812920622935","r2":null}}}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"linear","task":"regression","rows":4,"columns":4,"target":"price","path":"houses-lin.ml","bytes":349,"sha256":"b71697230965ab357e2c5a680d93e5fd58a2c4d04ba27b11d8eb0ab06e75f6de","written":true,"summary":{"plan":"model kind=linear l2=0.1\n","steps":0,"features":3,"coefficients":[{"name":"id","value":"-1905.5649303915627"},{"name":"rooms","value":"-15667.071024324228"},{"name":"area","value":"3843.571373934476"}],"intercept":"25324.69546154733","split":{"train":4,"test":1,"seed":3},"holdout":{"rows":1,"metrics":{"rmse":"8366.812920622935","mae":"8366.812920622935","r2":null}}}},"meta":{"version":"0.1.0"}}
 ```
 <!-- /gen:t-split -->
 
@@ -326,7 +326,7 @@ $ ml fit --model logistic --cat species,city --target adopted --output pets.ml p
 # exit status 8; the rule, hint, detail of the JSON line it prints
 # Encoded, the fit writes the model file. species is one-hot (the categories seen fewer than 4 times share __other__), city is its frequency; the file holds the training strings
 $ ml fit --model logistic --cat species,city --step 'encode column=species kind=onehot min-count=4;freq column=city missing=zero;scale column=age,visits kind=standard' --drop id --iterations 50 --l2 0.1 --target adopted --output pets.ml pets.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":76,"columns":5,"target":"adopted","path":"pets.ml","bytes":1177,"sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","written":true,"summary":{"plan":"encode column=species kind=onehot max-categories=64 unknown=ignore min-count=4\nfreq column=city max-categories=64 unknown=ignore min-count=1 missing=zero\nscale column=age,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":3,"steps_sha256":"8f910f6f5390602504628d4c90061912cd906bc60a7fd09959b610d8f766094b","categorical":[{"step":1,"kind":"onehot","column":"species","categories":6,"output_columns":6},{"step":2,"kind":"freq","column":"city","categories":3,"output_columns":1}],"string_table":{"entries":2,"strings":9,"pool_bytes":43,"bytes":342,"sha256":"c597f59764a5f40e89018b535f62668e14dd81a901782bf34383fee32c813295"},"features":9,"coefficients":[{"name":"age","value":"-0.7824228926137594"},{"name":"visits","value":"0.4073813210802055"},{"name":"species#0","value":"-0.020165373363988392"},{"name":"species#1","value":"-0.4065920239943293"},{"name":"species#2","value":"-0.06722805346853337"},{"name":"species#3","value":"0.22592934448065002"},{"name":"species#4","value":"-0.003848538940300602"},{"name":"species#5","value":"0.27190464528650155"},{"name":"city","value":"0.10100137512530218"}],"intercept":"0.3296864511790136","classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":76,"columns":5,"target":"adopted","path":"pets.ml","bytes":1177,"sha256":"49a6069b66698b3e2afe2b5e5e1ff2baf35cccab577ba8f56ecec134a739b073","written":true,"summary":{"plan":"encode column=species kind=onehot max-categories=64 unknown=ignore min-count=4\nfreq column=city max-categories=64 unknown=ignore min-count=1 missing=zero\nscale column=age,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":3,"steps_sha256":"8f910f6f5390602504628d4c90061912cd906bc60a7fd09959b610d8f766094b","categorical":[{"step":1,"kind":"onehot","column":"species","categories":6,"output_columns":6},{"step":2,"kind":"freq","column":"city","categories":3,"output_columns":1}],"string_table":{"entries":2,"strings":9,"pool_bytes":43,"bytes":342,"sha256":"c597f59764a5f40e89018b535f62668e14dd81a901782bf34383fee32c813295"},"features":9,"coefficients":[{"name":"age","value":"-0.7824228926137594"},{"name":"visits","value":"0.4073813210802055"},{"name":"species#0","value":"-0.020165373363988392"},{"name":"species#1","value":"-0.4065920239943293"},{"name":"species#2","value":"-0.06722805346853337"},{"name":"species#3","value":"0.22592934448065002"},{"name":"species#4","value":"-0.003848538940300602"},{"name":"species#5","value":"0.27190464528650155"},{"name":"city","value":"0.10100137512530218"}],"intercept":"0.3296864511790136","classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
 # predict reads the model file and nothing else; the text columns are found by name
 $ ml predict --model-file pets.ml --drop id --proba --limit 3 pets.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","columns":["label","probability"],"rows":[["1","0.7517148972048996"],["1","0.8107096739731363"],["0","0.45457790834086403"]],"row_count":3,"total_rows":76,"truncated":true,"next":{"from":3},"unknown_categories":0},"meta":{"version":"0.1.0"}}
@@ -338,7 +338,7 @@ $ ml eval --model-file pets.ml --drop id pets.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":76,"positive":1,"metrics":{"accuracy":"0.8289473684210527","precision":"0.8444444444444444","recall":"0.8636363636363636","f1":"0.8539325842696629","roc_auc":"0.8742897727272727","log_loss":"0.4847004611714956"},"unknown_categories":0},"meta":{"version":"0.1.0"}}
 # species hashed to 8 columns and city as a label: the file holds no string of species, and an unseen species lands in the bucket it hashes to
 $ ml fit --model logistic --cat species,city --step 'hash column=species buckets=8 missing=zero;encode column=city kind=label missing=zero;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets-hash.ml pets.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":57,"columns":5,"target":"adopted","path":"pets-hash.ml","bytes":1057,"sha256":"de1fd88e7ad23bb7fcdfc6964c5c828e73debba22cf874d4a21986ca37ec6a1b","written":true,"summary":{"plan":"hash column=species buckets=8 missing=zero\nencode column=city kind=label max-categories=64 unknown=ignore missing=zero\nscale column=age,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":3,"steps_sha256":"2c9c79220429bb0793ac19d974f565566b77a08b03492bda2ccc1f26b3eefa86","categorical":[{"step":1,"kind":"hash","column":"species","categories":0,"output_columns":8},{"step":2,"kind":"label","column":"city","categories":3,"output_columns":1}],"string_table":{"entries":2,"strings":3,"pool_bytes":14,"bytes":241,"sha256":"b7ca8fa50923607db62ab75bf2e7ecd7267edaa4d78704e3af296ef7f1747a9f"},"features":11,"coefficients":[{"name":"age","value":"-0.6875723955849204"},{"name":"visits","value":"0.4151426140617374"},{"name":"species#0","value":"0.25559046581946027"},{"name":"species#1","value":"0.0"},{"name":"species#2","value":"0.0"},{"name":"species#3","value":"-0.07144881420245953"},{"name":"species#4","value":"0.2628888663105544"},{"name":"species#5","value":"0.0"},{"name":"species#6","value":"0.0"},{"name":"species#7","value":"-0.44703051792755505"},{"name":"city","value":"-0.35100088010733876"}],"intercept":"0.5909043953829989","classes":[0,1],"positive":1,"split":{"train":57,"test":19,"seed":3},"holdout":{"rows":19,"metrics":{"accuracy":"0.7894736842105263","precision":"0.8181818181818182","recall":"0.8181818181818182","f1":"0.8181818181818182","roc_auc":"0.9318181818181818","log_loss":"0.4278208227654049"}}}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":57,"columns":5,"target":"adopted","path":"pets-hash.ml","bytes":1057,"sha256":"dd31046bf0af10e203781ea2121b0b12455a0ac74deba5b82b22ce169cdf9d62","written":true,"summary":{"plan":"hash column=species buckets=8 missing=zero\nencode column=city kind=label max-categories=64 unknown=ignore missing=zero\nscale column=age,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":3,"steps_sha256":"2c9c79220429bb0793ac19d974f565566b77a08b03492bda2ccc1f26b3eefa86","categorical":[{"step":1,"kind":"hash","column":"species","categories":0,"output_columns":8},{"step":2,"kind":"label","column":"city","categories":3,"output_columns":1}],"string_table":{"entries":2,"strings":3,"pool_bytes":14,"bytes":241,"sha256":"b7ca8fa50923607db62ab75bf2e7ecd7267edaa4d78704e3af296ef7f1747a9f"},"features":11,"coefficients":[{"name":"age","value":"-0.6875723955849204"},{"name":"visits","value":"0.4151426140617374"},{"name":"species#0","value":"0.25559046581946027"},{"name":"species#1","value":"0.0"},{"name":"species#2","value":"0.0"},{"name":"species#3","value":"-0.07144881420245953"},{"name":"species#4","value":"0.2628888663105544"},{"name":"species#5","value":"0.0"},{"name":"species#6","value":"0.0"},{"name":"species#7","value":"-0.44703051792755505"},{"name":"city","value":"-0.35100088010733876"}],"intercept":"0.5909043953829989","classes":[0,1],"positive":1,"split":{"train":57,"test":19,"seed":3},"holdout":{"rows":19,"metrics":{"accuracy":"0.7894736842105263","precision":"0.8181818181818182","recall":"0.8181818181818182","f1":"0.8181818181818182","roc_auc":"0.9318181818181818","log_loss":"0.4278208227654049"}}}},"meta":{"version":"0.1.0"}}
 $ ml predict --model-file pets-hash.ml --proba newpets.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","columns":["label","probability"],"rows":[["1","0.8560974272954618"],["1","0.5502566884050817"],["1","0.8204410175517777"]],"row_count":3,"total_rows":3,"truncated":false,"next":null,"unknown_categories":1},"meta":{"version":"0.1.0"}}
 ```
@@ -386,38 +386,52 @@ The values in an answer are the text `ml predict` prints, written as JSON number
 
 <!-- gen:hflow -->
 ```console
-# ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080)
-$ ml-serve --model-file pets.ml --no-token --port 8080 &
-listening on 8080
+# ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080). With no flag about the address it listens on 127.0.0.1 and needs no token
+$ ml-serve --model-file pets.ml --port 8080 &
+listening on 127.0.0.1:8080
 # liveness, and the SHA-256 of the model file being served
 $ curl -s localhost:8080/health
-{"ok":true,"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d"}
+{"ok":true,"model_sha256":"49a6069b66698b3e2afe2b5e5e1ff2baf35cccab577ba8f56ecec134a739b073"}
 # one record: a member for every column of the model. The head carries the digest too
 $ curl -s -i -XPOST -H 'Content-Type: application/json' -d '{"age":3,"species":"cat","city":"Turin","visits":4}' localhost:8080/predict
 HTTP/1.1 200 OK
-X-Model-Sha256: 676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d
+X-Model-Sha256: 49a6069b66698b3e2afe2b5e5e1ff2baf35cccab577ba8f56ecec134a739b073
 Content-Type: application/json
 Content-Length: 229
 Connection: keep-alive
 
-{"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","model":"logistic","task":"classification","columns":["label","probability"],"rows":[[1,0.6996810090936468]],"row_co…
+{"model_sha256":"49a6069b66698b3e2afe2b5e5e1ff2baf35cccab577ba8f56ecec134a739b073","model":"logistic","task":"classification","columns":["label","probability"],"rows":[[1,0.6996810090936468]],"row_co…
 # a batch: a row of the answer for each record, in order
 $ curl -s -XPOST -H 'Content-Type: application/json' -d '{"rows":[{"age":3,"species":"cat","city":"Turin","visits":4},{"age":1,"species":"dog","city":"Lyon","visits":7}]}' localhost:8080/predict/batch
-{"model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","model":"logistic","task":"classification","columns":["label","probability"],"rows":[[1,0.6996810090936468],[1,0.915…
+{"model_sha256":"49a6069b66698b3e2afe2b5e5e1ff2baf35cccab577ba8f56ecec134a739b073","model":"logistic","task":"classification","columns":["label","probability"],"rows":[[1,0.6996810090936468],[1,0.915…
 # a refusal: every error at once, each with its JSON Pointer, as application/problem+json with the rule
 $ curl -s -i -XPOST -H 'Content-Type: application/json' -d '{"age":"two","species":"axolotl","city":"Lyon","visits":4,"zip":1}' localhost:8080/predict
 HTTP/1.1 422 Unprocessable Content
-X-Model-Sha256: 676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d
+X-Model-Sha256: 49a6069b66698b3e2afe2b5e5e1ff2baf35cccab577ba8f56ecec134a739b073
 Content-Type: application/problem+json
 Content-Length: 412
 Connection: keep-alive
 
-{"rule":"ml.schema.mismatch","model_sha256":"676ffb79df91171894bde1d855b4ef4405e37f0a395f365a41f1498e735ac34d","type":"about:blank","title":"Unprocessable Content","status":422,"count":3,"errors":[{"pointer":"/age","code":"type","detail":"has the wrong type"}…
+{"rule":"ml.schema.mismatch","model_sha256":"49a6069b66698b3e2afe2b5e5e1ff2baf35cccab577ba8f56ecec134a739b073","type":"about:blank","title":"Unprocessable Content","status":422,"count":3,"errors":[{"pointer":"/age","code":"type","detail":"has the wrong type"}…
 # what the model requires of a caller (excerpt), and the OpenAPI 3.1 document made from the same columns (excerpt)
 $ curl -s localhost:8080/model
 {"model":"logistic","task":"classification","request":{"header":["age","species","city","visits"],"optional":["adopted"],"extra_columns":"refused","missing_cells":"needs_impute"},"classes":[0,1],"out…
 $ curl -s localhost:8080/openapi.json
 {"openapi":"3.1.0","paths":["/health","/model","/openapi.json","/predict","/predict/batch"],"Record":{"type":"object","properties":{"age":{"type":"integer","minimum":-999999999999,"maximum":999999999…
+# the form for a network: every address of the host, and a token (a request without it is a 401; the token is the only line of the file)
+$ ml-serve --model-file pets.ml --bind all --token-file token.txt --port 8081 &
+listening on 0.0.0.0:8081
+$ curl -s -i localhost:8081/model
+HTTP/1.1 401 Unauthorized
+X-Model-Sha256: 49a6069b66698b3e2afe2b5e5e1ff2baf35cccab577ba8f56ecec134a739b073
+Content-Type: application/problem+json
+Content-Length: 104
+Connection: keep-alive
+WWW-Authenticate: Bearer
+
+{"type":"about:blank","title":"Unauthorized","status":401,"detail":"send Authorization: Bearer <token>"}
+$ curl -s -H 'Authorization: Bearer demo-token' localhost:8081/model
+{"model":"logistic","task":"classification","classes":[0,1]}
 ```
 <!-- /gen:hflow -->
 
@@ -431,7 +445,7 @@ The model is read at start and changed by restarting. There is no TLS, no reload
 ```console
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
-tool        ml 0.1.0   (compiler a4572ea3)
+tool        ml 0.1.0   (compiler 0207556b)
 flags       45, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
