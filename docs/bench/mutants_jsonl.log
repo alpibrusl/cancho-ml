@@ -48,10 +48,4 @@ SURVIVED  cli-shown-name-lost                cli
 PASSED    baseline (the unchanged tree)      -      
 
 47 mutants: 46 killed, 1 survived, 0 invalid
-SURVIVOR cli-shown-name-lost: NO REASON GIVEN
-
---- the survivor re-run alone after its reason was written in scripts/mutants_jsonl.py:
-SURVIVED  cli-shown-name-lost                cli    
-
-1 mutants: 0 killed, 1 survived, 0 invalid
 SURVIVOR cli-shown-name-lost: equivalent: the name of the converted input is read by no answer. The refusals of the CSV reader carry a line and a column and no path, and a read of bytes in memory cannot fail with an errno; the refusals of the JSON lines reader take the name from the original Rp

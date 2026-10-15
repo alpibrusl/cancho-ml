@@ -46,7 +46,7 @@ pinned from cancho-table beyond what `ml` pins today, and no branch of cancho-ta
 Where (B) differs from table on purpose: `--fields` items are **flat names** (the key of the top-level object, literally: `a.b` is the key `"a.b"`, never
 the path `a` then `b`; table's dotted and indexed paths are not read), because the issue's contract is "never guessed" and a flat name is the only reading
 that needs no rule about arrays and nulls on the way; and the values are typed by the column (section 3), because `ml` reads typed columns where table
-reads text. A user who wants `user.age` writes `table --input-format jsonl --fields user.age --format csv FILE | ml fit ... -` (section 4).
+reads text. A user who wants `user.age` writes `table --input-format jsonl --fields id,user.age,spend --select '#2,#3' --format csv FILE | ml fit ... -` (section 7 shows the pipe answering).
 
 **Reproduction of the closure table** (`ci`-free, no compiler): `python3 scripts/jsonl_closure.py DIR_OF_TABLE_CHECKOUT` prints the rows above.
 
@@ -75,7 +75,7 @@ duplicates), as table does for keys the plan does not look up.
 **Standard input.** `fit -` and `eval -` read standard input as `predict -` does (`docs/serving.md` section 2): up to `--max-bytes` bytes, kept in memory
 (`limit.input-too-large` past it), CSV or JSON lines alike. The operand is required for `fit` and `eval` (no operand is `args.missing-operand`, as before):
 `predict` is the only verb where no operand means standard input. Memory: the bytes once, and for JSON lines the CSV made from them as well while the
-conversion runs (the JSON bytes are released before the model is fitted), so the peak is below two times `--max-bytes`. `fit - --split ...` needs no
+conversion runs (the JSON bytes are released before the verb runs), so the peak is below three times `--max-bytes` (the JSON lines, the CSV, and the copy of the CSV that the verb reads). `fit - --split ...` needs no
 second read (the scan already runs twice over the bytes in memory). `fit --cv` does not exist on `main`; when it merges it reads the same bytes in
 memory, which is why `fit -` was built with a bounded buffer and not as a stream. `--track` (not on `main`): the training file is `-`; **[choice] the
 tracking stage records the name `-` and the SHA-256 of the bytes read from standard input** (for JSON lines, of the JSON lines bytes, before the
@@ -173,4 +173,25 @@ Lookup of the keys of a line is one pass over the pairs of the top-level object 
 
 ## 7. What was built and measured
 
-(filled in as the code lands; a number is here only when a script printed it)
+**Built.** `tools/ml/jsonl.cho` (the converter, 488 lines: the declaration of the fields, one record, the input), `tools/ml/jsonlcli.cho` (the flags, the fields of a model file, the refusals, the replacement of the input, 434 lines), `tools/jsonl-check/main.cho` (the driver of the gates, a `[[bin]]` of `cancho.toml`), and edits of shared files, all small: `tools/ml/main.cho` and `tools/ml-predict/main.cho` (two lines each: the flag check and the conversion between "resolve the paths" and "run the verb"), `tools/ml/app.cho` (`stdin_wanted` takes `fit -` and `eval -`), `tools/ml/wire.cho` and `tools/ml/catcli.cho` (the loaders take the `Rp` of the input, so the bytes in memory reach them: three call sites), `tools/ml/spec.tmpl` (four flags, eight rules, one limit; `spec.cho`, the schemas, the manifests and `generated/*/built.cho` are regenerated from it), `cancho.toml` (two source lists and the `jsonl-check` bin), `tools.toml` (a reason), `tests/conformance/fixtures.py` (`_jsonl_cases`, appended), `scripts/site.py`, `scripts/xplat_check.py` (two cases appended), `scripts/check.sh`, `.github/workflows/ci.yml` (one build line), and the patterns of `scripts/mutants_cli.py` and `scripts/mutants_serve.py` that named the lines these edits changed.
+
+**The decision, measured** (section 1): `python3 scripts/jsonl_closure.py DIR` on cancho-table `0a1b7dc`: the input module `jsonl` has 30 modules and 15,777 lines in its import closure, `jrec` (one record) 18 and 9,553, both with the table's `Query`; `jfields` and `jflat` (255 and 202 lines) are free of the plan and hold neither the reading of a value nor an interface to it. `std.json.parse_with` is in cancho `e47d647` and not in `a4572ea`. No branch of cancho-table was made.
+
+**The gates, run on the final tree** (Mac, macOS 26, arm64, `a4572ea`; the machine was loaded, load average above 50 during the cost run):
+
+| gate | result |
+|---|---|
+| G1 `test_jsonl_equiv.py` | 20 tests pass |
+| G2 `test_jsonl_oracle.py` | 26 tests pass; 250 seeded random files agree with `jsonl_ref.py`; the CSV bound is exact to the byte; depth 127 and 128 are accepted and 129 refused, as the reference says |
+| G3 `test_jsonl_rules.py` | 12 tests pass; 24 fixtures (`_jsonl_cases`) reach the 8 new rules, 6 `args.*` and limit rules of the new flags |
+| G4 `test_jsonl_fuzz.py` | 11 tests pass: 0 traps, 0 hangs; 120 random and mutated files; hostile field lists of 8,192 and 8,193 names, and of 400,000 empty names, are answered quickly (a first version of the field list parser allocated a region of the size the list chose and trapped at 4,097 names; the test that found it is `test_hostile_field_lists_cost_their_length`) |
+| G5 `scripts/mutants_jsonl.py` | run on the final tree: 47 mutants, 46 killed, 1 explained (`cli-shown-name-lost`: the name of the converted input is read by no answer). `docs/bench/mutants_jsonl.log` |
+| G6 | `scripts/check_bins.py` and `scripts/manifest.py --check` pass; the derived authority of the three binaries is the same set of labels as before (`ml-predict`: `args`, `dir_read`, `err_write`, `file_read`, `fs_read("")`, `heap`, `io_read`, `io_write`); `ml-serve` compiles the new modules and its `main` reaches none of them |
+| G7 | in a Python with `ci/requirements-fast.txt` only (no numpy): `scripts/run_conformance.py --no-oracles` runs the four new modules, 68 tests at the time, none "not run" |
+| H | `scripts/xplat_check.py` prints `ok, 96 lines for 24 fits` on the Mac; the first 88 lines of `docs/bench/xplat_fp.txt` are unchanged and the 8 appended lines carry the hashes of the CSV cases (the model file and the predict answer of `logistic-iris-jsonl` equal those of `logistic-iris-t1`, and of `forest-pets-jsonl-cat` those of `forest-pets-hash-t1`) |
+| `table ... | ml predict -` | `table --input-format jsonl --fields id,user.age,spend --select '#2,#3' --format csv events.jsonl | ml predict --model-file m.ml -` answers (cancho-table built at `0a1b7dc` with its pinned compiler `e47d647`, a scratch clone): the CSV `table` prints is the header `user.age,spend` and the values, and `ml` reads it |
+@GRAM@
+
+**Cost** (one run each, minimum of 3, Mac with a load average of 56, so the figures are an upper bound and mean nothing against another machine): a file of 120,000 lines with 13 numeric keys (18,480,000 bytes), and the same table as a CSV (10,320,040 bytes). `jsonl-check` (the conversion alone) 0.43 s, about 43 MB/s of JSON lines; `ml fit --model constant` on the CSV 0.11 s, and on the JSON lines 0.30 s; the two model files are equal. Nothing is claimed against another reader or another library.
+
+**Not done.** `ml cv` and `--track`: not on `main` (the decisions are in section 2). Dotted or indexed paths in `--fields`: not read (section 1). The line of a CSV-reader refusal is the generated CSV's (section 4); a mapping back to the input line would need the reader to carry the line map. `--max-bytes` for a JSON lines file bounds memory (the file is read whole), where a CSV file is streamed.
