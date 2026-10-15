@@ -423,6 +423,19 @@ $ curl -s localhost:8080/openapi.json
 
 The model is read at start and changed by restarting. There is no TLS, no reload and no request deadline beyond the idle time. [docs/serving-http.md](docs/serving-http.md) has the endpoints, the status of every refusal, the limits and the gates.
 
+### The numeric stores other repositories pin
+
+The random generator, the matrix and its missing-cell bitmap, the exact sums, the linear algebra (Cholesky and the solves among it) and the ranks and splits are published as 23 pinned stores under `.cancho-vcs`, one per module (`ml.rng`, `ml.matrix`, `linalg.chol`, `metrics.splits` and the others), so that another repository, `cancho-stats` first, pins them and copies nothing. `python3 scripts/publish_stores.py` writes them, `--check` fails when a committed store differs from a fresh publish of the sources, and `python3 scripts/consume_stores.py` builds a scratch package outside the repository that pins the stores of a commit and calls every module. A consumer writes, for each module it imports:
+
+```
+[dependencies.ml-rng]
+git = "https://github.com/alpibrusl/cancho-ml"
+rev = "<a commit that holds the stores>"
+path = ".cancho-vcs/ml.rng"
+```
+
+The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`); a change to one is a pin move for the consumers. `ml` itself builds from `lib/core`, `lib/linalg` and `lib/metrics` and does not consume its own stores. [docs/stores.md](docs/stores.md)
+
 ## Built to be read by an agent
 
 `ml introspect` and `ml skill` come from the same tables the code parses its flags with, so they cannot disagree with the program: the interface, the limits, the rules and the authority can be learned from the binary itself. A test checks that every flag and every rule is in the table, in `introspect`, in `skill`, in the schema and in a fixture. [docs/cli.md](docs/cli.md) section 1.
@@ -539,6 +552,7 @@ The tables, the load of each cell and how to rerun them: [project page](https://
 | [docs/linalg.md](docs/linalg.md), [docs/rng.md](docs/rng.md) | the tensor and linear-algebra package and its summation order; the random generator |
 | [docs/reader.md](docs/reader.md) | the float and decimal CSV reader and the dependency on cancho-table |
 | [docs/metrics.md](docs/metrics.md) | metrics and splits |
+| [docs/stores.md](docs/stores.md) | the 23 numeric stores other repositories pin: the list and its import closure, the API, how a consumer pins, the gates |
 | [docs/models-linear.md](docs/models-linear.md), [docs/models-tree.md](docs/models-tree.md) | linear and logistic regression and k-means; trees and forests; the red gate |
 | [docs/spikes.md](docs/spikes.md), [docs/simd-ceiling.md](docs/simd-ceiling.md) | what was measured while deciding the design, with machine, load and minimum of N; the record of the decision, not a speed claim for `ml` |
 | [docs/upstream/](docs/upstream/) | reproducers for what cancho lacks, and the proposal to cancho-table |
