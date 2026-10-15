@@ -381,13 +381,13 @@ class Transport(Common):
         self.post("/predict", dict(RECORD, **{marker: 1}))
         self.srv.request("GET", "/health?token=" + marker)
         log = self.srv.stderr()
-        self.assertIn("listening on %d" % self.srv.port, log)
+        self.assertIn("listening on 127.0.0.1:%d" % self.srv.port, log)
         self.assertIn("POST /predict 422", log)
         self.assertNotIn(marker, log)
         self.assertNotIn("0.5", log)
         self.assertNotIn(self.desc["file"]["sha256"], log)
         for line in log.splitlines():
-            self.assertRegex(line, r"^(listening on \d+|[A-Z]+ /\S* \d{3} \d+ms)$")
+            self.assertRegex(line, r"^(listening on 127\.0\.0\.1:\d+|[A-Z]+ /\S* \d{3} \d+ms)$")
 
 
 class Kinds(unittest.TestCase):
