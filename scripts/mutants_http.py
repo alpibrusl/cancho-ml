@@ -104,6 +104,8 @@ MUTANTS = [
       why="the check is a backstop: the ceilings (1,000 rows of at most about 56 bytes) keep an answer under 60,000 bytes, so no request reaches it; an equivalent mutant of the tests, not of the design"),
     M("s-unknown-count-dropped", "S1", "unknown_categories is always 0", [e(SRV, "unseen = json.to_int(payload, tp, unknown);", "unseen = 0;")], S1,
       why="a vocabulary the file lists in full is an enum, so a category the model has not seen is refused before the predictor counts it; the count is nonzero only for a hash column, which counts none"),
+    M("s-out-of-range-dropped", "S1", "the answer's out_of_range is always null", [e(SRV, "                if oor >= 0 {\n                    w = track.put_node(heap, w, payload, tp, oor);", "                if false {\n                    w = track.put_node(heap, w, payload, tp, oor);")], ["test_serve_bytes", "test_track.Serve"]),
+    M("s-out-of-range-bound-ignored", "S1", "--max-out-of-range is not passed to the predictor", [e(SRV, "sv.max_oor, sv.max_oor_given);", "0, false);")], ["test_track.Serve"]),
     # ------------------------------------------------------------------ S2: the process
     M("m-no-token-flag-needed", "S2", "ml-serve starts with neither --token-file nor --no-token", [e(MAIN, '} else if !cli.has(parsed, table, "token-file") && !cli.has(parsed, table, "no-token") {', "} else if false {")], ["test_serve.Start.test_no_token_flag_is_refused"]),
     M("m-the-token-keeps-its-newline", "S2", "the line feed of the token file is part of the token", [e(MAIN, "if len(text) > 0 && int_of(text[len(text) - 1]) == 10 {", "if false {")], ["test_serve.Token"]),

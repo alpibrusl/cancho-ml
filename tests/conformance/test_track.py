@@ -578,6 +578,25 @@ class Tracking(Base):
         self.assertEqual(self.sb.run("runs", "list", "runs").first_rule(), "ml.runs.damaged")
 
 
+class Serve(Base):
+    def test_the_server_reports_the_cells_outside_the_range_and_refuses_over_its_bound(self):
+        from serve_lib import Server
+
+        self.fit()
+        with Server(self.sb.dir, "m.cml", "--max-out-of-range", "0") as srv:
+            hdr = {"Content-Type": "application/json"}
+            ok = srv.request("POST", "/predict", body=b'{"a":2,"b":3,"c":1}', headers=hdr)
+            self.assertEqual(ok.status, 200, ok)
+            self.assertEqual(ok.json()["out_of_range"]["cells"], "0")
+            far = srv.request("POST", "/predict", body=b'{"a":99,"b":3,"c":1}', headers=hdr)
+            self.assertEqual(far.status, 422, far)
+            self.assertEqual(far.json()["rule"], "ml.predict.out-of-range")
+        with Server(self.sb.dir, "m.cml") as srv:
+            far = srv.request("POST", "/predict", body=b'{"a":99,"b":3,"c":1}', headers={"Content-Type": "application/json"})
+            self.assertEqual(far.status, 200, far)
+            self.assertEqual(far.json()["out_of_range"]["columns"][0]["name"], "a")
+
+
 class Replay(Base):
     """T3: `runs verify` reproduces the model's SHA-256 for every kind, at 1 and at 8 threads (the cases of the oracle: constants, linear, logistic, tree, forest, kmeans, categorical, split)."""
 
