@@ -540,7 +540,9 @@ class Tracking(Base):
         self.assertEqual(s["id"], a["id"])
         c = self.sb.run("runs", "compare", "runs", a["id"], b["id"]).data()
         self.assertEqual([x["key"] for x in c["inputs"]], ["seed"])
-        self.assertIs(c["model_equal"], True)  # the seed does not reach a linear fit: same bytes
+        self.assertIs(c["model_equal"], False)  # the seed is in the meta of the file: another seed, other bytes
+        same = self.sb.run("runs", "compare", "runs", a["id"], a["id"]).data()
+        self.assertIs(same["model_equal"], True)
         o = self.track("--l2", "3", name="o.cml")
         c2 = self.sb.run("runs", "compare", "runs", a["id"], o["id"]).data()
         self.assertIs(c2["model_equal"], False)

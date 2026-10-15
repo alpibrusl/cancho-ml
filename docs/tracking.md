@@ -241,7 +241,7 @@ that adds the code (section 10).
 ## 8. The goldens: one deliberate re-record **[choice]**
 
 Every model file `fit` writes gains section 7, so its bytes and its SHA-256 change, and so does the `bytes` and `sha256` of the answer of `fit`; `describe` gains a member; `predict` and `eval` gain members.
-The re-record is **one commit**, made after the code works and before the docs, and it lists in its message every file it changes and why. The list is in section 10 (filled from the diff).
+The re-record is **one commit**, made after the code works and before the docs, and it lists in its message every file it changes and why. The list is in section 10.
 Nothing else in a golden may change: the commit is checked by comparing the re-recorded files with the previous ones after removing the new members, and a model file with section 7 removed (and the
 header count and the checksum repaired) with the previous bytes.
 
@@ -267,4 +267,25 @@ The existing suites (`scripts/check.sh`) run unchanged apart from the goldens of
 
 ## 10. Results
 
-(filled when the gates have run)
+Measured on one machine (Apple silicon, macOS), 2026-10-15, with the tree at the commit that carries this text; the machine was shared with other builds, so no timing is claimed.
+
+**The re-record** is commit `08309e2`. It changes 11 files: `tests/conformance/golden_constant.json`, `golden_numeric.json`, `golden_planned.json`, `golden_describe.json` and the seven documents
+`docs/serving/*.openapi.json` (the `provenance` member of `describe` and the `on`, `out_of_range` and `ignored_columns` members of the answers are in their schemas). `scripts/golden_track.py --verify OLD_BIN`
+ran the recorded cases with the binary of the parent and with the new one before the commit: 126 recorded cases change, 0 differences are unexplained, and each of the 59 planned model files is the old file with
+section 7 added (removing it and repairing the count and the checksum gives the old bytes).
+
+| gate | result |
+|---|---|
+| T1, T2 | `scripts/oracle_track.py --suite`: 13 cases (every model kind; categorical and `--split` fits; a float forced on an integer column); section 7 and the record equal the oracle's bytes, 0 mismatches |
+| T3 | the same 13 cases are refitted by `runs verify` at `--threads` 1 and 8: the model SHA-256 is reproduced in all 26 |
+| T4 to T11 | `tests/conformance/test_track.py` (42 tests, 7 classes without `Serve`; `Serve` needs `ml-serve`) and `test_serve_bytes`, inside the 451 tests of `scripts/check.sh` (all pass) |
+| T12 | `scripts/mutants_track.py`: 71 mutants, 66 killed, 5 survive and each has its reason in the script; the unmutated control passes |
+| T13 | `check_registry.py`, `manifest.py --check`, `check_bins.py` (and its mutants), the schema tests: pass |
+
+The five survivors: the cap of 8192 features (redundant with the equal length and the schema's feature count), the minimum-below-maximum term (implied by the mean lying in `[min, max]`), the count of seven
+sections (the order rule refuses the eighth), a column with no training cell skipped at range time (no fixture has a column that is empty in training), and the second hash of the training file in `fit`
+(a file changing during the fit cannot be arranged from a test).
+
+**Limits.** The `--track` directory must exist (the pinned compiler has no primitive that creates one). A flag column (`--drop`, `--float`, `--cat`) at a header position of 62 or more is not
+replayable (`ml.runs.not-replayable`). A non-UTF-8 name is not replayable. `ml.input.changed` is reported as `io.read-failed` and no fixture reaches it. A standard deviation whose sum of squares
+overflows is stored as the largest finite double. A constant model has no feature record. `eval` reads the model file again to hash it.
