@@ -251,12 +251,10 @@ fn plan_source[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byt
     return (b, true, e);
 }
 
-fn make_plan[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Planned, bool, fail.Errors) {
+// The plan parsed from its text (`ptxt`, consumed; `ok` false when the text could not be had: nothing is parsed), and the wired model it names with its hyperparameters
+fn build_plan[&h](heap: &!h Heap, ptxt: buffer.Buffer, ok: bool, o: verbs.Opts, errs: fail.Errors) -> [heap] (Planned, bool, fail.Errors) {
     var e = errs;
-    var go = true;
-    let (ptxt, ok1, e1) = plan_source(heap, fs, root, planp, o, tokens, e);
-    e = e1;
-    go = ok1;
+    var go = ok;
     var pl = plan.empty(heap);
     var kind = 0;
     var ip = box_slice(heap, 8, 0);
@@ -326,7 +324,7 @@ fn empty_data[&h](heap: &!h Heap) -> [heap] Data {
     return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, yall: box_slice(heap, 2, 0.0), cat: false };
 }
 
-fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, mixed_plan: bool, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
+fn load_data[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], mixed_plan: bool, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
@@ -337,7 +335,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
     var ids = catmat.empty(heap);
     var voc = dict.empty_vocab(heap);
     if o.cat_given || mixed_plan {
-        let l = csvload.load_cat(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), verbs.cat_config(o), o.target, false, dict.empty_vocab(heap), false);
+        let l = csvload.load_cat_with(heap, fs, root, file, verbs.config(o, 0, 0, 0), verbs.cat_config(o), tg, false, dict.empty_vocab(heap), false, na);
         let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
@@ -350,7 +348,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
         rep = rep2;
         code = code2;
     } else {
-        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), o.target, false);
+        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), tg, false);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
         x = x2;
@@ -376,7 +374,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
             w = fail.no_repair(heap, w);
             w = fail.detail_open(heap, w);
             w = fail.detail_str(heap, w, "flag", "--target");
-            w = fail.detail_text(heap, w, "name", o.target);
+            w = fail.detail_text(heap, w, "name", tg);
             e = fail.add(heap, e, w);
             go = false;
         } else {
@@ -404,11 +402,11 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
     borrow sh as &sr in {
         schema.drop(heap, sc);
         if o.cat_given || mixed_plan {
-            tj = catwire.numeric_index(sr, o.target);
-            sc = catwire.numeric_schema(heap, sr, o.target);
+            tj = catwire.numeric_index(sr, tg);
+            sc = catwire.numeric_schema(heap, sr, tg);
         } else {
-            tj = wiredata.kept_index(sr, o.target);
-            sc = wiredata.schema_of_shape(heap, sr, o.target);
+            tj = wiredata.kept_index(sr, tg);
+            sc = wiredata.schema_of_shape(heap, sr, tg);
         }
     }
     var ncat = 0;
@@ -441,7 +439,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
         }
         unbox_slice(heap, none);
         if bad > 0 {
-            e = wiredata.empty_target(heap, e, o.target, bad);
+            e = wiredata.empty_target(heap, e, tg, bad);
             go = false;
         } else if task == 2 {
             var cnt = 0;
@@ -469,7 +467,7 @@ fn load_data[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), 
                 c1 = hi;
                 c0 = lo;
                 if o.positive_given {
-                    let (pok, pv) = wiredata.parse_label(o.positive);
+                    let pv = o.positive_v;
                     if pv == lo {
                         c1 = lo;
                         c0 = hi;
@@ -1016,7 +1014,7 @@ fn apply_any[&h, &p, &m, &i, &v](heap: &!h Heap, cat: bool, payload: &p [byte], 
 }
 
 // ,"split":{...},"holdout":{...} for the rows --split held out, scored through the STORED steps and the fitted model
-fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, bool, fail.Errors) {
+fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], which: int, ntest: int, on: &static [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     var go = true;
     var w = json.writer(heap, 256);
@@ -1025,7 +1023,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
     var xte = matrix.empty(heap);
     if nfeat > 0 {
         borrow featcols as &fr in {
-            let (m3, code3) = wiredata.take(heap, ds.x, sel, 1, contents(fr), nfeat, o.max_rows, o.max_cols, o.max_cells);
+            let (m3, code3) = wiredata.take(heap, ds.x, sel, which, contents(fr), nfeat, o.max_rows, o.max_cols, o.max_cells);
             matrix.drop(heap, xte);
             xte = m3;
             if code3 != 0 {
@@ -1036,7 +1034,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
     }
     var idte = catmat.empty(heap);
     if go && ds.cat {
-        let (idt, icode) = catwire.take_ids(heap, cids, sel, 1, o.max_rows, o.max_cols, o.max_cells);
+        let (idt, icode) = catwire.take_ids(heap, cids, sel, which, o.max_rows, o.max_cols, o.max_cells);
         catmat.drop(heap, idte);
         idte = idt;
         if icode != 0 {
@@ -1074,7 +1072,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
                         var yte = box_slice(heap, ntest + 1, 0.0);
                         var hc0 = ds.c0;
                         if ds.tj >= 0 {
-                            let (y2, bad) = wiredata.take_col(heap, ds.x, sel, 1, ds.tj);
+                            let (y2, bad) = wiredata.take_col(heap, ds.x, sel, which, ds.tj);
                             unbox_slice(heap, yte);
                             yte = y2;
                         } else {
@@ -1107,7 +1105,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
     w = json.put_key(heap, w, "rows");
     w = json.put_int(heap, w, ntest);
     w = json.put_key(heap, w, "on");
-    w = json.put_string(heap, w, "held-out");
+    w = json.put_string(heap, w, on);
     w = json.put_key(heap, w, "metrics");
     borrow mobj as &mor in {
         if buffer.size(mor) > 0 {
@@ -1123,7 +1121,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
 }
 
 // the model file's bytes and the summary of the answer
-fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, pv: &pv [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
+fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv, &tn, &nn](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, pv: &pv [byte], want_rec: bool, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     let kind = pls.kind;
     var mp = box_slice(heap, 8, byte_of(0));
@@ -1148,7 +1146,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv](heap: &!h Heap, args: &g A
     var go = true;
     if ds.cat {
         // the schema of every column the model reads, the categorical ones with type 3; the steps become stubs and the vocabularies the string table (docs/stringtable.md)
-        let fsc = catwire.full_schema(heap, ds.sh, o.target);
+        let fsc = catwire.full_schema(heap, ds.sh, tg);
         var spf = buffer.empty(heap, 1);
         var fcols = 0;
         borrow fsc as &fsr in {
@@ -1156,7 +1154,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv](heap: &!h Heap, args: &g A
             spf = schema.encode(heap, fsr);
             fcols = schema.columns(fsr);
         }
-        let (section, tbl, pf) = strtab.pack(heap, buffer.bytes(tr.fitted.payload), o.na, o.max_cats, o.max_str, o.max_pool, o.max_catcols);
+        let (section, tbl, pf) = strtab.pack(heap, buffer.bytes(tr.fitted.payload), na, o.max_cats, o.max_str, o.max_pool, o.max_catcols);
         if pf.code != 0 {
             e = wiredata.code_error(heap, e, pf.code, pf.a, pf.b, pf.c);
             go = false;
@@ -1190,11 +1188,27 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv](heap: &!h Heap, args: &g A
     unbox_slice(heap, mp);
     var split = buffer.empty(heap, 1);
     if go && o.split_given {
-        let (sp2, ok6, e6) = holdout(heap, args, ds, cids, cvoc, pls, tr, sel, ntest, o, e);
+        let (sp2, ok6, e6) = holdout(heap, args, ds, cids, cvoc, pls, tr, sel, 1, ntest, "held-out", o, e);
         buffer.drop(heap, split);
         split = sp2;
         e = e6;
         go = ok6;
+    }
+    // the metrics of a run record (docs/tracking.md section 5.3): the held-out rows when there is a split, else the training rows, scored through the stored steps by the code of eval
+    var rec = buffer.empty(heap, 1);
+    if go && want_rec {
+        if o.split_given {
+            buffer.drop(heap, rec);
+            borrow split as &spr in {
+                rec = buffer.append(heap, buffer.empty(heap, buffer.size(spr) + 1), buffer.bytes(spr));
+            }
+        } else {
+            let (rc2, ok8, e8) = holdout(heap, args, ds, cids, cvoc, pls, tr, sel, 0 - 1, ds.nrows, "train", o, e);
+            buffer.drop(heap, rec);
+            rec = rc2;
+            e = e8;
+            go = ok8;
+        }
     }
     var summary = buffer.empty(heap, 1);
     if go {
@@ -1207,13 +1221,55 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv](heap: &!h Heap, args: &g A
     }
     buffer.drop(heap, split);
     buffer.drop(heap, table);
-    return (fbytes, summary, go, e);
+    return (fbytes, summary, rec, go, e);
 }
 
-pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
+// What a fit makes before anything is written: the model file's bytes, the summary of the answer, the metrics of a run record, and the numbers the record holds. `make` is `fit` without the
+// writing, so that `ml runs verify` refits in memory with the same code (docs/tracking.md section 5.4).
+pub res struct Made {
+    fbytes: buffer.Buffer,
+    summary: buffer.Buffer,
+    // the metrics object of the run record, empty when none was asked for
+    rec: buffer.Buffer,
+    // the canonical plan text
+    ptext: buffer.Buffer,
+    // the SHA-256 of the training file, 32 raw bytes
+    sha: buffer.Buffer,
+    errs: fail.Errors,
+    log: buffer.Buffer,
+    ok: bool,
+    kind: int,
+    task: int,
+    trows: int,
+    cols: int,
+    ntest: int,
+    file_rows: int,
+    file_bytes: int,
+    features: int,
+    steps: int,
+}
+
+pub fn drop_made[&h](heap: &!h Heap, m: Made) -> [heap] int {
+    let Made { fbytes, summary, rec, ptext, sha, errs, log, ok, kind, task, trows, cols, ntest, file_rows, file_bytes, features, steps } = m;
+    buffer.drop(heap, fbytes);
+    buffer.drop(heap, summary);
+    buffer.drop(heap, rec);
+    buffer.drop(heap, ptext);
+    buffer.drop(heap, sha);
+    buffer.drop(heap, log);
+    return fail.drop(heap, errs);
+}
+
+fn failed_made[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer) -> [heap] Made {
+    return Made { fbytes: buffer.empty(heap, 1), summary: buffer.empty(heap, 1), rec: buffer.empty(heap, 1), ptext: buffer.empty(heap, 1), sha: buffer.empty(heap, 1), errs: errs, log: log, ok: false, kind: 0, task: 0, trows: 0, cols: 0, ntest: 0, file_rows: 0, file_bytes: 0, features: 0, steps: 0 };
+}
+
+// Fit the model of the plan text `ptxt` (consumed; `ok` false when the text could not be had) on the file `file`, as `fit` does, and make its file. `tg` is the target's name and `na` the
+// missing-value markers: they come from the command line, or from a record (a runtime text cannot be a field of Opts). `want_rec`: also score the rows for the run record.
+pub fn make[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], o: verbs.Opts, want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read, conc] Made {
     var e = errs;
     var lg = log;
-    let (pls, ok1, e1) = make_plan(heap, fs, root, planp, tokens, o, e);
+    let (pls, ok1, e1) = build_plan(heap, ptxt, ok0, o, e);
     e = e1;
     var go = ok1;
     var kind = 0;
@@ -1253,7 +1309,7 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         hashed = st1 == 0;
     }
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, args, fs, root, file, o, mixed_plan, task, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, args, fs, root, file, o, tg, na, mixed_plan, task, e, lg);
         drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -1272,7 +1328,8 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
     var want = 0 - 1;
     var ntest = 0;
     if go && o.split_given {
-        let (sok, num, den) = wiredata.parse_split(o.split);
+        let num = o.split_num;
+        let den = o.split_den;
         let nt = splits.n_test_for(dn, num, den);
         var code = 0;
         if nt < 1 {
@@ -1359,6 +1416,7 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
     }
     var fbytes = buffer.empty(heap, 1);
     var summary = buffer.empty(heap, 1);
+    var rec = buffer.empty(heap, 1);
     if go {
         borrow ds as &dr in {
             borrow cids as &cir in {
@@ -1367,11 +1425,13 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
                         borrow tr as &tq in {
                             borrow sel as &sq in {
                                 borrow pv as &pvr in {
-                                    let (fb2, sm2, ok7, e7) = assemble(heap, args, dr, cir, cvr, pr, tq, contents(sq), ntest, buffer.bytes(pvr), o, e);
+                                    let (fb2, sm2, rc2, ok7, e7) = assemble(heap, args, dr, cir, cvr, pr, tq, contents(sq), ntest, buffer.bytes(pvr), want_rec, o, tg, na, e);
                                     buffer.drop(heap, fbytes);
                                     buffer.drop(heap, summary);
+                                    buffer.drop(heap, rec);
                                     fbytes = fb2;
                                     summary = sm2;
+                                    rec = rc2;
                                     e = e7;
                                     go = ok7;
                                 }
@@ -1399,20 +1459,25 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
             go = false;
         }
     }
-    buffer.drop(heap, h1);
     buffer.drop(heap, pv);
-    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    var made = failed_made(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
     if go {
-        verbs.drop_out(heap, result);
+        drop_made(heap, made);
         var cols = 0;
         var trows = 0;
         var is_cat = false;
+        var nfeat = 0;
+        var nsteps = 0;
+        var file_rows = 0;
         borrow ds as &dr in {
             cols = schema.columns(dr.sc);
             is_cat = dr.cat;
+            nfeat = feature_count(dr);
+            file_rows = dr.nrows;
         }
         borrow tr as &tq in {
             trows = tq.rows;
+            nsteps = tq.fitted.n;
         }
         if is_cat {
             // every column of the table, the categorical ones too
@@ -1420,6 +1485,41 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
                 cols = cols + dict.ncols(cvr);
             }
         }
+        var ptext = buffer.empty(heap, 1);
+        borrow pls as &pr in {
+            buffer.drop(heap, ptext);
+            ptext = buffer.append(heap, buffer.empty(heap, len(plan.text(pr.pl)) + 1), plan.text(pr.pl));
+        }
+        made = Made { fbytes: fbytes, summary: summary, rec: rec, ptext: ptext, sha: h1, errs: e, log: lg, ok: true, kind: kind, task: task, trows: trows, cols: cols, ntest: ntest, file_rows: file_rows, file_bytes: size1, features: nfeat, steps: nsteps };
+    } else {
+        buffer.drop(heap, h1);
+        buffer.drop(heap, summary);
+        buffer.drop(heap, rec);
+        buffer.drop(heap, fbytes);
+        drop_made(heap, made);
+        made = failed_made(heap, e, lg);
+    }
+    unbox_slice(heap, sel);
+    drop_trained(heap, tr);
+    drop_data(heap, ds);
+    catmat.drop(heap, cids);
+    dict.drop_vocab(heap, cvoc);
+    drop_planned(heap, pls);
+    return made;
+}
+
+pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
+    let (ptxt, ok0, e0) = plan_source(heap, fs, root, planp, o, tokens, errs);
+    let m = make(heap, args, fs, root, file, ptxt, ok0, o.target, o.na, o, o.track_given, e0, log);
+    let Made { fbytes, summary, rec, ptext, sha, errs, log, ok, kind, task, trows, cols, ntest, file_rows, file_bytes, features, steps } = m;
+    let e = errs;
+    let lg = log;
+    buffer.drop(heap, rec);
+    buffer.drop(heap, ptext);
+    buffer.drop(heap, sha);
+    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    if ok {
+        verbs.drop_out(heap, result);
         borrow fbytes as &fb in {
             result = answer_fit(heap, fs, root, out, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, buffer.bytes(fb), summary, e, lg);
         }
@@ -1429,11 +1529,5 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         result = verbs.nothing(heap, e, lg);
     }
     buffer.drop(heap, fbytes);
-    unbox_slice(heap, sel);
-    drop_trained(heap, tr);
-    drop_data(heap, ds);
-    catmat.drop(heap, cids);
-    dict.drop_vocab(heap, cvoc);
-    drop_planned(heap, pls);
     return result;
 }

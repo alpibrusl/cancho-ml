@@ -72,6 +72,14 @@ pub struct Opts {
     // predict, eval: --max-out-of-range N (docs/tracking.md section 3.3), and whether it was given
     max_oor: int,
     max_oor_given: bool,
+    // a replay of a recorded fit (ml runs verify, docs/tracking.md section 5.4): the positions of the header that --drop, --float and --cat name, as the bit masks of csv.Cfg, the positive label and
+    // the split as numbers (a recorded text cannot be a field of this structure); 0 on every command line but the numbers --positive and --split give
+    drop_mask: int,
+    float_mask: int,
+    cat_mask: int,
+    positive_v: int,
+    split_num: int,
+    split_den: int,
     // fit, eval: whether --track was given
     track_given: bool,
 }
@@ -391,11 +399,11 @@ fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte]
 }
 
 pub fn cat_config(o: Opts) -> [] csv.CatCfg {
-    return csv.CatCfg { cols: o.cats, na: o.na, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols, lenient: false };
+    return csv.CatCfg { cols: o.cats, cat_mask: o.cat_mask, na: o.na, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols, lenient: false };
 }
 
 pub fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {
-    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops, floats: o.floats, missing: false, mrows: 0, mcols: 0, wpc: 0 };
+    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops, floats: o.floats, drop_mask: o.drop_mask, float_mask: o.float_mask, missing: false, mrows: 0, mcols: 0, wpc: 0 };
 }
 
 // ---------------------------------------------------------------- text

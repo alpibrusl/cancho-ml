@@ -14,6 +14,7 @@ import ml.est;
 import ml.paths;
 import ml.spec;
 import ml.verbs;
+import ml.wiredata;
 import ml.wire;
 import toolbox.cli;
 import toolbox.fail;
@@ -300,12 +301,36 @@ pub fn drop_paths[&h](heap: &!h Heap, ps: Paths) -> [heap] int {
     return paths.drop(heap, logp);
 }
 
+// the value of --positive (an integer label), 0 when it is not given or not a label
+fn positive_value[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] int {
+    if !cli.has(parsed, table, "positive") {
+        return 0;
+    }
+    let (ok, v) = wiredata.parse_label(cli.text(args, parsed, table, "positive"));
+    return v;
+}
+
+// the numerator (part 0) or the denominator (part 1) of --split train=F, 0 when it is not given or malformed
+fn split_part[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte], part: int) -> [args] int {
+    if !cli.has(parsed, table, "split") {
+        return 0;
+    }
+    let (ok, num, den) = wiredata.parse_split(cli.text(args, parsed, table, "split"));
+    if !ok {
+        return 0;
+    }
+    if part == 0 {
+        return num;
+    }
+    return den;
+}
+
 pub fn options[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] verbs.Opts {
     var task = 1;
     if bytes.equal(cli.text(args, parsed, table, "task"), "classification") {
         task = 2;
     }
-    return verbs.Opts { cap: cli.nat(args, parsed, table, "max-line-bytes"), max_rows: cli.nat(args, parsed, table, "max-rows"), max_cols: cli.nat(args, parsed, table, "max-columns"), max_cells: cli.nat(args, parsed, table, "max-cells"), max_bytes: cli.nat(args, parsed, table, "max-bytes"), limit: cli.nat(args, parsed, table, "limit"), from: cli.nat(args, parsed, table, "from"), overwrite: cli.has(parsed, table, "overwrite"), dry: cli.has(parsed, table, "dry-run"), drop_given: cli.has(parsed, table, "drop"), task: task, drops: cli.text(args, parsed, table, "drop"), floats: cli.text(args, parsed, table, "float"), target: cli.text(args, parsed, table, "target"), model: cli.text(args, parsed, table, "model"), plan_given: cli.has(parsed, table, "plan"), step: cli.text(args, parsed, table, "step"), step_given: cli.has(parsed, table, "step"), positive: cli.text(args, parsed, table, "positive"), positive_given: cli.has(parsed, table, "positive"), split: cli.text(args, parsed, table, "split"), split_given: cli.has(parsed, table, "split"), seed: cli.nat(args, parsed, table, "seed"), threads: cli.nat(args, parsed, table, "threads"), threads_given: cli.has(parsed, table, "threads"), proba: cli.has(parsed, table, "proba"), distance: cli.has(parsed, table, "distance"), target_given: cli.has(parsed, table, "target"), task_given: cli.has(parsed, table, "task"), cats: cli.text(args, parsed, table, "cat"), cat_given: cli.has(parsed, table, "cat"), na: cli.text(args, parsed, table, "na-values"), max_cats: cli.nat(args, parsed, table, "max-categories"), max_str: cli.nat(args, parsed, table, "max-string-bytes"), max_pool: cli.nat(args, parsed, table, "max-pool-bytes"), max_catcols: cli.nat(args, parsed, table, "max-cat-columns"), max_oor: cli.nat(args, parsed, table, "max-out-of-range"), max_oor_given: cli.has(parsed, table, "max-out-of-range"), track_given: cli.has(parsed, table, "track") };
+    return verbs.Opts { cap: cli.nat(args, parsed, table, "max-line-bytes"), max_rows: cli.nat(args, parsed, table, "max-rows"), max_cols: cli.nat(args, parsed, table, "max-columns"), max_cells: cli.nat(args, parsed, table, "max-cells"), max_bytes: cli.nat(args, parsed, table, "max-bytes"), limit: cli.nat(args, parsed, table, "limit"), from: cli.nat(args, parsed, table, "from"), overwrite: cli.has(parsed, table, "overwrite"), dry: cli.has(parsed, table, "dry-run"), drop_given: cli.has(parsed, table, "drop"), task: task, drops: cli.text(args, parsed, table, "drop"), floats: cli.text(args, parsed, table, "float"), target: cli.text(args, parsed, table, "target"), model: cli.text(args, parsed, table, "model"), plan_given: cli.has(parsed, table, "plan"), step: cli.text(args, parsed, table, "step"), step_given: cli.has(parsed, table, "step"), positive: cli.text(args, parsed, table, "positive"), positive_given: cli.has(parsed, table, "positive"), split: cli.text(args, parsed, table, "split"), split_given: cli.has(parsed, table, "split"), seed: cli.nat(args, parsed, table, "seed"), threads: cli.nat(args, parsed, table, "threads"), threads_given: cli.has(parsed, table, "threads"), proba: cli.has(parsed, table, "proba"), distance: cli.has(parsed, table, "distance"), target_given: cli.has(parsed, table, "target"), task_given: cli.has(parsed, table, "task"), cats: cli.text(args, parsed, table, "cat"), cat_given: cli.has(parsed, table, "cat"), na: cli.text(args, parsed, table, "na-values"), max_cats: cli.nat(args, parsed, table, "max-categories"), max_str: cli.nat(args, parsed, table, "max-string-bytes"), max_pool: cli.nat(args, parsed, table, "max-pool-bytes"), max_catcols: cli.nat(args, parsed, table, "max-cat-columns"), max_oor: cli.nat(args, parsed, table, "max-out-of-range"), max_oor_given: cli.has(parsed, table, "max-out-of-range"), drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: positive_value(args, parsed, table), split_num: split_part(args, parsed, table, 0), split_den: split_part(args, parsed, table, 1), track_given: cli.has(parsed, table, "track") };
 }
 
 // the errors, and whether there are none
