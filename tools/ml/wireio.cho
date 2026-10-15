@@ -89,6 +89,35 @@ pub fn peek_kind[&d](data: &d [byte]) -> [] int {
     return 0;
 }
 
+// whether the model file is one of the planned kinds (the wired kinds, or a file with a string table): the files `predict` and `describe` decode with load_stored
+pub fn planned_file[&d](data: &d [byte]) -> [] bool {
+    return est.wired(peek_kind(data)) || six_sections(data);
+}
+
+pub fn stored_file[&s](st: &s Stored) -> [] &s file.Loaded {
+    return st.lo;
+}
+
+pub fn stored_schema[&s](st: &s Stored) -> [] &s schema.Schema {
+    return st.sc;
+}
+
+pub fn stored_kind[&s](st: &s Stored) -> [] int {
+    return st.kind;
+}
+
+pub fn stored_task[&s](st: &s Stored) -> [] int {
+    return st.task;
+}
+
+pub fn stored_c0[&s](st: &s Stored) -> [] int {
+    return st.c0;
+}
+
+pub fn stored_c1[&s](st: &s Stored) -> [] int {
+    return st.c1;
+}
+
 // whether the file says it has six sections: the file of a model with a string table (docs/stringtable.md). The constant models never have one, so such a file is
 // this module's whatever its model section says, and its refusals are the pipeline's, in the order of design.md 4.1
 fn six_sections[&d](data: &d [byte]) -> [] bool {
@@ -99,7 +128,7 @@ fn six_sections[&d](data: &d [byte]) -> [] bool {
 
 // A model file of a planned kind, decoded and checked: the file (kept: the stored steps are views into it), the schema, the estimator's parameters and labels,
 // and the schema as the old schema check reads it (an mfile.Model with no statistics)
-res struct Stored {
+pub res struct Stored {
     lo: file.Loaded,
     sc: schema.Schema,
     kind: int,
@@ -114,7 +143,7 @@ res struct Stored {
     cat: bool,
 }
 
-fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
+pub fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
     let Stored { lo, sc, kind, wv, c0, c1, d, task, view, cat } = s;
     file.drop(heap, lo);
     schema.drop(heap, sc);
@@ -150,7 +179,7 @@ fn view_of[&h, &s](heap: &!h Heap, sc: &s schema.Schema, rows: int) -> [heap] mf
     return mfile.Model { kind: 0, rows: rows, cols: cols, target: schema.target(sc), names: nm, ends: ends, types: types, stats: box_slice(heap, 8, 0), nstats: 0 };
 }
 
-fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], errs: fail.Errors) -> [heap] (Stored, bool, fail.Errors) {
+pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], errs: fail.Errors) -> [heap] (Stored, bool, fail.Errors) {
     var e = errs;
     let (lo, f) = file.decode(heap, data);
     if f.code != 0 {
@@ -342,7 +371,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
             return (empty_input(heap), false, e, lg);
         }
         let cc = csv.CatCfg { cols: "", na: "", max_cats: strtab.limit_of(tbl, 0), max_str: strtab.limit_of(tbl, 1), max_pool: strtab.limit_of(tbl, 2), max_catcols: strtab.limit_of(tbl, 3), lenient: true };
-        let l = csvload.load_cat_with(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), cc, tname, !want_target, v0, true, strtab.na_of(tbl));
+        let l = csvload.load_cat_with(heap, fs, root, datafile, verbs.config(o, 0, 0, 0), cc, tname, !want_target, v0, true, strtab.na_of(tbl));
         let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
@@ -355,7 +384,7 @@ fn read_input[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs
         rep = rep2;
         code = code2;
     } else {
-        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(datafile), paths.full(datafile), verbs.config(o, 0, 0, 0), tname, !want_target);
+        let (x2, sh2, rep2, code2) = csvload.load_t_rp(heap, fs, root, datafile, verbs.config(o, 0, 0, 0), tname, !want_target);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
         x = x2;

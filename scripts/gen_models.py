@@ -273,6 +273,26 @@ def limit_entries(models):
     return ["%s|%s|%d" % (n, next(iter(defaults[n])) if len(defaults[n]) == 1 else str(min(int(v) for v in defaults[n])), out[n][1]) for n in sorted(out)]
 
 
+# the flags of `ml-predict` (docs/serving.md section 3.2): those of `predict` and `describe` that write nothing, taken by name from the table of `ml`
+PREDICT_DROPS = {"log", "log-max-bytes"}
+
+
+def predict_tables(spec_text):
+    """(flag table, limits) of ml-predict, filtered from the generated table of ml by name: one definition of every flag."""
+    table = re.search(r'pub fn flag_table\(\) -> \[\] &static \[byte\] \{\n    return "(.*?)";\n\}', spec_text, re.S).group(1)
+    limits = re.search(r'pub fn limits\(\) -> \[\] &static \[byte\] \{\n    return "(.*?)";\n\}', spec_text, re.S).group(1)
+    allowed = set()
+    for verb in ("2", "4"):
+        m = re.search(r"if verb == %s \{\n        return \"(.*?)\";" % verb, spec_text)
+        allowed |= set(m.group(1).split(","))
+    keep = allowed - PREDICT_DROPS
+    flags = [e for e in table.split(";") if e.split("|")[0] in keep]
+    if {e.split("|")[0] for e in flags} != keep:
+        raise ManifestError("predict flags: %s are not in the table" % sorted(keep - {e.split('|')[0] for e in flags}))
+    lims = [e for e in limits.split(";") if e.split("|")[0] in keep]
+    return ";".join(flags), ";".join(lims)
+
+
 def render_spec(models, root):
     tmpl = (pathlib.Path(root) / "tools" / "ml" / "spec.tmpl").read_text()
     entries, _ = hp_flag_entries(models)
@@ -290,6 +310,8 @@ def render_spec(models, root):
     out = tmpl
     for k, v in subs.items():
         out = out.replace("{{%s}}" % k, v)
+    pflags, plimits = predict_tables(out)
+    out = out.replace("{{PREDICT_FLAGS}}", pflags).replace("{{PREDICT_LIMITS}}", plimits)
     left = re.findall(r"\{\{(\w+)\}\}", out)
     if left:
         raise ManifestError("spec.tmpl: unfilled placeholders %s" % sorted(set(left)))

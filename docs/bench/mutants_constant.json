@@ -4,9 +4,9 @@
  "suites": [
   {
    "script": "scripts/mutants_cli.py",
-   "log": "docs/bench/mutants_cli_w1.log",
-   "patterns": 53,
-   "killed": 53,
+   "log": "docs/bench/mutants_cli.log",
+   "patterns": 52,
+   "killed": 52,
    "survivors": []
   }
  ]

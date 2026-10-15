@@ -362,28 +362,23 @@ pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors,
 
 // ---------------------------------------------------------------- reading the CSV
 
-// open `file` and scan it. The errors gain the reason if the open fails (the shape is then empty and the report 99).
+// open `file` and scan it (or scan the bytes of standard input, when `file` is that). The errors gain the reason if the open fails (the shape is then empty and the report 99).
 fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, csv.Sinks) {
     var e = errs;
+    if paths.is_stdin(file) {
+        let (src, sh, rep, k2) = csv.scan(heap, csv.Source::Mem(0), paths.mem(file), cfg, target, sk);
+        csv.drop_source(src);
+        return (sh, rep, e, k2);
+    }
     match place.open_operand(fs, root, paths.shown(file), paths.full(file)) {
         Opened::Failed(reason) => {
             e = fail.io_error(heap, e, reason, false, paths.shown(file));
             return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: 0 }, e, sk);
         }
         Opened::Ok(opened) => {
-            var handle = opened;
-            var sh = csv.empty_shape(heap);
-            var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
-            var sink = sk;
-            borrow mut handle as &!fh in {
-                let (s2, r2, k2) = csv.scan(heap, fh, cfg, target, sink);
-                csv.drop_shape(heap, sh);
-                sh = s2;
-                rep = r2;
-                sink = k2;
-            }
-            file_close(handle);
-            return (sh, rep, e, sink);
+            let (src, sh, rep, k2) = csv.scan(heap, csv.Source::Disk(opened), "", cfg, target, sk);
+            csv.drop_source(src);
+            return (sh, rep, e, k2);
         }
     }
 }
@@ -821,7 +816,7 @@ pub fn fit[&h, &g, &f, &r, &pf, &po](heap: &!h Heap, args: &g Args, fs: &f Fs(""
 
 // ---------------------------------------------------------------- the stored model
 
-fn model_error[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
+pub fn model_error[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
     var rule: &static [byte] = "ml.model.malformed";
     var message: &static [byte] = "a section of the model file is not what the format allows";
     var hint: &static [byte] = "refit the model";

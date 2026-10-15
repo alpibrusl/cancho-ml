@@ -1,0 +1,507 @@
+edition 5;
+
+module ml.mdesc;
+
+// `describe --model-file M`: what a model file requires of its caller, as data (docs/serving.md sections 4 and 5). The file is decoded by the code `predict`
+// uses (mfile.decode for the constant kinds, wireio.load_stored for the others), so a damaged file is refused with the rule `predict` gives it, before anything
+// here reads a field; the description is then a function of the file's bytes alone. Nothing is allocated from a number read from the file that the decoder has not
+// compared with the bytes that exist: the columns, the strings and the markers listed come from the decoded schema, the decoded steps and the checked string table.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.catwire;
+import ml.est;
+import ml.fbits;
+import ml.fsio;
+import ml.kinds;
+import ml.mfile;
+import ml.paths;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import ml.wireio;
+import pipeline.file;
+import pipeline.mixed;
+import pipeline.schema;
+import transforms.catenc;
+import transforms.strtab;
+import toolbox.fail;
+import toolbox.text;
+
+// the first section with `tag`: (offset of its payload, length), or (0, -1) when the walk leaves the bytes. The decoder has already checked the structure, so
+// this is only the second look at the same walk, with the same bounds.
+fn section_at[&d](data: &d [byte], tag: int) -> [] (int, int) {
+    let n = len(data);
+    if n < 44 {
+        return (0, 0 - 1);
+    }
+    let count = int_of(data[8]) | int_of(data[9]) << 8 | int_of(data[10]) << 16 | int_of(data[11]) << 24;
+    var pos = 12;
+    var s = 0;
+    while s < count && s < 6 {
+        if pos + 12 > n - 32 {
+            return (0, 0 - 1);
+        }
+        let t = int_of(data[pos]) | int_of(data[pos + 1]) << 8 | int_of(data[pos + 2]) << 16 | int_of(data[pos + 3]) << 24;
+        let length = fbits.get64(data, pos + 4);
+        if length < 0 || length > n - 32 - pos - 12 {
+            return (0, 0 - 1);
+        }
+        if t == tag {
+            return (pos + 12, length);
+        }
+        pos = pos + 12 + length;
+        s = s + 1;
+    }
+    return (0, 0 - 1);
+}
+
+fn le32[&d](data: &d [byte], at: int) -> [] int {
+    return int_of(data[at]) | int_of(data[at + 1]) << 8 | int_of(data[at + 2]) << 16 | int_of(data[at + 3]) << 24;
+}
+
+fn type_word(ty: int) -> [] &static [byte] {
+    if ty == 0 {
+        return "int";
+    }
+    if ty == 1 {
+        return "dec";
+    }
+    if ty == 2 {
+        return "float";
+    }
+    return "categorical";
+}
+
+fn kind_word(kd: int) -> [] &static [byte] {
+    if kd == 7 {
+        return "onehot";
+    }
+    if kd == 8 {
+        return "label";
+    }
+    if kd == 9 {
+        return "freq";
+    }
+    return "hash";
+}
+
+fn put_key_text[&h, &n](heap: &!h Heap, w: json.Writer, key: &static [byte], name: &n [byte]) -> [heap] json.Writer {
+    return verbs.put_name(heap, w, key, name);
+}
+
+// "scale": the integer for a decimal column, null for the others
+fn put_scale[&h](heap: &!h Heap, w0: json.Writer, ty: int, scale: int) -> [heap] json.Writer {
+    var w = json.put_key(heap, w0, "scale");
+    if ty == 1 {
+        return json.put_int(heap, w, scale);
+    }
+    return json.put_null(heap, w);
+}
+
+// the markers of the list `na` (comma separated, as given to --na-values), each a text
+fn put_markers[&h, &n](heap: &!h Heap, w0: json.Writer, na: &n [byte]) -> [heap] json.Writer {
+    var w = json.begin_array(heap, w0);
+    if len(na) > 0 {
+        let count = bytes.count_byte(na, ',') + 1;
+        var k = 1;
+        while k <= count {
+            w = text.put(heap, w, bytes.field(na, ',', k));
+            k = k + 1;
+        }
+    }
+    return json.end_array(heap, w);
+}
+
+// the categorical columns of the steps payload, in the order of the steps, each with its vocabulary (at most `limit` strings, with their training counts)
+fn put_categorical[&h, &s](heap: &!h Heap, w0: json.Writer, payload: &s [byte], limit: int) -> [heap] json.Writer {
+    var w = json.begin_array(heap, w0);
+    var n = 0;
+    if len(payload) >= 4 {
+        n = le32(payload, 0);
+    }
+    var i = 0;
+    while i < n {
+        let (st, code) = mixed.cat_step_at(heap, payload, i);
+        if code == 0 {
+            borrow st as &sr in {
+                var c = 0;
+                while c < catenc.ncols(sr) {
+                    let kd = catenc.kind(sr);
+                    let ncat = catenc.ncat(sr, c);
+                    var listed = ncat;
+                    if listed > limit {
+                        listed = limit;
+                    }
+                    w = json.begin_object(heap, w);
+                    w = put_key_text(heap, w, "column", catenc.name(sr, c));
+                    w = json.put_key(heap, w, "encoder");
+                    w = json.put_string(heap, w, kind_word(kd));
+                    w = json.put_key(heap, w, "categories");
+                    w = json.put_int(heap, w, ncat);
+                    w = json.put_key(heap, w, "buckets");
+                    if kd == kinds.step_hash() {
+                        w = json.put_int(heap, w, catenc.param(sr));
+                    } else {
+                        w = json.put_null(heap, w);
+                    }
+                    w = json.put_key(heap, w, "listed");
+                    w = json.put_int(heap, w, listed);
+                    w = json.put_key(heap, w, "truncated");
+                    w = json.put_bool(heap, w, listed < ncat);
+                    w = json.put_key(heap, w, "values");
+                    w = json.begin_array(heap, w);
+                    var k = 0;
+                    while k < listed {
+                        w = json.begin_object(heap, w);
+                        w = put_key_text(heap, w, "value", catenc.string(sr, c, k));
+                        w = json.put_key(heap, w, "count");
+                        w = json.put_int(heap, w, catenc.count(sr, c, k));
+                        w = json.end_object(heap, w);
+                        k = k + 1;
+                    }
+                    w = json.end_array(heap, w);
+                    w = json.end_object(heap, w);
+                    c = c + 1;
+                }
+            }
+        }
+        catenc.drop(heap, st);
+        i = i + 1;
+    }
+    return json.end_array(heap, w);
+}
+
+// the description of a decoded file: (the data object, the plain text). `steps` is the (effective) steps payload and `tbl` the string table, empty when the file has none.
+fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byte], kind: int, task: int, c0: int, c1: int, sc: &c schema.Schema, steps: &s [byte], tbl: &t [byte], has_table: bool, takes_missing: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    let (pat, plen) = section_at(data, 1);
+    let (mat, mlen) = section_at(data, 5);
+    var plan_bytes = data[0..0];
+    if plen > 0 {
+        plan_bytes = data[pat..pat + plen];
+    }
+    var rows = 0;
+    var pin = data[0..0];
+    var sum_order = 0 - 1;
+    if mlen >= 32 {
+        rows = fbits.get64(data, mat);
+        let cl = le32(data, mat + 28);
+        if cl >= 0 && 32 + cl <= mlen {
+            pin = data[mat + 32..mat + 32 + cl];
+            if mlen == 36 + cl && kind >= 4 {
+                sum_order = le32(data, mat + 32 + cl);
+            }
+        }
+    }
+    let cols = schema.columns(sc);
+    // a clustering has no target: every column is a feature and the description says so (the target object is null, `optional` is empty)
+    let has_t = schema.has_target(sc);
+    var tcol = 0 - 1;
+    if has_t {
+        tcol = schema.target(sc);
+    }
+    var w = json.writer(heap, 1024);
+    var plain = buffer.empty(heap, 256);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "model");
+    w = json.put_string(heap, w, model);
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, wiredata.task_word(task));
+    w = json.put_key(heap, w, "kind");
+    w = json.put_int(heap, w, kind);
+    w = put_key_text(heap, w, "plan", plan_bytes);
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, rows);
+    // file
+    w = json.put_key(heap, w, "file");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "bytes");
+    w = json.put_int(heap, w, len(data));
+    w = json.put_key(heap, w, "sha256");
+    let hex = mfile.sha256_hex(heap, data);
+    borrow hex as &hr in {
+        w = json.put_string(heap, w, buffer.bytes(hr));
+    }
+    buffer.drop(heap, hex);
+    w = json.put_key(heap, w, "format");
+    w = json.put_string(heap, w, "CML1");
+    w = json.put_key(heap, w, "version");
+    w = json.put_int(heap, w, le32(data, 4));
+    w = json.put_key(heap, w, "sections");
+    w = json.put_int(heap, w, le32(data, 8));
+    w = put_key_text(heap, w, "compiler", pin);
+    w = json.put_key(heap, w, "sum_order");
+    if sum_order >= 0 {
+        w = json.put_int(heap, w, sum_order);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.end_object(heap, w);
+    // target
+    w = json.put_key(heap, w, "target");
+    if has_t {
+        w = json.begin_object(heap, w);
+        w = put_key_text(heap, w, "name", schema.name(sc, tcol));
+        w = json.put_key(heap, w, "type");
+        w = json.put_string(heap, w, type_word(schema.type_of(sc, tcol)));
+        w = put_scale(heap, w, schema.type_of(sc, tcol), schema.scale_of(sc, tcol));
+        w = json.end_object(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    // columns
+    w = json.put_key(heap, w, "columns");
+    w = json.begin_array(heap, w);
+    var j = 0;
+    while j < cols {
+        let ty = schema.type_of(sc, j);
+        w = json.begin_object(heap, w);
+        w = put_key_text(heap, w, "name", schema.name(sc, j));
+        w = json.put_key(heap, w, "type");
+        w = json.put_string(heap, w, type_word(ty));
+        w = put_scale(heap, w, ty, schema.scale_of(sc, j));
+        w = json.put_key(heap, w, "role");
+        if j == tcol {
+            w = json.put_string(heap, w, "target");
+        } else {
+            w = json.put_string(heap, w, "feature");
+        }
+        w = json.put_key(heap, w, "required");
+        w = json.put_bool(heap, w, j != tcol);
+        w = json.end_object(heap, w);
+        plain = buffer.append(heap, plain, "column ");
+        plain = buffer.append(heap, plain, schema.name(sc, j));
+        plain = buffer.append(heap, plain, ": ");
+        plain = buffer.append(heap, plain, type_word(ty));
+        if ty == 1 {
+            plain = buffer.push(heap, plain, byte_of('('));
+            plain = buffer.push_nat(heap, plain, schema.scale_of(sc, j));
+            plain = buffer.push(heap, plain, byte_of(')'));
+        }
+        if j == tcol {
+            plain = buffer.append(heap, plain, ", target (optional in an input)");
+        } else {
+            plain = buffer.append(heap, plain, ", required");
+        }
+        plain = buffer.push(heap, plain, byte_of(10));
+        j = j + 1;
+    }
+    w = json.end_array(heap, w);
+    // request
+    w = json.put_key(heap, w, "request");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "header");
+    w = json.begin_array(heap, w);
+    j = 0;
+    while j < cols {
+        if j != tcol {
+            w = text.put(heap, w, schema.name(sc, j));
+        }
+        j = j + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "optional");
+    w = json.begin_array(heap, w);
+    if has_t {
+        w = text.put(heap, w, schema.name(sc, tcol));
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "extra_columns");
+    w = json.put_string(heap, w, "refused");
+    w = json.put_key(heap, w, "missing_cells");
+    if takes_missing {
+        w = json.put_string(heap, w, "handled");
+    } else if kind <= 3 {
+        w = json.put_string(heap, w, "refused");
+    } else {
+        w = json.put_string(heap, w, "needs_impute");
+    }
+    w = json.end_object(heap, w);
+    // categorical
+    w = json.put_key(heap, w, "categorical");
+    if has_table {
+        w = put_categorical(heap, w, steps, o.limit);
+    } else {
+        w = json.begin_array(heap, w);
+        w = json.end_array(heap, w);
+    }
+    w = json.put_key(heap, w, "na_values");
+    if has_table {
+        w = put_markers(heap, w, strtab.na_of(tbl));
+    } else {
+        w = json.begin_array(heap, w);
+        w = json.end_array(heap, w);
+    }
+    w = json.put_key(heap, w, "reader");
+    if has_table {
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "max_categories");
+        w = json.put_int(heap, w, strtab.limit_of(tbl, 0));
+        w = json.put_key(heap, w, "max_string_bytes");
+        w = json.put_int(heap, w, strtab.limit_of(tbl, 1));
+        w = json.put_key(heap, w, "max_pool_bytes");
+        w = json.put_int(heap, w, strtab.limit_of(tbl, 2));
+        w = json.put_key(heap, w, "max_cat_columns");
+        w = json.put_int(heap, w, strtab.limit_of(tbl, 3));
+        w = json.end_object(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    // classes, positive
+    w = json.put_key(heap, w, "classes");
+    if task == 2 {
+        w = json.begin_array(heap, w);
+        w = json.put_int(heap, w, c0);
+        w = json.put_int(heap, w, c1);
+        w = json.end_array(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.put_key(heap, w, "positive");
+    if task == 2 && kind > 3 {
+        w = json.put_int(heap, w, c1);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    // output
+    w = json.put_key(heap, w, "output");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "columns");
+    w = json.begin_array(heap, w);
+    if task == 1 {
+        w = json.put_string(heap, w, "prediction");
+    } else if task == 4 {
+        w = json.put_string(heap, w, "cluster");
+    } else {
+        w = json.put_string(heap, w, "label");
+        if kind <= 3 {
+            // a constant classification always prints its probability, and refuses --proba
+            w = json.put_string(heap, w, "probability");
+        }
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "with_proba");
+    if task == 2 && kind > 3 {
+        w = json.begin_array(heap, w);
+        w = json.put_string(heap, w, "label");
+        w = json.put_string(heap, w, "probability");
+        w = json.end_array(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    // `--distance` adds the squared distance of a row to the centre of its cluster; only a clustering has it
+    w = json.put_key(heap, w, "with_distance");
+    if task == 4 {
+        w = json.begin_array(heap, w);
+        w = json.put_string(heap, w, "cluster");
+        w = json.put_string(heap, w, "distance");
+        w = json.end_array(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.put_key(heap, w, "label_threshold");
+    if task == 2 && kind > 3 {
+        w = json.put_string(heap, w, "0.5");
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "limits");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "values_per_column");
+    w = json.put_int(heap, w, o.limit);
+    w = json.put_key(heap, w, "max_bytes");
+    w = json.put_int(heap, w, o.max_bytes);
+    w = json.end_object(heap, w);
+    w = json.end_object(heap, w);
+    var head = buffer.empty(heap, 128);
+    head = buffer.append(heap, head, "model ");
+    head = buffer.append(heap, head, model);
+    head = buffer.append(heap, head, ", ");
+    head = buffer.append(heap, head, wiredata.task_word(task));
+    head = buffer.append(heap, head, ", ");
+    head = buffer.push_nat(heap, head, rows);
+    head = buffer.append(heap, head, " training rows\n");
+    borrow plain as &pr in {
+        head = buffer.append(heap, head, buffer.bytes(pr));
+    }
+    buffer.drop(heap, plain);
+    return (json.finish(w), head);
+}
+
+// the problem of reading the model file (the cases of verbs.load_model that come before the decoder)
+fn read_problem[&h, &p](heap: &!h Heap, errs: fail.Errors, st: int, aux: int, max: int, shown: &p [byte]) -> [heap] fail.Errors {
+    if st == 3 {
+        var w = fail.open(heap, "limit.input-too-large", "the model file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", aux);
+        w = fail.detail_int(heap, w, "max", max);
+        return fail.add(heap, errs, w);
+    }
+    return fail.io_error(heap, errs, aux, false, shown);
+}
+
+pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = errs;
+    let (data, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(model), paths.full(model), o.max_bytes);
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if st != 0 {
+        e = read_problem(heap, e, st, aux, o.max_bytes, paths.shown(model));
+        buffer.drop(heap, data);
+        return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+    }
+    borrow data as &dr in {
+        let bytes_of = buffer.bytes(dr);
+        if wireio.planned_file(bytes_of) {
+            let (stored, ok, e2) = wireio.load_stored(heap, bytes_of, paths.shown(model), e);
+            e = e2;
+            if ok {
+                borrow stored as &sr in {
+                    let lr = wireio.stored_file(sr);
+                    let (p2, t2) = emit(heap, bytes_of, est.name(wireio.stored_kind(sr)), est.kind_of(wireio.stored_kind(sr)), wireio.stored_task(sr), wireio.stored_c0(sr), wireio.stored_c1(sr), wireio.stored_schema(sr), file.steps_bytes(lr), file.table_bytes(lr), file.has_table(lr), est.takes_missing(wireio.stored_kind(sr)), o);
+                    buffer.drop(heap, payload);
+                    buffer.drop(heap, plain);
+                    payload = p2;
+                    plain = t2;
+                }
+            }
+            wireio.drop_stored(heap, stored);
+        } else {
+            let (mo, ds, da) = mfile.decode(heap, bytes_of);
+            if ds != 0 {
+                e = verbs.model_error(heap, e, ds, da, paths.shown(model));
+            } else {
+                let (sat, slen) = section_at(bytes_of, 2);
+                let (sc2, scode2) = schema.decode(heap, bytes_of[sat..sat + slen]);
+                if scode2 != 0 {
+                    e = verbs.model_error(heap, e, 5, 2, paths.shown(model));
+                } else {
+                    var c0 = 0;
+                    var c1 = 0;
+                    var mk = 0;
+                    borrow mo as &mr in {
+                        mk = mfile.kind(mr);
+                        if mk == 2 {
+                            c0 = mfile.stat(mr, 2);
+                            c1 = mfile.stat(mr, 3);
+                        }
+                    }
+                    borrow sc2 as &sq in {
+                        let (p2, t2) = emit(heap, bytes_of, "constant", mk, mfile.task_of(mk), c0, c1, sq, bytes_of[0..0], bytes_of[0..0], false, false, o);
+                        buffer.drop(heap, payload);
+                        buffer.drop(heap, plain);
+                        payload = p2;
+                        plain = t2;
+                    }
+                }
+                schema.drop(heap, sc2);
+            }
+            mfile.drop_model(heap, mo);
+        }
+    }
+    buffer.drop(heap, data);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+}

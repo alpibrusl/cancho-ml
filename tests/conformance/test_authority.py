@@ -11,10 +11,12 @@ import sys
 import tomllib
 import unittest
 
-from harness import ROOT, introspect
+from harness import PREDICT_BIN, ROOT, introspect
 
-EXPECTED = {"args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", 'fs_read("")', "heap", "io_write"}
-FORBIDDEN = {"ffi", "net_out", "net_in", "clock", "fs_write", "io_read", "exec", "env"}
+EXPECTED = {"args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", 'fs_read("")', "heap", "io_read", "io_write"}
+# `ml-predict` (docs/serving.md section 3.3): the row of `ml` without the writes and the thread
+EXPECTED_PREDICT = {"args", "dir_read", "err_write", "file_read", 'fs_read("")', "heap", "io_read", "io_write"}
+FORBIDDEN = {"ffi", "net_out", "net_in", "clock", "fs_write", "exec", "env"}
 
 
 def label_text(l):
@@ -48,14 +50,15 @@ class Authority(unittest.TestCase):
         ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
         base = set(tomllib.loads((ROOT / "lib" / "models" / "contract.toml").read_text())["authority"]["base"])
         beyond = set(ceilings["ml"]["allow"]) - base
-        self.assertEqual(beyond, {"conc"})
+        self.assertEqual(beyond, {"conc", "io_read"})
         self.assertTrue(ceilings["ml"]["reasons"]["conc"])
-        # a model that adds a label declares it
+        self.assertTrue(ceilings["ml"]["reasons"]["io_read"])
+        # a model that adds a label declares it; standard input (io_read) is the tool's, not a model's
         import gen_models
         declared = set()
         for m in gen_models.load_manifests(ROOT):
             declared |= set(m["authority"]["adds"])
-        self.assertEqual(declared, beyond)
+        self.assertEqual(declared, beyond - {"io_read"})
 
     def test_a_label_allowed_without_a_reason_fails_the_manifest_check(self):
         import shutil, tempfile
@@ -82,7 +85,51 @@ class Authority(unittest.TestCase):
     def test_the_binary_is_the_tool_in_the_manifest(self):
         # one binary per tool; the ceiling file knows only `ml` as an agent tool
         ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
-        self.assertEqual([k for k in ceilings if isinstance(ceilings[k], dict)], ["ml"])
+        self.assertEqual([k for k in ceilings if isinstance(ceilings[k], dict)], ["ml", "ml-predict"])
+
+
+def predict_introspect():
+    return json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout)
+
+
+class AuthorityPredict(unittest.TestCase):
+    """P3: the row of `ml-predict`, derived by the compiler, committed, embedded, within its ceiling."""
+
+    def test_the_binary_prints_the_committed_authority(self):
+        committed = json.loads((ROOT / "manifests" / "ml-predict.authority.json").read_text())
+        self.assertEqual(predict_introspect()["authority"], committed)
+
+    def test_the_row_is_exactly_these_labels_and_bounded(self):
+        a = predict_introspect()["authority"]
+        self.assertTrue(a["bounded"])
+        self.assertEqual((a["unbounded_by"], a["foreign_symbols"]), ([], []))
+        labels = {label_text(l) for l in a["labels"]}
+        self.assertEqual(labels, EXPECTED_PREDICT)
+        self.assertEqual(labels & FORBIDDEN, set())
+        self.assertEqual(labels & {"conc", "file_write", "dir_write"}, set())
+
+    def test_the_ceiling_is_exact_and_every_label_beyond_the_base_row_has_a_reason(self):
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        self.assertEqual(set(ceilings["ml-predict"]["allow"]), EXPECTED_PREDICT)
+        base = set(tomllib.loads((ROOT / "lib" / "models" / "contract.toml").read_text())["authority"]["base"])
+        self.assertEqual(set(ceilings["ml-predict"]["allow"]) - base, {"io_read"})
+        self.assertTrue(ceilings["ml-predict"]["reasons"]["io_read"])
+        # ml-predict has no label ml does not have
+        self.assertLessEqual(EXPECTED_PREDICT, EXPECTED)
+
+    def test_the_ceiling_check_fails_for_a_capability_added_to_the_derived_row(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import manifest
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        auth = json.loads((ROOT / "manifests" / "ml-predict.authority.json").read_text())
+        self.assertEqual(manifest.gate("ml-predict", auth, ceilings), [])
+        for extra in ("file_write", "dir_write", "conc", "net_out", "clock", "ffi"):
+            mutated = json.loads(json.dumps(auth))
+            mutated["labels"].append({"name": extra, "argument": None, "bounded": True})
+            self.assertNotEqual(manifest.gate("ml-predict", mutated, ceilings), [], extra)
+        mutated = json.loads(json.dumps(auth))
+        mutated["labels"].append({"name": "fs_write", "argument": "", "bounded": True})
+        self.assertNotEqual(manifest.gate("ml-predict", mutated, ceilings), [])
 
 
 if __name__ == "__main__":

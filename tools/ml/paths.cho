@@ -15,20 +15,64 @@ import toolbox.fail;
 import toolbox.path;
 import ml.pathcheck;
 
-// a checked path: the whole path to open, and where the part below --root starts in it
+// a checked path: the whole path to open, and where the part below --root starts in it. The CSV of `predict` can also be standard input
+// (docs/serving.md section 2): `stdin` is then true, `mem` holds the bytes that were read, and the path is shown as `-`.
 pub res struct Rp {
     full: buffer.Buffer,
     shown: int,
     present: bool,
+    mem: buffer.Buffer,
+    stdin: bool,
 }
 
 pub fn absent[&h](heap: &!h Heap) -> [heap] Rp {
-    return Rp { full: buffer.empty(heap, 1), shown: 0, present: false };
+    return Rp { full: buffer.empty(heap, 1), shown: 0, present: false, mem: buffer.empty(heap, 1), stdin: false };
 }
 
 pub fn drop[&h](heap: &!h Heap, r: Rp) -> [heap] int {
-    let Rp { full, shown, present } = r;
+    let Rp { full, shown, present, mem, stdin } = r;
+    buffer.drop(heap, mem);
     return buffer.drop(heap, full);
+}
+
+// an Rp for a path given as text: `full` is what to open, `rel` the part to show (the tail of it); the test drivers and the fits name their file this way
+pub fn of_path[&h, &f, &s](heap: &!h Heap, rel: &s [byte], full: &f [byte]) -> [heap] Rp {
+    var copy = buffer.empty(heap, len(full) + 1);
+    copy = buffer.append(heap, copy, full);
+    return Rp { full: copy, shown: len(full) - len(rel), present: true, mem: buffer.empty(heap, 1), stdin: false };
+}
+
+pub fn is_stdin[&r](r: &r Rp) -> [] bool {
+    return r.stdin;
+}
+
+// the bytes read from standard input (empty for a path)
+pub fn mem[&r](r: &r Rp) -> [] &r [byte] {
+    return buffer.bytes(r.mem);
+}
+
+// Read standard input up to `cap` bytes, one `getchar` at a time (the compiler of the pin has no bulk read, docs/serving.md section 2.3). More than `cap` bytes
+// is reported to the caller (limit.input-too-large), found as soon as byte cap + 1 arrives, so nothing is kept past the bound. The end of the input, and a read that fails, both end it.
+pub fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, cap: int) -> [heap, io_read] (Rp, bool) {
+    var data = buffer.empty(heap, 65536);
+    var n = 0;
+    var going = true;
+    var over = false;
+    while going {
+        let c = getchar(io);
+        if c < 0 {
+            going = false;
+        } else if n >= cap {
+            over = true;
+            going = false;
+        } else {
+            data = buffer.push(heap, data, byte_of(c));
+            n = n + 1;
+        }
+    }
+    var shown = buffer.empty(heap, 2);
+    shown = buffer.push(heap, shown, byte_of('-'));
+    return (Rp { full: shown, shown: 0, present: true, mem: data, stdin: true }, over);
 }
 
 pub fn present[&r](r: &r Rp) -> [] bool {
@@ -76,7 +120,7 @@ pub fn from_operand[&h, &g, &r](heap: &!h Heap, args: &g Args, root: &r [byte], 
                 drop(heap, out);
                 var copy = buffer.empty(heap, len(f) + 1);
                 copy = buffer.append(heap, copy, f);
-                out = Rp { full: copy, shown: len(f) - len(s), present: true };
+                out = Rp { full: copy, shown: len(f) - len(s), present: true, mem: buffer.empty(heap, 1), stdin: false };
             }
         }
     }

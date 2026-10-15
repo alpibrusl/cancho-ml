@@ -343,6 +343,34 @@ $ ml predict --model-file pets-hash.ml --proba newpets.csv
 
 **The strings are in the file.** The string table of the model file ([docs/stringtable.md](docs/stringtable.md)) holds the **raw category strings of the training rows**, with their counts, the column names and the missing-value markers: whoever has the model file has those values. A `hash` step stores none (its entry holds the column name and the number of buckets, and `predict` hashes the cells it reads), and `encode min-count=N` still stores every distinct string, because the counts are the state. A pipeline that must not carry its category values hashes them. A file with no categorical step has no table and is the file of a numeric model. The table is bounded (131,072 strings, 8 MiB of string bytes, 12 MiB in all: a fit over a bound is `ml.limit.string-table`), checksummed, and refused with `ml.model.string-table` when it is damaged. [docs/categorical.md](docs/categorical.md), [docs/categorical-encoders.md](docs/categorical-encoders.md)
 
+### Predict from standard input and with ml-predict
+
+`ml predict` reads the CSV from standard input for the operand `-` or for no operand; a file named `-` is `./-`. The bytes are read once, up to `--max-bytes` (16 MiB by default), and the reader's two passes run over them, so the answer for the bytes on standard input is, byte for byte, the answer for the same bytes in a file (a refusal that names a file says `-` instead). `ml describe --model-file M` prints, as data, what a model file requires of a caller: the model and its task, the plan, the columns by name and type, the vocabularies with counts, the missing-value markers, the reader limits, the classes and the columns of an answer. Its field names are a contract ([docs/serving.md](docs/serving.md) section 5): a server builds its request schema from them. `ml-predict` is a second binary built from the same sources. It has `predict`, `describe`, `introspect` and `skill` and nothing else, and its authority row has no write of any kind and no thread; its answers are the answers of `ml predict`, apart from the program name inside a repair.
+
+<!-- gen:sflow -->
+```console
+# predict reads the CSV from standard input for the operand - (or no operand): the answer is the file's answer
+$ ml predict --model-file houses.ml - < new.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
+# a forgotten operand with nothing on standard input is the refusal of an empty file
+$ ml predict --model-file houses.ml < empty.csv
+{"rule": "ml.input.empty", "hint": "give a CSV whose first row is the header"}
+# exit status 8; the rule, hint of the JSON line it prints
+# describe: what the model file requires of a caller. Excerpt: the model, the columns of a request, the classes, the columns of an answer
+$ ml describe --model-file pets.ml --limit 2
+{"model": "logistic", "task": "classification", "request": {"header": ["age", "species", "city", "visits"], "optional": ["adopted"], "extra_columns": "refused", "missing_cells": "needs_impute"}, "classes": [0, 1], "output": {"columns": ["label"], "with_proba": ["label", "probability"], "with_distance": null, "label_threshold": "0.5"}}
+# ml-predict predicts and describes, from the same sources, with a row that has no write and no thread
+$ ml-predict predict --model-file pets.ml --proba - < newpets.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","columns":["label","probability"],"rows":[["1","0.779143555391799"],["1","0.5062375189261414"],["1","0.7357314548827897"]],"row_count":3,"total_rows":3,"truncated":false,"next":null,"unknown_categories":2},"meta":{"version":"0.1.0"}}
+$ ml-predict eval --model-file houses.ml houses.csv
+{"rule": "args.unknown-command", "hint": "ml-predict has the verbs predict and describe, and introspect and skill describe it", "detail": {"command": "eval"}}
+# exit status 2; the rule, hint, detail of the JSON line it prints
+$ ml-predict predict --model-file houses.ml --log run.ndjson new.csv
+{"rule": "args.unknown-flag", "hint": "the tool's flags are listed by `introspect`; POSIX spellings are not promised", "detail": {"flag": "--log", "position": 4}}
+# exit status 2; the rule, hint, detail of the JSON line it prints
+```
+<!-- /gen:sflow -->
+
 ## Built to be read by an agent
 
 `ml introspect` and `ml skill` come from the same tables the code parses its flags with, so they cannot disagree with the program: the interface, the limits, the rules and the authority can be learned from the binary itself. A test checks that every flag and every rule is in the table, in `introspect`, in `skill`, in the schema and in a fixture. [docs/cli.md](docs/cli.md) section 1.
@@ -356,7 +384,7 @@ flags       45, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
-  --model-file  path             predict, eval: the model file to read
+  --model-file  path             predict, eval, describe: the model file to read
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
 limits      21, for example
@@ -372,7 +400,7 @@ rules       78, for example
   conflict.exists          exit 5   a repair: never
   limit.line-too-long      exit 8   a repair: sometimes
 reads environment: false   reads clock: false
-authority   args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_write
+authority   args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_read, io_write
             bounded: true   foreign symbols: 0
 ```
 <!-- /gen:agentio -->
@@ -395,12 +423,13 @@ authority   args, conc, dir_read, dir_write, err_write, file_read, file_write, f
 | 9 | `DRY_RUN` | a --dry-run completed; planned_actions lists what an apply would do |
 <!-- /gen:exit-codes -->
 
-* **The authority row.** What the compiler says the program can reach. It reads the files named on its command line, creates, appends to, renames and removes only beneath a directory it opened itself, and keeps its working data on the heap. `conc` is in the row because `fit --threads N` calls the threaded kernels of `lib/linalg`; `tools.toml` states the reason, and the test that no thread count changes a byte is in `tests/conformance` ([docs/wiring.md](docs/wiring.md) section 6).
+* **The authority row.** What the compiler says the program can reach. It reads the files named on its command line and, for `predict -`, standard input (`io_read`), creates, appends to, renames and removes only beneath a directory it opened itself, and keeps its working data on the heap. `ml-predict` has the same row without `conc`, `dir_write` and `file_write`. `conc` is in the row because `fit --threads N` calls the threaded kernels of `lib/linalg`; `tools.toml` states the reason, and the test that no thread count changes a byte is in `tests/conformance` ([docs/wiring.md](docs/wiring.md) section 6).
 
 <!-- gen:authority -->
 ```console
-# manifests/ml.authority.json
-ml    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_write
+# manifests/ml.authority.json and manifests/ml-predict.authority.json
+ml          args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_read, io_write
+ml-predict  args, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write
 # bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent
 ```
 <!-- /gen:authority -->

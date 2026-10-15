@@ -39,6 +39,14 @@ def tables(path=SPEC):
     allowed = {}
     m = re.search(r"pub fn allowed\(verb: int\)[^{]*\{(.*?)\n\}", text, re.S)
     found = re.findall(r"return \"([^\"]*)\";", m.group(1))
-    for verb, names in zip(("fit", "predict", "eval"), found):
+    for verb, names in zip(("fit", "predict", "describe", "eval"), found):
         allowed[verb] = names.split(",")
-    return {"flags": flags, "extra": extra, "rules": rules, "log": log, "limits": limits, "allowed": allowed}
+    pflags = []
+    for entry in _literal(text, "predict_flag_table").split(";"):
+        name, short, kind, role, default, help_ = entry.split("|", 5)
+        pflags.append({"name": name, "short": short, "kind": kind, "role": role, "default": default, "help": help_})
+    plimits = {}
+    for entry in _literal(text, "predict_limits").split(";"):
+        name, default, ceiling = entry.split("|")
+        plimits[name] = (int(default), int(ceiling))
+    return {"flags": flags, "extra": extra, "rules": rules, "log": log, "limits": limits, "allowed": allowed, "predict_flags": pflags, "predict_limits": plimits}

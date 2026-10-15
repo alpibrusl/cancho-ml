@@ -301,6 +301,30 @@ sizes 26 31 18
 mean_distance 1.2398733702280837 1.0644974060896137 1.1737313271562995</pre>
 <!-- /gen:kmflow -->
   <p class="sub"><strong>The strings are in the file.</strong> The string table of the model file holds the <strong>raw category strings of the training rows</strong>, with their counts, the column names and the missing-value markers: whoever has the model file has those values. A <code>hash</code> step stores none of the strings of its column, and <code>encode min-count=N</code> still stores every distinct string, because the counts are the state. A pipeline that must not carry its category values hashes them. A file with no categorical step has no table. The table is bounded (131,072 strings, 8 MiB of string bytes, 12 MiB in all; <code>ml.limit.string-table</code>), checksummed, and refused with <code>ml.model.string-table</code> when it is damaged (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/stringtable.md">docs/stringtable.md</a>).</p>
+
+  <h3 class="task" id="serving" style="margin-top:2.4rem">Predict from standard input, describe a model file, and ml-predict</h3>
+  <p class="sub"><code>ml predict</code> reads the CSV from standard input for the operand <code>-</code> or for no operand; a file named <code>-</code> is <code>./-</code>. The bytes are read once, up to <code>--max-bytes</code> (16 MiB by default), and the reader's two passes run over them, so the answer for the bytes on standard input is, byte for byte, the answer for the same bytes in a file (a refusal that names a file says <code>-</code> instead). <code>ml describe --model-file M</code> prints, as data, what a model file requires of a caller: the model and its task, the plan, the columns by name and type, the vocabularies with counts, the missing-value markers, the reader limits, the classes and the columns of an answer. Its field names are a contract (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/serving.md">docs/serving.md</a>): a server builds its request schema from them. <code>ml-predict</code> is a second binary built from the same sources. It has <code>predict</code>, <code>describe</code>, <code>introspect</code> and <code>skill</code> and nothing else, and its authority row has no write of any kind and no thread.</p>
+<!-- gen:sflow -->
+<pre class="code" tabindex="0"><span class="c"># predict reads the CSV from standard input for the operand - (or no operand): the answer is the file's answer</span>
+<span class="c">$</span> ml predict --model-file houses.ml - &lt; new.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
+<span class="c"># a forgotten operand with nothing on standard input is the refusal of an empty file</span>
+<span class="c">$</span> ml predict --model-file houses.ml &lt; empty.csv
+{"rule": "ml.input.empty", "hint": "give a CSV whose first row is the header"}
+<span class="r"># exit status 8; the rule, hint of the JSON line it prints</span>
+<span class="c"># describe: what the model file requires of a caller. Excerpt: the model, the columns of a request, the classes, the columns of an answer</span>
+<span class="c">$</span> ml describe --model-file pets.ml --limit 2
+{"model": "logistic", "task": "classification", "request": {"header": ["age", "species", "city", "visits"], "optional": ["adopted"], "extra_columns": "refused", "missing_cells": "needs_impute"}, "classes": [0, 1], "output": {"columns": ["label"], "with_proba": ["label", "probability"], "with_distance": null, "label_threshold": "0.5"}}
+<span class="c"># ml-predict predicts and describes, from the same sources, with a row that has no write and no thread</span>
+<span class="c">$</span> ml-predict predict --model-file pets.ml --proba - &lt; newpets.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","columns":["label","probability"],"rows":[["1","0.779143555391799"],["1","0.5062375189261414"],["1","0.7357314548827897"]],"row_count":3,"total_rows":3,"truncated":false,"next":null,"unknown_categories":2},"meta":{"version":"0.1.0"}}
+<span class="c">$</span> ml-predict eval --model-file houses.ml houses.csv
+{"rule": "args.unknown-command", "hint": "ml-predict has the verbs predict and describe, and introspect and skill describe it", "detail": {"command": "eval"}}
+<span class="r"># exit status 2; the rule, hint, detail of the JSON line it prints</span>
+<span class="c">$</span> ml-predict predict --model-file houses.ml --log run.ndjson new.csv
+{"rule": "args.unknown-flag", "hint": "the tool's flags are listed by `introspect`; POSIX spellings are not promised", "detail": {"flag": "--log", "position": 4}}
+<span class="r"># exit status 2; the rule, hint, detail of the JSON line it prints</span></pre>
+<!-- /gen:sflow -->
 </section>
 
 <section id="agent">
@@ -316,7 +340,7 @@ flags       45, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
-  --model-file  path             predict, eval: the model file to read
+  --model-file  path             predict, eval, describe: the model file to read
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
 limits      21, for example
@@ -332,7 +356,7 @@ rules       78, for example
   conflict.exists          exit 5   a repair: never
   limit.line-too-long      exit 8   a repair: sometimes
 reads environment: false   reads clock: false
-authority   args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_write
+authority   args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_read, io_write
             bounded: true   foreign symbols: 0</pre>
 <!-- /gen:agentio -->
     </div>
@@ -408,10 +432,11 @@ printf 'id,rooms,area,city\n6,2,52.5,Lyon\n7,3,80,Porto\n' &gt; listings.csv</co
 
 <section id="cancho">
   <h2>Built in cancho, with an authority the compiler wrote</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>ml</code> that is the line below: it can read its arguments and the files named on its command line, allocate memory, create, append to, rename and remove files beneath a directory it opened itself, and write to the terminal. It cannot use the network, call foreign code, read the clock, read standard input or write a file by path. <code>conc</code> is in the row because <code>fit --threads</code> calls the threaded kernels of the linear algebra. The path extent is a run-time value, so the row names the verb, not the place: <code>fs_read("")</code>.</p>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>ml</code> that is the first line below: it can read its arguments, the files named on its command line and, for <code>predict -</code>, standard input, allocate memory, create, append to, rename and remove files beneath a directory it opened itself, and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file by path. <code>ml-predict</code>, the second line, has the same row without <code>conc</code>, <code>dir_write</code> and <code>file_write</code>: it writes nothing but its answer. <code>conc</code> is in the row because <code>fit --threads</code> calls the threaded kernels of the linear algebra. The path extent is a run-time value, so the row names the verb, not the place: <code>fs_read("")</code>.</p>
 <!-- gen:authority -->
-<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json</span>
-ml    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_write
+<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json and manifests/ml-predict.authority.json</span>
+ml          args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_read, io_write
+ml-predict  args, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write
 <span class="c"># bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>
 <!-- /gen:authority -->
 </section>

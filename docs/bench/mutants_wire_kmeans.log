@@ -66,7 +66,17 @@ KILLED    wk-sum-order-of-kind-6-is-3                      WK4  tests: test_the_
 KILLED    wk-threads-minus-one                             WK8  tests: test_a_plan_decides_after_it_is_read, test_categorical_columns_reach_k_means_through_the_encoders, test_a_consistent_file_that_disagrees_about_the_target_is_malformed, test_a_dry_run_writes_nothing
 KILLED    wk-threads-reach-the-seed                        WK8  tests: test_the_model_file_is_the_same_at_1_2_4_8_and_16_threads, test_kmeans_plus_plus, test_random_initialisation
 KILLED    wk-seed-ignored                                  WK5  tests: test_kmeans_plus_plus, test_random_initialisation, test_the_oracle_is_sensitive_to_the_sum_order_field_and_to_the_target_index
-PASSED    baseline (the unchanged tree)                    -  
+FAILED    baseline (the unchanged tree)                    -                     start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/s5/pnld4xwd6m78ztb80vplzpjc0000gp/T/ml-mutant-hlxm4oqv/tree/build/ml-predict'
+
+----------------------------------------------------------------------
+Ran 343 tests in 726.824s
+
+FAILED (errors=15)
+
 
 68 mutants: 60 killed, 8 survived, 0 invalid
 SURVIVOR wk-empty-file-lower-bound: a second line of defence: the reader refuses a file whose every column is dropped (ml.input.empty, 'a header and no data rows') before load_data counts the columns, so the check is reached by no input; it stays for the day the reader keeps a zero-column table

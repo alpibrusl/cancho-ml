@@ -19,38 +19,50 @@ import ml.csv;
 import ml.dict;
 import ml.limits;
 import ml.matrix;
+import ml.paths;
 import ml.refuse;
 import toolbox.place;
 
 // a pass over the file `rel`: (shape, report, sinks); report.status 99 when the open failed (aux: the errno)
-pub fn pass[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks) {
-    let (sh, rep, k2, cs) = pass_cat(heap, fs, root, rel, full, cfg, csv.no_cats(), target, sk, csv.off_state(heap));
+pub fn pass_rp[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks) {
+    let (sh, rep, k2, cs) = pass_cat(heap, fs, root, file, cfg, csv.no_cats(), target, sk, csv.off_state(heap));
     csv.drop_state(heap, cs);
     return (sh, rep, k2);
 }
 
+// the same for a file named by text (the test drivers, the fits): the paths of ml.paths.of_path
+pub fn pass[&h, &f, &r, &pq, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pq [byte], full: &pf [byte], cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks) {
+    let rp = paths.of_path(heap, rel, full);
+    var sh = csv.empty_shape(heap);
+    var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
+    var sink = sk;
+    borrow rp as &rr in {
+        let (s2, r2, k2) = pass_rp(heap, fs, root, rr, cfg, target, sink);
+        csv.drop_shape(heap, sh);
+        sh = s2;
+        rep = r2;
+        sink = k2;
+    }
+    paths.drop(heap, rp);
+    return (sh, rep, sink);
+}
+
 // the same with the categorical part of the scan (docs/categorical.md): (shape, report, sinks, state); report.status 99 when the open failed
-pub fn pass_cat[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], sk: csv.Sinks, cs: csv.CatState) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks, csv.CatState) {
-    match place.open_operand(fs, root, rel, full) {
+pub fn pass_cat[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], sk: csv.Sinks, cs: csv.CatState) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks, csv.CatState) {
+    if paths.is_stdin(file) {
+        // standard input was read once, into memory (docs/serving.md section 2.2): both passes run over those bytes
+        let (src, sh, rep, k2, c2) = csv.scan_cat(heap, csv.Source::Mem(0), paths.mem(file), cfg, cc, target, sk, cs);
+        csv.drop_source(src);
+        return (sh, rep, k2, c2);
+    }
+    match place.open_operand(fs, root, paths.shown(file), paths.full(file)) {
         Opened::Failed(reason) => {
             return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: reason }, sk, cs);
         }
         Opened::Ok(opened) => {
-            var handle = opened;
-            var sink = sk;
-            var state = cs;
-            var sh = csv.empty_shape(heap);
-            var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
-            borrow mut handle as &!fh in {
-                let (s2, r2, k2, c2) = csv.scan_cat(heap, fh, cfg, cc, target, sink, state);
-                csv.drop_shape(heap, sh);
-                sh = s2;
-                rep = r2;
-                sink = k2;
-                state = c2;
-            }
-            file_close(handle);
-            return (sh, rep, sink, state);
+            let (src, sh, rep, k2, c2) = csv.scan_cat(heap, csv.Source::Disk(opened), "", cfg, cc, target, sk, cs);
+            csv.drop_source(src);
+            return (sh, rep, k2, c2);
         }
     }
 }
@@ -70,14 +82,34 @@ pub fn kept[&s](sh: &s csv.Shape) -> [] int {
 
 // (matrix, shape, report, code). code is 0, or the refusal of ml.refuse that stopped the matrix being made (no rows, a cap); when
 // report.status is not 0 the matrix is empty and the report says what stopped the read.
-pub fn load[&h, &f, &r, &pf, &pq](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
+pub fn load[&h, &f, &r, &pq, &pf](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pq [byte], full: &pf [byte], cfg: csv.Cfg) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
     return load_t(heap, fs, root, rel, full, cfg, "", false);
+}
+
+// the same for a file named by text: the paths of ml.paths.of_path
+pub fn load_t[&h, &f, &r, &pq, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pq [byte], full: &pf [byte], cfg: csv.Cfg, target: &t [byte], skip: bool) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
+    let rp = paths.of_path(heap, rel, full);
+    var mx = matrix.empty(heap);
+    var sh = csv.empty_shape(heap);
+    var rep = csv.Report { status: 0, line: 0, col: 0, aux: 0 };
+    var code = 0;
+    borrow rp as &rr in {
+        let (a, b, c, d) = load_t_rp(heap, fs, root, rr, cfg, target, skip);
+        matrix.drop(heap, mx);
+        csv.drop_shape(heap, sh);
+        mx = a;
+        sh = b;
+        rep = c;
+        code = d;
+    }
+    paths.drop(heap, rp);
+    return (mx, sh, rep, code);
 }
 
 // The same with a target: its column is found by name in the shape (`tcol`; -1 if the header has none). `skip` false: the target is a column of the
 // matrix like the others (fit and eval read it, and --drop of the target is status 14). `skip` true: the target is not read and not a column of the
 // matrix (predict of a planned model: the file may lack it, or hold anything there); pass 1 runs in mode 5 and pass 2 in mode 9 (docs/wiring.md section 3).
-pub fn load_t[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, target: &t [byte], skip: bool) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
+pub fn load_t_rp[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], skip: bool) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
     var m1 = 0;
     var m2 = 8;
     if skip {
@@ -85,7 +117,7 @@ pub fn load_t[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r 
         m2 = 9;
     }
     let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m1, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
-    let (sh, rep, sk) = pass(heap, fs, root, rel, full, c1, target, csv.plain_sinks(heap, 8, false));
+    let (sh, rep, sk) = pass_rp(heap, fs, root, file, c1, target, csv.plain_sinks(heap, 8, false));
     csv.drop_sinks(heap, sk);
     if rep.status != 0 {
         return (matrix.empty(heap), sh, rep, 0);
@@ -105,7 +137,7 @@ pub fn load_t[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r 
     }
     let (t, data, miss, mrows, mcols, wpc) = matrix.parts(mx);
     let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m2, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
-    let (sh2, rep2, sk2) = pass(heap, fs, root, rel, full, c2, target, csv.sinks(heap, 8, false, data, miss));
+    let (sh2, rep2, sk2) = pass_rp(heap, fs, root, file, c2, target, csv.sinks(heap, 8, false, data, miss));
     csv.drop_shape(heap, sh2);
     let (a2, f2, d2, m2s) = csv.sink_parts(sk2);
     unbox_slice(heap, a2);
@@ -147,13 +179,25 @@ pub fn cat_load_parts(l: CatLoad) -> [] (matrix.Matrix, catmat.Ids, dict.Vocab, 
 // and the ids by looking each cell up in it. `given` true is a PREDICT: `vocab` is the stored vocabulary, the categorical columns are its own (by name), a
 // string it does not hold is id -2 and counted, nothing is added to it. Either way the vocabulary comes back in the answer (an empty one when the read
 // was refused). `skip` is as in load_t (the target is not a column of the matrix).
-pub fn load_cat[&h, &f, &r, &pf, &pq, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], skip: bool, vocab: dict.Vocab, given: bool) -> [heap, fs_read(""), dir_read, file_read] CatLoad {
-    return load_cat_with(heap, fs, root, rel, full, cfg, cc, target, skip, vocab, given, "");
+pub fn load_cat[&h, &f, &r, &pq, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pq [byte], full: &pf [byte], cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], skip: bool, vocab: dict.Vocab, given: bool) -> [heap, fs_read(""), dir_read, file_read] CatLoad {
+    let rp = paths.of_path(heap, rel, full);
+    var out = CatLoad { x: matrix.empty(heap), ids: catmat.empty(heap), voc: dict.empty_vocab(heap), sh: csv.empty_shape(heap), rep: csv.Report { status: 0, line: 0, col: 0, aux: 0 }, code: 0 };
+    borrow rp as &rr in {
+        let l = load_cat_with(heap, fs, root, rr, cfg, cc, target, skip, vocab, given, "");
+        let CatLoad { x, ids, voc, sh, rep, code } = out;
+        matrix.drop(heap, x);
+        catmat.drop(heap, ids);
+        dict.drop_vocab(heap, voc);
+        csv.drop_shape(heap, sh);
+        out = l;
+    }
+    paths.drop(heap, rp);
+    return out;
 }
 
 // The same for a stored model (given true): `na` are the markers of the model file (docs/stringtable.md section 2), applied beside cc.na, and a column of the
 // vocabulary that is marked as hashed (ml.dict.hash_buckets) is read by hashing its cells (section 5).
-pub fn load_cat_with[&h, &f, &r, &pf, &pq, &t, &n](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pf [byte], full: &pq [byte], cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], skip: bool, vocab: dict.Vocab, given: bool, na: &n [byte]) -> [heap, fs_read(""), dir_read, file_read] CatLoad {
+pub fn load_cat_with[&h, &f, &r, &pf, &t, &n](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], skip: bool, vocab: dict.Vocab, given: bool, na: &n [byte]) -> [heap, fs_read(""), dir_read, file_read] CatLoad {
     var m1 = 0;
     var m2 = 8;
     if skip {
@@ -168,7 +212,7 @@ pub fn load_cat_with[&h, &f, &r, &pf, &pq, &t, &n](heap: &!h Heap, fs: &f Fs("")
     } else {
         dict.drop_vocab(heap, vocab);
     }
-    let (sh, rep, sk, s1) = pass_cat(heap, fs, root, rel, full, c1, cc, target, csv.plain_sinks(heap, 8, false), st1);
+    let (sh, rep, sk, s1) = pass_cat(heap, fs, root, file, c1, cc, target, csv.plain_sinks(heap, 8, false), st1);
     csv.drop_sinks(heap, sk);
     if rep.status != 0 {
         csv.drop_state(heap, s1);
@@ -229,7 +273,7 @@ pub fn load_cat_with[&h, &f, &r, &pf, &pq, &t, &n](heap: &!h Heap, fs: &f Fs("")
     if given {
         st2 = csv.set_markers(heap, st2, na);
     }
-    let (sh2, rep2, sk2, s2) = pass_cat(heap, fs, root, rel, full, c2, cc, target, csv.sinks(heap, 8, false, data, miss), st2);
+    let (sh2, rep2, sk2, s2) = pass_cat(heap, fs, root, file, c2, cc, target, csv.sinks(heap, 8, false, data, miss), st2);
     csv.drop_shape(heap, sh2);
     let (a2, f2, d2, m2s) = csv.sink_parts(sk2);
     unbox_slice(heap, a2);

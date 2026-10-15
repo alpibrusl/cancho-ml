@@ -338,6 +338,10 @@ def q5(c):
     declared = set()
     for mm in c.models:
         declared |= set(mm["authority"]["adds"])
+    # a label the tool itself needs (standard input for `predict -`, docs/serving.md section 2.4) has its reason in tools.toml [ml.reasons], which manifest.py --check
+    # above requires for every label beyond the base row
+    import tomllib
+    declared |= set(tomllib.loads((c.root / "tools.toml").read_text())["ml"].get("reasons", {})) - {"conc"}
     undeclared = labels - base - declared
     if undeclared:
         return "FAIL", "the authority of ml has %s, which no manifest declares in [authority] adds" % ", ".join(sorted(undeclared))

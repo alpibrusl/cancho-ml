@@ -11,6 +11,7 @@
     "file_write",
     "fs_read",
     "heap",
+    "io_read",
     "io_write"
   ],
   "labels": [
@@ -56,6 +57,11 @@
     },
     {
       "name": "heap",
+      "argument": null,
+      "bounded": true
+    },
+    {
+      "name": "io_read",
       "argument": null,
       "bounded": true
     },
@@ -219,6 +225,7 @@
     "distinct_labels",
     "done",
     "double",
+    "drop_source",
     "dropped",
     "dtype_f64",
     "dtype_i64",
@@ -367,6 +374,7 @@
     "is_missing",
     "is_model_flag",
     "is_print",
+    "is_stdin",
     "is_tail",
     "is_utf8",
     "is_valid",
@@ -399,6 +407,7 @@
     "kind_train_test",
     "kind_val",
     "kind_word",
+    "kind_word",
     "kmeans_size",
     "label_max",
     "label_not_binary",
@@ -411,6 +420,7 @@
     "last_kind",
     "layout",
     "ldexp",
+    "le32",
     "lead_bits",
     "leaf",
     "length",
@@ -495,6 +505,7 @@
     "max_tokens",
     "mean_of",
     "mean_scaled",
+    "mem",
     "message_of",
     "message_of",
     "min2",
@@ -614,6 +625,7 @@
     "plan_unknown_key",
     "plan_unknown_step",
     "planned",
+    "planned_file",
     "pool_bytes",
     "pow10",
     "pow2",
@@ -680,6 +692,7 @@
     "sec",
     "second_range",
     "section_at",
+    "section_at",
     "section_count",
     "section_meta",
     "section_model",
@@ -723,6 +736,12 @@
     "step_numeric_count",
     "steps",
     "steps_bytes",
+    "stored_c0",
+    "stored_c1",
+    "stored_file",
+    "stored_kind",
+    "stored_schema",
+    "stored_task",
     "stream",
     "stride",
     "stride_at",
@@ -782,6 +801,7 @@
     "truncated",
     "type_of",
     "type_of",
+    "type_word",
     "u01",
     "undefined",
     "under",
@@ -822,7 +842,7 @@
     "writable",
     "y_max"
   ],
-  "folded_operators": 165,
+  "folded_operators": 171,
   "folded_calls": 2,
-  "functions": 1349
+  "functions": 1378
 }

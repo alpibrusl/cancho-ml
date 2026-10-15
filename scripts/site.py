@@ -75,6 +75,8 @@ FILES = {
     "houses.csv": "id,rooms,area,price\n1,2,48.5,180000\n2,3,71.25,240000\n3,3,64,215000\n4,4,98.5,335000\n5,1,31,120000\n",
     # new rows to predict for: no price column is needed
     "new.csv": "id,rooms,area\n6,2,52.5\n7,3,80\n",
+    # no byte at all: the standard input of a forgotten operand
+    "empty.csv": "",
     # the same with a column of text
     "listings.csv": "id,rooms,area,city\n6,2,52.5,Lyon\n7,3,80,Porto\n",
     # a two-class target
@@ -119,6 +121,13 @@ DEMOS = [
     ("c_eval", "ml eval --model-file pets.ml --drop id pets.csv"),
     ("c_hash", "ml fit --model logistic --cat species,city --step 'hash column=species buckets=8 missing=zero;encode column=city kind=label missing=zero;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets-hash.ml pets.csv"),
     ("c_hash_new", "ml predict --model-file pets-hash.ml --proba newpets.csv"),
+    # standard input, describe and ml-predict (docs/serving.md); the last field of a demo is the file given on standard input
+    ("s_stdin", "ml predict --model-file houses.ml -", "new.csv"),
+    ("s_empty", "ml predict --model-file houses.ml", "empty.csv"),
+    ("s_describe", "ml describe --model-file pets.ml --limit 2"),
+    ("s_mp", "ml-predict predict --model-file pets.ml --proba -", "newpets.csv"),
+    ("s_mp_fit", "ml-predict eval --model-file houses.ml houses.csv"),
+    ("s_mp_flag", "ml-predict predict --model-file houses.ml --log run.ndjson new.csv"),
     # k-means (docs/wiring-kmeans.md) on docs/examples/data/iris_train.csv and iris_test.csv: no target, the label column dropped, the features standardised
     ("k_target", "ml fit --model kmeans --k 3 --target virginica --output iris-km.ml iris_train.csv"),
     ("k_nok", "ml fit --model kmeans --drop virginica --output iris-km.ml iris_train.csv"),
@@ -128,6 +137,8 @@ DEMOS = [
     ("k_text", "ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
+# demos whose answer is shown as the members of `data` that matter, since the document is long
+SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"]}
 SUMMARY = {
     "bad": ["rule", "hint", "repair"],
     "exists": ["rule", "hint", "detail"],
@@ -136,6 +147,9 @@ SUMMARY = {
     "typo": ["rule", "hint", "detail"],
     "p_bad": ["rule", "hint", "repair"],
     "c_bad": ["rule", "hint", "detail"],
+    "s_empty": ["rule", "hint"],
+    "s_mp_fit": ["rule", "hint", "detail"],
+    "s_mp_flag": ["rule", "hint", "detail"],
     "k_target": ["rule", "hint", "detail"],
     "k_nok": ["rule", "hint", "detail"],
 }
@@ -162,9 +176,13 @@ def e(s):
 # --- running things ----------------------------------------------------------
 
 
-def run_words(words, binary, cwd):
+def run_words(words, binary, cwd, stdin=None):
+    """The command, run as `words` say (argv[0] is what the tool prints in a repair) with `binary`, or its sibling `ml-predict` for that command;
+    `stdin` is the name of a file in `cwd` given on standard input (none: an empty one)."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"}
-    r = subprocess.run(words, executable=str(binary), cwd=cwd, env=env,
+    exe = Path(binary).parent / "ml-predict" if words and words[0] == "ml-predict" else binary
+    data = (Path(cwd) / stdin).read_bytes() if stdin else b""
+    r = subprocess.run(words, executable=str(exe), cwd=cwd, env=env, input=data,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return r.stdout.decode("utf-8"), r.returncode
 
@@ -180,17 +198,17 @@ def make_context(binary, tmp):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
     results = {}
 
-    def run(words):
-        return run_words(words, binary, tmp)
+    def run(words, stdin=None):
+        return run_words(words, binary, tmp, stdin)
 
-    for key, typed in DEMOS:
+    for key, typed, *given in DEMOS:
         if key == "damaged":
             # a copy of houses.ml with one byte changed, inside the part the SHA-256 trailer covers
             b = bytearray((Path(tmp) / "houses.ml").read_bytes())
             b[-40] ^= 1
             (Path(tmp) / "damaged.ml").write_bytes(bytes(b))
-        out, status = run(shlex.split(typed))
-        results[key] = (typed, out, status)
+        out, status = run(shlex.split(typed), given[0] if given else None)
+        results[key] = (typed + (" < %s" % given[0] if given else ""), out, status)
         if key == "c_bad" and (Path(tmp) / "pets.ml").exists():
             raise Drift("the demo `c_bad` wrote pets.ml: a declared column that no step reads is refused")
         if key in ("c_fit", "c_hash") and not (Path(tmp) / ("pets.ml" if key == "c_fit" else "pets-hash.ml")).exists():
@@ -216,6 +234,12 @@ def item(ctx, key):
     """(typed command, what is printed, status, note). A refusal is shown as the
     members of its JSON line that matter."""
     typed, out, status = ctx["results"][key]
+    if key in SUMMARY_DATA:
+        doc = json.loads(out)
+        if not doc["ok"]:
+            raise Drift("the demo %s refuses" % key)
+        out = json.dumps({k: doc["data"][k] for k in SUMMARY_DATA[key]}, ensure_ascii=False)
+        return typed, out, status, None
     if key in SUMMARY:
         doc = json.loads(out)
         if doc["ok"] or status == 0:
@@ -274,6 +298,18 @@ def catflow_items(ctx):
             item(ctx, "c_hash_new")]
 
 
+def sflow_items(ctx):
+    """Standard input, describe and ml-predict."""
+    return [("# predict reads the CSV from standard input for the operand - (or no operand): the answer is the file's answer", None, 0, None),
+            item(ctx, "s_stdin"),
+            ("# a forgotten operand with nothing on standard input is the refusal of an empty file", None, 0, None),
+            item(ctx, "s_empty"),
+            ("# describe: what the model file requires of a caller. Excerpt: the model, the columns of a request, the classes, the columns of an answer", None, 0, None),
+            item(ctx, "s_describe"),
+            ("# ml-predict predicts and describes, from the same sources, with a row that has no write and no thread", None, 0, None),
+            item(ctx, "s_mp"),
+            item(ctx, "s_mp_fit"),
+            item(ctx, "s_mp_flag")]
 def kmflow_items(ctx):
     """k-means: no target, a refusal that says so, a fit without k refused, the iris features standardised and clustered, the cluster and the distance of each test row, the metrics."""
     return [("# k-means has no target: it clusters the rows by their features. The label column of iris is not given as one", None, 0, None),
@@ -330,6 +366,17 @@ def qs_items(ctx):
     return [item(ctx, k) for k in QS]
 
 
+def predict_authority(ctx):
+    manifest = json.loads((ROOT / "manifests" / "ml-predict.authority.json").read_text())
+    out, status = ctx["run"](["ml-predict", "introspect"])
+    if status != 0 or manifest != json.loads(out)["authority"]:
+        raise Drift("manifests/ml-predict.authority.json is not what `ml-predict introspect` says: run scripts/manifest.py")
+    effects = {lab["name"] for lab in manifest["labels"]}
+    if not manifest["bounded"] or manifest["foreign_symbols"] or effects & (FORBIDDEN | {"conc", "file_write", "dir_write", "fs_write"}):
+        raise Drift("the authority of ml-predict has a write, a thread, a forbidden label or a foreign symbol, or is unbounded")
+    return ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in manifest["labels"])
+
+
 def authority_row(ctx):
     manifest = json.loads((ROOT / "manifests" / "ml.authority.json").read_text())
     if manifest != ctx["introspect"]["authority"]:
@@ -346,16 +393,16 @@ def authority_row(ctx):
 def authority_md(ctx):
     m = authority_row(ctx)
     names = ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in m["labels"])
-    return ("```console\n# manifests/ml.authority.json\nml    %s\n"
-            "# bounded: %s; foreign symbols: none; net_out, net_in, ffi, clock: absent\n```" % (names, str(m["bounded"]).lower()))
+    return ("```console\n# manifests/ml.authority.json and manifests/ml-predict.authority.json\nml          %s\nml-predict  %s\n"
+            "# bounded: %s; foreign symbols: none; net_out, net_in, ffi, clock: absent\n```" % (names, predict_authority(ctx), str(m["bounded"]).lower()))
 
 
 def authority(ctx):
     m = authority_row(ctx)
     names = ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in m["labels"])
-    return ('<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json</span>\n'
-            'ml    %s\n<span class="c"># bounded: %s; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>'
-            % (e(names), str(m["bounded"]).lower()))
+    return ('<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json and manifests/ml-predict.authority.json</span>\n'
+            'ml          %s\nml-predict  %s\n<span class="c"># bounded: %s; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>'
+            % (e(names), e(predict_authority(ctx)), str(m["bounded"]).lower()))
 
 
 def limits(ctx):
@@ -444,11 +491,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

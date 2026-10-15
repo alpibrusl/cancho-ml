@@ -155,7 +155,34 @@ def data_defs():
                       "unknown_categories": NAT, "split": split}, ["model", "task", "rows", "positive", "metrics", "unknown_categories"])
     eval_clu_p = obj({"model": names, "task": {"const": "clustering"}, "rows": NAT, "clusters": NAT, "metrics": mclu, "unknown_categories": NAT, "split": split},
                      ["model", "task", "rows", "clusters", "metrics", "unknown_categories"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p]}
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p, describe_data()]}
+
+
+def describe_data():
+    """The answer of `describe` (docs/serving.md section 5): the contract a server builds its request schema from."""
+    opt = lambda s: {"oneOf": [{"type": "null"}, s]}  # noqa: E731
+    column_type = {"enum": ["int", "dec", "float", "categorical"]}
+    column = obj({"name": TB, "type": column_type, "scale": opt(NAT), "role": {"enum": ["feature", "target"]}, "required": {"type": "boolean"}})
+    value = obj({"value": TB, "count": NAT})
+    cat = obj({"column": TB, "encoder": {"enum": ["onehot", "label", "freq", "hash"]}, "categories": NAT, "buckets": opt(NAT),
+               "listed": NAT, "truncated": {"type": "boolean"}, "values": {"type": "array", "items": value}})
+    file_ = obj({"bytes": NAT, "sha256": SHA, "format": {"const": "CML1"}, "version": {"const": 1}, "sections": {"enum": [5, 6]},
+                 "compiler": TB, "sum_order": opt(NAT)})
+    target = obj({"name": TB, "type": {"enum": ["int", "dec", "float"]}, "scale": opt(NAT)})
+    request = obj({"header": {"type": "array", "items": TB}, "optional": {"type": "array", "items": TB},
+                   "extra_columns": {"const": "refused"}, "missing_cells": {"enum": ["refused", "needs_impute", "handled"]}})
+    reader = obj({"max_categories": NAT, "max_string_bytes": NAT, "max_pool_bytes": NAT, "max_cat_columns": NAT})
+    output = obj({"columns": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2},
+                  "with_proba": opt({"type": "array", "items": {"type": "string"}}),
+                  "with_distance": opt({"type": "array", "items": {"type": "string"}}), "label_threshold": opt({"type": "string"})})
+    return obj({
+        "model": {"enum": ["constant"] + wired_models()}, "task": {"enum": ["regression", "classification", "clustering"]},
+        "kind": {"type": "integer", "minimum": 1, "maximum": 7}, "plan": TB, "rows": NAT, "file": file_, "target": opt(target),
+        "columns": {"type": "array", "items": column, "minItems": 1}, "request": request,
+        "categorical": {"type": "array", "items": cat}, "na_values": {"type": "array", "items": TB}, "reader": opt(reader),
+        "classes": opt({"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}), "positive": opt({"type": "integer"}),
+        "output": output, "limits": obj({"values_per_column": NAT, "max_bytes": NAT}),
+    })
 
 
 def planned():
