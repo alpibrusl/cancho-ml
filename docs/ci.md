@@ -181,7 +181,7 @@ the SHA-256 files are for a download check, not provenance. The tag is not check
 
 * The first run of the workflow is the pull request's own: it cannot be run anywhere but on GitHub, and what was run before it is every step by hand on a Linux x86-64
   machine and on a Mac (section 8), not the YAML.
-* Linux aarch64 is not in the matrix. A run on a Raspberry Pi 5 was done by hand, if at all, outside this workflow, and this document does not report it.
+* Linux aarch64 is not in the matrix. A run on a Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) was done by hand on 2026-10-15, outside this workflow: Rust 1.98.1 installed for one user, the compiler built at `a4572ea` and `ml` at `cb08d5b` on the Pi, `scripts/xplat_fp.py` run there: 22 of 22 fits succeeded and the 88 lines are equal to the golden's. It is a record of one run and not a gate.
 * Windows, other Linux distributions, musl, other macOS versions than the runner's, and other compiler revisions are untested.
 * The runners' images change without a commit here; a red run after no commit is the first thing to read in the platform lines of the log.
 * A compiler cache hit skips the compiler build: the cache key is the revision, the operating system and the architecture, so a compiler built by another Rust than the one
