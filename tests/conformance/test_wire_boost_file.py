@@ -180,17 +180,23 @@ class BoostFile(unittest.TestCase):
             for bits in (0x7FF8000000000000, 0x7FF0000000000000, 0xFFF0000000000000):
                 self.refused(key, self.edit_model(key, val0, struct.pack("<Q", bits)), "%s val NaN or inf" % key)
 
-    def test_a_leaf_value_may_be_any_finite_number(self):
-        # the values are the model: a file whose leaf says another finite number is a valid model with another prediction
+    def test_a_leaf_value_and_the_base_score_may_be_any_finite_number(self):
+        # the values are the model: a file whose leaves or base say other finite numbers is a valid model with other predictions
         key = "rf"
         m = payloads(self.files[key])[4]
         trees, total = i64(m, 28), i64(m, 52)
-        val0 = 156 + 8 * (trees + 1) + 5 * (16 + 8 * total) + 16
         before = self.predict(key, self.files[key]).data()["rows"]
-        # the last node of the first tree is a leaf (preorder)
-        off = i64(m, 156 + 8)
-        at = val0 + 8 * (off - 1)
-        r = self.predict(key, self.edit_model(key, at, struct.pack("<d", 1e30)))
+        r = self.predict(key, self.edit_model(key, 116, struct.pack("<d", 1e30)))
+        self.assertEqual(r.status, 0, r)
+        self.assertNotEqual(r.data()["rows"], before)
+        feat0 = 156 + 8 * (trees + 1) + 16
+        val0 = 156 + 8 * (trees + 1) + 5 * (16 + 8 * total) + 16
+        data = self.files[key]
+        start = sections(data)[3][1]
+        for g in range(total):
+            if i64(m, feat0 + 8 * g) == -1:
+                data = set_bytes(data, start + val0 + 8 * g, struct.pack("<d", 1e30))
+        r = self.predict(key, fix_checksum(data))
         self.assertEqual(r.status, 0, r)
         self.assertNotEqual(r.data()["rows"], before)
 

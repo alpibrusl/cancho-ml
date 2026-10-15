@@ -337,6 +337,22 @@ class BoostWire(unittest.TestCase):
         r = self.ml("fit", "--model", "boost", "--rounds", "7003", "--max-depth", "30", "--min-leaf", "1", "--target", "y", "--output", "m.cml", "--overwrite", "n300.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.limit.nodes"), r)
 
+    def test_an_explicit_zero_is_the_default_early_stopping(self):
+        self.fit("y", "full.csv", "a.cml", "--rounds", "5", "--early-stopping", "0")
+        self.fit("y", "full.csv", "b.cml", "--rounds", "5")
+        self.assertEqual(self.sb.read("a.cml"), self.sb.read("b.cml").replace(b"early-stopping=0", b"early-stopping=0"))
+        self.assertEqual(header(self.sb.read("a.cml"))[7], 0)
+
+    def test_a_boosted_fit_takes_at_most_2_to_the_20_training_rows(self):
+        n = (1 << 20) + 1
+        self.sb.write("rows.csv", "x,y\n" + "".join("%d,%d\n" % (i % 1000, i % 7) for i in range(n)))
+        r = self.ml("fit", "--model", "boost", "--target", "y", "--output", "rows.cml", "rows.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.input.too-many-rows"), r)
+        self.assertEqual((r.error()["detail"]["rows"], r.error()["detail"]["max"]), (n, 1 << 20))
+        self.assertFalse((self.sb.dir / "rows.cml").exists())
+        r = self.ml("fit", "--model", "boost", "--rounds", "2", "--max-depth", "1", "--split", "train=0.5", "--target", "y", "--output", "rows.cml", "rows.csv")
+        self.assertEqual(r.status, 0, r)
+
     def test_a_refused_fit_writes_nothing(self):
         self.sb.write("keep.cml", b"x")
         r = self.ml("fit", "--model", "boost", "--learning-rate", "2", "--target", "y", "--output", "keep.cml", "--overwrite", "full.csv")
