@@ -639,6 +639,7 @@
     "pow2",
     "precision",
     "predict_non_finite",
+    "predictor_scale",
     "present",
     "proba_of",
     "proba_of",
@@ -689,6 +690,7 @@
     "same_ignoring_case",
     "sane",
     "scale",
+    "scale_bound",
     "scale_of",
     "scale_of",
     "scan",
@@ -855,5 +857,5 @@
   ],
   "folded_operators": 182,
   "folded_calls": 2,
-  "functions": 1407
+  "functions": 1409
 }

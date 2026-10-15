@@ -662,6 +662,8 @@ def _refuse_cases():
              col(repair_runs=True, detail={"model": "logistic", "pass": 0, "column": "(intercept)"}), setup=RBASE),
         case("ml-fit-collinear-ridge-too-small", ["fit", "--model", "linear", "--l2", "1e-300", "--target", "y", "--output", "m.cml", "dup.csv"],
              col(repair_runs=True, detail={"l2": "1e-300"}), setup=RBASE),
+        case("ml-fit-collinear-with-a-step-offers-only-the-ridge", ["fit", "--model", "linear", "--step", "scale column=a,b kind=standard", "--target", "y", "--output", "m.cml", "dup.csv"],
+             col(repair_runs=True), setup=RBASE),
         case("ml-fit-collinear-in-a-plan-has-no-argv", ["fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "dup.csv"],
              col(repair_none=True), setup=RBASE + [("write", "p.txt", "model kind=linear l2=0\n")]),
         case("ml-fit-separable", ["fit", "--model", "logistic", "--target", "y", "--output", "m.cml", "sep.csv"],
