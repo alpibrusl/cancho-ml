@@ -172,10 +172,12 @@ def meta_bytes(rows, columns, seed, pin, model_kind):
     return m
 
 
-def build_file(plan, schema, steps, model, meta, table=b""):
+def build_file(plan, schema, steps, model, meta, table=b"", prov=b""):
     secs = [(1, plan), (2, schema), (3, steps), (4, model), (5, meta)]
     if table:
         secs.append((6, table))
+    if prov:
+        secs.append((7, prov))
     body = b"CML1" + struct.pack("<II", 1, len(secs)) + b"".join(struct.pack("<IQ", t, len(p)) + p for t, p in secs)
     return body + sha(body)
 
