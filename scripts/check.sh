@@ -119,5 +119,9 @@ ST_STRIDE=5 sh scripts/gate_st.sh
 # registries and the Python oracles (scripts/oracle_pipe.py --sklearn and scripts/mutants_pipe.py run on request, as the other mutants do)
 python3 scripts/mutants_pipe.py --check
 sh scripts/gate_pipe.sh
+# the demo script (scripts/demo.sh): two tracked experiments, compare and verify, train versus held-out, ml-serve on its default bind and two curl requests, run with the built
+# binaries; its key facts are asserted and the edits of the script that must be refused are shown refused
+python3 scripts/check_demo.py
+python3 scripts/check_demo.py --mutants
 # the documentation checks (docs: program output in README and the page, links, the pages' basics); they need build/ml, built above
 sh scripts/check_docs.sh
