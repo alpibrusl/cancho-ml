@@ -86,7 +86,7 @@ MUTANTS = [
     M("wk-cluster-index-plus-one", "WK3", "predict prints the cluster counted from 1", [(IO, "put_label(heap, w, plain, truncate(contents(pq)[k]));", "put_label(heap, w, plain, truncate(contents(pq)[k]) + 1);")], KM + ORACLE),
     M("wk-distance-accepted-by-linear", "WK3", "--distance is accepted by a model that has no centres", [(IO, "    if go && o.distance {", "    if false && o.distance {")], KM + RULES),
     M("wk-distance-accepted-by-constant", "WK3", "--distance is accepted by a constant model", [(IO, "    if verb == 2 && o.distance {", "    if false && o.distance {")], KM + RULES),
-    M("wk-proba-accepted-by-kmeans", "WK3", "--proba is accepted by k-means", [(IO, "        } else if is_clu {", "        } else if false {")], KM + RULES),
+    M("wk-proba-accepted-by-kmeans", "WK3", "--proba is accepted by k-means", [(IO, "        } else if stored.task == 4 {\n            e = wiredata.conflict(heap, e, \"proba\", \"a clustering has no probability", "        } else if false {\n            e = wiredata.conflict(heap, e, \"proba\", \"a clustering has no probability")], KM + RULES),
     M("wk-eval-positive-accepted", "WK3", "--positive is accepted by eval of k-means", [(IO, "        if task == 4 && o.positive_given {", "        if false {")], KM + RULES),
     M("wk-eval-reads-a-target", "WK3", "eval of a clustering reads a target column", [(IO, "                    if ir.tj >= 0 {", "                    if true {")], KM + ORACLE),
     M("wk-eval-clusters-field", "WK3", "eval does not say the number of clusters", [(IO, "w = json.put_key(heap, w, \"clusters\");", "w = json.put_key(heap, w, \"cluster_count\");")], KM + ORACLE + RULES),
