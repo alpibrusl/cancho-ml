@@ -72,9 +72,11 @@ The texts that name the reachable models (`ml.plan.model-not-built`, the `args.c
 * **predict.** `columns` is `["cluster"]`, or `["cluster", "distance"]` with `--distance`; a row of `rows` is the cluster index (0 to k-1, the lowest index among equal
   distances) and the squared distance as the shortest decimal that reads back. The file needs the feature columns only; a column that is not a feature is `ml.schema.mismatch`
   with the `--drop` repair, as for every model. `unknown_categories` as for the others.
+  A squared distance that is not a finite number (a feature past 1.3e154 squares past the largest double) is `ml.predict.non-finite`, with the row and `distance` in `detail`; without `--distance` the distances are not computed and the
+  clusters are printed as ever (`docs/nonfinite.md`).
 * **eval.** `metrics`: `inertia` (the sum of the squared distances of the rows to the centre of their cluster, a double), `sizes` (rows per cluster), `mean_distance` (per
   cluster, `null` for a cluster with no row). `rows` and `clusters` beside it. `--split train=F --seed N` scores the test rows only, as for the other models: the inertia of
-  held-out rows. The file needs no target column. There is no label, so there is no accuracy: k-means is not scored against a target.
+  held-out rows. A squared distance of one row that is not finite is `ml.predict.non-finite` (the row of the file and `distance` in `detail`), before any metric; a sum of finite squared distances that overflows is the `null` inertia. The file needs no target column. There is no label, so there is no accuracy: k-means is not scored against a target.
 * The **decisive sums** are the lane order of `docs/linalg.md` section 2: the inertia is the sum of the squared distances of the rows in row order, and the mean distance of a
   cluster is the sum of the Euclidean distances of its rows, **in the order of those rows in the file**, divided by their number; both through `lib/metrics/sums.cho`
   (blocks of 256 terms, four lanes, the fixed tree). A squared distance is the left fold over the features of `(x_j - c_j)^2` from `+0.0`, as the library forms it. The
@@ -123,6 +125,7 @@ sums of the fit are; it does not say there is no sequential sum. A reader that k
 | `ml.input.missing-value` | 8 | a feature cell still missing after the steps | the wiring, with the repair |
 | `ml.input.non-finite` | 8 | a cell that is not finite (the reader refuses it already), a sum that overflows is `ml.fit.non-finite` | the reader; the library |
 | `ml.fit.non-finite` | 8 | sums that overflow a double (cells of magnitude near 1e308) | the library |
+| `ml.predict.non-finite` | 8 | `predict --distance` or `eval` meets a squared distance that is NaN or infinite | `wiredata.first_bad_score`, `docs/nonfinite.md` |
 | `ml.param.threads` | 2 | `--threads 0`, `--threads 65` | the flag check |
 | `ml.model.truncated`, `ml.model.malformed`, `ml.model.version` | 8 | damaged files (WK12), a schema whose target disagrees with the kind, a `k` the plan and the payload disagree on | the file reader |
 

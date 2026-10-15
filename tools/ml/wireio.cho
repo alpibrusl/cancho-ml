@@ -24,6 +24,7 @@ import ml.logrec;
 import ml.matrix;
 import ml.mfile;
 import ml.paths;
+import ml.refuse;
 import ml.spec;
 import ml.verbs;
 import ml.wiredata;
@@ -601,17 +602,20 @@ fn through_steps[&h, &g, &ii, &ss, &s](heap: &!h Heap, args: &g Args, inp: &ii I
 
 // ---------------------------------------------------------------- predict
 
-// one value of the answer: the double `v` as the shortest decimal that reads back
-fn put_cell[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: float) -> [heap] (json.Writer, buffer.Buffer) {
-    var b = flt.put_float(heap, buffer.empty(heap, 32), csvcell.bits_of_key(bits_of(v)));
+// one value of the answer: the double `v` as the shortest decimal that reads back, through the door of verbs.put_float_text. The third member is false when `v` is not finite: nothing
+// was written for it. predict_page has refused every such row before it writes the first cell (docs/nonfinite.md section 4), so false cannot happen there; it is checked all the same.
+fn put_cell[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: float) -> [heap] (json.Writer, buffer.Buffer, bool) {
+    let (b, fin) = verbs.put_float_text(heap, buffer.empty(heap, 32), bits_of(v));
     var o = w;
     var p = plain;
-    borrow b as &br in {
-        o = json.put_string(heap, o, buffer.bytes(br));
-        p = buffer.append(heap, p, buffer.bytes(br));
+    if fin {
+        borrow b as &br in {
+            o = json.put_string(heap, o, buffer.bytes(br));
+            p = buffer.append(heap, p, buffer.bytes(br));
+        }
     }
     buffer.drop(heap, b);
-    return (o, p);
+    return (o, p, fin);
 }
 
 fn put_label[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: int) -> [heap] (json.Writer, buffer.Buffer) {
@@ -627,7 +631,7 @@ fn put_label[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: int) -
 }
 
 // the page of predictions: (the data object, the text, the refusal code of the estimator)
-fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w2 [float], blob: &bl [byte], c0: int, c1: int, unknown: int, with_proba: bool, with_distance: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w2 [float], blob: &bl [byte], c0: int, c1: int, unknown: int, with_proba: bool, with_distance: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int, int, int) {
     let total = matrix.rows(xs);
     var start = o.from;
     if start > total {
@@ -648,8 +652,24 @@ fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x m
             code = wiredata.proba_into(heap, kind, xs, wv, blob, contents(qw));
         }
     }
+    // docs/nonfinite.md section 4: every value of every row scored (not only the page), before the first byte of the answer
+    var badrow = 0 - 1;
+    var badcol = 0;
+    if code == 0 {
+        borrow pred as &pq0 in {
+            borrow prob as &qq0 in {
+                let (br, bc) = wiredata.first_bad_score(task, contents(pq0), contents(qq0), total, with_distance);
+                badrow = br;
+                badcol = bc;
+            }
+        }
+        if badrow >= 0 {
+            code = refuse.predict_non_finite();
+        }
+    }
     var w = json.writer(heap, 512);
     var plain = buffer.empty(heap, 64);
+    var printed = true;
     borrow pred as &pq in {
         borrow prob as &qq in {
             if code == 0 {
@@ -680,18 +700,20 @@ fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x m
                 while k < end {
                     w = json.begin_array(heap, w);
                     if task == 1 {
-                        let (w2, p2) = put_cell(heap, w, plain, contents(pq)[k]);
+                        let (w2, p2, f2) = put_cell(heap, w, plain, contents(pq)[k]);
                         w = w2;
                         plain = p2;
+                        printed = printed && f2;
                     } else if task == 4 {
                         let (w2, p2) = put_label(heap, w, plain, truncate(contents(pq)[k]));
                         w = w2;
                         plain = p2;
                         if with_distance {
                             plain = buffer.push(heap, plain, byte_of(9));
-                            let (w3, p3) = put_cell(heap, w, plain, contents(qq)[k]);
+                            let (w3, p3, f3) = put_cell(heap, w, plain, contents(qq)[k]);
                             w = w3;
                             plain = p3;
+                            printed = printed && f3;
                         }
                     } else {
                         var label = c0;
@@ -703,9 +725,10 @@ fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x m
                         plain = p2;
                         if with_proba {
                             plain = buffer.push(heap, plain, byte_of(9));
-                            let (w3, p3) = put_cell(heap, w, plain, contents(qq)[k]);
+                            let (w3, p3, f3) = put_cell(heap, w, plain, contents(qq)[k]);
                             w = w3;
                             plain = p3;
+                            printed = printed && f3;
                         }
                     }
                     w = json.end_array(heap, w);
@@ -736,7 +759,18 @@ fn predict_page[&h, &x, &w2, &bl](heap: &!h Heap, kind: int, task: int, xs: &x m
     }
     unbox_slice(heap, pred);
     unbox_slice(heap, prob);
-    return (json.finish(w), plain, code);
+    if code == 0 && !printed {
+        // not reachable after the scan; if it were, the answer is the refusal and no cell of it is kept
+        code = refuse.predict_non_finite();
+    }
+    if code != 0 {
+        buffer.drop(heap, plain);
+        plain = buffer.empty(heap, 1);
+        let doc = json.finish(w);
+        buffer.drop(heap, doc);
+        return (buffer.empty(heap, 1), plain, code, badrow, badcol);
+    }
+    return (json.finish(w), plain, code, badrow, badcol);
 }
 
 fn conflict_out[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer, flag: &static [byte], message: &static [byte]) -> [heap] verbs.Out {
@@ -856,12 +890,14 @@ pub fn predict_loaded[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, f
                 e = e4;
                 if ok4 {
                     borrow xs as &xq in {
-                        let (p2, t2, code) = predict_page(heap, stored.kind, stored.task, xq, contents(stored.wv), file.model_bytes(stored.lo), stored.c0, stored.c1, unk, o.proba, o.distance, o);
+                        let (p2, t2, code, brow, bcol) = predict_page(heap, stored.kind, stored.task, xq, contents(stored.wv), file.model_bytes(stored.lo), stored.c0, stored.c1, unk, o.proba, o.distance, o);
                         buffer.drop(heap, payload);
                         buffer.drop(heap, plain);
                         payload = p2;
                         plain = t2;
-                        if code != 0 {
+                        if code == refuse.predict_non_finite() {
+                            e = wiredata.non_finite_prediction(heap, e, brow + 1, wiredata.column_word(bcol));
+                        } else if code != 0 {
                             e = wiredata.code_error(heap, e, code, 0, 0, 0);
                         }
                     }
@@ -1033,9 +1069,14 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                                 if true {
                                     borrow yv as &yr in {
                                         borrow xs as &xq in {
-                                            let (mobj, mplain, mund, fl) = wiredata.metrics_block(heap, kind, task, xq, contents(yr), contents(sr.wv), file.model_bytes(sr.lo), c0, c1, pos, o.max_rows);
+                                            let (mobj, mplain, mund, fl) = wiredata.metrics_block(heap, kind, task, xq, contents(yr), contents(sr.wv), file.model_bytes(sr.lo), c0, c1, pos, o.max_rows, true);
                                             if fl.code != 0 {
-                                                e = wiredata.bad_metric(heap, e, fl);
+                                                var fl2 = fl;
+                                                if fl.code == refuse.predict_non_finite() {
+                                                    // the row of the file, not of the held-out rows
+                                                    fl2 = wiredata.Failed { code: fl.code, name: fl.name, row: wiredata.file_row(contents(sr2), nrows, want, fl.row) };
+                                                }
+                                                e = wiredata.bad_metric(heap, e, fl2);
                                                 buffer.drop(heap, mplain);
                                             } else {
                                                 var w = json.writer(heap, 256);

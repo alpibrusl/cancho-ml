@@ -709,7 +709,7 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
                 borrow yfit as &yfr in {
                     borrow wv as &wr in {
                         borrow blob as &bq in {
-                            let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, 4, xq, contents(yfr)[0..rows], contents(wr), contents(bq), contents(pls.ip)[0], 0, 0, o.max_rows);
+                            let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, 4, xq, contents(yfr)[0..rows], contents(wr), contents(bq), contents(pls.ip)[0], 0, 0, o.max_rows, false);
                             buffer.drop(heap, report);
                             report = mo;
                             buffer.drop(heap, mplain);
@@ -1080,7 +1080,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
                         }
                         borrow yte as &yr in {
                             borrow xs as &xq2 in {
-                                let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, ds.c1, o.max_rows);
+                                let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, ds.c1, o.max_rows, false);
                                 buffer.drop(heap, mobj);
                                 mobj = mo;
                                 buffer.drop(heap, mplain);
