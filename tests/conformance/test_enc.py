@@ -44,7 +44,7 @@ class Files(unittest.TestCase):
         data = self.sb.read("m.cml")
         self.assertEqual(d["bytes"], len(data))
         self.assertEqual(d["sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(int.from_bytes(data[8:12], "little"), 6)
+        self.assertEqual(int.from_bytes(data[8:12], "little"), 7)
         st = d["summary"]["string_table"]
         self.assertEqual((st["entries"], st["strings"], st["pool_bytes"]), (1, 5, 13))
         table = sections(data)[5]

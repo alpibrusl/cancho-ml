@@ -151,7 +151,7 @@ the model's string table.
 Bounds **[choice]**: at most **1000 records** in `DIR` (`ml.runs.too-many`, counted over every `*.json` of the directory, before anything is written); a record of at most **262144 bytes**
 (`ml.runs.record-too-large`; the plan alone may be 65536). Both are refused before the model is written.
 
-Idempotence: if `DIR/<id>.json` exists, it is read and compared with the record about to be written **with the `threads` member removed**; equal: nothing is written (`written:false`); different: the call is
+Idempotence: if `DIR/<id>.json` exists, it is read and compared with the record about to be written **but for the `threads` member and the name of the model file** (the candidate is rebuilt with the existing record's two values and compared byte for byte); equal: nothing is written (`written:false`) and the existing record stays; different: the call is
 refused with `ml.runs.conflict` and nothing is written. The second case is not a normal event: it means the same inputs gave another model (a determinism fault) or the directory was edited. Order of effects: every check
 (bounds, conflict, the output path, `--overwrite`) is made before either file is written; the model is written, then the record. `--dry-run` writes neither and lists both in `planned_actions`.
 
@@ -160,9 +160,9 @@ refused with `ml.runs.conflict` and nothing is written. The second case is not a
 `id = SHA-256(canonical text)` in lowercase hex, where the canonical text is the bytes of the `inputs` object of 5.3 exactly as the record holds them (the same writer produces both). `inputs` holds what
 determines the model bytes and nothing else:
 
-* the training file's SHA-256, size and row count (not its name: the same bytes under another name are the same run);
+* the training file's name as given, SHA-256, size and row count (the name is an input: the same bytes under another name are another run, and `verify` finds the file by the name);
 * the target column name (null for a clustering), the canonical plan text (which holds the model and every hyperparameter), the task;
-* the seed and the split as `{num, den}` reduced to lowest terms (`train=0.8` and `train=0.80` are one split) or null;
+* the seed, the positive label (null when `--positive` is not given) and the split as `{num, den}`, **the fraction that trains** in lowest terms (`train=0.8` and `train=0.80` are one split), or null;
 * the lists `--drop`, `--float` and `--cat` as given, `--na-values` and the four reader limits of `--cat` (they are stored in the string table, so they change bytes);
 * the compiler pin (`meta` stores it, so another compiler is another model file) and the `sum_order` of the model kind.
 
@@ -175,22 +175,23 @@ bytes), `--output`, `--overwrite`, `--log`, `--format`. `verify` reads with the 
 {"schema":"ml.run.v1","id":"<64 hex>",
  "inputs":{"data":{"path":"iris_train.csv","bytes":N,"sha256":"..","rows":N},
            "target":"virginica"|null,"task":"classification"|"regression"|"clustering",
-           "plan":"<canonical plan text>","seed":0,"split":{"num":4,"den":5}|null,
+           "plan":"<canonical plan text>","seed":0,"positive":null|N,"split":{"num":4,"den":5}|null,
            "drop":"..","float":"..","cat":"..","na_values":"..","reader":{"max_categories":64,"max_string_bytes":255,"max_pool_bytes":1048576,"max_cat_columns":128}|null,
            "compiler":"<pin>","sum_order":2|3|null},
  "threads":1,
  "model":{"path":"m.ml","bytes":N,"sha256":".."},
  "counts":{"file_rows":N,"train_rows":N,"test_rows":N,"features":N,"steps":N},
- "metrics":{"on":"train"|"held-out","rows":N,"values":{...}}|null}
+ "metrics":{"rows":N,"on":"train"|"held-out","metrics":{...}}|null,
+ "check":"<64 hex>"}
 ```
 
 (`drop`, `float`, `cat`, `na_values` are the strings as given, empty when absent; `reader` is null when `--cat` was not given. `sum_order` is null for the constant kinds.)
 
-`metrics` is the metric object `eval` prints for the same rows: the **held-out rows** when `--split` was given (`"on":"held-out"`), else the **training rows** (`"on":"train"`, scored through the stored steps by the same
+`check` is the SHA-256 of every byte of the record before `,"check":"`; a reader recomputes it and the id, so a record that was edited by one byte is `ml.runs.damaged`. `metrics` is the metric object `eval` prints for the same rows: the **held-out rows** when `--split` was given (`"on":"held-out"`), else the **training rows** (`"on":"train"`, scored through the stored steps by the same
 code as `eval`). A constant model has `metrics` null (its summary, the mean or the classes, is in the answer of `fit`; scoring a constant on its training rows is `ml eval`).
 The record is built from numbers `fit` already holds; it never contains a row, a cell or a category string.
 
-`ml eval --track DIR` writes `DIR/<run id>.eval-<scored sha256>.json`, schema `ml.eval.v1`: `{"schema":"ml.eval.v1","run":"<id>","model_sha256":"..","data":{"path":..,"bytes":..,"sha256":..,"rows":..},"on":"train"|"other"|"unknown","split":{..}|null,"positive":..|null,"metrics":{...}}`.
+`ml eval --track DIR` writes `DIR/<run id>.eval-<scored sha256>.json`, schema `ml.eval.v1`: `{"schema":"ml.eval.v1","run":"<id>","model_sha256":"..","data":{"path":..,"bytes":..,"sha256":..,"rows":..},"on":"train"|"other"|"unknown","split":{"num":..,"den":..,"seed":..}|null,"positive":..|null,"metrics":{...},"check":".."}`. The `answer` of `fit --track` names the record in `data.run` (`id`, `dir`, `file`, `written`, `sha256`).
 The run is found by the model file's SHA-256 among the records of `DIR`; none is `ml.runs.unknown-model`. The same eval twice writes the same bytes (idempotent as above).
 
 ### 5.4 The verbs (`ml runs ...`)
@@ -198,7 +199,7 @@ The run is found by the model file's SHA-256 among the records of `DIR`; none is
 All four go through the flag table, `introspect`, `skill`, the schemas and the module contract as the other verbs. Flags: `--root`, `--format`, `--limit` (list: records per page, default 1000), `--max-bytes`, and for
 `verify` also `--threads`.
 
-* `ml runs list DIR`: `{"dir":"DIR","count":N,"runs":[{"id":..,"model":..,"task":..,"data_sha256":..,"model_sha256":..,"on":..,"evals":N}]}`, sorted by id (bytewise); eval records are counted, not listed. A record that
+* `ml runs list DIR`: `{"dir":"DIR","count":N,"truncated":bool,"runs":[{"id":..,"model":..,"task":..,"data_sha256":..,"model_sha256":..,"train_rows":N,"metrics_on":"train"|"held-out"|null,"evals":N}]}`, sorted by id (bytewise); eval records are counted, not listed. A record that
   does not validate is `ml.runs.damaged` (the file name in detail), not skipped.
 * `ml runs show DIR ID`: `{"record":{...}}` the record, validated (the id recomputed from `inputs` must equal the name and `id`).
 * `ml runs compare DIR ID ID`: `{"a":..,"b":..,"inputs":[{"key":"seed","a":0,"b":1},...],"metrics":[{"name":"rmse","a":"..","b":"..","equal":false}],"model_equal":bool}`: the `inputs` members that differ (a
@@ -215,7 +216,7 @@ string at the pinned compiler); a record that needs more is refused with `ml.run
 
 New tags, all registered in `design.md` 8.1, `tools/ml/spec.tmpl`, `lib/core/kinds.cho` (numbers) and the schemas: `ml.predict.out-of-range` (8), `ml.predict.no-provenance` (8), `ml.runs.conflict` (8),
 `ml.runs.too-many` (8), `ml.runs.record-too-large` (8), `ml.runs.not-found` (3), `ml.runs.unknown-model` (8), `ml.runs.damaged` (8), `ml.runs.data-changed` (8), `ml.runs.model-differs` (8),
-`ml.runs.not-replayable` (8), `ml.input.changed` (8: the training file changed between the reads of one fit). Existing tags reused: `io.not-found` for a missing `DIR`, `ml.fit.non-finite` for an
+`ml.runs.not-replayable` (8). Existing tags reused: `io.not-found` for a missing `DIR`, `ml.fit.non-finite` for an
 unrepresentable statistic, `ml.model.malformed` for a damaged section 7.
 
 ### 5.6 Privacy
@@ -226,7 +227,7 @@ records of every fixture for every cell and every category of its training file.
 
 ## 6. Where the fit is computed
 
-`fit` hashes the training file before it reads it and again after, and refuses (`ml.input.changed`) if the two differ: the SHA-256 in the section is then the hash of the bytes that were read, and the claim
+`fit` hashes the training file before it reads it and again after, and refuses (`io.read-failed`, whose message says the file changed) if the two differ: the SHA-256 in the section is then the hash of the bytes that were read, and the claim
 "`verify` re-reads the file and gets the same hash" is a claim about the same bytes. The statistics are computed from the matrix the fit holds (no extra read of the file). Cost: two sequential reads of the training
 file plus one pass over the matrix per feature (exact accumulation), measured in section 10.
 

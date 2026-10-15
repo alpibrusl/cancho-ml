@@ -211,6 +211,8 @@ ever accepted (gate M1 flips every byte three ways).
 
 *The string table.* A file written by `fit` for a model with a categorical step has a sixth section, tag 6, and `sections` is then 6 (a file without a categorical step has the five sections above and the bytes it always had). The section holds the fitted vocabulary of every categorical step (the raw training strings with their counts: a privacy point, `docs/categorical.md` section 11), the `--na-values` markers and the reader limits of the fit, behind a SHA-256 of its own; the `steps` section holds an 8-byte stub for each categorical step and the schema has the type code 3 for each categorical input column. Layout, bounds (131,072 strings, 8 MiB of string bytes, 12 MiB) and refusals (`ml.model.string-table`, `ml.limit.string-table`) are in `docs/stringtable.md`. `predict` and `eval` take no flag of the categorical reader: the file says what to read.
 
+*The provenance section.* Every file `fit` writes ends, before the trailer, with a section of tag 7: the SHA-256 and size of the training file, its rows, and the range of each numeric feature; the header's `sections` is 5, 6 or 7. A file of an older version has none and is read as before. The layout, the bounds and the statistics are `docs/tracking.md` section 2. `fit --track DIR` and the verbs `ml runs list|show|compare|verify` are `docs/tracking.md` section 5; `predict` and `eval` take `--max-out-of-range N`.
+
 ## 5. The log
 
 `--log FILE` appends one NDJSON record at the start of the run (`start`), after the read (`read`: rows, columns, bytes of the CSV), after

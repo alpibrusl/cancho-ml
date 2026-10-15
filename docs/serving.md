@@ -130,6 +130,7 @@ One JSON object in `data` of the envelope `ml.v1`. A field is always present; a 
 | `kind` | integer 1 to 7 | the registry number of the file's model section (`lib/core/kinds.cho`): 1 and 3 constant regression, 2 constant classification, 4 linear, 5 logistic, 6 kmeans, 7 tree and forest |
 | `plan` | string | the canonical plan text, section 1 of the file |
 | `rows` | integer | training rows |
+| `provenance` | object or `null` | `null` for a model file with no provenance section; else `file_sha256`, `file_bytes`, `file_rows`, `rows` and `features`: for each numeric feature `name` (TB), `count`, `min`, `max`, `mean`, `std` (doubles as strings), `docs/tracking.md` section 2 |
 | `file` | object | `bytes` (integer), `sha256` (hex of the file's bytes, the digest of the whole file), `format` (`"CML1"`), `version` (1), `sections` (5, or 6 with a string table), `compiler` (the pin the file records, TB), `sum_order` (the summation order the file records for a model of kind 4 or above, 2 or 3; `null` for the constant kinds) |
 | `target` | object or `null` | `name` (TB), `type` (`int`, `dec`, `float`), `scale` (integer for `dec`, else `null`); `null` for a clustering, which has no target |
 | `columns` | array | one object per column of the schema, in the file's order: `name` (TB), `type` (`int`, `dec`, `float`, `categorical`), `scale` (integer for `dec`, else `null`), `role` (`feature` or `target`; a clustering has only features), `required` (a feature: true; the target: false) |
@@ -143,6 +144,8 @@ One JSON object in `data` of the envelope `ml.v1`. A field is always present; a 
 | `limits` | object | `values_per_column` (the `--limit` in force) and `max_bytes` (the `--max-bytes` in force) |
 
 The JSON Schema of the answer (`schemas/ml.v1.json`, the `describe` member of `data`) is generated from this table by `scripts/schemas.py`; D4 compares the schema, the table and the answers.
+
+`describe` also prints `provenance`: `null` for a model file with no provenance section, else `file_sha256`, `file_bytes`, `file_rows`, `rows` and for each numeric feature its `name`, `count`, `min`, `max`, `mean` and `std` (`docs/tracking.md` sections 2 and 3.4); `file.sections` is 5, 6 or 7. The answers of `predict` and `eval` carry `out_of_range` (and `predict` `ignored_columns`, `eval` `on`): `docs/tracking.md` section 3.
 
 ## 6. How one request row becomes the CSV the predictor reads
 

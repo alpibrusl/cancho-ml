@@ -207,6 +207,19 @@ def sections(data):
     return out
 
 
+def without_provenance(data):
+    """The model file without its provenance section (tag 7: the SHA-256 and size of the training file and the range of each feature, docs/tracking.md section 2), the count and the
+    checksum made again. What a file of an older version looked like; the files whose bytes must not depend on the order, the line endings or the spelling of the training file are compared this way."""
+    out = bytearray(data[:12])
+    kept = 0
+    for tag, start, length in sections(data):
+        if tag != 7:
+            out += data[start - 12:start + length]
+            kept += 1
+    out[8:12] = kept.to_bytes(4, "little")
+    return fix_checksum(bytes(out) + bytes(32))
+
+
 def fix_checksum(data):
     body = bytes(data[:-32])
     return body + hashlib.sha256(body).digest()

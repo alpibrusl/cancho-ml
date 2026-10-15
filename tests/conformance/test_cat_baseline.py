@@ -60,9 +60,9 @@ class NumericBaseline(unittest.TestCase):
         self.assertEqual(failures, [], "a numeric case changed")
 
     def test_the_one_exception_is_the_old_hash_and_nothing_else(self):
-        """the record still holds the OLD hash of that case (it is not rewritten), and the exception differs from it"""
+        """the record of the deliberate re-record of M22 (docs/tracking.md section 8) holds the hash of the text these cases print now: the exceptions equal it"""
         for k, new in CHANGED.items():
-            self.assertNotEqual(GOLDEN[k]["stdout"], new)
+            self.assertEqual(GOLDEN[k]["stdout"], new)
         self.assertEqual(sorted(CHANGED), ["args-conflict-step-needs-a-model", "ml-plan-model-not-built", "ml-plan-unknown-step"])
 
     def test_the_record_holds_the_wired_models(self):

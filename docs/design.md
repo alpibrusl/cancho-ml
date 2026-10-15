@@ -379,7 +379,6 @@ The library also answers, with its own codes in its band, tags that exist above:
 |---|---|---|---|
 | `ml.predict.out-of-range` | 8 | more rows of a `predict` or `eval` hold a numeric feature outside the range stored in the model file than `--max-out-of-range` allows; rows, bound, first column and first row in `detail` | none |
 | `ml.predict.no-provenance` | 8 | `--max-out-of-range` was given and the model file has no provenance section | none: refit with this version |
-| `ml.input.changed` | 8 | the training file changed while `fit` read it (its SHA-256 before and after differ) | none |
 | `ml.runs.conflict` | 8 | a run record with this id exists and differs from the one to write in more than the thread count and the name of the model file | none |
 | `ml.runs.too-many` | 8 | the `--track` directory holds 1000 records already | none |
 | `ml.runs.record-too-large` | 8 | a record would be over 262,144 bytes | none |

@@ -843,7 +843,7 @@ pub fn fit_prepare[&h, &g, &f, &r, &pf, &tn](heap: &!h Heap, args: &g Args, fs: 
                 if hst != 0 || hst2 != 0 {
                     e = fail.io_error(heap, e, haux + haux2, false, paths.shown(file));
                 } else {
-                    e = problem(heap, e, "ml.input.changed", "the training file changed while the fit read it", "fit again once the file is no longer being written", "", "");
+                    e = problem(heap, e, "io.read-failed", "the training file changed while the fit read it: its SHA-256 before and after the fit differ", "fit again once the file is no longer being written", "", "");
                 }
                 go = false;
             } else {

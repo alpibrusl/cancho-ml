@@ -203,18 +203,21 @@ def parse_file(data):
     if body < 12:
         raise FileBad("ml.model.truncated")
     count = struct.unpack_from("<I", data, 8)[0]
-    if count not in (5, 6):
+    if count not in (5, 6, 7):
         raise FileBad("ml.model.malformed")
     pos = 12
     out = {}
+    prev = 0
     for s in range(count):
         if pos + 12 > body:
             raise FileBad("ml.model.truncated")
         tag, ln = struct.unpack_from("<Iq", data, pos)
         if ln < 0 or ln > body - pos - 12:
             raise FileBad("ml.model.truncated")
-        if tag != s + 1:
+        # the five core sections in order, then the optional string table (6) and provenance (7) in increasing order (docs/tracking.md section 2.1)
+        if s < 5 and tag != s + 1 or s >= 5 and (tag <= prev or tag not in (6, 7)):
             raise FileBad("ml.model.malformed")
+        prev = tag
         out[tag] = data[pos + 12:pos + 12 + ln]
         pos += 12 + ln
     if pos != body:

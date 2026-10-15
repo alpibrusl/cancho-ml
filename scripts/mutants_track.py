@@ -132,7 +132,7 @@ MUTANTS = [
     M("t-verify-forgets-the-positive-label", "T3", "the refit takes the larger label as positive", [(RUNS, "let has_pos = pn >= 0 && json.is_int(contents(tp), pn);", "let has_pos = false;", 1)], ["test_track.Replay"]),
     M("t-list-skips-the-damaged", "T9", "list passes over a record that does not validate", [(RUNS, "                        } else {\n                            good = false;\n                        }", "                        } else {\n                            good = true;\n                        }", 1)], TRACK),
     M("t-compare-equal-always", "T3", "compare says the models are equal", [(RUNS, "w = json.put_bool(heap, w, bytes.equal(json.string_view(texta, contents(tpa), ma), json.string_view(textb, contents(tpb), mb)));", "w = json.put_bool(heap, w, true);", 1)], TRACK),
-    M("t-sha-not-hashed-twice", "T1", "the training file is not hashed again after the fit", [(WIRE, "        if !same {\n            e = verbs.problem(heap, e, \"ml.input.changed\"", "        if false {\n            e = verbs.problem(heap, e, \"ml.input.changed\"", 1)], SECTION,
+    M("t-sha-not-hashed-twice", "T1", "the training file is not hashed again after the fit", [(WIRE, "        if !same {\n            e = verbs.problem(heap, e, \"io.read-failed\"", "        if false {\n            e = verbs.problem(heap, e, \"io.read-failed\"", 1)], SECTION,
       why="a file that changes between the hashes of one fit cannot be arranged from a test without a second process writing it during the fit; the check is read in docs/tracking.md section 6"),
 ]
 

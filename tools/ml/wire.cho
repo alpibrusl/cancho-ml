@@ -1481,7 +1481,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, fs: &f
         }
         buffer.drop(heap, dg2);
         if !same {
-            e = verbs.problem(heap, e, "ml.input.changed", "the training file changed while the fit read it", "fit again once the file is no longer being written", "", "");
+            e = verbs.problem(heap, e, "io.read-failed", "the training file changed while the fit read it: its SHA-256 before and after the fit differ", "fit again once the file is no longer being written", "", "");
             go = false;
         }
     }

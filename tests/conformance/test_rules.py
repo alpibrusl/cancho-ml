@@ -74,7 +74,8 @@ class Rules(unittest.TestCase):
                 return 8
             if tag in ("ml.param.out-of-range", "ml.param.threads"):
                 return 2
-            if tag == "ml.input.unknown-column":
+            if tag in ("ml.input.unknown-column", "ml.runs.not-found"):
+                # a named input (a column, a run id) that does not exist
                 return 3
             return 8
 
