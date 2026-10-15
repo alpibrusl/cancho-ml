@@ -10,9 +10,43 @@ import models.score;
 import models.mexp;
 import models.npass;
 import models.par;
+import models.rank;
 
 // Binary logistic regression by Newton's method, a fixed number of iterations, no line search, no stopping rule, optional l2
 // that never touches the bias (docs/models-linear.md 3.2). The parameters are w[0..d) and the bias w[d], from zero.
+
+// The loss bound of the separation test (docs/refusals-fit.md D2): ln 2 = 0.693147..., rounded down. A pass whose summed loss is below it has a positive margin on every
+// row: the w it started from classifies every training row, so the classes are separated and, with l2 = 0, no optimum exists.
+pub fn separable_bound() -> [] float {
+    return 0.6931;
+}
+
+// The record of a separation refusal in diag (floats): [0] the pass, [1] 0 = the summed loss was under the bound, 1 = the pivot test failed at a pass after the first,
+// [2] the summed loss of the pass, [3] the Euclidean norm of w (the bias included), [4] the largest diagonal element of the Hessian of pass 0 (diag holds its sums in slot 0).
+// Read before anything is written: the slot-0 sums and wv.
+fn note_separable[&w, &g](p: int, ww: int, nf: float, it: int, reason: int, loss: float, wv: &w [float], diag: &!g [float]) -> [] int {
+    var hmax = 0.0;
+    var a = 0;
+    while a < p {
+        let v = diag[p + a * (a + 1) / 2 + a] / nf;
+        if v > hmax {
+            hmax = v;
+        }
+        a = a + 1;
+    }
+    var q = 0.0;
+    a = 0;
+    while a < p {
+        q = q + wv[a] * wv[a];
+        a = a + 1;
+    }
+    diag[0] = float_of(it);
+    diag[1] = float_of(reason);
+    diag[2] = loss;
+    diag[3] = sqrt(q);
+    diag[4] = hmax;
+    return 0;
+}
 
 // the iterations. xs positioned at X[0, 0], row stride rs. diag receives, per iteration, the W raw sums then the objective.
 fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, ys: &y [float], n: int, d: int, iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
@@ -101,10 +135,41 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
                 }
             }
         }
+        if code == 0 && l2 == 0.0 {
+            // separation (docs/refusals-fit.md D2): the summed loss of the pass is one of the decisive sums already computed
+            borrow st as &sr in {
+                borrow wv as &wr in {
+                    let loss = contents(sr)[ww - 1];
+                    if loss < separable_bound() {
+                        note_separable(p, ww, nf, it, 0, loss, contents(wr), diag);
+                        code = refuse.fit_separable();
+                    }
+                }
+            }
+        }
         if code == 0 {
             borrow hm as &hr in {
                 borrow mut lm as &!lw in {
                     code = chol.cholesky(common.mat(p, p), contents(hr), common.mat(p, p), contents(lw));
+                }
+            }
+            if code == refuse.not_positive_definite() {
+                if it == 0 {
+                    // the Hessian of the first pass is the Gram matrix over 4n (plus l2): the columns are dependent (docs/refusals-fit.md D1)
+                    borrow hm as &hr in {
+                        if rank.record(heap, p, contents(hr), 0, diag) >= 0 {
+                            code = refuse.fit_collinear();
+                        }
+                    }
+                } else if l2 == 0.0 {
+                    // the first Hessian passed, so the columns are not dependent: the weights have vanished, the numerical face of separation
+                    borrow st as &sr in {
+                        borrow wv as &wr in {
+                            let loss = contents(sr)[ww - 1];
+                            note_separable(p, ww, nf, it, 1, loss, contents(wr), diag);
+                            code = refuse.fit_separable();
+                        }
+                    }
                 }
             }
         }

@@ -299,8 +299,10 @@
     "first_non_finite",
     "first_ordered_kind",
     "first_ordered_model",
+    "fit_collinear",
     "fit_non_finite",
     "fit_non_finite",
+    "fit_separable",
     "flag_table",
     "float_of_key",
     "float_value",
@@ -489,6 +491,7 @@
     "max_columns",
     "max_columns",
     "max_depth",
+    "max_diag",
     "max_entries",
     "max_features",
     "max_iters",
@@ -663,6 +666,7 @@
     "rec_ok",
     "recall",
     "record_at",
+    "record_len",
     "reject_limit",
     "repairable_in",
     "report",
@@ -708,6 +712,7 @@
     "section_strings",
     "seek",
     "sentences",
+    "separable_bound",
     "sha256_state_len",
     "shape",
     "shape_at",
@@ -848,7 +853,7 @@
     "writable",
     "y_max"
   ],
-  "folded_operators": 177,
+  "folded_operators": 182,
   "folded_calls": 2,
-  "functions": 1389
+  "functions": 1407
 }

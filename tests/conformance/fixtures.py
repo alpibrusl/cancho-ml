@@ -662,7 +662,7 @@ def _refuse_cases():
         case("ml-fit-collinear-in-a-plan-has-no-argv", ["fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "dup.csv"],
              col(repair_none=True), setup=RBASE + [("write", "p.txt", "model kind=linear l2=0\n")]),
         case("ml-fit-separable", ["fit", "--model", "logistic", "--target", "y", "--output", "m.cml", "sep.csv"],
-             sepa(repair_runs=True, detail={"reason": "loss", "pass": 2, "l2": "0"}), setup=RBASE),
+             sepa(repair_runs=True, detail={"reason": "loss", "pass": 2, "l2": "0.0"}), setup=RBASE),
         case("ml-fit-separable-25-iterations", ["fit", "--model", "logistic", "--iterations", "25", "--target", "y", "--output", "m.cml", "sep.csv"],
              sepa(repair_runs=True, detail={"reason": "loss", "pass": 2}), setup=RBASE),
         case("ml-fit-separable-explicit-zero-l2-is-replaced", ["fit", "--model", "logistic", "--l2", "0", "--target", "y", "--output", "m.cml", "sep.csv"],

@@ -19,6 +19,7 @@ import ml.csvload;
 import ml.dict;
 import ml.est;
 import ml.fbits;
+import ml.fitfail;
 import ml.fsio;
 import ml.logrec;
 import ml.matrix;
@@ -774,9 +775,22 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
                     }
                 }
             }
+            if code == refuse.fit_collinear() {
+                borrow diag as &dgr in {
+                    borrow fitted as &fq2 in {
+                        e = fitfail.collinear(heap, args, e, kind == 5, contents(dgr), fq2.nm, contents(pls.fp)[0], o);
+                    }
+                }
+            } else if code == refuse.fit_separable() {
+                borrow diag as &dgr in {
+                    e = fitfail.separable(heap, args, e, contents(dgr), contents(pls.ip)[0], contents(pls.fp)[0], o);
+                }
+            }
             unbox_slice(heap, diag);
             unbox_slice(heap, yfit);
-            if code != 0 {
+            if code == refuse.fit_collinear() || code == refuse.fit_separable() {
+                go = false;
+            } else if code != 0 {
                 e = wiredata.code_error(heap, e, code, 0, 0, 0);
                 go = false;
             }

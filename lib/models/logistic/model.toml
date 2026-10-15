@@ -8,7 +8,7 @@ wired = true
 adapter = "models.adapter_logistic"
 payload_version = 2
 doc = "docs/models-linear.md"
-files = ["lib/models/logistic/adapter.cho", "lib/models/linear/logreg.cho", "lib/models/linear/npass.cho"]
+files = ["lib/models/logistic/adapter.cho", "lib/models/linear/logreg.cho", "lib/models/linear/npass.cho", "lib/models/rank.cho"]
 plan_order = 2
 
 [limits]
@@ -18,7 +18,7 @@ max_iterations = 1000
 [tags]
 emits = [
   "ml.tensor.rank", "ml.tensor.shape", "ml.tensor.bounds", "ml.input.non-finite", "ml.input.too-many-columns", "ml.param.out-of-range",
-  "ml.linalg.not-positive-definite", "ml.linalg.singular", "ml.param.threads", "ml.fit.non-finite", "ml.label.single-class", "ml.label.not-binary",
+  "ml.linalg.not-positive-definite", "ml.linalg.singular", "ml.param.threads", "ml.fit.non-finite", "ml.fit.collinear", "ml.fit.separable", "ml.label.single-class", "ml.label.not-binary",
 ]
 
 [authority]
