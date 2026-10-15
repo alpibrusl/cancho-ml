@@ -176,12 +176,28 @@ def bins():
         for b in ("ml", "ml-predict"):
             a = (ROOT / "build" / b).read_bytes()
             c = (work / "build" / b).read_bytes()
-            # a process id of another width moves the symbol table by a byte, which no normalisation can undo: build again (the id is new every time) until the widths agree
-            for _ in range(12):
+            # A process id of another width moves the symbol table by a byte, which no normalisation can undo; the id is new at every build, so build again until the widths agree.
+            # When the width of build/<b> itself is out of reach (a machine whose process ids grew a digit since it was built), the reference is built again from a copy of this
+            # tree with all its dependencies, until its width is the one of the build without them.
+            for _ in range(4):
                 if pid_width(a) == pid_width(c):
                     break
                 subprocess.run([cancho, "build", "--bin", b], cwd=work, capture_output=True, text=True)
                 c = (work / "build" / b).read_bytes()
+            if pid_width(a) != pid_width(c):
+                ref = pathlib.Path(tempfile.mkdtemp(prefix="webpin-ref-"))
+                try:
+                    for d in ("lib", "tools", "generated", "schemas"):
+                        shutil.copytree(ROOT / d, ref / d)
+                    shutil.copy(TOML, ref / "cancho.toml")
+                    subprocess.run([cancho, "install"], cwd=ref, capture_output=True, text=True)
+                    for _ in range(8):
+                        subprocess.run([cancho, "build", "--bin", b], cwd=ref, capture_output=True, text=True)
+                        a = (ref / "build" / b).read_bytes()
+                        if pid_width(a) == pid_width(c):
+                            break
+                finally:
+                    shutil.rmtree(ref, ignore_errors=True)
             if not same_binary(a, c):
                 problems.append("build/%s differs from the build without the three dependencies (%d and %d bytes)" % (b, len(a), len(c)))
         return problems
