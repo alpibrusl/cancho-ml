@@ -16,6 +16,7 @@ usage: oracle_refuse.py {rank|sep|fuzz|all} [--ml PATH] [--seed N] [--n N]
 """
 import itertools
 import json
+import math
 import os
 import random
 import subprocess
@@ -307,6 +308,56 @@ def gen_sep(rng, kind, dim):
             return pts, labels
 
 
+
+def newton_events(pts, labels, dim, iters=100):
+    """An independent numpy Newton iteration (the same method as lib/models/linear/logreg.cho: w = 0, no damping, H = X'WX / n, the relative pivot test of an unblocked
+    Cholesky) and the first event of the refusals: (rule, reason, pass, loss, norm, borderline) or None if the passes end quietly."""
+    import numpy as np
+    X = np.array([[float(v) for v in p[:dim]] for p in pts])
+    y = np.array(labels, dtype=float)
+    n = len(y)
+    A = np.hstack([X, np.ones((n, 1))])
+    P = A.shape[1]
+    G = A.T @ A / n
+    w = np.zeros(P)
+    tol = 2.0 ** -40
+    for it in range(iters):
+        z = A @ w
+        loss = float(np.sum(np.maximum(z, 0) + np.log1p(np.exp(-np.abs(z))) - y * z))
+        scale = math.sqrt(max(float(w @ G @ w), 0.0))
+        norm = float(np.linalg.norm(w))
+        pr = 1.0 / (1.0 + np.exp(-z))
+        W = pr * (1 - pr)
+        H = (A.T * W) @ A / n
+        border = abs(loss - 0.6931) < 1e-7 * 0.6931 or abs(scale - 50.0) < 1e-7 * 50
+        if loss < 0.6931:
+            return ("ml.fit.separable", "loss", it, loss, norm, border)
+        if scale > 50.0:
+            return ("ml.fit.separable", "scale", it, loss, norm, border)
+        L = np.zeros((P, P))
+        failed = None
+        ratio = 1.0
+        for j in range(P):
+            for i in range(j, P):
+                sv = H[i, j] - float(L[i, :j] @ L[j, :j])
+                if i == j:
+                    ratio = sv / H[j, j] if H[j, j] > 0 else 0.0
+                    if not (sv > tol * H[j, j]):
+                        failed = j
+                        break
+                    L[j, j] = math.sqrt(sv)
+                else:
+                    L[i, j] = sv / L[j, j]
+            if failed is not None:
+                break
+        if failed is not None:
+            border = border or 0.5 * tol < ratio < 2 * tol
+            return (("ml.fit.collinear", None, it, loss, norm, border) if it == 0 else ("ml.fit.separable", "pivot", it, loss, norm, border))
+        g = A.T @ (pr - y) / n
+        w = w - np.linalg.solve(H, g)
+    return None
+
+
 def case_sep(d, pts, labels, dim, stats, tally):
     header = ["x1", "x2", "y"] if dim == 2 else ["x1", "y"]
     rows = [[str(p[0]), str(p[1]), str(l)] if dim == 2 else [str(p[0]), str(l)] for p, l in zip(pts, labels)]
@@ -322,8 +373,31 @@ def case_sep(d, pts, labels, dim, stats, tally):
         outcomes[(it, l2)] = got
         if l2 != "0" and got == "ml.fit.separable" or (l2 != "0" and got.startswith("ml.fit.separable")):
             bad("a positive l2 (%s) was refused for separation: %s %s" % (l2, pts, labels))
-    tally.setdefault(verdict, {})
     g = outcomes[(100, "0")]
+    for k, v in outcomes.items():
+        if v == "ml.linalg.not-positive-definite" and k[1] != "1e-9":
+            bad("not-positive-definite escaped with l2 %s: %s %s" % (k[1], pts, labels))
+    ev = newton_events(pts, labels, dim)
+    st, out, _ = run(d, "fit", "--model", "logistic", "--iterations", "100", "--l2", "0", "--target", "y", "--output", "m.cml", "--overwrite", "d.csv")
+    doc = doc_of(out)
+    if ev is None:
+        if not doc["ok"]:
+            bad("independent Newton ends quietly, ml refused %s: %s %s" % (doc["error"]["rule"], pts, labels))
+        else:
+            stats["quiet"] = stats.get("quiet", 0) + 1
+    elif not ev[5]:
+        if doc["ok"] or doc["error"]["rule"] != ev[0]:
+            bad("independent Newton says %s, ml says %s: %s %s" % (ev[:3], "fitted" if doc["ok"] else doc["error"]["rule"], pts, labels))
+        elif ev[1] is not None:
+            det = doc["error"]["detail"]
+            if det["reason"] != ev[1] or det["pass"] != ev[2]:
+                bad("independent Newton says %s at pass %d, ml says %s at pass %d: %s %s" % (ev[1], ev[2], det["reason"], det["pass"], pts, labels))
+            elif ev[1] == "loss" and (abs(float(det["loss_sum"]) - ev[3]) > 1e-6 * ev[3] or abs(float(det["coefficient_norm"]) - ev[4]) > 1e-6 * max(ev[4], 1e-12)):
+                bad("loss/norm differ: ml %s %s, numpy %g %g" % (det["loss_sum"], det["coefficient_norm"], ev[3], ev[4]))
+            else:
+                stats["events"] = stats.get("events", 0) + 1
+                stats["reason:" + ev[1]] = stats.get("reason:" + ev[1], 0) + 1
+    tally.setdefault(verdict, {})
     tally[verdict][g] = tally[verdict].get(g, 0) + 1
     if verdict == "overlap" and g != "fitted":
         bad("overlapping classes were refused (%s): %s %s" % (g, pts, labels))
@@ -347,6 +421,7 @@ def sep_mode():
             kind = ["sep", "flip", "random"][i % 3]
             pts, labels = gen_sep(rng, kind, dim)
             case_sep(d, pts, labels, dim, stats, tally)
+    print("sep: independent-Newton agreement: %s" % json.dumps(stats, sort_keys=True))
     print("sep: exact verdict -> ml verdicts at 100 passes, l2 0: %s" % json.dumps(tally, sort_keys=True))
     if "complete" not in tally or "overlap" not in tally:
         bad("sep: a family never happened: %s" % tally)
