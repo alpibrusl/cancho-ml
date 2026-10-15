@@ -4,7 +4,7 @@ and the fuzz (cases are its seeds).
 
 A case: id, setup (steps run in a scratch directory that is the --root), argv (after `ml --root DIR`; "@ROOT" is the
 directory), expect {exit, rule, data (a subset the data must contain), stdout_starts, stderr_has}, and the switches
-close_stdin, close_stdout, noroot. A step: ("write", name, text) ("fit", args...) ("mutate", src, dst, fn) ("mkdir", name)
+close_stdin, close_stdout, noroot, darwin_only (a platform-specific answer: harness.runs_here). A step: ("write", name, text) ("fit", args...) ("mutate", src, dst, fn) ("mkdir", name)
 ("symlink", target, name) ("chmod", name, mode) ("raw", fn(sandbox)).
 """
 
@@ -158,9 +158,9 @@ CASES = [
     case("path-outside-root", ["fit", "--target", "y", "--output", "m.cml", "/etc/hosts"], bad("path.outside-root")),
     case("path-too-long", ["fit", "--target", "y", "--output", "m.cml", "a" * 5000], bad("path.too-long")),
     case("path-symlink", ["fit", "--target", "y", "--output", "m.cml", "link.csv"], bad("path.symlink"),
-         setup=BASE + [("symlink", "reg.csv", "link.csv")]),
+         setup=BASE + [("symlink", "reg.csv", "link.csv")], darwin_only=True),
     case("path-symlink-dir", ["fit", "--target", "y", "--output", "m.cml", "dirlink/reg.csv"], bad("path.symlink"),
-         setup=BASE + [("mkdir", "real"), ("symlink", "real", "dirlink")]),
+         setup=BASE + [("mkdir", "real"), ("symlink", "real", "dirlink")], darwin_only=True),
     case("path-bad-name", ["fit", "--target", "y", "--output", ".", "reg.csv"], bad("path.bad-name")),
     case("path-flag-value-with-equals", ["fit", "--target", "y", "--output=m.cml", "reg.csv"], bad("args.bad-value")),
     case("io-not-found", ["fit", "--target", "y", "--output", "m.cml", "missing.csv"], bad("io.not-found")),
@@ -171,7 +171,7 @@ CASES = [
     case("io-permission-denied", ["fit", "--target", "y", "--output", "m.cml", "secret.csv"], bad("io.permission-denied"),
          setup=BASE + [("write", "secret.csv", REG), ("chmod", "secret.csv", 0)], skip_if_root=True),
     case("io-read-failed", ["fit", "--target", "y", "--output", "m.cml", "/dev/stdin"], bad("io.read-failed"), close_stdin=True,
-         noroot=True),
+         noroot=True, darwin_only=True),
     case("io-write-failed-fit", FIT_REG, bad("io.write-failed", exit=1, stderr_has="io.write-failed"), close_stdout=True,
          no_json=True),
     case("io-write-failed-output-directory", ["fit", "--target", "y", "--output", "nodir/m.cml", "reg.csv"], bad("io.not-found")),

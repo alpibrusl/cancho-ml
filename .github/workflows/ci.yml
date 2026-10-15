@@ -114,6 +114,7 @@ jobs:
           time cancho build --bin ml
           time cancho build --bin ml-predict
           time cancho build --bin ml-serve
+          time cancho build --bin serve-check
 
       - name: The three binaries are built from the same sources
         run: |
@@ -130,10 +131,11 @@ jobs:
       - name: The determinism gate can fail (its mutants)
         run: python3 scripts/xplat_check.py --require-predict --mutants
 
+      # Every module of tests/conformance that imports without numpy, scipy and scikit-learn, four at a time; the ml-serve tests among them start the
+      # server on an ephemeral port and compare one POST per model kind with the command line's cell text. The oracle modules run in the full gate.
       - name: Conformance tests, including the ml-serve tests
         timeout-minutes: 40
-        working-directory: ml/tests/conformance
-        run: python3 -m unittest discover -p 'test_*.py' 2>&1 | tee "../../../conformance-$(uname -s)-$(uname -m).log"
+        run: python3 scripts/run_conformance.py --no-oracles 2>&1 | tee "../conformance-$(uname -s)-$(uname -m).log"
 
       - name: Documentation checks
         run: sh scripts/check_docs.sh
