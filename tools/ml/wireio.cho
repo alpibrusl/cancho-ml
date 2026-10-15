@@ -152,7 +152,7 @@ pub fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
     return kind;
 }
 
-fn empty_stored[&h](heap: &!h Heap) -> [heap] Stored {
+pub fn empty_stored[&h](heap: &!h Heap) -> [heap] Stored {
     return Stored { lo: file.empty(heap), sc: schema.empty(heap), kind: 0, wv: box_slice(heap, 2, 0.0), c0: 0, c1: 0, d: 0, task: 0, view: mfile.empty_model(heap), cat: false };
 }
 
@@ -792,7 +792,6 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
         return verbs.predict(heap, args, fs, root, file, model, o, e0, log);
     }
     var e = errs;
-    var lg = log;
     var st = empty_stored(heap);
     var go = true;
     borrow data as &dr in {
@@ -803,71 +802,76 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
         go = ok2;
     }
     buffer.drop(heap, data);
-    if go && o.proba {
-        var is_reg = false;
-        var is_clu = false;
-        borrow st as &sq0 in {
-            is_reg = sq0.task == 1;
-            is_clu = sq0.task == 4;
+    var result = verbs.nothing(heap, fail.empty(heap), buffer.empty(heap, 1));
+    if go {
+        borrow st as &sr in {
+            verbs.drop_out(heap, result);
+            result = predict_loaded(heap, args, fs, root, file, sr, o, e, log);
         }
-        if is_reg {
+    } else {
+        verbs.drop_out(heap, result);
+        result = wiredata.out_of(buffer.empty(heap, 1), buffer.empty(heap, 1), buffer.empty(heap, 1), e, log, false);
+    }
+    drop_stored(heap, st);
+    return result;
+}
+
+// `predict` of a model file that has been decoded already (`load_stored`): the checks of the flags, the input and the page of predictions. The server decodes its model once at start and
+// calls this for each request, so a request does not decode the file again; `predict` above is `load_stored`, this, and `drop_stored`, so the answer is the same function's.
+pub fn predict_loaded[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, stored: &ss Stored, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = errs;
+    var lg = log;
+    var go = true;
+    if o.proba {
+        if stored.task == 1 {
             e = wiredata.conflict(heap, e, "proba", "a regression has no probability");
             go = false;
-        } else if is_clu {
+        } else if stored.task == 4 {
             e = wiredata.conflict(heap, e, "proba", "a clustering has no probability: --distance adds the squared distance of a row to the centre of its cluster");
             go = false;
         }
     }
     if go && o.distance {
-        var is_clu = false;
-        borrow st as &sq0 in {
-            is_clu = sq0.task == 4;
-        }
-        if !is_clu {
+        if stored.task != 4 {
             e = wiredata.conflict(heap, e, "distance", "only a kmeans model has a distance to a cluster centre");
             go = false;
         }
     }
     var inp = empty_input(heap);
     if go {
-        borrow st as &sq in {
-            let (i2, ok3, e3, lg3) = read_input(heap, args, fs, root, file, sq, o, false, e, lg);
-            drop_input(heap, inp);
-            inp = i2;
-            e = e3;
-            lg = lg3;
-            go = ok3;
-        }
+        let (i2, ok3, e3, lg3) = read_input(heap, args, fs, root, file, stored, o, false, e, lg);
+        drop_input(heap, inp);
+        inp = i2;
+        e = e3;
+        lg = lg3;
+        go = ok3;
     }
     var payload = buffer.empty(heap, 1);
     var plain = buffer.empty(heap, 1);
     if go {
         let none = box_slice(heap, 1, 0);
         borrow inp as &ir in {
-            borrow st as &sr in {
-                borrow none as &nr in {
-                    let (xs, unk, ok4, e4) = through_steps(heap, args, ir, sr, contents(nr), 0 - 1, o, e);
-                    e = e4;
-                    if ok4 {
-                        borrow xs as &xq in {
-                            let (p2, t2, code) = predict_page(heap, sr.kind, sr.task, xq, contents(sr.wv), file.model_bytes(sr.lo), sr.c0, sr.c1, unk, o.proba, o.distance, o);
-                            buffer.drop(heap, payload);
-                            buffer.drop(heap, plain);
-                            payload = p2;
-                            plain = t2;
-                            if code != 0 {
-                                e = wiredata.code_error(heap, e, code, 0, 0, 0);
-                            }
+            borrow none as &nr in {
+                let (xs, unk, ok4, e4) = through_steps(heap, args, ir, stored, contents(nr), 0 - 1, o, e);
+                e = e4;
+                if ok4 {
+                    borrow xs as &xq in {
+                        let (p2, t2, code) = predict_page(heap, stored.kind, stored.task, xq, contents(stored.wv), file.model_bytes(stored.lo), stored.c0, stored.c1, unk, o.proba, o.distance, o);
+                        buffer.drop(heap, payload);
+                        buffer.drop(heap, plain);
+                        payload = p2;
+                        plain = t2;
+                        if code != 0 {
+                            e = wiredata.code_error(heap, e, code, 0, 0, 0);
                         }
                     }
-                    matrix.drop(heap, xs);
                 }
+                matrix.drop(heap, xs);
             }
         }
         unbox_slice(heap, none);
     }
     drop_input(heap, inp);
-    drop_stored(heap, st);
     return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
 }
 

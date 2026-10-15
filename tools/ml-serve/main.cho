@@ -14,6 +14,7 @@ import ml.fsio;
 import ml.mdesc;
 import ml.paths;
 import ml.verbs;
+import ml.wireio;
 import toolbox.built;
 import toolbox.cli;
 import toolbox.describe;
@@ -279,8 +280,25 @@ fn prepare[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             go = false;
         }
     }
+    // the model decoded once, when it is a planned file: a request does not decode it again
+    var stored = wireio.empty_stored(heap);
+    var planned = false;
+    if go {
+        borrow model as &mr in {
+            planned = wireio.planned_file(buffer.bytes(mr));
+            if planned {
+                borrow shown as &sr in {
+                    let (st2, ok, e8) = wireio.load_stored(heap, buffer.bytes(mr), buffer.bytes(sr), e);
+                    wireio.drop_stored(heap, stored);
+                    stored = st2;
+                    e = e8;
+                    go = ok;
+                }
+            }
+        }
+    }
     buffer.drop(heap, shown);
-    let served = srv.make(heap, built, model, model_doc, tokens, guarded, max_rows, max_model, max_body);
+    let served = srv.make(heap, built, model, model_doc, stored, planned, tokens, guarded, max_rows, max_model, max_body);
     if go && guarded {
         var undecided = 0;
         borrow served as &sv in {
@@ -384,7 +402,7 @@ fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p c
     }
     var status = 0;
     let (e2, clean) = app.clean(e);
-    var served = srv.make(heap, api.build(heap, "{}", false, 1, false), buffer.empty(heap, 1), buffer.empty(heap, 1), web.tokens_empty(heap), false, 1, 1, 1);
+    var served = srv.make(heap, api.build(heap, "{}", false, 1, false), buffer.empty(heap, 1), buffer.empty(heap, 1), wireio.empty_stored(heap), false, web.tokens_empty(heap), false, 1, 1, 1);
     e = e2;
     if clean {
         borrow root as &rr in {

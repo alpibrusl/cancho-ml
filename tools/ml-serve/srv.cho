@@ -38,6 +38,9 @@ pub res struct Served {
     health: buffer.Buffer,
     // X-Model-Sha256: ...\r\n
     sha_header: buffer.Buffer,
+    // the model decoded once at start, when it is a planned file (wireio.planned_file); the constant models of the older reader are decoded for each request
+    stored: wireio.Stored,
+    planned: bool,
     tokens: web.Tokens,
     guarded: bool,
     max_rows: int,
@@ -45,7 +48,7 @@ pub res struct Served {
     max_body: int,
 }
 
-pub fn make[&h](heap: &!h Heap, built: api.Built, model: buffer.Buffer, model_doc: buffer.Buffer, tokens: web.Tokens, guarded: bool, max_rows: int, max_model: int, max_body: int) -> [heap] Served {
+pub fn make[&h](heap: &!h Heap, built: api.Built, model: buffer.Buffer, model_doc: buffer.Buffer, stored: wireio.Stored, planned: bool, tokens: web.Tokens, guarded: bool, max_rows: int, max_model: int, max_body: int) -> [heap] Served {
     var health = buffer.append(heap, buffer.empty(heap, 96), "{\"ok\":true,\"model_sha256\":\"");
     var header = buffer.append(heap, buffer.empty(heap, 96), "X-Model-Sha256: ");
     borrow built as &br in {
@@ -54,12 +57,13 @@ pub fn make[&h](heap: &!h Heap, built: api.Built, model: buffer.Buffer, model_do
     }
     health = buffer.append(heap, health, "\"}");
     header = buffer.append(heap, header, "\r\n");
-    return Served { built: built, model: model, model_doc: model_doc, health: health, sha_header: header, tokens: tokens, guarded: guarded, max_rows: max_rows, max_model: max_model, max_body: max_body };
+    return Served { built: built, model: model, model_doc: model_doc, health: health, sha_header: header, stored: stored, planned: planned, tokens: tokens, guarded: guarded, max_rows: max_rows, max_model: max_model, max_body: max_body };
 }
 
 pub fn drop[&h](heap: &!h Heap, s: Served) -> [heap] int {
-    let Served { built, model, model_doc, health, sha_header, tokens, guarded, max_rows, max_model, max_body } = s;
+    let Served { built, model, model_doc, health, sha_header, stored, planned, tokens, guarded, max_rows, max_model, max_body } = s;
     api.drop(heap, built);
+    wireio.drop_stored(heap, stored);
     buffer.drop(heap, model);
     buffer.drop(heap, model_doc);
     buffer.drop(heap, health);
@@ -334,13 +338,21 @@ fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g 
     }
     buffer.drop(heap, csv);
     paths.drop(heap, model);
-    model = paths.of_mem(heap, buffer.bytes(sv.model), "model");
+    if sv.planned {
+        model = paths.absent(heap);
+    } else {
+        model = paths.of_mem(heap, buffer.bytes(sv.model), "model");
+    }
     let o = options(cols.count(cs), n, sv.max_model, api.with_proba(sv.built), api.with_distance(sv.built), sv.max_body, n);
     var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
     borrow data as &dr in {
         borrow model as &mr in {
             verbs.drop_out(heap, result);
-            result = wireio.predict(heap, args, fs, root, dr, mr, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+            if sv.planned {
+                result = wireio.predict_loaded(heap, args, fs, root, dr, sv.stored, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+            } else {
+                result = wireio.predict(heap, args, fs, root, dr, mr, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+            }
         }
     }
     paths.drop(heap, data);
