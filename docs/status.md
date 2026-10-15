@@ -2,7 +2,7 @@
 
 `ml` is early and alpha. It is not for production. This page says what is built, what is not, what has been measured (each figure with its source document and conditions) and what is open. A figure that has no source in this repository is not here.
 
-All the measurements are from one machine, a Mac (arm64, Apple M4 Max, 16 cores, macOS 26.2), with the compiler at `0207556` (the pin; the gates were re-run at it, and the figures of the benchmarks that were not re-run were measured at `a4572ea`, each section says which). The machine is shared and was never quiet: every timing is flagged `load >= 2`, and no quiet-machine run exists. Correctness gates do not depend on the load. Nothing has been run on a second machine.
+All the measurements are from one machine, a Mac (arm64, Apple M4 Max, 16 cores, macOS 26.2), with the compiler at `0207556` (the pin). The benchmark figures of the other documents were measured with `a4572ea`, and each document names the compiler of its figures. The machine is shared and was never quiet: every timing is flagged `load >= 2`, and no quiet-machine run exists. Correctness gates do not depend on the load. Nothing has been run on a second machine.
 
 ## What is built, and reachable from the command line
 
