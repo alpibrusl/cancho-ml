@@ -235,14 +235,23 @@ class Operand(unittest.TestCase):
         self.assertEqual(none.first_rule(), "ml.input.empty")
         os.unlink(SB.dir / "-")
 
-    def test_fit_and_eval_read_a_file_named_dash(self):
-        SB.write("-", (SB.dir / C.NUM).read_bytes())
-        r = ml("fit", "-", "--target", "y", "--drop", "lab", "--output", "dash.cml", "--overwrite")
+    def test_fit_and_eval_read_standard_input_for_dash(self):
+        data = (SB.dir / C.NUM).read_bytes()
+        r = ml("fit", "-", "--target", "y", "--drop", "lab", "--output", "dash.cml", "--overwrite", stdin=data)
         self.assertEqual(r.status, 0, r)
-        e = ml("eval", "-", "--model-file", "dash.cml", "--drop", "lab")
+        e = ml("eval", "-", "--model-file", "dash.cml", "--drop", "lab", stdin=data)
         self.assertEqual(e.status, 0, e)
+        # the same bytes in a file give the same model file and the same answer; a file named - is ./-
+        SB.write("-", data)
+        r2 = ml("fit", "./-", "--target", "y", "--drop", "lab", "--output", "dash2.cml", "--overwrite")
+        self.assertEqual(r2.status, 0, r2)
+        self.assertEqual((SB.dir / "dash.cml").read_bytes(), (SB.dir / "dash2.cml").read_bytes())
+        self.assertEqual(ml("eval", "./-", "--model-file", "dash.cml", "--drop", "lab").stdout, e.stdout)
+        # standard input over --max-bytes is refused, and an empty one is an empty file
+        self.assertEqual(ml("fit", "-", "--target", "y", "--drop", "lab", "--output", "dash3.cml", "--max-bytes", "10", stdin=data).first_rule(), "limit.input-too-large")
+        self.assertEqual(ml("eval", "-", "--model-file", "dash.cml", "--drop", "lab", stdin=b"").first_rule(), "ml.input.empty")
         # with no operand they still need the file
-        self.assertEqual(ml("fit", "--target", "y", "--output", "dash2.cml").first_rule(), "args.missing-operand")
+        self.assertEqual(ml("fit", "--target", "y", "--output", "dash4.cml").first_rule(), "args.missing-operand")
         self.assertEqual(ml("eval", "--model-file", "dash.cml").first_rule(), "args.missing-operand")
         os.unlink(SB.dir / "-")
 
@@ -340,7 +349,7 @@ class MlPredictSurface(unittest.TestCase):
 
     def test_the_flags_it_has(self):
         tool = {f["name"] for f in json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)["flags"]}
-        self.assertEqual(tool, {"--" + n for n in ("root", "proba", "distance", "drop", "model-file", "limit", "from", "max-rows", "max-columns", "max-cells", "max-line-bytes", "max-bytes", "format")})
+        self.assertEqual(tool, {"--" + n for n in ("root", "proba", "distance", "drop", "model-file", "limit", "from", "max-rows", "max-columns", "max-cells", "max-line-bytes", "max-bytes", "input-format", "absent", "max-json-nodes", "format")})
 
     def test_introspect_and_skill_name_the_binary(self):
         i = json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)

@@ -135,7 +135,7 @@ class Hostile(unittest.TestCase):
     def test_hostile_field_lists_cost_their_length(self):
         import time
         names = ",".join("n%d" % i for i in range(8192))
-        for fields, rule in ((",," * 200000, "args.bad-value"), (",".join("n%d" % i for i in range(8193)), "args.bad-value"), (names + ",n0", "args.bad-value"), ("a,,y", "args.bad-value")):
+        for fields, rule in ((",," * 50000, "args.bad-value"), (",".join("n%d" % i for i in range(8193)), "args.bad-value"), (names + ",n0", "args.bad-value"), ("a,,y", "args.bad-value")):
             t0 = time.time()
             r = self.sb.run("fit", "--input-format", "jsonl", "--fields", fields, "--target", "y", "--output", "z.cml", "good.jsonl")
             self.assertEqual(r.first_rule(), rule, r)

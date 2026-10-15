@@ -24,7 +24,9 @@ NEW_FLAGS = {"--plan", "--step", "--l2", "--iterations", "--positive", "--split"
              # the tree and the forest (docs/wiring-trees.md section 2)
              "--trees", "--max-depth", "--min-leaf", "--bins", "--mtry", "--bootstrap", "--max-nodes",
              # k-means (docs/wiring-kmeans.md section 2)
-             "--k", "--init", "--distance"}
+             "--k", "--init", "--distance",
+             # JSON lines as an input (docs/jsonl.md section 2)
+             "--input-format", "--fields", "--absent", "--max-json-nodes"}
 # the refusal of an unknown model name lists the models: it changes with the list, by design
 LISTS_THE_MODELS = {"args-bad-value-model"}
 
