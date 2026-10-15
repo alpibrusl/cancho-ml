@@ -86,6 +86,34 @@ mean_distance 1.2398733702280837 1.0644974060896137 1.1737313271562995
 ```
 <!-- /gen:kmflow -->
 
+## Boosted trees: `--model boost`
+
+`--model boost` fits additive trees to the gradients and hessians of a loss, round by round: squared error for a regression (`--task regression`, the default) and logistic loss for a binary classification (`--task classification`). Each round grows one histogram tree on the quantile bins of the tree library, with a Newton step `-G / (H + l2)` in each leaf, multiplied by `--learning-rate`; a cell that is missing is accepted and each split learns the side it takes. `--rounds` (default 100), `--learning-rate` (0.1), `--max-depth` (4), `--min-leaf` (10), `--bins` (64), `--l2` (1.0), `--subsample` (the fraction of the rows each round fits on, seeded from `--seed` and the round, never from the thread count) and `--early-stopping N` are the flags. Early stopping is refused unless `--split train=F` declares a held-out part, and the stopping rule never reads it: it takes a tenth of the training rows for its own validation loss and keeps the best round. Every sum is a sequential sum in a fixed row order, so the file records the summation order 3, as the tree and the forest do, and the same data, plan and seed give the same bytes at every `--threads` (the threads only bin the columns: the rounds are sequential). The file is model kind 8; a boosted model holds all its trees, so `fit` refuses to write a file longer than `--max-bytes`. On the committed `docs/examples/data/breast_cancer_train.csv` and `breast_cancer_test.csv` (copy them next to where you run it):
+
+<!-- gen:bflow -->
+```console
+# early stopping keeps rows out of the fit, so it is refused unless a held-out part is declared with --split
+$ ml fit --model boost --target benign --early-stopping 10 --output cancer-boost.ml breast_cancer_train.csv
+{"rule": "args.conflict", "hint": "see the verbs and their flags in introspect usage", "detail": {"flag": "early-stopping"}}
+# exit status 2; the rule, hint, detail of the JSON line it prints
+# 100 rounds of depth-3 trees on 80 percent of the rows each, learning rate 0.1: the summary holds the rounds, the nodes and the base score
+$ ml fit --model boost --task classification --target benign --rounds 100 --learning-rate 0.1 --max-depth 3 --subsample 0.8 --seed 1 --output cancer-boost.ml breast_cancer_train.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"boost","task":"classification","rows":426,"columns":31,"target":"benign","path":"cancer-boost.ml","bytes":56223,"sha256":"92d76687a414daf96c37b6643a02e5de8a6c15b790a3340ff1dce8c27345747c","written":true,"summary":{"plan":"model kind=boost task=classification rounds=100 learning-rate=0.1 max-depth=3 min-leaf=10 bins=64 l2=1.0 subsample=0.8 early-stopping=0 max-nodes=4194304\n","steps":0,"features":30,"boost":{"rounds":100,"rounds_requested":100,"nodes":1124,"bins":64,"max_depth":3,"min_leaf":10,"learning_rate":"0.1","base_score":"0.518344456180018"},"classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
+# the label and the probability of the positive label for three test rows
+$ ml predict --model-file cancer-boost.ml --proba --limit 3 breast_cancer_test.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"boost","task":"classification","columns":["label","probability"],"rows":[["1","0.9992001503488099"],["0","0.0013911001677134778"],["0","0.0006500344667037402"]],"row_count":3,"total_rows":143,"truncated":true,"next":{"from":3},"unknown_categories":0},"meta":{"version":"0.1.0"}}
+# accuracy, precision, recall, F1, ROC-AUC and log-loss of the 143 test rows
+$ ml eval --model-file cancer-boost.ml breast_cancer_test.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"boost","task":"classification","rows":143,"positive":1,"metrics":{"accuracy":"0.951048951048951","precision":"0.9560439560439561","recall":"0.9666666666666667","f1":"0.9613259668508287","roc_auc":"0.9861635220125786","log_loss":"0.14105834581387547"},"unknown_categories":0},"meta":{"version":"0.1.0"}}
+# up to 500 rounds, stopped after 10 without a better loss on a tenth of the training rows; the test side of --split is never read by the stopping rule
+$ ml fit --model boost --task classification --target benign --rounds 500 --learning-rate 0.2 --early-stopping 10 --split train=0.8 --seed 1 --output cancer-early.ml breast_cancer_train.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"boost","task":"classification","rows":340,"columns":31,"target":"benign","path":"cancer-early.ml","bytes":19224,"sha256":"81a8ed6d40af0b8451acfe7d5a51acb42dc7284d3bd78b9f2971e9621b99d2fa","written":true,"summary":{"plan":"model kind=boost task=classification rounds=500 learning-rate=0.2 max-depth=4 min-leaf=10 bins=64 l2=1.0 subsample=1.0 early-stopping=10 max-nodes=4194304\n","steps":0,"features":30,"boost":{"rounds":29,"rounds_requested":500,"nodes":365,"bins":64,"max_depth":4,"min_leaf":10,"learning_rate":"0.2","base_score":"0.3837251214717585","best_round":29},"classes":[0,1],"positive":1,"split":{"train":340,"test":86,"seed":1},"holdout":{"rows":86,"metrics":{"accuracy":"0.9534883720930233","precision":"0.9672131147540983","recall":"0.9672131147540983","f1":"0.9672131147540983","roc_auc":"0.9927868852459016","log_loss":"0.08923070021249499"}}}},"meta":{"version":"0.1.0"}}
+# describe says the kind (8), the sum order (in file) and the number of trees of the file
+$ ml describe --model-file cancer-boost.ml
+{"model": "boost", "task": "classification", "kind": 8, "ensemble": {"trees": 100, "nodes": 1124, "rounds_requested": 100}, "classes": [0, 1], "output": {"columns": ["label"], "with_proba": ["label", "probability"], "with_distance": null, "label_threshold": "0.5"}}
+```
+<!-- /gen:bflow -->
+
 ## Worked examples
 
 Four classic datasets, as bundled with scikit-learn (breast cancer Wisconsin, diabetes progression, iris restricted to two species, wine), solved by the real `ml` binary and compared with scikit-learn on the **same two files** each. [docs/examples.md](docs/examples.md) fixes what is compared and the tolerances, and was written before any example was run; the commands and their output are on [the examples page](https://alpibrusl.github.io/cancho-ml/examples.html), with two failures shown (a penalty-free logistic fit on separable data; a column whose type differs between two files). The `ml` output is regenerated by `scripts/check_docs.sh`; the scikit-learn column is read from `docs/examples/reference.json`, written by `python3 scripts/examples_data.py` (needs scikit-learn), and **is not computed by the check**. Nothing here is a claim about speed.
@@ -292,7 +320,7 @@ The `--model` list is the list of what is built. There are no stand-in models, a
 <!-- gen:t-honest -->
 ```console
 $ ml fit --model knn --target price --output knn.ml houses.csv
-{"rule": "args.bad-value", "detail": {"flag": "--model", "value": "knn", "expected": "constant/linear/logistic/kmeans/tree/forest"}}
+{"rule": "args.bad-value", "detail": {"flag": "--model", "value": "knn", "expected": "constant/linear/logistic/kmeans/tree/forest/boost"}}
 # exit status 2; the rule, detail of the JSON line it prints
 $ ml fit --target prize --output typo.ml houses.csv
 {"rule": "ml.input.unknown-column", "hint": "names are compared exactly, byte for byte", "detail": {"flag": "--target", "name": "prize"}}
@@ -432,14 +460,14 @@ The model is read at start and changed by restarting. There is no TLS, no reload
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler a4572ea3)
-flags       45, for example
+flags       49, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
   --model-file  path             predict, eval, describe: the model file to read
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
-limits      21, for example
+limits      23, for example
   --max-rows         default 10,000,000   ceiling 1,000,000,000
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216

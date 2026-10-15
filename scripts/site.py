@@ -33,6 +33,8 @@ generated:
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
                                           order, and a hashed column that stores no string
+    bflow         README.md, index.html   boosted trees on docs/examples/data/breast_cancer_train.csv and _test.csv: early stopping refused without --split, a fit, predict --proba,
+                                          eval, early stopping with a held-out part, describe
     hero          index.html              the first example
     agentio       README.md, index.html   excerpts of `ml introspect`
     skill         index.html              the first lines of `ml skill`
@@ -141,10 +143,17 @@ DEMOS = [
     ("k_predict", "ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv"),
     ("k_eval", "ml eval --model-file iris-km.ml --drop virginica iris_test.csv"),
     ("k_text", "ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv"),
+    # boosted trees on breast cancer (docs/models-boost.md): early stopping needs --split, a fit, the probabilities, the metrics, early stopping with a split, describe
+    ("b_nosplit", "ml fit --model boost --target benign --early-stopping 10 --output cancer-boost.ml breast_cancer_train.csv"),
+    ("b_fit", "ml fit --model boost --task classification --target benign --rounds 100 --learning-rate 0.1 --max-depth 3 --subsample 0.8 --seed 1 --output cancer-boost.ml breast_cancer_train.csv"),
+    ("b_predict", "ml predict --model-file cancer-boost.ml --proba --limit 3 breast_cancer_test.csv"),
+    ("b_eval", "ml eval --model-file cancer-boost.ml breast_cancer_test.csv"),
+    ("b_early", "ml fit --model boost --task classification --target benign --rounds 500 --learning-rate 0.2 --early-stopping 10 --split train=0.8 --seed 1 --output cancer-early.ml breast_cancer_train.csv"),
+    ("b_describe", "ml describe --model-file cancer-boost.ml"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
-SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"]}
+SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"], "b_describe": ["model", "task", "kind", "ensemble", "classes", "output"]}
 SUMMARY = {
     "bad": ["rule", "hint", "repair"],
     "exists": ["rule", "hint", "detail"],
@@ -159,6 +168,7 @@ SUMMARY = {
     "s_mp_flag": ["rule", "hint", "detail"],
     "k_target": ["rule", "hint", "detail"],
     "k_nok": ["rule", "hint", "detail"],
+    "b_nosplit": ["rule", "hint", "detail"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -301,6 +311,9 @@ def make_context(binary, tmp):
     # the k-means example: the iris files of the worked examples
     for part in ("train", "test"):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
+    # the boosting example: the breast cancer files of the worked examples
+    for part in ("train", "test"):
+        (Path(tmp) / ("breast_cancer_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("breast_cancer_%s.csv" % part)).read_bytes())
     results = {}
 
     def run(words, stdin=None):
@@ -430,6 +443,22 @@ def kmflow_items(ctx):
             item(ctx, "k_eval"),
             ("# The same, as text, on the training rows", None, 0, None),
             item(ctx, "k_text")]
+
+
+def bflow_items(ctx):
+    """Boosted trees: early stopping refused without --split, a fit on breast cancer, the probabilities of three test rows, the metrics, early stopping with a held-out part, describe."""
+    return [("# early stopping keeps rows out of the fit, so it is refused unless a held-out part is declared with --split", None, 0, None),
+            item(ctx, "b_nosplit"),
+            ("# 100 rounds of depth-3 trees on 80 percent of the rows each, learning rate 0.1: the summary holds the rounds, the nodes and the base score", None, 0, None),
+            item(ctx, "b_fit"),
+            ("# the label and the probability of the positive label for three test rows", None, 0, None),
+            item(ctx, "b_predict"),
+            ("# accuracy, precision, recall, F1, ROC-AUC and log-loss of the 143 test rows", None, 0, None),
+            item(ctx, "b_eval"),
+            ("# up to 500 rounds, stopped after 10 without a better loss on a tenth of the training rows; the test side of --split is never read by the stopping rule", None, 0, None),
+            item(ctx, "b_early"),
+            ("# describe says the kind (8), the sum order (in file) and the number of trees of the file", None, 0, None),
+            item(ctx, "b_describe")]
 
 
 def hflow_items(ctx):
@@ -631,11 +660,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), bflow=lambda c: md_block(bflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), bflow=lambda c: html_pre(bflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

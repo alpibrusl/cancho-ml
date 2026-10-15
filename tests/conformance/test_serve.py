@@ -399,7 +399,7 @@ class Kinds(unittest.TestCase):
         return s
 
     def test_classification_has_label_and_probability(self):
-        for mid in ("logistic", "tree_cls", "forest_cls", "const_cls"):
+        for mid in ("logistic", "tree_cls", "forest_cls", "boost_cls", "const_cls"):
             s = self.serve(MODELS[mid][0])
             d = loads_tokens(s.request("POST", "/predict", body=b'{"a":3,"b":2.5,"c":0.5}', headers=JSON).text())
             self.assertEqual(d["columns"], ["label", "probability"], mid)
@@ -413,7 +413,7 @@ class Kinds(unittest.TestCase):
         self.assertEqual(d["task"], "clustering")
 
     def test_regression_has_prediction(self):
-        for mid in ("const_reg_dec", "const_reg_float", "tree_reg", "forest_reg"):
+        for mid in ("const_reg_dec", "const_reg_float", "tree_reg", "forest_reg", "boost_reg"):
             s = self.serve(MODELS[mid][0])
             d = loads_tokens(s.request("POST", "/predict", body=b'{"a":3,"b":2.5,"c":0.5}', headers=JSON).text())
             self.assertEqual(d["columns"], ["prediction"], mid)

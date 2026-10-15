@@ -128,7 +128,7 @@ fn walk[&fr, &x, &b, &o](f: &fr fit.Boost, xd: &x [float], bm: &b [byte], rows: 
     return predict.kernel(f.rounds, d, f.total, f.base, contents(f.toff), contents(f.ni), contents(f.nv), xd, bm, rows, out[0..rows]);
 }
 
-// the value for each row: mode 0 gives the class (1.0 where the score is above 0.0, else 0.0; a regression gives its score), mode 1 the probability of the positive
+// the value for each row: mode 0 gives the class (1.0 where the probability of the score is above 0.5, else 0.0, the tree's rule; a regression gives its score), mode 1 the probability of the positive
 // class (logreg.proba_of of the score; a regression is refused: ml.param.out-of-range)
 fn predict_rows[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float], mode: int) -> [heap] int {
     let ls = lib_size(blob);
@@ -167,14 +167,15 @@ fn predict_rows[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.
     if rc == 0 && task == 0 {
         var i = 0;
         while i < rows {
+            let pr = logreg.proba_of(out[i]);
             if mode == 0 {
-                if out[i] > 0.0 {
+                if pr > 0.5 {
                     out[i] = 1.0;
                 } else {
                     out[i] = 0.0;
                 }
             } else {
-                out[i] = logreg.proba_of(out[i]);
+                out[i] = pr;
             }
             i = i + 1;
         }

@@ -130,7 +130,7 @@ def predict_oracle(case, ctx, X_rows):
         return s
     c0, c1 = ctx["labels"]
     p = [float(v) for v in ob.sigmoid(np.array(s))]
-    return [c1 if v > 0.0 else c0 for v in s], p
+    return [c1 if q > 0.5 else c0 for q in p], p
 
 
 def eval_oracle(case, ctx, rows_idx):

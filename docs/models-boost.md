@@ -85,7 +85,7 @@ Two stream kinds are appended to the registry (`lib/core/kinds.cho`, `docs/rng.m
 
 ### 2.5 Leaf values and shrinkage
 
-The Newton step of a leaf with totals `G`, `H`: `lv = -G / (H + L)` when `H + L >= HMIN`, else `lv = 0.0` (one negation, one division). The **stored value is
+The Newton step of a leaf with totals `G`, `H`: `lv = -G / (H + L)` when `H + L >= HMIN`, else `lv = 0.0` (the negation is `0.0 - G`, so a node with no gradient has the value +0.0, then one division). The **stored value is
 `eta * lv`** (one multiplication, rounded once), so the learning rate is applied at fit time and the model file holds the values that predict adds. An internal
 node's `val` is its threshold `e[f][b+1]`, as in the tree.
 
@@ -94,8 +94,7 @@ node's `val` is its threshold `e[f][b+1]`, as in the tree.
 After the tree of round `r` is built, every one of the `n` rows (fit rows, validation rows, rows outside the sample) walks it **by bins** (a missing bin follows
 `dleft`) to a leaf and `F_i = F_i + val` (one addition). Prediction is `acc = F0; for t = 0 .. T-1 in order: acc = acc + val_t`, the same additions in the same
 order, so **the score `predict` computes for a training row equals the training score `F_i` of the fit, bit for bit** (a row's bin walk and the threshold
-walk agree because `bin <= b` iff `x < e[b+1]`). That identity is a gate (GB3). Regression: the prediction is `acc`. Classification: the class is 1 iff
-`acc > 0.0` (equal to `p > 0.5`, decided on the score so that `p` rounding to exactly 0.5 cannot hide a positive score), the probability is `sigmoid(acc)`.
+walk agree because `bin <= b` iff `x < e[b+1]`). That identity is a gate (GB3). Regression: the prediction is `acc`. Classification: the probability is `sigmoid(acc)` (`models.logreg.proba_of`) and the class is 1 iff that probability is above 0.5, a tie going to the other class: the rule of the tree and of the forest, so `describe`'s `label_threshold` of 0.5 is true of the printed probability. (A score above 0 so small that its sigmoid rounds to exactly 0.5 is therefore class 0.)
 
 ### 2.7 Early stopping [choice]
 
