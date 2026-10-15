@@ -24,6 +24,7 @@ import ml.logrec;
 import ml.matrix;
 import ml.mfile;
 import ml.paths;
+import ml.prov;
 import ml.spec;
 import ml.verbs;
 import ml.wiredata;
@@ -36,6 +37,7 @@ import pipeline.file;
 import pipeline.mixed;
 import pipeline.names;
 import pipeline.plan;
+import pipeline.provsec;
 import pipeline.run;
 import pipeline.schema;
 import transforms.codes;
@@ -1119,7 +1121,7 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
 }
 
 // the model file's bytes and the summary of the answer
-fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
+fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, pv: &pv [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     let kind = pls.kind;
     var mp = box_slice(heap, 8, byte_of(0));
@@ -1162,7 +1164,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, 
                     borrow tbl as &tr2 in {
                         borrow mp as &mr in {
                             buffer.drop(heap, fbytes);
-                            fbytes = file.encode_with_table(heap, plan.text(pls.pl), buffer.bytes(spr), buffer.bytes(sr), buffer.bytes(tr2), contents(mr)[0..end], tr.rows, fcols, o.seed, built.compiler());
+                            fbytes = file.encode_full(heap, plan.text(pls.pl), buffer.bytes(spr), buffer.bytes(sr), buffer.bytes(tr2), pv, contents(mr)[0..end], tr.rows, fcols, o.seed, built.compiler());
                         }
                     }
                 }
@@ -1178,7 +1180,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, 
         borrow sp as &spr in {
             borrow mp as &mr in {
                 buffer.drop(heap, fbytes);
-                fbytes = file.encode(heap, plan.text(pls.pl), buffer.bytes(spr), buffer.bytes(tr.fitted.payload), contents(mr)[0..end], tr.rows, schema.columns(ds.sc), o.seed, built.compiler());
+                fbytes = file.encode_full(heap, plan.text(pls.pl), buffer.bytes(spr), buffer.bytes(tr.fitted.payload), "", pv, contents(mr)[0..end], tr.rows, schema.columns(ds.sc), o.seed, built.compiler());
             }
         }
         buffer.drop(heap, sp);
@@ -1237,6 +1239,17 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
     var ds = empty_data(heap);
     var cids = catmat.empty(heap);
     var cvoc = dict.empty_vocab(heap);
+    // the SHA-256 of the training file before it is read (docs/tracking.md section 6); a file that cannot be opened is reported by the read, which names the reason
+    var h1 = buffer.empty(heap, 1);
+    var size1 = 0;
+    var hashed = false;
+    if go {
+        let (dg1, sz1, st1, ax1) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+        buffer.drop(heap, h1);
+        h1 = dg1;
+        size1 = sz1;
+        hashed = st1 == 0;
+    }
     if go {
         let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, args, fs, root, file, o, mixed_plan, task, e, lg);
         drop_data(heap, ds);
@@ -1310,6 +1323,38 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         tr = t2;
         go = ok3;
     }
+    // the provenance section: the training file's identity and the range of each numeric feature over the training rows (docs/tracking.md section 2)
+    var pv = buffer.empty(heap, 1);
+    if go && !hashed {
+        e = fail.io_error(heap, e, 0, false, paths.shown(file));
+        go = false;
+    }
+    if go {
+        borrow ds as &dr in {
+            borrow sel as &sr in {
+                borrow tr as &tq in {
+                    let nf = feature_count(dr);
+                    let fc = indices_but(heap, dr.ncols, dr.tj);
+                    borrow fc as &fr in {
+                        let (st, bad) = prov.stats(heap, dr.x, contents(sr), want, contents(fr), nf);
+                        if bad != 0 {
+                            e = wiredata.code_error(heap, e, refuse.fit_non_finite(), 0, 0, 0);
+                            go = false;
+                        } else {
+                            borrow h1 as &hr in {
+                                borrow st as &str in {
+                                    buffer.drop(heap, pv);
+                                    pv = provsec.pack(heap, size1, buffer.bytes(hr), dr.nrows, tq.rows, nf, contents(str));
+                                }
+                            }
+                        }
+                        unbox_slice(heap, st);
+                    }
+                    unbox_slice(heap, fc);
+                }
+            }
+        }
+    }
     var fbytes = buffer.empty(heap, 1);
     var summary = buffer.empty(heap, 1);
     if go {
@@ -1319,13 +1364,15 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
                     borrow pls as &pr in {
                         borrow tr as &tq in {
                             borrow sel as &sq in {
-                                let (fb2, sm2, ok7, e7) = assemble(heap, args, dr, cir, cvr, pr, tq, contents(sq), ntest, o, e);
-                                buffer.drop(heap, fbytes);
-                                buffer.drop(heap, summary);
-                                fbytes = fb2;
-                                summary = sm2;
-                                e = e7;
-                                go = ok7;
+                                borrow pv as &pvr in {
+                                    let (fb2, sm2, ok7, e7) = assemble(heap, args, dr, cir, cvr, pr, tq, contents(sq), ntest, buffer.bytes(pvr), o, e);
+                                    buffer.drop(heap, fbytes);
+                                    buffer.drop(heap, summary);
+                                    fbytes = fb2;
+                                    summary = sm2;
+                                    e = e7;
+                                    go = ok7;
+                                }
                             }
                         }
                     }
@@ -1333,6 +1380,25 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
             }
         }
     }
+    // the file must be the one that was read: hashed again after the fit, the digest must be the first one
+    if go {
+        let (dg2, sz2, st2, ax2) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+        var same = st2 == 0 && sz2 == size1;
+        if same {
+            borrow h1 as &hr1 in {
+                borrow dg2 as &hr2 in {
+                    same = bytes.equal(buffer.bytes(hr1), buffer.bytes(hr2));
+                }
+            }
+        }
+        buffer.drop(heap, dg2);
+        if !same {
+            e = verbs.problem(heap, e, "ml.input.changed", "the training file changed while the fit read it", "fit again once the file is no longer being written", "", "");
+            go = false;
+        }
+    }
+    buffer.drop(heap, h1);
+    buffer.drop(heap, pv);
     var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
     if go {
         verbs.drop_out(heap, result);

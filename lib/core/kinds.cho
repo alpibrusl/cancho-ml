@@ -119,12 +119,23 @@ pub fn section_strings() -> [] int {
     return 6;
 }
 
+// the provenance of the training data (docs/tracking.md section 2): the training file's SHA-256 and size, its rows, and the range of every numeric feature. Present in every file `fit`
+// of this version writes (after the string table when there is one); a file of an older version has none. The section count of the header is 5, 6 or 7: the reader walks the tags.
+pub fn section_provenance() -> [] int {
+    return 7;
+}
+
+// the layout number of the provenance payload
+pub fn provenance_layout() -> [] int {
+    return 1;
+}
+
 pub fn core_sections() -> [] int {
     return 5;
 }
 
 pub fn section_count() -> [] int {
-    return 6;
+    return 7;
 }
 
 // the layout number of the string table, and the layout number that marks the 8-byte stub of a categorical step in the `steps` section (layout 1 is the full
@@ -284,6 +295,9 @@ pub fn section_at(i: int) -> [] int {
     }
     if i == 6 {
         return section_strings();
+    }
+    if i == 7 {
+        return section_provenance();
     }
     return 0;
 }

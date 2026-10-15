@@ -24,6 +24,7 @@ import ml.logrec;
 import ml.matrix;
 import ml.mfile;
 import ml.paths;
+import ml.prov;
 import ml.spec;
 import ml.verbs;
 import ml.wiredata;
@@ -34,12 +35,14 @@ import pipeline.mixed;
 import pipeline.file;
 import pipeline.names;
 import pipeline.plan;
+import pipeline.provsec;
 import pipeline.run;
 import pipeline.schema;
 import transforms.codes;
 import transforms.strtab;
 import flt;
 import toolbox.fail;
+import toolbox.text;
 
 // ---------------------------------------------------------------- the model file's kind
 
@@ -52,7 +55,7 @@ fn names_tree[&p](plan: &p [byte]) -> [] bool {
 // allow it. The old reader gives the real error for such a file.
 pub fn peek_kind[&d](data: &d [byte]) -> [] int {
     let n = len(data);
-    if n < 44 || !bytes.equal(data[0..4], "CML1") || record.get32(data, 8) != 5 && record.get32(data, 8) != 6 {
+    if n < 44 || !bytes.equal(data[0..4], "CML1") || record.get32(data, 8) < 5 || record.get32(data, 8) > 7 {
         return 0;
     }
     let body = n - 32;
@@ -118,10 +121,38 @@ pub fn stored_c1[&s](st: &s Stored) -> [] int {
     return st.c1;
 }
 
-// whether the file says it has six sections: the file of a model with a string table (docs/stringtable.md). The constant models never have one, so such a file is
-// this module's whatever its model section says, and its refusals are the pipeline's, in the order of design.md 4.1
+// whether the file has a string table (docs/stringtable.md): seven sections, or six of which the sixth is not the provenance (tag 7). The constant models never have a table, so such a file is
+// this module's whatever its model section says, and its refusals are the pipeline's, in the order of design.md 4.1. The sixth tag is read from the structure; a structure that does not allow
+// it is the pipeline's refusal too.
 fn six_sections[&d](data: &d [byte]) -> [] bool {
-    return len(data) >= 12 && bytes.equal(data[0..4], "CML1") && record.get32(data, 8) == 6;
+    if len(data) < 12 || !bytes.equal(data[0..4], "CML1") {
+        return false;
+    }
+    let count = record.get32(data, 8);
+    if count == 7 {
+        return true;
+    }
+    if count != 6 {
+        return false;
+    }
+    let body = len(data) - 32;
+    var pos = 12;
+    var s = 0;
+    while s < 5 {
+        if pos + 12 > body {
+            return true;
+        }
+        let length = fbits.get64(data, pos + 4);
+        if length < 0 || length > body - pos - 12 {
+            return true;
+        }
+        pos = pos + 12 + length;
+        s = s + 1;
+    }
+    if pos + 12 > body {
+        return true;
+    }
+    return record.get32(data, pos) != kinds.section_provenance();
 }
 
 // ---------------------------------------------------------------- the stored model
@@ -176,7 +207,7 @@ fn view_of[&h, &s](heap: &!h Heap, sc: &s schema.Schema, rows: int) -> [heap] mf
             i = i + 1;
         }
     }
-    return mfile.Model { kind: 0, rows: rows, cols: cols, target: schema.target(sc), names: nm, ends: ends, types: types, stats: box_slice(heap, 8, 0), nstats: 0 };
+    return mfile.Model { kind: 0, rows: rows, cols: cols, target: schema.target(sc), names: nm, ends: ends, types: types, stats: box_slice(heap, 8, 0), nstats: 0, prov: buffer.empty(heap, 1) };
 }
 
 pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], errs: fail.Errors) -> [heap] (Stored, bool, fail.Errors) {

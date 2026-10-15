@@ -283,7 +283,7 @@ fn is_json_type[&c](value: &c [byte]) -> [] bool {
 
 // the options the predictor is called with: the rows of a request, as many cells as the model's columns allow, the answer's columns the model has
 fn options(columns: int, rows: int, max_bytes: int, proba: bool, distance: bool, body_cap: int, limit: int) -> [] verbs.Opts {
-    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, drops: "", floats: "", target: "", model: "", plan_given: false, step: "", step_given: false, positive: "", positive_given: false, split: "", split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cats: "", cat_given: false, na: "", max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128 };
+    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, drops: "", floats: "", target: "", model: "", plan_given: false, step: "", step_given: false, positive: "", positive_given: false, split: "", split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cats: "", cat_given: false, na: "", max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128, max_oor: 0, max_oor_given: false, track_given: false };
 }
 
 // the options `describe` is called with: the most category strings listed per column, and the largest model file

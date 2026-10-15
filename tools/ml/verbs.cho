@@ -67,6 +67,11 @@ pub struct Opts {
     max_str: int,
     max_pool: int,
     max_catcols: int,
+    // predict, eval: --max-out-of-range N (docs/tracking.md section 3.3), and whether it was given
+    max_oor: int,
+    max_oor_given: bool,
+    // fit, eval: whether --track was given
+    track_given: bool,
 }
 
 // What a verb hands back. `payload` is the `data` object, `plain` the text of --format text, `extra` the keys of a dry run
@@ -582,7 +587,7 @@ fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a 
     if float_target {
         mkind = 3;
     }
-    return mfile.Model { kind: mkind, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats };
+    return mfile.Model { kind: mkind, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats, prov: buffer.empty(heap, 1) };
 }
 
 pub fn write_failure[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {

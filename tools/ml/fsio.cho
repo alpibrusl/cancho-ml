@@ -10,6 +10,7 @@ module ml.fsio;
 import std.buffer;
 import ml.paths;
 import toolbox.place;
+import toolbox.sha;
 
 // The bytes of a model file: the file below `root` when `model` names one, or a copy of the bytes an Rp holds in memory (the server read the file once at start,
 // `paths.of_mem`). (bytes, status, aux) as `read_whole`; a copy longer than `cap` is status 3 as a file is.
@@ -86,6 +87,61 @@ pub fn read_whole[&h, &f, &r, &p, &q](heap: &!h Heap, fs: &f Fs(""), root: &r [b
         }
     }
     return (out, status, aux);
+}
+
+// The SHA-256 and the size of the file `rel` (opened as toolbox.place says), streamed in chunks of 64 KiB: the file is never held. (digest, size, status, aux): the digest is the 32 raw bytes
+// (empty when the status is not 0); status 0 ok; 1 the open failed (aux: errno); 2 a read failed (aux: errno).
+pub fn sha_file[&h, &f, &r, &p, &q](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte]) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, int, int, int) {
+    var digest = buffer.empty(heap, 1);
+    var size = 0;
+    var status = 0;
+    var aux = 0;
+    match place.open_operand(fs, root, rel, full) {
+        Opened::Failed(reason) => {
+            return (digest, 0, 1, reason);
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var hasher = sha.sha256(heap);
+            var chunk = box_slice(heap, 65536, byte_of(0));
+            var going = true;
+            borrow mut file as &!fh in {
+                while going {
+                    borrow mut chunk as &!cw in {
+                        match file_read(fh, contents(cw)) {
+                            Read::Got(n) => {
+                                hasher = sha.update(hasher, contents(cw)[0..n]);
+                                size = size + n;
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                status = 2;
+                                aux = reason;
+                                going = false;
+                            }
+                        }
+                    }
+                }
+            }
+            file_close(file);
+            unbox_slice(heap, chunk);
+            if status == 0 {
+                var dg = box_slice(heap, 64, byte_of(0));
+                borrow mut dg as &!dw in {
+                    sha.finish(heap, hasher, contents(dw));
+                }
+                borrow dg as &dr in {
+                    digest = buffer.append(heap, digest, contents(dr)[0..32]);
+                }
+                unbox_slice(heap, dg);
+            } else {
+                sha.discard(heap, hasher);
+            }
+        }
+    }
+    return (digest, size, status, aux);
 }
 
 // the whole of `data` into the open file; 0, or the errno of the first failed write
