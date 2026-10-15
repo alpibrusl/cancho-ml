@@ -238,6 +238,21 @@ fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byt
         w = json.put_null(heap, w);
     }
     w = json.end_object(heap, w);
+    // a boosted model: the trees and nodes of its payload (docs/models-boost.md section 6)
+    if kind == kinds.model_boost() {
+        let (mdat, mdlen) = section_at(data, 4);
+        if mdlen >= 100 {
+            w = json.put_key(heap, w, "ensemble");
+            w = json.begin_object(heap, w);
+            w = json.put_key(heap, w, "trees");
+            w = json.put_int(heap, w, fbits.get64(data, mdat + 28));
+            w = json.put_key(heap, w, "nodes");
+            w = json.put_int(heap, w, fbits.get64(data, mdat + 52));
+            w = json.put_key(heap, w, "rounds_requested");
+            w = json.put_int(heap, w, fbits.get64(data, mdat + 84));
+            w = json.end_object(heap, w);
+        }
+    }
     // target
     w = json.put_key(heap, w, "target");
     if has_t {

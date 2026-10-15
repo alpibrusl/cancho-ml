@@ -358,6 +358,14 @@ pub fn takes_missing(kind: int) -> [] bool {
     return kind == 7 || kind == 107 || kind == 8;
 }
 
+// whether the hyperparameters `ip` of the model ask for early stopping, which is refused unless --split declares held-out rows
+pub fn needs_split[&i](kind: int, ip: &i [int]) -> [] bool {
+    if kind == 8 {
+        return ip[5] > 0;
+    }
+    return false;
+}
+
 // the least value the command line accepts for the integer hyperparameter flag `name` (the ceiling is in spec.limits())
 pub fn hparam_min[&n](name: &n [byte]) -> [] int {
     if bytes.equal(name, "bins") {

@@ -20,6 +20,7 @@ import ml.dict;
 import ml.est;
 import ml.fbits;
 import ml.fsio;
+import ml.kinds;
 import ml.logrec;
 import ml.matrix;
 import ml.mfile;
@@ -940,6 +941,36 @@ fn put_forest[&h, &b](heap: &!h Heap, w0: json.Writer, blob: &b [byte]) -> [heap
     return w;
 }
 
+// what the header of the payload of a boosted model says (docs/models-boost.md section 5): the rounds kept and requested, the nodes, the learning rate and the base score;
+// `best_round` is the round early stopping kept, present when early stopping ran
+fn put_boost[&h, &b](heap: &!h Heap, w0: json.Writer, blob: &b [byte]) -> [heap] json.Writer {
+    var w = w0;
+    w = json.put_key(heap, w, "boost");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "rounds");
+    w = json.put_int(heap, w, fbits.get64(blob, 28));
+    w = json.put_key(heap, w, "rounds_requested");
+    w = json.put_int(heap, w, fbits.get64(blob, 84));
+    w = json.put_key(heap, w, "nodes");
+    w = json.put_int(heap, w, fbits.get64(blob, 52));
+    w = json.put_key(heap, w, "bins");
+    w = json.put_int(heap, w, fbits.get64(blob, 44));
+    w = json.put_key(heap, w, "max_depth");
+    w = json.put_int(heap, w, fbits.get64(blob, 60));
+    w = json.put_key(heap, w, "min_leaf");
+    w = json.put_int(heap, w, fbits.get64(blob, 68));
+    w = json.put_key(heap, w, "learning_rate");
+    w = verbs.put_double(heap, w, fbits.get64(blob, 124));
+    w = json.put_key(heap, w, "base_score");
+    w = verbs.put_double(heap, w, fbits.get64(blob, 116));
+    if fbits.get64(blob, 76) > 0 {
+        w = json.put_key(heap, w, "best_round");
+        w = json.put_int(heap, w, fbits.get64(blob, 28));
+    }
+    w = json.end_object(heap, w);
+    return w;
+}
+
 // what the fit of a clustering says about itself: the hyperparameters (k, the iterations, the initialisation) and the metrics of the training rows
 fn put_clusters[&h, &pp, &ip](heap: &!h Heap, w0: json.Writer, tr: &pp Trained, ip: &ip [int]) -> [heap] json.Writer {
     var w = w0;
@@ -974,6 +1005,8 @@ fn fit_summary[&h, &pp, &dd, &sp, &tb, &ii](heap: &!h Heap, tr: &pp Trained, pl:
     w = json.put_int(heap, w, tr.d);
     if task == 4 {
         w = put_clusters(heap, w, tr, ip);
+    } else if est.is_blob(kind) && record.get32(contents(tr.blob), 0) == kinds.model_boost() {
+        w = put_boost(heap, w, contents(tr.blob));
     } else if est.is_blob(kind) {
         w = put_forest(heap, w, contents(tr.blob));
     } else {
@@ -1228,6 +1261,15 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs:
         } else if task != 4 && !o.target_given {
             e = verbs.problem(heap, e, "args.required-flag", "fit needs --target, the column to predict", "ml fit --target NAME --output MODEL FILE", "flag", "--target");
             go = false;
+        }
+    }
+    // early stopping keeps rows out of the fit: it is refused unless a held-out part is declared (docs/models-boost.md section 2.7)
+    if go && !o.split_given {
+        borrow pls as &npq in {
+            if est.needs_split(kind, contents(npq.ip)) {
+                e = wiredata.conflict(heap, e, "early-stopping", "early stopping keeps held-out rows: declare them with --split train=F");
+                go = false;
+            }
         }
     }
     var mixed_plan = false;

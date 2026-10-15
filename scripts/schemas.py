@@ -123,6 +123,10 @@ def data_defs():
     # a tree or a forest has no coefficients: what the header of its payload says (docs/wiring-trees.md section 2)
     forest_keys = {"plan": {"type": "string"}, "steps": NAT, "features": NAT,
                    "forest": obj({"trees": NAT, "nodes": NAT, "bins": NAT, "max_depth": NAT, "min_leaf": NAT, "mtry": NAT})}
+    # a boosted model: the rounds kept and requested, the nodes and the numbers that shaped them (docs/models-boost.md section 6)
+    boost_keys = {"plan": {"type": "string"}, "steps": NAT, "features": NAT,
+                  "boost": obj({"rounds": NAT, "rounds_requested": NAT, "nodes": NAT, "bins": NAT, "max_depth": NAT, "min_leaf": NAT, "learning_rate": FLT, "base_score": FLT,
+                                "best_round": NAT}, ["rounds", "rounds_requested", "nodes", "bins", "max_depth", "min_leaf", "learning_rate", "base_score"])}
     classes = {"classes": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "positive": {"type": "integer"}}
     # a fit with categorical steps adds to the summary the digest of the steps payload, the categorical columns the steps read and the string table the file holds
     # (docs/stringtable.md section 6)
@@ -133,6 +137,8 @@ def data_defs():
     summary_cls = obj({**summary_keys, **cat_keys, **classes, "split": split, "holdout": holdout_cls}, list(summary_keys) + ["classes", "positive"])
     summary_forest_reg = obj({**forest_keys, **cat_keys, "split": split, "holdout": holdout_reg}, list(forest_keys))
     summary_forest_cls = obj({**forest_keys, **cat_keys, **classes, "split": split, "holdout": holdout_cls}, list(forest_keys) + ["classes", "positive"])
+    summary_boost_reg = obj({**boost_keys, **cat_keys, "split": split, "holdout": holdout_reg}, list(boost_keys))
+    summary_boost_cls = obj({**boost_keys, **cat_keys, **classes, "split": split, "holdout": holdout_cls}, list(boost_keys) + ["classes", "positive"])
     # a clustering has no target (the target of its fit answer is null) and its summary says what the fit did (docs/wiring-kmeans.md section 3)
     mclu = cluster_metrics_def()
     cluster_keys = {"plan": {"type": "string"}, "steps": NAT, "features": NAT,
@@ -140,7 +146,7 @@ def data_defs():
     summary_clu = obj({**cluster_keys, **cat_keys, "split": split, "holdout": obj({"rows": NAT, "metrics": mclu})}, list(cluster_keys))
     fit_p = obj({
         "model": names, "task": {"enum": ["regression", "classification", "clustering"]}, "rows": NAT, "columns": NAT, "target": {"oneOf": [TB, {"type": "null"}]}, "path": TB,
-        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls, summary_clu]},
+        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls, summary_boost_reg, summary_boost_cls, summary_clu]},
     })
     predict_p = obj({
         "model": names, "task": {"enum": ["regression", "classification", "clustering"]},
@@ -177,12 +183,12 @@ def describe_data():
                   "with_distance": opt({"type": "array", "items": {"type": "string"}}), "label_threshold": opt({"type": "string"})})
     return obj({
         "model": {"enum": ["constant"] + wired_models()}, "task": {"enum": ["regression", "classification", "clustering"]},
-        "kind": {"type": "integer", "minimum": 1, "maximum": 7}, "plan": TB, "rows": NAT, "file": file_, "target": opt(target),
+        "kind": {"type": "integer", "minimum": 1, "maximum": 8}, "plan": TB, "rows": NAT, "file": file_, "ensemble": obj({"trees": NAT, "nodes": NAT, "rounds_requested": NAT}), "target": opt(target),
         "columns": {"type": "array", "items": column, "minItems": 1}, "request": request,
         "categorical": {"type": "array", "items": cat}, "na_values": {"type": "array", "items": TB}, "reader": opt(reader),
         "classes": opt({"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}), "positive": opt({"type": "integer"}),
         "output": output, "limits": obj({"values_per_column": NAT, "max_bytes": NAT}),
-    })
+    }, ["model", "task", "kind", "plan", "rows", "file", "target", "columns", "request", "categorical", "na_values", "reader", "classes", "positive", "output", "limits"])
 
 
 def planned():

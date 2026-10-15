@@ -452,6 +452,14 @@ def render_est(models):
           "pub fn takes_missing(kind: int) -> [] bool {"]
     o += ["    return %s;" % (" || ".join("kind == %d" % keys[m["name"]] for m in blob if m["task"] == "both") or "false"), "}", ""]
 
+    # a model whose integer hyperparameter `early-stopping` is above 0 keeps rows out of its fit and needs a declared held-out part (--split)
+    o += ["// whether the hyperparameters `ip` of the model ask for early stopping, which is refused unless --split declares held-out rows", "pub fn needs_split[&i](kind: int, ip: &i [int]) -> [] bool {"]
+    for m in ws:
+        for k, h in enumerate(int_like(m)):
+            if h["name"] == "early-stopping":
+                o += ["    if kind == %d {" % keys[m["name"]], "        return ip[%d] > 0;" % k, "    }"]
+    o += ["    return false;", "}", ""]
+
     # the least value of an integer hyperparameter flag (1 unless its manifest says 0: the generic check of the nat flags is 1 to the ceiling)
     mins = {}
     for m in ws:
