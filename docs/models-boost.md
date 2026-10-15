@@ -164,6 +164,7 @@ bound (`n <= 2^20` **[choice]**: the tree's exactness bound is not needed here, 
 | `ml.limit.depth` | 8 | `max_depth` above 30 |
 | `ml.limit.nodes` | 8 | `max_nodes` above 4,194,304; `rounds * cap` above `2^22` (`cap = min(max_nodes, 2^(D+1)-1, 2m-1)`: **the model of all rounds is held in memory and written whole**, so the total is bounded at 4,194,304 nodes, a quarter of the forest's, **[choice]**); a tree that needs more than `max_nodes` nodes while growing (never cut) |
 | `ml.input.non-finite` | 8 | a present `X` cell not finite; a regression `y` not finite or above 1e100 |
+| `ml.input.too-many-columns` | 8 | more than 4096 columns after the steps, though `--max-columns` allows up to 8192: the reader of the payload refuses more than 4096, and a fit does not write a file `predict` cannot read **[choice]** |
 | `ml.label.not-binary`, `ml.label.single-class` | 8 | as the tree; a classification whose fit rows hold one class (after the validation rows are taken out) |
 | `ml.fit.non-finite` | 8 | section 3.3 |
 | `ml.param.threads` | 2 | threads outside 1..64, or the copies the binning would make above 2^34 bytes (the tree's formula, the same `pbins`) |

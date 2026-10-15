@@ -92,6 +92,10 @@ pub fn check(p: Params, n: int, d: int, rows_cap: int, cols_cap: int, cells_cap:
     if n > params.rows_max() {
         return refuse.too_many_rows();
     }
+    // the reader of the payload refuses more than 4096 columns, so the fit does not write such a file (--max-columns can be raised to 8192)
+    if d > 4096 {
+        return refuse.too_many_columns();
+    }
     if p.task != 0 && p.task != 1 {
         return refuse.param_out_of_range();
     }

@@ -145,6 +145,7 @@ MUTANTS = [
     M("b-bound-subsample-k-zero", "GB6", "a subsample that rounds to K = 0 is accepted", [(BP, "|| subsample_k(p.subsample) < 1 {", "|| subsample_k(p.subsample) < 0 {")], BOOST),
     M("b-bound-early-needs-ten-rows", "GB6", "early stopping on 9 rows is accepted", [(BP, "if p.early > 0 && n < 10 {", "if p.early > 0 && n < 9 {")], RULES),
     M("b-bound-min-leaf-above-n", "GB6", "a min-leaf above the rows is accepted", [(BP, "if p.min_leaf < 1 || p.min_leaf > n {", "if p.min_leaf < 1 {")], BOOST + RULES),
+    M("b-bound-columns-4096", "GB6", "a fit on more than 4096 columns goes on and writes a file predict refuses", [(BP, "    if d > 4096 {\n        return refuse.too_many_columns();\n    }\n", "")], BOOST),
     M("b-bound-depth-ceiling", "GB6", "a depth of 30 is refused", [(BP, "if p.max_depth > params.depth_max() {", "if p.max_depth >= params.depth_max() {")], BOOST,
       why="a depth of exactly 30 needs a fit that the suite does not make (the node arrays of a tree of depth 30 on a few hundred rows are small, but the case is not in the suite); the boundary of 31 is tested"),
     M("b-bound-total-nodes", "GB6", "rounds times the nodes of a tree is compared with a strict ceiling", [(BP, "if p.rounds > nodes_total_max() / node_cap(p, fit_rows) {", "if p.rounds >= nodes_total_max() / node_cap(p, fit_rows) {")], BOOST),

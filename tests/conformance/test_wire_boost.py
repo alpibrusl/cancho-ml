@@ -353,6 +353,16 @@ class BoostWire(unittest.TestCase):
         r = self.ml("fit", "--model", "boost", "--rounds", "2", "--max-depth", "1", "--split", "train=0.5", "--target", "y", "--output", "rows.cml", "rows.csv")
         self.assertEqual(r.status, 0, r)
 
+    def test_more_than_4096_columns_are_refused_at_fit_not_at_predict(self):
+        d = 4097
+        self.sb.write("wide.csv", ",".join("c%d" % j for j in range(d)) + ",y\n" + "".join(",".join(str((i * j) % 7) for j in range(d)) + ",%d\n" % i for i in range(30)))
+        r = self.ml("fit", "--model", "boost", "--max-columns", "8192", "--min-leaf", "1", "--rounds", "2", "--target", "y", "--output", "wide.cml", "wide.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.input.too-many-columns"), r)
+        self.assertFalse((self.sb.dir / "wide.cml").exists())
+        r = self.ml("fit", "--model", "boost", "--max-columns", "8192", "--min-leaf", "1", "--rounds", "2", "--drop", "c0", "--target", "y", "--output", "wide.cml", "wide.csv")
+        self.assertEqual(r.status, 0, r)
+        self.assertEqual(self.ml("predict", "--model-file", "wide.cml", "--max-columns", "8192", "--limit", "2", "--drop", "y,c0", "wide.csv").status, 0)
+
     def test_a_refused_fit_writes_nothing(self):
         self.sb.write("keep.cml", b"x")
         r = self.ml("fit", "--model", "boost", "--learning-rate", "2", "--target", "y", "--output", "keep.cml", "--overwrite", "full.csv")
