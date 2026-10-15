@@ -44,7 +44,7 @@ block is the consumer's label (dots would nest a TOML table): this document uses
 ## 2. What is API
 
 * **The API is the `pub` declarations of the 23 modules.** Their names, parameter types, result types and effect rows are in
-  `docs/stores_api.txt`, one line per `pub` function, written by `scripts/publish_stores.py --api` from the sources. `--check` fails when the file
+  `docs/stores_api.txt`, one line per `pub` function, written by `scripts/publish_stores.py` from the sources. `--check` fails when the file
   differs from the sources, so a changed signature is a visible change of a committed file.
 * **A change to a `pub` declaration of a listed module is a pin move for every consumer**: the stores are republished in the same commit, the
   consumer reads the diff of `docs/stores_api.txt`, and bumps its `rev` as its own commit. A new `pub` function is an addition. A function that is

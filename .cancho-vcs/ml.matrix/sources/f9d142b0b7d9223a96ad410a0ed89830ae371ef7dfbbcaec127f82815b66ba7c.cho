@@ -1,0 +1,118 @@
+module ml.matrix;
+
+import ml.limits;
+import ml.refuse;
+import linalg.tensor;
+
+// The numeric matrix a reader fills (docs/reader.md section 3, design.md section 3): a rank-2 tensor descriptor (row-major, strides
+// (cols, 1)) beside a `[float]` of rows * cols doubles, and a per-column bitmap of the missing cells. A missing cell holds 0.0 in the
+// data and a 1 in the bitmap; NaN and infinity are never stored (a reader refuses them: ml.input.non-finite). Column j's bit for row i
+// is bit (i mod 32) of word j * wpc + i / 32, wpc = ceil(rows / 32): 32 bits an int, so no sign bit is touched.
+//
+// `make` is the only way to allocate one, and it compares the shape with the caps (ml.limits.check_matrix, without a product that can
+// overflow) BEFORE it allocates anything: a refusal allocates nothing.
+
+pub res struct Matrix {
+    t: tensor.Tensor,
+    data: Box[[float]],
+    miss: Box[[int]],
+    rows: int,
+    cols: int,
+    wpc: int,
+}
+
+// a matrix of no rows and no columns, owning nothing but two one-element boxes
+pub fn empty[&h](heap: &!h Heap) -> [heap] Matrix {
+    return Matrix { t: tensor.Tensor { off: 0, rank: 2, s0: 0, s1: 0, s2: 1, s3: 1, t0: 0, t1: 0, t2: 0, t3: 0 }, data: box_slice(heap, 1, 0.0), miss: box_slice(heap, 1, 0), rows: 0, cols: 0, wpc: 0 };
+}
+
+// (the matrix, 0) or (an empty matrix, the refusal code of ml.refuse). The caps are the ones of ml.limits.check_matrix.
+pub fn make[&h](heap: &!h Heap, rows: int, cols: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (Matrix, int) {
+    let code = limits.check_matrix(rows, cols, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (empty(heap), code);
+    }
+    match tensor.matrix(0, rows, cols) {
+        tensor.Made::Err(c) => {
+            return (empty(heap), c);
+        }
+        tensor.Made::Ok(t) => {
+            let wpc = (rows + 31) / 32;
+            return (Matrix { t: t, data: box_slice(heap, rows * cols, 0.0), miss: box_slice(heap, cols * wpc, 0), rows: rows, cols: cols, wpc: wpc }, 0);
+        }
+    }
+}
+
+pub fn drop[&h](heap: &!h Heap, m: Matrix) -> [heap] int {
+    let Matrix { t, data, miss, rows, cols, wpc } = m;
+    unbox_slice(heap, data);
+    unbox_slice(heap, miss);
+    return rows;
+}
+
+pub fn rows[&m](m: &m Matrix) -> [] int {
+    return m.rows;
+}
+
+pub fn cols[&m](m: &m Matrix) -> [] int {
+    return m.cols;
+}
+
+pub fn wpc[&m](m: &m Matrix) -> [] int {
+    return m.wpc;
+}
+
+pub fn shape[&m](m: &m Matrix) -> [] tensor.Tensor {
+    return m.t;
+}
+
+// the matrix taken apart into its descriptor, its data, its bitmap, rows, cols and words per column; `assemble` puts it back
+pub fn parts(m: Matrix) -> [] (tensor.Tensor, Box[[float]], Box[[int]], int, int, int) {
+    let Matrix { t, data, miss, rows, cols, wpc } = m;
+    return (t, data, miss, rows, cols, wpc);
+}
+
+pub fn assemble(t: tensor.Tensor, data: Box[[float]], miss: Box[[int]], rows: int, cols: int, wpc: int) -> [] Matrix {
+    return Matrix { t: t, data: data, miss: miss, rows: rows, cols: cols, wpc: wpc };
+}
+
+// the value at (r, c), and whether it is missing; the caller keeps r < rows and c < cols
+pub fn value[&m](m: &m Matrix, r: int, c: int) -> [] float {
+    return contents(m.data)[r * m.cols + c];
+}
+
+pub fn is_missing[&m](m: &m Matrix, r: int, c: int) -> [] bool {
+    return contents(m.miss)[c * m.wpc + (r >> 5)] >> (r & 31) & 1 != 0;
+}
+
+// the same on the pieces `parts` gives: the data, the bitmap
+pub fn put[&d](data: &!d [float], cols: int, r: int, c: int, v: float) -> [] int {
+    data[r * cols + c] = v;
+    return 0;
+}
+
+pub fn mark_missing[&b](miss: &!b [int], wpc: int, r: int, c: int) -> [] int {
+    let w = c * wpc + (r >> 5);
+    miss[w] = miss[w] | 1 << (r & 31);
+    return 0;
+}
+
+pub fn missing_at[&b](miss: &b [int], wpc: int, r: int, c: int) -> [] bool {
+    return miss[c * wpc + (r >> 5)] >> (r & 31) & 1 != 0;
+}
+
+// how many cells of column c are missing
+pub fn missing_count[&m](m: &m Matrix, c: int) -> [] int {
+    var n = 0;
+    var w = 0;
+    let b = contents(m.miss);
+    while w < m.wpc {
+        var x = b[c * m.wpc + w];
+        while x != 0 {
+            x = x & x - 1;
+            n = n + 1;
+        }
+        w = w + 1;
+    }
+    return n;
+}

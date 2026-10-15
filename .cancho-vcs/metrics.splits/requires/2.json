@@ -1,0 +1,47 @@
+{
+  "store": "../ml.rng",
+  "lock": {
+    "entries": {
+      "advance": {
+        "sig_id": "359819174173e2033c1637137759666ae8a475fa95218663cf4459a831685a4a",
+        "stage_id": "bca3f1311e608f03919ae22fbd3ed4a5549154589a34946b0414780929434bba",
+        "source_hash": "285466e39e328b07bbafa2400b0ac62da1fb2f64c2bf876f7827d4f51c15fa75"
+      },
+      "derive": {
+        "sig_id": "d9423fc1473cfaa806c5d63f54cc479ac4044a9a4d8eb09ac4b784fa4e3d0203",
+        "stage_id": "0170f4c9fbc85dce46a4a9843a3be66ca3ef3a724a8539bae2d1af02672b7b24",
+        "source_hash": "285466e39e328b07bbafa2400b0ac62da1fb2f64c2bf876f7827d4f51c15fa75"
+      },
+      "element": {
+        "sig_id": "62379c2c133aea51d9444c44f75cacfceb5538dcbdbb3ef2d1364f3c32a9deaf",
+        "stage_id": "b98b06cf333f8a43d0d6446e3d070bf865042dbcbc73396981aacabd8a350f5a",
+        "source_hash": "285466e39e328b07bbafa2400b0ac62da1fb2f64c2bf876f7827d4f51c15fa75"
+      },
+      "gold": {
+        "sig_id": "6fd8d5abe068e9c292d3e484373eaad228b2e6a79f5b2ac95c7cdb0ad1fe47b9",
+        "stage_id": "47a75c0456f21e0be5b24a240ad9b2fca6345238dcbd88bc7bdb26c42c1ea918",
+        "source_hash": "285466e39e328b07bbafa2400b0ac62da1fb2f64c2bf876f7827d4f51c15fa75"
+      },
+      "mix": {
+        "sig_id": "27ddd143ec25b48227e4854a9aba7274bec734fe943cd65f8e69028706d66a2d",
+        "stage_id": "eecaeedd19f9e85783245f32888eff4b703347c3d06aec78fc62228afc2909b0",
+        "source_hash": "285466e39e328b07bbafa2400b0ac62da1fb2f64c2bf876f7827d4f51c15fa75"
+      },
+      "output": {
+        "sig_id": "7f16db529cf26b84c8605290d994bf26e8aa012e34376d6563727fa7310a77dd",
+        "stage_id": "26604c98a304fa808a51e2ca6b637e0d7909e3978805d94b7a049d0a20a2be6a",
+        "source_hash": "285466e39e328b07bbafa2400b0ac62da1fb2f64c2bf876f7827d4f51c15fa75"
+      },
+      "uniform": {
+        "sig_id": "928c2ba4698df2affe9f4a1e2ddb5ad6d796fb310bf5d96fda0d9a9e1073a86a",
+        "stage_id": "9e1b62c2792c52426aeb72db8bc958bc4d309b9dbbb39b0393ddc375599ef9a3",
+        "source_hash": "285466e39e328b07bbafa2400b0ac62da1fb2f64c2bf876f7827d4f51c15fa75"
+      },
+      "unit": {
+        "sig_id": "acd0b6b54d83d74ee3eb9798040234400961ee78eed06401709e23be052c2fa9",
+        "stage_id": "f8b2aae00fc6c22c7de5766245c2954362623464200fcee73f62a87a55497eb8",
+        "source_hash": "285466e39e328b07bbafa2400b0ac62da1fb2f64c2bf876f7827d4f51c15fa75"
+      }
+    }
+  }
+}
