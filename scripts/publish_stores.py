@@ -6,6 +6,8 @@ the published modules it imports (cancho docs/package-system.md 7.4). docs/store
     python3 scripts/publish_stores.py --check    # change nothing; exit 1 if a committed store or the API file is not what a fresh publish gives
     python3 scripts/publish_stores.py --closure  # print each module, its imports and the closure; exit 1 if the list is not closed
 
+--modules A,B,C narrows the list to those modules of MODULES (the closure mutants list a module without its import).
+
 --src DIR and --out DIR (both default to the repository root) read the sources from, and write the stores to, other places.
 The compiler is $CANCHO, or `cancho` on PATH; it must be the commit cancho.toml names, because the bytes of a store depend on it.
 """
@@ -186,7 +188,15 @@ def main():
     ap.add_argument("--out", default=ROOT)
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--closure", action="store_true")
+    ap.add_argument("--modules")
     args = ap.parse_args()
+    if args.modules:
+        names = args.modules.split(",")
+        unknown = [n for n in names if n not in MODULES]
+        if unknown:
+            raise SystemExit("not in MODULES: " + ", ".join(unknown))
+        for m in [m for m in MODULES if m not in names]:
+            del MODULES[m]
     if args.closure:
         print_closure(args.src)
         return
