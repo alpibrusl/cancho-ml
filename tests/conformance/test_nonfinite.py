@@ -308,6 +308,28 @@ class Paging(unittest.TestCase):
         self.assertGreaterEqual(fine, 3)
 
 
+class FitIsUnchanged(unittest.TestCase):
+    """`fit` keeps what it did: a coefficient that is not finite is `ml.fit.non-finite`, and a held-out row whose prediction is not finite is not a refusal of the fit (its metrics are `null`)"""
+
+    def test_a_fit_whose_coefficients_overflow_is_still_ml_fit_non_finite(self):
+        SB.write("ovf.csv", "x,y\n1e200,1\n2e200,0\n3e200,1\n-1e200,0\n")
+        r = ml("fit", "--model", "linear", "--target", "y", "--output", "ovf.ml", "--overwrite", "ovf.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.fit.non-finite"), r)
+
+    def test_a_held_out_row_that_overflows_is_refused_by_the_fit_as_before(self):
+        # the held-out rows are scored by the metrics library, which refuses a prediction that is not finite as `ml.input.non-finite` (detail.metric): the fit does not use the new rule
+        rows = ["%d.5,%r" % (i, 10 * (i + 0.5) + 0.5) for i in range(20)]
+        rows[6] = "1e308,1"
+        SB.write("fsp.csv", "x,y\n" + "\n".join(rows) + "\n")
+        seen = set()
+        for seed in range(1, 21):
+            r = ml("fit", "--model", "linear", "--target", "y", "--float", "x,y", "--split", "train=0.5", "--seed", str(seed), "--output", "fsp.ml", "--overwrite", "fsp.csv")
+            self.assertEqual(r.status, 8, (seed, r))
+            self.assertIn(r.first_rule(), ("ml.fit.non-finite", "ml.input.non-finite"), (seed, r))
+            seen.add(r.first_rule())
+        self.assertEqual(seen, {"ml.fit.non-finite", "ml.input.non-finite"})
+
+
 def cases():
     """(name, model, header, rows, flags, the row that is refused or None, the column)"""
     return [
