@@ -313,7 +313,7 @@ CASES = [
     case("ml-fit-non-finite", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "big.csv"], bad("ml.fit.non-finite"),
          setup=LBASE + [("write", "big.csv", "x,y\n1e200,1\n2e200,0\n3e200,1\n-1e200,0\n")]),
     case("ml-predict-non-finite", ["predict", "--model-file", "lf.cml", "bigx.csv"], bad("ml.predict.non-finite"),
-         setup=LBASE + [("fit", "--model", "linear", "--float", "a,b,y", "--target", "y", "--output", "lf.cml", "lin.csv"), ("write", "bigx.csv", "a,b\n1,2\n1e308,2\n")]),
+         setup=LBASE + [("fit", "--model", "linear", "--float", "a,b,y", "--target", "y", "--output", "lf.cml", "lin.csv"), ("write", "bigx.csv", "a,b\n1,2\n1.7e308,2\n")]),
     case("ml-eval-non-finite-distance", ["eval", "--model-file", "k.cml", "kb.csv"], bad("ml.predict.non-finite"),
          setup=BASE + [("write", "km.csv", "a,b\n1,1\n1.1,0.9\n5,5\n5.1,4.9\n"), ("fit", "--model", "kmeans", "--k", "2", "--float", "a,b", "--output", "k.cml", "km.csv"),
                        ("write", "kb.csv", "a,b\n1,1\n1e200,1\n")]),
