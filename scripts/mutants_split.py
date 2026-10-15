@@ -153,6 +153,10 @@ def main():
     if "--check" in sys.argv:
         print("mutants_split: %d mutants, every pattern applies exactly once" % len(MUTANTS))
         return 0
+    if "--baseline" in sys.argv:
+        verdict, tail = run_one(None)
+        print("baseline (the unchanged copy): %s" % ("PASS" if verdict == "SURVIVED" else "FAILS\n" + tail))
+        return 0 if verdict == "SURVIVED" else 1
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
     killed, survived, invalid = 0, [], []
     for m in MUTANTS:

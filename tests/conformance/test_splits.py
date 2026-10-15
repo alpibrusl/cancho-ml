@@ -59,6 +59,8 @@ class Surface(unittest.TestCase):
         import subprocess
         from harness import PREDICT_BIN
         for b in (PREDICT_BIN,):
+            if not os.path.exists(b):
+                self.skipTest("no ml-predict beside this ml (a mutant copy)")
             doc = json.loads(subprocess.run([b, "introspect"], capture_output=True, check=True).stdout)
             have = {f["name"] for f in doc["flags"]}
             for f in ("stratify", "split-by", "split-group", "folds", "repeats", "emit-folds"):
