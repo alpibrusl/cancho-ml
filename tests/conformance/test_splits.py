@@ -183,6 +183,124 @@ class Hostile(unittest.TestCase):
             sb.cleanup()
 
 
+class Edges(unittest.TestCase):
+    """F1 -- the edges that one input decides: a century that is not a leap year, the fraction of a second, a quote or a CR inside a group cell, the digit 0 and
+    the trailing zeros of the canonical text, a class that would be held out whole, and the fold and repeat that a training fold without a class names."""
+
+    def table(self, n=24, groups=4, seed=21):
+        return O.gen_table(random.Random(seed), n, "cls", groups=groups)
+
+    def cv(self, header, rows, strategy, K, crlf=False, trim_last_newline=False, expect=None):
+        sb = Sandbox()
+        try:
+            O.write_csv(sb.dir / "h.csv", header, rows, crlf=crlf)
+            if trim_last_newline:
+                data = (sb.dir / "h.csv").read_bytes()
+                (sb.dir / "h.csv").write_bytes(data.rstrip(b"\r\n"))
+            col = {"group": ["--split-group", "grp"], "time": ["--split-by", "time:day"], "plain": []}[strategy]
+            r = sb.run("cv", "h.csv", "--target", "y", "--drop", "grp,day,t,cat", "--model", "tree", "--task", "classification", "--folds", str(K), "--emit-folds", *col)
+            if expect is None:
+                self.assertEqual(r.status, 0, r)
+                n, labels, gids, G, tkeys = O.oracle_inputs(header, rows, strategy)
+                self.assertEqual(r.data()["assignment"]["folds"], O.cv(strategy, n, K, 1, 0, labels, gids, G, tkeys), strategy)
+            else:
+                self.assertEqual(r.first_rule(), expect, r)
+            return r
+        finally:
+            sb.cleanup()
+
+    def test_century_years_and_leap_days(self):
+        header, rows = self.table()
+        for i, r in enumerate(rows):
+            r[5] = "2024-%02d-%02d" % (1 + i // 28, 1 + i % 28)
+            r[7] = str(i % 2)
+        for good in ("2000-02-29", "2024-02-29", "1600-02-29"):
+            rows2 = [list(r) for r in rows]
+            rows2[3][5] = good
+            self.cv(header, rows2, "time", 3)
+        for bad in ("1900-02-29", "2100-02-29", "2023-02-29"):
+            rows2 = [list(r) for r in rows]
+            rows2[3][5] = bad
+            r = self.cv(header, rows2, "time", 3, expect="ml.split.time-format")
+            self.assertEqual(r.error()["detail"]["reason"], "range", bad)
+
+    def test_the_fraction_of_a_second_orders_rows(self):
+        header, rows = self.table(n=30, seed=22)
+        frac = random.Random(23).sample(range(100, 1000), 30)
+        for i, r in enumerate(rows):
+            r[5] = "2024-05-06T10:30:15.%d" % frac[i]
+        self.cv(header, rows, "time", 3)
+
+    def test_group_cells_with_quotes_and_a_cr_at_the_end_of_the_file(self):
+        header, rows = self.table(n=32, groups=4, seed=24)
+        names = ['g1', 'g"1', 'g2', 'g2"', 'g3', '"g3', 'g4', 'g4""']
+        for i, r in enumerate(rows):
+            r[4] = names[i % len(names)]
+        self.cv(header, rows, "group", 4)
+        # the group is the last cell of every line, the file is CRLF, and the last line has no line ending: its cell must equal the others'
+        header2 = [h for h in header if h != "grp"] + ["grp"]
+        rows2 = [[c for c, h in zip(r, header) if h != "grp"] + [r[header.index("grp")]] for r in rows]
+        for i, r in enumerate(rows2):
+            r[-1] = "g%d" % (i % 4)
+        self.cv(header2, rows2, "group", 4, crlf=True, trim_last_newline=True)
+
+    def test_the_canonical_text_of_a_fraction_and_of_a_name_with_a_zero(self):
+        header, rows = self.table(n=40, groups=5, seed=25)
+        sb = Sandbox()
+        try:
+            O.write_csv(sb.dir / "h.csv", header, rows)
+            for text in ("train=0.80", "train=0.500", "train=0.75", "train=0.8000"):
+                r = sb.run("fit", "h.csv", "--target", "y", "--drop", "grp,day,t,cat", "--model", "tree", "--task", "classification", "--split", text, "--output", "m-%s.ml" % text[6:])
+                self.assertEqual(r.status, 0, r)
+                self.assertEqual(r.data()["summary"]["split"]["spec"], O.spec_text("holdout", "plain", 0, train=text), text)
+        finally:
+            sb.cleanup()
+        for name in ("grp0", "g0", "0", "a-0.b_0", "g0\u00e9"):
+            h2 = [name if h == "grp" else h for h in header]
+            sb = Sandbox()
+            try:
+                O.write_csv(sb.dir / "h.csv", h2, rows)
+                r = sb.run("cv", "h.csv", "--target", "y", "--drop", name + ",day,t,cat", "--model", "tree", "--task", "classification", "--folds", "2", "--split-group", name)
+                self.assertEqual(r.status, 0, r)
+                self.assertEqual(r.data()["split"], O.spec_text("cv", "group", 0, name, K=2, R=1), name)
+            finally:
+                sb.cleanup()
+
+    def test_a_class_held_out_whole_and_a_holdout_that_keeps_a_group(self):
+        header, rows = self.table(n=12, groups=2, seed=26)
+        for i, r in enumerate(rows):
+            r[7] = "1" if i < 2 else "0"
+        sb = Sandbox()
+        try:
+            O.write_csv(sb.dir / "h.csv", header, rows)
+            r = sb.run("fit", "h.csv", "--target", "y", "--drop", "grp,day,t,cat", "--model", "tree", "--task", "classification", "--output", "m.ml", "--split", "train=0.1", "--stratify")
+            self.assertEqual(r.first_rule(), "ml.split.stratum-too-small", r)
+        finally:
+            sb.cleanup()
+        header, rows = self.table(n=10, groups=2, seed=27)
+        for i, r in enumerate(rows):
+            r[4] = "ga" if i < 5 else "gb"
+            r[7] = str(i % 2)
+        sb = Sandbox()
+        try:
+            O.write_csv(sb.dir / "h.csv", header, rows)
+            r = sb.run("fit", "h.csv", "--target", "y", "--drop", "grp,day,t,cat", "--model", "tree", "--task", "classification", "--split", "train=0.2", "--split-group", "grp", "--output", "m.ml")
+            self.assertEqual(r.status, 0, r)
+            self.assertEqual((r.data()["summary"]["split"]["train"], r.data()["summary"]["split"]["test"]), (5, 5), r)
+        finally:
+            sb.cleanup()
+
+    def test_a_training_fold_without_a_class_names_its_repeat_and_fold(self):
+        sb = Sandbox()
+        try:
+            sb.write("spl.csv", "grp,day,a,b,y,r\n" + "".join("g%d,2024-01-%02d,%d,%d,%d,1.5\n" % (i // 3, i + 1, i, i % 4, 1 if i < 3 else 0) for i in range(12)))
+            r = sb.run("cv", "--model", "tree", "--task", "classification", "--target", "y", "--drop", "grp,day,r", "--folds", "2", "--split-group", "grp", "spl.csv")
+            self.assertEqual(r.first_rule(), "ml.label.single-class", r)
+            self.assertEqual(sorted(k for k in r.error()["detail"] if k in ("fold", "repeat")), ["fold", "repeat"], r)
+        finally:
+            sb.cleanup()
+
+
 class Arguments(unittest.TestCase):
     """F1 -- a seeded fuzz of argument vectors over the new flags and verb: every answer is the contract's, no trap."""
 
