@@ -190,6 +190,8 @@ equal to the single-thread one bit for bit. Output SHA-256, Mac and Linux x86-64
 on both (13.2 s and 13.4 s). A consumer that pins only `metrics.splits` installs 5 files (`metrics.splits`, `metrics.rules`, `ml.limits`,
 `ml.refuse`, `ml.rng`) and can `import ml.rng`: the closure comes through `requires/`.
 
+**The repository.** `scripts/check.sh`, which now begins with the store gates and runs the consumption proof, passes on this tree; `check_docs.sh`, `check_prose.py`, `check_links.py` and `check_doc_refs.py` pass.
+
 **Limits.** The stores were consumed through a `file://` URL of a clone; a fetch from GitHub is the same command with `--url` and is run when a commit
 holding the stores is pushed. Only the pinned compiler `a4572ea` was tried as the consumer's compiler. `publish_stores.py --check` is a step of
 `scripts/check.sh`; there is no CI workflow that runs it. Which `pub` functions are stable is a statement of this document, not something a compiler
