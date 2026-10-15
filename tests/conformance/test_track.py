@@ -136,9 +136,7 @@ class Section(Base):
         self.fit("--split", "train=0.75", "--seed", "4", data="big.csv", flags=["--model", "linear", "--target", "y"])
         data = self.sb.read("m.cml")
         s, n = section_at(data, 7)
-        import oracle_metrics as om
-
-        test = om.py_train_test(40, 10, 4, 0)
+        test = O.OS.holdout("plain", 40, "train=0.75", 4)
         self.assertEqual(data[s:s + n], O.provenance(self.sb.read("big.csv"), ["a"], [t == 0 for t in test]))
         self.assertEqual(struct.unpack_from("<QQ", data, s + 44), (40, 30))
 

@@ -28,6 +28,7 @@ from fractions import Fraction
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
+import oracle_split as OS  # noqa: E402  (stdlib only: this file needs no numpy)
 BIN = os.environ.get("ML_BIN", str(ROOT / "build" / "ml"))
 PIN = (ROOT / "cancho.toml").read_text().split('cancho = "')[1].split('"')[0]
 FAILS = []
@@ -171,22 +172,28 @@ def jdump(v):
     return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
 
 
-def split_reduced(text):
-    """'train=0.8' -> {'num': 4, 'den': 5} (the fraction in lowest terms), None for no split"""
-    if text is None:
-        return None
-    frac = text.split("=")[1]
-    digits = len(frac.split(".")[1]) if "." in frac else 0
-    den = 10 ** digits
-    num = int(frac.replace(".", ""))
-    g = math.gcd(num, den)
-    return {"num": num // g, "den": den // g}
+def split_text(train, strategy, column, seed):
+    """the canonical text of the split of the record (docs/tracking.md section 5.2): scripts/oracle_split.py writes it, from the flags and not from the tool"""
+    if train is None:
+        return "none"
+    return OS.spec_text("holdout", strategy, seed, column, train)
+
+
+def strategy_of(flags):
+    """(strategy word of oracle_split, the column) of the flags before the verb"""
+    if "--stratify" in flags:
+        return "stratify", None
+    if "--split-group" in flags:
+        return "group", flag_value(flags, "--split-group")
+    if "--split-by" in flags:
+        return "time", flag_value(flags, "--split-by").split(":", 1)[1]
+    return "plain", None
 
 
 def inputs_obj(path, data, rows, target, task, plan, seed, positive, split, drop, flt, cat, na, reader, sum_order):
     return {
         "data": {"path": path, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "rows": rows},
-        "target": target, "task": task, "plan": plan, "seed": seed, "positive": positive, "split": split_reduced(split),
+        "target": target, "task": task, "plan": plan, "seed": seed, "positive": positive, "split": split,
         "drop": drop, "float": flt, "cat": cat, "na_values": na, "reader": reader, "compiler": PIN, "sum_order": sum_order,
     }
 
@@ -226,6 +233,10 @@ def case_list():
         ("linear split", ["--model", "linear", "--target", "progression", "--split", "train=0.8", "--seed", "3", "--step", "scale column=* kind=standard"], "diabetes_train.csv"),
         ("logistic positive", ["--model", "logistic", "--target", "virginica", "--positive", "0"], "iris_train.csv"),
         ("logistic split 0.75", ["--model", "logistic", "--target", "virginica", "--split", "train=0.750", "--seed", "2"], "iris_train.csv"),
+        ("logistic stratified split", ["--model", "logistic", "--target", "virginica", "--split", "train=0.8", "--stratify", "--seed", "4"], "iris_train.csv"),
+        ("linear group split", ["--model", "linear", "--target", "progression", "--split", "train=0.75", "--split-group", "sex", "--drop", "sex", "--seed", "6"], "diabetes_train.csv"),
+        ("linear time split", ["--model", "linear", "--target", "progression", "--split", "train=0.7", "--split-by", "time:age"], "diabetes_train.csv"),
+        ("tree group split on a text column", ["--model", "tree", "--task", "classification", "--target", "adopted", "--split", "train=0.6", "--split-group", "city", "--drop", "id,species,city", "--seed", "1"], "pets.csv"),
         ("tree split", ["--model", "tree", "--task", "regression", "--target", "progression", "--split", "train=0.7"], "diabetes_train.csv"),
         ("forest", ["--model", "forest", "--task", "classification", "--trees", "7", "--target", "virginica"], "iris_train.csv"),
         ("kmeans", ["--model", "kmeans", "--k", "3", "--drop", "virginica", "--seed", "5"], "iris_train.csv"),
@@ -256,13 +267,18 @@ def oracle_case(label, flags, csvname, work):
     split = flag_value(flags, "--split")
     seed = int(flag_value(flags, "--seed", 0))
     mask = None
+    strategy, scol = strategy_of(flags)
     if split:
-        import oracle_metrics as om
-
-        sp = split_reduced(split)
         n_rows = len(rows)
-        n_test = -(-n_rows * (sp["den"] - sp["num"]) // sp["den"])
-        test = om.py_train_test(n_rows, n_test, seed, 0)
+        labels = gids = tkeys = None
+        G = 0
+        if strategy == "stratify":
+            labels = [int(r[header.index(names[target])]) for r in rows]
+        elif strategy == "group":
+            G, gids = OS.group_ranks([r[header.index(scol)] for r in rows])
+        elif strategy == "time":
+            tkeys = OS.time_keys([r[header.index(scol)] for r in rows])
+        test = OS.holdout(strategy, n_rows, split, seed, labels, gids, G, tkeys)
         mask = [t == 0 for t in test]
     feats = [nm for j, nm in enumerate(names) if j != target and types[j] != 3]
     kind = struct.unpack("<I", secs[4][:4])[0]
@@ -296,7 +312,7 @@ def oracle_case(label, flags, csvname, work):
     on_rec = json.loads(rec.decode().rstrip("\n").rsplit(',"check"', 1)[0] + "}")
     metrics = on_rec["metrics"]
     positive = int(flag_value(flags, "--positive")) if "--positive" in flags else None
-    inputs = inputs_obj(csvname, data, nfile, None if kind == 6 else names[target], task, plan, seed, positive, split,
+    inputs = inputs_obj(csvname, data, nfile, None if kind == 6 else names[target], task, plan, seed, positive, split_text(split, strategy, scol, seed),
                         flag_value(flags, "--drop", ""), flag_value(flags, "--float", ""), flag_value(flags, "--cat", ""), flag_value(flags, "--na-values", ""), reader, sum_order)
     rid, want_rec = run_record(inputs, 1, "m.ml", model, counts, metrics)
     check(runs[0].name == rid + ".json", "%s: the record is named %s, the oracle's id is %s" % (label, runs[0].name, rid))
@@ -341,7 +357,9 @@ def selftest():
     assert (n, f(mn), f(mx)) == (3, -4.0, 3.0) and abs(f(me) - 0.0) < 1e-12
     cells, rows, counts = out_of_range(p, *read_csv(b"a,b,t\n9,2.5,0\n-5,,1\n"), ["a", "b"])
     assert (cells, rows, counts) == (2, 2, {"a": 2}), (cells, rows, counts)
-    assert split_reduced("train=0.80") == {"num": 4, "den": 5}
+    assert split_text("train=0.80", "plain", None, 3) == "holdout train=0.8 seed=3"
+    assert split_text("train=0.75", "group", "my grp", 0) == "holdout train=0.75 group=my%20grp seed=0"
+    assert split_text(None, "plain", None, 0) == "none"
     print("oracle_track --self: ok")
     return 0
 
