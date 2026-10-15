@@ -17,7 +17,9 @@ import ml.fsio;
 import ml.logrec;
 import ml.mfile;
 import ml.paths;
+import ml.prov;
 import ml.fsq;
+import pipeline.provsec;
 import ml.spec;
 import facc;
 import flt;
@@ -512,7 +514,7 @@ pub fn task_name(kind: int) -> [] &static [byte] {
 // ---------------------------------------------------------------- fit
 
 // the model of a scanned file: its kept columns and the target's statistics (acc as ml.csv.fold leaves it)
-fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a csv.Sinks, mean_bits: int) -> [heap] mfile.Model {
+fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a csv.Sinks, mean_bits: int, prov: buffer.Buffer) -> [heap] mfile.Model {
     var names = buffer.empty(heap, 64);
     var ends = vec.empty(heap, 16, 0);
     let all = csv.cols(sh);
@@ -587,7 +589,7 @@ fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a 
     if float_target {
         mkind = 3;
     }
-    return mfile.Model { kind: mkind, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats, prov: buffer.empty(heap, 1) };
+    return mfile.Model { kind: mkind, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats, prov: prov };
 }
 
 pub fn write_failure[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
@@ -727,6 +729,8 @@ fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], o
 fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
+    // the SHA-256 of the training file before it is read (docs/tracking.md section 6); a file that cannot be opened is reported by the scan, which names the reason
+    let (dg1, size1, hst, haux) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
     let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, 0, 0, 0), o.target, csv.plain_sinks(heap, 8, false), e);
     e = e1;
     csv.drop_sinks(heap, sk1);
@@ -799,14 +803,44 @@ fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs("")
             sk = csv.sink_join(a3, fvv, d3, m3);
         }
         if go {
-            mfile.drop_model(heap, mo);
-            borrow sk as &kr in {
-                mo = build_model(heap, sr, o.task, kr, mean_bits);
+            // the provenance of a constant model: the identity of the training file, no feature record (docs/tracking.md section 2.2); the file must be the one that was read
+            let (dg2, size2, hst2, haux2) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+            var same = hst == 0 && hst2 == 0 && size1 == size2;
+            if same {
+                borrow dg1 as &d1 in {
+                    borrow dg2 as &d2 in {
+                        same = bytes.equal(buffer.bytes(d1), buffer.bytes(d2));
+                    }
+                }
+            }
+            buffer.drop(heap, dg2);
+            if !same {
+                if hst != 0 || hst2 != 0 {
+                    e = fail.io_error(heap, e, haux + haux2, false, paths.shown(file));
+                } else {
+                    e = problem(heap, e, "ml.input.changed", "the training file changed while the fit read it", "fit again once the file is no longer being written", "", "");
+                }
+                go = false;
+            } else {
+                mfile.drop_model(heap, mo);
+                var pv = buffer.empty(heap, 1);
+                borrow dg1 as &d1 in {
+                    let none = box_slice(heap, 1, 0);
+                    borrow none as &nr in {
+                        buffer.drop(heap, pv);
+                        pv = provsec.pack(heap, size1, buffer.bytes(d1), csv.rows(sr), csv.rows(sr), 0, contents(nr));
+                    }
+                    unbox_slice(heap, none);
+                }
+                borrow sk as &kr in {
+                    mo = build_model(heap, sr, o.task, kr, mean_bits, pv);
+                }
             }
         }
     }
     csv.drop_shape(heap, sh);
     csv.drop_sinks(heap, sk);
+    buffer.drop(heap, dg1);
     return (mo, go, e, lg);
 }
 
@@ -1271,7 +1305,7 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
 // ---------------------------------------------------------------- eval
 
 // the metrics object and the text of an eval, from the accumulators `ml.csv.scan` left
-fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer, bool) {
+fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, onw: &static [byte], acc: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer, bool) {
     var undefined = false;
     var w = json.writer(heap, 512);
     var plain = buffer.empty(heap, 64);
@@ -1282,6 +1316,11 @@ fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &
     w = json.put_string(heap, w, task_name(mfile.kind(mo)));
     w = json.put_key(heap, w, "rows");
     w = json.put_int(heap, w, rows);
+    w = json.put_key(heap, w, "on");
+    w = json.put_string(heap, w, onw);
+    plain = buffer.append(heap, plain, "on ");
+    plain = buffer.append(heap, plain, onw);
+    plain = buffer.push(heap, plain, byte_of(10));
     w = json.put_key(heap, w, "metrics");
     w = json.begin_object(heap, w);
     if mfile.kind(mo) == 3 {
@@ -1381,8 +1420,12 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                     let (e2, same) = schema_check(heap, args, e, mr, sr, o, true, false);
                     e = e2;
                     if same {
+                        let (onw, ost, oaux) = prov.on_word(heap, fs, root, file, mfile.prov_bytes(mr));
+                        if ost != 0 {
+                            e = fail.io_error(heap, e, oaux, false, paths.shown(file));
+                        }
                         borrow mut accv as &!aw in {
-                            let (p2, t2, undefined) = eval_answer(heap, mr, csv.rows(sr), contents(aw));
+                            let (p2, t2, undefined) = eval_answer(heap, mr, csv.rows(sr), onw, contents(aw));
                             buffer.drop(heap, payload);
                             buffer.drop(heap, plain);
                             payload = p2;

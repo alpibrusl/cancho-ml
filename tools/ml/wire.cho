@@ -1106,6 +1106,8 @@ fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, d
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "rows");
     w = json.put_int(heap, w, ntest);
+    w = json.put_key(heap, w, "on");
+    w = json.put_string(heap, w, "held-out");
     w = json.put_key(heap, w, "metrics");
     borrow mobj as &mor in {
         if buffer.size(mor) > 0 {

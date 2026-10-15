@@ -10,13 +10,17 @@ module ml.prov;
 // `out_of_range`: how many non-missing cells of the scored rows lie strictly outside [min, max] of the stored records.
 
 import std.buffer;
+import std.bytes;
 import std.vec;
 import ml.csvcell;
 import ml.fbits;
+import ml.fsio;
 import ml.fsq;
 import ml.matrix;
+import ml.paths;
 import facc;
 import pipeline.provsec;
+import toolbox.sha;
 
 // the bits of a double, with every zero as +0.0 (there is no -0 in a model file)
 fn norm_bits(v: float) -> [] int {
@@ -193,4 +197,40 @@ pub fn out_of_range[&h, &m, &s, &c, &p](heap: &!h Heap, x: &m matrix.Matrix, sel
     unbox_slice(heap, hi);
     unbox_slice(heap, live);
     return Range { counts: counts, cells: cells, rows: rows, first_row: first_row, first_col: first_col };
+}
+
+// Whether the file `file` is the file the model was fitted on, by the SHA-256 of its bytes: ("train" | "other" | "unknown", status, aux). A model with no provenance (`pv` empty) says "unknown" and
+// the file is not read; status is 0, or 1 and 2 as fsio.sha_file when the hash of the file could not be made (aux: errno).
+pub fn on_word[&h, &f, &r, &pf, &p](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, pv: &p [byte]) -> [heap, fs_read(""), dir_read, file_read] (&static [byte], int, int) {
+    if len(pv) == 0 {
+        return ("unknown", 0, 0);
+    }
+    let (dg, size, st, aux) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+    if st != 0 {
+        buffer.drop(heap, dg);
+        return ("unknown", st, aux);
+    }
+    var same = false;
+    borrow dg as &dr in {
+        same = bytes.equal(buffer.bytes(dr), provsec.file_sha(pv));
+    }
+    buffer.drop(heap, dg);
+    if same {
+        return ("train", 0, 0);
+    }
+    return ("other", 0, 0);
+}
+
+// the 32 raw bytes of a digest as 64 lowercase hex digits
+pub fn hex[&h, &d](heap: &!h Heap, raw: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var hx = box_slice(heap, 64, byte_of(0));
+    borrow mut hx as &!hw in {
+        sha.hex_into(raw, 32, contents(hw));
+    }
+    borrow hx as &hr in {
+        out = buffer.append(heap, out, contents(hr));
+    }
+    unbox_slice(heap, hx);
+    return out;
 }

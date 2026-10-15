@@ -202,7 +202,7 @@ pub fn check_nats[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
     while k <= count {
         let name = bytes.field(bytes.field(table, ';', k), '|', 1);
         var least = 1;
-        if bytes.equal(name, "from") {
+        if bytes.equal(name, "from") || bytes.equal(name, "max-out-of-range") {
             least = 0;
         }
         if est.hparam_flag(name) {
