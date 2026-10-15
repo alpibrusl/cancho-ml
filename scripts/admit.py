@@ -433,6 +433,8 @@ def small_model_flags(c):
     extra = ["--max-depth", "4"]
     if any(h["name"] == "trees" for h in c.model["hyperparameter"]):
         extra += ["--trees", "3"]
+    if any(h["name"] == "rounds" for h in c.model["hyperparameter"]):
+        extra += ["--rounds", "4"]
     return extra
 
 
