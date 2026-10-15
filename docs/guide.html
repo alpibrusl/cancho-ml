@@ -9,35 +9,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cancho-ml: classical ML as a command line an agent can read</title>
-<meta name="description" content="Fit, apply and score a model on a CSV: exact sums, bounded resources, named refusals, verifiable authority. Early: constant, linear and logistic models.">
-<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/">
+<title>The cancho-ml guide: every flow, model and refusal</title>
+<meta name="description" content="The long walkthrough of cancho-ml: complete flows with the real output, the six models, text columns, serving, the agent view and what it cannot do.">
+<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/guide.html">
 <meta name="robots" content="index, follow">
 <meta property="og:site_name" content="cancho-ml">
 <meta property="og:locale" content="en">
 <meta property="og:type" content="website">
-<meta property="og:title" content="cancho-ml: classical ML as a command line an agent can read">
-<meta property="og:description" content="Fit, apply and score a model on a CSV: exact sums, bounded resources, named refusals, verifiable authority. Early: constant, linear and logistic models.">
-<meta property="og:url" content="https://alpibrusl.github.io/cancho-ml/">
+<meta property="og:title" content="The cancho-ml guide: every flow, model and refusal">
+<meta property="og:description" content="The long walkthrough of cancho-ml: complete flows with the real output, the six models, text columns, serving, the agent view and what it cannot do.">
+<meta property="og:url" content="https://alpibrusl.github.io/cancho-ml/guide.html">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="cancho-ml: classical ML as a command line an agent can read">
-<meta name="twitter:description" content="Fit, apply and score a model on a CSV: exact sums, bounded resources, named refusals, verifiable authority. Early: constant, linear and logistic models.">
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "cancho-ml",
-  "url": "https://alpibrusl.github.io/cancho-ml/",
-  "description": "A command line that fits, applies and scores a model on a CSV, with exact sums, bounded resources, structured refusals and a machine-verifiable authority. Early: six models are built (constant, linear, logistic, k-means, tree, forest).",
-  "applicationCategory": "DeveloperApplication",
-  "applicationSubCategory": "Command-line tool",
-  "programmingLanguage": "cancho",
-  "license": "EUPL-1.2",
-  "sameAs": [
-    "https://github.com/alpibrusl/cancho-ml"
-  ]
-}
-</script>
+<meta name="twitter:title" content="The cancho-ml guide: every flow, model and refusal">
+<meta name="twitter:description" content="The long walkthrough of cancho-ml: complete flows with the real output, the six models, text columns, serving, the agent view and what it cannot do.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" type="image/png" href="assets/cancho-ml-icon.png">
 <link rel="stylesheet" href="assets/site.css">
@@ -57,8 +41,8 @@
 <div class="hero" id="top">
   <div>
     <a class="badge" href="#status"><i></i>Early, alpha · six models are built</a>
-    <h1>Classical ML as a command line an agent can read.</h1>
-    <p class="lead">Fit, apply and score a model on a CSV, with exact sums, bounded resources, structured refusals and a machine-verifiable authority.</p>
+    <h1>The guide</h1>
+    <p class="lead">Classical ML as a command line an agent can read: fit, apply and score a model on a CSV, with exact sums, bounded resources, structured refusals and a machine-verifiable authority.</p>
     <p class="sub">A command line and flags, not a chat box. The same tool for a person and for an agent. It builds six models: the constant one (the training mean or the majority class, a baseline with the whole path around it), linear regression, logistic regression, k-means (clusters, and no target), a decision tree and a random forest, the last five through a pipeline of steps that is fitted on the training rows and stored with the model in one file.</p>
     <div class="cta"><a class="btn primary" href="#flow">See a complete flow</a><a class="btn ghost" href="#start">Quick start</a></div>
   </div>

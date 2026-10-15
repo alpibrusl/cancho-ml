@@ -13,34 +13,34 @@ pair of comment lines in a file,
     ...whatever the script writes...
     <!-- /gen:NAME -->
 
-and nothing outside a pair is touched: **the prose of README.md, docs/index.html,
+and nothing outside a pair is touched: **the prose of README.md, docs/guide.html,
 docs/evidence.html and docs/benchmarks.html is hand-written, and so is every
 number in them that is not program output** (the gate and benchmark figures are
 copied from the document that cites them, next to their conditions). What is
 generated:
 
-    t-NAME        README.md, index.html   the example for one task: the command and
+    t-NAME        README.md, guide.html   the example for one task: the command and
                                           what the built binary prints for it
-    flow          README.md, index.html   one complete flow: fit, predict, eval, a
+    flow          README.md, guide.html   one complete flow: fit, predict, eval, a
                                           refusal with its repair, the repair run
-    pflow         README.md, index.html   the same for a model that goes through the pipeline: a
+    pflow         README.md, guide.html   the same for a model that goes through the pipeline: a
                                           float CSV with an empty cell, a refusal with its repair,
                                           impute + standardise + logistic, predict --proba, eval
-    qs            README.md, index.html   the quick start's commands and output
-    kmflow        README.md, index.html   k-means on docs/examples/data/iris_train.csv and iris_test.csv: no target (a --target is refused), k required, the label dropped,
+    qs            README.md, guide.html   the quick start's commands and output
+    kmflow        README.md, guide.html   k-means on docs/examples/data/iris_train.csv and iris_test.csv: no target (a --target is refused), k required, the label dropped,
                                           the features standardised, three clusters, predict with the squared distance, eval
-    catflow       README.md, index.html   the categorical flow on docs/examples/data/pets.csv: a declared column that no step
+    catflow       README.md, guide.html   the categorical flow on docs/examples/data/pets.csv: a declared column that no step
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
                                           order, and a hashed column that stores no string
-    hero          index.html              the first example
-    agentio       README.md, index.html   excerpts of `ml introspect`
-    skill         index.html              the first lines of `ml skill`
-    authority     README.md, index.html   the row of manifests/ml.authority.json
+    hero          guide.html              the first example
+    agentio       README.md, guide.html   excerpts of `ml introspect`
+    skill         guide.html              the first lines of `ml skill`
+    authority     README.md, guide.html   the row of manifests/ml.authority.json
                                           (checked against `ml introspect`, and
                                           for net, ffi and clock)
     exit-codes    README.md               the exit codes `ml introspect` lists
-    limits, rules, nrules   index.html    the limits and rules `ml introspect` lists
+    limits, rules, nrules   guide.html    the limits and rules `ml introspect` lists
 
 Two whole files are also written (and checked) from the list of pages below, so
 that the pages and the sitemap cannot disagree: docs/sitemap.xml and
@@ -633,7 +633,7 @@ REGIONS = {
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
                       catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
-    "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
+    "docs/guide.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
                             catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
@@ -666,7 +666,7 @@ REGIONS["README.md"]["ex-summary"] = lambda c: sx.summary_md(c["examples"], c["r
 
 SITE_BASE = "https://alpibrusl.github.io/cancho-ml/"
 # the pages that are meant to be found
-PAGES = ["", "examples.html", "evidence.html", "benchmarks.html"]
+PAGES = ["", "guide.html", "examples.html", "evidence.html", "benchmarks.html"]
 
 
 def sitemap(_ctx=None):
