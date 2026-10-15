@@ -39,10 +39,11 @@ def copy_tree(dst):
     (dst / "tools" / "ml").mkdir(parents=True)
 
 
-def edit(path, old, new):
+def edit(path, old, new, first=False):
+    """replace `old` by `new`; the pattern occurs once, or (first=True, for a document that repeats a name) the first occurrence is the one changed"""
     t = path.read_text()
-    assert t.count(old) == 1, f"{path}: pattern occurs {t.count(old)} times"
-    path.write_text(t.replace(old, new))
+    assert t.count(old) == 1 or (first and t.count(old) > 1), f"{path}: pattern occurs {t.count(old)} times"
+    path.write_text(t.replace(old, new, 1))
 
 
 def first(p, pattern):
@@ -122,9 +123,9 @@ def mutants():
     add("pin-circular-dependency", "fast",
         lambda c: (c / "cancho.toml").write_text((c / "cancho.toml").read_text() + '\n[dependencies.rng]\ngit = "https://github.com/alpibrusl/cancho-ml"\n'
                                                  'rev = "' + "a" * 40 + '"\npath = ".cancho-vcs/ml.rng"\n'), lambda c: pin(c))
-    add("pin-doc-lists-an-extra-module", "fast", lambda c: edit(c / "docs/stores.md", "`metrics.rules`, `metrics.ratio`", "`metrics.rules`, `metrics.logloss`, `metrics.ratio`"),
+    add("pin-doc-lists-an-extra-module", "fast", lambda c: edit(c / "docs/stores.md", "`metrics.rules`, `metrics.ratio`", "`metrics.rules`, `metrics.logloss`, `metrics.ratio`", first=True),
         lambda c: pin(c))
-    add("pin-doc-misses-a-module", "fast", lambda c: edit(c / "docs/stores.md", "`ml.fbits`, ", ""), lambda c: pin(c))
+    add("pin-doc-misses-a-module", "fast", lambda c: edit(c / "docs/stores.md", "`ml.fbits`, ", "", first=True), lambda c: pin(c))
     add("pin-api-file-missing", "fast", lambda c: (c / "docs/stores_api.txt").unlink(), lambda c: pin(c))
 
     def consumer(files, toml):
