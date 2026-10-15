@@ -94,6 +94,7 @@ class Common(unittest.TestCase):
         self.assertEqual(int(d["status"]), status)
         if rule is not None:
             self.assertEqual(d["rule"], rule, d)
+            self.assertEqual(d["model_sha256"], self.desc["file"]["sha256"])
         self.assertEqual(resp.headers["x-model-sha256"], self.desc["file"]["sha256"])
         if path in self.doc.doc["paths"]:
             self.ok(resp, path)
@@ -473,6 +474,9 @@ class Kinds(unittest.TestCase):
             self.assertEqual(r.json()["rows"], cli.data()["rows"], v)
             seen.add(tuple(r.json()["rows"][0]))
         self.assertGreater(len(seen), 2)
+        # CR LF would be read as LF: refused, never changed
+        r = s.request("POST", "/predict", body=json.dumps({"c0": "a\r\nb", "c1": "x", "n": 3}).encode(), headers=JSON)
+        self.assertEqual((r.status, r.json()["rule"], r.json()["errors"][0]["pointer"]), (422, "serve.string-not-renderable", "/c0"))
 
     def test_null_where_the_model_takes_it(self):
         mfile = MODELS["cat_forest_hash"][0]
@@ -530,6 +534,11 @@ class Kinds(unittest.TestCase):
         self.assertEqual(r.json()["errors"][0]["pointer"], "/a~1b~0c")
         r = s.request("POST", "/predict/batch", body=json.dumps({"rows": [{"x,1": 3, "y\"z": 2, "a/b~c": 1}, {"x,1": 3, "y\"z": 2, "a/b~c": 1.5}]}).encode(), headers=JSON)
         self.assertEqual((r.status, r.json()["rule"], r.json()["errors"][0]["pointer"]), (422, "ml.schema.mismatch", "/rows/1/a~1b~0c"))
+        # a number the schema takes as an integer and the renderer refuses: its pointer comes from the server's own escaping
+        r = s.request("POST", "/predict", body=b'{"x,1":3,"y\\"z":2,"a/b~c":1.0000000000000000001}', headers=JSON)
+        self.assertEqual((r.status, r.json()["rule"], r.json()["errors"][0]["pointer"]), (422, "serve.number-not-exact", "/a~1b~0c"))
+        r = s.request("POST", "/predict/batch", body=b'{"rows":[{"x,1":3,"y\\"z":2,"a/b~c":1},{"x,1":3,"y\\"z":2,"a/b~c":1.0000000000000000001}]}', headers=JSON)
+        self.assertEqual((r.status, r.json()["errors"][0]["pointer"]), (422, "/rows/1/a~1b~0c"))
         doc = json.loads(s.request("GET", "/openapi.json").text())
         self.assertEqual(list(doc["components"]["schemas"]["Record"]["properties"])[:3], ["x,1", 'y"z', "a/b~c"])
 
