@@ -64,10 +64,12 @@ By model kind, for `predict` (and the same predictors under `eval`):
 
 ## 4. Where the check is, and what it covers
 
-**One function, at the one point where the doubles are known.** `wiredata.first_non_finite(values, n)` returns the index of the first value that is not finite or -1.
-`predict_page` (`tools/ml/wireio.cho`) fills the vector of predictions and, where the task has them, the vector of probabilities or squared distances for **all the rows of
-the input**, then calls it **before anything is written**; `wiredata.metrics_block` (`eval`) does the same after `predict_into` and `proba_into`. Both raise the error
-`wiredata.non_finite_prediction(errs, row, column)`. `ml predict`, `ml-predict predict` and `ml-serve` all call `wireio.predict` or `wireio.predict_loaded`, so there is no
+**One function, at the one point where the doubles are known.** `wiredata.first_bad_score(task, predictions, probabilities, n, with_distance)`, built on `first_non_finite`,
+returns the first row, in file order, whose value is not finite and the column that holds it, or -1. `predict_page` (`tools/ml/wireio.cho`) fills the vector of predictions
+and, where the task has them, the vector of probabilities or squared distances for **all the rows of the input**, then calls it **before anything is written**;
+`wiredata.metrics_block` (`eval`) calls it after `predict_into` and `proba_into` (and `cluster_metrics` for the squared distances). Both raise the error
+`wiredata.non_finite_prediction(errs, row, column)`. A second, later guard is the door of section 5: a cell that the printer would be handed and cannot write makes
+`predict_page` answer the same refusal, so a scan that was wrong could not print `i.nf` (the mutant `nf-check-removed` shows the guard alone sees the page and no more). `ml predict`, `ml-predict predict` and `ml-serve` all call `wireio.predict` or `wireio.predict_loaded`, so there is no
 second implementation and nothing to keep equal by hand; the server maps the rule to 422 (`status_of`).
 
 **The refusal is all-or-nothing [choice].** The answer of `predict` is a document built after the scan: no cell is written for a refused request, as for every other
@@ -75,9 +77,9 @@ refusal. `--format text` the same.
 
 **Paging [choice].** `--limit` and `--from` select the rows that are printed. The check covers **all the rows scored**, not the page: a request for rows 1 to 10 of a file
 whose row 500 is not finite is refused, with row 500 in `detail`. Reasons: a caller that pages through a file must not see page 1 succeed and page 50 refuse (the same
-file, the same model, an answer that depends on the window); `total_rows` and `next` promise a complete file; and `eval` has no window, so one rule for both. **Cost:** the
-predictions of all the rows were already computed (the page is a slice of a vector of `total` values, **[read]** `predict_page`), so the check adds one pass over `total`
-doubles, about 1 ns a row on the tested machine **[estimate]**, section 7 prints the measured one.
+file, the same model, an answer that depends on the window); `total_rows` and `next` promise a complete file; and `eval` has no window, so one rule for both. **Cost:** the predictions of all the rows were already computed (the page is a slice of a vector of `total` values, **[read]** `predict_page`), so the check adds one pass over `total`
+doubles. **[measured]** `predict --limit 1` of a linear model on a file of 1,000,000 rows of two float columns (`/private/tmp` scratch, Mac M4 Max, load average 19 to 25 from the
+mutant suites running beside it, so a ceiling and not a speed): minimum of 5 runs 0.336 and 0.337 s before the change, 0.348 and 0.350 s after, 12 ms for 1,000,000 rows, 3.6 %.
 
 **`eval`.** A prediction, probability or squared distance of any scored row that is not finite is refused with the same rule and the same detail, before any metric.
 **[measured, the tree before the change]** `eval` of a regression or a classification with such a row was already a refusal, but the metrics library's (`ml.input.non-finite`,
