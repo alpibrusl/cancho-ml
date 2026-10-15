@@ -127,7 +127,7 @@ fn part_matrix[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
             var c = 0;
             while c < 2 {
                 if matrix.is_missing(mr, r, c) {
-                    mask = mask + (1 << (r * 2 + c));
+                    mask = mask + (1 << r * 2 + c);
                 }
                 c = c + 1;
             }
@@ -430,7 +430,7 @@ fn part_rest[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
             }
             borrow cv as &cr in {
                 line_hex(io, "syrk.c00", bits_of(contents(cr)[0]));
-                line_hex(io, "syrk.c10", bits_of(contents(cr)[2]));
+                line_hex(io, "syrk.c01", bits_of(contents(cr)[1]));
                 line_hex(io, "syrk.c11", bits_of(contents(cr)[3]));
             }
         }
