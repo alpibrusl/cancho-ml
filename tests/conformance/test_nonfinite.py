@@ -463,6 +463,32 @@ class Fuzz(unittest.TestCase):
             else:
                 self.assertEqual((status, doc["rule"], doc["error"]["detail"]["row"]), (422, RULE, str(detail_of(a)["row"])))
 
+    def test_the_server_never_answers_an_infinity_or_a_5xx(self):
+        """one record at a time, over every kind of model of the fuzz: 200 with cells that are finite numbers, or 422 with the rule"""
+        answered = refused = 0
+        for model, header, flags in FUZZ_MODELS:
+            if "--drop" in flags:
+                continue
+            combo = combos(len(header))
+            with Server(SB.dir, model) as srv:
+                conn = srv.conn()
+                for row in combo[:: max(1, len(combo) // 60)]:
+                    body = record(header, row).encode()
+                    resp = conn.request("POST", "/predict", body=body, headers={"Content-Type": "application/json"})
+                    self.assertIn(resp.status, (200, 422), (model, row, resp))
+                    if resp.status == 200:
+                        d = resp.json()
+                        for r in d["rows"]:
+                            for c in r:
+                                self.assertTrue(math.isfinite(float(c)), (model, row, c))
+                        answered += 1
+                    else:
+                        self.assertEqual(resp.json()["rule"], RULE, (model, row, resp))
+                        refused += 1
+        self.assertGreater(answered, 20)
+        self.assertGreater(refused, 20)
+        print("non-finite fuzz over ml-serve: %d records answered, %d refused with %s" % (answered, refused, RULE))
+
 
 if __name__ == "__main__":
     unittest.main()
