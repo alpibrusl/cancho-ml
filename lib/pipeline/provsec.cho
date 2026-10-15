@@ -1,0 +1,166 @@
+module pipeline.provsec;
+
+import std.buffer;
+import ml.fbits;
+
+// The provenance section of the model file (section tag 7, docs/tracking.md section 2): what the model was fitted on, as numbers and no payload. All integers little endian, a double is its bits.
+//
+//     u32 layout = 1 | u64 file_bytes | 32 bytes SHA-256 of the training file | u64 file_rows | u64 rows | u32 features | features * (u64 count | f64 min | f64 max | f64 mean | f64 std)
+//
+// The payload is exactly 64 + 40 * features bytes. `validate` checks every field against its bound and against the file's own other sections, reading nothing and allocating nothing
+// that the length has not covered first. The statistics are computed by tools/ml/prov.cho (exact sums); this module only lays them out and checks the layout.
+
+pub fn layout() -> [] int {
+    return 1;
+}
+
+pub fn header_len() -> [] int {
+    return 64;
+}
+
+pub fn record_len() -> [] int {
+    return 40;
+}
+
+pub fn max_features() -> [] int {
+    return 8192;
+}
+
+pub fn max_rows() -> [] int {
+    return 1000000000;
+}
+
+// 2^62
+pub fn max_file_bytes() -> [] int {
+    return 4611686018427387904;
+}
+
+fn put32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+fn put64[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = b;
+    var k = 0;
+    while k < 8 {
+        o = buffer.push(heap, o, byte_of(v >> 8 * k & 255));
+        k = k + 1;
+    }
+    return o;
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+// The payload: `sha` is the 32 raw bytes of the digest, `stats` holds five ints per feature (count, then the bits of min, max, mean and std).
+pub fn pack[&h, &s, &x](heap: &!h Heap, file_bytes: int, sha: &s [byte], file_rows: int, rows: int, features: int, stats: &x [int]) -> [heap] buffer.Buffer {
+    var o = put32(heap, buffer.empty(heap, header_len() + record_len() * features + 8), layout());
+    o = put64(heap, o, file_bytes);
+    o = buffer.append(heap, o, sha[0..32]);
+    o = put64(heap, o, file_rows);
+    o = put64(heap, o, rows);
+    o = put32(heap, o, features);
+    var i = 0;
+    while i < features * 5 {
+        o = put64(heap, o, stats[i]);
+        i = i + 1;
+    }
+    return o;
+}
+
+// ---------------------------------------------------------------- reading a payload that `validate` has accepted
+
+pub fn file_bytes[&p](p: &p [byte]) -> [] int {
+    return fbits.get64(p, 4);
+}
+
+pub fn file_sha[&p](p: &p [byte]) -> [] &p [byte] {
+    return p[12..44];
+}
+
+pub fn file_rows[&p](p: &p [byte]) -> [] int {
+    return fbits.get64(p, 44);
+}
+
+pub fn rows[&p](p: &p [byte]) -> [] int {
+    return fbits.get64(p, 52);
+}
+
+pub fn features[&p](p: &p [byte]) -> [] int {
+    return get32(p, 60);
+}
+
+// field `f` of record `i`: 0 count, 1 min, 2 max, 3 mean, 4 std (the doubles as bits)
+pub fn field[&p](p: &p [byte], i: int, f: int) -> [] int {
+    return fbits.get64(p, header_len() + record_len() * i + 8 * f);
+}
+
+// ---------------------------------------------------------------- validate
+
+// whether the bits are a finite double
+fn finite(bits: int) -> [] bool {
+    return bits >> 52 & 2047 != 2047;
+}
+
+// whether the bits are negative zero
+fn negative_zero(bits: int) -> [] bool {
+    return bits < 0 && bits & 9223372036854775807 == 0;
+}
+
+// 0 when the payload is a provenance section of the layout, consistent with the file it is in, else 1. `rows_meta` is the `rows` of the `meta` section and `numeric_features` the number of
+// numeric feature columns of the schema (zero for the constant kinds); the payload must agree with both. The order: the length against the counts it states, then the header fields, then the
+// records one by one. Nothing is read before the length says it is there.
+pub fn validate[&p](p: &p [byte], rows_meta: int, numeric_features: int) -> [] int {
+    if len(p) < header_len() {
+        return 1;
+    }
+    let nf = get32(p, 60);
+    if nf < 0 || nf > max_features() || len(p) != header_len() + record_len() * nf {
+        return 1;
+    }
+    if get32(p, 0) != layout() {
+        return 1;
+    }
+    let fb = file_bytes(p);
+    let fr = file_rows(p);
+    let r = rows(p);
+    if fb < 0 || fb > max_file_bytes() || fr < 1 || fr > max_rows() || r < 1 || r > fr || r != rows_meta || nf != numeric_features {
+        return 1;
+    }
+    var i = 0;
+    while i < nf {
+        let count = field(p, i, 0);
+        let mn = field(p, i, 1);
+        let mx = field(p, i, 2);
+        let me = field(p, i, 3);
+        let sd = field(p, i, 4);
+        if count < 0 || count > r {
+            return 1;
+        }
+        if count == 0 {
+            if mn != 0 || mx != 0 || me != 0 || sd != 0 {
+                return 1;
+            }
+        } else {
+            if !finite(mn) || !finite(mx) || !finite(me) || !finite(sd) || negative_zero(mn) || negative_zero(mx) || negative_zero(me) || sd < 0 {
+                return 1;
+            }
+            let fmn = fbits.decode(mn);
+            let fmx = fbits.decode(mx);
+            let fme = fbits.decode(me);
+            if fmn > fmx || fme < fmn || fme > fmx {
+                return 1;
+            }
+            if fmn == fmx && (me != mn || sd != 0) {
+                return 1;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}

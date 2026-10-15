@@ -3,7 +3,9 @@ double, never approximately; the decimals that are accepted are read exactly."""
 
 import unittest
 
-from harness import Sandbox, introspect
+import hashlib
+
+from harness import Sandbox, introspect, without_provenance
 
 
 class Honesty(unittest.TestCase):
@@ -58,8 +60,11 @@ class Honesty(unittest.TestCase):
         # docs/cli.md section 2.4: this exact file, this exact command, written by the commit before the float reader
         self.sb.write("sales.csv", "id,x,y\n1,2.5,10\n2,3.5,20\n3,1.0,30\n4,0.25,41\n")
         r = self.sb.run("fit", "--target", "y", "--output", "sales.cml", "sales.csv")
-        self.assertEqual(r.data()["bytes"], 316)
-        self.assertEqual(r.data()["sha256"], "9b6a34144d1351f141f1ed2f1238f053afef57d815f29d047892239b63afbd05")
+        # the file now ends with the provenance section; without it the bytes are those of the commit before the float reader
+        old = without_provenance(self.sb.read("sales.cml"))
+        self.assertEqual(len(old), 316)
+        self.assertEqual(hashlib.sha256(old).hexdigest(), "9b6a34144d1351f141f1ed2f1238f053afef57d815f29d047892239b63afbd05")
+        self.assertEqual(r.data()["bytes"], 316 + 76)
 
     def test_the_unsupported_type_rule_is_gone(self):
         self.assertNotIn("ml.input.unsupported-type", [r["rule"] for r in introspect()["rules"]])

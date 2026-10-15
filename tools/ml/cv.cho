@@ -1,0 +1,527 @@
+edition 6;
+
+module ml.cv;
+
+// `ml cv`: k-fold cross-validation of a model of the pipeline (docs/splits.md). Writes nothing. The folds come from ml.splitwire; every fold is fitted by wire.train
+// (the function fit uses: every step is fitted on the training rows of the fold) and scored by wire.holdout (the function `fit --split` uses: the held-out rows go through the
+// STORED steps of that fit), one fold after the other.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.catmat;
+import ml.csvcell;
+import ml.cvagg;
+import ml.dict;
+import ml.est;
+import ml.logrec;
+import ml.matrix;
+import ml.paths;
+import ml.spec;
+import ml.splitspec;
+import ml.splitwire;
+import ml.verbs;
+import ml.wire;
+import ml.wiredata;
+import metrics.sums;
+import flt;
+import models.common;
+import pipeline.plan;
+import pipeline.schema;
+import tree.params;
+import toolbox.cli;
+import toolbox.fail;
+
+// the metrics object inside the answer of wire.holdout, `{"rows":N,"metrics":{...}}`: the text from after `"metrics":` to before the last brace
+fn metrics_of[&j](inner: &j [byte]) -> [] &j [byte] {
+    let at = bytes.find(inner, "\"metrics\":");
+    if at < 0 {
+        return inner[0..0];
+    }
+    return inner[at + 10..len(inner) - 1];
+}
+
+// the training rows of a fold lack a class of the target (the fit of that fold would be the refusal of fit on its file)
+fn lacks_class[&y, &s](yall: &y [float], sel: &s [int], n: int, c0: int, c1: int) -> [] bool {
+    var s0 = false;
+    var s1 = false;
+    var i = 0;
+    while i < n {
+        if sel[i] == 0 {
+            if truncate(yall[i]) == c1 {
+                s1 = true;
+            } else {
+                s0 = true;
+            }
+        }
+        i = i + 1;
+    }
+    return !(s0 && s1);
+}
+
+// The mean and the sample standard deviation of the `m` values in `vals`, in the one summation order of the package: (mean, std)
+fn mean_std[&h, &v](heap: &!h Heap, vals: &v [float], m: int) -> [heap] (float, float) {
+    var buf = box_slice(heap, 257, 0.0);
+    var stk = box_slice(heap, 41, 0.0);
+    var lvl = box_slice(heap, 41, 0);
+    var mean = 0.0;
+    var ss = 0.0;
+    borrow mut buf as &!bw in {
+        borrow mut stk as &!kw in {
+            borrow mut lvl as &!lw in {
+                let total = sums.reduce(sums.kind_val(), vals, vals, 0.0, m, contents(bw), contents(kw), contents(lw));
+                mean = total / float_of(m);
+                ss = sums.reduce(sums.kind_dev(), vals, vals, mean, m, contents(bw), contents(kw), contents(lw));
+            }
+        }
+    }
+    unbox_slice(heap, buf);
+    unbox_slice(heap, stk);
+    unbox_slice(heap, lvl);
+    return (mean, sqrt(ss / float_of(m - 1)));
+}
+
+pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read, conc] verbs.Out {
+    var e = errs;
+    var lg = log;
+    let (pls, ok1, e1) = wire.make_plan(heap, fs, root, planp, tokens, o, e);
+    e = e1;
+    var go = ok1;
+    var kind = 0;
+    borrow pls as &pq in {
+        kind = pq.kind;
+    }
+    var task = est.task(kind);
+    borrow pls as &pq2 in {
+        task = est.task_of(kind, contents(pq2.ip));
+    }
+    if go && o.plan_given {
+        if task == 4 && o.target_given {
+            e = wiredata.conflict(heap, e, "target", "kmeans has no target: it clusters the rows by their features, so a label column is dropped with --drop");
+            go = false;
+        } else if task != 4 && !o.target_given {
+            e = verbs.problem(heap, e, "args.required-flag", "cv needs --target, the column to predict", "ml cv --target NAME FILE", "flag", "--target");
+            go = false;
+        }
+    }
+    var mixed_plan = false;
+    borrow pls as &mpq in {
+        mixed_plan = plan.needs_mixed(mpq.pl);
+    }
+    var ds = wire.empty_data(heap);
+    var cids = catmat.empty(heap);
+    var cvoc = dict.empty_vocab(heap);
+    if go {
+        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, args, fs, root, file, o, o.target, o.na, mixed_plan, task, e, lg);
+        wire.drop_data(heap, ds);
+        catmat.drop(heap, cids);
+        dict.drop_vocab(heap, cvoc);
+        ds = d2;
+        cids = ids2;
+        cvoc = voc2;
+        e = e2;
+        lg = lg2;
+        go = ok2;
+    }
+    var dn = 0;
+    var c0 = 0;
+    var c1 = 0;
+    borrow ds as &dq in {
+        dn = dq.nrows;
+        c0 = dq.c0;
+        c1 = dq.c1;
+    }
+    var assign = box_slice(heap, 2, 0);
+    if go {
+        var ok3 = false;
+        var a3 = box_slice(heap, 2, 0);
+        borrow ds as &dq1 in {
+            let (a4, ok4, e4) = splitwire.cv_assign(heap, args, fs, root, file, sp, o, dn, task, contents(dq1.yall), e);
+            unbox_slice(heap, a3);
+            a3 = a4;
+            ok3 = ok4;
+            e = e4;
+        }
+        unbox_slice(heap, assign);
+        assign = a3;
+        go = ok3;
+    }
+    let strategy = splitspec.strategy(sp);
+    let folds = sp.folds;
+    let reps = sp.repeats;
+    let total = folds * reps;
+    // the results: the entries of "results" as JSON, and the metrics objects of the folds one after the other with their ends
+    var results = buffer.push(heap, buffer.empty(heap, 256), byte_of('['));
+    var frags = buffer.empty(heap, 256);
+    var ends = box_slice(heap, total + 2, 0);
+    var sizes = box_slice(heap, 2 * total + 2, 0);
+    var done = 0;
+    var sel = box_slice(heap, dn + 1, 0);
+    var retry_ok = !o.plan_given && !o.step_given;
+    var rep = 0;
+    while go && rep < reps {
+        var f = 0;
+        while go && f < folds {
+            var ntrain = 0;
+            var ntest = 0;
+            borrow assign as &ar in {
+                borrow mut sel as &!sw in {
+                    var i = 0;
+                    while i < dn {
+                        let a = contents(ar)[rep * dn + i];
+                        var side = 0;
+                        if a == f {
+                            side = 1;
+                            ntest = ntest + 1;
+                        } else if strategy == 3 && a > f {
+                            side = 2;
+                        } else {
+                            ntrain = ntrain + 1;
+                        }
+                        contents(sw)[i] = side;
+                        i = i + 1;
+                    }
+                }
+            }
+            if task == 2 {
+                var lacking = false;
+                borrow ds as &dq2 in {
+                    borrow sel as &sq2 in {
+                        lacking = lacks_class(contents(dq2.yall), contents(sq2), dn, c0, c1);
+                    }
+                }
+                if lacking {
+                    var w = wiredata.open_tag(heap, "ml.label.single-class");
+                    w = fail.no_repair(heap, w);
+                    w = fail.detail_open(heap, w);
+                    w = fail.detail_int(heap, w, "repeat", rep);
+                    w = fail.detail_int(heap, w, "fold", f);
+                    e = fail.add(heap, e, w);
+                    go = false;
+                }
+            }
+            if go && est.is_blob(kind) && task != 4 && ntrain > params.rows_max() {
+                e = wiredata.tree_rows(heap, e, ntrain);
+                go = false;
+            }
+            if go {
+                var t2 = wire.empty_trained(heap);
+                var ok5 = false;
+                borrow ds as &dr in {
+                    borrow cids as &cir in {
+                        borrow cvoc as &cvr in {
+                            borrow pls as &pr in {
+                                borrow sel as &sr in {
+                                    let (t3, ok6, e6) = wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, e);
+                                    wire.drop_trained(heap, t2);
+                                    t2 = t3;
+                                    ok5 = ok6;
+                                    e = e6;
+                                }
+                            }
+                        }
+                    }
+                }
+                go = ok5;
+                if go {
+                    var inner = buffer.empty(heap, 1);
+                    var ok7 = false;
+                    borrow ds as &dr2 in {
+                        borrow cids as &cir2 in {
+                            borrow cvoc as &cvr2 in {
+                                borrow pls as &pr2 in {
+                                    borrow t2 as &tq in {
+                                        borrow sel as &sr2 in {
+                                            let (i3, ok8, e8) = wire.holdout(heap, args, dr2, cir2, cvr2, pr2, tq, contents(sr2), 1, ntest, "held-out", o, e);
+                                            buffer.drop(heap, inner);
+                                            inner = i3;
+                                            ok7 = ok8;
+                                            e = e8;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    go = ok7;
+                    if go {
+                        borrow inner as &ir in {
+                            let m = metrics_of(buffer.bytes(ir));
+                            frags = buffer.append(heap, frags, m);
+                            if done > 0 {
+                                results = buffer.push(heap, results, byte_of(','));
+                            }
+                            results = buffer.append(heap, results, "{\"repeat\":");
+                            results = buffer.push_nat(heap, results, rep);
+                            results = buffer.append(heap, results, ",\"fold\":");
+                            results = buffer.push_nat(heap, results, f);
+                            results = buffer.append(heap, results, ",\"train\":");
+                            results = buffer.push_nat(heap, results, ntrain);
+                            results = buffer.append(heap, results, ",\"test\":");
+                            results = buffer.push_nat(heap, results, ntest);
+                            results = buffer.append(heap, results, ",\"metrics\":");
+                            results = buffer.append(heap, results, m);
+                            results = buffer.push(heap, results, byte_of('}'));
+                        }
+                        var size = 0;
+                        borrow frags as &fr in {
+                            size = buffer.size(fr);
+                        }
+                        borrow mut ends as &!ew in {
+                            contents(ew)[done + 1] = size;
+                        }
+                        borrow mut sizes as &!zw in {
+                            contents(zw)[2 * done] = ntrain;
+                            contents(zw)[2 * done + 1] = ntest;
+                        }
+                        done = done + 1;
+                    }
+                    buffer.drop(heap, inner);
+                }
+                wire.drop_trained(heap, t2);
+            }
+            f = f + 1;
+        }
+        rep = rep + 1;
+    }
+    results = buffer.push(heap, results, byte_of(']'));
+    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    if go {
+        verbs.drop_out(heap, result);
+        var specb = splitspec.text(heap, true, "", folds, reps, strategy, splitspec.column(sp), o.seed);
+        var payload = buffer.empty(heap, 1);
+        var plain = buffer.empty(heap, 1);
+        var cols = 0;
+        borrow ds as &dr3 in {
+            cols = schema.columns(dr3.sc);
+            if dr3.cat {
+                borrow cvoc as &cvr3 in {
+                    cols = cols + dict.ncols(cvr3);
+                }
+            }
+        }
+        borrow specb as &sbr in {
+            borrow results as &rr in {
+                borrow frags as &fr2 in {
+                    borrow ends as &er2 in {
+                        borrow sizes as &zr in {
+                            borrow assign as &ar2 in {
+                                borrow pls as &pr3 in {
+                                    let (p2, t2) = answer(heap, kind, task, o, sp, dn, cols, plan.text(pr3.pl), buffer.bytes(sbr), strategy, folds, reps, buffer.bytes(rr), buffer.bytes(fr2), contents(er2), contents(zr), done, contents(ar2));
+                                    buffer.drop(heap, payload);
+                                    buffer.drop(heap, plain);
+                                    payload = p2;
+                                    plain = t2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, specb);
+        result = wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
+    } else {
+        verbs.drop_out(heap, result);
+        result = verbs.nothing(heap, e, lg);
+    }
+    buffer.drop(heap, results);
+    buffer.drop(heap, frags);
+    unbox_slice(heap, ends);
+    unbox_slice(heap, sizes);
+    unbox_slice(heap, sel);
+    unbox_slice(heap, assign);
+    wire.drop_data(heap, ds);
+    catmat.drop(heap, cids);
+    dict.drop_vocab(heap, cvoc);
+    wire.drop_planned(heap, pls);
+    return result;
+}
+
+// the document and the plain text of a finished cross-validation
+fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa](heap: &!h Heap, kind: int, task: int, o: verbs.Opts, sp: splitspec.SplitOpts, rows: int, cols: int, plan_text: &pt [byte], spec_text: &sx [byte], strategy: int, folds: int, reps: int, results: &rr [byte], frags: &fr [byte], ends: &ee [int], sizes: &zz [int], count: int, assign: &aa [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    var w = json.writer(heap, 1024);
+    var plain = buffer.empty(heap, 256);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "model");
+    w = json.put_string(heap, w, est.name(kind));
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, wiredata.task_word(task));
+    if len(o.target) == 0 {
+        w = json.put_key(heap, w, "target");
+        w = json.put_null(heap, w);
+    } else {
+        w = verbs.put_name(heap, w, "target", o.target);
+    }
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, rows);
+    w = json.put_key(heap, w, "columns");
+    w = json.put_int(heap, w, cols);
+    w = json.put_key(heap, w, "plan");
+    w = json.put_string(heap, w, plan_text);
+    w = json.put_key(heap, w, "split");
+    w = json.put_string(heap, w, spec_text);
+    w = json.put_key(heap, w, "strategy");
+    w = json.put_string(heap, w, splitspec.strategy_word(strategy, true));
+    w = json.put_key(heap, w, "folds");
+    w = json.put_int(heap, w, folds);
+    w = json.put_key(heap, w, "repeats");
+    w = json.put_int(heap, w, reps);
+    w = json.put_key(heap, w, "results");
+    w = json.put_fragment(heap, w, results);
+    plain = buffer.append(heap, plain, "cv: ");
+    plain = buffer.append(heap, plain, est.name(kind));
+    plain = buffer.push(heap, plain, byte_of(' '));
+    plain = buffer.append(heap, plain, wiredata.task_word(task));
+    plain = buffer.append(heap, plain, ", ");
+    plain = buffer.push_nat(heap, plain, rows);
+    plain = buffer.append(heap, plain, " rows, ");
+    plain = buffer.append(heap, plain, spec_text);
+    plain = buffer.push(heap, plain, byte_of(10));
+    // one line per fold
+    var kf = 0;
+    while kf < count {
+        plain = buffer.append(heap, plain, "repeat ");
+        plain = buffer.push_nat(heap, plain, kf / folds);
+        plain = buffer.append(heap, plain, " fold ");
+        plain = buffer.push_nat(heap, plain, kf % folds);
+        plain = buffer.append(heap, plain, ": train ");
+        plain = buffer.push_nat(heap, plain, sizes[2 * kf]);
+        plain = buffer.append(heap, plain, " test ");
+        plain = buffer.push_nat(heap, plain, sizes[2 * kf + 1]);
+        let frag = frags[ends[kf]..ends[kf + 1]];
+        var q = 0;
+        var more = true;
+        while more {
+            let (fq, kq, kqe, vq, vqe, nq) = cvagg.next_member(frag, q);
+            q = nq;
+            if !fq {
+                more = false;
+            } else if cvagg.is_scalar(frag, vq, vqe) {
+                plain = buffer.push(heap, plain, byte_of(' '));
+                plain = buffer.append(heap, plain, frag[kq..kqe]);
+                plain = buffer.push(heap, plain, byte_of('='));
+                var va = vq;
+                var vb = vqe;
+                if vb - va >= 2 && int_of(frag[va]) == '"' {
+                    va = va + 1;
+                    vb = vb - 1;
+                }
+                plain = buffer.append(heap, plain, frag[va..vb]);
+            }
+        }
+        plain = buffer.push(heap, plain, byte_of(10));
+        kf = kf + 1;
+    }
+    // the summary: every scalar member of the metrics of the first fold, over all the folds
+    w = json.put_key(heap, w, "summary");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "count");
+    w = json.put_int(heap, w, count);
+    w = json.put_key(heap, w, "std");
+    w = json.put_string(heap, w, "sample");
+    w = json.put_key(heap, w, "metrics");
+    w = json.begin_object(heap, w);
+    let first = frags[ends[0]..ends[1]];
+    var pos = 0;
+    var going = true;
+    var vals = box_slice(heap, count + 1, 0.0);
+    while going {
+        let (found, ks, ke, vs, ve, next) = cvagg.next_member(first, pos);
+        pos = next;
+        if !found {
+            going = false;
+        } else if cvagg.is_scalar(first, vs, ve) {
+            let name = first[ks..ke];
+            var have = 0;
+            var k = 0;
+            borrow mut vals as &!vw in {
+                while k < count {
+                    let frag = frags[ends[k]..ends[k + 1]];
+                    var p2 = 0;
+                    var seen = false;
+                    var more = true;
+                    while more && !seen {
+                        let (f2, ks2, ke2, vs2, ve2, n2) = cvagg.next_member(frag, p2);
+                        p2 = n2;
+                        if !f2 {
+                            more = false;
+                        } else if bytes.equal(frag[ks2..ke2], name) {
+                            seen = true;
+                            let (okn, v) = cvagg.number(frag, vs2, ve2);
+                            if okn && common.is_finite(v) {
+                                contents(vw)[have] = v;
+                                have = have + 1;
+                            }
+                        }
+                    }
+                    k = k + 1;
+                }
+            }
+            w = json.put_key(heap, w, name);
+            w = json.begin_object(heap, w);
+            plain = buffer.append(heap, plain, name);
+            if have == count && count >= 2 {
+                var mean = 0.0;
+                var sd = 0.0;
+                borrow vals as &vr in {
+                    let (m2, s2) = mean_std(heap, contents(vr), count);
+                    mean = m2;
+                    sd = s2;
+                }
+                w = json.put_key(heap, w, "mean");
+                w = verbs.put_double(heap, w, bits_of(mean));
+                w = json.put_key(heap, w, "std");
+                w = verbs.put_double(heap, w, bits_of(sd));
+                plain = buffer.append(heap, plain, " mean ");
+                let (p_mean, fin_mean) = verbs.put_float_text(heap, plain, bits_of(mean));
+                plain = p_mean;
+                if !fin_mean {
+                    plain = buffer.append(heap, plain, "null");
+                }
+                plain = buffer.append(heap, plain, " std ");
+                let (p_sd, fin_sd) = verbs.put_float_text(heap, plain, bits_of(sd));
+                plain = p_sd;
+                if !fin_sd {
+                    plain = buffer.append(heap, plain, "null");
+                }
+                plain = buffer.push(heap, plain, byte_of(10));
+            } else {
+                w = json.put_key(heap, w, "mean");
+                w = json.put_null(heap, w);
+                w = json.put_key(heap, w, "std");
+                w = json.put_null(heap, w);
+                plain = buffer.append(heap, plain, " mean null std null\n");
+            }
+            w = json.put_key(heap, w, "n");
+            w = json.put_int(heap, w, have);
+            w = json.end_object(heap, w);
+        }
+    }
+    unbox_slice(heap, vals);
+    w = json.end_object(heap, w);
+    w = json.end_object(heap, w);
+    if sp.emit {
+        w = json.put_key(heap, w, "assignment");
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "repeats");
+        w = json.put_int(heap, w, reps);
+        w = json.put_key(heap, w, "rows");
+        w = json.put_int(heap, w, rows);
+        w = json.put_key(heap, w, "folds");
+        w = json.begin_array(heap, w);
+        var r = 0;
+        while r < reps {
+            let v = splitwire.json_vector(heap, assign, r * rows, r * rows + rows);
+            borrow v as &vr2 in {
+                w = json.put_fragment(heap, w, buffer.bytes(vr2));
+            }
+            buffer.drop(heap, v);
+            r = r + 1;
+        }
+        w = json.end_array(heap, w);
+        w = json.end_object(heap, w);
+    }
+    w = json.end_object(heap, w);
+    return (json.finish(w), plain);
+}

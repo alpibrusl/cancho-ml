@@ -190,7 +190,7 @@ class KMeansWire(unittest.TestCase):
         # the text form: one line for each of the three numbers
         t = self.ml("--format", "text", "eval", "--model-file", "m.cml", "full.csv")
         lines = t.stdout.decode().splitlines()
-        self.assertEqual([l.split(" ")[0] for l in lines], ["inertia", "sizes", "mean_distance"])
+        self.assertEqual([l.split(" ")[0] for l in lines], ["on", "inertia", "sizes", "mean_distance"])
 
     def test_an_empty_cluster_has_a_null_mean_distance(self):
         # fitted on the six points, scored on rows that are all near the first centre: the other cluster is empty
@@ -275,6 +275,7 @@ class KMeansWire(unittest.TestCase):
         self.fit("full.csv", "m.cml", "--k", "3")
         d = self.sb.read("m.cml")
         secs = payloads(d)
+        secs.pop(7, None)  # the provenance would disagree with the new schema first; only the schema and the kind are to disagree here
         k, dim, vals = centroids(d)
         secs[2] = secs[2][:4] + struct.pack("<I", 2) + secs[2][8:]
         keep = [vals[i * dim + j] for i in range(k) for j in range(dim - 1)]
@@ -286,6 +287,7 @@ class KMeansWire(unittest.TestCase):
         self.sb.write("reg.csv", "a,b,y\n1,2,3\n2,1,4\n3,5,9\n4,3,8\n5,7,12\n")
         self.assertEqual(self.ml("fit", "--model", "linear", "--target", "y", "--output", "lin.cml", "--overwrite", "reg.csv").status, 0)
         lin = payloads(self.sb.read("lin.cml"))
+        lin.pop(7, None)
         lin[2] = lin[2][:4] + struct.pack("<I", 3) + lin[2][8:]
         w = [0.5, 0.25, 1.0]
         lin[4] = struct.pack("<I", 4) + struct.pack("<IIQ", 2, 1, 3) + struct.pack("<3d", *w) + struct.pack("<IIQ", 2, 1, 1) + struct.pack("<d", 0.0)

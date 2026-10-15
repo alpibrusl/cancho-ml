@@ -62,6 +62,12 @@ class Result:
 PREDICT_BIN = os.environ.get("ML_PREDICT_BIN") or str(ROOT / "build" / "ml-predict")
 
 
+def runs_here(c):
+    """A case marked darwin_only has a platform-specific answer (the errno of a refusal, or what /dev/stdin is when descriptor 0 is closed): it is run on macOS only
+    (docs/ci.md section 5). Every other case runs everywhere."""
+    return not c.get("darwin_only") or sys.platform == "darwin"
+
+
 def run(*args, cwd=None, timeout=120, close_stdin=False, close_stdout=False, binary_path=None, stdin=None):
     """stdin: the bytes to give the process on standard input (None: the process gets an empty one, /dev/null)."""
     argv = [binary_path or BIN, *[str(a) for a in args]]
@@ -205,6 +211,19 @@ def sections(data):
         out.append((tag, pos + 12, n))
         pos += 12 + n
     return out
+
+
+def without_provenance(data):
+    """The model file without its provenance section (tag 7: the SHA-256 and size of the training file and the range of each feature, docs/tracking.md section 2), the count and the
+    checksum made again. What a file of an older version looked like; the files whose bytes must not depend on the order, the line endings or the spelling of the training file are compared this way."""
+    out = bytearray(data[:12])
+    kept = 0
+    for tag, start, length in sections(data):
+        if tag != 7:
+            out += data[start - 12:start + length]
+            kept += 1
+    out[8:12] = kept.to_bytes(4, "little")
+    return fix_checksum(bytes(out) + bytes(32))
 
 
 def fix_checksum(data):

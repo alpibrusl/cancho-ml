@@ -1,0 +1,13 @@
+{
+  "op_id": "5abbd908c6f963d8f7f27e8a2789796c3d3d4874b02dea8f32c4c54454f29fe8",
+  "operation": {
+    "kind": "AddFunction",
+    "sig_id": "1d6fd06adfc784f9341a610749704d8258682d98858cf3d2a362d3b487e01a6d",
+    "stage_id": "88a9384ac38d1733d74071abdb6fa7a3886d6a016943b595d94d93229945d301",
+    "effects": [
+      "conc",
+      "heap"
+    ],
+    "edition": 1
+  }
+}

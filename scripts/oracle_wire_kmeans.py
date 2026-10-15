@@ -69,8 +69,8 @@ def payload(cen):
     return struct.pack("<I", KIND) + struct.pack("<IIQQ", 2, 2, k, d) + struct.pack("<%dd" % (k * d), *[float(v) for v in cen.reshape(-1)])
 
 
-def file_bytes(plan, schema, steps, model, rows, ncols, seed):
-    return ow.file_bytes(plan, schema, steps, model, rows, ncols, seed)
+def file_bytes(plan, schema, steps, model, rows, ncols, seed, prov=None):
+    return ow.file_bytes(plan, schema, steps, model, rows, ncols, seed, prov)
 
 
 def matrix_of(rows_after):
@@ -107,7 +107,7 @@ def fit_oracle(case):
     cen, diag, lab, D = omod.kmeans(Xn, case.k, case.iters, case.seed, init)
     plan = ow.canon(case.plan_text())
     # the schema: the kept columns and no target; the target index is the number of columns
-    data = file_bytes(plan, ow.schema_bytes(names, types, len(names)), ow.steps_bytes(stored), payload(cen), ntr, len(names), case.seed)
+    data = file_bytes(plan, ow.schema_bytes(names, types, len(names)), ow.steps_bytes(stored), payload(cen), ntr, len(names), case.seed, ow.provenance_of(case, list(names), mask))
     ctx = {"stored": stored, "cen": cen, "d": d, "types": types, "mask": mask, "Xn": Xn, "init_rows": omod.chosen_rows(Xn, case.k, case.seed, init)}
     COVER["cases"] += 1
     COVER["with_missing"] += 1 if any(c == "" for r in rows for c in r) else 0

@@ -173,7 +173,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 9 | frequency encoding of a categorical column | `freq` |
 | 10 | hashing of a categorical column | `hash` |
 
-**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta, and **6 strings (the string table, present only when a step of kind 7 to 10 needs it; `sections` is then 6, and 5 otherwise: a file without a categorical step has the bytes it always had)**. The byte layout of the table, its bounds (pool at most 8 MiB, strings at most 2^17, the section at most 12 MiB), its SHA-256, the 8-byte stub that stands for a categorical step in the `steps` section (kind, layout 2), the schema type 3 (a categorical input column) and the refusals `ml.model.string-table` (code 328) and `ml.limit.string-table` (code 329) are in `docs/stringtable.md`. The next step kind is 11. Kinds 7 to 10 are the categorical steps of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them, and in a model file each is an 8-byte stub whose payload is an entry of the string table (`docs/stringtable.md`).
+**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta, **6 strings (the string table, present only when a step of kind 7 to 10 needs it)** and **7 provenance (the SHA-256 and size of the training file, its rows and the range of each numeric feature: `docs/tracking.md` section 2; present in every file `fit` of this version writes, absent from the files of older versions, which are read and say `provenance: absent`)**. The header's `sections` is 5, 6 or 7 and does not say which of the two optional sections a count of 6 holds: a reader walks the tags (each optional tag is greater than the one before it, 6 then 7). A file with neither has the five-section bytes it always had; the constant models (kinds 1 to 3) carry section 7 with no feature record. The byte layout of the table, its bounds (pool at most 8 MiB, strings at most 2^17, the section at most 12 MiB), its SHA-256, the 8-byte stub that stands for a categorical step in the `steps` section (kind, layout 2), the schema type 3 (a categorical input column) and the refusals `ml.model.string-table` (code 328) and `ml.limit.string-table` (code 329) are in `docs/stringtable.md`. The next step kind is 11. Kinds 7 to 10 are the categorical steps of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them, and in a model file each is an 8-byte stub whose payload is an entry of the string table (`docs/stringtable.md`).
 
 Kinds 4 and 5 are built by `ml` since W1 (`tools/ml/wire.cho`, through `lib/pipeline/file.cho` and the adapters of `lib/models`; the logistic payload gained a labels record, `docs/wiring.md` section 4); kinds 6 and 7 are written by libraries only, and `mfile.cho` (the reader of the constant kinds)
 refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
@@ -328,7 +328,7 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.metric.length-mismatch` | 8 | two arrays of a metric have different lengths | one prediction per row |
 | `ml.metric.bad-probability` | 8 | a probability outside 0 to 1 | the probability of the positive class |
 | `ml.split.empty-fold` | 8 | k above the number of rows, or a train/test split that leaves a side empty | fewer folds, a smaller test size |
-| `ml.split.stratum-too-small` | 8 | a class with fewer rows than k | fewer folds |
+| `ml.split.stratum-too-small` | 8 | a class with fewer rows than k *(reachable from `ml cv --stratify` and `fit --split --stratify`: `extra()` since `docs/splits.md`)* | fewer folds |
 
 *Registered by the transforms and the pipeline stage (library only: `lib/transforms/codes.cho`, `docs/transforms.md` section 1 X7, `docs/pipeline.md` section 2.1; `tools/ml/spec.cho` `pending()`; none is reachable from `ml` yet):*
 
@@ -378,6 +378,37 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.predict.non-finite` | 8 | a prediction, a probability or a squared distance of a row scored by `predict`, `ml-predict`, `eval` or `ml-serve` is NaN or infinite; the 1-based row of the file and the column of the answer (`prediction`, `label`, `probability`, `distance`) are in `detail`; all the rows scored are checked, not only the page | none: scale the inputs, or check or drop the row |
 
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
+
+*Added by M22, run tracking and train/serve skew (`docs/tracking.md` section 5.5; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/test_track.py`, `tests/conformance/fixtures.py`):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.predict.out-of-range` | 8 | more rows of a `predict` or `eval` hold a numeric feature outside the range stored in the model file than `--max-out-of-range` allows; rows, bound, first column and first row in `detail` | none |
+| `ml.predict.no-provenance` | 8 | `--max-out-of-range` was given and the model file has no provenance section | none: refit with this version |
+| `ml.runs.conflict` | 8 | a run record with this id exists and differs from the one to write in more than the thread count and the name of the model file | none |
+| `ml.runs.too-many` | 8 | the `--track` directory holds 1000 records already | none |
+| `ml.runs.record-too-large` | 8 | a record would be over 262,144 bytes | none |
+| `ml.runs.not-found` | 3 | no record has this id | none |
+| `ml.runs.unknown-model` | 8 | no record of the directory has the SHA-256 of the model file `eval --track` was given | none |
+| `ml.runs.damaged` | 8 | a record does not parse, has a member out of its type, an id that is not the hash of its inputs, or a check that is not the hash of what precedes it | none |
+| `ml.runs.data-changed` | 8 | the training file a record names does not have the SHA-256 it holds | none |
+| `ml.runs.model-differs` | 8 | the refit of `runs verify` gave a file whose SHA-256 is not the record's | none |
+| `ml.runs.not-replayable` | 8 | a column carrying `--drop`, `--float` or `--cat` is past the 62nd position of the header | none |
+
+`ml.model.malformed` also answers a damaged section 7 (`detail.section` 7); `io.not-found` a `--track` directory that does not exist; 
+
+*Added by issue 42, split strategies and cross-validation (`docs/splits.md` section 7; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/fixtures.py`; `ml.split.empty-fold` and `ml.split.stratum-too-small` above are the library's, reached by the same verbs):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.split.stratify-target` | 2 | `--stratify` with a regression or a clustering | `retry` without `--stratify` |
+| `ml.split.too-few-groups` | 8 | fewer groups than `--folds`, or fewer than 2 | `retry` with `--folds` set to the number of groups when it is at least 2, else none |
+| `ml.split.time-format` | 8 | a cell of the `--split-by` column that is not a number or an accepted ISO-8601 date or datetime, or of the other kind than the first (`row`, `column`, `reason`) | none |
+| `ml.split.missing-cell` | 8 | an empty cell in the `--split-by` or `--split-group` column | none |
+| `ml.split.combination` | 2 | two of `--stratify`, `--split-group`, `--split-by`; `cv` with `--split`; `--repeats` above 1 with `--split-by` | `retry` with `--repeats 1` for the last, else none (which rule to keep is a judgement) |
+| `ml.split.out-of-range` | 2 | `--folds` outside 2 to 20, `--repeats` outside 1 to 10 | none |
+| `ml.split.column-target` | 2 | the group or time column is the target | none |
+| `ml.split.emit-too-large` | 8 | `--emit-folds` over 1,048,576 entries | `retry` without `--emit-folds` |
 
 ## 8.1 The numeric codes of the libraries (added at integration)
 
@@ -476,7 +507,7 @@ cancho-table exports and cancho-ml depends on at a pinned commit; (b) a small `c
 Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. *(Done, `docs/reader.md` section 1: option (a) needed
 no change to any source of cancho-table, only that it publish `pow5`, `dec`, `flt`, `query`, `facc` and `reader` as `.cancho-vcs` stores
 at a commit, with a CI check that they match (cancho-table PR #44, merged). `ml` pins five of them as `[dependencies.*]` (`pow5`, `dec`, `flt`, `facc`, `reader`); the proposal is kept in
-`docs/upstream/` as the record.)*
+`docs/upstream/` as the record. In the other direction, `lib/core`, `lib/linalg` and `lib/metrics` are published as 23 `.cancho-vcs` stores that cancho-stats pins: `docs/stores.md`.)*
 
 ## 11. What M0 must settle before section 6 and 9 are final
 
@@ -592,3 +623,19 @@ names which); its `sum_order` is **3** (section 4.1: sequential sums, no lane or
 has one more cause that no fixture can reach (the memory ceiling of the thread copies, about 2.3e8 cells). A tree or forest takes missing cells itself (a learned default side per split); the linear models
 keep refusing them. The libraries are otherwise unchanged except for the order of two comparisons in the reader of the payload, which a fuzz of the wiring found to trap on a class count of 2^63 - 1
 (`docs/models-tree.md` 10.6).
+
+## 22. Issue 42: split strategies and cross-validation from the command line (`docs/splits.md`)
+
+`ml cv` is a verb of `ml` (not of `ml-predict` or `ml-serve`: a split is a training-time concept, and `scripts/check_bins.py` keeps the flags out of their tables). Six flags are new
+(`--stratify`, `--split-by`, `--split-group`, `--folds`, `--repeats`, `--emit-folds`). The stream registry takes kinds 7 (stratified holdout) and 8 (the shuffle of the groups); the plain holdout, k-fold and
+stratified k-fold keep kinds 4, 5 and 6, so every existing assignment is unchanged. Section 8 takes nine tags (above); `ml.split.stratum-too-small` moved from `pending()` to `extra()`. The canonical text of a
+split (`holdout train=0.8 stratify seed=1`, `cv folds=5 repeats=1 group=customer seed=3`) is written by one function (`tools/ml/splitspec.cho`) for the tracking record of issue 43. The answer of `fit --split` and of
+`eval --split` gains `split.spec` (and `split.assignment` with `--emit-folds`); `schemas/ml.v1.json` gains the answer of `cv`.
+
+## 23. M22: run tracking and train/serve skew (`docs/tracking.md`)
+
+Every model file `fit` writes carries a provenance section (tag 7): the training file's SHA-256 and size, the rows, and for each numeric feature the count, minimum, maximum, exact mean and population
+standard deviation of the training cells as the reader read them. `eval` says whether it scored the training file (`on`); `predict`, `eval` and `ml-serve` count the cells outside the stored range
+(`out_of_range`, bounded by `--max-out-of-range`); `fit --track DIR` writes a canonical run record whose id is the hash of the inputs that determine the model bytes; `ml runs list|show|compare|verify`
+read the records and replay a fit in memory. The split of a record is the canonical split text of section 22 (`none`, `holdout train=0.8 stratify seed=1`, ...), and a replay holds the same rows out for every strategy. `ml cv` takes no `--track`
+(`docs/tracking.md` section 5.7). The registries are unchanged except the section tag (7) and the rule tags of section 8; no model kind, step kind or stream kind is added, and no capability.

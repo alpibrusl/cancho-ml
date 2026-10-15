@@ -5,7 +5,7 @@ import os
 import unittest
 
 from fixtures import CASES
-from harness import ROOT, Sandbox, run, spec, validate
+from harness import ROOT, Sandbox, run, runs_here, spec, validate
 from runner import judge, run_case
 
 
@@ -14,6 +14,8 @@ class Rules(unittest.TestCase):
         failures = []
         for c in CASES:
             if c.get("skip_if_root") and os.geteuid() == 0:
+                continue
+            if not runs_here(c):
                 continue
             sb, r = run_case(c)
             try:
@@ -72,9 +74,10 @@ class Rules(unittest.TestCase):
                 return 5
             if area in ("limit", "parse"):
                 return 8
-            if tag in ("ml.param.out-of-range", "ml.param.threads"):
+            if tag in ("ml.param.out-of-range", "ml.param.threads", "ml.split.stratify-target", "ml.split.combination", "ml.split.out-of-range", "ml.split.column-target"):
                 return 2
-            if tag == "ml.input.unknown-column":
+            if tag in ("ml.input.unknown-column", "ml.runs.not-found"):
+                # a named input (a column, a run id) that does not exist
                 return 3
             return 8
 

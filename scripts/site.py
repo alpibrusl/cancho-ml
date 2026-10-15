@@ -33,6 +33,9 @@ generated:
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
                                           order, and a hashed column that stores no string
+    splitflow     README.md, index.html   the split strategies and cross-validation (docs/splits.md): a stratified holdout on docs/examples/data/breast_cancer_train.csv, a time split and
+                                          a group split on docs/examples/data/visits.csv, a refused combination, `ml cv --folds 5` on iris and diabetes with the metrics of
+                                          each fold and their mean and standard deviation, a time cv, a group cv with --emit-folds, and a refusal with its repair
     hero          index.html              the first example
     agentio       README.md, index.html   excerpts of `ml introspect`
     skill         index.html              the first lines of `ml skill`
@@ -141,10 +144,28 @@ DEMOS = [
     ("k_predict", "ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv"),
     ("k_eval", "ml eval --model-file iris-km.ml --drop virginica iris_test.csv"),
     ("k_text", "ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv"),
+    # split strategies and cross-validation (docs/splits.md)
+    ("sp_strat", "ml fit --model tree --task classification --max-depth 4 --target benign --split train=0.8 --stratify --seed 7 --output bc.ml breast_cancer_train.csv"),
+    ("sp_time", "ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-by time:visit_date --output visits-time.ml visits.csv"),
+    ("sp_group", "ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-group customer --seed 2 --output visits-group.ml visits.csv"),
+    ("sp_combo", "ml fit --model tree --task classification --target returning --drop customer,visit_date --split train=0.75 --stratify --split-by time:visit_date --output x.ml visits.csv"),
+    ("sp_cv_iris", "ml --format text cv --model logistic --task classification --step 'scale column=* kind=standard' --l2 0.1 --target virginica --folds 5 --seed 1 --stratify iris_train.csv"),
+    ("sp_cv_diab", "ml --format text cv --model linear --step 'scale column=* kind=standard' --target progression --folds 5 --seed 1 diabetes_train.csv"),
+    ("sp_cv_time", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-by time:visit_date --folds 4 visits.csv"),
+    ("sp_cv_group", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-group customer --folds 4 --seed 5 --emit-folds visits.csv"),
+    ("sp_bad", "ml cv --model linear --step 'scale column=* kind=standard' --target progression --stratify diabetes_train.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
 SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"]}
+# demos whose answer is shown as members found by a path into `data`: the last name of a path is the key shown
+PICK_DATA = {
+    "sp_strat": [("summary", "split"), ("summary", "holdout")],
+    "sp_time": [("summary", "split"), ("summary", "holdout")],
+    "sp_group": [("summary", "split"), ("summary", "holdout")],
+    "sp_cv_time": [("split",), ("strategy",), ("summary",)],
+    "sp_cv_group": [("split",), ("strategy",), ("assignment",)],
+}
 SUMMARY = {
     "bad": ["rule", "hint", "repair"],
     "exists": ["rule", "hint", "detail"],
@@ -159,6 +180,8 @@ SUMMARY = {
     "s_mp_flag": ["rule", "hint", "detail"],
     "k_target": ["rule", "hint", "detail"],
     "k_nok": ["rule", "hint", "detail"],
+    "sp_combo": ["rule", "hint", "repair", "detail"],
+    "sp_bad": ["rule", "hint", "repair"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -172,7 +195,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "sp_bad": "sp_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -349,6 +372,9 @@ def make_context(binary, tmp):
     # the k-means example: the iris files of the worked examples
     for part in ("train", "test"):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
+    # the split examples: the committed files of docs/examples/data
+    for name in ("breast_cancer_train.csv", "diabetes_train.csv", "visits.csv"):
+        (Path(tmp) / name).write_bytes((ROOT / "docs" / "examples" / "data" / name).read_bytes())
     results = {}
 
     def run(words, stdin=None):
@@ -376,12 +402,75 @@ def make_context(binary, tmp):
             if status2 != 0:
                 raise Drift("the repair of the demo `%s` does not run" % key)
             results[REPAIRED[key]] = (shlex.join(argv), out2, status2)
+    run_track_demos(run, tmp, results)
     http_results = run_http_demos(binary, tmp)
     ref = sx.reference()
     examples = sx.run_examples(run, tmp, ref)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
     return {"results": results, "http": http_results, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
+
+
+# Run tracking and the skew checks (docs/tracking.md) on docs/examples/data/iris_train.csv and iris_test.csv. The ids are the hashes of the inputs, so they are the same on every run; the
+# commands that name them are typed from the answers of the fits.
+TRACK_FITS = [
+    ("t_fit", "ml fit --model logistic --target virginica --iterations 25 --l2 0 --track runs --output iris-lr.ml iris_train.csv"),
+    ("t_fit2", "ml fit --model forest --task classification --trees 20 --seed 2 --target virginica --track runs --output iris-rf.ml iris_train.csv"),
+]
+SUMMARY_DATA.update({
+    "t_fit": ["path", "bytes", "sha256", "run"], "t_fit2": ["path", "bytes", "sha256", "run"], "t_list": ["count", "runs"], "t_compare": ["model_equal", "inputs"],
+    "t_eval_train": ["rows", "on", "metrics", "out_of_range"], "t_eval_test": ["rows", "on", "metrics", "out_of_range"],
+    "t_predict": ["row_count", "unknown_categories", "out_of_range", "ignored_columns"], "t_verify": ["verified", "model_sha256", "threads"],
+    "t_verify8": ["verified", "model_sha256", "threads"],
+})
+SUMMARY.update({"t_bound": ["rule", "hint", "detail"], "t_conflict": ["rule", "detail"]})
+
+
+def run_track_demos(run, tmp, results):
+    (Path(tmp) / "runs").mkdir()
+    ids = []
+    for key, typed in TRACK_FITS:
+        out, status = run(shlex.split(typed))
+        if status != 0:
+            raise Drift("the demo %s fails" % key)
+        results[key] = (typed, out, status)
+        ids.append(json.loads(out)["data"]["run"]["id"])
+    a, b = ids
+    for key, typed in [
+        ("t_list", "ml runs list runs"),
+        ("t_show", "ml runs show runs %s" % a),
+        ("t_compare", "ml runs compare runs %s %s" % (a, b)),
+        ("t_verify", "ml runs verify runs %s" % a),
+        ("t_verify8", "ml runs verify --threads 8 runs %s" % b),
+        ("t_eval_train", "ml eval --model-file iris-lr.ml --track runs iris_train.csv"),
+        ("t_eval_test", "ml eval --model-file iris-lr.ml --track runs iris_test.csv"),
+        ("t_predict", "ml predict --model-file iris-lr.ml --limit 2 iris_test.csv"),
+        ("t_bound", "ml predict --model-file iris-lr.ml --max-out-of-range 0 iris_test.csv"),
+    ]:
+        out, status = run(shlex.split(typed))
+        results[key] = (typed, out, status)
+
+
+def track_items(ctx):
+    """Track runs and check for skew: fit with --track, list, show, compare, verify; eval says what it scored; predict counts the cells outside the training range and can refuse."""
+    show = ctx["results"]["t_show"]
+    return [("# Every fit can write a run record: canonical JSON, named by the hash of the inputs that determine the model (not the thread count), no timestamp, no payload", None, 0, None),
+            item(ctx, "t_fit"),
+            item(ctx, "t_fit2"),
+            ("# The directory lists the runs; a run is shown whole, and two are compared by the inputs that differ and the metrics side by side", None, 0, None),
+            item(ctx, "t_list"),
+            (show[0], cut(show[1].strip(), 420), show[2], None),
+            item(ctx, "t_compare"),
+            ("# A run is replayable: verify refits in memory and compares the SHA-256 of the model file, at any thread count", None, 0, None),
+            item(ctx, "t_verify"),
+            item(ctx, "t_verify8"),
+            ("# eval says whether it scored the file the model was fitted on, and counts the cells outside the range of the training rows", None, 0, None),
+            item(ctx, "t_eval_train"),
+            item(ctx, "t_eval_test"),
+            ("# predict counts them too, and names the target column it ignored", None, 0, None),
+            item(ctx, "t_predict"),
+            ("# A bound on the rows outside the range refuses, naming the first column and row", None, 0, None),
+            item(ctx, "t_bound")]
 
 
 def item(ctx, key):
@@ -394,6 +483,17 @@ def item(ctx, key):
             raise Drift("the demo %s refuses" % key)
         out = json.dumps({k: doc["data"][k] for k in SUMMARY_DATA[key]}, ensure_ascii=False)
         return typed, out, status, None
+    if key in PICK_DATA:
+        doc = json.loads(out)
+        if not doc["ok"]:
+            raise Drift("the demo %s refuses" % key)
+        picked = {}
+        for path in PICK_DATA[key]:
+            v = doc["data"]
+            for step in path:
+                v = v[step]
+            picked[path[-1]] = v
+        return typed, json.dumps(picked, ensure_ascii=False, separators=(",", ":")), status, None
     if key in SUMMARY:
         doc = json.loads(out)
         if doc["ok"] or status == 0:
@@ -478,6 +578,28 @@ def kmflow_items(ctx):
             item(ctx, "k_eval"),
             ("# The same, as text, on the training rows", None, 0, None),
             item(ctx, "k_text")]
+
+
+def splitflow_items(ctx):
+    """Splits and cross-validation: a stratified holdout, a time split, a group split, a refused combination, k-fold cv of two models with the metrics of every fold and their mean and
+    standard deviation, a time cv, a group cv with the folds as data, and a refusal with its repair."""
+    return [("# A holdout that keeps the class proportions: 426 rows, 20 percent held out, per class the floor or the ceiling of its share", None, 0, None),
+            item(ctx, "sp_strat"),
+            ("# visits.csv: 12 customers with 10 visits each, an ISO date, a basket, the item count and whether the customer came back. The newest quarter of the visits is held out (the date column is dropped as a feature, not as a rule)", None, 0, None),
+            item(ctx, "sp_time"),
+            ("# No customer on both sides: whole customers are held out", None, 0, None),
+            item(ctx, "sp_group"),
+            ("# Two rules for one split are refused, not blended", None, 0, None),
+            item(ctx, "sp_combo"),
+            ("# Five-fold cross-validation, stratified: every step is fitted on the four training folds of each fold alone. Per-fold metrics, then the mean and the sample standard deviation", None, 0, None),
+            item(ctx, "sp_cv_iris"),
+            item(ctx, "sp_cv_diab"),
+            ("# An expanding window: fold i trains on everything before block i + 1 and tests on that block", None, 0, None),
+            item(ctx, "sp_cv_time"),
+            ("# Whole customers per fold, and the assignment of every row (file order) as data, so that a run can be replayed", None, 0, None),
+            item(ctx, "sp_cv_group"),
+            ("# A regression has no classes to keep in proportion. The refusal offers the corrected command", None, 0, None),
+            item(ctx, "sp_bad")]
 
 
 def hflow_items(ctx):
@@ -683,11 +805,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

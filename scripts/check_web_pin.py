@@ -122,6 +122,40 @@ def remote(proj):
     return problems
 
 
+# The compiler on Linux leaves the name of its temporary file, `cancho-llvm-<pid>-<n>.ll`, in the symbol table of a binary, so two builds of one tree differ in those
+# digits (three builds of ml-predict on Linux x86-64 gave three hashes; on macOS two builds gave one). The digits are zeroed before the comparison, which keeps every byte
+# length, and nothing else is changed (docs/ci.md section 10).
+TMPNAME = re.compile(rb"cancho-llvm-(\d+)-(\d+)\.ll")
+
+
+def unpid(b):
+    return TMPNAME.sub(lambda m: b"cancho-llvm-" + b"0" * len(m.group(1)) + b"-" + b"0" * len(m.group(2)) + b".ll", b)
+
+
+def pid_width(b):
+    m = TMPNAME.search(b)
+    return len(m.group(1)) if m else None
+
+
+def same_binary(a, c):
+    return unpid(a) == unpid(c)
+
+
+def selftest_same_binary():
+    """The normalisation hides the process id and nothing else: it is shown able to fail."""
+    base = b"\x7fELF....cancho-llvm-1810468-0.ll\x00lexs_argc\x00rest"
+    cases = [
+        (base, base.replace(b"1810468", b"1510769"), True),  # another process id of the same width
+        (base, base.replace(b"-0.ll", b"-1.ll"), True),  # another counter
+        (base, base.replace(b"rest", b"rexp"), False),  # a real byte differs
+        (base, base.replace(b"lexs_argc", b"lexs_argd"), False),
+        (base, base.replace(b"1810468", b"99999"), False),  # another width shifts the table: not hidden
+        (base, base[:-1], False),
+        (b"no name here", b"no name herf", False),
+    ]
+    return ["same_binary self-test %d: %r" % (i, want) for i, (a, c, want) in enumerate(cases) if same_binary(a, c) != want]
+
+
 def bins():
     """W2: ml and ml-predict, built from a copy of this tree without the three dependency blocks and without the ml-serve bin, are the bytes of build/ml and build/ml-predict."""
     cancho = os.environ.get("CANCHO") or str(ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho")
@@ -138,11 +172,33 @@ def bins():
             r = subprocess.run(cmd, cwd=work, capture_output=True, text=True)
             if r.returncode != 0:
                 return ["%s failed: %s" % (" ".join(cmd[1:]), (r.stdout + r.stderr)[-400:])]
-        problems = []
+        problems = selftest_same_binary()
         for b in ("ml", "ml-predict"):
             a = (ROOT / "build" / b).read_bytes()
             c = (work / "build" / b).read_bytes()
-            if a != c:
+            # A process id of another width moves the symbol table by a byte, which no normalisation can undo; the id is new at every build, so build again until the widths agree.
+            # When the width of build/<b> itself is out of reach (a machine whose process ids grew a digit since it was built), the reference is built again from a copy of this
+            # tree with all its dependencies, until its width is the one of the build without them.
+            for _ in range(4):
+                if pid_width(a) == pid_width(c):
+                    break
+                subprocess.run([cancho, "build", "--bin", b], cwd=work, capture_output=True, text=True)
+                c = (work / "build" / b).read_bytes()
+            if pid_width(a) != pid_width(c):
+                ref = pathlib.Path(tempfile.mkdtemp(prefix="webpin-ref-"))
+                try:
+                    for d in ("lib", "tools", "generated", "schemas"):
+                        shutil.copytree(ROOT / d, ref / d)
+                    shutil.copy(TOML, ref / "cancho.toml")
+                    subprocess.run([cancho, "install"], cwd=ref, capture_output=True, text=True)
+                    for _ in range(8):
+                        subprocess.run([cancho, "build", "--bin", b], cwd=ref, capture_output=True, text=True)
+                        a = (ref / "build" / b).read_bytes()
+                        if pid_width(a) == pid_width(c):
+                            break
+                finally:
+                    shutil.rmtree(ref, ignore_errors=True)
+            if not same_binary(a, c):
                 problems.append("build/%s differs from the build without the three dependencies (%d and %d bytes)" % (b, len(a), len(c)))
         return problems
     finally:

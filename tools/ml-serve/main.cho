@@ -54,7 +54,11 @@ fn check_range[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
         let top = cli.parse_nat(bytes.field(entry, '|', 3));
         if cli.has(parsed, table, name) {
             let v = cli.nat(args, parsed, table, name);
-            if v < 1 || v > top {
+            var least = 1;
+            if bytes.equal(name, "max-out-of-range") {
+                least = 0;
+            }
+            if v < least || v > top {
                 var w = fail.open_in(heap, sspec.extra(), "ml.param.out-of-range", "a numeric flag is outside its range", "the range is in the detail and in introspect limits");
                 w = fail.no_repair(heap, w);
                 w = fail.detail_open(heap, w);
@@ -316,7 +320,7 @@ fn prepare[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
         }
     }
     buffer.drop(heap, shown);
-    let served = srv.make(heap, built, model, model_doc, stored, planned, tokens, guarded, max_rows, max_model, max_body);
+    let served = srv.make(heap, built, model, model_doc, stored, planned, tokens, guarded, max_rows, max_model, max_body, cli.nat(args, parsed, table, "max-out-of-range"), cli.has(parsed, table, "max-out-of-range"));
     if go && guarded {
         var undecided = 0;
         borrow served as &sv in {
@@ -422,7 +426,7 @@ fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p c
     }
     var status = 0;
     let (e2, clean) = app.clean(e);
-    var served = srv.make(heap, api.build(heap, "{}", false, 1, false), buffer.empty(heap, 1), buffer.empty(heap, 1), wireio.empty_stored(heap), false, web.tokens_empty(heap), false, 1, 1, 1);
+    var served = srv.make(heap, api.build(heap, "{}", false, 1, false), buffer.empty(heap, 1), buffer.empty(heap, 1), wireio.empty_stored(heap), false, web.tokens_empty(heap), false, 1, 1, 1, 0, false);
     e = e2;
     if clean {
         borrow root as &rr in {

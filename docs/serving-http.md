@@ -94,6 +94,7 @@ family is (`toolbox.path`: below `--root`, no `..`, no symbolic link followed).
 | `--max-batch-rows` | the most records in one batch | 100 | 1,000 |
 | `--idle-seconds` | a connection that makes no progress for this long is closed (the only deadline of a request) | 10 | 3,600 |
 | `--max-bytes` | the largest model file | 16,777,216 | 268,435,456 |
+| `--max-out-of-range` | refuse a request with more rows outside the training range than this (0 refuses any); absent: no bound | none | 1,000,000,000 |
 
 ## 3. The endpoints
 
@@ -132,7 +133,7 @@ At start the server calls the code of `ml describe` on the model bytes (the same
 ### 3.2 The answer
 
 ```
-{"model_sha256":"<64 hex digits>","model":"linear","task":"regression","columns":["prediction"],"rows":[[36.17963203363425]],"row_count":1,"unknown_categories":0}
+{"model_sha256":"<64 hex digits>","model":"linear","task":"regression","columns":["prediction"],"rows":[[36.17963203363425]],"row_count":1,"unknown_categories":0,"out_of_range":{"cells":0,"rows":0,"columns":[]}}
 ```
 
 * `columns` is `describe.output.columns` for a regression (`["prediction"]`), `["label","probability"]` for every classification (the probability of the positive label; a constant classification has both
@@ -142,6 +143,7 @@ At start the server calls the code of `ml describe` on the model bytes (the same
   between no quotes after checking that it is a JSON number (`json.put_fragment` parses it: a text that is not one is `serve.internal`, 500, never a quoted string). The decimal text is the same; nothing is printed twice. 
 * `model_sha256` is `describe.file.sha256` and the response header `X-Model-Sha256` carries it too.
 * `unknown_categories` is the predictor's count over the request (the constant models count none; the server writes 0).
+* `out_of_range` is the predictor's member of `ml predict` (`docs/tracking.md` section 3.2): the cells of the request outside the range of the training rows stored in the model file, the rows that hold one and the columns that do; `null` for a constant model and for a model file with no provenance section. `--max-out-of-range N` at start refuses a request with more than N such rows: HTTP 422, rule `ml.predict.out-of-range`, with the rows, the bound, the first column and the first row in the error. `ignored_columns` is not in the answer: the server builds the CSV from the columns of the model.
 * Every answer is at most 60,000 bytes; the 1,000-row ceiling and the values (at most about 56 bytes a row) make that true by construction, and the server checks it.
 
 ### 3.3 `GET /model`
@@ -239,7 +241,7 @@ Refusals are `application/problem+json` (RFC 9457) with a `rule` field and the `
 | 415 | `Content-Type` of a predict POST is not `application/json` (parameters allowed, case ignored) | `serve.media-type` |
 | 422 | the body breaks the request schema: a missing column, an unknown column, a value of the wrong type, a string outside the `enum`, null for a column that takes none, an empty or missing `rows`, an integer outside 12 digits; **all errors (the first 16 stored, the count of all), each with its JSON Pointer** | `ml.schema.mismatch` |
 | 422 | a number that cannot be written exactly for its column (4), a category with CR LF | `serve.number-not-exact`, `serve.string-not-renderable` |
-| 422 | the predictor refuses the CSV because of the data in it: `ml.schema.mismatch`, `ml.input.non-numeric`, `ml.input.non-finite`, `ml.input.missing-value`, `ml.input.unknown-category`, `ml.input.invalid-utf8`, `ml.input.reserved-category`, `ml.input.duplicate-column`, `ml.input.unknown-column`, `ml.limit.string-bytes`, `ml.limit.string-pool`, `ml.limit.categories`, `ml.limit.categorical-columns`, and `ml.predict.non-finite` (the model's answer for a row of the batch is not a finite number: a prediction, a probability or a squared distance; the command line refuses it too, before it writes a cell, `docs/nonfinite.md`; `error.detail` holds the 1-based `row` of the batch and the `column`) | the predictor's tag, and its error object as `error` |
+| 422 | the predictor refuses the CSV because of the data in it: `ml.schema.mismatch`, `ml.input.non-numeric`, `ml.input.non-finite`, `ml.input.missing-value`, `ml.input.unknown-category`, `ml.input.invalid-utf8`, `ml.input.reserved-category`, `ml.input.duplicate-column`, `ml.input.unknown-column`, `ml.limit.string-bytes`, `ml.limit.string-pool`, `ml.limit.categories`, `ml.limit.categorical-columns`, `ml.predict.out-of-range` (more rows of the request hold a feature outside the training range than `--max-out-of-range` allows, `docs/tracking.md`), and `ml.predict.non-finite` (the model's answer for a row of the batch is not a finite number: a prediction, a probability or a squared distance; the command line refuses it too, before it writes a cell, `docs/nonfinite.md`; `error.detail` holds the 1-based `row` of the batch and the `column`) | the predictor's tag, and its error object as `error` |
 | 413 | the predictor refuses a limit of the size of the input: `limit.line-too-long`, `limit.input-too-large`, `ml.input.too-many-rows`, `ml.input.too-many-columns`, `ml.input.too-many-cells` | the predictor's tag, and its error object as `error` |
 | 500 | everything else, which a request cannot cause: `ml.model.*` (the file was checked at start), `ml.plan.*`, `ml.fit.*`, `ml.linalg.*`, `ml.metric.*`, `ml.tensor.*`, `ml.split.*`, `ml.label.*`, `ml.param.*`, `ml.input.empty`, `parse.*`, `io.*`, `path.*`, `args.*`, `conflict.*`, an answer the server cannot write | the predictor's tag, or `serve.internal` |
 

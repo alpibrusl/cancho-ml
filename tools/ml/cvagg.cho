@@ -1,0 +1,107 @@
+edition 6;
+
+module ml.cvagg;
+
+// The members of the metrics object of a fold, read back from the JSON text the verbs print (docs/splits.md section 6): the printed number is the shortest decimal that reads back
+// as the double, so the value read here is exactly the double the metric was. Arrays and objects (the sizes of the clusters) are skipped.
+
+import ml.csvcell;
+
+// the position after the end of the value that starts at `at`: a string, an array or object (brackets matched, strings skipped), or a bare token up to , or }
+fn value_end[&j](j: &j [byte], at: int) -> [] int {
+    let n = len(j);
+    var p = at;
+    if p >= n {
+        return n;
+    }
+    let c = int_of(j[p]);
+    if c == '"' {
+        p = p + 1;
+        while p < n && int_of(j[p]) != '"' {
+            if int_of(j[p]) == 92 {
+                p = p + 1;
+            }
+            p = p + 1;
+        }
+        if p < n {
+            p = p + 1;
+        }
+        return p;
+    }
+    if c == '[' || c == '{' {
+        var depth = 0;
+        while p < n {
+            let d = int_of(j[p]);
+            if d == '"' {
+                p = value_end(j, p) - 1;
+            } else if d == '[' || d == '{' {
+                depth = depth + 1;
+            } else if d == ']' || d == '}' {
+                depth = depth - 1;
+                if depth == 0 {
+                    return p + 1;
+                }
+            }
+            p = p + 1;
+        }
+        return n;
+    }
+    while p < n && int_of(j[p]) != ',' && int_of(j[p]) != '}' {
+        p = p + 1;
+    }
+    return p;
+}
+
+// The next member of the object `j` from `pos` (the position of the opening brace for the first): (found, key start, key end, value start, value end, position for the next call).
+// The value range includes the quotes of a string.
+pub fn next_member[&j](j: &j [byte], pos: int) -> [] (bool, int, int, int, int, int) {
+    let n = len(j);
+    var p = pos;
+    if p < n && (int_of(j[p]) == '{' || int_of(j[p]) == ',') {
+        p = p + 1;
+    }
+    if p >= n || int_of(j[p]) != '"' {
+        return (false, 0, 0, 0, 0, n);
+    }
+    let ks = p + 1;
+    var ke = ks;
+    while ke < n && int_of(j[ke]) != '"' {
+        ke = ke + 1;
+    }
+    p = ke + 1;
+    if p >= n || int_of(j[p]) != ':' {
+        return (false, 0, 0, 0, 0, n);
+    }
+    p = p + 1;
+    let ve = value_end(j, p);
+    return (true, ks, ke, p, ve, ve);
+}
+
+// the value as a number: a string that holds a number, or a bare number. (ok, the double)
+pub fn number[&j](j: &j [byte], vs: int, ve: int) -> [] (bool, float) {
+    var a = vs;
+    var b = ve;
+    if b > a && int_of(j[a]) == '"' && int_of(j[b - 1]) == '"' && b - a >= 2 {
+        a = a + 1;
+        b = b - 1;
+    } else if b > a && (int_of(j[a]) == '[' || int_of(j[a]) == '{' || int_of(j[a]) == '"') {
+        return (false, 0.0);
+    }
+    if b <= a {
+        return (false, 0.0);
+    }
+    let (st, kind, m, frac, idig, key) = csvcell.read(j[a..b]);
+    if st != 0 {
+        return (false, 0.0);
+    }
+    return (true, csvcell.double(kind, m, frac, key));
+}
+
+// whether the value is `null` or an array or object or a string that is no number: a member that is not a scalar metric
+pub fn is_scalar[&j](j: &j [byte], vs: int, ve: int) -> [] bool {
+    if ve <= vs {
+        return false;
+    }
+    let c = int_of(j[vs]);
+    return c != '[' && c != '{';
+}

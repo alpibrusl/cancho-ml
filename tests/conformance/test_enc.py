@@ -44,7 +44,7 @@ class Files(unittest.TestCase):
         data = self.sb.read("m.cml")
         self.assertEqual(d["bytes"], len(data))
         self.assertEqual(d["sha256"], hashlib.sha256(data).hexdigest())
-        self.assertEqual(int.from_bytes(data[8:12], "little"), 6)
+        self.assertEqual(int.from_bytes(data[8:12], "little"), 7)
         st = d["summary"]["string_table"]
         self.assertEqual((st["entries"], st["strings"], st["pool_bytes"]), (1, 5, 13))
         table = sections(data)[5]
@@ -69,7 +69,7 @@ class Files(unittest.TestCase):
         self.assertIs(d["written"], True)
         self.assertEqual(d["path"], "m.cml")
         s = d["summary"]
-        self.assertEqual(s["split"], {"train": 7, "test": 3, "seed": 3})
+        self.assertEqual(s["split"], {"train": 7, "test": 3, "seed": 3, "spec": "holdout train=0.7 seed=3"})
         self.assertEqual(s["holdout"]["rows"], 3)
         self.assertEqual(len(s["steps_sha256"]), 64)
         self.assertEqual([(c["column"], c["categories"], c["output_columns"]) for c in s["categorical"]], [("sex", 2, 2), ("port", 3, 3)])

@@ -39,7 +39,7 @@ def tables(path=SPEC):
     allowed = {}
     m = re.search(r"pub fn allowed\(verb: int\)[^{]*\{(.*?)\n\}", text, re.S)
     found = re.findall(r"return \"([^\"]*)\";", m.group(1))
-    for verb, names in zip(("fit", "predict", "describe", "eval"), found):
+    for verb, names in zip(("fit", "predict", "describe", "cv", "eval"), found):
         allowed[verb] = names.split(",")
     pflags = []
     for entry in _literal(text, "predict_flag_table").split(";"):

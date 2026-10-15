@@ -1,0 +1,494 @@
+// The program of the consumption proof (scripts/consume_stores.py, docs/stores.md section 5). It is built in a scratch package outside
+// this repository that depends on the stores only, and it calls each published family once. One `key value` per line; the script
+// compares every line with a value it computes in Python. Floats are printed as the 16 hex digits of their bits.
+edition 5;
+
+import std.io;
+import ml.rng;
+import ml.fbits;
+import ml.fsq;
+import ml.exact;
+import ml.limits;
+import ml.matrix;
+import linalg.tensor;
+import linalg.dot;
+import linalg.chol;
+import linalg.par;
+import ml.refuse;
+import linalg.order;
+import linalg.axpy;
+import linalg.gemv;
+import linalg.syrk;
+import linalg.gemm;
+import metrics.rules;
+import metrics.ratio;
+import metrics.classify;
+import metrics.rank;
+import metrics.regress;
+import metrics.splits;
+import metrics.sums;
+
+fn hex16[&i](io: &!i Io, bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            putchar(io, '0' + nib);
+        } else {
+            putchar(io, 'a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn line_hex[&i, &k](io: &!i Io, key: &k [byte], bits: int) -> [io_write] int {
+    io.write_all(io, key);
+    io.write_all(io, " ");
+    hex16(io, bits);
+    io.newline(io);
+    return 0;
+}
+
+fn line_int[&i, &k](io: &!i Io, key: &k [byte], v: int) -> [io_write] int {
+    io.write_all(io, key);
+    io.write_all(io, " ");
+    io.print_int(io, v);
+    io.newline(io);
+    return 0;
+}
+
+fn made(m: tensor.Made) -> [] tensor.Tensor {
+    match m {
+        tensor.Made::Ok(t) => {
+            return t;
+        }
+        tensor.Made::Err(c) => {
+            return tensor.Tensor { off: 0, rank: 0, s0: 0, s1: 0, s2: 0, s3: 0, t0: 0, t1: 0, t2: 0, t3: 0 };
+        }
+    }
+}
+
+// ml.rng and ml.fbits
+fn part_rng[&i](io: &!i Io) -> [io_write] int {
+    line_hex(io, "rng.output0", rng.output(rng.advance(0)));
+    line_hex(io, "rng.derive", rng.derive(rng.derive(42, 1), 0));
+    line_hex(io, "rng.unit", bits_of(rng.unit(rng.output(rng.advance(0)))));
+    line_hex(io, "rng.element", bits_of(rng.element(7, 3)));
+    return 0;
+}
+
+fn part_fbits[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
+    let b = box_slice(heap, 8, byte_of(0));
+    var o = b;
+    borrow mut o as &!w in {
+        fbits.put64(contents(w), 0, bits_of(1.5));
+    }
+    borrow o as &r in {
+        line_hex(io, "fbits.roundtrip", bits_of(fbits.decode(fbits.get64(contents(r), 0))));
+    }
+    unbox_slice(heap, o);
+    return 0;
+}
+
+// ml.limits, ml.matrix and the missing bitmap: a 3 by 2 matrix, cells (1,0) and (2,1) missing
+fn part_matrix[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
+    line_int(io, "limits.ok", limits.check_matrix(3, 2, 100, 100, 1000));
+    if limits.check_matrix(101, 2, 100, 100, 1000) != 0 {
+        line_int(io, "limits.refused", 1);
+    } else {
+        line_int(io, "limits.refused", 0);
+    }
+    let (m0, code) = matrix.make(heap, 3, 2, 100, 100, 1000);
+    line_int(io, "matrix.make", code);
+    let (t, data, miss, rows, cols, wpc) = matrix.parts(m0);
+    var d = data;
+    var b = miss;
+    borrow mut d as &!dw in {
+        borrow mut b as &!bw in {
+            matrix.put(contents(dw), cols, 0, 0, 1.5);
+            matrix.put(contents(dw), cols, 2, 0, 0.0 - 2.25);
+            matrix.put(contents(dw), cols, 0, 1, 0.1);
+            matrix.mark_missing(contents(bw), wpc, 1, 0);
+            matrix.mark_missing(contents(bw), wpc, 2, 1);
+        }
+    }
+    let m = matrix.assemble(t, d, b, rows, cols, wpc);
+    borrow m as &mr in {
+        line_int(io, "matrix.rows", matrix.rows(mr));
+        line_int(io, "matrix.cols", matrix.cols(mr));
+        line_int(io, "matrix.wpc", matrix.wpc(mr));
+        line_hex(io, "matrix.v00", bits_of(matrix.value(mr, 0, 0)));
+        line_hex(io, "matrix.v20", bits_of(matrix.value(mr, 2, 0)));
+        line_hex(io, "matrix.v01", bits_of(matrix.value(mr, 0, 1)));
+        var mask = 0;
+        var r = 0;
+        while r < 3 {
+            var c = 0;
+            while c < 2 {
+                if matrix.is_missing(mr, r, c) {
+                    mask = mask + (1 << r * 2 + c);
+                }
+                c = c + 1;
+            }
+            r = r + 1;
+        }
+        line_int(io, "matrix.missing_mask", mask);
+        line_int(io, "matrix.missing_col0", matrix.missing_count(mr, 0));
+        line_int(io, "matrix.missing_col1", matrix.missing_count(mr, 1));
+    }
+    matrix.drop(heap, m);
+    return 0;
+}
+
+// ml.fsq (the exact sum of squared differences) and ml.exact
+fn part_exact[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
+    let acc = box_slice(heap, fsq.size(), 0);
+    var a = acc;
+    borrow mut a as &!w in {
+        fsq.add_square(contents(w), bits_of(10000000000000000.0), bits_of(1.0));
+        fsq.add_square(contents(w), bits_of(0.5), bits_of(0.25));
+        let (v, st) = fsq.finish(contents(w));
+        line_hex(io, "fsq.sum", bits_of(v));
+        line_int(io, "fsq.status", st);
+    }
+    unbox_slice(heap, a);
+    line_int(io, "exact.mean_pos", exact.mean_scaled(0, 7, 3));
+    line_int(io, "exact.mean_neg", exact.mean_scaled(0, 0 - 7, 3));
+    line_int(io, "exact.mean_big", exact.mean_scaled(4995, 4999999995, 5));
+    return 0;
+}
+
+// linalg.chol: A = [[4,12,-16],[12,37,-43],[-16,-43,98]] = L L^T with L = [[2,0,0],[6,1,0],[-8,5,3]], then A x = b for x = (1,2,3): L y = b, then L^T x = y
+fn part_chol[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
+    let a = box_slice(heap, 9, 0.0);
+    let l = box_slice(heap, 9, 0.0);
+    let b = box_slice(heap, 3, 0.0);
+    let y = box_slice(heap, 3, 0.0);
+    let x = box_slice(heap, 3, 0.0);
+    var av = a;
+    var yv = y;
+    var bv = b;
+    borrow mut av as &!w in {
+        let c = contents(w);
+        c[0] = 4.0;
+        c[1] = 12.0;
+        c[2] = 0.0 - 16.0;
+        c[3] = 12.0;
+        c[4] = 37.0;
+        c[5] = 0.0 - 43.0;
+        c[6] = 0.0 - 16.0;
+        c[7] = 0.0 - 43.0;
+        c[8] = 98.0;
+    }
+    borrow mut bv as &!w in {
+        let c = contents(w);
+        c[0] = 0.0 - 20.0;
+        c[1] = 0.0 - 43.0;
+        c[2] = 192.0;
+    }
+    var lv = l;
+    var xv = x;
+    let m3 = made(tensor.matrix(0, 3, 3));
+    let v3 = made(tensor.vector(0, 3, 1));
+    borrow av as &ar in {
+        borrow mut lv as &!lw in {
+            line_int(io, "chol.code", chol.cholesky(m3, contents(ar), m3, contents(lw)));
+        }
+    }
+    borrow lv as &lr in {
+        var k = 0;
+        while k < 9 {
+            if k % 3 <= k / 3 {
+                line_hex(io, "chol.l", bits_of(contents(lr)[k]));
+            }
+            k = k + 1;
+        }
+        borrow bv as &br in {
+            borrow mut yv as &!yw in {
+                line_int(io, "chol.forward_code", chol.solve(0, m3, contents(lr), v3, contents(br), v3, contents(yw)));
+            }
+        }
+        borrow yv as &yr in {
+            borrow mut xv as &!xw in {
+                line_int(io, "chol.backward_code", chol.solve(1, m3, contents(lr), v3, contents(yr), v3, contents(xw)));
+            }
+        }
+    }
+    borrow xv as &xr in {
+        line_hex(io, "chol.x0", bits_of(contents(xr)[0]));
+        line_hex(io, "chol.x1", bits_of(contents(xr)[1]));
+        line_hex(io, "chol.x2", bits_of(contents(xr)[2]));
+    }
+    unbox_slice(heap, av);
+    unbox_slice(heap, lv);
+    unbox_slice(heap, bv);
+    unbox_slice(heap, yv);
+    unbox_slice(heap, xv);
+    return 0;
+}
+
+// linalg.dot and linalg.par: the threaded dot is bit-equal to the one-thread dot, for 1, 2 and 3 threads (the lane order, docs/linalg.md section 2)
+fn part_par[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap, conc] int {
+    let n = 5000;
+    let x = box_slice(heap, n + 1, 0.0);
+    let y = box_slice(heap, n + 1, 0.0);
+    var xv = x;
+    var yv = y;
+    borrow mut xv as &!w in {
+        var k = 0;
+        while k < n {
+            contents(w)[k] = rng.element(1, k);
+            k = k + 1;
+        }
+    }
+    borrow mut yv as &!w in {
+        var k = 0;
+        while k < n {
+            contents(w)[k] = rng.element(2, k);
+            k = k + 1;
+        }
+    }
+    let vt = made(tensor.vector(0, n, 1));
+    borrow xv as &xr in {
+        borrow yv as &yr in {
+            let one = dot.dot(heap, vt, contents(xr), vt, contents(yr));
+            line_hex(io, "dot.one", bits_of(one.v));
+            var t = 1;
+            while t <= 3 {
+                let many = par.dot_par(heap, t, vt, contents(xr), vt, contents(yr));
+                if bits_of(many.v) == bits_of(one.v) && many.code == 0 {
+                    line_int(io, "par.equal", 1);
+                } else {
+                    line_int(io, "par.equal", 0);
+                }
+                t = t + 1;
+            }
+        }
+    }
+    unbox_slice(heap, xv);
+    unbox_slice(heap, yv);
+    return 0;
+}
+
+// metrics.rank (AUC by midranks), metrics.regress and metrics.sums
+fn part_metrics[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
+    let y = box_slice(heap, 4, 0);
+    let s = box_slice(heap, 4, 0.0);
+    var yv = y;
+    var sv = s;
+    borrow mut yv as &!w in {
+        contents(w)[0] = 1;
+        contents(w)[1] = 0;
+        contents(w)[2] = 1;
+        contents(w)[3] = 0;
+    }
+    borrow mut sv as &!w in {
+        contents(w)[0] = 9.0;
+        contents(w)[1] = 8.0;
+        contents(w)[2] = 8.0;
+        contents(w)[3] = 1.0;
+    }
+    borrow yv as &yr in {
+        borrow sv as &sr in {
+            let r = rank.auc(heap, contents(yr), contents(sr), 1, 100);
+            line_int(io, "rank.auc_code", r.code);
+            line_hex(io, "rank.auc", bits_of(r.v));
+        }
+    }
+    unbox_slice(heap, yv);
+    unbox_slice(heap, sv);
+    let p = box_slice(heap, 4, 0.0);
+    let q = box_slice(heap, 4, 0.0);
+    var pv = p;
+    var qv = q;
+    borrow mut pv as &!w in {
+        contents(w)[0] = 0.0;
+        contents(w)[1] = 1.0;
+        contents(w)[2] = 2.0;
+        contents(w)[3] = 3.0;
+    }
+    borrow mut qv as &!w in {
+        contents(w)[0] = 1.0;
+        contents(w)[1] = 2.0;
+        contents(w)[2] = 3.0;
+        contents(w)[3] = 4.0;
+    }
+    borrow pv as &pr in {
+        borrow qv as &qr in {
+            let e = regress.rmse(heap, contents(pr), contents(qr), 100);
+            line_int(io, "regress.rmse_code", e.code);
+            line_hex(io, "regress.rmse", bits_of(e.v));
+            let sq = box_slice(heap, 4, 0.0);
+            let lv = box_slice(heap, 64, 0);
+            let st = box_slice(heap, 64, 0.0);
+            var sqv = sq;
+            var lvv = lv;
+            var stv = st;
+            borrow mut sqv as &!bw in {
+                borrow mut lvv as &!iw in {
+                    borrow mut stv as &!sw in {
+                        let total = sums.reduce(sums.kind_sq(), contents(pr), contents(qr), 0.0, 4, contents(bw), contents(sw), contents(iw));
+                        line_hex(io, "sums.sq", bits_of(total));
+                    }
+                }
+            }
+            unbox_slice(heap, sqv);
+            unbox_slice(heap, lvv);
+            unbox_slice(heap, stv);
+        }
+    }
+    unbox_slice(heap, pv);
+    unbox_slice(heap, qv);
+    return 0;
+}
+
+// metrics.splits: a k-fold of 10 rows into 3 folds, seed 7, repeat 0
+fn part_splits[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
+    let out = box_slice(heap, 11, 0 - 1);
+    var ov = out;
+    borrow mut ov as &!w in {
+        line_int(io, "splits.code", splits.kfold(heap, 10, 3, 7, 0, 1000, contents(w)[0..10]));
+    }
+    borrow ov as &r in {
+        io.write_all(io, "splits.kfold");
+        var k = 0;
+        while k < 10 {
+            io.write_all(io, " ");
+            io.print_int(io, contents(r)[k]);
+            k = k + 1;
+        }
+        io.newline(io);
+    }
+    unbox_slice(heap, ov);
+    return 0;
+}
+
+// the modules no part above names: ml.refuse, linalg.order, linalg.axpy, linalg.gemv, linalg.syrk, linalg.gemm, metrics.ratio, metrics.classify
+// (metrics.rules is reached through metrics.rank above). X = [[1,2],[3,4]], W = [[5,6],[7,8]]
+fn part_rest[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
+    line_int(io, "order.block", order.block());
+    line_int(io, "order.lanes", order.lanes());
+    io.write_all(io, "refuse.singular ");
+    io.write_all(io, refuse.tag(refuse.singular()));
+    io.newline(io);
+    line_hex(io, "ratio.third", bits_of(ratio.ratio(1, 3)));
+    let x = box_slice(heap, 4, 0.0);
+    let w = box_slice(heap, 4, 0.0);
+    let c = box_slice(heap, 4, 0.0);
+    let u = box_slice(heap, 2, 1.0);
+    let v = box_slice(heap, 2, 0.0);
+    var xv = x;
+    var wv = w;
+    var cv = c;
+    var uv = u;
+    var vv = v;
+    borrow mut xv as &!a in {
+        contents(a)[0] = 1.0;
+        contents(a)[1] = 2.0;
+        contents(a)[2] = 3.0;
+        contents(a)[3] = 4.0;
+    }
+    borrow mut wv as &!a in {
+        contents(a)[0] = 5.0;
+        contents(a)[1] = 6.0;
+        contents(a)[2] = 7.0;
+        contents(a)[3] = 8.0;
+    }
+    let m22 = made(tensor.matrix(0, 2, 2));
+    let v2 = made(tensor.vector(0, 2, 1));
+    borrow xv as &xr in {
+        borrow wv as &wr in {
+            borrow mut cv as &!cw in {
+                line_int(io, "gemm.code", gemm.gemm(heap, m22, contents(xr), m22, contents(wr), m22, contents(cw)));
+            }
+            borrow cv as &cr in {
+                line_hex(io, "gemm.c00", bits_of(contents(cr)[0]));
+                line_hex(io, "gemm.c01", bits_of(contents(cr)[1]));
+                line_hex(io, "gemm.c10", bits_of(contents(cr)[2]));
+                line_hex(io, "gemm.c11", bits_of(contents(cr)[3]));
+            }
+            borrow uv as &ur in {
+                borrow mut vv as &!vw in {
+                    line_int(io, "gemv.code", gemv.gemv_n(heap, m22, contents(xr), v2, contents(ur), v2, contents(vw)));
+                }
+            }
+            borrow vv as &vr in {
+                line_hex(io, "gemv.y0", bits_of(contents(vr)[0]));
+                line_hex(io, "gemv.y1", bits_of(contents(vr)[1]));
+            }
+            // y = 2 x + y with x = the first two entries of X and y = (1, 1)
+            borrow mut uv as &!uw in {
+                line_int(io, "axpy.code", axpy.axpy(2.0, v2, contents(xr), v2, contents(uw)));
+            }
+            borrow uv as &ur in {
+                line_hex(io, "axpy.y0", bits_of(contents(ur)[0]));
+                line_hex(io, "axpy.y1", bits_of(contents(ur)[1]));
+            }
+            borrow mut cv as &!cw in {
+                line_int(io, "syrk.code", syrk.syrk(heap, m22, contents(xr), m22, contents(cw)));
+            }
+            borrow cv as &cr in {
+                line_hex(io, "syrk.c00", bits_of(contents(cr)[0]));
+                line_hex(io, "syrk.c01", bits_of(contents(cr)[1]));
+                line_hex(io, "syrk.c11", bits_of(contents(cr)[3]));
+            }
+        }
+    }
+    let ya = box_slice(heap, 4, 0);
+    let yb = box_slice(heap, 4, 0);
+    var yav = ya;
+    var ybv = yb;
+    borrow mut yav as &!a in {
+        contents(a)[0] = 1;
+        contents(a)[1] = 1;
+        contents(a)[2] = 1;
+        contents(a)[3] = 0;
+    }
+    borrow mut ybv as &!a in {
+        contents(a)[0] = 1;
+        contents(a)[1] = 1;
+        contents(a)[2] = 0;
+        contents(a)[3] = 0;
+    }
+    borrow yav as &ar in {
+        borrow ybv as &br in {
+            let acc = classify.accuracy(contents(ar), contents(br), 100);
+            line_int(io, "classify.code", acc.code);
+            line_hex(io, "classify.accuracy", bits_of(acc.v));
+        }
+    }
+    unbox_slice(heap, xv);
+    unbox_slice(heap, wv);
+    unbox_slice(heap, cv);
+    unbox_slice(heap, uv);
+    unbox_slice(heap, vv);
+    unbox_slice(heap, yav);
+    unbox_slice(heap, ybv);
+    return 0;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            part_rng(i);
+            part_fbits(i, h);
+            part_matrix(i, h);
+            part_exact(i, h);
+            part_chol(i, h);
+            part_par(i, h);
+            part_metrics(i, h);
+            part_splits(i, h);
+            part_rest(i, h);
+        }
+    }
+    release(args);
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}

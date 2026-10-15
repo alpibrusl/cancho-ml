@@ -1,0 +1,548 @@
+edition 6;
+
+module ml.splitspec;
+
+// The options of the split strategies (docs/splits.md), the checks of the command line that need no file, the canonical text of a split (section 2: the one function
+// that writes it) and the errors every split refusal is made with (section 7).
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.spec;
+import ml.wiredata;
+import metrics.rules;
+import toolbox.cli;
+import toolbox.fail;
+
+pub struct SplitOpts {
+    stratify: bool,
+    // the value of --split-by (`time:COLUMN`) and of --split-group; `*_given` says whether the flag was on the command line
+    by: &static [byte],
+    by_given: bool,
+    group: &static [byte],
+    group_given: bool,
+    folds: int,
+    repeats: int,
+    repeats_given: bool,
+    emit: bool,
+}
+
+pub fn from_cli[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] SplitOpts {
+    return SplitOpts { stratify: cli.has(parsed, table, "stratify"), by: cli.text(args, parsed, table, "split-by"), by_given: cli.has(parsed, table, "split-by"), group: cli.text(args, parsed, table, "split-group"), group_given: cli.has(parsed, table, "split-group"), folds: cli.nat(args, parsed, table, "folds"), repeats: cli.nat(args, parsed, table, "repeats"), repeats_given: cli.has(parsed, table, "repeats"), emit: cli.has(parsed, table, "emit-folds") };
+}
+
+// 0 the library's plain split, 1 stratified, 2 by group, 3 by time
+pub fn strategy(sp: SplitOpts) -> [] int {
+    if sp.stratify {
+        return 1;
+    }
+    if sp.group_given {
+        return 2;
+    }
+    if sp.by_given {
+        return 3;
+    }
+    return 0;
+}
+
+pub fn strategy_word(strategy: int, cv: bool) -> [] &static [byte] {
+    if strategy == 1 {
+        if cv {
+            return "stratified";
+        }
+        return "stratify";
+    }
+    if strategy == 2 {
+        return "group";
+    }
+    if strategy == 3 {
+        return "time";
+    }
+    if cv {
+        return "kfold";
+    }
+    return "random";
+}
+
+// the column of --split-group, or the part of --split-by after `time:` (empty for the plain and the stratified strategies)
+pub fn column(sp: SplitOpts) -> [] &static [byte] {
+    if sp.group_given {
+        return sp.group;
+    }
+    if sp.by_given && len(sp.by) > 5 {
+        return sp.by[5..len(sp.by)];
+    }
+    return "";
+}
+
+// whether --split-by is `time:` and at least one more byte
+pub fn by_ok[&t](text: &t [byte]) -> [] bool {
+    return len(text) > 5 && bytes.equal(text[0..5], "time:");
+}
+
+// ---------------------------------------------------------------- the canonical text
+
+fn hex(d: int) -> [] int {
+    if d < 10 {
+        return '0' + d;
+    }
+    return 'A' + d - 10;
+}
+
+// the column name with every byte outside A-Z a-z 0-9 _ . - written as % and two upper-case hex digits
+fn put_name[&h, &n](heap: &!h Heap, b0: buffer.Buffer, name: &n [byte]) -> [heap] buffer.Buffer {
+    var b = b0;
+    var i = 0;
+    while i < len(name) {
+        let c = int_of(name[i]);
+        if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '-' {
+            b = buffer.push(heap, b, name[i]);
+        } else {
+            b = buffer.push(heap, b, byte_of('%'));
+            b = buffer.push(heap, b, byte_of(hex(c / 16)));
+            b = buffer.push(heap, b, byte_of(hex(c % 16)));
+        }
+        i = i + 1;
+    }
+    return b;
+}
+
+// the train fraction of `train=F` without trailing zeros: 0.8, 0.75, 0.05
+fn put_train[&h](heap: &!h Heap, b0: buffer.Buffer, num: int, den: int) -> [heap] buffer.Buffer {
+    var b = b0;
+    var digits = 0;
+    var d = den;
+    while d > 1 {
+        d = d / 10;
+        digits = digits + 1;
+    }
+    var train = den - num;
+    // the digits of `train`, zero padded to `digits`, then the trailing zeros dropped
+    var cells = box_slice(heap, digits + 1, 0);
+    borrow mut cells as &!cw in {
+        var k = digits - 1;
+        while k >= 0 {
+            contents(cw)[k] = train % 10;
+            train = train / 10;
+            k = k - 1;
+        }
+        var last = digits;
+        while last > 1 && contents(cw)[last - 1] == 0 {
+            last = last - 1;
+        }
+        b = buffer.append(heap, b, "0.");
+        var j = 0;
+        while j < last {
+            b = buffer.push(heap, b, byte_of('0' + contents(cw)[j]));
+            j = j + 1;
+        }
+    }
+    unbox_slice(heap, cells);
+    return b;
+}
+
+// The canonical text of a split. `cv`: folds and repeats; otherwise `train` is the text of --split (`train=F`, already valid). `strategy` as `strategy`, `col` its column.
+pub fn text[&h, &t, &c](heap: &!h Heap, cv: bool, train: &t [byte], folds: int, repeats: int, strategy: int, col: &c [byte], seed: int) -> [heap] buffer.Buffer {
+    let (ok, num, den) = wiredata.parse_split(train);
+    return text_nd(heap, cv, num, den, folds, repeats, strategy, col, seed);
+}
+
+// the same with the held-out fraction as numbers (`num` over `den`, as wiredata.parse_split gives them): a run record holds the fraction, not the text of the flag
+pub fn text_nd[&h, &c](heap: &!h Heap, cv: bool, num: int, den: int, folds: int, repeats: int, strategy: int, col: &c [byte], seed: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 64);
+    if cv {
+        b = buffer.append(heap, b, "cv folds=");
+        b = buffer.push_nat(heap, b, folds);
+        b = buffer.append(heap, b, " repeats=");
+        b = buffer.push_nat(heap, b, repeats);
+    } else {
+        b = buffer.append(heap, b, "holdout train=");
+        b = put_train(heap, b, num, den);
+    }
+    if strategy == 1 {
+        b = buffer.append(heap, b, " stratify");
+    } else if strategy == 2 {
+        b = buffer.append(heap, b, " group=");
+        b = put_name(heap, b, col);
+    } else if strategy == 3 {
+        b = buffer.append(heap, b, " time=");
+        b = put_name(heap, b, col);
+    }
+    b = buffer.append(heap, b, " seed=");
+    b = buffer.push_nat(heap, b, seed);
+    return b;
+}
+
+// the digit value of an upper-case hex digit, -1 for another byte
+fn unhex(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if c >= 'A' && c <= 'F' {
+        return c - 'A' + 10;
+    }
+    return 0 - 1;
+}
+
+// the column name `put_name` wrote, decoded; the second member is false when the text is not an encoding
+fn decode_name[&h, &n](heap: &!h Heap, enc: &n [byte]) -> [heap] (buffer.Buffer, bool) {
+    var b = buffer.empty(heap, len(enc) + 1);
+    var i = 0;
+    var ok = true;
+    while i < len(enc) {
+        let c = int_of(enc[i]);
+        if c == '%' {
+            if i + 2 >= len(enc) {
+                ok = false;
+                i = len(enc);
+            } else {
+                let hi = unhex(int_of(enc[i + 1]));
+                let lo = unhex(int_of(enc[i + 2]));
+                if hi < 0 || lo < 0 {
+                    ok = false;
+                    i = len(enc);
+                } else {
+                    b = buffer.push(heap, b, byte_of(hi * 16 + lo));
+                    i = i + 3;
+                }
+            }
+        } else {
+            b = buffer.push(heap, b, enc[i]);
+            i = i + 1;
+        }
+    }
+    return (b, ok);
+}
+
+// The parts of the canonical text of a split that a replay of a run record needs (docs/tracking.md section 5.2): (ok, none, held-out numerator, denominator, strategy, column, seed).
+// `ok` only when `text_nd` writes the same text back from the parts, so a text that is not canonical (`train=0.80`, a column spelled with a lower-case escape, a second space) is not ok.
+pub fn parse[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] (bool, bool, int, int, int, buffer.Buffer, int) {
+    if bytes.equal(text, "none") {
+        return (true, true, 0, 0, 0, buffer.empty(heap, 1), 0);
+    }
+    let count = bytes.count_byte(text, ' ') + 1;
+    if count < 3 || count > 4 || !bytes.equal(bytes.field(text, ' ', 1), "holdout") {
+        return (false, false, 0, 0, 0, buffer.empty(heap, 1), 0);
+    }
+    let (tok, num, den) = wiredata.parse_split(bytes.field(text, ' ', 2));
+    var strategy = 0;
+    var col = buffer.empty(heap, 1);
+    var ok = tok;
+    if count == 4 {
+        let f = bytes.field(text, ' ', 3);
+        if bytes.equal(f, "stratify") {
+            strategy = 1;
+        } else if len(f) > 6 && bytes.equal(f[0..6], "group=") {
+            strategy = 2;
+            let (c2, dok) = decode_name(heap, f[6..len(f)]);
+            buffer.drop(heap, col);
+            col = c2;
+            ok = ok && dok;
+        } else if len(f) > 5 && bytes.equal(f[0..5], "time=") {
+            strategy = 3;
+            let (c2, dok) = decode_name(heap, f[5..len(f)]);
+            buffer.drop(heap, col);
+            col = c2;
+            ok = ok && dok;
+        } else {
+            ok = false;
+        }
+    }
+    let sf = bytes.field(text, ' ', count);
+    var seed = 0;
+    if len(sf) < 6 || len(sf) > 24 || !bytes.equal(sf[0..5], "seed=") {
+        ok = false;
+    } else {
+        var i = 5;
+        while i < len(sf) {
+            let c = int_of(sf[i]);
+            if c < '0' || c > '9' {
+                ok = false;
+            } else {
+                seed = seed * 10 + c - '0';
+            }
+            i = i + 1;
+        }
+    }
+    if ok {
+        var again = buffer.empty(heap, 1);
+        borrow col as &cr in {
+            buffer.drop(heap, again);
+            again = text_nd(heap, false, num, den, 0, 0, strategy, buffer.bytes(cr), seed);
+        }
+        borrow again as &ar in {
+            ok = bytes.equal(buffer.bytes(ar), text);
+        }
+        buffer.drop(heap, again);
+    }
+    return (ok, false, num, den, strategy, col, seed);
+}
+
+// ---------------------------------------------------------------- the checks that need no file
+
+// the arguments of the invocation with the flag `name` removed (and its value, when it takes one), or its value replaced
+fn retry_edit[&h, &g](heap: &!h Heap, w: json.Writer, args: &g Args, name: &static [byte], takes_value: bool, replace: bool, value: &static [byte]) -> [heap, args] json.Writer {
+    var o = fail.retry_open(heap, w);
+    var i = 0;
+    while i < arg_count(args) {
+        let a = arg(args, i);
+        var eq = false;
+        var prefixed = false;
+        if len(a) > len(name) && bytes.equal(a[0..len(name)], name) && int_of(a[len(name)]) == '=' {
+            prefixed = true;
+        }
+        if bytes.equal(a, name) {
+            eq = true;
+        }
+        if eq && takes_value {
+            if replace {
+                o = json.put_string(heap, o, a);
+                o = json.put_string(heap, o, value);
+            }
+            i = i + 2;
+        } else if eq || prefixed {
+            if replace {
+                var rep = buffer.empty(heap, 32);
+                rep = buffer.append(heap, rep, name);
+                rep = buffer.push(heap, rep, byte_of('='));
+                rep = buffer.append(heap, rep, value);
+                borrow rep as &rr in {
+                    o = json.put_string(heap, o, buffer.bytes(rr));
+                }
+                buffer.drop(heap, rep);
+            }
+            i = i + 1;
+        } else {
+            o = json.put_string(heap, o, a);
+            i = i + 1;
+        }
+    }
+    return fail.retry_close(heap, o);
+}
+
+// ml.split.combination: two options that cannot be given together. No repair: which of the two to keep is a judgement (dropping a group or a time rule can leak).
+pub fn combination[&h, &a, &b](heap: &!h Heap, errs: fail.Errors, flag: &a [byte], other: &b [byte]) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.combination");
+    w = fail.repair_none(heap, w, "keep one of the two: they are different algorithms, and dropping a group or a time rule can leak rows between the sides");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "flag", flag);
+    w = fail.detail_text(heap, w, "other", other);
+    return fail.add(heap, errs, w);
+}
+
+// --repeats above 1 with --split-by: an expanding window has nothing random to repeat; the repair gives --repeats 1
+pub fn combination_repeats[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args) -> [heap, args] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.combination");
+    w = retry_edit(heap, w, args, "--repeats", true, true, "1");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", "--repeats");
+    w = fail.detail_str(heap, w, "other", "--split-by");
+    return fail.add(heap, errs, w);
+}
+
+pub fn out_of_range[&h, &n](heap: &!h Heap, errs: fail.Errors, flag: &n [byte], value: int, least: int, most: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.out-of-range");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "flag", flag);
+    w = fail.detail_int(heap, w, "value", value);
+    w = fail.detail_int(heap, w, "min", least);
+    w = fail.detail_int(heap, w, "max", most);
+    return fail.add(heap, errs, w);
+}
+
+pub fn folds_max() -> [] int {
+    return 20;
+}
+
+pub fn repeats_max() -> [] int {
+    return 10;
+}
+
+// the entries --emit-folds may put in an answer
+pub fn emit_max() -> [] int {
+    return 1048576;
+}
+
+// What the command line alone settles. verb 1 fit, 3 eval, 5 cv.
+pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, verb: int, table: &static [byte]) -> [heap, args] fail.Errors {
+    var e = errs;
+    let sp = from_cli(args, parsed, table);
+    var n = 0;
+    if sp.stratify {
+        n = n + 1;
+    }
+    if sp.by_given {
+        n = n + 1;
+    }
+    if sp.group_given {
+        n = n + 1;
+    }
+    if n > 1 {
+        var a: &static [byte] = "--stratify";
+        var b: &static [byte] = "--split-by";
+        if sp.stratify && sp.group_given {
+            b = "--split-group";
+        } else if !sp.stratify {
+            a = "--split-by";
+            b = "--split-group";
+        }
+        e = combination(heap, e, a, b);
+    }
+    if sp.by_given && !by_ok(sp.by) {
+        e = wiredata.bad_value(heap, e, "split-by", sp.by, "time:COLUMN, for example time:order_date");
+    }
+    if sp.group_given && len(sp.group) == 0 {
+        e = wiredata.bad_value(heap, e, "split-group", sp.group, "the name of a column");
+    }
+    if verb == 5 {
+        if cli.has(parsed, table, "split") {
+            e = combination(heap, e, "--split", "cv");
+        }
+        if sp.folds < 2 || sp.folds > folds_max() {
+            e = out_of_range(heap, e, "folds", sp.folds, 2, folds_max());
+        }
+        if sp.repeats < 1 || sp.repeats > repeats_max() {
+            e = out_of_range(heap, e, "repeats", sp.repeats, 1, repeats_max());
+        } else if sp.repeats > 1 && sp.by_given && by_ok(sp.by) {
+            e = combination_repeats(heap, e, args);
+        }
+    } else if !cli.has(parsed, table, "split") && (n > 0 || sp.emit) {
+        var flag: &static [byte] = "emit-folds";
+        if sp.stratify {
+            flag = "stratify";
+        } else if sp.by_given {
+            flag = "split-by";
+        } else if sp.group_given {
+            flag = "split-group";
+        }
+        e = wiredata.conflict(heap, e, flag, "this flag chooses how the --split rows are held out: it needs --split train=F");
+    }
+    return e;
+}
+
+// ---------------------------------------------------------------- errors of the data
+
+// ml.split.stratify-target
+pub fn stratify_target[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, task: int) -> [heap, args] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.stratify-target");
+    w = retry_edit(heap, w, args, "--stratify", false, false, "");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "task", wiredata.task_word(task));
+    return fail.add(heap, errs, w);
+}
+
+// ml.split.stratum-too-small: a class has `rows` rows and the split needs `need`; with --folds given the repair lowers it when that is still a cross-validation
+pub fn stratum_too_small[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, cv: bool, label: int, rows: int, need: int) -> [heap, args] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.stratum-too-small");
+    if cv && rows >= 2 {
+        var v = buffer.push_nat(heap, buffer.empty(heap, 8), rows);
+        borrow v as &vr in {
+            w = retry_value(heap, w, args, "--folds", buffer.bytes(vr));
+        }
+        buffer.drop(heap, v);
+    } else {
+        w = fail.no_repair(heap, w);
+    }
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "class", label);
+    w = fail.detail_int(heap, w, "rows", rows);
+    w = fail.detail_int(heap, w, "need", need);
+    return fail.add(heap, errs, w);
+}
+
+// --flag VALUE, appended when the flag is not on the command line, else replaced
+fn retry_value[&h, &g, &v](heap: &!h Heap, w: json.Writer, args: &g Args, name: &static [byte], value: &v [byte]) -> [heap, args] json.Writer {
+    var given = false;
+    var i = 0;
+    while i < arg_count(args) {
+        if bytes.equal(arg(args, i), name) {
+            given = true;
+        }
+        i = i + 1;
+    }
+    var o = fail.retry_open(heap, w);
+    i = 0;
+    while i < arg_count(args) {
+        let a = arg(args, i);
+        if bytes.equal(a, name) {
+            o = json.put_string(heap, o, a);
+            o = json.put_string(heap, o, value);
+            i = i + 2;
+        } else {
+            o = json.put_string(heap, o, a);
+            i = i + 1;
+        }
+    }
+    if !given {
+        o = json.put_string(heap, o, name);
+        o = json.put_string(heap, o, value);
+    }
+    return fail.retry_close(heap, o);
+}
+
+// ml.split.too-few-groups
+pub fn too_few_groups[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, cv: bool, groups: int, need: int) -> [heap, args] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.too-few-groups");
+    if cv && groups >= 2 {
+        var v = buffer.push_nat(heap, buffer.empty(heap, 8), groups);
+        borrow v as &vr in {
+            w = retry_value(heap, w, args, "--folds", buffer.bytes(vr));
+        }
+        buffer.drop(heap, v);
+    } else {
+        w = fail.no_repair(heap, w);
+    }
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "groups", groups);
+    w = fail.detail_int(heap, w, "need", need);
+    return fail.add(heap, errs, w);
+}
+
+pub fn time_format[&h, &c](heap: &!h Heap, errs: fail.Errors, col: &c [byte], row: int, reason: &static [byte]) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.time-format");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "row", row);
+    w = fail.detail_text(heap, w, "column", col);
+    w = fail.detail_str(heap, w, "reason", reason);
+    return fail.add(heap, errs, w);
+}
+
+pub fn missing_cell[&h, &c](heap: &!h Heap, errs: fail.Errors, col: &c [byte], row: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.missing-cell");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "row", row);
+    w = fail.detail_text(heap, w, "column", col);
+    return fail.add(heap, errs, w);
+}
+
+pub fn column_target[&h, &c](heap: &!h Heap, errs: fail.Errors, flag: &static [byte], col: &c [byte]) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.column-target");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    w = fail.detail_text(heap, w, "column", col);
+    return fail.add(heap, errs, w);
+}
+
+pub fn emit_too_large[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, entries: int) -> [heap, args] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.emit-too-large");
+    w = retry_edit(heap, w, args, "--emit-folds", false, false, "");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "entries", entries);
+    w = fail.detail_int(heap, w, "max", emit_max());
+    return fail.add(heap, errs, w);
+}
+
+// the error of a plan result `(kind, a, b)` of ml.splitplan
+pub fn plan_error[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, cv: bool, kind: int, a: int, b: int, need: int) -> [heap, args] fail.Errors {
+    if kind == 2 {
+        return stratum_too_small(heap, errs, args, cv, a, b, need);
+    }
+    if kind == 3 {
+        return too_few_groups(heap, errs, args, cv, a, b);
+    }
+    return wiredata.code_error(heap, errs, rules.empty_fold(), 0, 0, 0);
+}
