@@ -1,0 +1,290 @@
+module linalg.syrk;
+
+import linalg.order;
+import linalg.tensor;
+import ml.refuse;
+
+// C = X^T X, the entries C[j][k] with j <= k written (the other triangle is not touched). Order: docs/linalg.md section 2.1:
+// each entry is the block rule (blocks of 256 rows), the lane rule inside a block (row i of the block to lane i mod 4, each lane
+// ascending from +0.0, partial (l0 + l1) + (l2 + l3)) and the tree rule over rows i of X_ij * X_ik. A block's partial is built tile
+// by tile (2 x 2 entries, four lanes each: sixteen accumulators held across the whole block); the partials of the blocks are
+// settled on the order.* stack, a d x d square per slot (only j <= k is meaningful).
+
+// accumulators of a full 2 x 2 tile over rows [r0, r1) of one block (r0 a multiple of 4); xs positioned at X[0, 0], row stride rs
+fn tile22[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, j0: int, k0: int, slot: &!s [float], d: int) -> [] int {
+    var c000 = 0.0;
+    var c001 = 0.0;
+    var c002 = 0.0;
+    var c003 = 0.0;
+    var c010 = 0.0;
+    var c011 = 0.0;
+    var c012 = 0.0;
+    var c013 = 0.0;
+    var c100 = 0.0;
+    var c101 = 0.0;
+    var c102 = 0.0;
+    var c103 = 0.0;
+    var c110 = 0.0;
+    var c111 = 0.0;
+    var c112 = 0.0;
+    var c113 = 0.0;
+    // the offsets of row i are carried (wrapping adds: no multiplication to check in the loop); xs[a..b] still checks the range
+    var pj = r0 * rs + j0;
+    var qk = r0 * rs + k0;
+    var i = r0;
+    while i + 4 <= r1 {
+        let p0 = xs[pj..wrapping_add(pj, 2)];
+        let q0 = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        let p1 = xs[pj..wrapping_add(pj, 2)];
+        let q1 = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        let p2 = xs[pj..wrapping_add(pj, 2)];
+        let q2 = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        let p3 = xs[pj..wrapping_add(pj, 2)];
+        let q3 = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        c000 = c000 + p0[0] * q0[0];
+        c010 = c010 + p0[0] * q0[1];
+        c100 = c100 + p0[1] * q0[0];
+        c110 = c110 + p0[1] * q0[1];
+        c001 = c001 + p1[0] * q1[0];
+        c011 = c011 + p1[0] * q1[1];
+        c101 = c101 + p1[1] * q1[0];
+        c111 = c111 + p1[1] * q1[1];
+        c002 = c002 + p2[0] * q2[0];
+        c012 = c012 + p2[0] * q2[1];
+        c102 = c102 + p2[1] * q2[0];
+        c112 = c112 + p2[1] * q2[1];
+        c003 = c003 + p3[0] * q3[0];
+        c013 = c013 + p3[0] * q3[1];
+        c103 = c103 + p3[1] * q3[0];
+        c113 = c113 + p3[1] * q3[1];
+        i = i + 4;
+    }
+    if i + 0 < r1 {
+        let p = xs[pj..wrapping_add(pj, 2)];
+        let q = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        c000 = c000 + p[0] * q[0];
+        c010 = c010 + p[0] * q[1];
+        c100 = c100 + p[1] * q[0];
+        c110 = c110 + p[1] * q[1];
+    }
+    if i + 1 < r1 {
+        let p = xs[pj..wrapping_add(pj, 2)];
+        let q = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        c001 = c001 + p[0] * q[0];
+        c011 = c011 + p[0] * q[1];
+        c101 = c101 + p[1] * q[0];
+        c111 = c111 + p[1] * q[1];
+    }
+    if i + 2 < r1 {
+        let p = xs[pj..wrapping_add(pj, 2)];
+        let q = xs[qk..wrapping_add(qk, 2)];
+        pj = wrapping_add(pj, rs);
+        qk = wrapping_add(qk, rs);
+        c002 = c002 + p[0] * q[0];
+        c012 = c012 + p[0] * q[1];
+        c102 = c102 + p[1] * q[0];
+        c112 = c112 + p[1] * q[1];
+    }
+    slot[(j0 + 0) * d + k0 + 0] = order.lane_combine(c000, c001, c002, c003);
+    slot[(j0 + 0) * d + k0 + 1] = order.lane_combine(c010, c011, c012, c013);
+    slot[(j0 + 1) * d + k0 + 0] = order.lane_combine(c100, c101, c102, c103);
+    slot[(j0 + 1) * d + k0 + 1] = order.lane_combine(c110, c111, c112, c113);
+    return 0;
+}
+
+// one entry, rows [r0, r1) of one block (r0 a multiple of 4): four lanes, lane = (i - r0) mod 4; ja and kb are the two columns
+fn lane_entry[&x](xs: &x [float], rs: int, r0: int, r1: int, ja: int, kb: int) -> [] float {
+    var s0 = 0.0;
+    var s1 = 0.0;
+    var s2 = 0.0;
+    var s3 = 0.0;
+    var i = r0;
+    while i + 4 <= r1 {
+        s0 = s0 + xs[i * rs + ja] * xs[i * rs + kb];
+        s1 = s1 + xs[(i + 1) * rs + ja] * xs[(i + 1) * rs + kb];
+        s2 = s2 + xs[(i + 2) * rs + ja] * xs[(i + 2) * rs + kb];
+        s3 = s3 + xs[(i + 3) * rs + ja] * xs[(i + 3) * rs + kb];
+        i = i + 4;
+    }
+    if i < r1 {
+        s0 = s0 + xs[i * rs + ja] * xs[i * rs + kb];
+    }
+    if i + 1 < r1 {
+        s1 = s1 + xs[(i + 1) * rs + ja] * xs[(i + 1) * rs + kb];
+    }
+    if i + 2 < r1 {
+        s2 = s2 + xs[(i + 2) * rs + ja] * xs[(i + 2) * rs + kb];
+    }
+    return order.lane_combine(s0, s1, s2, s3);
+}
+
+// an edge tile (jb x kb entries, each at most 2): one entry at a time
+fn tile_edge[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, j0: int, jb: int, k0: int, kb: int, slot: &!s [float], d: int) -> [] int {
+    var j = 0;
+    while j < jb {
+        var k = 0;
+        while k < kb {
+            slot[(j0 + j) * d + k0 + k] = lane_entry(xs, rs, r0, r1, j0 + j, k0 + k);
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// the partial of rows [r0, r1) (one block) into slot, all tiles with k0 >= j0
+fn block_tiles[&x, &s](xs: &x [float], rs: int, r0: int, r1: int, slot: &!s [float], d: int) -> [] int {
+    var j0 = 0;
+    while j0 < d {
+        var jb = 2;
+        if j0 + 2 > d {
+            jb = d - j0;
+        }
+        var k0 = j0;
+        while k0 < d {
+            var kb = 2;
+            if k0 + 2 > d {
+                kb = d - k0;
+            }
+            if jb == 2 && kb == 2 {
+                tile22(xs, rs, r0, r1, j0, k0, slot, d);
+            } else {
+                tile_edge(xs, rs, r0, r1, j0, jb, k0, kb, slot, d);
+            }
+            k0 = k0 + 2;
+        }
+        j0 = j0 + 2;
+    }
+    return 0;
+}
+
+// blocks [b0, b1) pushed on the stack (st/lv, width d*d) from slot sp0; xs positioned at X[0, 0]; answers the new sp
+pub fn syrk_blocks[&x, &s, &l](xs: &x [float], rs: int, n: int, d: int, b0: int, b1: int, st: &!s [float], lv: &!l [int], sp0: int) -> [] int {
+    var sp = sp0;
+    var b = b0;
+    while b < b1 {
+        var hi = (b + 1) * 256;
+        if hi > n {
+            hi = n;
+        }
+        block_tiles(xs, rs, b * 256, hi, st[sp * d * d..sp * d * d + d * d], d);
+        sp = order.settle(st, lv, sp, d * d);
+        b = b + 1;
+    }
+    return sp;
+}
+
+// the same partial through arbitrary strides: four lanes per entry (lane = (i - r0) mod 4), indexed through the descriptor
+fn block_generic[&x, &s](xd: &x [float], xo: int, rs: int, cs: int, r0: int, r1: int, slot: &!s [float], d: int) -> [] int {
+    var j = 0;
+    while j < d {
+        var k = j;
+        while k < d {
+            var s0 = 0.0;
+            var s1 = 0.0;
+            var s2 = 0.0;
+            var s3 = 0.0;
+            var i = r0;
+            while i < r1 {
+                let p = xd[xo + i * rs + j * cs] * xd[xo + i * rs + k * cs];
+                let l = (i - r0) % 4;
+                if l == 0 {
+                    s0 = s0 + p;
+                } else if l == 1 {
+                    s1 = s1 + p;
+                } else if l == 2 {
+                    s2 = s2 + p;
+                } else {
+                    s3 = s3 + p;
+                }
+                i = i + 1;
+            }
+            slot[j * d + k] = order.lane_combine(s0, s1, s2, s3);
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// write the upper triangle of the d x d square `sq` into the output matrix
+pub fn store_upper[&r, &c](sq: &r [float], ct: tensor.Tensor, cd: &!c [float], d: int) -> [] int {
+    var j = 0;
+    while j < d {
+        var k = j;
+        while k < d {
+            cd[ct.off + j * ct.t0 + k * ct.t1] = sq[j * d + k];
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// X is n x d; C is d x d and writable. Answers a refusal code, 0 when done.
+pub fn syrk[&h, &x, &c](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], ct: tensor.Tensor, cd: &!c [float]) -> [heap] int {
+    var cc = tensor.expect(xt, 2, len(xd));
+    if cc != 0 {
+        return cc;
+    }
+    cc = tensor.expect(ct, 2, len(cd));
+    if cc != 0 {
+        return cc;
+    }
+    cc = tensor.writable(ct);
+    if cc != 0 {
+        return cc;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    if ct.s0 != d || ct.s1 != d {
+        return refuse.tensor_shape();
+    }
+    if d == 0 {
+        return 0;
+    }
+    let st = box_slice(heap, 40 * d * d, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    borrow mut st as &!sw in {
+        borrow mut lv as &!lw in {
+            if n == 0 {
+                // the sum over no rows: +0.0 everywhere (slot 0 is already zero)
+                store_upper(contents(sw), ct, cd, d);
+            } else {
+                var sp = 0;
+                let nb = order.blocks(n);
+                if xt.t1 == 1 && xt.t0 >= 0 {
+                    sp = syrk_blocks(xd[xt.off..len(xd)], xt.t0, n, d, 0, nb, contents(sw), contents(lw), 0);
+                } else {
+                    var b = 0;
+                    while b < nb {
+                        var hi = (b + 1) * 256;
+                        if hi > n {
+                            hi = n;
+                        }
+                        block_generic(xd, xt.off, xt.t0, xt.t1, b * 256, hi, contents(sw)[sp * d * d..sp * d * d + d * d], d);
+                        sp = order.settle(contents(sw), contents(lw), sp, d * d);
+                        b = b + 1;
+                    }
+                }
+                order.finish(contents(sw), sp, d * d);
+                store_upper(contents(sw), ct, cd, d);
+            }
+        }
+    }
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    return 0;
+}

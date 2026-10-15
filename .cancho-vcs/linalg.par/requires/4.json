@@ -1,0 +1,47 @@
+{
+  "store": "../linalg.syrk",
+  "lock": {
+    "entries": {
+      "block_generic": {
+        "sig_id": "897032a6cb159ce7557ce27ba792e3ca79cc16756b163004bcfb7582be43a769",
+        "stage_id": "914d959f0bf0008c1318735cd86dc96417b3cd3fdd6788be867f8a4376c77cf4",
+        "source_hash": "0b651656cd1e8e35a0e318fd8d3f94cccd1941739a970b4edbccd091333d59bc"
+      },
+      "block_tiles": {
+        "sig_id": "36478cc56fef28e1a1c9fac73d00021b5643d42a21199310b92248f74bffbc3f",
+        "stage_id": "1ce2f385c31f70440fcf5b12aed63c768d1e3ca9cca6c6cf109a10e6b3478df8",
+        "source_hash": "0b651656cd1e8e35a0e318fd8d3f94cccd1941739a970b4edbccd091333d59bc"
+      },
+      "lane_entry": {
+        "sig_id": "e88c6b76a11fc6daec8731d116089b3e4e4aa8c6e1ade35b51119fef03d80654",
+        "stage_id": "90ac7644393863de24a285aa72b2b234e9d393349a3beb5df499a5cf76c933bf",
+        "source_hash": "0b651656cd1e8e35a0e318fd8d3f94cccd1941739a970b4edbccd091333d59bc"
+      },
+      "store_upper": {
+        "sig_id": "63e68e8a09f75b69cb07f9c53158ec7b3c6f63e2769a5ff33d732ce5bf93ee7b",
+        "stage_id": "ccb5e6b225365a34075b3fc7b1d700afb8e8ee0e16e5621b78d13b0e809643e4",
+        "source_hash": "0b651656cd1e8e35a0e318fd8d3f94cccd1941739a970b4edbccd091333d59bc"
+      },
+      "syrk": {
+        "sig_id": "b940bff0e64223f8c3d3087db09af2496a934bd16cebc00b4da0208bfa147ee2",
+        "stage_id": "2371384ae1bb2633900c32d6daaf55d390f0f198131d2bcf392165d5d4d03719",
+        "source_hash": "0b651656cd1e8e35a0e318fd8d3f94cccd1941739a970b4edbccd091333d59bc"
+      },
+      "syrk_blocks": {
+        "sig_id": "5ff75d2e0734a43522a07c165292a087cf2f7eba14f4ada15ac92067c39b416e",
+        "stage_id": "720407c77decec5462efbb48edce51a5a9acdefed861d929455ca4ddb9efb5ac",
+        "source_hash": "0b651656cd1e8e35a0e318fd8d3f94cccd1941739a970b4edbccd091333d59bc"
+      },
+      "tile22": {
+        "sig_id": "fb36bb40a86ae5af2afa0eba77c278c9a4a5c68faab650213ad593745922fe82",
+        "stage_id": "4373106952c604ce5f9a5bdb68ea16a9b09bc9886a810eff18768cfc8728150f",
+        "source_hash": "0b651656cd1e8e35a0e318fd8d3f94cccd1941739a970b4edbccd091333d59bc"
+      },
+      "tile_edge": {
+        "sig_id": "dbec0705ac815db153131d5e9c02f9357f748b1dee964b1eed7c1f8d85f5b143",
+        "stage_id": "44acb28e85a5fba6b3a99e95e6d7509816716d0292119b1467fd0b4495d17035",
+        "source_hash": "0b651656cd1e8e35a0e318fd8d3f94cccd1941739a970b4edbccd091333d59bc"
+      }
+    }
+  }
+}

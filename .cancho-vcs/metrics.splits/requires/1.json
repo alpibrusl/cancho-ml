@@ -1,0 +1,42 @@
+{
+  "store": "../ml.limits",
+  "lock": {
+    "entries": {
+      "ceiling_cells": {
+        "sig_id": "1e1917b1374b269009d5ce53fbf9e8e3346a971012d26395100d679e62553675",
+        "stage_id": "297ab72e47a54545c638029d69307b39adb962428cd547a6236a33aa02c76f68",
+        "source_hash": "d619148eefa889e211104ed77b00c69305652b89765d8aa7a1b23803db76bba1"
+      },
+      "ceiling_dim": {
+        "sig_id": "e467351a7f02851d737e9415bb114f3424cd73993c4f559ca0848840a07b46b0",
+        "stage_id": "e3754743d841810da4ac8ad1f7a0d124769c4162f0be6217f05091f34d36fbab",
+        "source_hash": "d619148eefa889e211104ed77b00c69305652b89765d8aa7a1b23803db76bba1"
+      },
+      "check_matrix": {
+        "sig_id": "18be09a9ff720a5158be9bca68cd1e6cb4c11e041c20771e527fe77c4973d91a",
+        "stage_id": "7a0dff38c2cc9de6bfc9114e4cab1468ee8119ed5a78856aaf22e858dd3fd416",
+        "source_hash": "d619148eefa889e211104ed77b00c69305652b89765d8aa7a1b23803db76bba1"
+      },
+      "check_threads": {
+        "sig_id": "7f94849e366683433d846e41a917bd1d35a240b2c7bdf74b7b0c5ade81390337",
+        "stage_id": "de6cbb26a8e4e629f47b3e026c6157ac46ad3a01d4037945ae8986c456931961",
+        "source_hash": "d619148eefa889e211104ed77b00c69305652b89765d8aa7a1b23803db76bba1"
+      },
+      "default_cells": {
+        "sig_id": "7509c572b69f4087b85a7809bf724ac1fad56aed06d25ef47f6d6d8819d8ca3c",
+        "stage_id": "df1a22d60e73a2416ceea0ae786f3ec49da08f0189ee4142b90cdddb6475d78a",
+        "source_hash": "d619148eefa889e211104ed77b00c69305652b89765d8aa7a1b23803db76bba1"
+      },
+      "default_cols": {
+        "sig_id": "814e54af459c07ebb952dce40832b428543f6a5720db48ff022240ff4f87ab64",
+        "stage_id": "4243821a1968d4004fb7425b4b5f6f5eb59f28f49abe97f08e238f8b69509d0d",
+        "source_hash": "d619148eefa889e211104ed77b00c69305652b89765d8aa7a1b23803db76bba1"
+      },
+      "default_rows": {
+        "sig_id": "063e7b347790eab62233b3ab445e0ee3fc2c6cddaeba40fccd74e092d137549e",
+        "stage_id": "2867092cb54b2d447edb18a025b02bb5e2d50e48381b5eeaa204de412e7dbe57",
+        "source_hash": "d619148eefa889e211104ed77b00c69305652b89765d8aa7a1b23803db76bba1"
+      }
+    }
+  }
+}

@@ -489,7 +489,7 @@ cancho-table exports and cancho-ml depends on at a pinned commit; (b) a small `c
 Recommendation: (a) now, (b) only if cancho-table's reader moves for cancho-ml's sake. *(Done, `docs/reader.md` section 1: option (a) needed
 no change to any source of cancho-table, only that it publish `pow5`, `dec`, `flt`, `query`, `facc` and `reader` as `.cancho-vcs` stores
 at a commit, with a CI check that they match (cancho-table PR #44, merged). `ml` pins five of them as `[dependencies.*]` (`pow5`, `dec`, `flt`, `facc`, `reader`); the proposal is kept in
-`docs/upstream/` as the record.)*
+`docs/upstream/` as the record. In the other direction, `lib/core`, `lib/linalg` and `lib/metrics` are published as 23 `.cancho-vcs` stores that cancho-stats pins: `docs/stores.md`.)*
 
 ## 11. What M0 must settle before section 6 and 9 are final
 
