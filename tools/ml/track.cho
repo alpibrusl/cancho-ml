@@ -643,7 +643,6 @@ pub fn plan[&h, &f, &r, &pt, &dp, &op, &fb, &sh, &tn, &pl, &mt, &nv](heap: &!h H
     return (rec, id, write, e);
 }
 
-
 // The pieces of an answer that has a run record: the file name `<id>.json`, the `run` member (`{"id":..,"dir":..,"file":..,"written":..,"sha256":..}`) and the entry of a dry run's planned_actions
 // (empty when the record already exists and nothing would be written). `write` says whether the record is a new file, `dry` whether this is a dry run.
 pub fn answer_parts[&h, &i, &d, &rc](heap: &!h Heap, id: &i [byte], dir: &d [byte], rec: &rc [byte], write: bool, dry: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer) {
@@ -844,68 +843,68 @@ pub fn eval_after[&h, &f, &r, &pd, &pf, &pm, &pa](heap: &!h Heap, fs: &f Fs(""),
     borrow mhex as &mhr in {
         let (rid, rst, rbad, rax) = find_run(heap, fs, root, dirp, buffer.bytes(mhr));
         borrow rid as &ridr in {
-        borrow rbad as &rbr in {
-        if rst == 1 {
-            var w = open_error(heap, "ml.runs.unknown-model");
-            w = fail.detail_str(heap, w, "model_sha256", buffer.bytes(mhr));
-            e = fail.add(heap, e, w);
-            go = false;
-        } else if rst == 2 {
-            e = fail.io_error(heap, e, rax, false, paths.shown(dirp));
-            go = false;
-        } else if rst == 3 {
-            var w = open_error(heap, "ml.runs.damaged");
-            w = fail.detail_text(heap, w, "file", buffer.bytes(rbr));
-            e = fail.add(heap, e, w);
-            go = false;
-        } else if rst == 4 {
-            var w = open_error(heap, "ml.runs.too-many");
-            w = fail.detail_int(heap, w, "max", max_records());
-            e = fail.add(heap, e, w);
-            go = false;
-        }
-        if go {
-            // the metrics and the rows of the answer, and whether it scored the training file
-            let tape = box_slice(heap, json.tape_len(payload), 0);
-            var tw = tape;
-            var frag = buffer.empty(heap, 1);
-            var rows = 0;
-            var onw = buffer.empty(heap, 1);
-            borrow mut tw as &!tp in {
-                if json.parse(payload, contents(tp)) > 0 {
-                    let mm = json.get(payload, contents(tp), 0, "metrics");
-                    let rr = json.get(payload, contents(tp), 0, "rows");
-                    let oo = json.get(payload, contents(tp), 0, "on");
-                    if mm >= 0 && rr >= 0 && oo >= 0 {
-                        buffer.drop(heap, frag);
-                        frag = node_text(heap, payload, contents(tp), mm);
-                        rows = json.to_int(payload, contents(tp), rr);
-                        buffer.drop(heap, onw);
-                        onw = str_of(heap, payload, contents(tp), oo);
-                    } else {
-                        go = false;
-                    }
-                } else {
+            borrow rbad as &rbr in {
+                if rst == 1 {
+                    var w = open_error(heap, "ml.runs.unknown-model");
+                    w = fail.detail_str(heap, w, "model_sha256", buffer.bytes(mhr));
+                    e = fail.add(heap, e, w);
+                    go = false;
+                } else if rst == 2 {
+                    e = fail.io_error(heap, e, rax, false, paths.shown(dirp));
+                    go = false;
+                } else if rst == 3 {
+                    var w = open_error(heap, "ml.runs.damaged");
+                    w = fail.detail_text(heap, w, "file", buffer.bytes(rbr));
+                    e = fail.add(heap, e, w);
+                    go = false;
+                } else if rst == 4 {
+                    var w = open_error(heap, "ml.runs.too-many");
+                    w = fail.detail_int(heap, w, "max", max_records());
+                    e = fail.add(heap, e, w);
                     go = false;
                 }
-            }
-            unbox_slice(heap, tw);
-            if go {
-                borrow frag as &fr in {
-                    borrow onw as &onr in {
-                        borrow shex as &shr in {
-                            buffer.drop(heap, rec);
-                            rec = eval_record(heap, buffer.bytes(ridr), buffer.bytes(mhr), paths.shown(file), size, buffer.bytes(shr), rows, buffer.bytes(onr), o.split_num, o.split_den, o.seed, o.positive_v, o.positive_given, buffer.bytes(fr));
-                            buffer.drop(heap, name);
-                            name = eval_name(heap, buffer.bytes(ridr), buffer.bytes(shr));
+                if go {
+                    // the metrics and the rows of the answer, and whether it scored the training file
+                    let tape = box_slice(heap, json.tape_len(payload), 0);
+                    var tw = tape;
+                    var frag = buffer.empty(heap, 1);
+                    var rows = 0;
+                    var onw = buffer.empty(heap, 1);
+                    borrow mut tw as &!tp in {
+                        if json.parse(payload, contents(tp)) > 0 {
+                            let mm = json.get(payload, contents(tp), 0, "metrics");
+                            let rr = json.get(payload, contents(tp), 0, "rows");
+                            let oo = json.get(payload, contents(tp), 0, "on");
+                            if mm >= 0 && rr >= 0 && oo >= 0 {
+                                buffer.drop(heap, frag);
+                                frag = node_text(heap, payload, contents(tp), mm);
+                                rows = json.to_int(payload, contents(tp), rr);
+                                buffer.drop(heap, onw);
+                                onw = str_of(heap, payload, contents(tp), oo);
+                            } else {
+                                go = false;
+                            }
+                        } else {
+                            go = false;
                         }
                     }
+                    unbox_slice(heap, tw);
+                    if go {
+                        borrow frag as &fr in {
+                            borrow onw as &onr in {
+                                borrow shex as &shr in {
+                                    buffer.drop(heap, rec);
+                                    rec = eval_record(heap, buffer.bytes(ridr), buffer.bytes(mhr), paths.shown(file), size, buffer.bytes(shr), rows, buffer.bytes(onr), o.split_num, o.split_den, o.seed, o.positive_v, o.positive_given, buffer.bytes(fr));
+                                    buffer.drop(heap, name);
+                                    name = eval_name(heap, buffer.bytes(ridr), buffer.bytes(shr));
+                                }
+                            }
+                        }
+                    }
+                    buffer.drop(heap, frag);
+                    buffer.drop(heap, onw);
                 }
             }
-            buffer.drop(heap, frag);
-            buffer.drop(heap, onw);
-        }
-        }
         }
         buffer.drop(heap, rid);
         buffer.drop(heap, rbad);

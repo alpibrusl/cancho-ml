@@ -671,179 +671,179 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                 let threads = o.threads;
                 let full = full_path(heap, root, text, contents(tp), data);
                 borrow full as &fur in {
-                borrow dpath as &dpr in {
-                borrow dsha as &dsr in {
-                borrow target as &tgr in {
-                borrow plan as &plr in {
-                borrow drops as &drr in {
-                borrow floats as &flr in {
-                borrow cats as &ctr in {
-                borrow na as &nar in {
-                borrow task as &tkr in {
-                borrow msha as &msr in {
-                borrow compiler as &cpr in {
-                    // 1 the training file named by the record must be the one it hashed
-                    var go = true;
-                    if len(root) == 0 && paths.has_double_dot(buffer.bytes(fur)) {
-                        e = damaged(heap, e, buffer.bytes(dpr));
-                        go = false;
-                    }
-                    if go {
-                        let (dg, dsize, hst, hax) = fsio.sha_file(heap, fs, root, buffer.bytes(dpr), buffer.bytes(fur));
-                        if hst != 0 {
-                            e = fail.io_error(heap, e, hax, false, buffer.bytes(dpr));
-                            go = false;
-                        } else {
-                            var found = buffer.empty(heap, 1);
-                            borrow dg as &dgr in {
-                                buffer.drop(heap, found);
-                                found = prov.hex(heap, buffer.bytes(dgr));
-                            }
-                            borrow found as &fdr in {
-                                if !bytes.equal(buffer.bytes(fdr), buffer.bytes(dsr)) {
-                                    var w = track.open_error(heap, "ml.runs.data-changed");
-                                    w = fail.detail_str(heap, w, "recorded", buffer.bytes(dsr));
-                                    w = fail.detail_str(heap, w, "found", buffer.bytes(fdr));
-                                    e = fail.add(heap, e, w);
-                                    go = false;
+                    borrow dpath as &dpr in {
+                        borrow dsha as &dsr in {
+                            borrow target as &tgr in {
+                                borrow plan as &plr in {
+                                    borrow drops as &drr in {
+                                        borrow floats as &flr in {
+                                            borrow cats as &ctr in {
+                                                borrow na as &nar in {
+                                                    borrow task as &tkr in {
+                                                        borrow msha as &msr in {
+                                                            borrow compiler as &cpr in {
+                                                                // 1 the training file named by the record must be the one it hashed
+                                                                var go = true;
+                                                                if len(root) == 0 && paths.has_double_dot(buffer.bytes(fur)) {
+                                                                    e = damaged(heap, e, buffer.bytes(dpr));
+                                                                    go = false;
+                                                                }
+                                                                if go {
+                                                                    let (dg, dsize, hst, hax) = fsio.sha_file(heap, fs, root, buffer.bytes(dpr), buffer.bytes(fur));
+                                                                    if hst != 0 {
+                                                                        e = fail.io_error(heap, e, hax, false, buffer.bytes(dpr));
+                                                                        go = false;
+                                                                    } else {
+                                                                        var found = buffer.empty(heap, 1);
+                                                                        borrow dg as &dgr in {
+                                                                            buffer.drop(heap, found);
+                                                                            found = prov.hex(heap, buffer.bytes(dgr));
+                                                                        }
+                                                                        borrow found as &fdr in {
+                                                                            if !bytes.equal(buffer.bytes(fdr), buffer.bytes(dsr)) {
+                                                                                var w = track.open_error(heap, "ml.runs.data-changed");
+                                                                                w = fail.detail_str(heap, w, "recorded", buffer.bytes(dsr));
+                                                                                w = fail.detail_str(heap, w, "found", buffer.bytes(fdr));
+                                                                                e = fail.add(heap, e, w);
+                                                                                go = false;
+                                                                            }
+                                                                        }
+                                                                        buffer.drop(heap, found);
+                                                                    }
+                                                                    buffer.drop(heap, dg);
+                                                                }
+                                                                var dmask = 0;
+                                                                var fmask = 0;
+                                                                var cmask = 0;
+                                                                let rp = paths.of_path(heap, buffer.bytes(dpr), buffer.bytes(fur));
+                                                                if go {
+                                                                    // 2 the places of the flagged columns in the header: the reader is configured with positions
+                                                                    let hdr = replay_opts(0, 1, 0, 1, false, false, 0, 0, 0, false, mc, ms, mp, mk, 0, 0, 0);
+                                                                    let hcfg = verbs.config(hdr, 0, 0, 0);
+                                                                    borrow rp as &rpr in {
+                                                                        let (sh, rep, e1, sk1) = verbs.scan_file(heap, fs, root, rpr, hcfg, buffer.bytes(tgr), csv.plain_sinks(heap, 8, false), e);
+                                                                        e = e1;
+                                                                        csv.drop_sinks(heap, sk1);
+                                                                        if rep.status == 99 {
+                                                                            e = fail.io_error(heap, e, rep.aux, false, buffer.bytes(dpr));
+                                                                            go = false;
+                                                                        } else {
+                                                                            var m1 = 0;
+                                                                            var b1 = 0;
+                                                                            var m2 = 0;
+                                                                            var b2 = 0;
+                                                                            var m3 = 0;
+                                                                            var b3 = 0;
+                                                                            borrow sh as &shr in {
+                                                                                let (x1, y1) = list_mask(shr, buffer.bytes(drr));
+                                                                                let (x2, y2) = list_mask(shr, buffer.bytes(flr));
+                                                                                let (x3, y3) = list_mask(shr, buffer.bytes(ctr));
+                                                                                m1 = x1;
+                                                                                b1 = y1;
+                                                                                m2 = x2;
+                                                                                b2 = y2;
+                                                                                m3 = x3;
+                                                                                b3 = y3;
+                                                                            }
+                                                                            dmask = m1;
+                                                                            fmask = m2;
+                                                                            cmask = m3;
+                                                                            if b1 > 0 {
+                                                                                e = not_replayable(heap, e, "drop", bytes.field(buffer.bytes(drr), ',', b1));
+                                                                                go = false;
+                                                                            } else if b2 > 0 {
+                                                                                e = not_replayable(heap, e, "float", bytes.field(buffer.bytes(flr), ',', b2));
+                                                                                go = false;
+                                                                            } else if b3 > 0 {
+                                                                                e = not_replayable(heap, e, "cat", bytes.field(buffer.bytes(ctr), ',', b3));
+                                                                                go = false;
+                                                                            }
+                                                                        }
+                                                                        csv.drop_shape(heap, sh);
+                                                                    }
+                                                                }
+                                                                if go {
+                                                                    // 3 the refit, in memory
+                                                                    let constant = bytes.find(buffer.bytes(plr), "kind=constant") >= 0;
+                                                                    var otask = 1;
+                                                                    if bytes.equal(buffer.bytes(tkr), "classification") {
+                                                                        otask = 2;
+                                                                    }
+                                                                    let ro = replay_opts(1000000000, otask, seed, threads, len(buffer.bytes(tgr)) > 0, has_pos, pos, snum, sden, cat_given, mc, ms, mp, mk, dmask, fmask, cmask);
+                                                                    var fbytes = buffer.empty(heap, 1);
+                                                                    var made_ok = false;
+                                                                    borrow rp as &rpr in {
+                                                                        if constant {
+                                                                            let (mo, fb, ok2, e2, lg2) = cfit.make(heap, args, fs, root, rpr, ro, buffer.bytes(tgr), e, lg);
+                                                                            mfile.drop_model(heap, mo);
+                                                                            buffer.drop(heap, fbytes);
+                                                                            fbytes = fb;
+                                                                            made_ok = ok2;
+                                                                            e = e2;
+                                                                            lg = lg2;
+                                                                        } else {
+                                                                            let ptxt = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(plr)) + 1), buffer.bytes(plr));
+                                                                            let m = wire.make(heap, args, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), ro, false, e, lg);
+                                                                            let (mfb, merr, mlg, mok) = wire.made_file(heap, m);
+                                                                            buffer.drop(heap, fbytes);
+                                                                            fbytes = mfb;
+                                                                            made_ok = mok;
+                                                                            e = merr;
+                                                                            lg = mlg;
+                                                                        }
+                                                                    }
+                                                                    if made_ok {
+                                                                        var fhex = buffer.empty(heap, 1);
+                                                                        borrow fbytes as &fbr in {
+                                                                            buffer.drop(heap, fhex);
+                                                                            fhex = mfile.sha256_hex(heap, buffer.bytes(fbr));
+                                                                        }
+                                                                        borrow fhex as &fhr in {
+                                                                            if bytes.equal(buffer.bytes(fhr), buffer.bytes(msr)) {
+                                                                                var w = json.writer(heap, 256);
+                                                                                w = json.begin_object(heap, w);
+                                                                                w = json.put_key(heap, w, "id");
+                                                                                w = json.put_string(heap, w, id);
+                                                                                w = json.put_key(heap, w, "verified");
+                                                                                w = json.put_bool(heap, w, true);
+                                                                                w = json.put_key(heap, w, "model_sha256");
+                                                                                w = json.put_string(heap, w, buffer.bytes(fhr));
+                                                                                w = json.put_key(heap, w, "data_sha256");
+                                                                                w = json.put_string(heap, w, buffer.bytes(dsr));
+                                                                                w = json.put_key(heap, w, "threads");
+                                                                                w = json.put_int(heap, w, threads);
+                                                                                w = verbs.put_name(heap, w, "compiler", built.compiler());
+                                                                                w = json.end_object(heap, w);
+                                                                                buffer.drop(heap, payload);
+                                                                                payload = json.finish(w);
+                                                                                plain = buffer.append(heap, plain, "verified ");
+                                                                                plain = buffer.append(heap, plain, id);
+                                                                                plain = buffer.push(heap, plain, byte_of(10));
+                                                                            } else {
+                                                                                var w = track.open_error(heap, "ml.runs.model-differs");
+                                                                                w = fail.detail_str(heap, w, "recorded", buffer.bytes(msr));
+                                                                                w = fail.detail_str(heap, w, "refit", buffer.bytes(fhr));
+                                                                                w = fail.detail_text(heap, w, "recorded_compiler", buffer.bytes(cpr));
+                                                                                w = fail.detail_text(heap, w, "compiler", built.compiler());
+                                                                                e = fail.add(heap, e, w);
+                                                                            }
+                                                                        }
+                                                                        buffer.drop(heap, fhex);
+                                                                    }
+                                                                    buffer.drop(heap, fbytes);
+                                                                }
+                                                                paths.drop(heap, rp);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            buffer.drop(heap, found);
-                        }
-                        buffer.drop(heap, dg);
-                    }
-                    var dmask = 0;
-                    var fmask = 0;
-                    var cmask = 0;
-                    let rp = paths.of_path(heap, buffer.bytes(dpr), buffer.bytes(fur));
-                    if go {
-                        // 2 the places of the flagged columns in the header: the reader is configured with positions
-                        let hdr = replay_opts(0, 1, 0, 1, false, false, 0, 0, 0, false, mc, ms, mp, mk, 0, 0, 0);
-                        let hcfg = verbs.config(hdr, 0, 0, 0);
-                        borrow rp as &rpr in {
-                            let (sh, rep, e1, sk1) = verbs.scan_file(heap, fs, root, rpr, hcfg, buffer.bytes(tgr), csv.plain_sinks(heap, 8, false), e);
-                            e = e1;
-                            csv.drop_sinks(heap, sk1);
-                            if rep.status == 99 {
-                                e = fail.io_error(heap, e, rep.aux, false, buffer.bytes(dpr));
-                                go = false;
-                            } else {
-                                var m1 = 0;
-                                var b1 = 0;
-                                var m2 = 0;
-                                var b2 = 0;
-                                var m3 = 0;
-                                var b3 = 0;
-                                borrow sh as &shr in {
-                                    let (x1, y1) = list_mask(shr, buffer.bytes(drr));
-                                    let (x2, y2) = list_mask(shr, buffer.bytes(flr));
-                                    let (x3, y3) = list_mask(shr, buffer.bytes(ctr));
-                                    m1 = x1;
-                                    b1 = y1;
-                                    m2 = x2;
-                                    b2 = y2;
-                                    m3 = x3;
-                                    b3 = y3;
-                                }
-                                dmask = m1;
-                                fmask = m2;
-                                cmask = m3;
-                                if b1 > 0 {
-                                    e = not_replayable(heap, e, "drop", bytes.field(buffer.bytes(drr), ',', b1));
-                                    go = false;
-                                } else if b2 > 0 {
-                                    e = not_replayable(heap, e, "float", bytes.field(buffer.bytes(flr), ',', b2));
-                                    go = false;
-                                } else if b3 > 0 {
-                                    e = not_replayable(heap, e, "cat", bytes.field(buffer.bytes(ctr), ',', b3));
-                                    go = false;
-                                }
-                            }
-                            csv.drop_shape(heap, sh);
                         }
                     }
-                    if go {
-                        // 3 the refit, in memory
-                        let constant = bytes.find(buffer.bytes(plr), "kind=constant") >= 0;
-                        var otask = 1;
-                        if bytes.equal(buffer.bytes(tkr), "classification") {
-                            otask = 2;
-                        }
-                        let ro = replay_opts(1000000000, otask, seed, threads, len(buffer.bytes(tgr)) > 0, has_pos, pos, snum, sden, cat_given, mc, ms, mp, mk, dmask, fmask, cmask);
-                        var fbytes = buffer.empty(heap, 1);
-                        var made_ok = false;
-                        borrow rp as &rpr in {
-                            if constant {
-                                let (mo, fb, ok2, e2, lg2) = cfit.make(heap, args, fs, root, rpr, ro, buffer.bytes(tgr), e, lg);
-                                mfile.drop_model(heap, mo);
-                                buffer.drop(heap, fbytes);
-                                fbytes = fb;
-                                made_ok = ok2;
-                                e = e2;
-                                lg = lg2;
-                            } else {
-                                let ptxt = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(plr)) + 1), buffer.bytes(plr));
-                                let m = wire.make(heap, args, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), ro, false, e, lg);
-                                let (mfb, merr, mlg, mok) = wire.made_file(heap, m);
-                                buffer.drop(heap, fbytes);
-                                fbytes = mfb;
-                                made_ok = mok;
-                                e = merr;
-                                lg = mlg;
-                            }
-                        }
-                        if made_ok {
-                            var fhex = buffer.empty(heap, 1);
-                            borrow fbytes as &fbr in {
-                                buffer.drop(heap, fhex);
-                                fhex = mfile.sha256_hex(heap, buffer.bytes(fbr));
-                            }
-                            borrow fhex as &fhr in {
-                                if bytes.equal(buffer.bytes(fhr), buffer.bytes(msr)) {
-                                    var w = json.writer(heap, 256);
-                                    w = json.begin_object(heap, w);
-                                    w = json.put_key(heap, w, "id");
-                                    w = json.put_string(heap, w, id);
-                                    w = json.put_key(heap, w, "verified");
-                                    w = json.put_bool(heap, w, true);
-                                    w = json.put_key(heap, w, "model_sha256");
-                                    w = json.put_string(heap, w, buffer.bytes(fhr));
-                                    w = json.put_key(heap, w, "data_sha256");
-                                    w = json.put_string(heap, w, buffer.bytes(dsr));
-                                    w = json.put_key(heap, w, "threads");
-                                    w = json.put_int(heap, w, threads);
-                                    w = verbs.put_name(heap, w, "compiler", built.compiler());
-                                    w = json.end_object(heap, w);
-                                    buffer.drop(heap, payload);
-                                    payload = json.finish(w);
-                                    plain = buffer.append(heap, plain, "verified ");
-                                    plain = buffer.append(heap, plain, id);
-                                    plain = buffer.push(heap, plain, byte_of(10));
-                                } else {
-                                    var w = track.open_error(heap, "ml.runs.model-differs");
-                                    w = fail.detail_str(heap, w, "recorded", buffer.bytes(msr));
-                                    w = fail.detail_str(heap, w, "refit", buffer.bytes(fhr));
-                                    w = fail.detail_text(heap, w, "recorded_compiler", buffer.bytes(cpr));
-                                    w = fail.detail_text(heap, w, "compiler", built.compiler());
-                                    e = fail.add(heap, e, w);
-                                }
-                            }
-                            buffer.drop(heap, fhex);
-                        }
-                        buffer.drop(heap, fbytes);
-                    }
-                    paths.drop(heap, rp);
-                }
-                }
-                }
-                }
-                }
-                }
-                }
-                }
-                }
-                }
-                }
                 }
                 buffer.drop(heap, full);
                 buffer.drop(heap, dpath);
