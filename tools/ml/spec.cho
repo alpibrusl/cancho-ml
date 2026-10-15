@@ -46,14 +46,14 @@ pub fn allowed(verb: int) -> [] &static [byte] {
     if verb == 1 {
         return "root,model,task,target,drop,float,cat,na-values,max-categories,max-string-bytes,max-pool-bytes,max-cat-columns,output,overwrite,dry-run,plan,step,bins,bootstrap,init,iterations,k,l2,max-depth,max-nodes,min-leaf,mtry,trees,positive,split,seed,threads,stratify,split-by,split-group,emit-folds,max-rows,max-columns,max-cells,max-line-bytes,max-bytes,log,log-max-bytes,format";
     }
-    if verb == 5 {
-        return "root,model,task,target,drop,float,cat,na-values,max-categories,max-string-bytes,max-pool-bytes,max-cat-columns,plan,step,bins,bootstrap,init,iterations,k,l2,max-depth,max-nodes,min-leaf,mtry,trees,positive,split,seed,threads,stratify,split-by,split-group,folds,repeats,emit-folds,max-rows,max-columns,max-cells,max-line-bytes,max-bytes,log,log-max-bytes,format";
-    }
     if verb == 2 {
         return "root,model-file,drop,limit,from,proba,distance,max-rows,max-columns,max-cells,max-line-bytes,max-bytes,log,log-max-bytes,format";
     }
     if verb == 4 {
         return "root,model-file,limit,max-bytes,format";
+    }
+    if verb == 5 {
+        return "root,model,task,target,drop,float,cat,na-values,max-categories,max-string-bytes,max-pool-bytes,max-cat-columns,plan,step,bins,bootstrap,init,iterations,k,l2,max-depth,max-nodes,min-leaf,mtry,trees,positive,split,seed,threads,stratify,split-by,split-group,folds,repeats,emit-folds,max-rows,max-columns,max-cells,max-line-bytes,max-bytes,log,log-max-bytes,format";
     }
     return "root,model-file,drop,positive,split,seed,threads,stratify,split-by,split-group,emit-folds,max-rows,max-columns,max-cells,max-line-bytes,max-bytes,log,log-max-bytes,format";
 }

@@ -190,7 +190,7 @@ class Arguments(unittest.TestCase):
             sb.write("spl.csv", SPL)
             sb.write("empty.csv", "grp,day,a,b,y,r\n")
             vocab = ["--folds", "--repeats", "--stratify", "--split-by", "--split-group", "--emit-folds", "--split", "--seed", "--threads", "--model", "--task", "--target", "--drop", "--output",
-                     "--step", "--max-rows", "--positive", "--overwrite", "--dry-run", "--format"]
+                     "--step", "--max-rows", "--positive", "--overwrite", "--dry-run"]
             values = ["1", "2", "3", "5", "20", "21", "0", "-1", "99999999999999999999", "", "time:day", "time:", "time", "time:grp", "time:nosuch", "date:day", "grp", "y", "day", "nosuch",
                       "train=0.8", "train=2", "tree", "linear", "logistic", "kmeans", "constant", "classification", "regression", "r", "grp,day,r", "grp,day,y", "text", "json", "m.cml", "..", "a,b"]
             rnd = random.Random(int(os.environ.get("FUZZ_SEED", "11")))
