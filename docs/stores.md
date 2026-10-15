@@ -1,6 +1,6 @@
 # The numeric stores other repositories pin (issue #46)
 
-**Status: sections 1 to 6 are the design and the gates, written before `scripts/publish_stores.py`. Section 7 holds what the scripts printed.**
+**Status: sections 1 to 6 are the design and the gates, written before `scripts/publish_stores.py`. Section 7 holds what the scripts printed; a number or a verdict is in it only if a script of this repository printed it, with its conditions.**
 Tags: **[read]** read from a source file or a document, **[choice]** a decision the maintainer can overturn, **[measured]** printed by a script of this
 repository, with its conditions.
 
@@ -56,9 +56,9 @@ block is the consumer's label (dots would nest a TOML table): this document uses
 
 ## 3. How a consumer pins
 
-A consumer lists one `[dependencies.*]` block per module it imports **and** per module it wants named in its own `cancho.toml` (the
-`requires/` entries bring the closure of each store, but a consumer that lists only the modules it imports still builds; section 7 says what was
-measured). All blocks carry one `rev`, a full commit hash of this repository that contains the stores, the same way `cancho-ml` pins
+A consumer lists one `[dependencies.*]` block per module it imports. The `requires/` entries of a store bring the closure of its imports
+(a consumer that pins only `metrics.splits` can `import ml.rng`, section 7), but a block per imported module says in the consumer's own
+`cancho.toml` what its sources rely on, and `scripts/check_stores_pin.py` (with `CONSUMER=<dir>`) checks the blocks. All blocks carry one `rev`, a full commit hash of this repository that contains the stores, the same way `cancho-ml` pins
 `cancho-table` (`docs/reader.md` section 1.3):
 
 ```
@@ -134,10 +134,11 @@ commit is pushed; the proof for a pushed commit is `python3 scripts/consume_stor
 | PS2 `--check`, source mutant | one byte of a listed source is changed (a comment byte) and the stores are not republished |
 | PS3 `--check`, store mutant | one byte of a committed store file is changed, a store file is missing, a store or a file is extra, `docs/stores_api.txt` differs |
 | PS4 closure | `--closure` finds a listed module with an unlisted import; the mutant lists `ml.matrix` without `linalg.tensor`, and `linalg.chol` without `linalg.order`, and both must be refused |
-| PS5 no copy | `scripts/check_stores_pin.sh`: a `.cho` file outside `lib/core`, `lib/linalg`, `lib/metrics` declares one of the 23 modules; a `cancho.toml` block names this repository as its `git` (no circular dependency); `docs/stores.md` lists a module that is not in the publisher, or the reverse. Its `CONSUMER` mode reads another repository's `cancho.toml` and `.cho` files: every block on this repository has the 40-hex `rev`, one rev, a path `.cancho-vcs/<module>` of a listed module, and no file of the consumer declares a listed module |
+| PS5 no copy | `scripts/check_stores_pin.py`: a `.cho` file other than a module's own source declares one of the 23 modules; a `cancho.toml` block names this repository as its `git` (no circular dependency); `docs/stores.md` lists a module that is not in the publisher, or the reverse. Its `CONSUMER` mode reads another repository's `cancho.toml` and `.cho` files: every block on this repository has the 40-hex `rev`, one rev, a path `.cancho-vcs/<module>` of a listed module, and no file of the consumer declares a listed module |
 | PS6 consumption | `scripts/consume_stores.py` fails to install, build or match a value; mutants: a store removed from the scratch repository, a store with one byte changed (the install must refuse it), a wrong expected value |
 | PS7 two machines | the proof run on this Mac and on the Linux host (a clean clone, `taskset -c 0-6`) prints different output |
-| PS8 the repository | `scripts/check.sh` fails (it runs `--check`, PS5 and the PS4 and PS2 mutants) |
+| PS8 the repository | `scripts/check.sh` fails (it runs `--check`, `--closure`, `check_stores_pin.py`, the fast mutants and the consumption proof, and every other gate it had) |
 | PS9 the documents | `check_docs.sh`, `check_prose.py`, `check_links.py`, `check_doc_refs.py` fail |
 
-`scripts/mutants_stores.py` runs PS2 to PS6's mutants and reports each as killed or surviving.
+`scripts/mutants_stores.py` runs the mutants of PS1 to PS6 (each on a copy of the tree) and reports each as killed, surviving, or killed for another
+reason than the one it is for (the script holds, for each mutant, the sentence of the gate that must appear). `--fast` runs those that need no compiler.
