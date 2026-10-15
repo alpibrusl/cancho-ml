@@ -6,7 +6,7 @@
 # Prints microseconds per dot of n = 1,000,000, minimum of 7 runs of 100. Outputs of the lanes variants are NOT the rule's.
 set -e
 cd "$(dirname "$0")/../.."
-C=${CANCHO:-../cancho-compiler-a4572ea/target/release/cancho}
+C=${CANCHO:-../cancho-compiler-0207556/target/release/cancho}
 D=build/ablate/dot; mkdir -p $D
 for cfg in "256 8" "256 16" "240 16"; do set -- $cfg
   python3 scripts/ablate/dot_blocks_gen.py $1 $2 > $D/b_$1_$2.cho; $C build --std lib/core/rng.cho $D/b_$1_$2.cho -o $D/b_$1_$2

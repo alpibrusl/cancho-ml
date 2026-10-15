@@ -10,7 +10,7 @@ The compiler is $CANCHO or the pinned build next to this repository. Exit 1 if a
 import os, pathlib, shutil, subprocess, sys, tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-DEFAULT_CANCHO = ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"
+DEFAULT_CANCHO = ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"
 
 
 def cancho():

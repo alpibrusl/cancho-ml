@@ -25,7 +25,7 @@ PY = sys.executable
 
 
 def compiler():
-    here = ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"
+    here = ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"
     return os.environ.get("CANCHO") or (str(here) if here.exists() else "cancho")
 
 

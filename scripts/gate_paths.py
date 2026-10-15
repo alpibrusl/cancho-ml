@@ -23,7 +23,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CANCHO = os.environ.get("CANCHO", os.path.join(os.path.dirname(ROOT), "cancho-compiler-a4572ea", "target", "release", "cancho"))
+CANCHO = os.environ.get("CANCHO", os.path.join(os.path.dirname(ROOT), "cancho-compiler-0207556", "target", "release", "cancho"))
 TRAPS = {132, 134, 136, 139}
 TAG = "path.dotdot"
 SEED = int(os.environ.get("FUZZ_SEED", "20261013"))

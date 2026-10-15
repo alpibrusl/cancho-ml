@@ -39,7 +39,7 @@ def diff(a, b):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--sizes", default="1000,100000"); ap.add_argument("--mutants", action="store_true")
-    ap.add_argument("--cancho", default="/Users/alfonso/Workspace/alpibrusl/lexsys/cancho-compiler-a4572ea/target/release/cancho")
+    ap.add_argument("--cancho", default="/Users/alfonso/Workspace/alpibrusl/lexsys/cancho-compiler-0207556/target/release/cancho")
     a = ap.parse_args(); sizes = a.sizes.split(","); os.makedirs(f"{R}/build", exist_ok=True)
     src = open(f"{H}/spike_f.cho").read(); fail = False
     exe = f"{R}/build/spike_f"; build(a.cancho, f"{H}/spike_f.cho", exe)

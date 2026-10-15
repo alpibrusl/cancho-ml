@@ -5,7 +5,7 @@ import os, pathlib, subprocess, sys, tempfile, shutil
 import qlib
 
 SRC = qlib.HERE / "spike_q.cho"
-CANCHO = os.environ.get("CANCHO", str(qlib.ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"))
+CANCHO = os.environ.get("CANCHO", str(qlib.ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"))
 def build(src_text, out, order_text=None, tmp=None):
     d = pathlib.Path(tmp)
     (d / "spike_q.cho").write_text(src_text)

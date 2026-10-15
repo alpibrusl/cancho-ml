@@ -53,6 +53,12 @@
       "bounded": true
     }
   ],
+  "never_touches": [
+    "the network",
+    "signals",
+    "other programs",
+    "foreign code"
+  ],
   "foreign_symbols": [],
   "pure": [
     "abs_c",
@@ -663,5 +669,5 @@
   ],
   "folded_operators": 127,
   "folded_calls": 0,
-  "functions": 981
+  "functions": 985
 }
