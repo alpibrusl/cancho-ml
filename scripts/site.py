@@ -33,6 +33,9 @@ generated:
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
                                           order, and a hashed column that stores no string
+    splitflow     README.md, index.html   the split strategies and cross-validation (docs/splits.md): a stratified holdout on docs/examples/data/breast_cancer_train.csv, a time split and
+                                          a group split on docs/examples/data/visits.csv, a refused combination, `ml cv --folds 5` on iris and diabetes with the metrics of
+                                          each fold and their mean and standard deviation, a time cv, a group cv with --emit-folds, and a refusal with its repair
     hero          index.html              the first example
     agentio       README.md, index.html   excerpts of `ml introspect`
     skill         index.html              the first lines of `ml skill`
@@ -137,10 +140,28 @@ DEMOS = [
     ("k_predict", "ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv"),
     ("k_eval", "ml eval --model-file iris-km.ml --drop virginica iris_test.csv"),
     ("k_text", "ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv"),
+    # split strategies and cross-validation (docs/splits.md)
+    ("sp_strat", "ml fit --model tree --task classification --max-depth 4 --target benign --split train=0.8 --stratify --seed 7 --output bc.ml breast_cancer_train.csv"),
+    ("sp_time", "ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-by time:visit_date --output visits-time.ml visits.csv"),
+    ("sp_group", "ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-group customer --seed 2 --output visits-group.ml visits.csv"),
+    ("sp_combo", "ml fit --model tree --task classification --target returning --drop customer,visit_date --split train=0.75 --stratify --split-by time:visit_date --output x.ml visits.csv"),
+    ("sp_cv_iris", "ml --format text cv --model logistic --task classification --step 'scale column=* kind=standard' --l2 0.1 --target virginica --folds 5 --seed 1 --stratify iris_train.csv"),
+    ("sp_cv_diab", "ml --format text cv --model linear --step 'scale column=* kind=standard' --target progression --folds 5 --seed 1 diabetes_train.csv"),
+    ("sp_cv_time", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-by time:visit_date --folds 4 visits.csv"),
+    ("sp_cv_group", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-group customer --folds 4 --seed 5 --emit-folds visits.csv"),
+    ("sp_bad", "ml cv --model linear --step 'scale column=* kind=standard' --target progression --stratify diabetes_train.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
 SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"]}
+# demos whose answer is shown as members found by a path into `data`: the last name of a path is the key shown
+PICK_DATA = {
+    "sp_strat": [("summary", "split"), ("summary", "holdout")],
+    "sp_time": [("summary", "split"), ("summary", "holdout")],
+    "sp_group": [("summary", "split"), ("summary", "holdout")],
+    "sp_cv_time": [("split",), ("strategy",), ("summary",)],
+    "sp_cv_group": [("split",), ("strategy",), ("assignment",)],
+}
 SUMMARY = {
     "bad": ["rule", "hint", "repair"],
     "exists": ["rule", "hint", "detail"],
@@ -154,6 +175,8 @@ SUMMARY = {
     "s_mp_flag": ["rule", "hint", "detail"],
     "k_target": ["rule", "hint", "detail"],
     "k_nok": ["rule", "hint", "detail"],
+    "sp_combo": ["rule", "hint", "repair", "detail"],
+    "sp_bad": ["rule", "hint", "repair"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -167,7 +190,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "sp_bad": "sp_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -296,6 +319,9 @@ def make_context(binary, tmp):
     # the k-means example: the iris files of the worked examples
     for part in ("train", "test"):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
+    # the split examples: the committed files of docs/examples/data
+    for name in ("breast_cancer_train.csv", "diabetes_train.csv", "visits.csv"):
+        (Path(tmp) / name).write_bytes((ROOT / "docs" / "examples" / "data" / name).read_bytes())
     results = {}
 
     def run(words, stdin=None):
@@ -341,6 +367,17 @@ def item(ctx, key):
             raise Drift("the demo %s refuses" % key)
         out = json.dumps({k: doc["data"][k] for k in SUMMARY_DATA[key]}, ensure_ascii=False)
         return typed, out, status, None
+    if key in PICK_DATA:
+        doc = json.loads(out)
+        if not doc["ok"]:
+            raise Drift("the demo %s refuses" % key)
+        picked = {}
+        for path in PICK_DATA[key]:
+            v = doc["data"]
+            for step in path:
+                v = v[step]
+            picked[path[-1]] = v
+        return typed, json.dumps(picked, ensure_ascii=False, separators=(",", ":")), status, None
     if key in SUMMARY:
         doc = json.loads(out)
         if doc["ok"] or status == 0:
@@ -425,6 +462,28 @@ def kmflow_items(ctx):
             item(ctx, "k_eval"),
             ("# The same, as text, on the training rows", None, 0, None),
             item(ctx, "k_text")]
+
+
+def splitflow_items(ctx):
+    """Splits and cross-validation: a stratified holdout, a time split, a group split, a refused combination, k-fold cv of two models with the metrics of every fold and their mean and
+    standard deviation, a time cv, a group cv with the folds as data, and a refusal with its repair."""
+    return [("# A holdout that keeps the class proportions: 426 training rows, 20 percent held out, per class the floor or the ceiling of its share", None, 0, None),
+            item(ctx, "sp_strat"),
+            ("# visits.csv: 12 customers with 10 visits each, an ISO date, a basket, the item count and whether the customer came back. The newest quarter of the visits is held out (the date column is dropped as a feature, not as a rule)", None, 0, None),
+            item(ctx, "sp_time"),
+            ("# No customer on both sides: whole customers are held out", None, 0, None),
+            item(ctx, "sp_group"),
+            ("# Two rules for one split are refused, not blended", None, 0, None),
+            item(ctx, "sp_combo"),
+            ("# Five-fold cross-validation, stratified: every step is fitted on the four training folds of each fold alone. Per-fold metrics, then the mean and the sample standard deviation", None, 0, None),
+            item(ctx, "sp_cv_iris"),
+            item(ctx, "sp_cv_diab"),
+            ("# An expanding window: fold i trains on everything before block i + 1 and tests on that block", None, 0, None),
+            item(ctx, "sp_cv_time"),
+            ("# Whole customers per fold, and the assignment of every row (file order) as data, so that a run can be replayed", None, 0, None),
+            item(ctx, "sp_cv_group"),
+            ("# A regression has no classes to keep in proportion. The refusal offers the corrected command", None, 0, None),
+            item(ctx, "sp_bad")]
 
 
 def hflow_items(ctx):
@@ -626,11 +685,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }
