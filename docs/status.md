@@ -62,7 +62,7 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 | imputation in the constant model | `--model constant` refuses an empty cell; the pipeline models take it as a missing value |
 | neural networks, GPU | not planned in v1 |
 | other platforms | macOS arm64, Linux x86-64 and Linux aarch64 (a Raspberry Pi 5, by hand, outside the workflow) agree on 88 fingerprint lines for 22 fits (`docs/bench/xplat_fp.txt`, `scripts/xplat_check.py`; compiler `a4572ea`, commit `cb08d5b`); the workflow covers the first two; any other platform is untested |
-| CI | `.github/workflows/ci.yml` ([ci.md](ci.md)): build, determinism gate and fast gates on `ubuntu-latest` and `macos-latest`; `scripts/check.sh` on request and nightly; binaries on a tag `v*`. Run by hand on a Mac and a Linux x86-64 workstation; no GitHub run is recorded here. `cancho install` needs the network |
+| CI | `.github/workflows/ci.yml` ([ci.md](ci.md)): build, determinism gate and fast gates on `ubuntu-24.04`, `ubuntu-26.04`, `ubuntu-24.04-arm` and `macos-26`; `scripts/check.sh` on request and nightly; binaries on a tag `v*`. The first GitHub run (2026-10-15) covered `ubuntu-24.04` and `macos-26` and passed; the jobs for `ubuntu-26.04` and `ubuntu-24.04-arm` have no recorded run. `cancho install` needs the network |
 
 ## What was measured
 
