@@ -1,0 +1,105 @@
+import std.test;
+import std.buffer;
+import std.bytes;
+import serve.num;
+
+// tests of tools/ml-serve/num.cho (docs/serving-http.md section 4, gate S3's unit half): `cancho test --std tools/ml-serve/num.cho build/deps/*.cho tests/serve_num.cho`.
+// A test answers 0 to pass.
+
+fn cell[&h](heap: &!h Heap, text: &static [byte], scale: int, want: &static [byte], status: int) -> [heap] int {
+    let (b, st) = num.exact_cell(heap, buffer.empty(heap, 8), text, scale);
+    var bad = 0;
+    if st != status {
+        bad = bad + 1;
+    }
+    borrow b as &br in {
+        if !bytes.equal(buffer.bytes(br), want) {
+            bad = bad + 1;
+        }
+    }
+    buffer.drop(heap, b);
+    return bad;
+}
+
+fn fcell[&h](heap: &!h Heap, text: &static [byte], want: &static [byte], status: int) -> [heap] int {
+    let (b, st) = num.float_cell(heap, buffer.empty(heap, 8), text);
+    var bad = 0;
+    if st != status {
+        bad = bad + 1;
+    }
+    borrow b as &br in {
+        if !bytes.equal(buffer.bytes(br), want) {
+            bad = bad + 1;
+        }
+    }
+    buffer.drop(heap, b);
+    return bad;
+}
+
+fn test_int[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    bad = bad + cell(heap, "0", 0, "0", 0);
+    bad = bad + cell(heap, "-0", 0, "0", 0);
+    bad = bad + cell(heap, "-0.0e5", 0, "0", 0);
+    bad = bad + cell(heap, "0e99999999999", 0, "0", 0);
+    bad = bad + cell(heap, "150", 0, "150", 0);
+    bad = bad + cell(heap, "-150", 0, "-150", 0);
+    bad = bad + cell(heap, "150.0", 0, "150", 0);
+    bad = bad + cell(heap, "1.5e2", 0, "150", 0);
+    bad = bad + cell(heap, "15E1", 0, "150", 0);
+    bad = bad + cell(heap, "1500e-1", 0, "150", 0);
+    bad = bad + cell(heap, "0.0150e4", 0, "150", 0);
+    bad = bad + cell(heap, "999999999999", 0, "999999999999", 0);
+    bad = bad + cell(heap, "-999999999999", 0, "-999999999999", 0);
+    bad = bad + cell(heap, "1e11", 0, "100000000000", 0);
+    bad = bad + cell(heap, "1e12", 0, "", 1);
+    bad = bad + cell(heap, "1000000000000", 0, "", 1);
+    bad = bad + cell(heap, "1.5", 0, "", 1);
+    bad = bad + cell(heap, "150.0000000000000000001", 0, "", 1);
+    bad = bad + cell(heap, "1e-1", 0, "", 1);
+    bad = bad + cell(heap, "1e99999999999", 0, "", 1);
+    return bad;
+}
+
+fn test_dec[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    bad = bad + cell(heap, "0", 2, "0.00", 0);
+    bad = bad + cell(heap, "-0.00", 2, "0.00", 0);
+    bad = bad + cell(heap, "3", 2, "3.00", 0);
+    bad = bad + cell(heap, "3.5", 2, "3.50", 0);
+    bad = bad + cell(heap, "3.50", 2, "3.50", 0);
+    bad = bad + cell(heap, "-3.25", 2, "-3.25", 0);
+    bad = bad + cell(heap, "0.05", 2, "0.05", 0);
+    bad = bad + cell(heap, "0.5", 2, "0.50", 0);
+    bad = bad + cell(heap, "5e-2", 2, "0.05", 0);
+    bad = bad + cell(heap, "500e-4", 2, "0.05", 0);
+    bad = bad + cell(heap, "3.125", 2, "", 1);
+    bad = bad + cell(heap, "3.1250", 3, "3.125", 0);
+    bad = bad + cell(heap, "0.001", 2, "", 1);
+    bad = bad + cell(heap, "1e-3", 2, "", 1);
+    bad = bad + cell(heap, "12345678901.5", 1, "12345678901.5", 0);
+    bad = bad + cell(heap, "123456789012.5", 1, "", 1);
+    bad = bad + cell(heap, "999999999999", 0, "999999999999", 0);
+    bad = bad + cell(heap, "9999999999.99", 2, "9999999999.99", 0);
+    bad = bad + cell(heap, "99999999999.99", 2, "", 1);
+    bad = bad + cell(heap, "0.000000000005", 12, "0.000000000005", 0);
+    bad = bad + cell(heap, "1e2", 2, "100.00", 0);
+    return bad;
+}
+
+fn test_float[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    bad = bad + fcell(heap, "0", "0.0", 0);
+    bad = bad + fcell(heap, "-0", "0.0", 0);
+    bad = bad + fcell(heap, "0.1", "0.1", 0);
+    bad = bad + fcell(heap, "100", "100.0", 0);
+    bad = bad + fcell(heap, "1e21", "1e21", 0);
+    bad = bad + fcell(heap, "1.5e-7", "1.5e-7", 0);
+    bad = bad + fcell(heap, "0.30000000000000004", "0.30000000000000004", 0);
+    bad = bad + fcell(heap, "0.1000000000000000055511151231257827", "0.1", 0);
+    bad = bad + fcell(heap, "1e999", "", 2);
+    bad = bad + fcell(heap, "-1e999", "", 2);
+    bad = bad + fcell(heap, "1e-999", "", 2);
+    bad = bad + fcell(heap, "5e-324", "5e-324", 0);
+    return bad;
+}

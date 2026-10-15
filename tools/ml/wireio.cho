@@ -766,7 +766,7 @@ fn constant_conflict[&h](heap: &!h Heap, errs: fail.Errors, o: verbs.Opts, verb:
 
 // read the model file once to see its kind: (the bytes, whether this module takes it)
 fn peek_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, o: verbs.Opts) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, bool) {
-    let (data, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(model), paths.full(model), o.max_bytes);
+    let (data, st, aux) = fsio.read_model(heap, fs, root, model, o.max_bytes);
     if st != 0 {
         return (data, false);
     }
