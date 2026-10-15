@@ -691,7 +691,7 @@ pub fn not_built[&h, &n](heap: &!h Heap, errs: fail.Errors, name: &n [byte]) -> 
 
 // a tree or forest fit on more training rows than the exact comparison of its Gini criterion allows (docs/models-tree.md section 3.1), refused before the rows are copied
 pub fn tree_rows[&h](heap: &!h Heap, errs: fail.Errors, rows: int) -> [heap] fail.Errors {
-    var w = fail.open_in(heap, spec.extra(), "ml.input.too-many-rows", "a tree, forest or boost fit takes at most 1048576 training rows (the bound of the tree's exact Gini comparison, kept for boost)", "fit on a sample of the rows, or hold rows out with --split train=F so that the train side has at most 1048576 rows");
+    var w = fail.open_in(heap, spec.extra(), "ml.input.too-many-rows", "a tree or forest fit takes at most 1048576 training rows (a boosted fit too: the bound of the tree's exact Gini comparison)", "fit on a sample of the rows, or hold rows out with --split train=F so that the train side has at most 1048576 rows");
     w = fail.no_repair(heap, w);
     w = fail.detail_open(heap, w);
     w = fail.detail_int(heap, w, "rows", rows);
