@@ -173,7 +173,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 9 | frequency encoding of a categorical column | `freq` |
 | 10 | hashing of a categorical column | `hash` |
 
-**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta, and **6 strings (the string table, present only when a step of kind 7 to 10 needs it; `sections` is then 6, and 5 otherwise: a file without a categorical step has the bytes it always had)**. The byte layout of the table, its bounds (pool at most 8 MiB, strings at most 2^17, the section at most 12 MiB), its SHA-256, the 8-byte stub that stands for a categorical step in the `steps` section (kind, layout 2), the schema type 3 (a categorical input column) and the refusals `ml.model.string-table` (code 328) and `ml.limit.string-table` (code 329) are in `docs/stringtable.md`. The next step kind is 11. Kinds 7 to 10 are the categorical steps of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them, and in a model file each is an 8-byte stub whose payload is an entry of the string table (`docs/stringtable.md`).
+**Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta, **6 strings (the string table, present only when a step of kind 7 to 10 needs it)** and **7 provenance (the SHA-256 and size of the training file, its rows and the range of each numeric feature: `docs/tracking.md` section 2; present in every file `fit` of this version writes, absent from the files of older versions, which are read and say `provenance: absent`)**. The header's `sections` is 5, 6 or 7 and does not say which of the two optional sections a count of 6 holds: a reader walks the tags (each optional tag is greater than the one before it, 6 then 7). A file with neither has the five-section bytes it always had; the constant models (kinds 1 to 3) carry section 7 with no feature record. The byte layout of the table, its bounds (pool at most 8 MiB, strings at most 2^17, the section at most 12 MiB), its SHA-256, the 8-byte stub that stands for a categorical step in the `steps` section (kind, layout 2), the schema type 3 (a categorical input column) and the refusals `ml.model.string-table` (code 328) and `ml.limit.string-table` (code 329) are in `docs/stringtable.md`. The next step kind is 11. Kinds 7 to 10 are the categorical steps of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them, and in a model file each is an 8-byte stub whose payload is an entry of the string table (`docs/stringtable.md`).
 
 Kinds 4 and 5 are built by `ml` since W1 (`tools/ml/wire.cho`, through `lib/pipeline/file.cho` and the adapters of `lib/models`; the logistic payload gained a labels record, `docs/wiring.md` section 4); kinds 6 and 7 are written by libraries only, and `mfile.cho` (the reader of the constant kinds)
 refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
@@ -372,6 +372,25 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.limit.string-table` | 8 | a fit would write a string table over 131,072 strings, 8 MiB of string bytes or 12 MiB (`what`, `size`, `max` in `detail`) | none: fewer or shorter categories, or a `hash` step |
 
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
+
+*Added by M22, run tracking and train/serve skew (`docs/tracking.md` section 5.5; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/test_track.py`, `tests/conformance/fixtures.py`):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.predict.out-of-range` | 8 | more rows of a `predict` or `eval` hold a numeric feature outside the range stored in the model file than `--max-out-of-range` allows; rows, bound, first column and first row in `detail` | none |
+| `ml.predict.no-provenance` | 8 | `--max-out-of-range` was given and the model file has no provenance section | none: refit with this version |
+| `ml.input.changed` | 8 | the training file changed while `fit` read it (its SHA-256 before and after differ) | none |
+| `ml.runs.conflict` | 8 | a run record with this id exists and differs from the one to write in more than the thread count and the name of the model file | none |
+| `ml.runs.too-many` | 8 | the `--track` directory holds 1000 records already | none |
+| `ml.runs.record-too-large` | 8 | a record would be over 262,144 bytes | none |
+| `ml.runs.not-found` | 3 | no record has this id | none |
+| `ml.runs.unknown-model` | 8 | no record of the directory has the SHA-256 of the model file `eval --track` was given | none |
+| `ml.runs.damaged` | 8 | a record does not parse, has a member out of its type, an id that is not the hash of its inputs, or a check that is not the hash of what precedes it | none |
+| `ml.runs.data-changed` | 8 | the training file a record names does not have the SHA-256 it holds | none |
+| `ml.runs.model-differs` | 8 | the refit of `runs verify` gave a file whose SHA-256 is not the record's | none |
+| `ml.runs.not-replayable` | 8 | a column carrying `--drop`, `--float` or `--cat` is past the 62nd position of the header | none |
+
+`ml.model.malformed` also answers a damaged section 7 (`detail.section` 7); `io.not-found` a `--track` directory that does not exist; `ml.fit.non-finite` a column whose exact sum of squares is beyond the largest double.
 
 ## 8.1 The numeric codes of the libraries (added at integration)
 
@@ -585,3 +604,10 @@ names which); its `sum_order` is **3** (section 4.1: sequential sums, no lane or
 has one more cause that no fixture can reach (the memory ceiling of the thread copies, about 2.3e8 cells). A tree or forest takes missing cells itself (a learned default side per split); the linear models
 keep refusing them. The libraries are otherwise unchanged except for the order of two comparisons in the reader of the payload, which a fuzz of the wiring found to trap on a class count of 2^63 - 1
 (`docs/models-tree.md` 10.6).
+
+## 22. M22: run tracking and train/serve skew (`docs/tracking.md`)
+
+Every model file `fit` writes carries a provenance section (tag 7): the training file's SHA-256 and size, the rows, and for each numeric feature the count, minimum, maximum, exact mean and population
+standard deviation of the training cells as the reader read them. `eval` says whether it scored the training file (`on`); `predict`, `eval` and `ml-serve` count the cells outside the stored range
+(`out_of_range`, bounded by `--max-out-of-range`); `fit --track DIR` writes a canonical run record whose id is the hash of the inputs that determine the model bytes; `ml runs list|show|compare|verify`
+read the records and replay a fit in memory. The registries are unchanged except the section tag (7) and the rule tags of section 8; no model kind, step kind or stream kind is added, and no capability.

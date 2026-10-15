@@ -137,6 +137,10 @@ fn six_sections[&d](data: &d [byte]) -> [] bool {
     if count != 6 {
         return false;
     }
+    // a file whose plan is the constant model's has no string table: its damage is the constant reader's to report (it carries section 7 since M22, so its count is 6)
+    if len(data) >= 43 && bytes.equal(data[24..43], "model kind=constant") {
+        return false;
+    }
     let body = len(data) - 32;
     var pos = 12;
     var s = 0;
