@@ -140,9 +140,12 @@ def verify(old_bin, new_bin):
 
     bad, report = 0, []
     seen = set()
+    # the cases of the records: a fixture added after a record was written (a verb or a flag the old binary does not have) is not in it, and is not a golden
+    recorded = {"numeric": set(json.loads((ROOT / "tests" / "conformance" / "golden_numeric.json").read_text())),
+                "constant": set(json.loads((ROOT / "tests" / "conformance" / "golden_constant.json").read_text()))}
     for src, cases in (("numeric", golden_numeric.cases()), ("constant", golden_constant.cases())):
         for c in cases:
-            if c["id"] in seen:
+            if c["id"] in seen or c["id"] not in recorded[src]:
                 continue
             seen.add(c["id"])
             problems = explain(c["id"], capture(c, old_bin), capture(c, new_bin), report)

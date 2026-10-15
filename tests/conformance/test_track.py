@@ -484,9 +484,15 @@ class Tracking(Base):
         self.assertFalse((self.sb.dir / "m.cml").exists())
 
     def test_a_record_over_its_size_is_refused_before_the_model_is_written(self):
-        names = ["c%04d_" % i + "x" * 70 for i in range(4000)]
-        self.sb.write("wide.csv", ",".join(names) + "\n" + ",".join(str(i % 7) for i in range(4000)) + "\n" + ",".join(str((i * 3) % 11) for i in range(4000)) + "\n")
-        r = self.sb.run("fit", "--model", "linear", "--target", names[0], "--drop", ",".join(names[2:]), "--output", "m.cml", "--track", "runs", "wide.csv")
+        # the arguments of the fixture: no single argument over 131,072 bytes, which is the most a Linux process takes
+        import fixtures as F
+
+        cols = F.long_record_columns()
+        n = len(cols)
+        self.sb.write("wide.csv", ",".join(cols) + "\n" + ",".join(str(i % 7) for i in range(n)) + "\n" + ",".join(str((i * 3) % 11) for i in range(n)) + "\n")
+        args = F.long_record_args()
+        self.assertLess(max(len(a) for a in args), 131072)
+        r = self.sb.run("fit", *args, "--output", "m.cml", "--track", "runs", "wide.csv")
         self.assertEqual(r.first_rule(), "ml.runs.record-too-large", r)
         self.assertFalse((self.sb.dir / "m.cml").exists())
         self.assertEqual(self.records(), [])

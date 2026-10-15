@@ -657,10 +657,25 @@ def _wide(sb):
     sb.write("wide.csv", ",".join(cols) + "\n" + ",".join(str((i * 7) % 5) for i in range(70)) + "\n" + ",".join(str((i * 3 + 1) % 7) for i in range(70)) + "\n" + ",".join(str((i * 5 + 2) % 11) for i in range(70)) + "\n")
 
 
+# A record over 262,144 bytes (docs/tracking.md section 5.1) from arguments that fit one process on Linux, where a single argument is at most 131,072 bytes: a target name of 100,000 bytes, a list
+# of dropped columns and a list of forced float columns of about 122,000 bytes each (the record holds the three)
+LONG_TARGET = "t" * 100000
+LONG_DROP = [("d%04d_" % i) + "x" * 80 for i in range(1400)]
+LONG_FLOAT = [("f%04d_" % i) + "x" * 80 for i in range(1400)]
+
+
+def long_record_columns():
+    return [LONG_TARGET] + LONG_DROP + LONG_FLOAT
+
+
+def long_record_args():
+    return ["--model", "constant", "--target", LONG_TARGET, "--drop", ",".join(LONG_DROP), "--float", ",".join(LONG_FLOAT)]
+
+
 def _long_names(sb):
-    names = ["c%04d_" % i + "x" * 70 for i in range(4000)]
-    sb.write("wide2.csv", ",".join(names) + "\n" + ",".join(str(i % 7) for i in range(4000)) + "\n" + ",".join(str((i * 3) % 11) for i in range(4000)) + "\n")
-    sb.write("names.txt", ",".join(names[2:]))
+    cols = long_record_columns()
+    n = len(cols)
+    sb.write("wide2.csv", ",".join(cols) + "\n" + ",".join(str(i % 7) for i in range(n)) + "\n" + ",".join(str((i * 3) % 11) for i in range(n)) + "\n")
 
 
 FIT_TR = ["fit", "--model", "linear", "--target", "y", "--output", "lin.cml", "--track", "runs", "lin.csv"]
@@ -681,7 +696,7 @@ def _tracking_cases():
         case("ml-runs-track-directory-missing", FIT_TR, bad("io.not-found"), setup=LBASE),
         case("ml-runs-conflict", FIT_TR + ["--overwrite"], bad("ml.runs.conflict"), setup=WITH_RUN + [("raw", _edit_record)]),
         case("ml-runs-too-many", FIT_TR, bad("ml.runs.too-many"), setup=LBASE + [("mkdir", "runs"), ("raw", _thousand_records)]),
-        case("ml-runs-record-too-large", ["fit", "--model", "linear", "--target", "c0000_" + "x" * 70, "--drop", ",".join("c%04d_" % i + "x" * 70 for i in range(2, 4000)), "--output", "w.cml", "--track", "runs", "wide2.csv"],
+        case("ml-runs-record-too-large", ["fit"] + long_record_args() + ["--output", "w.cml", "--track", "runs", "wide2.csv"],
              bad("ml.runs.record-too-large"), setup=[("mkdir", "runs"), ("raw", _long_names)]),
         case("ml-runs-show-not-found", ["runs", "show", "runs", "0" * 64], bad("ml.runs.not-found"), setup=LBASE + [("mkdir", "runs")]),
         case("ml-runs-unknown-model", ["eval", "--model-file", "lin.cml", "--track", "runs", "lin.csv"], bad("ml.runs.unknown-model"), setup=WITH_LIN + [("mkdir", "runs")]),
