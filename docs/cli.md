@@ -60,6 +60,8 @@ table to drift (gate T1 checks the one table against its projections).
 | `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
 | `describe` | `--model-file MODEL` | `--limit` (category strings listed per column), `--max-bytes`, `--format` (no CSV operand) |
 
+*The models and their flags (the table is `ml introspect | jq .flags`, generated from `lib/models/*/model.toml`).* `--model` takes `constant`, `linear`, `logistic`, `kmeans`, `tree`, `forest` or `boost`. `--model boost` (gradient-boosted trees, `docs/models-boost.md`) takes `--task`, `--rounds` (1 to 10,000, default 100), `--learning-rate` (above 0 and at most 1, default 0.1), `--max-depth`, `--min-leaf`, `--bins`, `--l2`, `--subsample` (above 0 and at most 1, default 1.0), `--early-stopping` (0 is off; a positive number needs `--split`, else `args.conflict`) and `--max-nodes`; `--trees`, `--mtry` and the other models' flags are `args.conflict`. A float outside its range is `ml.param.out-of-range` (exit 2), a depth above 30 `ml.limit.depth`, rounds times the nodes of a tree above 4,194,304 `ml.limit.nodes`, more than 4,096 columns `ml.input.too-many-columns`. The model file is kind 8 with the summation order 3.
+
 **Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,
 error, errors, meta}`, errors `{code, rule, message, hint, repair, detail}`, no timestamp, no duration, no float (every decimal is a
 string whose digits are exact). In `--format text` a success is a few lines and an error is a sentence on standard error.

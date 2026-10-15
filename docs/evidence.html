@@ -75,7 +75,9 @@
       <tr><th><code>mutants_serve.py</code></th><td class="num">59</td><td class="num">59</td><td class="num">0</td><td class="num">0</td></tr>
       <tr><th><code>mutants_http.py</code></th><td class="num">75</td><td class="num">71</td><td class="num">4</td><td class="num">0</td></tr>
       <tr><th><code>mutants_nonfinite.py</code></th><td class="num">28</td><td class="num">25</td><td class="num">3</td><td class="num">0</td></tr>
-      <tr class="us"><th>total</th><td class="num">1,194</td><td class="num">1,144</td><td class="num">50</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_boost.py</code></th><td class="num">151</td><td class="num">129</td><td class="num">22</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_wire_boost.py</code></th><td class="num">24</td><td class="num">24</td><td class="num">0</td><td class="num">0</td></tr>
+      <tr class="us"><th>total</th><td class="num">1,369</td><td class="num">1,297</td><td class="num">72</td><td class="num">0</td></tr>
     </tbody>
   </table></div>
   <p class="note">The total is the sum of the rows. The suites for core, paths, linear algebra, metrics and trees were not run again on this tree (their code is unchanged): their rows are the counts of commit <code>01c7bee</code>, 2026-10-14. The others were run in copies of this tree (the baselines of <code>mutants_wire.py</code> and <code>mutants_wire_kmeans.py</code> were interrupted before their summary line: the unmutated copy passes its 439 tests when run alone, and the two counts rest on the targeted tests of each mutant). Beside them: 11 pin mutants of RD1 (in <code>mutants_reader.py</code>), 11 deliberately wrong oracles of the linear algebra (in <code>mutants_linalg.py</code>), 6 mutant modules of the admission script and 27 mutants of the prose lint (<code>scripts/check_prose.py --mutants</code>), all caught. A survivor is usually an equivalent mutant: the change cannot alter a result (an addition is commutative, a clamp removes only all-zero partials). The argument for each is in the script that holds it.</p>
@@ -206,6 +208,25 @@
     </tbody>
   </table></div>
   <p class="note"><strong>Not shown:</strong> the admission checks that <code>--fast</code> skips are run on request, not by <code>check.sh</code>. A tree or forest with a categorical step has five conformance fixtures (no file, the held-out rows scored, a missing numeric cell, a dry run); the oracle of the tree files covers numeric plans only. The scikit-learn bounds for the tree and forest are loose on small files, and a model file longer than <code>--max-bytes</code> is refused by <code>fit</code> in four fixtures. <code>eval</code> accepts <code>--threads</code> and nothing in it is threaded.</p>
+</section>
+
+<section id="boost">
+  <h2>Gradient-boosted trees</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/models-boost.md">docs/models-boost.md</a> sections 8 to 10. The gates were written before the code. A Newton step in each leaf, every sum a sequential left fold in a fixed order (summation order 3, model kind 8), a seeded row sample per round, early stopping that never reads the held-out rows. The mutant suites ran in slices on the Linux x86-64 workstation; the rest on the Mac and the workstation.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>oracle, byte for byte</th><td><code>scripts/oracle_wire_boost.py --suite 60</code>: 120 cases (both tasks, 30 to 700 rows, rounds 1 to 50, depth 1 to 8), 115 fitted and 5 refusals the oracle predicts, all equal to the file the binary writes: 46 with missing cells left in (8,292 cells), 2,989 splits whose default side is left, 44,500 nodes, 72 with a split, 47 with a row sample, 28 with early stopping. 60 more cases on the workstation. 100,000 rows: 4 cases, the file at 1, 2, 4, 8 and 16 threads equal to the oracle&rsquo;s. <code>predict</code>, <code>predict --proba</code> and every <code>eval</code> metric equal the oracle&rsquo;s doubles.</td></tr>
+      <tr><th>threads</th><td>One file at 1, 2, 4, 8 and 16 threads in four configurations, and at 1 to 16 in the admission. The threads only bin the columns: the rounds are sequential, so there is no speed-up with threads (1.96 s at one thread and 1.90 s at eight for 100,000 rows, 50 rounds of depth 6).</td></tr>
+      <tr><th>against scikit-learn</th><td>10 comparisons with <code>HistGradientBoosting*</code> inside bounds fixed first, all inside: breast cancer accuracy 0.958 for both and ROC-AUC 0.9828 against 0.9868, wine and iris equal in accuracy, diabetes RMSE 61.4 against 63.4. A depth-1 control and a permuted-target control fall outside, so the gate can fail. The trees are not the same trees: the bins, the tie rule and the gain test differ.</td></tr>
+      <tr><th>admission</th><td><code>scripts/admit.py boost</code>: 12 of 12 checks pass (9,072 damaged files in the check of the reader, 60 oracle cases, 175 mutant patterns, 10 comparisons); the six mutant modules are still refused and the twin is admitted.</td></tr>
+      <tr><th>damaged files</th><td>10,876 truncations, 21,752 flipped bytes and 3,000 seeded damages of three model files, counts that wrap the size computation, and every rule of the payload one at a time: no trap, no wrong checksum accepted.</td></tr>
+      <tr><th>mutants</th><td>175 patterns: 153 killed, 22 survive and each carries its reason (equivalents, second lines of defence behind another check of the same bound, bounds no input reaches); the two that guard the reader&rsquo;s ceilings are the adapter&rsquo;s identical check.</td></tr>
+      <tr><th>serving</th><td><code>ml-predict</code> and <code>ml-serve</code> equal <code>ml predict</code> byte for byte for three boosted models; <code>describe</code> equals its Python oracle; two OpenAPI documents validate and Schemathesis 4.31.1 finds no issue in 335 and 345 cases.</td></tr>
+      <tr><th>fingerprint</th><td>24 lines appended to the 88 of the determinism golden (6 fits, 1 and 8 threads, a categorical plan): equal on the Mac and on the workstation. Not run on the Raspberry Pi.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note"><strong>Not shown:</strong> a quiet-machine timing (<code>ml fit</code> is 2.3 to 2.8 times slower than scikit-learn&rsquo;s <code>fit</code> alone on one thread on 100,000 rows, a comparison of two different programs), column sampling, multiclass, a threaded round.</p>
 </section>
 
 <section id="pipeline">
