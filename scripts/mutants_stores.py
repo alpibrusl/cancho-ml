@@ -84,6 +84,7 @@ WHY = {
     "consumer-wrong-path": "not .cancho-vcs/<a published module>",
     "consumer-copies": "a copy",
     "check-other-compiler": "cancho.toml pins",
+    "check-stores-dir-missing": "is missing",
     "check-": "are not what a fresh publish gives",
     "consume-store-removed-checked": "not what a fresh publish gives",
     "consume-source-changed": "not what a fresh publish gives",

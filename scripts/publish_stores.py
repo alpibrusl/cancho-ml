@@ -127,7 +127,7 @@ def write_api(found, out):
         f.write("".join(l + "\n" for l in api_lines(found)))
 
 
-def publish(src, out):
+def publish(src, out, quiet=False):
     exe = compiler(src)
     found = sources(src)
     root = os.path.join(out, STORE)
@@ -145,7 +145,8 @@ def publish(src, out):
             r = subprocess.run(args + [path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             if r.returncode != 0:
                 raise SystemExit(f"publishing {m} failed:\n{r.stdout}")
-            print(f"{m}: {r.stdout.count('published ')} declarations")
+            if not quiet:
+                print(f"{m}: {r.stdout.count('published ')} declarations")
     write_api(found, out)
 
 
@@ -208,7 +209,7 @@ def main():
         raise SystemExit(committed + " is missing")
     api = os.path.join(args.out, API)
     with tempfile.TemporaryDirectory() as scratch:
-        publish(args.src, scratch)
+        publish(args.src, scratch, quiet=True)
         bad = differences(committed, os.path.join(scratch, STORE))
         if not os.path.isfile(api):
             bad.append(API + " (missing)")
