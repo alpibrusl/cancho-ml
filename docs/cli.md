@@ -43,6 +43,7 @@ verdict of each, with the survivors.
 ml [FLAGS] fit FILE       fit a model on a CSV and write it
 ml [FLAGS] predict FILE   apply a stored model to a CSV (FILE, or - or nothing for standard input)
 ml [FLAGS] eval FILE      score a stored model on a CSV
+ml [FLAGS] cv FILE        cross-validate a model: fit and score it on every fold, write nothing (docs/splits.md)
 ml [FLAGS] describe       what a model file requires of its caller (docs/serving.md section 5)
 ml introspect             the tool as data (flags, rules, limits, authority, schema)
 ml skill                  the same as a SKILL.md for an agent
@@ -58,6 +59,7 @@ table to drift (gate T1 checks the one table against its projections).
 | `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) and, for `--model tree|forest`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes` (`docs/wiring-trees.md` section 2) |
 | `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
 | `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
+| `cv` | `--target NAME` (none for kmeans) and a model other than constant | the model flags of `fit` (`--model`, `--plan`, `--step`, the hyperparameters, `--task`, `--positive`, `--drop`, `--float`, `--cat`), `--folds`, `--repeats`, `--stratify`, `--split-group`, `--split-by`, `--emit-folds`, `--seed`, `--threads`, the `--max-*` caps, `--log`, `--format`; never `--output`, `--overwrite`, `--dry-run` or `--split` |
 | `describe` | `--model-file MODEL` | `--limit` (category strings listed per column), `--max-bytes`, `--format` (no CSV operand) |
 
 **Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,

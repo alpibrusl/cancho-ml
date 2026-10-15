@@ -6,7 +6,7 @@ All the measurements are from one machine, a Mac (arm64, Apple M4 Max, 16 cores,
 
 ## What is built, and reachable from the command line
 
-The command line is `ml fit | predict | eval | describe | introspect | skill`; `ml-predict`, a second binary from the same sources, is `predict | describe | introspect | skill`; `ml-serve`, a third, serves one model file over HTTP. It builds six models: `--model constant` (the training mean for a regression, the majority class and its probability for a classification), `--model linear`, `--model logistic`, `--model kmeans`, `--model tree` and `--model forest`, the last five through a pipeline of fitted steps stored in the same file ([wiring.md](wiring.md), [wiring-trees.md](wiring-trees.md), [wiring-kmeans.md](wiring-kmeans.md), [modules.md](modules.md)).
+The command line is `ml fit | predict | eval | cv | describe | introspect | skill`; `ml-predict`, a second binary from the same sources, is `predict | describe | introspect | skill`; `ml-serve`, a third, serves one model file over HTTP. It builds six models: `--model constant` (the training mean for a regression, the majority class and its probability for a classification), `--model linear`, `--model logistic`, `--model kmeans`, `--model tree` and `--model forest`, the last five through a pipeline of fitted steps stored in the same file ([wiring.md](wiring.md), [wiring-trees.md](wiring-trees.md), [wiring-kmeans.md](wiring-kmeans.md), [modules.md](modules.md)).
 
 | item | what it is | source |
 |---|---|---|
@@ -38,8 +38,9 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 | item | what it is | source |
 |---|---|---|
 | tensor and linear algebra | Rank 1 to 4 descriptors; `dot`, `axpy`, `gemv`, `syrk`, `gemm`, Cholesky and triangular solves, with one written summation order (blocks of 256 terms, 4 lanes in a block, a fixed tree over blocks, Cholesky panels of 32) that does not depend on the thread count; the metrics and the transforms use the same function. | [linalg.md](linalg.md) section 2, [lanes.md](lanes.md) |
-| random generator | SplitMix64, derived streams, six registered stream kinds. | [rng.md](rng.md) |
+| random generator | SplitMix64, derived streams, eight registered stream kinds. | [rng.md](rng.md) |
 | metrics and splits | Accuracy, precision, recall, F1, ROC-AUC (integers, midranks), RMSE, MAE, R-squared, log-loss; k-fold, train/test, stratified. | [metrics.md](metrics.md) |
+| split strategies and cross-validation, from the command line | `fit --split` and `eval --split` with `--stratify`, `--split-group COLUMN` or `--split-by time:COLUMN`; `ml cv --folds K --repeats R` with the same three (an expanding window for a time split), the metrics of every fold and their mean and sample standard deviation, and `--emit-folds`. Every fitted step is fitted on the training rows of each fold alone. Nine `ml.split.*` rules. `--model constant` is not cross-validated. | [splits.md](splits.md) |
 | linear and ridge regression | Normal equations, Cholesky. Dependent columns are refused by a relative pivot test (a pivot must exceed 2^-40 of its own diagonal element), not by the sign of a rounded number. | [models-linear.md](models-linear.md) section 3.1 |
 | logistic regression, binary | Newton, a fixed number of iterations, optional l2. | [models-linear.md](models-linear.md) |
 | k-means | Seeded k-means++ or random initialisation, a fixed number of Lloyd iterations, the lowest index wins a tie, an empty cluster keeps its centroid. Called by `--model kmeans`. | [models-linear.md](models-linear.md) |
