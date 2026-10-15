@@ -160,11 +160,14 @@ def copy_tree(dest):
     if deps.is_dir():
         (dest / "build").mkdir(exist_ok=True)
         shutil.copytree(deps, dest / "build" / "deps")
-    # the other two binaries are not rebuilt from a mutant: the tests that run them (the baseline runs every test) need the ones of the real tree
-    for name in ("ml-predict", "ml-serve"):
-        if (ROOT / "build" / name).is_file():
-            (dest / "build").mkdir(exist_ok=True)
-            shutil.copy2(ROOT / "build" / name, dest / "build" / name)
+    # every other binary of the real tree (ml-predict, ml-serve, the check programs) is carried as it is: a mutant rebuilds only ml, and the
+    # tests that run the others (the baseline runs every test) need them
+    built = ROOT / "build"
+    if built.is_dir():
+        (dest / "build").mkdir(exist_ok=True)
+        for f in sorted(built.iterdir()):
+            if f.name != "ml" and f.is_file() and os.access(f, os.X_OK):
+                shutil.copy2(f, dest / "build" / f.name)
 
 
 def apply_edits(tree, m, strict=True):
