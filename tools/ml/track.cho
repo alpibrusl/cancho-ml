@@ -640,3 +640,48 @@ pub fn plan[&h, &f, &r, &pt, &dp, &op, &fb, &sh, &tn, &pl, &mt, &nv](heap: &!h H
     return (rec, id, write, e);
 }
 
+
+// The pieces of an answer that has a run record: the file name `<id>.json`, the `run` member (`{"id":..,"dir":..,"file":..,"written":..,"sha256":..}`) and the entry of a dry run's planned_actions
+// (empty when the record already exists and nothing would be written). `write` says whether the record is a new file, `dry` whether this is a dry run.
+pub fn answer_parts[&h, &i, &d, &rc](heap: &!h Heap, id: &i [byte], dir: &d [byte], rec: &rc [byte], write: bool, dry: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    let name = run_name(heap, id);
+    let rhex = mfile.sha256_hex(heap, rec);
+    var runjson = buffer.empty(heap, 1);
+    var action = buffer.empty(heap, 1);
+    borrow name as &nr in {
+        borrow rhex as &rhr in {
+            var rw = json.writer(heap, 256);
+            rw = json.begin_object(heap, rw);
+            rw = json.put_key(heap, rw, "id");
+            rw = json.put_string(heap, rw, id);
+            rw = verbs.put_name(heap, rw, "dir", dir);
+            rw = json.put_key(heap, rw, "file");
+            rw = json.put_string(heap, rw, buffer.bytes(nr));
+            rw = json.put_key(heap, rw, "written");
+            rw = json.put_bool(heap, rw, write && !dry);
+            rw = json.put_key(heap, rw, "sha256");
+            rw = json.put_string(heap, rw, buffer.bytes(rhr));
+            rw = json.end_object(heap, rw);
+            buffer.drop(heap, runjson);
+            runjson = json.finish(rw);
+            if write {
+                var aw = json.writer(heap, 128);
+                aw = json.begin_object(heap, aw);
+                aw = json.put_key(heap, aw, "op");
+                aw = json.put_string(heap, aw, "create");
+                aw = verbs.put_name(heap, aw, "dir", dir);
+                aw = json.put_key(heap, aw, "file");
+                aw = json.put_string(heap, aw, buffer.bytes(nr));
+                aw = json.put_key(heap, aw, "bytes");
+                aw = json.put_int(heap, aw, len(rec));
+                aw = json.put_key(heap, aw, "sha256");
+                aw = json.put_string(heap, aw, buffer.bytes(rhr));
+                aw = json.end_object(heap, aw);
+                buffer.drop(heap, action);
+                action = json.finish(aw);
+            }
+        }
+    }
+    buffer.drop(heap, rhex);
+    return (name, runjson, action);
+}

@@ -1,0 +1,103 @@
+edition 6;
+
+module ml.cfit;
+
+// `fit` of the constant models (docs/cli.md section 3), with the run record of --track (docs/tracking.md section 5): the model is made by tools/ml/verbs.cho (fit_prepare), its file by
+// tools/ml/mfile.cho, and the record by tools/ml/track.cho. `make` is the same without the writing, for `ml runs verify`.
+
+import std.buffer;
+import ml.csv;
+import ml.fsio;
+import ml.mfile;
+import ml.paths;
+import ml.spec;
+import ml.track;
+import ml.verbs;
+import ml.wire;
+import pipeline.provsec;
+import toolbox.built;
+import toolbox.fail;
+
+// What a constant fit makes before anything is written: the model file's bytes and the numbers a run record holds. `ok` false: the errors say why.
+pub fn make[&h, &g, &f, &r, &pf, &tn](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (mfile.Model, buffer.Buffer, bool, fail.Errors, buffer.Buffer) {
+    let (mo, ok, e, lg) = verbs.fit_prepare(heap, args, fs, root, file, o, tg, errs, log);
+    var fbytes = buffer.empty(heap, 1);
+    if ok {
+        borrow mo as &mr in {
+            buffer.drop(heap, fbytes);
+            fbytes = mfile.encode(heap, mr, built.compiler());
+        }
+    }
+    return (mo, fbytes, ok, e, lg);
+}
+
+pub fn fit[&h, &g, &f, &r, &pf, &po, &pt](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
+    let (mo, fbytes, ok, e, lg) = make(heap, args, fs, root, file, o, o.target, errs, log);
+    if !ok {
+        mfile.drop_model(heap, mo);
+        buffer.drop(heap, fbytes);
+        return verbs.nothing(heap, e, lg);
+    }
+    var recbuf = buffer.empty(heap, 1);
+    var rname = buffer.empty(heap, 1);
+    var runjson = buffer.empty(heap, 1);
+    var action = buffer.empty(heap, 1);
+    var write_rec = false;
+    var track_errs = fail.empty_in(heap, spec.extra());
+    var track_ok = true;
+    if o.track_given {
+        borrow mo as &mr in {
+            borrow fbytes as &fb in {
+                let pv = mfile.prov_bytes(mr);
+                let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(fb), provsec.file_sha(pv), provsec.file_bytes(pv), mfile.rows(mr), mfile.rows(mr), 0, 0, 0, o.target, true, verbs.task_name(mfile.kind(mr)), mfile.plan_text(mfile.kind(mr)), "", 0 - 1, o.na, o, fail.empty_in(heap, spec.extra()));
+                write_rec = wr;
+                fail.drop(heap, track_errs);
+                track_errs = te;
+                borrow rb as &rbr in {
+                    borrow ib as &ibr in {
+                        let (nm, rj, ac) = track.answer_parts(heap, buffer.bytes(ibr), paths.shown(trackp), buffer.bytes(rbr), wr, o.dry);
+                        buffer.drop(heap, rname);
+                        buffer.drop(heap, runjson);
+                        buffer.drop(heap, action);
+                        rname = nm;
+                        runjson = rj;
+                        action = ac;
+                    }
+                }
+                buffer.drop(heap, recbuf);
+                recbuf = rb;
+                buffer.drop(heap, ib);
+            }
+        }
+        borrow track_errs as &ter in {
+            track_ok = fail.count(ter) == 0;
+        }
+    }
+    if !track_ok {
+        mfile.drop_model(heap, mo);
+        buffer.drop(heap, fbytes);
+        buffer.drop(heap, recbuf);
+        buffer.drop(heap, rname);
+        buffer.drop(heap, runjson);
+        buffer.drop(heap, action);
+        fail.drop(heap, e);
+        return verbs.nothing(heap, track_errs, lg);
+    }
+    fail.drop(heap, track_errs);
+    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    borrow runjson as &rjr in {
+        borrow action as &acr in {
+            borrow rname as &rnr in {
+                borrow recbuf as &rcr in {
+                    verbs.drop_out(heap, result);
+                    result = verbs.finish_fit(heap, fs, root, out, trackp, o, mo, fbytes, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, lg);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, recbuf);
+    buffer.drop(heap, rname);
+    buffer.drop(heap, runjson);
+    buffer.drop(heap, action);
+    return result;
+}

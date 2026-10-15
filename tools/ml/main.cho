@@ -11,6 +11,7 @@ import std.bytes;
 import std.json;
 import ml.app;
 import ml.catcli;
+import ml.cfit;
 import ml.est;
 import ml.fsio;
 import ml.logrec;
@@ -83,7 +84,7 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
             buffer.drop(heap, tokens);
             return (answer, log_ok);
         }
-        return (verbs.fit(heap, args, fs, root, ps.file, ps.out, o, e3, lg), log_ok);
+        return (cfit.fit(heap, args, fs, root, ps.file, ps.out, ps.trackp, o, e3, lg), log_ok);
     }
     if verb == 2 {
         return (wireio.predict(heap, args, fs, root, ps.file, ps.model, o, e3, lg), log_ok);

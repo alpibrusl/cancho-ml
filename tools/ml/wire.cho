@@ -1592,51 +1592,15 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t, &pt](heap: &!h Heap, args: &g Args
         var action = buffer.empty(heap, 1);
         var rname = buffer.empty(heap, 1);
         if o.track_given {
-            // `"run":{"id":..,"path":..,"written":..}` and the record's entry in planned_actions
             borrow idbuf as &idr in {
-                buffer.drop(heap, rname);
-                rname = track.run_name(heap, buffer.bytes(idr));
-            }
-            borrow rname as &rnr in {
                 borrow recbuf as &rcr in {
-                    let rhex = mfile.sha256_hex(heap, buffer.bytes(rcr));
-                    var rw = json.writer(heap, 256);
-                    rw = json.begin_object(heap, rw);
-                    rw = json.put_key(heap, rw, "id");
-                    borrow idbuf as &idr2 in {
-                        rw = json.put_string(heap, rw, buffer.bytes(idr2));
-                    }
-                    rw = verbs.put_name(heap, rw, "dir", paths.shown(trackp));
-                    rw = json.put_key(heap, rw, "file");
-                    rw = json.put_string(heap, rw, buffer.bytes(rnr));
-                    rw = json.put_key(heap, rw, "written");
-                    rw = json.put_bool(heap, rw, write_rec && !o.dry);
-                    rw = json.put_key(heap, rw, "sha256");
-                    borrow rhex as &rhr in {
-                        rw = json.put_string(heap, rw, buffer.bytes(rhr));
-                    }
-                    rw = json.end_object(heap, rw);
+                    let (nm, rj, ac) = track.answer_parts(heap, buffer.bytes(idr), paths.shown(trackp), buffer.bytes(rcr), write_rec, o.dry);
+                    buffer.drop(heap, rname);
                     buffer.drop(heap, runjson);
-                    runjson = json.finish(rw);
-                    if write_rec {
-                        var aw = json.writer(heap, 128);
-                        aw = json.begin_object(heap, aw);
-                        aw = json.put_key(heap, aw, "op");
-                        aw = json.put_string(heap, aw, "create");
-                        aw = verbs.put_name(heap, aw, "dir", paths.shown(trackp));
-                        aw = json.put_key(heap, aw, "file");
-                        aw = json.put_string(heap, aw, buffer.bytes(rnr));
-                        aw = json.put_key(heap, aw, "bytes");
-                        aw = json.put_int(heap, aw, buffer.size(rcr));
-                        aw = json.put_key(heap, aw, "sha256");
-                        borrow rhex as &rhr2 in {
-                            aw = json.put_string(heap, aw, buffer.bytes(rhr2));
-                        }
-                        aw = json.end_object(heap, aw);
-                        buffer.drop(heap, action);
-                        action = json.finish(aw);
-                    }
-                    buffer.drop(heap, rhex);
+                    buffer.drop(heap, action);
+                    rname = nm;
+                    runjson = rj;
+                    action = ac;
                 }
             }
         }
