@@ -127,9 +127,9 @@ has mutants (`--mutants`), each of which must make it fail. `actionlint` is not 
 
 ## 7. The full gate
 
-`scripts/check.sh` takes 30 to 40 minutes on the Mac [open: measured in section 8] and needs numpy, scipy, scikit-learn, Schemathesis and the OpenAPI validator
+`scripts/check.sh` takes 41 minutes on the Mac and 37.5 minutes on the Linux machine of section 8, with the same exit status 0 and needs numpy, scipy, scikit-learn, Schemathesis and the OpenAPI validator
 (`ci/requirements-full.txt`), and the files of spike F, which are not in the repository: the job regenerates them with `scripts/spikes/gen.py` into the directory the tree
-gates read (`../ml-data`). `CANCHO` points to the compiler built by the job. The job has a timeout of 120 minutes, runs on `workflow_dispatch` and on a nightly schedule only, and uploads
+gates read (`../ml-data`). `CANCHO` points to the compiler built by the job. The job has a timeout of 150 minutes, runs on `workflow_dispatch` and on a nightly schedule only, and uploads
 its log as an artifact.
 
 ## 8. Measured
