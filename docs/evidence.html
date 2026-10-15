@@ -75,7 +75,8 @@
       <tr><th><code>mutants_serve.py</code></th><td class="num">59</td><td class="num">59</td><td class="num">0</td><td class="num">0</td></tr>
       <tr><th><code>mutants_http.py</code></th><td class="num">75</td><td class="num">71</td><td class="num">4</td><td class="num">0</td></tr>
       <tr><th><code>mutants_nonfinite.py</code></th><td class="num">28</td><td class="num">25</td><td class="num">3</td><td class="num">0</td></tr>
-      <tr class="us"><th>total</th><td class="num">1,194</td><td class="num">1,144</td><td class="num">50</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_refusals.py</code></th><td class="num">34</td><td class="num">34</td><td class="num">0</td><td class="num">0</td></tr>
+      <tr class="us"><th>total</th><td class="num">1,228</td><td class="num">1,178</td><td class="num">50</td><td class="num">0</td></tr>
     </tbody>
   </table></div>
   <p class="note">The total is the sum of the rows. The suites for core, paths, linear algebra, metrics and trees were not run again on this tree (their code is unchanged): their rows are the counts of commit <code>01c7bee</code>, 2026-10-14. The others were run in copies of this tree (the baselines of <code>mutants_wire.py</code> and <code>mutants_wire_kmeans.py</code> were interrupted before their summary line: the unmutated copy passes its 439 tests when run alone, and the two counts rest on the targeted tests of each mutant). Beside them: 11 pin mutants of RD1 (in <code>mutants_reader.py</code>), 11 deliberately wrong oracles of the linear algebra (in <code>mutants_linalg.py</code>), 6 mutant modules of the admission script and 27 mutants of the prose lint (<code>scripts/check_prose.py --mutants</code>), all caught. A survivor is usually an equivalent mutant: the change cannot alter a result (an addition is commutative, a clamp removes only all-zero partials). The argument for each is in the script that holds it.</p>
