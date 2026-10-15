@@ -78,7 +78,7 @@ def main():
                     cmd += ["-H", "Authorization: Bearer " + token]
                 p = subprocess.run(cmd, capture_output=True, text=True, cwd=work)
                 tail = [l for l in p.stdout.splitlines() if l.strip()][-14:]
-                print("== %s (%s)%s: exit %d" % (fid, version, ", positive_data_acceptance excluded (dec column)" if has_dec else "", p.returncode))
+                print("== %s (%s)%s: exit %d" % (fid, version, ", positive_data_acceptance excluded (constraints the document cannot state)" if has_dec else "", p.returncode))
                 if p.returncode != 0:
                     print(p.stdout[-6000:])
                     bad += 1
