@@ -179,6 +179,7 @@ h2 + .sub, h3 + .sub { margin-top: .3rem; }
 .flow .smb { font: 13px var(--font); fill: var(--bad); font-weight: 400; }
 .flow .arrow { stroke: var(--muted); stroke-width: 1.8; fill: none; marker-end: url(#ah); }
 .flow .arrow.bad { stroke: var(--bad); stroke-dasharray: 5 4; marker-end: url(#ahb); }
+.flow .line { stroke: var(--muted); stroke-width: 1.8; fill: none; }
 .flow .arrow.ok { stroke: var(--good); }
 .nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1rem; text-align: center; }
 .nums .n b { display: block; font-size: 2.3rem; line-height: 1.2; letter-spacing: -.03em; color: var(--accent); font-variant-numeric: tabular-nums; }

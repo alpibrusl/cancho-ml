@@ -94,6 +94,14 @@ FILES = {
     "newpets.csv": "city,species,age,visits\nOslo,rabbit,2,3\nLyon,axolotl,4,1\n,cat,1,2\n",
 }
 
+def iris_gaps():
+    """docs/examples/data/iris_train.csv with the sepal_width_cm cell of its fourth data row emptied (the landing page's refusal)."""
+    lines = (ROOT / "docs" / "examples" / "data" / "iris_train.csv").read_text().split("\n")
+    cells = lines[4].split(",")
+    cells[1] = ""
+    lines[4] = ",".join(cells)
+    return "\n".join(lines)
+
 # What is shown is what is typed; the argv run is shlex.split of it. The order is the order of running.
 DEMOS = [
     ("fit", "ml fit --target price --output houses.ml houses.csv"),
@@ -141,6 +149,15 @@ DEMOS = [
     ("k_predict", "ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv"),
     ("k_eval", "ml eval --model-file iris-km.ml --drop virginica iris_test.csv"),
     ("k_text", "ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv"),
+    # the landing page (docs/index.html): a replayed run on the iris files of the worked examples, a refusal with its repair, and the commands of "One command"
+    ("r_fit", "ml fit --model logistic --step 'scale column=* kind=standard' --l2 0.1 --split train=0.8 --seed 3 --target virginica --output iris.ml iris_train.csv"),
+    ("r_predict", "ml predict --model-file iris.ml --proba --limit 3 iris_test.csv"),
+    ("r_eval", "ml eval --model-file iris.ml iris_test.csv"),
+    ("r_bad", "ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv"),
+    ("l_fit", "ml fit --model forest --task classification --trees 20 --seed 7 --target virginica --output iris-forest.ml iris_train.csv"),
+    ("l_predict", "ml predict --model-file iris-forest.ml --proba --limit 3 iris_test.csv"),
+    ("l_describe", "ml describe --model-file iris-forest.ml"),
+    ("l_mp", "ml-predict predict --model-file iris-forest.ml --proba --limit 3 iris_test.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
@@ -153,6 +170,7 @@ SUMMARY = {
     "typo": ["rule", "hint", "detail"],
     "big": ["rule", "hint", "detail"],
     "p_bad": ["rule", "hint", "repair"],
+    "r_bad": ["rule", "hint", "repair"],
     "c_bad": ["rule", "hint", "detail"],
     "s_empty": ["rule", "hint"],
     "s_mp_fit": ["rule", "hint", "detail"],
@@ -172,7 +190,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_bad": "r_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -301,6 +319,7 @@ def make_context(binary, tmp):
     # the k-means example: the iris files of the worked examples
     for part in ("train", "test"):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
+    (Path(tmp) / "iris_gaps.csv").write_text(iris_gaps())
     results = {}
 
     def run(words, stdin=None):
@@ -628,6 +647,172 @@ def exit_codes(ctx):
     return "| exit | `code` | meaning |\n|---:|---|---|\n" + rows.rstrip("\n")
 
 
+# --- the landing page (docs/index.html) -------------------------------------------------------------------------------------------
+
+
+def jline(obj):
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+def short_sha(s):
+    return s[:16] + "\u2026"
+
+
+def result_doc(ctx, key, ok):
+    typed, out, status = ctx["results"][key]
+    doc = json.loads(out)
+    if doc["ok"] != ok or (status == 0) != ok:
+        raise Drift("the demo %s %s" % (key, "refuses" if ok else "no longer refuses"))
+    return typed, doc, status
+
+
+def replay_lines(ctx):
+    """The replayed run: (class, text) lines. The commands are the typed ones; each answer is one JSON line of which the members that matter are kept
+    (the elision is marked by a final ellipsis and said in the caption), and the sha256 is cut to 16 hex digits."""
+    L = []
+    typed, d, _ = result_doc(ctx, "r_fit", True)
+    dd = d["data"]
+    L += [("d", "# fit on 80% of the rows, 20% held out, seed 3"), ("a", "$ " + typed),
+          ("", jline({"ok": True, "data": {"model": dd["model"], "rows": dd["rows"], "bytes": dd["bytes"], "sha256": short_sha(dd["sha256"]),
+                                          "split": dd["summary"]["split"],
+                                          "holdout": {"rows": dd["summary"]["holdout"]["rows"], "accuracy": dd["summary"]["holdout"]["metrics"]["accuracy"]}}}) + " \u2026")]
+    typed, d, _ = result_doc(ctx, "r_predict", True)
+    dd = d["data"]
+    L += [("d", "# the model file alone is enough to predict"), ("a", "$ " + typed),
+          ("", jline({"ok": True, "data": {"columns": dd["columns"], "rows": dd["rows"], "total_rows": dd["total_rows"]}}) + " \u2026")]
+    typed, d, _ = result_doc(ctx, "r_eval", True)
+    dd = d["data"]
+    L += [("d", "# score it on the test file"), ("a", "$ " + typed),
+          ("", jline({"ok": True, "data": {"rows": dd["rows"], "metrics": {k: dd["metrics"][k] for k in ("accuracy", "roc_auc", "log_loss")}}}) + " \u2026")]
+    typed, d, status = result_doc(ctx, "r_bad", False)
+    err = d["error"]
+    L += [("d", "# one cell of the training file is empty and the plan does not say what to do with it"), ("a", "$ " + typed),
+          ("b", jline({"ok": False, "error": {"rule": err["rule"], "hint": err["hint"], "repair": err["repair"]}}) + " \u2026"),
+          ("b", "# exit status %d" % status)]
+    typed, out, status = ctx["results"]["r_fixed"]
+    dd = json.loads(out)["data"]
+    L += [("d", "# the repair is a command: run as offered"), ("a", "$ " + typed),
+          ("g", jline({"ok": True, "data": {"model": dd["model"], "rows": dd["rows"], "bytes": dd["bytes"], "sha256": short_sha(dd["sha256"])}}) + " \u2026")]
+    return L
+
+
+def replay_html(ctx):
+    return '<pre id="screen" tabindex="0" aria-label="Replayed log">' + "\n".join(
+        '<span%s>%s</span>' % (' class="%s"' % c if c else "", e(x)) for c, x in replay_lines(ctx)) + "</pre>"
+
+
+LAND_CMDS = [("# any of the six models, one verb each", None),
+             ("l_fit", None), ("l_predict", None),
+             ("# what a model file requires of a caller, as data", None), ("l_describe", None),
+             ("# the prediction half, a separate binary with no write and no thread", None), ("l_mp", None),
+             ("# the same file over HTTP, one request at a time (see the guide for the requests and what it answers)", None),
+             ("ml-serve --model-file iris-forest.ml --no-token --port 8080", "serve")]
+
+
+def land_cmds(ctx):
+    out = []
+    for key, kind in LAND_CMDS:
+        if key.startswith("#"):
+            out.append('<span class="c">%s</span>' % e(key))
+        elif kind == "serve":
+            if "ml-serve --model-file pets.ml --no-token --port 8080 &" != ctx["http"]["h_start"][0]:
+                raise Drift("the ml-serve command of the landing page is not the one the HTTP demos run")
+            out.append('<span class="c">$</span> ' + e(key))
+        else:
+            typed, _, status = ctx["results"][key]
+            if status != 0:
+                raise Drift("the landing command %s fails" % key)
+            out.append('<span class="c">$</span> ' + e(typed))
+    return '<pre class="code" tabindex="0">' + "\n".join(out) + "</pre>"
+
+
+# --- the numbers of the landing page: read from the sources, never typed ------------------------------------------------------------
+
+
+PLATFORMS = ["macOS arm64", "Linux x86-64", "Linux aarch64"]
+
+
+def _int(s):
+    return int(s.replace(",", ""))
+
+
+def landing_values(ctx):
+    """name -> text, for every <b data-n="name"> or <span data-n="name"> of docs/index.html. Sources: docs/status.md (the document every count lives in),
+    docs/bench/xplat_fp.txt (the golden), and `ml introspect` (the rules)."""
+    import re
+    status = (ROOT / "docs" / "status.md").read_text()
+    fp = (ROOT / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines()
+    fits = sum(1 for l in fp if l.split("\t")[1:2] == ["fit-exit"])
+    m = re.search(r"agree on (\d+) fingerprint lines for (\d+) fits", status)
+    if not m or (int(m.group(1)), int(m.group(2))) != (len(fp), fits):
+        raise Drift("docs/status.md and docs/bench/xplat_fp.txt disagree on the fingerprint (%s vs %d lines, %d fits)" % (m and m.groups(), len(fp), fits))
+    row = next((l for l in status.splitlines() if l.startswith("| other platforms")), "")
+    for plat in PLATFORMS:
+        if plat not in row:
+            raise Drift("docs/status.md does not name the platform %s in its row 'other platforms'" % plat)
+    m = re.search(r"([\d,]+) conformance tests pass, none skipped", status)
+    if not m:
+        raise Drift("docs/status.md no longer says '<N> conformance tests pass, none skipped'")
+    tests = m.group(1)
+    m = re.search(r"([\d,]+) patterns across \w+ scripts: ([\d,]+) killed, (\d+) survive, each explained, 0 unexplained", status)
+    if not m:
+        raise Drift("docs/status.md no longer gives the mutant totals in its usual words")
+    total, killed, survive = m.groups()
+    if _int(total) != _int(killed) + int(survive):
+        raise Drift("the mutant totals of docs/status.md do not add up")
+    m = re.search(r"RMSE ([\d.]+) against scikit-learn's ([\d.]+), ([\d.]+)% apart; the tolerance is (\d+)%", status)
+    if not m:
+        raise Drift("docs/status.md no longer gives the red gate in its usual words")
+    return {"fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
+            "mut_survive": survive, "rules": str(len(ctx["introspect"]["rules"])), "red_gap": m.group(3), "red_tol": m.group(4)}
+
+
+
+
+
+def fill_values(text, ctx):
+    import re
+    vals = landing_values(ctx)
+
+    def sub(m):
+        if m.group(2) not in vals:
+            raise Drift("docs/index.html has data-n=%r, which nothing computes" % m.group(2))
+        return m.group(1) + vals[m.group(2)] + m.group(3)
+    return re.sub(r'(<(?:b|span) data-n="([a-z_]+)">)[^<]*(</(?:b|span)>)', sub, text)
+
+
+# --- the header and the footer of every page, one source ----------------------------------------------------------------------------
+
+REPO_URL = "https://github.com/alpibrusl/cancho-ml"
+NAV = [("How it works", "index.html#how", "opt", "index.html"), ("Guide", "guide.html", "", "guide.html"), ("Examples", "examples.html", "opt", "examples.html"),
+       ("Evidence", "evidence.html", "", "evidence.html"), ("Benchmarks", "benchmarks.html", "opt", "benchmarks.html"), ("GitHub", REPO_URL, "", None)]
+FOOT = [("Repository", REPO_URL), ("Status", REPO_URL + "/blob/main/docs/status.md"), ("Command line", REPO_URL + "/blob/main/docs/cli.md"),
+        ("Design", REPO_URL + "/blob/main/docs/design.md")]
+FOOT_EXTRA = {"docs/examples.html": [("Examples: the gate", REPO_URL + "/blob/main/docs/examples.md")],
+              "docs/benchmarks.html": [("Linear algebra", REPO_URL + "/blob/main/docs/linalg.md")]}
+
+
+def nav_html(rel):
+    page = rel.split("/")[-1]
+    links = []
+    for label, href, cls, target in NAV:
+        if page == "index.html" and href.startswith("index.html#"):
+            href = href[len("index.html"):]
+        attrs = ' class="%s"' % cls if cls else ""
+        if target == page and not href.startswith("#"):
+            attrs += ' aria-current="page"'
+        links.append('<a href="%s"%s>%s</a>' % (href, attrs, label))
+    return ('<header class="top"><div class="wrap">\n  <a class="brand" href="./">cancho-ml</a>\n  <nav aria-label="Site">\n    '
+            + "".join(links) + "\n  </nav>\n</div></header>")
+
+
+def foot_html(rel):
+    links = "".join('<a href="%s">%s</a>' % (h, l) for l, h in FOOT + FOOT_EXTRA.get(rel, []))
+    return ('<footer><div class="wrap">\n  <span class="brandline">cancho-ml</span><span>EUPL-1.2</span><span>written in <a href="https://github.com/alpibrusl/cancho">cancho</a></span>\n  '
+            + links + "\n</div></footer>")
+
+
+
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
@@ -659,6 +844,11 @@ def example_regions():
 
 
 REGIONS["docs/examples.html"] = example_regions()
+REGIONS["docs/index.html"] = {"replay": replay_html, "cmds": land_cmds}
+for _rel in ("docs/index.html", "docs/guide.html", "docs/examples.html", "docs/evidence.html", "docs/benchmarks.html"):
+    REGIONS.setdefault(_rel, {})
+    REGIONS[_rel]["nav"] = lambda c, r=_rel: nav_html(r)
+    REGIONS[_rel]["foot"] = lambda c, r=_rel: foot_html(r)
 REGIONS["README.md"]["ex-flow"] = lambda c: md_block(sx.cmd_items(c["examples"], "iris", only=["fit"]))
 REGIONS["docs/examples.md"] = {"ex-results": lambda c: sx.full_md(c["examples"], c["ref"])}
 REGIONS["README.md"]["ex-summary"] = lambda c: sx.summary_md(c["examples"], c["ref"])
@@ -725,6 +915,8 @@ def main():
             new = old
             for name, fn in regions.items():
                 new = splice(new, name, fn(ctx))
+            if rel == "docs/index.html":
+                new = fill_values(new, ctx)
             if new == old:
                 continue
             if args.check:

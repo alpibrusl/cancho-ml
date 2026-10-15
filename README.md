@@ -540,7 +540,8 @@ The tables, the load of each cell and how to rerun them: [project page](https://
 
 | | |
 |---|---|
-| [project page](https://alpibrusl.github.io/cancho-ml/) | the flow, the agent view and the quick start, in pages |
+| [project page](https://alpibrusl.github.io/cancho-ml/) | the landing page: a replayed run, what is checked, the measured numbers and how to build it |
+| [guide](https://alpibrusl.github.io/cancho-ml/guide.html) | the flows with their real output, the agent view and the quick start, in pages |
 | [worked examples](https://alpibrusl.github.io/cancho-ml/examples.html) | four classic datasets solved by `ml` and compared with scikit-learn on the same files |
 | [evidence](https://alpibrusl.github.io/cancho-ml/evidence.html) | the gates, the oracles and the mutants, and what each proves and does not prove |
 | [benchmarks](https://alpibrusl.github.io/cancho-ml/benchmarks.html) | what was timed, with machine, load and minimum of N; not claims |
@@ -563,7 +564,7 @@ Design before code, in `docs/design.md`, with claims measured; a claim found fal
 
 `scripts/check.sh` runs the pin check, the format check, the unit tests, every library gate, the registry checks, the command line's conformance tests, the generator's drift check, the admission script on the wired models with the mutant modules it must refuse, a check that every mutant edit still applies, and `scripts/check_docs.sh`. It needs the compiler at the pinned revision, the network for `cancho install` and the data files of the tree library's gate in `../ml-data`. The mutant runs (`scripts/mutants_*.py`) rebuild the tool many times and run on request.
 
-This README and the project page carry program output between paired `gen` comment markers. `python3 scripts/site.py` rewrites them from the built `build/ml`; `scripts/check_docs.sh` runs `site.py --check`, which fails if either file differs from what the binary prints, and `scripts/check_links.py`, which fails on a link to a file that is not in the repository. `scripts/check_prose.py`, run by the same script, fails when this README, `docs/status.md` or a project page holds a phrase of history (the list is in the script, with a mutant per phrase). The prose, and every benchmark and gate figure, is written by hand next to its source document.
+This README and the project pages (the landing page and the guide, among others) carry program output between paired `gen` comment markers; the figures of the landing page are read from `docs/status.md`, the golden and `ml introspect` by `scripts/site.py`. `python3 scripts/site.py` rewrites them from the built `build/ml`; `scripts/check_docs.sh` runs `site.py --check`, which fails if either file differs from what the binary prints, and `scripts/check_links.py`, which fails on a link to a file that is not in the repository. `scripts/check_prose.py`, run by the same script, fails when this README, `docs/status.md` or a project page holds a phrase of history (the list is in the script, with a mutant per phrase). The prose, and every benchmark and gate figure, is written by hand next to its source document.
 
 ## Licence
 

@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<!--
+  The landing page. Hand-written, except between the paired "gen:NAME" comment lines (the header, the replayed run, the commands and the footer)
+  and except the figures marked data-n="NAME": scripts/site.py writes those from the built binary, docs/status.md and docs/bench/xplat_fp.txt
+  (run python3 scripts/site.py; scripts/check_docs.sh runs it with --check). The long page is guide.html.
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cancho-ml: machine learning on a CSV that refuses clearly</title>
+<meta name="description" content="Fit, score and serve classical models on a CSV. A refusal names its rule and prints the fix; the model file has the same bytes on three platforms.">
+<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/">
+<meta name="robots" content="index, follow">
+<meta property="og:site_name" content="cancho-ml">
+<meta property="og:locale" content="en">
+<meta property="og:type" content="website">
+<meta property="og:title" content="cancho-ml: machine learning on a CSV that refuses clearly">
+<meta property="og:description" content="Fit, score and serve classical models on a CSV. A refusal names its rule and prints the fix; the model file has the same bytes on three platforms.">
+<meta property="og:url" content="https://alpibrusl.github.io/cancho-ml/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="cancho-ml: machine learning on a CSV that refuses clearly">
+<meta name="twitter:description" content="Fit, score and serve classical models on a CSV. A refusal names its rule and prints the fix; the model file has the same bytes on three platforms.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "cancho-ml",
+  "url": "https://alpibrusl.github.io/cancho-ml/",
+  "description": "A command line that fits, applies, scores and serves classical machine-learning models on a CSV, with exact sums, structured refusals with a repair, one checked model file and a machine-verifiable authority.",
+  "applicationCategory": "DeveloperApplication",
+  "applicationSubCategory": "Command-line tool",
+  "programmingLanguage": "cancho",
+  "license": "EUPL-1.2",
+  "sameAs": ["https://github.com/alpibrusl/cancho-ml"]
+}
+</script>
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="assets/cancho-ml-icon.png">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="home">
+<a class="skip" href="#main">Skip to content</a>
+<!-- gen:nav -->
+<header class="top"><div class="wrap">
+  <a class="brand" href="./">cancho-ml</a>
+  <nav aria-label="Site">
+    <a href="#how" class="opt">How it works</a><a href="guide.html">Guide</a><a href="examples.html" class="opt">Examples</a><a href="evidence.html">Evidence</a><a href="benchmarks.html" class="opt">Benchmarks</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
+  </nav>
+</div></header>
+<!-- /gen:nav -->
+
+<main id="main">
+
+<div class="wrap hero">
+  <h1>Machine learning on a CSV that says no clearly and repeats exactly.</h1>
+  <p class="sub">cancho-ml fits, scores and serves classical models from the command line. When it cannot do what you asked, it names the rule and prints the command that fixes it.</p>
+  <div class="cta"><a class="btn primary" href="#try">Try it</a><a class="btn" href="#how">See how it works</a></div>
+</div>
+
+<div class="wrap" style="padding-bottom:2.5rem">
+  <div class="replay" role="group" aria-labelledby="replay-t">
+    <div class="bar"><i></i><i></i><i></i> <span id="replay-t">a real run, replayed</span> <button id="replay" type="button" hidden>&#8635; replay</button></div>
+<!-- gen:replay -->
+<pre id="screen" tabindex="0" aria-label="Replayed log"><span class="d"># fit on 80% of the rows, 20% held out, seed 3</span>
+<span class="a">$ ml fit --model logistic --step 'scale column=* kind=standard' --l2 0.1 --split train=0.8 --seed 3 --target virginica --output iris.ml iris_train.csv</span>
+<span>{"ok":true,"data":{"model":"logistic","rows":60,"bytes":677,"sha256":"03ec3d09f19cae32…","split":{"train":60,"test":15,"seed":3},"holdout":{"rows":15,"accuracy":"0.9333333333333333"}}} …</span>
+<span class="d"># the model file alone is enough to predict</span>
+<span class="a">$ ml predict --model-file iris.ml --proba --limit 3 iris_test.csv</span>
+<span>{"ok":true,"data":{"columns":["label","probability"],"rows":[["1","0.9636663247980974"],["1","0.9572685462147796"],["0","0.3306981615183625"]],"total_rows":25}} …</span>
+<span class="d"># score it on the test file</span>
+<span class="a">$ ml eval --model-file iris.ml iris_test.csv</span>
+<span>{"ok":true,"data":{"rows":25,"metrics":{"accuracy":"1.0","roc_auc":"1.0","log_loss":"0.21015244741509848"}}} …</span>
+<span class="d"># one cell of the training file is empty and the plan does not say what to do with it</span>
+<span class="a">$ ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv</span>
+<span class="b">{"ok":false,"error":{"rule":"ml.input.missing-value","hint":"add an impute step for the columns, for example impute column=a,b strategy=mean.","repair":{"kind":"retry","argv":["ml","fit","--model","logistic","--target","virginica","--output","iris-gaps.ml","iris_gaps.csv","--step","impute column=sepal_width_cm strategy=mean"]}}} …</span>
+<span class="b"># exit status 8</span>
+<span class="d"># the repair is a command: run as offered</span>
+<span class="a">$ ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv --step 'impute column=sepal_width_cm strategy=mean'</span>
+<span class="g">{"ok":true,"data":{"model":"logistic","rows":75,"bytes":596,"sha256":"eeddbdfe7ff6d530…"}} …</span></pre>
+<!-- /gen:replay -->
+  </div>
+  <p class="caption">A real run of the built <code>ml</code> on the iris files of the <a href="examples.html">worked examples</a>: a fit with rows held out, a predict, an eval, then a refusal and its repair. It is a replay of that output, not a live session. Each answer is one JSON line; the replay keeps the members that matter and cuts the rest (marked &hellip;), and shows 16 digits of each SHA-256. Without JavaScript the whole log is shown.</p>
+</div>
+
+<section class="alt" id="why"><div class="wrap">
+  <h2>Trust the check, not the claim</h2>
+  <p class="lead">A model you cannot reproduce or audit is a guess. Four things that are checked, each by a script that can fail.</p>
+  <div class="cards">
+    <div class="card"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg><h3>The same bytes</h3><p><span data-n="fp_lines">88</span> hashes of model files and printed answers (<span data-n="fp_fits">22</span> fits) equal a committed golden on <span data-n="platforms">3</span> platforms. One changed byte fails the gate.</p></div>
+    <div class="card"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 2h8.2L22 7.9v8.2L16.1 22H7.9L2 16.1V7.9z"/><path d="M12 8v5M12 16.5v.5"/></svg><h3>Refusals are data</h3><p>One JSON line with a rule tag, an exit code and, where one can exist, a command that fixes it. An empty cell, an unread text column or a damaged file stops the run.</p></div>
+    <div class="card"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15l2 2 4-4"/></svg><h3>One checked file</h3><p>A model is one file that ends in a SHA-256 of the rest, so a flipped byte is refused. <code>ml-predict</code> and <code>ml-serve</code> read it and print the text <code>ml predict</code> prints.</p></div>
+    <div class="card"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><h3>Authority you can read</h3><p>What each program may touch is derived by the compiler and checked against a committed manifest. <code>ml</code> has no network; <code>ml-predict</code> and <code>ml-serve</code> write no file.</p></div>
+  </div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <h2>How it works</h2>
+  <p class="lead">A CSV becomes a plan of steps, a fit with sums in a fixed order, and one model file. Anything the tool cannot accept goes back to you with its repair.</p>
+  <div class="flow">
+  <svg viewBox="0 0 760 330" role="img" aria-labelledby="flow-t flow-d">
+    <title id="flow-t">From a CSV to a model file, and the refusal loop</title>
+    <desc id="flow-d">Your CSV goes to a plan of steps, then to a fit with fixed-order sums, then to one model file with a SHA-256 trailer. Predict, eval and serve read that file. If the CSV or the plan cannot be accepted, the tool refuses with a rule tag, an exit code and a repair; you run the repair and try again.</desc>
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+      <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--bad)"/></marker>
+    </defs>
+    <rect class="box" x="10" y="30" width="130" height="64" rx="10"/><text x="75" y="58" text-anchor="middle">Your CSV</text><text class="sm" x="75" y="78" text-anchor="middle">rows and columns</text>
+    <rect class="boxa" x="180" y="30" width="150" height="64" rx="10"/><text x="255" y="58" text-anchor="middle">Plan of steps</text><text class="sm" x="255" y="78" text-anchor="middle">impute, scale, encode</text>
+    <rect class="boxa" x="370" y="30" width="170" height="64" rx="10"/><text x="455" y="58" text-anchor="middle">Fit</text><text class="sm" x="455" y="78" text-anchor="middle">sums in a fixed order</text>
+    <rect class="ok" x="590" y="30" width="160" height="64" rx="10"/><text x="670" y="58" text-anchor="middle">One model file</text><text class="sm" x="670" y="78" text-anchor="middle">ends in a SHA-256</text>
+    <path class="arrow" d="M140 62H178"/><path class="arrow" d="M330 62H368"/><path class="arrow" d="M540 62H588"/>
+    <path class="line" d="M670 94V122M390 122H670"/>
+    <path class="arrow" d="M390 122V148"/><path class="arrow" d="M530 122V148"/><path class="arrow" d="M670 122V148"/>
+    <rect class="box" x="325" y="150" width="130" height="54" rx="10"/><text x="390" y="174" text-anchor="middle">predict</text><text class="sm" x="390" y="193" text-anchor="middle">rows in, answers out</text>
+    <rect class="box" x="465" y="150" width="130" height="54" rx="10"/><text x="530" y="174" text-anchor="middle">eval</text><text class="sm" x="530" y="193" text-anchor="middle">the metrics</text>
+    <rect class="box" x="605" y="150" width="130" height="54" rx="10"/><text x="670" y="174" text-anchor="middle">serve</text><text class="sm" x="670" y="193" text-anchor="middle">HTTP, ml-serve</text>
+    <path class="arrow bad" d="M255 94V256"/>
+    <text class="smb" x="265" y="150">cannot accept it</text>
+    <rect class="no" x="150" y="258" width="330" height="58" rx="10"/><text x="315" y="282" text-anchor="middle">Refused, with data</text><text class="sm" x="315" y="302" text-anchor="middle">a rule tag, an exit code, a repair to run</text>
+    <path class="arrow bad" d="M150 287H75V98"/>
+    <text class="smb" x="86" y="200">run the repair,</text><text class="smb" x="86" y="217">then try again</text>
+  </svg>
+  </div>
+  <p class="fine">In words: your CSV goes to a plan of steps, then to a fit with sums in a fixed order, then to one model file. <code>predict</code>, <code>eval</code> and <code>ml-serve</code> read that file. A CSV or a plan the tool cannot accept is refused with a rule tag, an exit code and a repair; you run the repair and try again.</p>
+</div></section>
+
+<section class="alt" id="commands"><div class="wrap">
+  <h2>One command, one model file</h2>
+  <p class="lead">Six models behind one verb: constant, linear, logistic, k-means, tree and forest. The file the fit writes is all a later command needs.</p>
+<!-- gen:cmds -->
+<pre class="code" tabindex="0"><span class="c"># any of the six models, one verb each</span>
+<span class="c">$</span> ml fit --model forest --task classification --trees 20 --seed 7 --target virginica --output iris-forest.ml iris_train.csv
+<span class="c">$</span> ml predict --model-file iris-forest.ml --proba --limit 3 iris_test.csv
+<span class="c"># what a model file requires of a caller, as data</span>
+<span class="c">$</span> ml describe --model-file iris-forest.ml
+<span class="c"># the prediction half, a separate binary with no write and no thread</span>
+<span class="c">$</span> ml-predict predict --model-file iris-forest.ml --proba --limit 3 iris_test.csv
+<span class="c"># the same file over HTTP, one request at a time (see the guide for the requests and what it answers)</span>
+<span class="c">$</span> ml-serve --model-file iris-forest.ml --no-token --port 8080</pre>
+<!-- /gen:cmds -->
+  <div class="cards">
+    <div class="card"><h3>Rows held out, with a seed</h3><p><code>--split train=0.8 --seed 3</code> holds rows out and scores them; the same seed holds out the same rows. The seed also draws the forest's trees and the k-means start.</p></div>
+    <div class="card"><h3>Text columns, by a written rule</h3><p>Columns declared with <code>--cat</code> are encoded (one-hot, label, frequency or hash) by a step; the model file holds what <code>predict</code> needs, and a new category is counted, not guessed.</p></div>
+    <div class="card"><h3>Read by a program</h3><p><code>ml introspect</code> prints every flag, limit and refusal rule (<span data-n="rules">79</span> rules) as one JSON document, and <code>ml skill</code> prints a guide for an agent.</p></div>
+  </div>
+  <p class="fine"><code>ml-serve</code> answers one request at a time, listens on every address of the host and so needs <code>--token-file</code> or <code>--no-token</code>; it has no TLS. The <a href="guide.html#http">guide</a> shows the requests and what comes back.</p>
+</div></section>
+
+<section id="numbers"><div class="wrap">
+  <h2>Measured, not promised</h2>
+  <p class="lead">Counts read from the repository&rsquo;s own gates and documents when the page is built.</p>
+  <div class="nums">
+    <div class="n"><b><span data-n="fp_lines">88</span> lines</b><span>of hashes equal a committed golden on <span data-n="platforms">3</span> platforms</span></div>
+    <div class="n"><b><span data-n="tests">439</span></b><span>conformance tests of the command line pass, none skipped</span></div>
+    <div class="n"><b><span data-n="mut_killed">1,144</span> / <span data-n="mut_total">1,194</span></b><span>deliberate faults are caught; each of the other <span data-n="mut_survive">50</span> is explained</span></div>
+    <div class="n"><b><span data-n="rules">79</span></b><span>named refusals, each with a rule tag and an exit code</span></div>
+  </div>
+  <p class="fine"><strong>Conditions.</strong> The hashes cover every model file and printed answer of <span data-n="fp_fits">22</span> fits (every model kind, 1 and 8 threads) on the bundled example data; they equal the golden on macOS arm64 and Linux x86-64, and on Linux aarch64 (a Raspberry Pi 5), each run by hand. The workflow runs the same gate on the first two; no run on a GitHub runner is recorded in the repository. Any other platform, input or compiler revision is untested. The tests and mutants ran on one Mac with compiler <code>a4572ea</code>; the counts of five mutant suites were measured on another commit (<a href="evidence.html#mutants">Evidence</a> says which). <strong>Limits.</strong> One pre-registered gate is red: the regression forest differs from scikit-learn&rsquo;s by <span data-n="red_gap">8.1</span>% against a tolerance of <span data-n="red_tol">3</span>%. No speed is claimed: the command line is not timed, and the timings of its libraries come from a loaded machine (<a href="benchmarks.html">Benchmarks</a>).</p>
+</div></section>
+
+<section class="alt" id="try"><div class="wrap">
+  <h2>Try it</h2>
+  <p class="lead">Build it from source. You need <code>git</code>, Rust, <code>clang</code> and <code>python3</code>, and the network for the clones and <code>cancho install</code>.</p>
+<pre class="code" tabindex="0" id="build-cmds"><code>git clone https://github.com/alpibrusl/cancho                           # the compiler
+git clone https://github.com/alpibrusl/cancho-ml &amp;&amp; cd cancho-ml
+REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
+(cd ../cancho &amp;&amp; git fetch -q origin &amp;&amp; git checkout "$REV" &amp;&amp; cargo build --release -p cancho)
+export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
+cancho install &amp;&amp; cancho build --bin ml                                 # install fetches the pins (network); builds build/ml</code></pre>
+  <p class="lead" style="margin-bottom:0">Then run the commands above on the CSVs in <code>docs/examples/data</code>. The workflow builds <code>ml</code>, <code>ml-predict</code> and <code>ml-serve</code> for Linux x86-64 and macOS arm64 and attaches them with SHA-256 files to a release when a tag <code>v*</code> is pushed; no release is published today, so the source is the way in. The <a href="guide.html#start">guide</a> has the full quick start.</p>
+</div></section>
+
+<section id="deeper"><div class="wrap">
+  <h2>Go deeper</h2>
+  <div class="cards">
+    <div class="card"><h3><a href="guide.html">Guide</a></h3><p>Every flow with its real output: six models, text columns, serving and the agent view.</p></div>
+    <div class="card"><h3><a href="examples.html">Examples</a></h3><p>Four classic datasets solved by <code>ml</code> and compared with scikit-learn on the same files.</p></div>
+    <div class="card"><h3><a href="evidence.html">Evidence</a></h3><p>The gates, the oracles and the mutants, and what each proves and does not prove.</p></div>
+    <div class="card"><h3><a href="benchmarks.html">Benchmarks</a></h3><p>What was timed, with machine, load and minimum of N. None is a claim.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">Reference</a></h3><p>Every flag, rule and limit of the command line, and the model file.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/design.md">Design</a></h3><p>Why it is built this way, and the measurements behind each choice.</p></div>
+  </div>
+</div></section>
+
+</main>
+
+<!-- gen:foot -->
+<footer><div class="wrap">
+  <span class="brandline">cancho-ml</span><span>EUPL-1.2</span><span>written in <a href="https://github.com/alpibrusl/cancho">cancho</a></span>
+  <a href="https://github.com/alpibrusl/cancho-ml">Repository</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">Status</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">Command line</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/design.md">Design</a>
+</div></footer>
+<!-- /gen:foot -->
+
+<script>
+(function () {
+  var pre = document.getElementById("screen"), btn = document.getElementById("replay");
+  if (!pre || !btn) { return; }
+  var lines = Array.prototype.map.call(pre.children, function (s) { return [s.className, s.textContent]; });
+  function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+  function span(c, t) { return "<span" + (c ? ' class="' + c + '"' : "") + ">" + esc(t) + "</span>"; }
+  function full() { pre.innerHTML = lines.map(function (l) { return span(l[0], l[1]); }).join("\n"); pre.removeAttribute("aria-busy"); }
+  var timer = null, reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function play() {
+    clearTimeout(timer); pre.innerHTML = ""; pre.setAttribute("aria-busy", "true");
+    var i = 0, j = 0, html = "";
+    (function tick() {
+      if (i >= lines.length) { pre.removeAttribute("aria-busy"); return; }
+      var l = lines[i], step = l[0] === "a" ? 2 : 14;
+      j += step;
+      pre.innerHTML = html + span(l[0], l[1].slice(0, j));
+      if (j >= l[1].length) { html += span(l[0], l[1]) + "\n"; i++; j = 0; timer = setTimeout(tick, l[0] === "d" ? 350 : 500); }
+      else { timer = setTimeout(tick, 12); }
+    })();
+  }
+  btn.hidden = false;
+  btn.addEventListener("click", function () { if (reduce) { full(); } else { play(); } });
+  if (!reduce) { play(); }
+})();
+</script>
+</body>
+</html>

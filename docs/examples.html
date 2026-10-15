@@ -27,13 +27,14 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<!-- gen:nav -->
 <header class="top"><div class="wrap">
-  <a class="brand" href="./"><img class="mark" src="assets/cancho-ml-icon.png" alt="" width="28" height="28">cancho-ml</a>
+  <a class="brand" href="./">cancho-ml</a>
   <nav aria-label="Site">
-    <a href="./" class="opt">Overview</a><a href="examples.html" aria-current="page">Examples</a><a href="evidence.html">Evidence</a><a href="benchmarks.html">Benchmarks</a><a href="./#start" class="opt">Quick start</a>
-    <a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
+    <a href="index.html#how" class="opt">How it works</a><a href="guide.html">Guide</a><a href="examples.html" class="opt" aria-current="page">Examples</a><a href="evidence.html">Evidence</a><a href="benchmarks.html" class="opt">Benchmarks</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
   </nav>
 </div></header>
+<!-- /gen:nav -->
 
 <main id="main" class="wrap">
 <div class="pagehead">
@@ -280,11 +281,11 @@
   <h2>Not covered</h2>
   <p class="sub">Popular tasks that need something <code>ml</code> does not have. Nothing is claimed about running them.</p>
   <ul class="plain">
-    <li><b>Titanic</b> (survival, a binary label) has columns of text: <code>Name</code>, <code>Sex</code>, <code>Ticket</code>, <code>Cabin</code> and <code>Embarked</code>. What works on a file of that shape: <code>Sex</code> and <code>Embarked</code> declared with <code>--cat</code> (and the empty <code>Embarked</code> cells taken with <code>missing=zero</code>) and read by <code>encode</code> steps, an <code>impute</code> step for the empty <code>Age</code>, <code>--drop Name,Ticket,Cabin</code> for the columns of free text and identifiers (each has hundreds of distinct values, where the default limit is 64 categories), <code>fit</code> writing the model file with the training strings, and <code>predict</code> and <code>eval</code> reading that file for the second file of the task, the rows to predict, which may hold a category the first file did not (counted) and its columns in another order. This combination was <b>not run on the Titanic file</b>, which is not in this repository and was not downloaded; <a href="./#text-columns">the same pieces run on a generated file</a> (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">status</a>).</li>
+    <li><b>Titanic</b> (survival, a binary label) has columns of text: <code>Name</code>, <code>Sex</code>, <code>Ticket</code>, <code>Cabin</code> and <code>Embarked</code>. What works on a file of that shape: <code>Sex</code> and <code>Embarked</code> declared with <code>--cat</code> (and the empty <code>Embarked</code> cells taken with <code>missing=zero</code>) and read by <code>encode</code> steps, an <code>impute</code> step for the empty <code>Age</code>, <code>--drop Name,Ticket,Cabin</code> for the columns of free text and identifiers (each has hundreds of distinct values, where the default limit is 64 categories), <code>fit</code> writing the model file with the training strings, and <code>predict</code> and <code>eval</code> reading that file for the second file of the task, the rows to predict, which may hold a category the first file did not (counted) and its columns in another order. This combination was <b>not run on the Titanic file</b>, which is not in this repository and was not downloaded; <a href="guide.html#text-columns">the same pieces run on a generated file</a> (<a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">status</a>).</li>
 
     <li><b>House Prices</b> (a regression) has many columns of text categories, where an empty cell often means none. The same pieces: each text column named in <code>--cat</code> (up to 128 by default, 4,096 at most) and read by a step (<code>hash column=*</code> reads every declared column that no other step reads, and stores none of their strings), <code>fit</code> writing the model file and <code>predict</code> reading it for the rows to predict. Not run.</li>
 
-    <li><b>Clustering</b> (iris without its label, a customer segmentation) has no target. <code>ml --model kmeans</code> fits it, and <a href="./#kmeans">the project page</a> runs it on the committed iris files. It is not one of the four examples above because there is no label to score against: its gate against scikit-learn gives scikit-learn the initial centres of <code>ml</code>, since the two programs draw different ones (<code>scripts/gate_wire_sklearn.py kmeans</code>, <a href="evidence.html#wiring">the evidence page</a>).</li>
+    <li><b>Clustering</b> (iris without its label, a customer segmentation) has no target. <code>ml --model kmeans</code> fits it, and <a href="guide.html#kmeans">the guide</a> runs it on the committed iris files. It is not one of the four examples above because there is no label to score against: its gate against scikit-learn gives scikit-learn the initial centres of <code>ml</code>, since the two programs draw different ones (<code>scripts/gate_wire_sklearn.py kmeans</code>, <a href="evidence.html#wiring">the evidence page</a>).</li>
 
         <li><b>Digit Recognizer</b> (handwritten digits) has ten classes and images with many columns. <code>ml</code> is binary only (a third label is <code>ml.label.not-binary</code>), and how large images would be read has not been looked at.</li>
   </ul>
@@ -292,7 +293,7 @@
 
 <section id="run">
   <h2>Run it yourself</h2>
-  <p class="sub">Build <code>ml</code> as in the <a href="./#start">quick start</a>, then run the commands on the committed CSVs in <code>docs/examples/data/</code>. To regenerate the CSVs and the reference file, run <code>python3 scripts/examples_data.py</code>; that is the one place scikit-learn is needed.</p>
+  <p class="sub">Build <code>ml</code> as in the <a href="guide.html#start">quick start</a>, then run the commands on the committed CSVs in <code>docs/examples/data/</code>. To regenerate the CSVs and the reference file, run <code>python3 scripts/examples_data.py</code>; that is the one place scikit-learn is needed.</p>
   <pre class="code" tabindex="0">git clone https://github.com/alpibrusl/cancho                           # the compiler
 git clone https://github.com/alpibrusl/cancho-ml &amp;&amp; cd cancho-ml
 REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
@@ -351,10 +352,11 @@ ml predict --model-file wine_fit.ml --proba wine_test.csv --limit 5</pre>
 </section>
 </main>
 
+<!-- gen:foot -->
 <footer><div class="wrap">
-  <a href="https://github.com/alpibrusl/cancho-ml">Repository</a><a href="./">Overview</a><a href="evidence.html">Evidence</a><a href="benchmarks.html">Benchmarks</a>
-  <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/examples.md">Examples: the gate</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">Status</a>
-  <span>Built on <a href="https://github.com/alpibrusl/cancho">cancho</a> · EUPL-1.2</span>
+  <span class="brandline">cancho-ml</span><span>EUPL-1.2</span><span>written in <a href="https://github.com/alpibrusl/cancho">cancho</a></span>
+  <a href="https://github.com/alpibrusl/cancho-ml">Repository</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">Status</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">Command line</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/design.md">Design</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/examples.md">Examples: the gate</a>
 </div></footer>
+<!-- /gen:foot -->
 </body>
 </html>
