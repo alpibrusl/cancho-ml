@@ -163,6 +163,16 @@ class ModelFile(unittest.TestCase):
         # the writer of this test, applied to the parsed sections, gives the bytes back (the layout is the one parse() reads)
         self.assertEqual(write_file(payloads(self.reg)), self.reg)
 
+    def test_the_sum_order_of_kind_8_is_three(self):
+        # a boosted model (docs/models-boost.md): the reader of planned files knows the kind, so the order it requires is the kind's, 3
+        for order in (0, 1, 2, 4, 255, 0x10000, 0xFFFFFFFF):
+            data = ordered_file(self.reg, 8, order)
+            self.assertEqual(self.check_refused(data, "kind 8 order %d" % order), "ml.model.version")
+            err = self.try_model(data).error()
+            self.assertEqual((err["detail"]["sum_order"], err["detail"]["known"]), (order, 3))
+        # order 3 is right; the payload is a constant model's record under the kind of a boosted model and a constant plan: malformed
+        self.assertEqual(self.check_refused(ordered_file(self.reg, 8, 3), "kind 8 order 3"), "ml.model.malformed")
+
     def test_the_sum_order_of_kinds_4_to_7(self):
         for kind in (4, 5, 6, 7):
             for order in (0, 1, 3, 4, 255, 0x10000, 0xFFFFFFFF):
@@ -185,7 +195,7 @@ class ModelFile(unittest.TestCase):
                 secs[5] = secs[5] + struct.pack("<I", order)
                 self.assertEqual(self.check_refused(write_file(secs), "kind %d + order %d" % (kind, order)), "ml.model.malformed")
         # a model of kind 4 to 7 without the field (35 bytes of meta), or with the pin length lying
-        for kind in (4, 7):
+        for kind in (4, 7, 8):
             secs = payloads(self.reg)
             secs[4] = struct.pack("<I", kind) + secs[4][4:]
             self.assertEqual(self.check_refused(write_file(secs), "kind %d, no field" % kind), "ml.model.malformed")
