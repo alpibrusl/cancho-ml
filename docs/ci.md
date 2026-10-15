@@ -57,12 +57,16 @@ red determinism job is not repaired by `--update`; it is first explained (a real
 
 ## 4. The platforms and the pins
 
-| job | runner label | architecture | what the label points to |
+| job label | runner | architecture | image |
 |---|---|---|---|
-| Linux | `ubuntu-latest` | x86-64 | an Ubuntu image of GitHub-hosted runners |
-| macOS | `macos-latest` | arm64 (Apple silicon) | a macOS image of GitHub-hosted runners |
+| `linux-x86_64-ubuntu24` | `ubuntu-24.04` | x86-64 | Ubuntu 24.04; the first GitHub run printed image 20261004.327.1 [measured, run 38732945507] |
+| `linux-x86_64-ubuntu26` | `ubuntu-26.04` | x86-64 | Ubuntu 26.04, the new LTS (images published 2026-10-13 by actions/runner-images) |
+| `linux-aarch64-ubuntu24` | `ubuntu-24.04-arm` | aarch64 | Ubuntu 24.04 on Arm: a native Linux aarch64 build and gate in the workflow |
+| `darwin-arm64` | `macos-26` | arm64 (Apple silicon) | macOS 26; the first GitHub run printed image 20261013.0424.1 [measured, run 38732945507] |
 
-The label is a moving target [open]: the workflow prints `uname -a`, `sw_vers` (macOS), the C compiler version and the Rust version into the log of every run, so the
+The release assets are the Ubuntu 24.04 builds (the oldest glibc of each architecture, so the binaries run on the newer images) and the macOS build.
+
+The labels are named images, never `-latest` (the lint `W11` refuses a moving label): the workflow prints `uname -a`, `sw_vers` (macOS), the C compiler version and the Rust version into the log of every run, so the
 log says which image ran. The macOS runner is not the Mac of the earlier measurements (macOS 26.2, Darwin 25.2.0, Apple M4 Max); its operating-system version differs,
 and its Xcode, clang and CPU generation may too. That the golden holds on both is the evidence that the bytes do not depend on those.
 
@@ -181,7 +185,7 @@ the SHA-256 files are for a download check, not provenance. The tag is not check
 
 * The first run of the workflow is the pull request's own: it cannot be run anywhere but on GitHub, and what was run before it is every step by hand on a Linux x86-64
   machine and on a Mac (section 8), not the YAML.
-* Linux aarch64 is not in the matrix. A run on a Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) was done by hand on 2026-10-15, outside this workflow: Rust 1.98.1 installed for one user, the compiler built at `a4572ea` and `ml` at `cb08d5b` on the Pi, `scripts/xplat_fp.py` run there: 22 of 22 fits succeeded and the 88 lines are equal to the golden's. It is a record of one run and not a gate.
+* Linux aarch64 is in the matrix (`ubuntu-24.04-arm`). A second, independent record of it: a run on a Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) by hand on 2026-10-15, outside this workflow: Rust 1.98.1 installed for one user, the compiler built at `a4572ea` and `ml` at `cb08d5b` on the Pi, `scripts/xplat_fp.py` run there: 22 of 22 fits succeeded and the 88 lines are equal to the golden's. It is a record of one run and is not a gate.
 * Windows, other Linux distributions, musl, other macOS versions than the runner's, and other compiler revisions are untested.
 * The runners' images change without a commit here; a red run after no commit is the first thing to read in the platform lines of the log.
 * A compiler cache hit skips the compiler build: the cache key is the revision, the operating system and the architecture, so a compiler built by another Rust than the one
