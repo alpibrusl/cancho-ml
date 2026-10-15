@@ -179,9 +179,15 @@ the fit used to succeed with `x1 = 15.16` (section 1); with `--iterations 2` it 
 * The worked examples: the penalty-free fits of breast cancer and wine (`--l2 0`) are refused with `ml.fit.separable`; `scripts/examples_common.py` has one such run each (it had two and three); the generated pages and `docs/examples.md` item 5 say so.
 * Unchanged: the 22 fits of the fingerprint; the oracle suites of `lib/models` (bit for bit); every other conformance record. A fit that succeeded before and is not separable (completely, or with ties past the scale bound) succeeds with the same bytes.
 
-### 6.5 Mutants
+### 6.5 Mutants (`python3 scripts/mutants_refusals.py`; log `docs/bench/mutants_refusals.log`)
 
-(filled below)
+34 mutants of the tolerance, the pivot test of the diagnosis, the pivot index, the relative pivot, the forward and backward solves of the dependency, the conversion of a failure at the first column, the first-pass test of
+logistic regression, the column named (the pivot, the intercept), the cut that lists the columns, the ridge of both repairs, the replace of an explicit `--l2`, the `--drop` name and its guard, the plan form of both repairs, the loss bound
+(too high, too low), the loss test removed, the loss test with a ridge, the scale test removed, its bound and its factor 4, the late pivot form removed and with a ridge, the pass number and the norm. **All 34 are killed.**
+In the first run 3 survived and were not accepted as equivalent: the diagnosis with a tolerance 2^10 larger (the oracle had no design with a near but fine pair before a dependent column: the family `mixed` was added), the relative
+pivot written as the sum (the oracle did not read it: it compares it with the exact one to 5e-15 now) and `--drop` offered beside a step (a fixture where the step names the column was added); each was killed on the re-run
+(`docs/bench/mutants_refusals.log`). The unmutated baseline of that run failed one test, the wire oracle's expectation for separable logistic data (`scripts/oracle_wire.py` and `scripts/oracle_models.py` mirror the new refusals now); the
+baseline is the full conformance suite of `scripts/check.sh`, which passes (section 6.8).
 
 ### 6.6 The real session
 
