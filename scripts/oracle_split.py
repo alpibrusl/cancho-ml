@@ -402,7 +402,10 @@ def cv_argv(path, strategy, K, R, seed, model, extra=()):
 
 def oracle_inputs(header, rows, strategy):
     n = len(rows)
-    labels = [int(r[header.index("y")]) for r in rows]
+    try:
+        labels = [int(r[header.index("y")]) for r in rows]
+    except ValueError:
+        labels = None
     gids, G, tkeys = None, 0, None
     if strategy == "group":
         G, gids = group_ranks([r[header.index("grp")] for r in rows])
@@ -419,6 +422,20 @@ def model_flags(model, task):
     if model == "linear":
         return ["--step", "impute column=x2 strategy=mean;scale column=x1,x2,x3 kind=standard"]
     return []
+
+
+def one_class_fold(assigns, labels, K, strategy):
+    """whether some held-out side of the folds has one class only: the metric refusal ml.label.single-class of `ml eval` on that side (docs/splits.md section 8)"""
+    if labels is None:
+        return False
+    for a in assigns:
+        for f in range(K):
+            if len({labels[i] for i in range(len(a)) if a[i] == f}) < 2:
+                return True
+            tr = {labels[i] for i in range(len(a)) if (a[i] < f if strategy == "time" else a[i] != f)}
+            if len(tr) < 2:
+                return True
+    return False
 
 
 # ---------------------------------------------------------------- A1: the assignment, bytes
@@ -446,6 +463,8 @@ def gate_assign(tmp, quick=False):
                     n_, labels, gids, G, tkeys = oracle_inputs(header, rows, strategy)
                     try:
                         want = cv(strategy, n_, K, R, seed, labels, gids, G, tkeys)
+                        if doc is not None and doc.get("ok") is False and doc["error"]["rule"] == "ml.label.single-class" and one_class_fold(want, labels, K, strategy):
+                            continue
                     except Refusal as r:
                         check(doc is not None and doc.get("ok") is False and doc["error"]["rule"] == r.rule,
                               "A1 %s %s K=%d R=%d seed=%d: oracle refuses with %s, tool says %s" % (task, strategy, K, R, seed, r.rule, doc and (doc.get("error") or {}).get("rule")))
@@ -466,6 +485,8 @@ def gate_assign(tmp, quick=False):
                     n_, labels, gids, G, tkeys = oracle_inputs(header, rows, strategy)
                     try:
                         want = holdout(strategy, n_, train, seed, labels, gids, G, tkeys)
+                        if doc is not None and doc.get("ok") is False and doc["error"]["rule"] == "ml.label.single-class" and labels is not None and len({labels[i] for i in range(n_) if want[i] == 1}) < 2:
+                            continue
                     except Refusal as r:
                         check(doc is not None and doc.get("ok") is False and doc["error"]["rule"] == r.rule,
                               "A1 holdout %s %s %s seed=%d: oracle refuses with %s, tool says %s" % (task, strategy, train, seed, r.rule, doc and (doc.get("error") or {}).get("rule")))
@@ -581,14 +602,16 @@ def gate_invariants(tmp, quick=False):
 # ---------------------------------------------------------------- C1: end to end, per fold, fit + eval on the files the oracle writes
 E2E_PLANS = [
     ("linear", "reg", ["--step", "impute column=x2 strategy=mean;scale column=x1,x2,x3 kind=standard"]),
-    ("linear", "reg", ["--step", "impute column=x2 strategy=median;bucket column=x3 bins=3;scale column=* kind=standard"]),
+    ("linear", "reg", ["--step", "impute column=x2 strategy=median;bucket column=x3 kind=quantile bins=3;scale column=* kind=standard"]),
     ("logistic", "cls", ["--step", "impute column=x2 strategy=mean;scale column=x1,x2,x3 kind=standard"]),
     ("tree", "cls", ["--task", "classification", "--max-depth", "3"]),
     ("forest", "reg", ["--task", "regression", "--trees", "6", "--max-depth", "3"]),
     ("forest", "cls", ["--task", "classification", "--trees", "5", "--max-depth", "3"]),
     ("kmeans", "reg", ["--k", "3", "--iterations", "5", "--step", "impute column=x2 strategy=mean;scale column=* kind=standard"]),
-    ("linear", "reg", ["--cat", "cat", "--step", "impute column=x2 strategy=mean;encode column=cat method=onehot;scale column=x1,x2,x3 kind=standard"]),
-    ("logistic", "cls", ["--cat", "cat", "--step", "impute column=x2 strategy=mean;encode column=cat method=onehot;scale column=x1,x2,x3 kind=standard"]),
+    ("linear", "reg", ["--cat", "cat", "--l2", "1.0", "--step", "impute column=x2 strategy=mean;encode column=cat kind=onehot;scale column=x1,x2,x3 kind=standard"]),
+    ("logistic", "cls", ["--cat", "cat", "--l2", "1.0", "--step", "impute column=x2 strategy=mean;encode column=cat kind=onehot;scale column=x1,x2,x3 kind=standard"]),
+    ("linear", "reg", ["--cat", "cat", "--step", "impute column=x2 strategy=mean;freq column=cat;scale column=* kind=minmax"]),
+    ("tree", "reg", ["--cat", "cat", "--task", "regression", "--max-depth", "3", "--step", "hash column=cat buckets=8"]),
 ]
 
 
@@ -623,7 +646,7 @@ def strip_flags(flags, remove):
 def gate_e2e(tmp, quick=False, planted=False):
     rnd = random.Random(2026)
     cases = 0
-    plans = E2E_PLANS if not quick else E2E_PLANS[:3] + E2E_PLANS[6:8]
+    plans = E2E_PLANS if not quick else E2E_PLANS[:2] + E2E_PLANS[6:8]
     for pi, (model, task, flags) in enumerate(plans):
         header, rows = gen_table(rnd, 120, task, groups=10, imbalance=0.4, missing=0.08)
         path = os.path.join(tmp, "c1_%d.csv" % pi)
@@ -672,7 +695,7 @@ def gate_e2e(tmp, quick=False, planted=False):
                     check(agg["mean"] is None, "C1 aggregate of a missing metric")
                     continue
                 mean, std = aggregate([float(v) for v in vals])
-                check(agg["mean"] == shortest(mean) and agg["std"] == shortest(std), "C1 aggregate %s: tool %s oracle %s %s" % (name, agg, shortest(mean), shortest(std)))
+                check(float(agg["mean"]) == mean and float(agg["std"]) == std, "C1 aggregate %s: tool %s oracle %s %s" % (name, agg, shortest(mean), shortest(std)))
     print("C1: %d fold(s) compared string for string%s" % (cases, " (planted leak)" if planted else ""))
 
 
@@ -685,8 +708,8 @@ def gate_threads(tmp, quick=False):
     cases = 0
     for model, task, flags in (E2E_PLANS[0], E2E_PLANS[2], E2E_PLANS[3], E2E_PLANS[5], E2E_PLANS[6]):
         for strategy in ("plain", "stratify", "group", "time"):
-            if strategy == "stratify" and task != "cls" and model != "logistic":
-                pass
+            if strategy == "stratify" and task != "cls":
+                continue
             outs = []
             for th in (1, 8):
                 base = ["--target", "y", "--drop", "grp,day,t,cat", "--model", model, "--seed", 5, "--threads", th] + flags

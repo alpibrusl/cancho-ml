@@ -76,6 +76,7 @@
     "bits_of_key",
     "block_width",
     "built",
+    "by_ok",
     "bytes",
     "bytes_read",
     "bytes_read",
@@ -220,6 +221,7 @@
     "float_of_key",
     "float_value",
     "floats_shape",
+    "folds_max",
     "fraction_scaled",
     "from_refuse",
     "full",
@@ -506,6 +508,7 @@
     "rec_ok",
     "record_at",
     "repairable_in",
+    "repeats_max",
     "report",
     "reserved_category",
     "role_of",
@@ -657,5 +660,5 @@
   ],
   "folded_operators": 124,
   "folded_calls": 0,
-  "functions": 973
+  "functions": 982
 }

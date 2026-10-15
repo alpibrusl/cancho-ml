@@ -199,7 +199,7 @@ pub fn holdout_sel[&h, &g, &f, &r, &pf, &y](heap: &!h Heap, args: &g Args, fs: &
         var b = 0;
         borrow keys as &kr in {
             borrow mut sel as &!sw in {
-                let (k3, a3, b3) = splitplan.holdout(heap, strategy, n, nt, o.seed, o.max_rows, contents(kr.labels), contents(kr.gid), kr.groups, contents(kr.order), contents(sw)[0..n]);
+                let (k3, a3, b3) = splitplan.holdout(heap, strategy, n, nt, o.seed, o.max_rows, contents(kr.labels)[0..n], contents(kr.gid), kr.groups, contents(kr.order), contents(sw)[0..n]);
                 kind = k3;
                 a = a3;
                 b = b3;
@@ -251,7 +251,7 @@ pub fn cv_assign[&h, &g, &f, &r, &pf, &y](heap: &!h Heap, args: &g Args, fs: &f 
             borrow mut assign as &!aw in {
                 var rep = 0;
                 while rep < reps && kind == 0 {
-                    let (k3, a3, b3) = splitplan.folds(heap, strategy, n, sp.folds, rep, o.seed, o.max_rows, contents(kr.labels), contents(kr.gid), kr.groups, contents(kr.order), contents(aw)[rep * n..rep * n + n]);
+                    let (k3, a3, b3) = splitplan.folds(heap, strategy, n, sp.folds, rep, o.seed, o.max_rows, contents(kr.labels)[0..n], contents(kr.gid), kr.groups, contents(kr.order), contents(aw)[rep * n..rep * n + n]);
                     kind = k3;
                     a = a3;
                     b = b3;
