@@ -90,6 +90,16 @@ def judge(c, sb, r):
                 rep = doc["error"]["repair"]
                 if not (rep and rep["kind"] == "retry"):
                     problems.append("expected a retry repair, got %r" % rep)
+            if ex.get("repair_runs"):
+                rep = doc["error"]["repair"]
+                if not (rep and rep["kind"] in ("retry", "choose")):
+                    problems.append("expected a retry or choose repair, got %r" % rep)
+            if ex.get("repair_none"):
+                rep = doc["error"]["repair"]
+                if not (rep and rep["kind"] == "none" and rep.get("reason")):
+                    problems.append("expected a repair of kind none with a reason, got %r" % rep)
+            if ex.get("detail") is not None:
+                problems += subset(ex["detail"], doc.get("error", {}).get("detail") or {}, "detail")
     if ex.get("stdout_starts") is not None and not r.stdout.decode().startswith(ex["stdout_starts"]):
         problems.append("stdout starts %r, expected %r" % (r.stdout[:80], ex["stdout_starts"]))
     if ex.get("stderr_has") and ex["stderr_has"] not in r.stderr.decode():

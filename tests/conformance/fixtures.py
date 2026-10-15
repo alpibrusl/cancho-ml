@@ -629,5 +629,61 @@ def _kmeans_cases():
 
 CASES += _kmeans_cases()
 
+# ------------------------------------------------------------------ separable data and collinear columns (docs/refusals-fit.md, issue 48)
+# Written BEFORE the code, against main: every case below fails there (the fit is not refused with these tags).
+DUPC = "a,b,y\n1,1,0\n2,2,1\n3,3,0\n4,4,1\n5,5,1\n6,6,0\n"
+CONSTC = "a,k,y\n1,5,0\n2,5,1\n3,5,0\n4,5,1\n5,5,1\n6,5,0\n"
+SPC = "id,sp,y\n1,cat,1\n2,dog,0\n3,cat,0\n4,bird,1\n5,dog,1\n6,bird,0\n7,cat,1\n8,dog,0\n9,bird,1\n10,cat,0\n11,dog,1\n12,bird,0\n"
+SEP = "x1,x2,y\n-3,1,0\n-2,-1,0\n-1,2,0\n1,-2,1\n2,1,1\n3,-1,1\n"
+NEARSEP = SEP + "3,-1,0\n"
+NEARCOL = "a,b,y\n1,1.00001,0\n2,2.00002,1\n3,2.99999,0\n4,4.00004,1\n5,5.00003,1\n6,5.99996,0\n7,7.00001,1\n"
+RBASE = [("write", "dup.csv", DUPC), ("write", "const.csv", CONSTC), ("write", "sp.csv", SPC), ("write", "sep.csv", SEP),
+         ("write", "nearsep.csv", NEARSEP), ("write", "nearcol.csv", NEARCOL), ("write", "lcls.csv", LCLS)]
+FIT_SP = ["--cat", "sp", "--step", "encode column=sp kind=onehot", "--drop", "id", "--target", "y", "--output", "m.cml", "sp.csv"]
+
+
+def _refuse_cases():
+    col = lambda **kw: bad("ml.fit.collinear", **kw)
+    sepa = lambda **kw: bad("ml.fit.separable", **kw)
+    return [
+        case("ml-fit-collinear-duplicate-column", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "dup.csv"],
+             col(repair_runs=True, detail={"model": "linear", "pivot": 1, "column": "b", "columns": ["a"], "coefficients": ["1.000000"]}), setup=RBASE),
+        case("ml-fit-collinear-constant-column-and-the-intercept", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "const.csv"],
+             col(repair_runs=True, detail={"model": "linear", "column": "(intercept)", "columns": ["k"]}), setup=RBASE),
+        case("ml-fit-collinear-full-one-hot-and-the-intercept", ["fit", "--model", "linear"] + FIT_SP,
+             col(repair_runs=True, detail={"model": "linear", "column": "(intercept)", "columns": ["sp#0", "sp#1", "sp#2"],
+                                           "coefficients": ["1.000000", "1.000000", "1.000000"]}), setup=RBASE),
+        case("ml-fit-collinear-logistic-duplicate-column", ["fit", "--model", "logistic", "--target", "y", "--output", "m.cml", "dup.csv"],
+             col(repair_runs=True, detail={"model": "logistic", "pass": 0, "pivot": 1, "column": "b", "columns": ["a"]}), setup=RBASE),
+        case("ml-fit-collinear-logistic-full-one-hot", ["fit", "--model", "logistic"] + FIT_SP,
+             col(repair_runs=True, detail={"model": "logistic", "pass": 0, "column": "(intercept)"}), setup=RBASE),
+        case("ml-fit-collinear-ridge-too-small", ["fit", "--model", "linear", "--l2", "1e-300", "--target", "y", "--output", "m.cml", "dup.csv"],
+             col(repair_runs=True, detail={"l2": "1e-300"}), setup=RBASE),
+        case("ml-fit-collinear-in-a-plan-has-no-argv", ["fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "dup.csv"],
+             col(repair_none=True), setup=RBASE + [("write", "p.txt", "model kind=linear l2=0\n")]),
+        case("ml-fit-separable", ["fit", "--model", "logistic", "--target", "y", "--output", "m.cml", "sep.csv"],
+             sepa(repair_runs=True, detail={"reason": "loss", "pass": 2, "l2": "0"}), setup=RBASE),
+        case("ml-fit-separable-25-iterations", ["fit", "--model", "logistic", "--iterations", "25", "--target", "y", "--output", "m.cml", "sep.csv"],
+             sepa(repair_runs=True, detail={"reason": "loss", "pass": 2}), setup=RBASE),
+        case("ml-fit-separable-explicit-zero-l2-is-replaced", ["fit", "--model", "logistic", "--l2", "0", "--target", "y", "--output", "m.cml", "sep.csv"],
+             sepa(repair_runs=True), setup=RBASE),
+        case("ml-fit-separable-in-a-plan-has-no-argv", ["fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "sep.csv"],
+             sepa(repair_none=True), setup=RBASE + [("write", "p.txt", "model kind=logistic iterations=50 l2=0\n")]),
+        case("ml-fit-separable-a-positive-l2-is-fitted", ["fit", "--model", "logistic", "--l2", "0.01", "--target", "y", "--output", "m.cml", "sep.csv"],
+             ok({"model": "logistic"}), setup=RBASE),
+        case("ml-fit-separable-two-passes-are-not-enough-to-see-it", ["fit", "--model", "logistic", "--iterations", "2", "--target", "y", "--output", "m.cml", "sep.csv"],
+             ok({"model": "logistic"}), setup=RBASE),
+        case("ml-fit-nearly-separable-but-not-is-fitted", ["fit", "--model", "logistic", "--target", "y", "--output", "m.cml", "nearsep.csv"],
+             ok({"model": "logistic"}), setup=RBASE),
+        case("ml-fit-overlapping-classes-are-fitted", ["fit", "--model", "logistic", "--target", "lab", "--output", "m.cml", "lcls.csv"],
+             ok({"model": "logistic"}), setup=RBASE),
+        case("ml-fit-near-collinear-columns-are-fitted", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "nearcol.csv"],
+             ok({"model": "linear"}), setup=RBASE),
+        case("ml-fit-full-one-hot-with-a-ridge-is-fitted", ["fit", "--model", "linear", "--l2", "0.1"] + FIT_SP, ok({"model": "linear"}), setup=RBASE),
+    ]
+
+
+CASES += _refuse_cases()
+
 def log_cases():
     return [c for c in CASES if c.get("log")]
