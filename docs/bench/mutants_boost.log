@@ -201,4 +201,13 @@ SURVIVOR b-read-pending-children: the same argument as the tree library's reader
 SURVIVOR b-adapter-threads-not-passed: an equivalent mutant by design: no thread count changes a byte of the model (the property GB2 asserts, and the binning is the only threaded part), so a fit that ignores the flag writes the same file
 SURVIVOR b-adapter-class-of-one-half: a probability of exactly 0.5 needs a score whose sigmoid rounds to one half: |score| below 1e-16, a sum of leaf values that cancel to the last bit: the generated rows never reach it (the same tie as the tree's `wt-class-of-a-tie`)
 SURVIVOR b-adapter-proba-of-a-regression: a second line of defence: predict --proba on a regression is args.conflict before the adapter is called and eval asks for a probability only of a classification
-# re-runs of the nine mutants whose tests were strengthened after the first run (tests for the sample boundary and rounding, the wrapped counts, ten rows, the 2^22 total, the summary and describe fields)
+# re-runs of the mutants whose tests were strengthened after the first run (the sample boundary and the rounding of K, the wrapped counts, ten rows, the 2^22 total, the summary and describe fields)
+KILLED    b-read-depth-of-a-tree                           GB6  tests: test_the_header_of_the_payload
+KILLED    b-sample-compares-with-less-or-equal             GB1  tests: test_the_sample_boundary_and_the_rounding_of_K
+KILLED    b-sample-rounding                                GB1  tests: test_the_sample_boundary_and_the_rounding_of_K
+KILLED    b-bound-early-needs-ten-rows                     GB6  tests: test_early_stopping_needs_ten_training_rows
+KILLED    b-bound-total-nodes                              GB6  tests: test_the_total_of_nodes_is_bounded_at_exactly_2_to_the_22
+SURVIVED  b-read-rounds-ceiling                            GB6  
+SURVIVED  b-read-nodes-ceiling                             GB6  
+KILLED    wb-summary-nodes-field                           GB2  tests: test_the_file_of_a_regression_has_no_labels
+KILLED    wb-describe-requested-field                      GB8  tests: test_describe_says_the_number_of_trees
