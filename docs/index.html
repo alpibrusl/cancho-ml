@@ -97,7 +97,7 @@
 <section id="how"><div class="wrap">
   <h2>How it works</h2>
   <p class="lead">A CSV becomes a plan of steps, a fit with sums in a fixed order, and one model file. Anything the tool cannot accept goes back to you with its repair.</p>
-  <div class="flow">
+  <div class="flow" tabindex="0" aria-label="Flow diagram, scrolls sideways on a narrow screen">
   <svg viewBox="0 0 760 330" role="img" aria-labelledby="flow-t flow-d">
     <title id="flow-t">From a CSV to a model file, and the refusal loop</title>
     <desc id="flow-d">Your CSV goes to a plan of steps, then to a fit with fixed-order sums, then to one model file with a SHA-256 trailer. Predict, eval and serve read that file. If the CSV or the plan cannot be accepted, the tool refuses with a rule tag, an exit code and a repair; you run the repair and try again.</desc>

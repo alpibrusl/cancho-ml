@@ -21,7 +21,7 @@ a { color: var(--accent); text-underline-offset: .15em; }
 .wrap { width: 100%; max-width: 64rem; margin: 0 auto; padding: 0 16px; }
 .skip { position: absolute; left: 16px; top: -4rem; background: var(--accent); color: var(--accent-fg); padding: .5rem .8rem; border-radius: 6px; z-index: 9; }
 .skip:focus { top: 8px; }
-a:focus-visible, button:focus-visible, .btn:focus-visible, pre:focus-visible, summary:focus-visible, .fitwrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+a:focus-visible, button:focus-visible, .flow:focus-visible, .btn:focus-visible, pre:focus-visible, summary:focus-visible, .fitwrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
 header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
@@ -183,9 +183,9 @@ h2 + .sub, h3 + .sub { margin-top: .3rem; }
 .flow .arrow.ok { stroke: var(--good); }
 .nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1rem; text-align: center; }
 .nums .n b { display: block; font-size: 2.3rem; line-height: 1.2; letter-spacing: -.03em; color: var(--accent); font-variant-numeric: tabular-nums; }
-.nums .n span { color: var(--muted); font-size: .92rem; display: block; }
+.nums .n > span { color: var(--muted); font-size: .92rem; display: block; }
 .fine { max-width: 46rem; margin: 1.5rem auto 0; color: var(--muted); font-size: .88rem; text-align: center; }
 .home pre.code { max-width: 46rem; margin: 0 auto 1.4rem; }
 .home .fine a, .home .caption a, .home .lead a { color: var(--accent); }
 footer .brandline { font-family: var(--mono); }
-@media (max-width: 40rem) { .home .hero { padding-top: 2.4rem; } .home section { padding: 2.2rem 0; } .replay pre { min-height: 30rem; } }
+@media (max-width: 40rem) { .flow { overflow-x: auto; } .flow svg { min-width: 31rem; } .home .hero { padding-top: 2.4rem; } .home section { padding: 2.2rem 0; } .replay pre { min-height: 30rem; } }
