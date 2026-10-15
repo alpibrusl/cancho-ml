@@ -108,7 +108,7 @@ pub fn tier(kind: int) -> [] &static [byte] {
         return "supported";
     }
     if kind == 8 {
-        return "experimental";
+        return "supported";
     }
     return "";
 }
