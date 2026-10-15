@@ -243,6 +243,7 @@ CI (`tools.toml`, `manifests/`). The expected rows **[choice]**:
 |---|---|---|
 | `ml` (fit, predict, eval, introspect, skill) | read files named on the command line (`file_read`, `fs_read("")`, `dir_read`); write the model and the log it is told to, beneath a directory it opened (`dir_write`, `file_write`: no `fs_write`, no path write); heap; `conc` (`spawn`): in the row since W1, because `fit --threads N` calls `lib/linalg/par.cho`; its reason is in `tools.toml` `[ml.reasons]` and `docs/wiring.md` section 6 | network, exec, ffi, clock, environment beyond arguments, standard input |
 | `ml-predict` (M10) | read a model file, read an input; heap | everything else, including writes other than standard output and `conc` if single-threaded |
+| `ml-serve` (M12, `docs/serving-http.md`) | read a model file and a token file once; listen, accept, read and write connections, wait on them, read the clock; heap | every write, `conc`, `exec`, `ffi`, `net_out`, standard input |
 
 A change to a binary's authority fails CI until the manifest changes in the same diff (M9's gate, built: `scripts/manifest.py
 --check`, `tools.toml`, `manifests/ml.authority.json`; the derived row of the CLI slice was the first, without `conc`; W1 added `conc` deliberately, `docs/cli.md`

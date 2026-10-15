@@ -8,7 +8,7 @@ decided.
 ## 0. What this slice is
 
 The agent-visible surface of cancho-ml is the command line (and later an MCP server). `ml` is one binary with the verbs
-`fit`, `predict`, `eval`, `describe`, `introspect` and `skill` (`predict` reads standard input; `describe` prints what a model file requires of its caller; a second binary, `ml-predict`, has `predict`, `describe`, `introspect` and `skill` only: `docs/serving.md`), built the way `cancho-table`'s `table` is: one flag table drives the
+`fit`, `predict`, `eval`, `describe`, `introspect` and `skill` (`predict` reads standard input; `describe` prints what a model file requires of its caller; a second binary, `ml-predict`, has `predict`, `describe`, `introspect` and `skill` only: `docs/serving.md`; a third, `ml-serve`, serves one model file over HTTP: `docs/serving-http.md`), built the way `cancho-table`'s `table` is: one flag table drives the
 parser, `introspect` and `skill`; every refusal is data with a `<area>.<name>` tag, an exit code and, where safe, a repair;
 the authority is derived by the compiler and gated against a committed manifest. The linear-algebra and tensor packages stay
 internal: nothing in this slice imports them, because the one model built here (`--model constant`) needs none. *(Stage W1, `docs/wiring.md`, wires `--model linear` and `--model logistic` through the pipeline; they import them. `--model constant` and every file it writes are unchanged, byte for byte: `tests/conformance/test_wire_baseline.py`.)*
@@ -227,7 +227,8 @@ logged; gate L1 plants canaries in all three and in every kind of run. Bounded: 
 `err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, **`io_read`**, `io_write` and nothing else. In words: it reads the files named on its
 command line, and standard input for `predict -` and `predict` with no operand (`io_read`, `docs/serving.md` section 2.4); it creates, appends to, renames and removes only beneath a directory it opened itself, and holds no `fs_write`, so no
 path write; it spawns threads for `fit --threads N` (`conc`); it has no clock, no environment, no network, no foreign code. `ml-predict`, built from the same sources, has the row
-without `conc`, `dir_write` and `file_write` (`manifests/ml-predict.authority.json`, `docs/serving.md` section 3.3).
+without `conc`, `dir_write` and `file_write` (`manifests/ml-predict.authority.json`, `docs/serving.md` section 3.3). `ml-serve` has the sockets of a server and the clock and writes nothing
+(`manifests/ml-serve.authority.json`, `docs/serving-http.md` section 6).
 `design.md` section 7 expected `conc`. **The label arrived at stage W1, deliberately, in the same diff as the test that no thread count changes a byte**
 (`tests/conformance/test_determinism.py`, gate D1), as this section asked: `ml` now links `lib/linalg/par.cho`, which spawns, and the compiler derives
 `conc` from the code, so the label is in the row at `--threads 1` too. The reason is stated in `tools.toml` (`[ml.reasons]`), in the manifests of the two

@@ -1,7 +1,7 @@
 # cancho-ml serving, first half: standard input, `ml-predict` and `describe` (issues #11 and #16)
 
 **Status: this document is written before the code it judges. Sections 1 to 8 fix the behaviour, the authority rows, the contract of `describe` and the gates; section 9
-holds the results and is filled only with what a script of this repository printed, with its conditions. Section 10 lists what the server (`ml-serve`, issue #16, second half) has to decide.**
+holds the results and is filled only with what a script of this repository printed, with its conditions. Section 10 lists what the server (`ml-serve`, issue #16, second half) had to decide; `docs/serving-http.md` decides it.**
 Tags as in `design.md`: **[choice]** a decision the maintainer can overturn, **[read]** read from the code or from a document of the pinned compiler, **[measured]** printed by a
 script here, **[open]** not decided.
 
@@ -196,5 +196,7 @@ Machine: Mac, arm64, Apple M4 Max, macOS 26.2, compiler `a4572ea`, load about 8 
 4. **`describe` size.** Bounded by the file (a table of 12 MiB can list about that much); `--limit` caps the strings per column. A server would call it once at start.
 5. **`ml predict` with no operand on a terminal** waits for input like `cat` does; the MCP generator should always pass `-` or a file (`docs/cli.md` section 9).
 6. **Hot reload and the model digest.** `describe.file.sha256` is the digest a response should carry.
+
+**Decided in [serving-http.md](serving-http.md):** (1) `ml-serve` reads no standard input and has no `io_read`; the CSV is bytes in memory (section 4). (2) The memory entry is `paths.of_mem` and `fsio.read_model`, with `wireio.predict` split into `load_stored`, `predict_loaded` and `drop_stored` so that the server decodes its model once (section 7). (3) A one-row CSV is typed from its cells, so the server renders an `int` as an integer and a `dec` with the digits of its scale, and refuses what cannot be written exactly (section 4). (4) The server calls `describe` at start, once for the request schema and once, with a smaller `--limit`, for the answer of `GET /model` (sections 3.1 and 3.3). (5) The server loop, the schema and the problem documents are cancho-web's, cancho-schema's and `http.server`'s, pinned and not copied (section 1). (6) `describe.file.sha256` is in the head and the body of every answer the handler makes (section 3.2).
 
 Files other branches also edit: `tools/ml/main.cho` (the shared command-line code moved to `tools/ml/app.cho`), `tools/ml/spec.tmpl` (the template of `spec.cho`), `scripts/gen_models.py`, `scripts/manifest.py`, `scripts/site.py`, `scripts/mutants_cli.py` and `scripts/mutants_cat.py` (patterns retargeted), `cancho.toml`, `tools.toml`, `tests/conformance/harness.py` (a `stdin` argument), `tests/conformance/golden_constant.json` and `golden_numeric.json`.

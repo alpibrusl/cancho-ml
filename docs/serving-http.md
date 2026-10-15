@@ -1,7 +1,8 @@
 # cancho-ml serving over HTTP: `ml-serve` (issue #16)
 
-**Status: this document is written before the code it judges. Sections 1 to 9 fix the dependency, the endpoints, the byte rule, the limits, the authority and the gates; section 10 holds the
-results and is filled only with what a script of this repository printed, with its conditions; section 11 lists what the stage does not do.**
+**Status: sections 1 to 9 were written before the code they judge and fix the dependency, the endpoints, the byte rule, the limits, the authority and the gates; a place where the code showed the
+text wrong is corrected in place (the facts found while building are tagged [measured] or [read]). Section 10 holds the results and is filled only with what a script of this repository printed, with
+its conditions; section 11 lists what the stage does not do.**
 Tags as in `design.md`: **[choice]** a decision the maintainer can overturn, **[read]** read from the code or from a document of a pinned dependency, **[measured]** printed by a script
 here, **[open]** not decided.
 
@@ -57,10 +58,11 @@ are added; the other changes of this stage that reach their sources are listed i
 ### 1.3 What the pinned libraries do, read before the design
 
 * **One thread.** `http.server` is one `Poller` loop (`wait`, then `next` until it answers -1, `respond`). Requests are answered one at a time, in order, per connection; pipelined requests are supported **[read]**.
-* **Limits of the loop [read].** The buffer of one connection (`size` in `server.open`) holds the head and the body: a request whose head and body do not fit is answered by the loop itself, before the handler, `413`
-  (`{"error":"request too large"}`) or, for a head with no end in `size` bytes, `431`; a malformed head is `400`. These three bodies are `application/json` `{"error": ...}`, not `problem+json`: **the loop
-  writes them, and the pinned package has no hook for them** (section 5.3 says what that means for the documented refusals). The idle timeout of a connection is an argument of `server.open` (seconds; it reads the
-  clock, so the row has `clock`). At most 1,024 connections, and 256 MiB of buffers in all: a larger `size` means fewer connections.
+* **Limits of the loop [read, measured].** The buffer of one connection (`size` in `server.open`) holds the head and the body. The head is bounded by `std.http` (65,536 bytes and 64 headers: more is the loop's `400`);
+  a request whose head and body do not fit `size` is answered by the loop itself, before the handler, `413` (`{"error":"request too large"}`) or, for a head with no end in `size` bytes, `431`; a malformed head
+  is `400`. These bodies are `application/json` `{"error": ...}`, not `problem+json`: **the loop writes them, and the pinned package has no hook for them** (section 5.3 says what that means for the documented
+  refusals). `ml-serve` sets `size` to `--max-body-bytes` plus 16 KiB, and judges the body's length itself, so a body past the flag that the buffer still holds is a `problem+json` 413. The idle timeout of a connection is an argument
+  of `server.open` (seconds; it reads the clock, so the row has `clock`). At most 1,024 connections, and 256 MiB of buffers in all: a larger `size` means fewer connections.
 * **The output queue of a connection is 65,536 bytes [read].** An answer is handed to the kernel at once; what the kernel does not take is queued, and **a connection whose queue would hold more than 64 KiB is
   closed**. So every answer of `ml-serve` is bounded to 60,000 bytes by construction (section 5.2) and the documents that could be larger are refused or reduced at start (sections 3.5 and 5.2).
 * **`tcp_listen` binds every address of the host [read].** `cancho` `crates/cancho-codegen/src/body/net.rs` (`bind`): the socket address is `INADDR_ANY`, the bound of the capability is the port alone, and there is no host argument.
@@ -87,9 +89,9 @@ family is (`toolbox.path`: below `--root`, no `..`, no symbolic link followed).
 | `--port` | the TCP port (1 to 65535) | 8080 | 65535 |
 | `--token-file` | a file holding the bearer token (section 5.4) | none | |
 | `--no-token` | serve with no token, on every address of the host (section 5.4) | off | |
-| `--max-body-bytes` | the largest request body | 1,048,576 | 16,777,216 |
+| `--max-body-bytes` | the largest request body | 1,048,576 | 4,194,304 |
 | `--max-batch-rows` | the most records in one batch | 100 | 1,000 |
-| `--idle-seconds` | a connection that makes no progress for this long is closed | 10 | 3,600 |
+| `--idle-seconds` | a connection that makes no progress for this long is closed (the only deadline of a request) | 10 | 3,600 |
 | `--max-bytes` | the largest model file | 16,777,216 | 268,435,456 |
 
 ## 3. The endpoints
@@ -138,7 +140,7 @@ At start the server calls the code of `ml describe` on the model bytes (the same
   `flt.put_float` (shortest decimal that reads back to the double, positional from 1e-6 to 1e21 with a point, scientific outside) or `exact.put_scaled` (a label, an integer), and the server writes the same string
   between no quotes after checking that it is a JSON number (`json.put_fragment` parses it: a text that is not one is `serve.internal`, 500, never a quoted string). The decimal text is the same; nothing is printed twice. 
 * `model_sha256` is `describe.file.sha256` and the response header `X-Model-Sha256` carries it too.
-* `unknown_categories` is the predictor's count over the request.
+* `unknown_categories` is the predictor's count over the request (the constant models count none; the server writes 0).
 * Every answer is at most 60,000 bytes; the 1,000-row ceiling and the values (at most about 56 bytes a row) make that true by construction, and the server checks it.
 
 ### 3.3 `GET /model`
@@ -171,12 +173,12 @@ the server read at start). No temporary file, no subprocess, no `exec`. The answ
 **The CSV.** The header is `request.header`, joined by commas, each name written between double quotes with each quote doubled when it holds a comma, a quote, CR or LF (RFC 4180); then one line per record, in the
 request's order, with one cell per header column, then LF. The cells of a column, by its type:
 
-| column | the cell | refused with 422 (`serve.number-not-exact`, the JSON Pointer of the value) |
+| column | the cell | refused with 422 (`serve.number-not-exact` or `serve.string-not-renderable`, with the JSON Pointer of the value) |
 |---|---|---|
 | `int` | the integer's decimal digits, `-` for a negative, no leading zeros, `0` for zero (`-0` is `0`) | a number that is not exactly an integer of at most 12 digits: `1.5`, `1e13`, `150.0000000000000000001` |
 | `dec`, scale `s` | the value with exactly `s` digits after the point (`s = 0`: no point) | a number with more than `s` significant digits after the point, or more than 12 digits in all (`dec` is an exact 12-digit decimal) |
 | `float` | `flt.put_float` of the nearest double (ties to even; the shortest decimal that reads back to it); `0.0` for any zero (the reader has no negative zero) | a number past the range of a double (`1e999`), or non-zero and smaller than the smallest subnormal |
-| `categorical` | the string as UTF-8, between double quotes with quotes doubled when it holds a comma, a quote or LF | a string with a CR or NUL (a CSV reader does not keep a CR inside a quoted field: the cell could not be read back as sent) |
+| `categorical` | the string as UTF-8, between double quotes with quotes doubled when it holds a comma, a quote, CR or LF; an empty string is an empty cell | a string with a CR directly before an LF (the reader drops that CR inside a quoted field, so the cell could not be read back as sent; a lone CR and U+0000 are kept and are written as sent **[measured]**) |
 | any, `null` | an empty cell | |
 
 The number is judged from its text (the tape's byte range), by a decimal reader of its own that keeps the digits and the exponent, and never from a double: a request is never rounded to a number it did not
@@ -281,7 +283,7 @@ Its row is derived by `cancho authority` and committed in `manifests/ml-serve.au
 | `net_in`, `conn_accept`, `conn_read`, `conn_write`, `poll` | listen on a port and serve the connections of the loop |
 | `clock` | the idle timeout of `http.server` and the milliseconds of the log line (cancho-web's `users` example has the same two uses) |
 | `args` | the command line |
-| `fs_read("")`, `dir_read`, `file_read` | the model file and the token file, read below `--root` once at start (and the library signatures the in-process call keeps) |
+| `fs_read("")`, `dir_read`, `file_read` | the model file and the token file, read below `--root` once at start; the predictor's signature keeps them for every call, and a call over bytes in memory opens nothing |
 | `io_write` | `introspect` and `skill` |
 | `err_write` | the usage line, `listening on PORT`, the access log |
 | `heap` | the working data |
@@ -290,18 +292,20 @@ Not in the row: `file_write`, `dir_write`, `fs_write` (no write of any file), `e
 label beyond `ml-predict`'s row, and `scripts/manifest.py` no longer forbids `net_in` and `clock` for a tool whose ceiling names them with a reason (the other tools keep the ban). A check fails when the binary's
 embedded row, the committed file or the ceiling disagree; mutants that add `file_write`, `dir_write`, `exec`, `ffi`, `net_out` or `conc` to the derived row, or to a reachable function, must be caught.
 
-## 7. The library boundary: what `wireio`, `verbs`, `mdesc` and `paths` change
+## 7. The library boundary: what `wireio`, `verbs`, `mdesc`, `fsio` and `paths` change
 
-The in-process call needs a memory-in entry, and the entry is the one the command line already has for standard input. The changes to `tools/ml`, each a few lines and each covered by the existing
-suite (gate G: every fixture and golden file of the other binaries is unchanged):
+The in-process call needs a memory-in entry, and the entry is the one the command line already has for standard input. The changes to `tools/ml`, each small and each covered by the existing suite (gate G: every fixture and
+golden file of the other binaries is unchanged, and `test_serving.py` and `test_describe.py` pass):
 
-* `paths.of_mem(bytes, shown)`: an `Rp` that holds bytes (the `stdin` Rp of `predict -`, built from a buffer that is not standard input).
-* `wireio.peek_model`, `verbs.load_model` and `mdesc.describe` take the bytes of an `Rp` that holds memory instead of opening the path, and open the path otherwise. **A model read from memory and a model read
-  from the file are the same bytes, decoded by the same function**; the file case is unchanged.
+* `paths.of_mem(bytes, shown)`: an `Rp` that holds bytes (the `stdin` Rp of `predict -`, built from a slice that is not standard input).
+* `fsio.read_model`: the bytes of a model file for `wireio.predict`, `verbs.predict` and `mdesc.describe`: a copy of the bytes an `Rp` holds in memory, or the file below `--root` otherwise. **A model read from memory and
+  a model read from the file are the same bytes, decoded by the same function**; the file case is unchanged.
+* `wireio.predict` is `load_stored`, then `wireio.predict_loaded`, then `drop_stored`: the second function is the rest of the old body, taking the decoded model by reference. The command line calls the three in a row; the server
+  decodes its model **once at start** and calls `predict_loaded` for each request, so the answer is the answer of the same function and a request does not decode the file again. The constant models of the older reader
+  (`verbs.predict`, kinds 1 to 3) are tiny and are decoded for each request from the bytes held in memory.
 
-The model file is read once at start (`fsio.read_whole`, below `--root`, bounded by `--max-bytes`); each request builds an `Rp` over a copy of the bytes (a copy of the file's length per request: measured in section 10,
-not claimed to be free) and decodes it, so a request does not depend on any other and no state is shared between requests. **[choice]** Decoding per request is the price of one code path; caching the decoded model
-is an optimisation that adds a second path to the gate and is not done here.
+The model file is read once at start (`fsio.read_whole`, below `--root`, bounded by `--max-bytes`). **[measured]** Without the single decode a request on a 33 MB forest of 200 trees took 155 ms (1 client); with it 9.5 ms
+(section 10): the decode was the cost, and the design of one decode at start is the one measured.
 
 ## 8. What the server does with a request, in order
 
@@ -320,17 +324,18 @@ is an optimisation that adds a second path to the gate and is not done here.
 | id | gate | test or script | mutants that must be killed |
 |---|---|---|---|
 | W1 | the three dependencies are pinned, consistent and not copied | `scripts/check_web_pin.py` | a rev edited in one block; a block removed; a copy of `web` under `lib/`; a sixth store of cancho-web |
-| W2 | the three blocks do not change the bytes of `ml` and `ml-predict` | `scripts/check_web_pin.py --bins` (or the run recorded in section 10) | |
+| W2 | the three blocks do not change the bytes of `ml` and `ml-predict` | `scripts/check_web_pin.py --bins` | a changed byte |
 | S1 | the byte-equality of 4.1 over the 19-model corpus | `tests/conformance/test_serve_bytes.py` | number formatting, column order, null rendering, `dec` padding, category quoting |
 | S2 | end-to-end over real sockets: readiness, every endpoint, every refusal with its status and `problem+json` body, keep-alive, pipelining (5 requests in one write, answers in order), a request split across 1-byte writes, a body larger than the limit (413), wrong content type (415), invalid JSON (400), JSON with duplicate keys, NaN, Infinity, 1e999, nesting of 100,000, a BOM, invalid UTF-8; unknown, missing and extra columns; unseen categories (`enum` and no `enum`); null; one record, a batch at the limit and over | `tests/conformance/test_serve.py` | a status mapped to another; a refusal as 200; the `rule` field dropped; the row limit off by one |
 | S3 | the JSON number differential: the cell the server renders for a number equals Python's `Decimal`/`float` of the same text (int exact or refused, dec exact or refused, float correctly rounded or refused) over generated and adversarial numbers: 17-digit mantissas, subnormals, halfway cases, exponents, `-0`, `1e999` | `tests/conformance/test_serve_json.py` | the rounding of a float taken for an int; an exponent ignored; a dec scale off by one |
-| S4 | the fuzz: request bodies, paths and headers (random bytes, truncations and byte flips of valid requests) never trap and never hang (every request is answered or the connection is closed within the idle time) | `tests/conformance/test_serve_fuzz.py` | none (the property is "no trap"); the harness is checked by a planted trap |
+| S4 | the fuzz: request bodies, paths and headers (random bytes, truncations, byte flips, insertions and deletions of valid requests, hostile paths and headers, hostile JSON) never trap and never hang (every request is answered or the connection is closed within the idle time); the resident set does not grow | `tests/conformance/test_serve_fuzz.py` | a planted trap for a body of a size; a planted spin on a path; an idle time in milliseconds |
 | O1 | the served OpenAPI document of every fixture model is a checked-in file and the check fails on drift; it validates with `openapi-spec-validator` | `scripts/gate_serve_openapi.py`, `docs/serving/*.openapi.json` | a field dropped from the document; an `enum` removed |
-| O2 | Schemathesis against the served document of fixture models, if it can be installed in a virtual environment inside this clone | `scripts/gate_serve_schemathesis.py` | |
+| O2 | Schemathesis against the served document of six fixture models, in a virtual environment inside this clone (`build/venv`); it reported what the document could not say, and the exclusion is in the script | `scripts/gate_serve_schemathesis.py` | (the findings: a `dec` number and a CR LF the document accepts and the server refuses) |
 | A1 | the authority row is the committed `manifests/ml-serve.authority.json`, within the ceiling; a derived row with `file_write`, `dir_write`, `exec`, `ffi`, `net_out`, `conc` added fails | `tests/conformance/test_authority.py`, `scripts/manifest.py --check`, `scripts/mutants_http.py` | a write, an `exec`, a thread in a reachable function |
 | A2 | `ml-serve` is built from the same sources: P4 extended | `scripts/check_bins.py` | a copied or missing file |
-| T1 | the flag table of `ml-serve` is checked as the other tools' (introspect, skill, schemas) | `tests/conformance/test_tables.py` | a flag in the table and not in the parser |
+| T1 | the flag table of `ml-serve` lists the flags the parser takes, `introspect` and `skill` answer, and each range is refused outside | `tests/conformance/test_serve.py` (`Start`) | a flag ignored (`--max-batch-rows`, `--max-body-bytes`) |
 | L1 | a load test: requests per second and latency percentiles at stated concurrency, the machine and N; no claim beyond the measurement | `scripts/bench_serve.py` | |
+| S9 | every refusal rule of the predictor has a status (5.3), and the lists in the source, the document and `ml introspect` agree | `tests/conformance/test_serve.py` (`Statuses`) | a rule moved between lists; a status changed |
 | G | every other fixture and golden file is unchanged | the existing suite | |
 
 The mutants of the new code are `scripts/mutants_http.py` (counts in section 10).
@@ -341,5 +346,13 @@ The mutants of the new code are `scripts/mutants_http.py` (counts in section 10)
 
 ## 11. Not done, limits
 
-* Reload (restart only). A loopback-only bind (the pinned compiler has none, 5.4). Per-request deadline (the loop has none). Caching of the decoded model. TLS. Per-column nullability for a model with an
-  imputing plan. `problem+json` for the 400, 413 and 431 of the loop and the 405 of the router (not hookable at the pins).
+* **Reload** (restart only). **A loopback-only bind** (the pinned compiler has none: `tcp_listen` is `INADDR_ANY`, 5.4). **A per-request deadline** (the loop has none). **TLS.** **A listing of every refusal in problem+json:** the 400, 413 and
+  431 of the loop and the 405, 401 and 403 of cancho-web are theirs (5.3).
+* **Per-column nullability** for a model with an imputing plan: `describe` says `needs_impute` and not which columns, so no column takes `null` (3.1).
+* **What the document cannot state.** cancho-schema at the pin has no bound or multiple for a `number` and no pattern but one for U+0000, so the document says `number` for a `dec` column whose cells take at most its
+  scale's digits and 12 in all (a request outside is `422 serve.number-not-exact`), and `string` for a category with no `enum` that may not hold CR LF. Schemathesis finds exactly these two (section 10), and `positive_data_acceptance` is
+  excluded for the models that have them. The change that would state them is in cancho-schema (bounds and `multipleOf` for `number`, a pattern for a string).
+* **Memory of a large body.** The tape of a request is about 24 bytes for each byte of body; the allocator keeps what it took, so after a body of 4 MiB the server's resident set stays near 105 MiB **[measured]**.
+* **The command line prints a prediction that is infinite as text that is not a number** (`i.nf`, from `flt.put_float` of cancho-table); the server refuses such a row (`serve.non-finite-prediction`) and the finding is for cancho-table.
+* **Tie-breaking of the shortest decimal.** cancho-table's printer and Python's `repr` may choose different shortest decimals for the same double when two are equally near (`-902899553826474.3` and `...4.2`); the server prints
+  what the command line prints, and the differential test compares the number of digits and the double.
