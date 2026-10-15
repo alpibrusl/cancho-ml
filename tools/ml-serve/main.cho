@@ -1,0 +1,472 @@
+edition 5;
+
+// `ml-serve` -- serve one trained model file over HTTP with cancho-web (docs/serving-http.md). It is built from the sources of `ml` and `ml-predict` with this entry
+// point: it reads the model file once, builds the request schema and the OpenAPI document from what `describe` says, listens, and answers one request at a time. The
+// authority the compiler derives from `main` has the sockets, the clock and the reads of the model and token files, and no write of any kind, no `exec` and no foreign code.
+
+import std.buffer;
+import std.bytes;
+import std.io;
+import http.server;
+import web;
+import ml.app;
+import ml.fsio;
+import ml.mdesc;
+import ml.paths;
+import ml.verbs;
+import toolbox.built;
+import toolbox.cli;
+import toolbox.describe;
+import toolbox.fail;
+import toolbox.out;
+import toolbox.path;
+import serve.api;
+import serve.srv;
+import serve.sspec;
+
+fn built() -> [] describe.Built {
+    return describe.Built { authority: built.authority(), schema: built.schema(), compiler: built.compiler() };
+}
+
+// a refusal of the server's own, with one string of detail
+fn refusal[&h, &m, &k, &v](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message: &m [byte], hint: &static [byte], key: &k [byte], value: &v [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, sspec.extra(), rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    if len(key) > 0 {
+        w = fail.detail_str(heap, w, key, value);
+    }
+    return fail.add(heap, e, w);
+}
+
+// a numeric flag given must be in 1..ceiling (the ceilings are sspec.limits())
+fn check_range[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte]) -> [heap, args] fail.Errors {
+    var e = errs;
+    let limits = sspec.limits();
+    let count = bytes.count_byte(limits, ';') + 1;
+    var k = 1;
+    while k <= count {
+        let entry = bytes.field(limits, ';', k);
+        let name = bytes.field(entry, '|', 1);
+        let top = cli.parse_nat(bytes.field(entry, '|', 3));
+        if cli.has(parsed, table, name) {
+            let v = cli.nat(args, parsed, table, name);
+            if v < 1 || v > top {
+                var w = fail.open_in(heap, sspec.extra(), "ml.param.out-of-range", "a numeric flag is outside its range", "the range is in the detail and in introspect limits");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_str(heap, w, "flag", name);
+                w = fail.detail_int(heap, w, "value", v);
+                w = fail.detail_int(heap, w, "min", 1);
+                w = fail.detail_int(heap, w, "max", top);
+                e = fail.add(heap, e, w);
+            }
+        }
+        k = k + 1;
+    }
+    return e;
+}
+
+// the command line, before any file is read
+fn check_cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors) -> [heap, args] fail.Errors {
+    let table = sspec.flag_table();
+    var e = errs;
+    if cli.operand_count(parsed) > 0 {
+        e = app.flag_problem(heap, e, "args.too-many-operands", "ml-serve takes no operand: it serves the model file named by --model-file", "ml-serve --model-file MODEL --token-file FILE", "operand", "FILE");
+    }
+    if !cli.has(parsed, table, "model-file") {
+        e = app.flag_problem(heap, e, "args.required-flag", "ml-serve needs --model-file, the model to serve", "ml-serve --model-file MODEL --token-file FILE", "flag", "--model-file");
+    }
+    if cli.has(parsed, table, "token-file") && cli.has(parsed, table, "no-token") {
+        e = app.flag_problem(heap, e, "args.conflict", "--token-file and --no-token say opposite things", "give one of them", "flag", "--no-token");
+    } else if !cli.has(parsed, table, "token-file") && !cli.has(parsed, table, "no-token") {
+        e = refusal(heap, e, "serve.no-token", "ml-serve needs --token-file FILE, or --no-token to serve with no token", "the pinned compiler listens on every address of the host: without a token every host that can reach the port can call the model", "flag", "--token-file");
+    }
+    return check_range(heap, args, parsed, e, table);
+}
+
+// the token: the bytes of the file without one trailing line break, printable ASCII without a space, 1 to 4096 of them
+fn token_ok[&t](text: &t [byte]) -> [] bool {
+    if len(text) < 1 || len(text) > 4096 {
+        return false;
+    }
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if c < 33 || c > 126 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// the file `shown` below `root` whole, up to `cap` bytes: (bytes, whether it is read); a refusal is added to the errors
+fn read_file[&h, &f, &r, &pr](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], p: &pr paths.Rp, cap: int, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, bool, fail.Errors) {
+    let (data, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(p), paths.full(p), cap);
+    var e = errs;
+    if st == 1 || st == 2 {
+        e = fail.io_error(heap, e, aux, false, paths.shown(p));
+        buffer.drop(heap, data);
+        return (buffer.empty(heap, 1), false, e);
+    }
+    if st == 3 {
+        var w = fail.open_in(heap, sspec.extra(), "limit.input-too-large", "the file is longer than its bound", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", aux);
+        w = fail.detail_int(heap, w, "max", cap);
+        e = fail.add(heap, e, w);
+        buffer.drop(heap, data);
+        return (buffer.empty(heap, 1), false, e);
+    }
+    return (data, true, e);
+}
+
+// `describe` of the model bytes with at most `limit` category strings per column: (the data object, whether it is made); a refusal is added to the errors
+fn describe_model[&h, &f, &r, &m, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &m [byte], shown: &s [byte], limit: int, max_bytes: int, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, bool, fail.Errors) {
+    let rp = paths.of_mem(heap, model, shown);
+    var payload = buffer.empty(heap, 1);
+    var e = errs;
+    borrow rp as &rr in {
+        let result = mdesc.describe(heap, fs, root, rr, srv.describe_opts(limit, max_bytes), e, buffer.empty(heap, 1));
+        let (p2, plain, extra, errs2, log, dry) = verbs.parts(result);
+        buffer.drop(heap, plain);
+        buffer.drop(heap, extra);
+        buffer.drop(heap, log);
+        buffer.drop(heap, payload);
+        payload = p2;
+        e = errs2;
+    }
+    paths.drop(heap, rp);
+    var none = true;
+    borrow e as &er in {
+        none = fail.count(er) == 0;
+    }
+    return (payload, none, e);
+}
+
+// Everything that can be refused before the server listens (docs/serving-http.md section 5.6): the paths, the model file, `describe`, the request schema and the documents,
+// the token. The server comes back whole, or the errors say why not.
+fn prepare[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), root: &r [byte], errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (srv.Served, fail.Errors) {
+    let table = sspec.flag_table();
+    let guarded = cli.has(parsed, table, "token-file");
+    let max_rows = cli.nat(args, parsed, table, "max-batch-rows");
+    let max_body = cli.nat(args, parsed, table, "max-body-bytes");
+    let max_model = cli.nat(args, parsed, table, "max-bytes");
+    let (mp, e1) = paths.from_flag(heap, args, parsed, table, root, "model-file", errs);
+    let (tp, e2) = paths.from_flag(heap, args, parsed, table, root, "token-file", e1);
+    var e = e2;
+    let (e3, clean) = app.clean(e);
+    e = e3;
+    var go = clean;
+    var model = buffer.empty(heap, 1);
+    var shown = buffer.empty(heap, 1);
+    if go {
+        borrow mp as &mpr in {
+            let (data, ok, e4) = read_file(heap, fs, root, mpr, max_model, e);
+            e = e4;
+            go = ok;
+            buffer.drop(heap, model);
+            model = data;
+            buffer.drop(heap, shown);
+            shown = buffer.append(heap, buffer.empty(heap, 16), paths.shown(mpr));
+        }
+    }
+    // the answer of `describe` with every category the file lists: the request schema is built from it
+    var full = buffer.empty(heap, 1);
+    if go {
+        borrow model as &mr in {
+            borrow shown as &sr in {
+                let (payload, ok, e5) = describe_model(heap, fs, root, buffer.bytes(mr), buffer.bytes(sr), 1000000, max_model, e);
+                e = e5;
+                go = ok;
+                buffer.drop(heap, full);
+                full = payload;
+            }
+        }
+    }
+    var tokens = web.tokens_empty(heap);
+    if go && guarded {
+        borrow tp as &tpr in {
+            let (data, ok, e6) = read_file(heap, fs, root, tpr, 4097, e);
+            e = e6;
+            go = ok;
+            borrow data as &dr in {
+                var text = buffer.bytes(dr);
+                if len(text) > 0 && int_of(text[len(text) - 1]) == 10 {
+                    text = text[0..len(text) - 1];
+                    if len(text) > 0 && int_of(text[len(text) - 1]) == 13 {
+                        text = text[0..len(text) - 1];
+                    }
+                }
+                if ok && !token_ok(text) {
+                    e = refusal(heap, e, "serve.token", "the token file is empty, longer than 4096 bytes or holds a byte outside ! to ~", "write the token alone in the file, printable ASCII without spaces", "", "");
+                    go = false;
+                } else if ok {
+                    tokens = web.token(heap, tokens, "token", text);
+                }
+            }
+            buffer.drop(heap, data);
+        }
+    }
+    paths.drop(heap, mp);
+    paths.drop(heap, tp);
+    var built = api.build(heap, "{}", false, 1, false);
+    var model_doc = buffer.empty(heap, 1);
+    if go {
+        api.drop(heap, built);
+        borrow full as &fr in {
+            built = api.build(heap, buffer.bytes(fr), true, max_rows, guarded);
+            var too_big = false;
+            borrow built as &br in {
+                too_big = api.code(br) == 0 && len(api.doc_of(br)) > srv.answer_limit();
+            }
+            if too_big {
+                api.drop(heap, built);
+                built = api.build(heap, buffer.bytes(fr), false, max_rows, guarded);
+            }
+        }
+        var bcode = 0;
+        var bigdoc = false;
+        borrow built as &br in {
+            bcode = api.code(br);
+            bigdoc = len(api.doc_of(br)) > srv.answer_limit();
+        }
+        if bcode == 1 {
+            e = refusal(heap, e, "serve.column-name", "a column name of the model is not UTF-8 text, so it cannot be a JSON key", "refit the model with column names in UTF-8", "", "");
+            go = false;
+        } else if bcode != 0 {
+            e = refusal(heap, e, "serve.internal", "the description of the model could not be read", "this is a bug of ml-serve", "", "");
+            go = false;
+        } else if bigdoc {
+            e = refusal(heap, e, "serve.document-too-large", "the OpenAPI document is larger than 60000 bytes even without the category lists", "fit the model on fewer columns", "", "");
+            go = false;
+        }
+    }
+    buffer.drop(heap, full);
+    // the answer of GET /model: the largest listing of categories that fits one reply
+    if go {
+        var limit = 1000;
+        var found = false;
+        while go && !found && limit >= 1 {
+            borrow model as &mr in {
+                borrow shown as &sr in {
+                    let (payload, ok, e7) = describe_model(heap, fs, root, buffer.bytes(mr), buffer.bytes(sr), limit, max_model, e);
+                    e = e7;
+                    if !ok {
+                        go = false;
+                        buffer.drop(heap, payload);
+                    } else {
+                        var fits = false;
+                        borrow payload as &pl in {
+                            fits = len(buffer.bytes(pl)) <= srv.answer_limit();
+                        }
+                        if fits {
+                            found = true;
+                            buffer.drop(heap, model_doc);
+                            model_doc = payload;
+                        } else {
+                            buffer.drop(heap, payload);
+                        }
+                    }
+                }
+            }
+            limit = limit / 10;
+        }
+        if go && !found {
+            e = refusal(heap, e, "serve.document-too-large", "the description of the model is larger than 60000 bytes even without the category lists", "fit the model on fewer columns", "", "");
+            go = false;
+        }
+    }
+    buffer.drop(heap, shown);
+    let served = srv.make(heap, built, model, model_doc, tokens, guarded, max_rows, max_model, max_body);
+    if go && guarded {
+        var undecided = 0;
+        borrow served as &sv in {
+            undecided = srv.undecided(sv);
+        }
+        if undecided > 0 {
+            e = refusal(heap, e, "serve.internal", "an operation of the declaration says nothing about who may call it", "this is a bug of ml-serve", "", "");
+        }
+    }
+    return (served, e);
+}
+
+// the answer of a refused start: the document with the errors, and the exit code of the first
+fn finish[&h, &i, &e](heap: &!h Heap, io: &!i Io, errs: &e fail.Errors) -> [heap, io_write, err_write] int {
+    return out.respond(heap, io, "ml", "ml.v1", app.version(), "", "", errs, false, "", 0);
+}
+
+// the loop of docs/serving-http.md section 5.1: `wait`, then `next` until it answers -1, one answer for each request
+fn run[&h, &sv, &g, &f, &r, &k, &l, &i](heap: &!h Heap, served: &sv srv.Served, args: &g Args, fs: &f Fs(""), root: &r [byte], clock: &k Clock, listener: &!l Listener, con: &!i Io, port: int, idle: int, size: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock, err_write, args, fs_read(""), dir_read, file_read] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var loop_server = server.open(heap, p, listener, size, 0, idle);
+            var widest = 1;
+            if srv.most_params(served) > 1 {
+                widest = srv.most_params(served);
+            }
+            let params = box_slice(heap, 2 * widest, 0);
+            let wide = srv.most_args(served);
+            let argv = box_slice(heap, wide, 0);
+            let scratch = box_slice(heap, 256, byte_of(0));
+            var out = buffer.empty(heap, 4096);
+            var line = buffer.append(heap, buffer.empty(heap, 64), "listening on ");
+            line = buffer.push_nat(heap, line, port);
+            line = buffer.push(heap, line, byte_of(10));
+            borrow line as &lb in {
+                io.error_all(con, buffer.bytes(lb));
+            }
+            buffer.drop(heap, line);
+            while true {
+                loop_server = server.wait(heap, loop_server, clock, listener, 1000);
+                var more = true;
+                while more {
+                    var slot = 0 - 1;
+                    borrow mut loop_server as &!sw in {
+                        slot = server.next(heap, sw);
+                    }
+                    if slot < 0 {
+                        more = false;
+                    } else {
+                        borrow mut out as &!ob in {
+                            buffer.clear(ob);
+                        }
+                        let started = clock_ms(clock);
+                        borrow loop_server as &sr in {
+                            borrow mut params as &!pw in {
+                                borrow mut argv as &!aw in {
+                                    borrow mut scratch as &!cw in {
+                                        out = srv.handle(heap, served, args, fs, root, server.head(sr), server.parsed(sr), contents(pw), contents(aw), contents(cw), server.body(sr), out);
+                                    }
+                                }
+                            }
+                            borrow out as &ob in {
+                                let entry = web.log_line(heap, server.head(sr), server.parsed(sr), buffer.bytes(ob), clock_ms(clock) - started);
+                                borrow entry as &eb in {
+                                    io.error_all(con, buffer.bytes(eb));
+                                }
+                                buffer.drop(heap, entry);
+                            }
+                        }
+                        borrow mut loop_server as &!sw in {
+                            borrow out as &ob in {
+                                server.respond(sw, buffer.bytes(ob));
+                            }
+                        }
+                    }
+                }
+            }
+            server.close(heap, loop_server);
+            buffer.drop(heap, out);
+            unbox_slice(heap, scratch);
+            unbox_slice(heap, argv);
+            unbox_slice(heap, params);
+            return 0;
+        }
+        Polling::Failed(code) => {
+            return 4;
+        }
+    }
+}
+
+// the server: the command line, `prepare`, then the socket
+fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, net: &n Net(""), clock: &k Clock, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock] int {
+    let table = sspec.flag_table();
+    let e0 = check_cmdline(heap, args, parsed, errs);
+    let (root, e1) = path.root(heap, args, cli.text(args, parsed, table, "root"), cli.value_index(parsed, table, "root"), e0);
+    var e = e1;
+    borrow root as &rb in {
+        if paths.has_double_dot(buffer.bytes(rb)) {
+            e = paths.refuse_double_dot(heap, e, buffer.bytes(rb), cli.value_index(parsed, table, "root"));
+        }
+    }
+    var status = 0;
+    let (e2, clean) = app.clean(e);
+    var served = srv.make(heap, api.build(heap, "{}", false, 1, false), buffer.empty(heap, 1), buffer.empty(heap, 1), web.tokens_empty(heap), false, 1, 1, 1);
+    e = e2;
+    if clean {
+        borrow root as &rr in {
+            srv.drop(heap, served);
+            let (sv2, e3) = prepare(heap, args, parsed, fs, buffer.bytes(rr), e);
+            served = sv2;
+            e = e3;
+        }
+    }
+    let (e4, ready) = app.clean(e);
+    e = e4;
+    if !ready {
+        borrow e as &er in {
+            status = finish(heap, io, er);
+        }
+    } else {
+        let port = cli.nat(args, parsed, table, "port");
+        let idle = cli.nat(args, parsed, table, "idle-seconds");
+        let size = cli.nat(args, parsed, table, "max-body-bytes") + 16384;
+        match tcp_listen(net, port, 1024, 0) {
+            Listening::Ok(l) => {
+                var listener = l;
+                borrow mut listener as &!lh in {
+                    listener_nonblocking(lh);
+                    borrow served as &sv in {
+                        borrow root as &rr in {
+                            status = run(heap, sv, args, fs, buffer.bytes(rr), clock, lh, io, port, idle, size);
+                        }
+                    }
+                }
+                listener_close(listener);
+            }
+            Listening::Failed(code) => {
+                var detail = buffer.append(heap, buffer.empty(heap, 32), "errno ");
+                detail = buffer.push_nat(heap, detail, code);
+                borrow detail as &db in {
+                    e = refusal(heap, e, "serve.listen", "the port cannot be bound", "give another --port", "reason", buffer.bytes(db));
+                }
+                buffer.drop(heap, detail);
+                borrow e as &er in {
+                    status = finish(heap, io, er);
+                }
+            }
+        }
+    }
+    fail.drop(heap, e);
+    srv.drop(heap, served);
+    buffer.drop(heap, root);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow args as &g in {
+            borrow fs as &f in {
+                borrow mut io as &!i in {
+                    let which = cli.subcommand(g);
+                    if which != 0 {
+                        status = describe.answer(h, i, which, sspec.tool(), built());
+                    } else {
+                        let (parsed, e) = cli.parse(h, g, sspec.flag_table(), fail.empty_in(h, sspec.extra()));
+                        borrow parsed as &pr in {
+                            borrow net as &nn in {
+                                borrow clock as &kk in {
+                                    status = serve(h, g, pr, f, i, nn, kk, e);
+                                }
+                            }
+                        }
+                        cli.drop(h, parsed);
+                    }
+                }
+            }
+        }
+    }
+    release(net);
+    release(clock);
+    release(heap);
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}

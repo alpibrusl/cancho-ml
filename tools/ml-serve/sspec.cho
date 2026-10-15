@@ -1,6 +1,6 @@
 edition 5;
 
-module serve.spec;
+module serve.sspec;
 
 // What `ml-serve` says about itself (docs/serving-http.md section 2): the flag table that drives the parser, `introspect` and `skill`, the rules of its own beside
 // the shared catalogue, and the limits. Written by hand (the tables of `ml` and `ml-predict` are generated from the model manifests; the flags of the server are

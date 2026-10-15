@@ -160,3 +160,44 @@ pub fn float_cell[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte]) -
     }
     return (flt.put_float(heap, out, key), ok());
 }
+
+// whether `text` is a JSON number (RFC 8259: an optional minus, an integer part without leading zeros, an optional fraction, an optional exponent) and nothing else.
+// The values of an answer are the predictor's own decimal text and are written between no quotes only when this holds.
+pub fn is_json_number[&t](text: &t [byte]) -> [] bool {
+    var i = 0;
+    if i < len(text) && int_of(text[i]) == 45 {
+        i = i + 1;
+    }
+    if i >= len(text) || !is_digit(int_of(text[i])) {
+        return false;
+    }
+    if int_of(text[i]) == 48 {
+        i = i + 1;
+    } else {
+        while i < len(text) && is_digit(int_of(text[i])) {
+            i = i + 1;
+        }
+    }
+    if i < len(text) && int_of(text[i]) == 46 {
+        i = i + 1;
+        if i >= len(text) || !is_digit(int_of(text[i])) {
+            return false;
+        }
+        while i < len(text) && is_digit(int_of(text[i])) {
+            i = i + 1;
+        }
+    }
+    if i < len(text) && (int_of(text[i]) == 101 || int_of(text[i]) == 69) {
+        i = i + 1;
+        if i < len(text) && (int_of(text[i]) == 43 || int_of(text[i]) == 45) {
+            i = i + 1;
+        }
+        if i >= len(text) || !is_digit(int_of(text[i])) {
+            return false;
+        }
+        while i < len(text) && is_digit(int_of(text[i])) {
+            i = i + 1;
+        }
+    }
+    return i == len(text);
+}
