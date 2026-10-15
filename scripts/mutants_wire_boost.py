@@ -8,6 +8,7 @@ reason (`why`). The library's mutants are scripts/mutants_boost.py; the machiner
 
     python3 scripts/mutants_wire_boost.py              all mutants, then the baseline (the unchanged copy must pass)
     python3 scripts/mutants_wire_boost.py --only ID
+    python3 scripts/mutants_wire_boost.py --slice 0:12
     python3 scripts/mutants_wire_boost.py --list
     python3 scripts/mutants_wire_boost.py --check      every `old` text is found exactly once where it is expected (no build, no test)
 """
@@ -100,14 +101,19 @@ def main():
         print("%d boost wiring mutants, %d with an edit that does not apply" % (len(MUTANTS), bad))
         return 1 if bad else 0
     only = argv[argv.index("--only") + 1] if "--only" in argv else None
+    # --slice A:B runs the mutants A to B - 1 of the list (the suites are long: slices run side by side; the baseline is run by the slice that starts at 0)
+    lo, hi = 0, len(MUTANTS)
+    if "--slice" in argv:
+        a, b = argv[argv.index("--slice") + 1].split(":")
+        lo, hi = int(a or 0), int(b or len(MUTANTS))
     results = []
-    for m in MUTANTS:
+    for m in MUTANTS[lo:hi]:
         if only and m["id"] != only:
             continue
         verdict, detail = mw.run_one(m)
         results.append((m, verdict, detail))
         print("%-9s %-48s %s  %s" % (verdict, m["id"], m["gate"], detail), flush=True)
-    if not only:
+    if not only and lo == 0:
         v, d = mc.baseline()
         print("%-9s %-48s %s  %s" % (v, "baseline (the unchanged tree)", "-", d), flush=True)
     survivors = [(m, d) for m, v, d in results if v == "SURVIVED"]
