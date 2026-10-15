@@ -14,6 +14,7 @@ import ml.spec;
 import ml.track;
 import ml.verbs;
 import ml.wire;
+import ml.wiredata;
 import pipeline.provsec;
 import toolbox.built;
 import toolbox.fail;
@@ -100,4 +101,20 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pt](heap: &!h Heap, args: &g Args, fs: &f 
     buffer.drop(heap, runjson);
     buffer.drop(heap, action);
     return result;
+}
+
+// `eval` of a constant model, with the eval record of --track (docs/tracking.md section 5.3) written after the answer is made
+pub fn eval[&h, &g, &f, &r, &pf, &pm, &pt](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
+    let out = verbs.eval(heap, args, fs, root, file, model, o, errs, log);
+    if !o.track_given {
+        return out;
+    }
+    let (payload, plain, extra, e, lg, dry) = verbs.parts(out);
+    var e2 = e;
+    borrow payload as &pyr in {
+        if buffer.size(pyr) > 0 {
+            e2 = track.eval_after(heap, fs, root, trackp, file, model, buffer.bytes(pyr), o, e2);
+        }
+    }
+    return wiredata.out_of(payload, plain, extra, e2, lg, dry);
 }

@@ -11,6 +11,7 @@ import std.json;
 import std.vec;
 import ml.catmat;
 import ml.catwire;
+import ml.cfit;
 import ml.csv;
 import ml.csvcell;
 import ml.csvload;
@@ -26,6 +27,7 @@ import ml.mfile;
 import ml.paths;
 import ml.prov;
 import ml.spec;
+import ml.track;
 import ml.verbs;
 import ml.wiredata;
 import metrics.rules;
@@ -1029,7 +1031,7 @@ pub fn predict_loaded[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, f
 
 // ---------------------------------------------------------------- eval
 
-pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] verbs.Out {
+pub fn eval[&h, &g, &f, &r, &pf, &pm, &pt](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
     let (data, mine) = peek_model(heap, fs, root, model, o);
     if !mine {
         buffer.drop(heap, data);
@@ -1041,7 +1043,7 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
         if !none {
             return verbs.nothing(heap, e0, log);
         }
-        return verbs.eval(heap, args, fs, root, file, model, o, e0, log);
+        return cfit.eval(heap, args, fs, root, file, model, trackp, o, e0, log);
     }
     var e = errs;
     var lg = log;
@@ -1271,5 +1273,15 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
     }
     drop_input(heap, inp);
     drop_stored(heap, st);
+    // --track: the eval record beside the run of the model (docs/tracking.md section 5.3), when the eval answered
+    if o.track_given && go {
+        var answered = false;
+        borrow payload as &pyr in {
+            answered = buffer.size(pyr) > 0;
+            if answered {
+                e = track.eval_after(heap, fs, root, trackp, file, model, buffer.bytes(pyr), o, e);
+            }
+        }
+    }
     return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
 }
