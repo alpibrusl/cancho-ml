@@ -1,0 +1,204 @@
+module ml.fsq;
+
+import std.math;
+
+// The exact sum of squared differences of doubles, rounded once (docs/reader.md section 4). A finite double is m * 2^e with m below
+// 2^53 and e from -1074 to 971; the difference of two of them is an integer of up to 2098 + 53 bits times 2^(the smaller e), its square an
+// integer of up to 4196 bits, and the sum of those is kept exactly as an integer in units of 2^-2148, in limbs of 26 bits:
+//
+//   * the two operands are laid into limbs (26-bit chunks, shifted by their exponent's distance from the smaller one), subtracted limb
+//     by limb (a limb is then below 2^27 in size), squared by schoolbook multiplication (a product is below 2^54, 86 of them add to
+//     less than 2^61), carried so every limb is below 2^26, and added at the bit offset 2 * e0 + 2148 into the accumulator;
+//   * the accumulator gains less than 2^27 in a limb per row, so 2^36 rows could be added without a carry: nothing rounds, and nothing
+//     is carried, until `finish`, which carries once, finds the top bit, keeps 53 bits (fewer below 2^-1022), and rounds half to even
+//     from the guard bit and a sticky bit of everything below it. The result is the double nearest the exact sum.
+//
+// The accumulator is a slice of `size()` ints, all zero at the start: [0, 176) the sum, [176, 264) and [264, 352) the operands, [352, 528)
+// the square. There is no float operation on the way, so the result is the same on every machine and in every order of rows.
+
+pub fn size() -> [] int {
+    return 528;
+}
+
+fn mask() -> [] int {
+    return 67108863;
+}
+
+fn mant_of(bits: int) -> [] int {
+    let e = bits >> 52 & 2047;
+    let f = bits & 4503599627370495;
+    if e == 0 {
+        return f;
+    }
+    return f | 4503599627370496;
+}
+
+fn exp_of(bits: int) -> [] int {
+    let e = bits >> 52 & 2047;
+    if e == 0 {
+        return 0 - 1074;
+    }
+    return e - 1075;
+}
+
+// m * 2^sh laid into the limbs at `base` (added)
+fn place[&a](acc: &!a [int], base: int, m: int, sh: int) -> [] int {
+    let q = sh / 26;
+    let r = sh % 26;
+    var k = 0;
+    while k < 3 {
+        let c = m >> 26 * k & mask();
+        let v = c << r;
+        acc[base + q + k] = acc[base + q + k] + (v & mask());
+        acc[base + q + k + 1] = acc[base + q + k + 1] + (v >> 26);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// Add (y - p)^2, exactly, for the finite doubles whose bits are `y` and `p`.
+pub fn add_square[&a](acc: &!a [int], y: int, p: int) -> [] int {
+    let ey = exp_of(y);
+    let ep = exp_of(p);
+    var e0 = ey;
+    if ep < e0 {
+        e0 = ep;
+    }
+    let shy = ey - e0;
+    let shp = ep - e0;
+    var far = shy;
+    if shp > far {
+        far = shp;
+    }
+    let l = (far + 53) / 26 + 3;
+    var i = 0;
+    while i < l {
+        acc[176 + i] = 0;
+        acc[264 + i] = 0;
+        i = i + 1;
+    }
+    place(acc, 176, mant_of(y), shy);
+    place(acc, 264, mant_of(p), shp);
+    var sy = 1;
+    if y < 0 {
+        sy = 0 - 1;
+    }
+    var sp = 1;
+    if p < 0 {
+        sp = 0 - 1;
+    }
+    i = 0;
+    while i < l {
+        acc[176 + i] = sy * acc[176 + i] - sp * acc[264 + i];
+        i = i + 1;
+    }
+    let top = 2 * l + 2;
+    i = 0;
+    while i < top {
+        acc[352 + i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < l {
+        let d = acc[176 + i];
+        if d != 0 {
+            var j = 0;
+            while j < l {
+                acc[352 + i + j] = acc[352 + i + j] + d * acc[176 + j];
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    var carry = 0;
+    i = 0;
+    var last = 0 - 1;
+    while i < top {
+        let v = acc[352 + i] + carry;
+        acc[352 + i] = v & mask();
+        carry = v >> 26;
+        if acc[352 + i] != 0 {
+            last = i;
+        }
+        i = i + 1;
+    }
+    let off = 2 * e0 + 2148;
+    let q = off / 26;
+    let r = off % 26;
+    i = 0;
+    while i <= last {
+        let v = acc[352 + i] << r;
+        acc[q + i] = acc[q + i] + (v & mask());
+        acc[q + i + 1] = acc[q + i + 1] + (v >> 26);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn bit_at[&a](acc: &a [int], b: int) -> [] int {
+    return acc[b / 26] >> b % 26 & 1;
+}
+
+// The sum, rounded once to the nearest double (ties to even): (value, 0), or (0.0, 1) when it is beyond the largest double.
+pub fn finish[&a](acc: &!a [int]) -> [] (float, int) {
+    var carry = 0;
+    var i = 0;
+    while i < 176 {
+        let v = acc[i] + carry;
+        acc[i] = v & mask();
+        carry = v >> 26;
+        i = i + 1;
+    }
+    var k = 175;
+    while k >= 0 && acc[k] == 0 {
+        k = k - 1;
+    }
+    if k < 0 {
+        return (0.0, 0);
+    }
+    var width = 0;
+    var x = acc[k];
+    while x != 0 {
+        width = width + 1;
+        x = x >> 1;
+    }
+    let t = 26 * k + width - 1;
+    let e = t - 2148;
+    if e >= 1024 {
+        return (0.0, 1);
+    }
+    var lo = t - 52;
+    if e < 0 - 1022 {
+        lo = 1074;
+    }
+    var mant = 0;
+    var b = t;
+    while b >= lo {
+        mant = mant << 1 | bit_at(acc, b);
+        b = b - 1;
+    }
+    let guard = bit_at(acc, lo - 1);
+    var sticky = false;
+    b = 0;
+    while b < lo - 1 && !sticky {
+        if b % 26 == 0 && b + 26 <= lo - 1 {
+            if acc[b / 26] != 0 {
+                sticky = true;
+            }
+            b = b + 26;
+        } else {
+            if bit_at(acc, b) != 0 {
+                sticky = true;
+            }
+            b = b + 1;
+        }
+    }
+    if guard == 1 && (sticky || mant & 1 == 1) {
+        mant = mant + 1;
+    }
+    let shift = lo - 2148;
+    if mant == 9007199254740992 && shift + 53 >= 1024 {
+        return (0.0, 1);
+    }
+    return (math.ldexp(float_of(mant), shift), 0);
+}

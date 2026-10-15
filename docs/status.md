@@ -30,6 +30,7 @@ The command line is `ml fit | predict | eval | describe | introspect | skill`; `
 | the authority row of `ml` | `args`, `conc`, `dir_read`, `dir_write`, `err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, `io_read`, `io_write`; bounded; no foreign function; no `net_out`, `net_in`, `ffi` or `clock` (`ml-serve` alone holds `net_in` and `clock`). `conc` is there for `fit --threads` and `io_read` for `predict` from standard input, each with its reason in `tools.toml`. | [`manifests/ml.authority.json`](../manifests/ml.authority.json), [cli.md](cli.md) section 6 |
 | `--log` | NDJSON records of counts, flags, rule tags and a hash; no cell, column name or path; bounded. | [cli.md](cli.md) section 5 |
 | the reader as a package dependency | Five `[dependencies.*]` (`pow5`, `dec`, `flt`, `facc`, `reader`) on the stores of [alpibrusl/cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44), pinned to `202b214`; `scripts/check_table_pin.sh` checks the pin. | [reader.md](reader.md) section 1 |
+| the numeric stores | 23 modules of `lib/core`, `lib/linalg` and `lib/metrics` (`ml.rng`, `ml.exact`, `ml.fsq`, `ml.matrix`, `linalg.chol`, `linalg.par`, `metrics.rank`, `metrics.splits` and 15 more) are committed as `.cancho-vcs` stores that another repository pins by git, rev and path; `scripts/publish_stores.py --check` compares them with a fresh publish of the sources, `scripts/check_stores_pin.py` checks that nothing is copied or consumed back, and `scripts/consume_stores.py` builds a package outside the tree that calls every module. The `pub` functions are the interface (`stores_api.txt`). | [stores.md](stores.md) |
 
 ## What is built as a library
 
@@ -62,6 +63,8 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 | imputation in the constant model | `--model constant` refuses an empty cell; the pipeline models take it as a missing value |
 | neural networks, GPU | not planned in v1 |
 | other platforms | macOS arm64, Linux x86-64 and Linux aarch64 (a Raspberry Pi 5, by hand, outside the workflow) agree on 88 fingerprint lines for 22 fits (`docs/bench/xplat_fp.txt`, `scripts/xplat_check.py`; compiler `a4572ea`, commit `cb08d5b`); the workflow covers the first two; any other platform is untested |
+| the stores on a second machine | the stores and the output of the consumption proof are equal on a Mac and on a Linux x86-64 host ([stores.md](stores.md) section 7) |
+| a fetch of the stores from GitHub | the consumption proof reads them through a `file://` URL of a clone; the GitHub form is the same command with `--url` and is run once a commit holding the stores is pushed |
 | CI | `.github/workflows/ci.yml` ([ci.md](ci.md)): build, determinism gate and fast gates on `ubuntu-latest` and `macos-latest`; `scripts/check.sh` on request and nightly; binaries on a tag `v*`. Run by hand on a Mac and a Linux x86-64 workstation; no GitHub run is recorded here. `cancho install` needs the network |
 
 ## What was measured

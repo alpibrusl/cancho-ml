@@ -1,0 +1,60 @@
+module ml.limits;
+
+import ml.refuse;
+
+// Numeric matrix limits (design.md sections 8 and 9). The defaults are PROVISIONAL [choice]: section 9 waits for the speed
+// factor; they are what a caller passes as the caps unless a flag says otherwise. A matrix is rows x cols doubles, 8 bytes
+// a cell. Every allocation sized by input is first compared here, with no multiplication that can overflow.
+
+pub fn default_rows() -> [] int {
+    return 10000000;
+}
+
+pub fn default_cols() -> [] int {
+    return 4096;
+}
+
+// 4e8 cells = 3.2 GB of doubles
+pub fn default_cells() -> [] int {
+    return 400000000;
+}
+
+// no flag may raise a cap above these (2^31 - 1 rows or columns, 2^40 cells): they keep every index and product inside int
+pub fn ceiling_dim() -> [] int {
+    return 2147483647;
+}
+
+pub fn ceiling_cells() -> [] int {
+    return 1099511627776;
+}
+
+// 0 if a rows x cols matrix may be built under the caps, else a refusal code of ml.refuse
+pub fn check_matrix(rows: int, cols: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [] int {
+    if rows_cap < 1 || rows_cap > ceiling_dim() || cols_cap < 1 || cols_cap > ceiling_dim() || cells_cap < 1 || cells_cap > ceiling_cells() {
+        return refuse.param_out_of_range();
+    }
+    if rows < 0 || cols < 0 {
+        return refuse.param_out_of_range();
+    }
+    if rows == 0 || cols == 0 {
+        return refuse.input_empty();
+    }
+    if rows > rows_cap {
+        return refuse.too_many_rows();
+    }
+    if cols > cols_cap {
+        return refuse.too_many_columns();
+    }
+    if rows > cells_cap / cols {
+        return refuse.too_many_cells();
+    }
+    return 0;
+}
+
+// the thread count of a threaded kernel: 1 to 64 (the number of threads is a call depth, cancho-table docs/parallel.md)
+pub fn check_threads(t: int) -> [] int {
+    if t < 1 || t > 64 {
+        return refuse.threads();
+    }
+    return 0;
+}

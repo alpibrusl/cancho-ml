@@ -1,0 +1,76 @@
+module metrics.sums;
+
+import linalg.order;
+
+// The decisive sums of the metrics (docs/metrics.md section 2.4) use the one order of the package, lib/linalg/order.cho
+// (docs/linalg.md section 2): blocks of K = 256 terms, 4 lanes inside a block (`order.block_partial`), the fixed tree over blocks.
+// This module had a lane constant of its own until `v1-lanes`; it has none now.
+
+// term kinds of `terms`
+pub fn kind_sq() -> [] int {
+    return 1;
+}
+
+pub fn kind_abs() -> [] int {
+    return 2;
+}
+
+pub fn kind_dev() -> [] int {
+    return 3;
+}
+
+pub fn kind_val() -> [] int {
+    return 4;
+}
+
+// buf[0 .. m) = the terms of rows [at, at + m): sq: (a - b)^2, abs: |a - b|, dev: (a - c)^2 with c = `center`, val: a
+pub fn terms[&x, &y, &o](kind: int, a: &x [float], b: &y [float], center: float, at: int, m: int, buf: &!o [float]) -> [] int {
+    var j = 0;
+    if kind == 1 {
+        while j < m {
+            let e = a[at + j] - b[at + j];
+            buf[j] = e * e;
+            j = j + 1;
+        }
+    } else if kind == 2 {
+        while j < m {
+            let e = a[at + j] - b[at + j];
+            if e < 0.0 {
+                buf[j] = 0.0 - e;
+            } else {
+                buf[j] = e;
+            }
+            j = j + 1;
+        }
+    } else if kind == 3 {
+        while j < m {
+            let e = a[at + j] - center;
+            buf[j] = e * e;
+            j = j + 1;
+        }
+    } else {
+        while j < m {
+            buf[j] = a[at + j];
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
+// the decisive sum of n >= 1 terms of the given kind. buf has 256 floats, st 40 floats, lv 40 ints (the caller's workspace).
+pub fn reduce[&x, &y, &o, &s, &l](kind: int, a: &x [float], b: &y [float], center: float, n: int, buf: &!o [float], st: &!s [float], lv: &!l [int]) -> [] float {
+    var sp = 0;
+    var at = 0;
+    while at < n {
+        var m = n - at;
+        if m > order.block() {
+            m = order.block();
+        }
+        terms(kind, a, b, center, at, m, buf);
+        st[sp] = order.block_partial(buf, m);
+        sp = order.settle(st, lv, sp, 1);
+        at = at + m;
+    }
+    order.finish(st, sp, 1);
+    return st[0];
+}

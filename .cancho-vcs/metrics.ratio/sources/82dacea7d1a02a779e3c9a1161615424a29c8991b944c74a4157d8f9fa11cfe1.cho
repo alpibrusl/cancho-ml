@@ -1,0 +1,53 @@
+module metrics.ratio;
+
+import std.math;
+
+// The correctly rounded quotient of two ints (docs/metrics.md section 2.7), no float intermediate: integer long division, 53
+// significant bits, round to nearest even with the round and sticky bits. For 0 <= a <= b < 2^62, b >= 1 (anything else answers
+// NaN: the callers' counts are far below that). 2 * r < 2^63 holds throughout, because r < b < 2^62.
+
+pub fn ratio(a: int, b: int) -> [] float {
+    if a < 0 || b < 1 || a > b || b >= 4611686018427387904 {
+        return 0.0 / 0.0;
+    }
+    if a == 0 {
+        return 0.0;
+    }
+    if a == b {
+        return 1.0;
+    }
+    var r = a;
+    var e = 0;
+    var found = false;
+    while found == false {
+        r = 2 * r;
+        e = e + 1;
+        if r >= b {
+            r = r - b;
+            found = true;
+        }
+    }
+    var m = 1;
+    var i = 0;
+    while i < 52 {
+        r = 2 * r;
+        m = 2 * m;
+        if r >= b {
+            m = m + 1;
+            r = r - b;
+        }
+        i = i + 1;
+    }
+    r = 2 * r;
+    var round_up = false;
+    if r >= b {
+        r = r - b;
+        if r != 0 || m % 2 == 1 {
+            round_up = true;
+        }
+    }
+    if round_up {
+        m = m + 1;
+    }
+    return math.ldexp(float_of(m), 0 - (e + 52));
+}

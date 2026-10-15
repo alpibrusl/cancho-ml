@@ -1,0 +1,178 @@
+module linalg.dot;
+
+import linalg.order;
+import linalg.tensor;
+import ml.refuse;
+
+// dot product, unit stride: docs/linalg.md section 2.1. A block of K = 256 terms is summed in four lanes (term j of the block to
+// lane j mod 4, each lane ascending from +0.0, the partial is (l0 + l1) + (l2 + l3): order.lane_combine); two blocks are summed
+// together so that eight independent chains are in flight; the partials are then settled into the tree stack in block order.
+// `xs` and `ys` are positioned at the first element and hold at least n elements.
+
+// partial of the block that starts at `at`, length m (m <= 256), four lanes
+fn block1[&x, &y](xs: &x [float], ys: &y [float], at: int, m: int) -> [] float {
+    let xr = xs[at..at + m];
+    let yr = ys[at..at + m];
+    var s0 = 0.0;
+    var s1 = 0.0;
+    var s2 = 0.0;
+    var s3 = 0.0;
+    var j = 0;
+    while j + 4 <= m {
+        s0 = s0 + xr[j] * yr[j];
+        s1 = s1 + xr[j + 1] * yr[j + 1];
+        s2 = s2 + xr[j + 2] * yr[j + 2];
+        s3 = s3 + xr[j + 3] * yr[j + 3];
+        j = j + 4;
+    }
+    if j < m {
+        s0 = s0 + xr[j] * yr[j];
+        j = j + 1;
+    }
+    if j < m {
+        s1 = s1 + xr[j] * yr[j];
+        j = j + 1;
+    }
+    if j < m {
+        s2 = s2 + xr[j] * yr[j];
+    }
+    return order.lane_combine(s0, s1, s2, s3);
+}
+
+// the two full blocks starting at `at` (2 * 256 terms): eight chains; the partials of the first and of the second block
+fn pair[&x, &y](xs: &x [float], ys: &y [float], at: int) -> [] (float, float) {
+    let x0 = xs[at..at + 256];
+    let x1 = xs[at + 256..at + 512];
+    let y0 = ys[at..at + 256];
+    let y1 = ys[at + 256..at + 512];
+    var a0 = 0.0;
+    var a1 = 0.0;
+    var a2 = 0.0;
+    var a3 = 0.0;
+    var b0 = 0.0;
+    var b1 = 0.0;
+    var b2 = 0.0;
+    var b3 = 0.0;
+    var j = 0;
+    while j < 256 {
+        a0 = a0 + x0[j] * y0[j];
+        a1 = a1 + x0[j + 1] * y0[j + 1];
+        a2 = a2 + x0[j + 2] * y0[j + 2];
+        a3 = a3 + x0[j + 3] * y0[j + 3];
+        b0 = b0 + x1[j] * y1[j];
+        b1 = b1 + x1[j + 1] * y1[j + 1];
+        b2 = b2 + x1[j + 2] * y1[j + 2];
+        b3 = b3 + x1[j + 3] * y1[j + 3];
+        j = j + 4;
+    }
+    return (order.lane_combine(a0, a1, a2, a3), order.lane_combine(b0, b1, b2, b3));
+}
+
+// Sum of the terms of blocks [b0, b1) of an n-term product (b0 a multiple of G unless it is the whole range's start of a
+// chunk): pushes each block's partial on the stack (st/lv, width 1) starting at slot sp0; answers the new sp. `st` and `lv`
+// are the caller's workspace (order.slots() entries). Used by dot_unit and by the threads (which start at chunk boundaries).
+pub fn run_blocks[&x, &y, &s, &l](xs: &x [float], ys: &y [float], n: int, b0: int, b1: int, st: &!s [float], lv: &!l [int], sp0: int) -> [] int {
+    var sp = sp0;
+    var b = b0;
+    while b < b1 {
+        if b + 2 <= b1 && (b + 2) * 256 <= n {
+            let (p0, p1) = pair(xs, ys, b * 256);
+            st[sp] = p0;
+            sp = order.settle(st, lv, sp, 1);
+            st[sp] = p1;
+            sp = order.settle(st, lv, sp, 1);
+            b = b + 2;
+        } else {
+            var m = n - b * 256;
+            if m > 256 {
+                m = 256;
+            }
+            st[sp] = block1(xs, ys, b * 256, m);
+            sp = order.settle(st, lv, sp, 1);
+            b = b + 1;
+        }
+    }
+    return sp;
+}
+
+pub fn dot_unit[&x, &y, &s, &l](xs: &x [float], ys: &y [float], n: int, st: &!s [float], lv: &!l [int]) -> [] float {
+    if n <= 0 {
+        return 0.0;
+    }
+    let sp = run_blocks(xs, ys, n, 0, order.blocks(n), st, lv, 0);
+    order.finish(st, sp, 1);
+    return st[0];
+}
+
+// One block's partial over a strided vector pair: four lanes (the generic path; same bits as the unit path).
+pub fn block_strided[&x, &y](xd: &x [float], xo: int, xs: int, yd: &y [float], yo: int, ys: int, b: int, n: int) -> [] float {
+    var m = n - b * 256;
+    if m > 256 {
+        m = 256;
+    }
+    var s0 = 0.0;
+    var s1 = 0.0;
+    var s2 = 0.0;
+    var s3 = 0.0;
+    var j = 0;
+    while j < m {
+        let i = b * 256 + j;
+        let p = xd[xo + i * xs] * yd[yo + i * ys];
+        let l = j % 4;
+        if l == 0 {
+            s0 = s0 + p;
+        } else if l == 1 {
+            s1 = s1 + p;
+        } else if l == 2 {
+            s2 = s2 + p;
+        } else {
+            s3 = s3 + p;
+        }
+        j = j + 1;
+    }
+    return order.lane_combine(s0, s1, s2, s3);
+}
+
+// dot product of two rank-1 tensors of equal extent. Answers FRes (code 0 and the value, or a refusal and 0.0).
+// Unit strides take the 8-block path; any other stride the generic path; the bits are the same.
+pub fn dot[&h, &x, &y](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], yt: tensor.Tensor, yd: &y [float]) -> [heap] tensor.FRes {
+    var c = tensor.expect(xt, 1, len(xd));
+    if c != 0 {
+        return tensor.fres(c, 0.0);
+    }
+    c = tensor.expect(yt, 1, len(yd));
+    if c != 0 {
+        return tensor.fres(c, 0.0);
+    }
+    if xt.s0 != yt.s0 {
+        return tensor.fres(refuse.tensor_shape(), 0.0);
+    }
+    let n = xt.s0;
+    if n == 0 {
+        return tensor.fres(0, 0.0);
+    }
+    let st = box_slice(heap, 40, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    var v = 0.0;
+    borrow mut st as &!sw in {
+        borrow mut lv as &!lw in {
+            if xt.t0 == 1 && yt.t0 == 1 {
+                v = dot_unit(xd[xt.off..xt.off + n], yd[yt.off..yt.off + n], n, contents(sw), contents(lw));
+            } else {
+                var sp = 0;
+                var b = 0;
+                let nb = order.blocks(n);
+                while b < nb {
+                    contents(sw)[sp] = block_strided(xd, xt.off, xt.t0, yd, yt.off, yt.t0, b, n);
+                    sp = order.settle(contents(sw), contents(lw), sp, 1);
+                    b = b + 1;
+                }
+                order.finish(contents(sw), sp, 1);
+                v = contents(sw)[0];
+            }
+        }
+    }
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    return tensor.fres(0, v);
+}

@@ -1,0 +1,12 @@
+{
+  "store": "../metrics.ratio",
+  "lock": {
+    "entries": {
+      "ratio": {
+        "sig_id": "026b2df561cc0db93c22b3d9ccb1fb60d0b2e73ecc82710286476864fdc63a52",
+        "stage_id": "4e745f8ad502ce0241c3cbe8bac5fa0db2b32a880d1df0819b9ee1662c566780",
+        "source_hash": "82dacea7d1a02a779e3c9a1161615424a29c8991b944c74a4157d8f9fa11cfe1"
+      }
+    }
+  }
+}
