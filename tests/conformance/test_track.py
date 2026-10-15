@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import oracle_track as O  # noqa: E402
 
 TRAIN = "a,b,c,y\n1,3,0.5,3\n2,1,1.5,5\n3,4,,8\n4,1,2.0,9\n5,5,3.5,14\n6,9,1,13\n7,2,0.25,12\n8,6,2.75,10\n"
+GRP = "\u00e9 g%"
 LAST = "8,6,2.75,10"
 CHANGED = "8,6,2.75,11"
 LIN = ["--model", "linear", "--target", "y", "--step", "impute column=c strategy=mean"]
@@ -639,25 +640,26 @@ class Splits(Base):
 
     def table(self):
         rows = "".join("%d,g%d,%d.5,%d\n" % (i, i % 7, i * 3 % 11, i % 2) for i in range(60))
-        self.sb.write("sp.csv", "t,my grp,x,y\n" + rows.replace(",g", ",G ").replace("G 0", "G 0"))
+        # the column of the groups has a space, a percent sign and a non-ASCII byte in its name: the text of the split writes each as % and two hex digits
+        (self.sb.dir / "sp.csv").write_text("t,%s,x,y\n" % GRP + rows, encoding="utf-8")
 
     def fit_sp(self, strategy_flags, name="sp.cml"):
-        r = self.sb.run("fit", "--model", "linear", "--target", "y", "--drop", "t,my grp", "--split", "train=0.75", "--seed", "3", *strategy_flags, "--output", name, "--overwrite", "--track", "runs", "sp.csv")
+        r = self.sb.run("fit", "--model", "linear", "--target", "y", "--drop", "t," + GRP, "--split", "train=0.75", "--seed", "3", *strategy_flags, "--output", name, "--overwrite", "--track", "runs", "sp.csv")
         self.assertEqual(r.status, 0, r)
         return r.data()["run"]["id"]
 
     def test_the_record_holds_the_text_of_the_split_and_each_strategy_is_another_run(self):
         self.table()
         ids = {}
-        want = {"plain": ([], "holdout train=0.75 seed=3"), "group": (["--split-group", "my grp"], "holdout train=0.75 group=my%20grp seed=3"),
+        want = {"plain": ([], "holdout train=0.75 seed=3"), "group": (["--split-group", GRP], "holdout train=0.75 group=%C3%A9%20g%25 seed=3"),
                 "time": (["--split-by", "time:t"], "holdout train=0.75 time=t seed=3")}
         for k, (flags, text) in want.items():
             ids[k] = self.fit_sp(flags)
             rec = json.loads((self.sb.dir / "runs" / (ids[k] + ".json")).read_text())
             self.assertEqual(rec["inputs"]["split"], text)
-            self.assertEqual(O.split_text("train=0.75", k if k != "plain" else "plain", {"plain": None, "group": "my grp", "time": "t"}[k], 3), text)
+            self.assertEqual(O.split_text("train=0.75", k if k != "plain" else "plain", {"plain": None, "group": GRP, "time": "t"}[k], 3), text)
         self.assertEqual(len(set(ids.values())), 3)
-        r = self.sb.run("fit", "--model", "linear", "--target", "y", "--drop", "t,my grp", "--output", "n.cml", "--track", "runs", "sp.csv")
+        r = self.sb.run("fit", "--model", "linear", "--target", "y", "--drop", "t," + GRP, "--output", "n.cml", "--track", "runs", "sp.csv")
         nid = r.data()["run"]["id"]
         self.assertEqual(json.loads((self.sb.dir / "runs" / (nid + ".json")).read_text())["inputs"]["split"], "none")
         c = self.sb.run("runs", "compare", "runs", ids["plain"], ids["group"]).data()
@@ -665,7 +667,7 @@ class Splits(Base):
 
     def test_a_stratified_split_is_recorded_for_a_classification(self):
         self.table()
-        r = self.sb.run("fit", "--model", "logistic", "--l2", "1", "--target", "y", "--drop", "t,my grp", "--split", "train=0.8", "--stratify", "--seed", "5", "--output", "st.cml", "--track", "runs", "sp.csv")
+        r = self.sb.run("fit", "--model", "logistic", "--l2", "1", "--target", "y", "--drop", "t," + GRP, "--split", "train=0.8", "--stratify", "--seed", "5", "--output", "st.cml", "--track", "runs", "sp.csv")
         self.assertEqual(r.status, 0, r)
         rid = r.data()["run"]["id"]
         self.assertEqual(json.loads((self.sb.dir / "runs" / (rid + ".json")).read_text())["inputs"]["split"], "holdout train=0.8 stratify seed=5")
@@ -676,7 +678,7 @@ class Splits(Base):
 
     def test_every_strategy_replays_at_one_and_eight_threads_to_the_same_model(self):
         self.table()
-        for flags in ([], ["--split-group", "my grp"], ["--split-by", "time:t"]):
+        for flags in ([], ["--split-group", GRP], ["--split-by", "time:t"]):
             rid = self.fit_sp(flags)
             sha = hashlib.sha256((self.sb.dir / "sp.cml").read_bytes()).hexdigest()
             for th in ("1", "8"):
@@ -687,17 +689,17 @@ class Splits(Base):
     def test_the_eval_record_carries_the_text_of_the_split_of_the_eval(self):
         self.table()
         rid = self.fit_sp([])
-        r = self.sb.run("eval", "--model-file", "sp.cml", "--drop", "t,my grp", "--split", "train=0.5", "--split-group", "my grp", "--seed", "2", "--track", "runs", "sp.csv")
+        r = self.sb.run("eval", "--model-file", "sp.cml", "--drop", "t," + GRP, "--split", "train=0.5", "--split-group", GRP, "--seed", "2", "--track", "runs", "sp.csv")
         self.assertEqual(r.status, 0, r)
-        self.assertEqual(r.data()["split"]["spec"], "holdout train=0.5 group=my%20grp seed=2")
+        self.assertEqual(r.data()["split"]["spec"], "holdout train=0.5 group=%C3%A9%20g%25 seed=2")
         evals = [n for n in os.listdir(self.sb.dir / "runs") if ".eval-" in n]
         self.assertEqual(len(evals), 1)
         scored = hashlib.sha256((self.sb.dir / "sp.csv").read_bytes()).hexdigest()
         # the key of an eval with a split: the SHA-256 of the scored file's digest, a line break and the text of the split
-        self.assertEqual(evals[0], rid + ".eval-" + hashlib.sha256((scored + "\nholdout train=0.5 group=my%20grp seed=2").encode()).hexdigest() + ".json")
+        self.assertEqual(evals[0], rid + ".eval-" + hashlib.sha256((scored + "\nholdout train=0.5 group=%C3%A9%20g%25 seed=2").encode()).hexdigest() + ".json")
         doc = json.loads((self.sb.dir / "runs" / evals[0]).read_text())
-        self.assertEqual((doc["run"], doc["split"]), (rid, "holdout train=0.5 group=my%20grp seed=2"))
-        self.assertEqual(self.sb.run("eval", "--model-file", "sp.cml", "--drop", "t,my grp", "--track", "runs", "sp.csv").status, 0)
+        self.assertEqual((doc["run"], doc["split"]), (rid, "holdout train=0.5 group=%C3%A9%20g%25 seed=2"))
+        self.assertEqual(self.sb.run("eval", "--model-file", "sp.cml", "--drop", "t," + GRP, "--track", "runs", "sp.csv").status, 0)
         plain = [n for n in os.listdir(self.sb.dir / "runs") if ".eval-" in n and n != evals[0]]
         self.assertEqual(plain, [rid + ".eval-" + scored + ".json"])
         self.assertEqual(json.loads((self.sb.dir / "runs" / plain[0]).read_text())["split"], "none")
@@ -718,7 +720,7 @@ class Splits(Base):
 
     def test_cv_takes_no_track_flag(self):
         self.table()
-        r = self.sb.run("cv", "--model", "linear", "--target", "y", "--drop", "t,my grp", "--track", "runs", "sp.csv")
+        r = self.sb.run("cv", "--model", "linear", "--target", "y", "--drop", "t," + GRP, "--track", "runs", "sp.csv")
         self.assertEqual((r.status, r.first_rule()), (2, "args.conflict"), r)
         self.assertEqual(r.error()["detail"], {"flag": "track", "verb": "cv"})
         self.assertEqual(os.listdir(self.sb.dir / "runs"), [])
