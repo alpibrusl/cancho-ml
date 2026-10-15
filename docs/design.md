@@ -328,7 +328,7 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.metric.length-mismatch` | 8 | two arrays of a metric have different lengths | one prediction per row |
 | `ml.metric.bad-probability` | 8 | a probability outside 0 to 1 | the probability of the positive class |
 | `ml.split.empty-fold` | 8 | k above the number of rows, or a train/test split that leaves a side empty | fewer folds, a smaller test size |
-| `ml.split.stratum-too-small` | 8 | a class with fewer rows than k | fewer folds |
+| `ml.split.stratum-too-small` | 8 | a class with fewer rows than k *(reachable from `ml cv --stratify` and `fit --split --stratify`: `extra()` since `docs/splits.md`)* | fewer folds |
 
 *Registered by the transforms and the pipeline stage (library only: `lib/transforms/codes.cho`, `docs/transforms.md` section 1 X7, `docs/pipeline.md` section 2.1; `tools/ml/spec.cho` `pending()`; none is reachable from `ml` yet):*
 
@@ -378,6 +378,19 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.predict.non-finite` | 8 | a prediction, a probability or a squared distance of a row scored by `predict`, `ml-predict`, `eval` or `ml-serve` is NaN or infinite; the 1-based row of the file and the column of the answer (`prediction`, `label`, `probability`, `distance`) are in `detail`; all the rows scored are checked, not only the page | none: scale the inputs, or check or drop the row |
 
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
+
+*Added by issue 42, split strategies and cross-validation (`docs/splits.md` section 7; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/fixtures.py`; `ml.split.empty-fold` and `ml.split.stratum-too-small` above are the library's, reached by the same verbs):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.split.stratify-target` | 2 | `--stratify` with a regression or a clustering | `retry` without `--stratify` |
+| `ml.split.too-few-groups` | 8 | fewer groups than `--folds`, or fewer than 2 | `retry` with `--folds` set to the number of groups when it is at least 2, else none |
+| `ml.split.time-format` | 8 | a cell of the `--split-by` column that is not a number or an accepted ISO-8601 date or datetime, or of the other kind than the first (`row`, `column`, `reason`) | none |
+| `ml.split.missing-cell` | 8 | an empty cell in the `--split-by` or `--split-group` column | none |
+| `ml.split.combination` | 2 | two of `--stratify`, `--split-group`, `--split-by`; `cv` with `--split`; `--repeats` above 1 with `--split-by` | `retry` with `--repeats 1` for the last, else none (which rule to keep is a judgement) |
+| `ml.split.out-of-range` | 2 | `--folds` outside 2 to 20, `--repeats` outside 1 to 10 | none |
+| `ml.split.column-target` | 2 | the group or time column is the target | none |
+| `ml.split.emit-too-large` | 8 | `--emit-folds` over 1,048,576 entries | `retry` without `--emit-folds` |
 
 ## 8.1 The numeric codes of the libraries (added at integration)
 
@@ -592,3 +605,11 @@ names which); its `sum_order` is **3** (section 4.1: sequential sums, no lane or
 has one more cause that no fixture can reach (the memory ceiling of the thread copies, about 2.3e8 cells). A tree or forest takes missing cells itself (a learned default side per split); the linear models
 keep refusing them. The libraries are otherwise unchanged except for the order of two comparisons in the reader of the payload, which a fuzz of the wiring found to trap on a class count of 2^63 - 1
 (`docs/models-tree.md` 10.6).
+
+## 22. Issue 42: split strategies and cross-validation from the command line (`docs/splits.md`)
+
+`ml cv` is a sixth verb of `ml` (not of `ml-predict` or `ml-serve`: a split is a training-time concept, and `scripts/check_bins.py` keeps the flags out of their tables). Six flags are new
+(`--stratify`, `--split-by`, `--split-group`, `--folds`, `--repeats`, `--emit-folds`). The stream registry takes kinds 7 (stratified holdout) and 8 (the shuffle of the groups); the plain holdout, k-fold and
+stratified k-fold keep kinds 4, 5 and 6, so every existing assignment is unchanged. Section 8 takes nine tags (above); `ml.split.stratum-too-small` moved from `pending()` to `extra()`. The canonical text of a
+split (`holdout train=0.8 stratify seed=1`, `cv folds=5 repeats=1 group=customer seed=3`) is written by one function (`tools/ml/splitspec.cho`) for the tracking record of issue 43. The answer of `fit --split` and of
+`eval --split` gains `split.spec` (and `split.assignment` with `--emit-folds`); `schemas/ml.v1.json` gains the answer of `cv`.

@@ -631,3 +631,90 @@ CASES += _kmeans_cases()
 
 def log_cases():
     return [c for c in CASES if c.get("log")]
+
+
+# ------------------------------------------------------------------ split strategies and cross-validation (docs/splits.md); the gates are tests/conformance/test_splits.py
+def _split_rows():
+    grp = ["g1"] * 3 + ["g2"] * 3 + ["g3"] * 3 + ["g4"] * 3
+    rows = ["grp,day,a,b,y,r"]
+    for i in range(12):
+        rows.append("%s,2024-01-%02d,%s,%d,%d,%s" % (grp[i], i + 1, [1.5, 2.25, 0.5, 3.0, 1.0, 2.5][i % 6], (i * 7) % 5, i % 2, [3.5, 1.25, 7.5, 2.0, 9.75, 4.5][i % 6]))
+    return "\n".join(rows) + "\n"
+
+
+SPL = _split_rows()
+SBASE = BASE + [("write", "spl.csv", SPL)]
+CVT = ["cv", "--model", "tree", "--task", "classification", "--target", "y", "--drop", "grp,day,r"]
+CVR = ["cv", "--model", "linear", "--target", "r", "--drop", "grp,day,y"]
+FITT = ["fit", "--model", "tree", "--task", "classification", "--target", "y", "--drop", "grp,day,r", "--output", "s.cml", "--split", "train=0.75"]
+
+
+def _split_cases():
+    return [
+        case("cv-kfold", CVT + ["--folds", "3", "spl.csv"], ok({"model": "tree", "task": "classification", "rows": 12, "split": "cv folds=3 repeats=1 seed=0", "strategy": "kfold",
+                                                               "summary": {"count": 3, "std": "sample"}}), setup=SBASE),
+        case("cv-kfold-repeats-and-emit", CVT + ["--folds", "2", "--repeats", "2", "--seed", "4", "--emit-folds", "spl.csv"],
+             ok({"split": "cv folds=2 repeats=2 seed=4", "assignment": {"repeats": 2, "rows": 12}}), setup=SBASE),
+        case("cv-stratify", CVT + ["--folds", "3", "--stratify", "spl.csv"], ok({"split": "cv folds=3 repeats=1 stratify seed=0", "strategy": "stratified"}), setup=SBASE),
+        case("cv-group", CVT + ["--folds", "2", "--split-group", "grp", "spl.csv"], ok({"split": "cv folds=2 repeats=1 group=grp seed=0", "strategy": "group"}), setup=SBASE),
+        case("cv-time", CVT + ["--folds", "3", "--split-by", "time:day", "spl.csv"], ok({"split": "cv folds=3 repeats=1 time=day seed=0", "strategy": "time"}), setup=SBASE),
+        case("cv-regression-linear", CVR + ["--folds", "3", "spl.csv"], ok({"model": "linear", "task": "regression"}), setup=SBASE),
+        case("cv-text", ["--format", "text"] + CVT + ["--folds", "3", "spl.csv"], ok(None, stdout_starts="cv: tree classification, 12 rows, cv folds=3"), setup=SBASE),
+        case("fit-split-stratify", FITT + ["--stratify", "spl.csv"], ok({"summary": {"split": {"spec": "holdout train=0.75 stratify seed=0"}}}), setup=SBASE),
+        case("fit-split-group", FITT + ["--split-group", "grp", "spl.csv"], ok({"summary": {"split": {"spec": "holdout train=0.75 group=grp seed=0"}}}), setup=SBASE),
+        case("fit-split-time", FITT + ["--split-by", "time:day", "spl.csv"], ok({"summary": {"split": {"spec": "holdout train=0.75 time=day seed=0", "train": 9, "test": 3}}}), setup=SBASE),
+        case("fit-split-emit-folds", FITT + ["--emit-folds", "--split-by", "time:day", "spl.csv"],
+             ok({"summary": {"split": {"assignment": [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]}}}), setup=SBASE),
+        case("eval-split-replays-the-strategy", ["eval", "--model-file", "s.cml", "--split", "train=0.75", "--split-by", "time:day", "--drop", "grp,day,r", "spl.csv"],
+             ok({"rows": 3, "split": {"spec": "holdout train=0.75 time=day seed=0"}}), setup=SBASE + [("fit",) + tuple(FITT[1:]) + ("--split-by", "time:day", "spl.csv")]),
+        # ---- refusals
+        case("ml-split-stratify-target-regression", CVR + ["--folds", "3", "--stratify", "spl.csv"], bad("ml.split.stratify-target", repair_retry=True), setup=SBASE),
+        case("ml-split-stratum-too-small-cv", CVT + ["--folds", "7", "--stratify", "spl.csv"], bad("ml.split.stratum-too-small", repair_retry=True), setup=SBASE),
+        case("ml-split-stratum-too-small-holdout", ["fit", "--model", "tree", "--task", "classification", "--target", "y", "--output", "s.cml", "--split", "train=0.75", "--stratify", "one.csv"], bad("ml.split.stratum-too-small"),
+             setup=SBASE + [("write", "one.csv", "a,b,y\n1,1,0\n2,2,0\n3,3,0\n4,4,0\n5,5,0\n6,6,0\n7,7,0\n8,8,1\n")]),
+        case("ml-split-stratify-target-holdout", ["fit", "--model", "linear", "--target", "r", "--drop", "grp,day,y", "--output", "s.cml", "--split", "train=0.75", "--stratify", "spl.csv"],
+             bad("ml.split.stratify-target", repair_retry=True), setup=SBASE),
+        case("ml-split-stratum-too-small-low-class", CVT + ["--folds", "3", "--stratify", "rare.csv"], bad("ml.split.stratum-too-small"),
+             setup=SBASE + [("write", "rare.csv", "grp,day,a,b,y,r\n" + "".join("g,2024-01-%02d,%d,%d,%d,1.5\n" % (i + 1, i, i % 4, 0 if i == 0 else 1) for i in range(12)))]),
+        case("ml-split-stratum-too-small-high-class", CVT + ["--folds", "3", "--stratify", "rare2.csv"], bad("ml.split.stratum-too-small"),
+             setup=SBASE + [("write", "rare2.csv", "grp,day,a,b,y,r\n" + "".join("g,2024-01-%02d,%d,%d,%d,1.5\n" % (i + 1, i, i % 4, 1 if i == 0 else 0) for i in range(12)))]),
+        case("ml-split-too-few-groups-cv", CVT + ["--folds", "5", "--split-group", "grp", "spl.csv"], bad("ml.split.too-few-groups", repair_retry=True), setup=SBASE),
+        case("ml-split-too-few-groups-holdout", ["fit", "--model", "tree", "--task", "classification", "--target", "y", "--drop", "one,day,r", "--output", "s.cml", "--split", "train=0.75", "--split-group", "one", "spl.csv"], bad("ml.split.too-few-groups"),
+             setup=SBASE + [("write", "spl.csv", SPL.replace("g1", "g4").replace("g2", "g4").replace("g3", "g4").replace("grp", "one"))]),
+        case("ml-split-time-format-not-a-time", CVT + ["--folds", "3", "--split-by", "time:day", "spl.csv"], bad("ml.split.time-format"),
+             setup=SBASE + [("write", "spl.csv", SPL.replace("2024-01-05", "last friday"))]),
+        case("ml-split-time-format-offset", CVT + ["--folds", "3", "--split-by", "time:day", "spl.csv"], bad("ml.split.time-format"),
+             setup=SBASE + [("write", "spl.csv", SPL.replace("2024-01-05", "2024-01-05T10:00+01:00"))]),
+        case("ml-split-time-format-mixed-kinds", CVT + ["--folds", "3", "--split-by", "time:day", "spl.csv"], bad("ml.split.time-format"),
+             setup=SBASE + [("write", "spl.csv", SPL.replace("2024-01-05", "5"))]),
+        case("ml-split-missing-cell-time", CVT + ["--folds", "3", "--split-by", "time:day", "spl.csv"], bad("ml.split.missing-cell"),
+             setup=SBASE + [("write", "spl.csv", SPL.replace("2024-01-05", ""))]),
+        case("ml-split-missing-cell-group", CVT + ["--folds", "2", "--split-group", "grp", "spl.csv"], bad("ml.split.missing-cell"),
+             setup=SBASE + [("write", "spl.csv", SPL.replace("g2,2024-01-05", ",2024-01-05"))]),
+        case("ml-split-combination-stratify-group", CVT + ["--folds", "2", "--stratify", "--split-group", "grp", "spl.csv"], bad("ml.split.combination"), setup=SBASE),
+        case("ml-split-combination-stratify-time", FITT + ["--stratify", "--split-by", "time:day", "spl.csv"], bad("ml.split.combination"), setup=SBASE),
+        case("ml-split-combination-time-group", CVT + ["--split-by", "time:day", "--split-group", "grp", "spl.csv"], bad("ml.split.combination"), setup=SBASE),
+        case("ml-split-combination-cv-with-split", CVT + ["--split", "train=0.8", "spl.csv"], bad("ml.split.combination"), setup=SBASE),
+        case("ml-split-combination-repeats-with-time", CVT + ["--folds", "3", "--repeats", "2", "--split-by", "time:day", "spl.csv"], bad("ml.split.combination", repair_retry=True), setup=SBASE),
+        case("ml-split-out-of-range-folds-one", CVT + ["--folds", "1", "spl.csv"], bad("ml.split.out-of-range"), setup=SBASE),
+        case("ml-split-out-of-range-folds-above", CVT + ["--folds", "21", "spl.csv"], bad("ml.split.out-of-range"), setup=SBASE),
+        case("ml-split-out-of-range-repeats", CVT + ["--repeats", "11", "spl.csv"], bad("ml.split.out-of-range"), setup=SBASE),
+        case("ml-split-column-target-group", ["cv", "--model", "tree", "--task", "classification", "--target", "y", "--drop", "grp,day,r", "--split-group", "y", "spl.csv"],
+             bad("ml.split.column-target"), setup=SBASE),
+        case("ml-split-emit-too-large", ["cv", "--model", "tree", "--task", "classification", "--target", "y", "--folds", "2", "--repeats", "10", "--emit-folds", "--max-rows", "200000", "big.csv"], bad("ml.split.emit-too-large", repair_retry=True),
+             setup=SBASE + [("raw", lambda sb: sb.write("big.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (i % 97, i % 13, i % 2) for i in range(110000))))]),
+        case("ml-split-empty-fold-more-folds-than-rows", ["cv", "--model", "tree", "--task", "classification", "--target", "y", "--folds", "20", "tiny.csv"], bad("ml.split.empty-fold"),
+             setup=SBASE + [("write", "tiny.csv", "a,b,y\n1,1,0\n2,2,1\n3,3,0\n")]),
+        case("ml-input-unknown-column-split-group", CVT + ["--split-group", "nosuch", "spl.csv"], bad("ml.input.unknown-column"), setup=SBASE),
+        case("args-conflict-stratify-without-split", FITT[:-2] + ["--stratify", "spl.csv"], bad("args.conflict"), setup=SBASE),
+        case("args-conflict-folds-at-fit", FITT + ["--folds", "3", "spl.csv"], bad("args.conflict"), setup=SBASE),
+        case("args-conflict-cv-constant", ["cv", "--target", "y", "spl.csv"], bad("args.conflict"), setup=SBASE),
+        case("args-bad-value-split-by", CVT + ["--split-by", "date:day", "spl.csv"], bad("args.bad-value"), setup=SBASE),
+        case("args-required-flag-cv-target", ["cv", "--model", "linear", "spl.csv"], bad("args.required-flag"), setup=SBASE),
+        case("args-conflict-cv-output", CVT + ["--output", "m.cml", "spl.csv"], bad("args.conflict"), setup=SBASE),
+        case("ml-label-single-class-in-a-training-fold", CVT + ["--folds", "2", "--split-group", "grp", "spl.csv"], bad("ml.label.single-class"),
+             setup=SBASE + [("write", "spl.csv", "grp,day,a,b,y,r\n" + "".join("g%d,2024-01-%02d,%d,%d,%d,1.5\n" % (i // 3, i + 1, i, i % 4, 1 if i < 3 else 0) for i in range(12)))]),
+    ]
+
+
+CASES += _split_cases()

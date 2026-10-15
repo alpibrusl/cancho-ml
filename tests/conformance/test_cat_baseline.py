@@ -33,6 +33,10 @@ CHANGED = {
     "ml-plan-model-not-built": "1d966eb36f993ca466d7c2856019eedc074988a9803d05363d4d53da0ef662ed",
     # the message of the refusal lists the models that can take the flag: kmeans is one of them
     "args-conflict-step-needs-a-model": "c04310948bae0754f026ed3b753c7ad1b0039b2e3b4beb96847dd65ef5d3ea23",
+    # the answer of a fit or an eval with --split gained `split.spec`, the canonical text of the split (docs/splits.md section 2); status and files are the record's
+    "fit-linear-split-seed-threads": "084103d88c9e88343acc673eabc4d17b661a77e652a1b2057492a82dcc763730",
+    "fit-logistic-split-holdout": "a2496e4b0e478267fbd4e33c1e9a75076177950551ac1fb7d69918f848bfc971",
+    "eval-linear-split": "f77f8244fa21bfadecf460ef363642ecebcc99f15233956594f68d403d55ef46",
 }
 # the file of that case that changed with it: the plan the fixture writes
 CHANGED_FILES = {"ml-plan-model-not-built": {"p.txt": hashlib.sha256(b"model kind=constant task=regression\n").hexdigest()}}
@@ -63,7 +67,7 @@ class NumericBaseline(unittest.TestCase):
         """the record still holds the OLD hash of that case (it is not rewritten), and the exception differs from it"""
         for k, new in CHANGED.items():
             self.assertNotEqual(GOLDEN[k]["stdout"], new)
-        self.assertEqual(sorted(CHANGED), ["args-conflict-step-needs-a-model", "ml-plan-model-not-built", "ml-plan-unknown-step"])
+        self.assertEqual(sorted(CHANGED), ["args-conflict-step-needs-a-model", "eval-linear-split", "fit-linear-split-seed-threads", "fit-logistic-split-holdout", "ml-plan-model-not-built", "ml-plan-unknown-step"])
 
     def test_the_record_holds_the_wired_models(self):
         wired = [k for k in GOLDEN if "linear" in k or "logistic" in k or "pipeline" in k or "plan" in k or "step" in k]
