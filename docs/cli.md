@@ -43,6 +43,7 @@ verdict of each, with the survivors.
 ml [FLAGS] fit FILE       fit a model on a CSV and write it
 ml [FLAGS] predict FILE   apply a stored model to a CSV (FILE, or - or nothing for standard input)
 ml [FLAGS] eval FILE      score a stored model on a CSV
+ml [FLAGS] cv FILE        cross-validate a model: fit and score it on every fold, write nothing (docs/splits.md)
 ml [FLAGS] describe       what a model file requires of its caller (docs/serving.md section 5)
 ml introspect             the tool as data (flags, rules, limits, authority, schema)
 ml skill                  the same as a SKILL.md for an agent
@@ -58,6 +59,7 @@ table to drift (gate T1 checks the one table against its projections).
 | `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) and, for `--model tree|forest`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes` (`docs/wiring-trees.md` section 2) |
 | `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
 | `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
+| `cv` | `--target NAME` (none for kmeans) and a model other than constant | the model flags of `fit` (`--model`, `--plan`, `--step`, the hyperparameters, `--task`, `--positive`, `--drop`, `--float`, `--cat`), `--folds`, `--repeats`, `--stratify`, `--split-group`, `--split-by`, `--emit-folds`, `--seed`, `--threads`, the `--max-*` caps, `--log`, `--format`; never `--output`, `--overwrite`, `--dry-run` or `--split` |
 | `describe` | `--model-file MODEL` | `--limit` (category strings listed per column), `--max-bytes`, `--format` (no CSV operand) |
 
 **Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,
@@ -113,6 +115,10 @@ forces float. Records are RFC 4180 (cancho-table's `reader` module): quoted fiel
 blank lines. `nan` and `inf` are `ml.input.non-finite`, and so is a number past the range of a double; a cell that is empty, is not a number,
 reads as zero though it is not zero, or is longer than 1,100 bytes is `ml.input.non-numeric` with the reason in `detail`. A quote closed and
 followed by anything but a comma is `parse.csv-bad-quote`, a quote open at the end `parse.csv-unterminated-quote`.
+
+**A prediction that is not a number.** A finite input can make a model compute an infinity (a feature of 1e308 times a coefficient above 1) or a NaN (two infinite terms that cancel). `predict` and `eval` check every value of every
+row they score (a prediction, a probability, and with `--distance` or in `eval` a squared distance), not only the rows of the page `--limit` and `--from` select, and refuse the request with `ml.predict.non-finite` (exit 8, `detail` `row` and `column`)
+before any cell is written; `ml-predict` and `ml-serve` raise the same rule from the same function. `docs/nonfinite.md` has the cases and the gates.
 
 The modules of cancho-table are **not copied**: they are five `[dependencies.*]` of `cancho.toml` on cancho-table's `.cancho-vcs` stores, pinned to
 one commit (`docs/reader.md` section 1), fetched by `cancho install` into `build/deps`.

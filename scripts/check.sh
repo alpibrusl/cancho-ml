@@ -1,5 +1,5 @@
 #!/bin/sh
-# What CI runs: fmt check, unit tests, the numeric gates of stage 1, then the command line (stage 2, docs/cli.md section 1):
+# What CI runs: the store gates (docs/stores.md), fmt check, unit tests, the numeric gates of stage 1, then the command line (stage 2, docs/cli.md section 1):
 # package-mode build of `ml`, the schemas and the authority manifest checked against the sources, the conformance gates, and a
 # check that every edit of the mutant list still applies. The gates of lib/metrics and
 # lib/models/tree and the registry check are run here too. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
@@ -14,8 +14,16 @@ export CANCHO
 sh scripts/check_table_pin.sh
 # W1 (docs/serving-http.md section 1): cancho-web, cancho-schema and http-server are pinned stores, none copied
 python3 scripts/check_web_pin.py
+# PS1 to PS5 (docs/stores.md): the numeric stores other repositories pin (lib/core, lib/linalg, lib/metrics) are what a fresh publish of these sources gives, the list is closed
+# under imports, and nothing is copied or consumed back; the mutants that need no compiler (scripts/mutants_stores.py without --fast runs all of them and the consumption ones, on request)
+python3 scripts/publish_stores.py --check
+python3 scripts/publish_stores.py --closure > /dev/null
+python3 scripts/check_stores_pin.py
+python3 scripts/mutants_stores.py --fast
 # the pinned packages, fetched into build/deps (needs the network the first time; build/deps is not committed)
 $CANCHO install
+# PS6: a scratch package outside this tree pins the stores of the committed HEAD by file:// URL, installs, builds and calls every published module (commit the stores first)
+python3 scripts/consume_stores.py
 $CANCHO fmt --check lib tests tools
 $CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/core.cho
 $CANCHO test --std lib/core/exact.cho tests/exact.cho
@@ -70,6 +78,9 @@ python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
 python3 scripts/mutants_serve.py --check
+# a prediction that is not a finite number (docs/nonfinite.md): no call of flt.put_float outside its door, and the patterns of the mutants apply (scripts/mutants_nonfinite.py rebuilds the three binaries once per pattern and runs on request)
+python3 scripts/check_nonfinite.py
+python3 scripts/mutants_nonfinite.py --check
 # ml-serve (docs/serving-http.md section 9): the documents it serves for the fixture models are the checked-in files and validate; Schemathesis runs when it is installed (build/venv);
 # the patterns of its mutants apply (scripts/mutants_http.py rebuilds the server once per pattern and runs on request); W2 builds ml and ml-predict without the three dependencies
 python3 scripts/gate_serve_openapi.py

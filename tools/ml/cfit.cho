@@ -11,6 +11,7 @@ import ml.fsio;
 import ml.mfile;
 import ml.paths;
 import ml.spec;
+import ml.splitspec;
 import ml.track;
 import ml.verbs;
 import ml.wire;
@@ -47,29 +48,38 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pt](heap: &!h Heap, args: &g Args, fs: &f 
     var track_errs = fail.empty_in(heap, spec.extra());
     var track_ok = true;
     if o.track_given {
-        borrow mo as &mr in {
-            borrow fbytes as &fb in {
-                let pv = mfile.prov_bytes(mr);
-                let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(fb), provsec.file_sha(pv), provsec.file_bytes(pv), mfile.rows(mr), mfile.rows(mr), 0, 0, 0, o.target, true, verbs.task_name(mfile.kind(mr)), mfile.plan_text(mfile.kind(mr)), "", 0 - 1, o.na, o, fail.empty_in(heap, spec.extra()));
-                write_rec = wr;
-                fail.drop(heap, track_errs);
-                track_errs = te;
-                borrow rb as &rbr in {
-                    borrow ib as &ibr in {
-                        let (nm, rj, ac) = track.answer_parts(heap, buffer.bytes(ibr), paths.shown(trackp), buffer.bytes(rbr), wr, o.dry);
-                        buffer.drop(heap, rname);
-                        buffer.drop(heap, runjson);
-                        buffer.drop(heap, action);
-                        rname = nm;
-                        runjson = rj;
-                        action = ac;
+        // the canonical text of the split of the record (docs/splits.md section 2): the constant model is held out at random
+        var spl = buffer.append(heap, buffer.empty(heap, 8), "none");
+        if o.split_given {
+            buffer.drop(heap, spl);
+            spl = splitspec.text_nd(heap, false, o.split_num, o.split_den, 0, 0, 0, "", o.seed);
+        }
+        borrow spl as &splr in {
+            borrow mo as &mr in {
+                borrow fbytes as &fb in {
+                    let pv = mfile.prov_bytes(mr);
+                    let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(fb), provsec.file_sha(pv), provsec.file_bytes(pv), mfile.rows(mr), mfile.rows(mr), 0, 0, 0, o.target, true, verbs.task_name(mfile.kind(mr)), mfile.plan_text(mfile.kind(mr)), buffer.bytes(splr), "", 0 - 1, o.na, o, fail.empty_in(heap, spec.extra()));
+                    write_rec = wr;
+                    fail.drop(heap, track_errs);
+                    track_errs = te;
+                    borrow rb as &rbr in {
+                        borrow ib as &ibr in {
+                            let (nm, rj, ac) = track.answer_parts(heap, buffer.bytes(ibr), paths.shown(trackp), buffer.bytes(rbr), wr, o.dry);
+                            buffer.drop(heap, rname);
+                            buffer.drop(heap, runjson);
+                            buffer.drop(heap, action);
+                            rname = nm;
+                            runjson = rj;
+                            action = ac;
+                        }
                     }
+                    buffer.drop(heap, recbuf);
+                    recbuf = rb;
+                    buffer.drop(heap, ib);
                 }
-                buffer.drop(heap, recbuf);
-                recbuf = rb;
-                buffer.drop(heap, ib);
             }
         }
+        buffer.drop(heap, spl);
         borrow track_errs as &ter in {
             track_ok = fail.count(ter) == 0;
         }

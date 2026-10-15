@@ -13,6 +13,7 @@ import std.json;
 import ml.est;
 import ml.paths;
 import ml.spec;
+import ml.splitspec;
 import ml.verbs;
 import ml.wiredata;
 import ml.wire;
@@ -51,8 +52,11 @@ pub fn verb_of[&v](text: &v [byte], tool: int) -> [] int {
     if tool == 1 && bytes.equal(text, "eval") {
         return 3;
     }
-    if tool == 1 && bytes.equal(text, "runs") {
+    if tool == 1 && bytes.equal(text, "cv") {
         return 5;
+    }
+    if tool == 1 && bytes.equal(text, "runs") {
+        return 6;
     }
     return 0;
 }
@@ -68,6 +72,9 @@ pub fn verb_name(verb: int) -> [] &static [byte] {
         return "describe";
     }
     if verb == 5 {
+        return "cv";
+    }
+    if verb == 6 {
         return "runs";
     }
     return "eval";
@@ -101,23 +108,33 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
         }
         i = i + 1;
     }
-    if verb == 1 {
+    if verb == 1 || verb == 5 {
         // every model but k-means needs a target; with --plan the model is the plan's and the fit checks the target once the plan is read (wire.fit)
         if !cli.has(parsed, table, "target") && !cli.has(parsed, table, "plan") && est.task(est.kind_named(cli.text(args, parsed, table, "model"))) != 4 {
             e = flag_problem(heap, e, "args.required-flag", "fit needs --target, the column to predict", "ml fit --target NAME --output MODEL FILE", "flag", "--target");
         }
-        if !cli.has(parsed, table, "output") {
+        if verb == 1 && !cli.has(parsed, table, "output") {
             e = flag_problem(heap, e, "args.required-flag", "fit needs --output, where to write the model file", "ml fit --target NAME --output MODEL FILE", "flag", "--output");
         }
-    } else if verb != 5 && !cli.has(parsed, table, "model-file") {
+        if verb == 5 && !wire.planned(cli.has(parsed, table, "plan"), cli.text(args, parsed, table, "model")) {
+            e = flag_problem(heap, e, "args.conflict", "cv scores a model fitted through the pipeline: the constant model is not cross-validated", "give --model linear, logistic, tree, forest or kmeans, or --plan", "flag", "--model");
+        }
+    } else if verb != 5 && verb != 6 && !cli.has(parsed, table, "model-file") {
         e = flag_problem(heap, e, "args.required-flag", "this verb needs --model-file, the model to read", "ml predict --model-file MODEL FILE", "flag", "--model-file");
     }
-    if verb == 1 {
+    if verb == 1 || verb == 5 {
         e = cat_flags(heap, args, parsed, e, table);
+    }
+    if tool == 1 && (verb == 1 || verb == 3 || verb == 5) {
+        e = splitspec.check_flags(heap, args, parsed, e, verb, table);
     }
     if tool == 2 {
         // `ml-predict` has no fit flag to check (wire.check_flags judges the flags of fit and eval)
         return e;
+    }
+    // cv is judged by the rules of a fit for everything but its own flags (splitspec.check_flags)
+    if verb == 5 {
+        return wire.check_flags(heap, args, parsed, e, 1);
     }
     return wire.check_flags(heap, args, parsed, e, verb);
 }
@@ -325,7 +342,7 @@ pub fn cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
             if cli.operand_count(parsed) > 1 {
                 e = flag_problem(heap, e, "args.too-many-operands", "describe takes no file: it reads the model file named by --model-file", "ml describe --model-file MODEL", "operand", "FILE");
             }
-        } else if verb == 5 {
+        } else if verb == 6 {
             e = runs_operands(heap, args, parsed, e);
         } else if verb == 2 {
             if cli.operand_count(parsed) > 2 {
@@ -416,7 +433,7 @@ pub fn resolve_all[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli
     var e2 = e0;
     if verb != 4 && !stdin_wanted(args, parsed, verb) {
         var at = 1;
-        if verb == 5 {
+        if verb == 6 {
             at = 2;
         }
         let (fa, ea) = paths.from_operand(heap, args, root, cli.operand_index(parsed, at), e2);

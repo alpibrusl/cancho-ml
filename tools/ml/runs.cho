@@ -16,6 +16,7 @@ import ml.mfile;
 import ml.paths;
 import ml.prov;
 import ml.spec;
+import ml.splitspec;
 import ml.track;
 import ml.verbs;
 import ml.wire;
@@ -93,11 +94,7 @@ fn valid_run[&s, &t, &i](src: &s [byte], tp: &t [int], id: &i [byte]) -> [] bool
     if data < 0 || !json.is_object(tp, data) || !member_string(src, tp, data, "path") || !member_string(src, tp, data, "sha256") || !ints_of(src, tp, data, "bytes", "rows", "", "", "") {
         return false;
     }
-    if !member_or_null(src, tp, inp, "target", 1) || !member_string(src, tp, inp, "task") || !member_string(src, tp, inp, "plan") || !member_int(src, tp, inp, "seed") || !member_or_null(src, tp, inp, "positive", 2) || !member_or_null(src, tp, inp, "split", 3) || !member_string(src, tp, inp, "drop") || !member_string(src, tp, inp, "float") || !member_string(src, tp, inp, "cat") || !member_string(src, tp, inp, "na_values") || !member_or_null(src, tp, inp, "reader", 3) || !member_string(src, tp, inp, "compiler") || !member_or_null(src, tp, inp, "sum_order", 2) {
-        return false;
-    }
-    let sp = json.get(src, tp, inp, "split");
-    if json.is_object(tp, sp) && !ints_of(src, tp, sp, "num", "den", "", "", "") {
+    if !member_or_null(src, tp, inp, "target", 1) || !member_string(src, tp, inp, "task") || !member_string(src, tp, inp, "plan") || !member_int(src, tp, inp, "seed") || !member_or_null(src, tp, inp, "positive", 2) || !member_string(src, tp, inp, "split") || !member_string(src, tp, inp, "drop") || !member_string(src, tp, inp, "float") || !member_string(src, tp, inp, "cat") || !member_string(src, tp, inp, "na_values") || !member_or_null(src, tp, inp, "reader", 3) || !member_string(src, tp, inp, "compiler") || !member_or_null(src, tp, inp, "sum_order", 2) {
         return false;
     }
     let rd = json.get(src, tp, inp, "reader");
@@ -633,7 +630,6 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                 let data = json.get(text, contents(tp), inp, "data");
                 let md = json.get(text, contents(tp), 0, "model");
                 let rd = json.get(text, contents(tp), inp, "reader");
-                let sp = json.get(text, contents(tp), inp, "split");
                 let dpath = field_str(heap, text, contents(tp), data, "path");
                 let dsha = field_str(heap, text, contents(tp), data, "sha256");
                 let target = field_str(heap, text, contents(tp), inp, "target");
@@ -649,13 +645,23 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                 let pn = json.get(text, contents(tp), inp, "positive");
                 let has_pos = pn >= 0 && json.is_int(contents(tp), pn);
                 let pos = field_int(text, contents(tp), inp, "positive", 0);
+                // the split of the record: its canonical text (docs/tracking.md section 5.2), read back into the numbers and the strategy the fit used
+                let spt = field_str(heap, text, contents(tp), inp, "split");
                 var snum = 0;
                 var sden = 0;
-                if sp >= 0 && json.is_object(contents(tp), sp) {
-                    // the record has the fraction that trains, the options the fraction that is held out
-                    sden = field_int(text, contents(tp), sp, "den", 0);
-                    snum = sden - field_int(text, contents(tp), sp, "num", 0);
+                var sstrat = 0;
+                var scol = buffer.empty(heap, 1);
+                var split_ok = false;
+                borrow spt as &sptr in {
+                    let (sok, snone, sn, sd, sst, sc, ssd) = splitspec.parse(heap, buffer.bytes(sptr));
+                    split_ok = sok && (snone || ssd == seed);
+                    snum = sn;
+                    sden = sd;
+                    sstrat = sst;
+                    buffer.drop(heap, scol);
+                    scol = sc;
                 }
+                buffer.drop(heap, spt);
                 var cat_given = false;
                 var mc = 64;
                 var ms = 255;
@@ -684,6 +690,10 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                                                             borrow compiler as &cpr in {
                                                                 // 1 the training file named by the record must be the one it hashed
                                                                 var go = true;
+                                                                if !split_ok {
+                                                                    e = damaged(heap, e, id);
+                                                                    go = false;
+                                                                }
                                                                 if len(root) == 0 && paths.has_double_dot(buffer.bytes(fur)) {
                                                                     e = damaged(heap, e, buffer.bytes(dpr));
                                                                     go = false;
@@ -783,13 +793,17 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                                                                             lg = lg2;
                                                                         } else {
                                                                             let ptxt = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(plr)) + 1), buffer.bytes(plr));
-                                                                            let m = wire.make(heap, args, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), ro, false, e, lg);
-                                                                            let (mfb, merr, mlg, mok) = wire.made_file(heap, m);
-                                                                            buffer.drop(heap, fbytes);
-                                                                            fbytes = mfb;
-                                                                            made_ok = mok;
-                                                                            e = merr;
-                                                                            lg = mlg;
+                                                                            // the strategy and the column of the split come from the record's text (a runtime column cannot be a field of the options)
+                                                                            let spo = splitspec.SplitOpts { stratify: sstrat == 1, by: "", by_given: sstrat == 3, group: "", group_given: sstrat == 2, folds: 0, repeats: 0, repeats_given: false, emit: false };
+                                                                            borrow scol as &scr in {
+                                                                                let m = wire.make(heap, args, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), ro, spo, buffer.bytes(scr), false, e, lg);
+                                                                                let (mfb, merr, mlg, mok) = wire.made_file(heap, m);
+                                                                                buffer.drop(heap, fbytes);
+                                                                                fbytes = mfb;
+                                                                                made_ok = mok;
+                                                                                e = merr;
+                                                                                lg = mlg;
+                                                                            }
                                                                         }
                                                                     }
                                                                     if made_ok {
@@ -845,6 +859,7 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                         }
                     }
                 }
+                buffer.drop(heap, scol);
                 buffer.drop(heap, full);
                 buffer.drop(heap, dpath);
                 buffer.drop(heap, dsha);

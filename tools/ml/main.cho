@@ -12,6 +12,7 @@ import std.json;
 import ml.app;
 import ml.catcli;
 import ml.cfit;
+import ml.cv;
 import ml.est;
 import ml.fsio;
 import ml.logrec;
@@ -19,6 +20,7 @@ import ml.mdesc;
 import ml.paths;
 import ml.runs;
 import ml.spec;
+import ml.splitspec;
 import ml.track;
 import ml.verbs;
 import ml.wire;
@@ -71,6 +73,17 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
         return (verbs.nothing(heap, e3, lg), log_ok);
     }
     let o = app.options(args, parsed, table);
+    let sp = splitspec.from_cli(args, parsed, table);
+    if verb == 5 {
+        let tokens = wire.model_tokens(heap, args, parsed, est.kind_named(o.model));
+        var answer = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+        borrow tokens as &tk in {
+            verbs.drop_out(heap, answer);
+            answer = cv.run(heap, args, fs, root, ps.file, ps.planp, buffer.bytes(tk), o, sp, e3, lg);
+        }
+        buffer.drop(heap, tokens);
+        return (answer, log_ok);
+    }
     if verb == 1 {
         if o.cat_given && !wire.planned(o.plan_given, o.model) {
             return (catcli.fit(heap, args, fs, root, ps.file, o, e3, lg), log_ok);
@@ -80,7 +93,7 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
             var answer = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
             borrow tokens as &tk in {
                 verbs.drop_out(heap, answer);
-                answer = wire.fit(heap, args, fs, root, ps.file, ps.out, ps.planp, ps.trackp, buffer.bytes(tk), o, e3, lg);
+                answer = wire.fit(heap, args, fs, root, ps.file, ps.out, ps.planp, ps.trackp, buffer.bytes(tk), o, sp, e3, lg);
             }
             buffer.drop(heap, tokens);
             return (answer, log_ok);
@@ -93,7 +106,7 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
     if verb == 4 {
         return (mdesc.describe(heap, fs, root, ps.model, o, e3, lg), log_ok);
     }
-    if verb == 5 {
+    if verb == 6 {
         var id1: &static [byte] = "";
         var id2: &static [byte] = "";
         if cli.operand_count(parsed) > 3 {
@@ -104,7 +117,7 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
         }
         return (runs.run(heap, args, fs, root, ps.file, cli.operand(args, parsed, 1), id1, id2, o, e3, lg), log_ok);
     }
-    return (wireio.eval(heap, args, fs, root, ps.file, ps.model, ps.trackp, o, e3, lg), log_ok);
+    return (wireio.eval(heap, args, fs, root, ps.file, ps.model, ps.trackp, o, sp, e3, lg), log_ok);
 }
 
 // the end record, the log written, the answer

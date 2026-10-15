@@ -133,7 +133,8 @@ def data_defs():
     # the models that go through the pipeline (docs/wiring.md section 2)
     names = {"enum": wired_models()}
     mreg, mcls = metrics_defs()
-    split = obj({"train": NAT, "test": NAT, "seed": NAT})
+    # a holdout says how the rows were chosen: the canonical text of the split (docs/splits.md section 2) and, with --emit-folds, 1 for each held-out row
+    split = obj({"train": NAT, "test": NAT, "seed": NAT, "spec": {"type": "string"}, "assignment": {"type": "array", "items": {"enum": [0, 1]}}}, ["train", "test", "seed", "spec"])
     holdout_reg = obj({"rows": NAT, "on": {"const": "held-out"}, "metrics": mreg})
     holdout_cls = obj({"rows": NAT, "on": {"const": "held-out"}, "metrics": mcls})
     summary_keys = {
@@ -175,7 +176,16 @@ def data_defs():
                       "unknown_categories": NAT, "out_of_range": OOR, "split": split}, ["model", "task", "rows", "on", "positive", "metrics", "unknown_categories", "out_of_range"])
     eval_clu_p = obj({"model": names, "task": {"const": "clustering"}, "rows": NAT, "on": ON, "clusters": NAT, "metrics": mclu, "unknown_categories": NAT, "out_of_range": OOR, "split": split},
                      ["model", "task", "rows", "on", "clusters", "metrics", "unknown_categories", "out_of_range"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p, describe_data()] + runs_data()}
+    # `ml cv` (docs/splits.md section 6)
+    agg = obj({"mean": {"oneOf": [FLT, {"type": "null"}]}, "std": {"oneOf": [FLT, {"type": "null"}]}, "n": NAT})
+    result = obj({"repeat": NAT, "fold": NAT, "train": NAT, "test": NAT, "metrics": {"oneOf": [mreg, mcls, mclu]}})
+    cv_p = obj({"model": names, "task": {"enum": ["regression", "classification", "clustering"]}, "target": {"oneOf": [TB, {"type": "null"}]}, "rows": NAT, "columns": NAT,
+                "plan": {"type": "string"}, "split": {"type": "string"}, "strategy": {"enum": ["kfold", "stratified", "group", "time"]}, "folds": NAT, "repeats": NAT,
+                "results": {"type": "array", "items": result, "minItems": 2},
+                "summary": obj({"count": NAT, "std": {"const": "sample"}, "metrics": {"type": "object", "additionalProperties": agg}}),
+                "assignment": obj({"repeats": NAT, "rows": NAT, "folds": {"type": "array", "items": {"type": "array", "items": {"type": "integer", "minimum": -1}}}})},
+               ["model", "task", "target", "rows", "columns", "plan", "split", "strategy", "folds", "repeats", "results", "summary"])
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p, cv_p, describe_data()] + runs_data()}
 
 
 def describe_data():

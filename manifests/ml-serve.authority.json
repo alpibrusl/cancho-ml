@@ -112,6 +112,7 @@
     "bit_length",
     "bit_length",
     "bit_length_of",
+    "bits_finite",
     "bits_of_key",
     "block_width",
     "body",
@@ -166,6 +167,7 @@
     "cols",
     "cols_of",
     "column_of",
+    "column_word",
     "columns",
     "columns",
     "comp_of",
@@ -327,6 +329,8 @@
     "first",
     "first",
     "first_bad",
+    "first_bad_score",
+    "first_non_finite",
     "first_ordered_kind",
     "first_ordered_model",
     "fit_non_finite",
@@ -418,6 +422,7 @@
     "is_digit",
     "is_digit",
     "is_digit",
+    "is_finite",
     "is_flag",
     "is_hex",
     "is_incomplete",
@@ -703,6 +708,7 @@
     "point_width",
     "pow10",
     "pow2",
+    "predict_non_finite",
     "proba_of",
     "proba_of",
     "problem_response_json",
@@ -941,7 +947,7 @@
     "words_of",
     "wpc"
   ],
-  "folded_operators": 303,
+  "folded_operators": 306,
   "folded_calls": 0,
-  "functions": 1385
+  "functions": 1393
 }

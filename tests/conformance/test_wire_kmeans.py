@@ -425,17 +425,16 @@ class KMeansWire(unittest.TestCase):
             self.assertEqual((r.status, r.first_rule()), (2, "ml.param.threads"), (t, r))
 
     def test_sums_that_overflow(self):
-        # the sums of the update overflow a double: a fit is refused; a score that overflows has no value (null), as a metric with none does everywhere
+        # the sums of the update overflow a double: a fit is refused; a squared distance of one row that overflows is the refusal ml.predict.non-finite (docs/nonfinite.md), and a sum of
+        # finite squared distances that overflows has no value (null), as a metric with none does everywhere (test_nonfinite.Clustering)
         self.sb.write("huge.csv", "x\n1e200\n-1e200\n3e200\n5e200\n")
         r = self.ml("fit", "--model", "kmeans", "--k", "2", "--output", "h.cml", "--overwrite", "huge.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.fit.non-finite"), r)
         self.sb.write("mid.csv", "x\n1e154\n-1e154\n2e154\n")
         self.fit("mid.csv", "mid.cml", "--k", "2")
         e = self.ml("eval", "--model-file", "mid.cml", "huge.csv")
-        self.assertEqual(e.status, 0, e)
-        self.assertIsNone(e.data()["metrics"]["inertia"])
-        self.assertEqual(e.data()["metrics"]["sizes"], [4, 0])
-        self.assertEqual(e.data()["metrics"]["mean_distance"], [None, None])
+        self.assertEqual((e.status, e.first_rule()), (8, "ml.predict.non-finite"), e)
+        self.assertEqual(e.error()["detail"], {"row": 1, "column": "distance"})
 
     def test_a_refused_fit_writes_nothing(self):
         self.sb.write("keep.cml", b"x")

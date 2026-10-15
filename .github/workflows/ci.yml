@@ -1,0 +1,296 @@
+# What this workflow runs, on which machines and what it does not show: docs/ci.md. Third-party actions are pinned by full commit SHA
+# (scripts/check_workflow.py fails on any other form), the compiler revision is read from cancho.toml and written nowhere else, and
+# the only write permission is the `release` job's.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *" # nightly: the full gate only
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+    working-directory: ml # the checkout of this repository; the compiler is built next to it, in ../cancho
+
+jobs:
+  # The fast gates on Linux x86-64 (Ubuntu 24.04 and 26.04), Linux aarch64 (Ubuntu 24.04) and macOS arm64: build, the determinism gate (each
+  # platform equals the committed golden, so they equal each other), the conformance tests, the documentation checks. The runner images are
+  # named, never `-latest`: a moving label changes the platform under a green run. The `release` job publishes the Ubuntu 24.04 builds (the
+  # oldest glibc of each architecture, so the binary runs on the newer images too) and the macOS build.
+
+  build-test:
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, label: linux-x86_64-ubuntu24}
+          - {os: ubuntu-26.04, label: linux-x86_64-ubuntu26}
+          - {os: ubuntu-24.04-arm, label: linux-aarch64-ubuntu24}
+          - {os: macos-26, label: darwin-arm64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ml
+          persist-credentials: false
+
+      - name: Platform
+        run: |
+          uname -a
+          if command -v sw_vers >/dev/null; then sw_vers; fi
+          cc --version | head -1 || true
+          rustc --version || true
+          python3 --version
+
+      - name: The compiler revision, read from cancho.toml
+        id: pins
+        run: |
+          rev=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
+          test "${#rev}" -eq 40 || { echo "cancho.toml has no 40-digit compiler revision" >&2; exit 1; }
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          echo "compiler revision $rev"
+
+      - name: Cache the compiler
+        id: compiler
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cancho/target/release/cancho
+          key: cancho-compiler-${{ steps.pins.outputs.rev }}-${{ matrix.label }}
+
+      - name: Check out the compiler
+        if: steps.compiler.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: alpibrusl/cancho
+          ref: ${{ steps.pins.outputs.rev }}
+          path: cancho
+          persist-credentials: false
+
+      - name: Build the compiler
+        if: steps.compiler.outputs.cache-hit != 'true'
+        working-directory: cancho
+        run: |
+          channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          export RUSTUP_TOOLCHAIN="$channel"
+          cargo --version
+          time cargo build --release -p cancho
+
+      - name: The compiler runs
+        run: |
+          echo "CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho" >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/cancho/target/release" >> "$GITHUB_PATH"
+          "$GITHUB_WORKSPACE/cancho/target/release/cancho" --version
+
+      - name: Python and the packages of the fast gates
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install the packages of the fast gates (ci/requirements-fast.txt)
+        run: python3 -m pip install --disable-pip-version-check -r ci/requirements-fast.txt
+
+      - name: The pins agree with the documents
+        run: |
+          sh scripts/check_table_pin.sh
+          python3 scripts/check_web_pin.py
+
+      - name: Fetch the pinned packages and check the format
+        run: |
+          cancho install
+          cancho fmt --check lib tests tools
+
+      - name: Build ml, ml-predict and ml-serve
+        run: |
+          time cancho build --bin ml
+          time cancho build --bin ml-predict
+          time cancho build --bin ml-serve
+          time cancho build --bin serve-check
+
+      - name: The three binaries are built from the same sources
+        run: |
+          python3 scripts/check_bins.py
+          python3 scripts/check_bins.py --mutants
+          python3 scripts/check_web_pin.py --bins
+
+      # Each platform compares its fingerprint to docs/bench/xplat_fp.txt: 88 lines for 22 fits. Equal to the golden on both platforms is equal across them.
+      - name: Determinism gate (the fingerprint equals the committed golden)
+        run: |
+          python3 scripts/xplat_check.py --require-predict | tee "../xplat-check-$(uname -s)-$(uname -m).txt"
+          python3 scripts/xplat_check.py --print > ../xplat-fp-run.txt
+
+      - name: The determinism gate can fail (its mutants)
+        run: python3 scripts/xplat_check.py --require-predict --mutants
+
+      # Every module of tests/conformance that imports without numpy, scipy and scikit-learn, four at a time; the ml-serve tests among them start the
+      # server on an ephemeral port and compare one POST per model kind with the command line's cell text. The oracle modules run in the full gate.
+      # ST_STRIDE=5 flips every fifth byte of a damaged model file (the default, 1, flips every byte: about 27 minutes for test_describe alone on a Linux machine), and
+      # FUZZ_N=500 draws 500 argument vectors of the fuzz (the default is 2,500). The full gate runs the defaults.
+      - name: Conformance tests, including the ml-serve tests
+        timeout-minutes: 45
+        env:
+          ST_STRIDE: "5"
+          FUZZ_N: "500"
+        run: python3 scripts/run_conformance.py --no-oracles 2>&1 | tee "../conformance-$(uname -s)-$(uname -m).log"
+
+      - name: Documentation checks
+        run: sh scripts/check_docs.sh
+
+      - name: This workflow's own checks
+        run: |
+          python3 scripts/check_workflow.py
+          python3 scripts/check_workflow.py --mutants
+
+      - name: Package the binaries
+        run: |
+          plat="$(uname -s | tr 'A-Z' 'a-z')-$(uname -m)"
+          mkdir -p ../dist
+          (cd build && tar -czf "../../dist/cancho-ml-$plat.tar.gz" ml ml-predict ml-serve)
+          (cd build && shasum -a 256 ml ml-predict ml-serve) > "../dist/cancho-ml-$plat.sha256"
+          (cd ../dist && shasum -a 256 "cancho-ml-$plat.tar.gz") >> "../dist/cancho-ml-$plat.sha256"
+          cat "../dist/cancho-ml-$plat.sha256"
+          cp ../xplat-fp-run.txt "../dist/cancho-ml-$plat.fingerprint.txt"
+
+      - name: Upload the binaries, checksums, fingerprint and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cancho-ml-${{ matrix.label }}
+          path: |
+            dist/
+            conformance-*.log
+            xplat-check-*.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  # scripts/check.sh: every gate (30 to 40 minutes on the maintainer's Mac), on request and nightly.
+  full-gate:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ml
+          persist-credentials: false
+
+      - name: Platform
+        run: |
+          uname -a
+          cc --version | head -1 || true
+          python3 --version
+
+      - name: The compiler revision, read from cancho.toml
+        id: pins
+        run: |
+          rev=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
+          test "${#rev}" -eq 40 || { echo "cancho.toml has no 40-digit compiler revision" >&2; exit 1; }
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the compiler
+        id: compiler
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cancho/target/release/cancho
+          key: cancho-compiler-${{ steps.pins.outputs.rev }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Check out the compiler
+        if: steps.compiler.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: alpibrusl/cancho
+          ref: ${{ steps.pins.outputs.rev }}
+          path: cancho
+          persist-credentials: false
+
+      - name: Build the compiler
+        if: steps.compiler.outputs.cache-hit != 'true'
+        working-directory: cancho
+        run: |
+          channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          export RUSTUP_TOOLCHAIN="$channel"
+          cargo build --release -p cancho
+
+      - name: The compiler runs
+        run: |
+          echo "CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho" >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/cancho/target/release" >> "$GITHUB_PATH"
+          "$GITHUB_WORKSPACE/cancho/target/release/cancho" --version
+
+      - name: Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install the packages of the full gate (ci/requirements-full.txt)
+        run: python3 -m pip install --disable-pip-version-check -r ci/requirements-full.txt
+
+      # The files of spike F are not in the repository: the tree gates read them from ../ml-data, which the seed writes again.
+      - name: The data of the tree gates
+        run: python3 scripts/spikes/gen.py "$GITHUB_WORKSPACE/ml-data"
+
+      - name: scripts/check.sh
+        run: |
+          set -o pipefail
+          time sh scripts/check.sh 2>&1 | tee ../check.log
+
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: full-gate-log
+          path: check.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # A tag v*: the binaries the gates ran on, per platform, with checksums, as release assets. The only job that can write.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download the binaries of the three release platforms
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: cancho-ml-{linux-x86_64-ubuntu24,linux-aarch64-ubuntu24,darwin-arm64}
+          path: assets
+          merge-multiple: true
+
+      - name: List the assets
+        working-directory: assets
+        run: ls -l dist 2>/dev/null || ls -lR .
+
+      - name: Create the release
+        working-directory: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          files=$(ls dist/cancho-ml-*.tar.gz dist/cancho-ml-*.sha256 dist/cancho-ml-*.fingerprint.txt)
+          test "$(ls dist/cancho-ml-*.tar.gz | wc -l)" -eq 3 || { echo "expected the binaries of three platforms" >&2; exit 1; }
+          # shellcheck disable=SC2086
+          gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes "Binaries of ml, ml-predict and ml-serve built and gated by this workflow run: $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID. Unsigned; the .sha256 files are for a download check." --verify-tag $files

@@ -1,0 +1,374 @@
+module linalg.gemv;
+
+import linalg.order;
+import linalg.tensor;
+import linalg.dot;
+import ml.refuse;
+
+// y = X w   (gemv_n) and   g = X^T r   (gemv_t), X a rank-2 tensor (n x d). Orders: docs/linalg.md section 2.1 (four lanes in a block).
+//   gemv_n  y_i = dot(row i of X, w): one block when d <= 256 (term j to lane j mod 4), else the block rule and tree of dot, row by row.
+//   gemv_t  g_j = the block rule over rows i = 0..n-1 of X_ij * r_i, blocks of 256 rows, row i of a block to lane i mod 4, tree rule;
+//           each column independent.
+// Fast paths: X with unit column stride, vectors with unit stride. Everything else takes the generic path; same bits.
+
+// ---------------------------------------------------------------- gemv_n
+
+// 4 rows at a time, d <= 256: sixteen independent chains (four lanes per row), each lane adding its terms ascending in j from +0.0.
+// (Four rows, not eight: with eight row streams 2 KB apart (d = 256) the loop ran 2.2x slower than with four; scripts/ and
+// docs/linalg.md section 5.) `xs` is positioned at X[0, 0]; the row stride is rs.
+fn rows4[&x, &w, &y](xs: &x [float], rs: int, wv: &w [float], ys: &!y [float], i: int, d: int) -> [] int {
+    let r0 = xs[(i + 0) * rs..(i + 0) * rs + d];
+    let r1 = xs[(i + 1) * rs..(i + 1) * rs + d];
+    let r2 = xs[(i + 2) * rs..(i + 2) * rs + d];
+    let r3 = xs[(i + 3) * rs..(i + 3) * rs + d];
+    let wr = wv[0..d];
+    var z00 = 0.0;
+    var z01 = 0.0;
+    var z02 = 0.0;
+    var z03 = 0.0;
+    var z10 = 0.0;
+    var z11 = 0.0;
+    var z12 = 0.0;
+    var z13 = 0.0;
+    var z20 = 0.0;
+    var z21 = 0.0;
+    var z22 = 0.0;
+    var z23 = 0.0;
+    var z30 = 0.0;
+    var z31 = 0.0;
+    var z32 = 0.0;
+    var z33 = 0.0;
+    var j = 0;
+    while j + 4 <= d {
+        let w0 = wr[j + 0];
+        let w1 = wr[j + 1];
+        let w2 = wr[j + 2];
+        let w3 = wr[j + 3];
+        z00 = z00 + r0[j + 0] * w0;
+        z01 = z01 + r0[j + 1] * w1;
+        z02 = z02 + r0[j + 2] * w2;
+        z03 = z03 + r0[j + 3] * w3;
+        z10 = z10 + r1[j + 0] * w0;
+        z11 = z11 + r1[j + 1] * w1;
+        z12 = z12 + r1[j + 2] * w2;
+        z13 = z13 + r1[j + 3] * w3;
+        z20 = z20 + r2[j + 0] * w0;
+        z21 = z21 + r2[j + 1] * w1;
+        z22 = z22 + r2[j + 2] * w2;
+        z23 = z23 + r2[j + 3] * w3;
+        z30 = z30 + r3[j + 0] * w0;
+        z31 = z31 + r3[j + 1] * w1;
+        z32 = z32 + r3[j + 2] * w2;
+        z33 = z33 + r3[j + 3] * w3;
+        j = j + 4;
+    }
+    if j + 0 < d {
+        let wj = wr[j + 0];
+        z00 = z00 + r0[j + 0] * wj;
+        z10 = z10 + r1[j + 0] * wj;
+        z20 = z20 + r2[j + 0] * wj;
+        z30 = z30 + r3[j + 0] * wj;
+    }
+    if j + 1 < d {
+        let wj = wr[j + 1];
+        z01 = z01 + r0[j + 1] * wj;
+        z11 = z11 + r1[j + 1] * wj;
+        z21 = z21 + r2[j + 1] * wj;
+        z31 = z31 + r3[j + 1] * wj;
+    }
+    if j + 2 < d {
+        let wj = wr[j + 2];
+        z02 = z02 + r0[j + 2] * wj;
+        z12 = z12 + r1[j + 2] * wj;
+        z22 = z22 + r2[j + 2] * wj;
+        z32 = z32 + r3[j + 2] * wj;
+    }
+    ys[i + 0] = order.lane_combine(z00, z01, z02, z03);
+    ys[i + 1] = order.lane_combine(z10, z11, z12, z13);
+    ys[i + 2] = order.lane_combine(z20, z21, z22, z23);
+    ys[i + 3] = order.lane_combine(z30, z31, z32, z33);
+    return 0;
+}
+
+fn row1[&x, &w](xs: &x [float], at: int, wv: &w [float], d: int) -> [] float {
+    let r = xs[at..at + d];
+    let wr = wv[0..d];
+    var z0 = 0.0;
+    var z1 = 0.0;
+    var z2 = 0.0;
+    var z3 = 0.0;
+    var j = 0;
+    while j + 4 <= d {
+        z0 = z0 + r[j] * wr[j];
+        z1 = z1 + r[j + 1] * wr[j + 1];
+        z2 = z2 + r[j + 2] * wr[j + 2];
+        z3 = z3 + r[j + 3] * wr[j + 3];
+        j = j + 4;
+    }
+    if j < d {
+        z0 = z0 + r[j] * wr[j];
+    }
+    if j + 1 < d {
+        z1 = z1 + r[j + 1] * wr[j + 1];
+    }
+    if j + 2 < d {
+        z2 = z2 + r[j + 2] * wr[j + 2];
+    }
+    return order.lane_combine(z0, z1, z2, z3);
+}
+
+// unit-stride kernel, d <= 256: rows [i0, i1) of y; xs positioned at X[0, 0]
+pub fn gemv_n_rows[&x, &w, &y](xs: &x [float], rs: int, wv: &w [float], ys: &!y [float], i0: int, i1: int, d: int) -> [] int {
+    var i = i0;
+    while i + 4 <= i1 {
+        rows4(xs, rs, wv, ys, i, d);
+        i = i + 4;
+    }
+    while i < i1 {
+        ys[i] = row1(xs, i * rs, wv, d);
+        i = i + 1;
+    }
+    return 0;
+}
+
+pub fn gemv_n[&h, &x, &w, &y](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], wt: tensor.Tensor, wd: &w [float], yt: tensor.Tensor, yd: &!y [float]) -> [heap] int {
+    var c = tensor.expect(xt, 2, len(xd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.expect(wt, 1, len(wd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.expect(yt, 1, len(yd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.writable(yt);
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    if wt.s0 != d || yt.s0 != n {
+        return refuse.tensor_shape();
+    }
+    if n == 0 {
+        return 0;
+    }
+    if d == 0 {
+        var i = 0;
+        while i < n {
+            yd[yt.off + i * yt.t0] = 0.0;
+            i = i + 1;
+        }
+        return 0;
+    }
+    if xt.t1 == 1 && wt.t0 == 1 && yt.t0 == 1 && d <= 256 && xt.t0 >= 0 {
+        return gemv_n_rows(xd[xt.off..len(xd)], xt.t0, wd[wt.off..wt.off + d], yd[yt.off..yt.off + n], 0, n, d);
+    }
+    // generic: row i is the dot of the row and w, whatever the strides (block rule over j)
+    let st = box_slice(heap, 40, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    borrow mut st as &!sw in {
+        borrow mut lv as &!lw in {
+            var i = 0;
+            while i < n {
+                var sp = 0;
+                var b = 0;
+                let nb = order.blocks(d);
+                while b < nb {
+                    let s = dot.block_strided(xd, xt.off + i * xt.t0, xt.t1, wd, wt.off, wt.t0, b, d);
+                    contents(sw)[sp] = s;
+                    sp = order.settle(contents(sw), contents(lw), sp, 1);
+                    b = b + 1;
+                }
+                order.finish(contents(sw), sp, 1);
+                yd[yt.off + i * yt.t0] = contents(sw)[0];
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    return 0;
+}
+
+// ---------------------------------------------------------------- gemv_t
+
+// the stack of gemv_t needs 40 slots of width d and then four lane accumulators of width d (the scratch of one block)
+pub fn stack_len(d: int) -> [] int {
+    return 44 * d;
+}
+
+// Rows [r0, r1) (one block, at most 256 rows, r0 a multiple of 4) accumulated into the four lane vectors acc[l * d ..], row i of
+// the block to lane (i - r0) mod 4, ascending in i inside a lane from +0.0: four rows per pass over the lanes, one row to each.
+// `xs` positioned at X[0, 0], row stride rs; rv positioned at r[0].
+fn block_lanes[&x, &r, &a](xs: &x [float], rs: int, rv: &r [float], acc: &!a [float], r0: int, r1: int, d: int) -> [] int {
+    var j = 0;
+    while j < 4 * d {
+        acc[j] = 0.0;
+        j = j + 1;
+    }
+    let l0 = acc[0..d];
+    let l1 = acc[d..2 * d];
+    let l2 = acc[2 * d..3 * d];
+    let l3 = acc[3 * d..4 * d];
+    var i = r0;
+    while i + 4 <= r1 {
+        let a0 = xs[(i + 0) * rs..(i + 0) * rs + d];
+        let a1 = xs[(i + 1) * rs..(i + 1) * rs + d];
+        let a2 = xs[(i + 2) * rs..(i + 2) * rs + d];
+        let a3 = xs[(i + 3) * rs..(i + 3) * rs + d];
+        let c0 = rv[i + 0];
+        let c1 = rv[i + 1];
+        let c2 = rv[i + 2];
+        let c3 = rv[i + 3];
+        j = 0;
+        while j < d {
+            l0[j] = l0[j] + a0[j] * c0;
+            l1[j] = l1[j] + a1[j] * c1;
+            l2[j] = l2[j] + a2[j] * c2;
+            l3[j] = l3[j] + a3[j] * c3;
+            j = j + 1;
+        }
+        i = i + 4;
+    }
+    if i < r1 {
+        let a0 = xs[i * rs..i * rs + d];
+        let c0 = rv[i];
+        j = 0;
+        while j < d {
+            l0[j] = l0[j] + a0[j] * c0;
+            j = j + 1;
+        }
+    }
+    if i + 1 < r1 {
+        let a1 = xs[(i + 1) * rs..(i + 1) * rs + d];
+        let c1 = rv[i + 1];
+        j = 0;
+        while j < d {
+            l1[j] = l1[j] + a1[j] * c1;
+            j = j + 1;
+        }
+    }
+    if i + 2 < r1 {
+        let a2 = xs[(i + 2) * rs..(i + 2) * rs + d];
+        let c2 = rv[i + 2];
+        j = 0;
+        while j < d {
+            l2[j] = l2[j] + a2[j] * c2;
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
+// the four lane vectors acc[l * d ..] -> the block's partial in st[at ..), width d: (l0 + l1) + (l2 + l3) per column
+fn lanes_to_slot[&s](st: &!s [float], at: int, d: int) -> [] int {
+    let base = 40 * d;
+    var j = 0;
+    while j < d {
+        st[at + j] = order.lane_combine(st[base + j], st[base + d + j], st[base + 2 * d + j], st[base + 3 * d + j]);
+        j = j + 1;
+    }
+    return 0;
+}
+
+// Blocks [b0, b1) of the tree for gemv_t, pushed on the stack (st/lv, width d) from slot sp0; answers the new sp.
+// st holds stack_len(d) floats.
+pub fn gemv_t_blocks[&x, &r, &s, &l](xs: &x [float], rs: int, rv: &r [float], n: int, d: int, b0: int, b1: int, st: &!s [float], lv: &!l [int], sp0: int) -> [] int {
+    var sp = sp0;
+    var b = b0;
+    while b < b1 {
+        var hi = (b + 1) * 256;
+        if hi > n {
+            hi = n;
+        }
+        block_lanes(xs, rs, rv, st[40 * d..44 * d], b * 256, hi, d);
+        lanes_to_slot(st, sp * d, d);
+        sp = order.settle(st, lv, sp, d);
+        b = b + 1;
+    }
+    return sp;
+}
+
+pub fn gemv_t[&h, &x, &r, &g](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], rt: tensor.Tensor, rd: &r [float], gt: tensor.Tensor, gd: &!g [float]) -> [heap] int {
+    var c = tensor.expect(xt, 2, len(xd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.expect(rt, 1, len(rd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.expect(gt, 1, len(gd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.writable(gt);
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    if rt.s0 != n || gt.s0 != d {
+        return refuse.tensor_shape();
+    }
+    var j = 0;
+    if n == 0 || d == 0 {
+        while j < d {
+            gd[gt.off + j * gt.t0] = 0.0;
+            j = j + 1;
+        }
+        return 0;
+    }
+    let st = box_slice(heap, stack_len(d), 0.0);
+    let lv = box_slice(heap, 40, 0);
+    borrow mut st as &!sw in {
+        borrow mut lv as &!lw in {
+            var sp = 0;
+            let nb = order.blocks(n);
+            if xt.t1 == 1 && rt.t0 == 1 && xt.t0 >= 0 {
+                sp = gemv_t_blocks(xd[xt.off..len(xd)], xt.t0, rd[rt.off..rt.off + n], n, d, 0, nb, contents(sw), contents(lw), 0);
+            } else {
+                // generic strides: the same additions (lane = row of the block mod 4), indexed through the descriptors
+                var b = 0;
+                while b < nb {
+                    var hi = (b + 1) * 256;
+                    if hi > n {
+                        hi = n;
+                    }
+                    j = 0;
+                    while j < 4 * d {
+                        contents(sw)[40 * d + j] = 0.0;
+                        j = j + 1;
+                    }
+                    var i = b * 256;
+                    while i < hi {
+                        let ri = rd[rt.off + i * rt.t0];
+                        let lane = (i - b * 256) % 4;
+                        j = 0;
+                        while j < d {
+                            contents(sw)[40 * d + lane * d + j] = contents(sw)[40 * d + lane * d + j] + xd[xt.off + i * xt.t0 + j * xt.t1] * ri;
+                            j = j + 1;
+                        }
+                        i = i + 1;
+                    }
+                    lanes_to_slot(contents(sw), sp * d, d);
+                    sp = order.settle(contents(sw), contents(lw), sp, d);
+                    b = b + 1;
+                }
+            }
+            order.finish(contents(sw), sp, d);
+            j = 0;
+            while j < d {
+                gd[gt.off + j * gt.t0] = contents(sw)[j];
+                j = j + 1;
+            }
+        }
+    }
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    return 0;
+}

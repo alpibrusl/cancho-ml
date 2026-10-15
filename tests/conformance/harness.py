@@ -62,6 +62,12 @@ class Result:
 PREDICT_BIN = os.environ.get("ML_PREDICT_BIN") or str(ROOT / "build" / "ml-predict")
 
 
+def runs_here(c):
+    """A case marked darwin_only has a platform-specific answer (the errno of a refusal, or what /dev/stdin is when descriptor 0 is closed): it is run on macOS only
+    (docs/ci.md section 5). Every other case runs everywhere."""
+    return not c.get("darwin_only") or sys.platform == "darwin"
+
+
 def run(*args, cwd=None, timeout=120, close_stdin=False, close_stdout=False, binary_path=None, stdin=None):
     """stdin: the bytes to give the process on standard input (None: the process gets an empty one, /dev/null)."""
     argv = [binary_path or BIN, *[str(a) for a in args]]

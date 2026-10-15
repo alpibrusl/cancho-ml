@@ -1,0 +1,398 @@
+edition 5;
+
+module linalg.par;
+
+import linalg.order;
+import linalg.tensor;
+import linalg.dot;
+import linalg.gemv;
+import linalg.syrk;
+import linalg.gemm;
+import ml.refuse;
+
+// Threaded variants (docs/linalg.md sections 2 and 3). The thread count never changes a bit:
+//   * reductions (dot, gemv_t, syrk): the rows are cut into CHUNKS of G = 8 blocks (2048 rows). A thread is given whole chunks,
+//     reduces each chunk with the sequential code (the root of an aligned subtree of the global tree) and returns the roots in
+//     a slot; the parent continues the one global stack with those roots in chunk order (`combine_roots`, the only place where
+//     partials of different threads meet). Which thread ran which chunk is invisible in the result.
+//   * row-parallel kernels (gemv_n, gemm): every output entry is computed by one thread with the sequential code.
+// cancho gives a thread one pointer-width payload (here: a unique reference to a struct) and no shared reads, so every thread
+// OWNS a copy of the input rows it needs (copy_into is bytes only, so the copy is a loop). The copies overlap with the work
+// of the threads already started (the parent copies piece k + 1 while thread k runs); their cost is part of the measured time.
+
+res struct Job {
+    a: Box[[float]],
+    b: Box[[float]],
+    out: Box[[float]],
+    st: Box[[float]],
+    lv: Box[[int]],
+    p: Box[[int]],
+}
+
+// p: 0 kind (1 dot, 2 gemv_t, 3 syrk, 4 gemv_n, 5 gemm), 1 rows of the piece, 2 d (columns) / n, 3 inner dimension, 4 slot width,
+//    5 chunks in the piece
+
+fn copy_floats[&d, &s](dst: &!d [float], src: &s [float], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the chunks of the piece, one root each, into out[c * w ..]
+fn reduce_chunks[&a, &b, &o, &s, &l](kind: int, av: &a [float], bv: &b [float], ov: &!o [float], st: &!s [float], lv: &!l [int], rows: int, d: int, w: int, nchunks: int) -> [] int {
+    let nb = order.blocks(rows);
+    var c = 0;
+    while c < nchunks {
+        var b1 = c * 8 + 8;
+        if b1 > nb {
+            b1 = nb;
+        }
+        var sp = 0;
+        if kind == 1 {
+            sp = dot.run_blocks(av, bv, rows, c * 8, b1, st, lv, 0);
+        }
+        if kind == 2 {
+            sp = gemv.gemv_t_blocks(av, d, bv, rows, d, c * 8, b1, st, lv, 0);
+        }
+        if kind == 3 {
+            sp = syrk.syrk_blocks(av, d, rows, d, c * 8, b1, st, lv, 0);
+        }
+        order.finish(st, sp, w);
+        var j = 0;
+        while j < w {
+            ov[c * w + j] = st[j];
+            j = j + 1;
+        }
+        c = c + 1;
+    }
+    return 0;
+}
+
+fn work[&r](job: &!r Job) -> [] int {
+    let kind = contents(job.p)[0];
+    let rows = contents(job.p)[1];
+    let d = contents(job.p)[2];
+    let inner = contents(job.p)[3];
+    let w = contents(job.p)[4];
+    let nchunks = contents(job.p)[5];
+    if kind == 4 {
+        // y piece = X piece * w; rows contiguous, d <= 256 here
+        gemv.gemv_n_rows(contents(job.a), d, contents(job.b), contents(job.out), 0, rows, d);
+        return 0;
+    }
+    if kind == 5 {
+        // C piece = A piece (rows x inner) * B (inner x d), C piece rows x d
+        gemm.gemm_rows(contents(job.a), inner, contents(job.b), d, contents(job.out), d, 1, 0, rows, d, inner, contents(job.st), contents(job.lv));
+        return 0;
+    }
+    reduce_chunks(kind, contents(job.a), contents(job.b), contents(job.out), contents(job.st), contents(job.lv), rows, d, w, nchunks);
+    return 0;
+}
+
+// Partition of `nchunks` chunks among `t` threads: thread k takes chunks [bound(k), bound(k + 1))
+pub fn bound(k: int, t: int, nchunks: int) -> [] int {
+    return k * nchunks / t;
+}
+
+// Make job k: copies of the rows [r0, r1) of X (row stride rs, d columns) and of the matching part of the second operand.
+// kind 1: second operand is a vector (dot: y[r0..r1)); kind 2: r[r0..r1); kind 3: none; kind 4: w (d floats, all of it);
+// kind 5: B (inner x d, all of it), and X is A
+fn make_job[&h, &x, &y](heap: &!h Heap, kind: int, xd: &x [float], rs: int, d: int, yd: &y [float], r0: int, r1: int, inner: int, w: int, nchunks: int) -> [heap] Job {
+    let rows = r1 - r0;
+    var acols = d;
+    if kind == 1 {
+        acols = 1;
+    }
+    if kind == 5 {
+        acols = inner;
+    }
+    var bn = 1;
+    if kind == 1 || kind == 2 {
+        bn = rows;
+    }
+    if kind == 4 {
+        bn = d;
+    }
+    if kind == 5 {
+        bn = inner * d;
+    }
+    var on = nchunks * w + 8;
+    if kind == 4 {
+        on = rows;
+    }
+    if kind == 5 {
+        on = rows * d;
+    }
+    var stn = 40 * w;
+    if kind == 2 {
+        stn = gemv.stack_len(w);
+    }
+    if kind == 5 {
+        stn = 40 * 16;
+    }
+    var job = Job { a: box_slice(heap, rows * acols + 1, 0.0), b: box_slice(heap, bn + 1, 0.0), out: box_slice(heap, on + 1, 0.0), st: box_slice(heap, stn + 1, 0.0), lv: box_slice(heap, 41, 0), p: box_slice(heap, 8, 0) };
+    borrow mut job as &!jk in {
+        let pp = contents(jk.p);
+        pp[0] = kind;
+        pp[1] = rows;
+        pp[2] = d;
+        pp[3] = inner;
+        pp[4] = w;
+        pp[5] = nchunks;
+        // rows of X (or of A), packed with row stride acols
+        if kind == 1 {
+            copy_floats(contents(jk.a), xd[r0..r1], rows);
+            copy_floats(contents(jk.b), yd[r0..r1], rows);
+        } else {
+            var i = 0;
+            while i < rows {
+                copy_floats(contents(jk.a)[i * acols..(i + 1) * acols], xd[(r0 + i) * rs..(r0 + i) * rs + acols], acols);
+                i = i + 1;
+            }
+            if kind == 2 {
+                copy_floats(contents(jk.b), yd[r0..r1], rows);
+            }
+            if kind == 4 {
+                copy_floats(contents(jk.b), yd[0..d], d);
+            }
+            if kind == 5 {
+                copy_floats(contents(jk.b), yd[0..inner * d], inner * d);
+            }
+        }
+    }
+    return job;
+}
+
+// Run the jobs for threads k .. t - 1 (one level of the recursion per thread: the number of threads is the depth of the call),
+// then copy each thread's out into `slots` at slot_at(k). Answers 0.
+fn fan[&h, &x, &y, &o](heap: &!h Heap, kind: int, xd: &x [float], rs: int, d: int, yd: &y [float], inner: int, w: int, nrows: int, nchunks: int, k: int, t: int, slots: &!o [float]) -> [heap, conc] int {
+    if k >= t {
+        return 0;
+    }
+    var r0 = 0;
+    var r1 = 0;
+    var c0 = 0;
+    var c1 = 0;
+    if kind == 4 || kind == 5 {
+        // row partition: multiples of 4 rows (the gemm tile), the last thread takes the rest
+        let tiles = (nrows + 3) / 4;
+        r0 = bound(k, t, tiles) * 4;
+        r1 = bound(k + 1, t, tiles) * 4;
+        if r1 > nrows {
+            r1 = nrows;
+        }
+        if r0 > nrows {
+            r0 = nrows;
+        }
+    } else {
+        c0 = bound(k, t, nchunks);
+        c1 = bound(k + 1, t, nchunks);
+        r0 = c0 * 2048;
+        r1 = c1 * 2048;
+        if r1 > nrows {
+            r1 = nrows;
+        }
+    }
+    var job = make_job(heap, kind, xd, rs, d, yd, r0, r1, inner, w, c1 - c0);
+    var rest = 0;
+    borrow mut job as &!jk in {
+        let body = work;
+        let th = spawn(jk, body);
+        rest = fan(heap, kind, xd, rs, d, yd, inner, w, nrows, nchunks, k + 1, t, slots);
+        join(th);
+    }
+    let Job { a, b, out, st, lv, p } = job;
+    // the output of this thread, in place: reductions: its chunk roots at chunk c0; row kernels: its rows
+    borrow out as &ow in {
+        if kind == 4 {
+            copy_floats(slots[r0..r1], contents(ow), r1 - r0);
+        } else if kind == 5 {
+            copy_floats(slots[r0 * d..r1 * d], contents(ow), (r1 - r0) * d);
+        } else {
+            copy_floats(slots[c0 * w..c1 * w], contents(ow), (c1 - c0) * w);
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    unbox_slice(heap, out);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    unbox_slice(heap, p);
+    return rest;
+}
+
+// THE ONLY PLACE where partials of different threads meet: continue the global stack with the chunk roots in chunk order
+// (each root is an aligned subtree of 8 blocks, level 3; the last chunk may hold fewer blocks, its root is labelled 3 too:
+// docs/linalg.md section 2). The result is left in slot 0 of st. nchunks >= 1. `t` (the threads used) is NOT used: the
+// answer does not depend on it; it is a parameter only so that a mutant can use it (scripts/mutants_linalg.py, group par).
+pub fn combine_roots[&r, &s, &l](roots: &r [float], nchunks: int, w: int, t: int, st: &!s [float], lv: &!l [int]) -> [] int {
+    var sp = 0;
+    var c = 0;
+    while c < nchunks {
+        sp = order.settle_root(st, lv, sp, w, roots, c * w, 3);
+        c = c + 1;
+    }
+    order.finish(st, sp, w);
+    return 0;
+}
+
+// the threads actually used: at most the number of chunks
+pub fn threads_for(t: int, nchunks: int) -> [] int {
+    if t > nchunks {
+        return nchunks;
+    }
+    return t;
+}
+
+// chunks of 2048 rows in n rows
+pub fn chunks(n: int) -> [] int {
+    return (order.blocks(n) + 7) / 8;
+}
+
+// ---------------------------------------------------------------- entries
+
+// dot with t threads (t >= 1). Bits are those of dot.dot. Unit strides take the threaded path; anything else the sequential one.
+pub fn dot_par[&h, &x, &y](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yt: tensor.Tensor, yd: &y [float]) -> [heap, conc] tensor.FRes {
+    if ml_threads_ok(t) != 0 {
+        return tensor.fres(refuse.threads(), 0.0);
+    }
+    let nchunks = chunks(xt.s0);
+    if t == 1 || nchunks < 2 || xt.t0 != 1 || yt.t0 != 1 || xt.s0 != yt.s0 || tensor.expect(xt, 1, len(xd)) != 0 || tensor.expect(yt, 1, len(yd)) != 0 {
+        return dot.dot(heap, xt, xd, yt, yd);
+    }
+    let te = threads_for(t, nchunks);
+    let slots = box_slice(heap, nchunks + 8, 0.0);
+    let st = box_slice(heap, 41, 0.0);
+    let lv = box_slice(heap, 41, 0);
+    var v = 0.0;
+    borrow mut slots as &!sw in {
+        fan(heap, 1, xd[xt.off..xt.off + xt.s0], 1, 1, yd[yt.off..yt.off + yt.s0], 0, 1, xt.s0, nchunks, 0, te, contents(sw));
+    }
+    borrow slots as &sr in {
+        borrow mut st as &!stw in {
+            borrow mut lv as &!lvw in {
+                combine_roots(contents(sr), nchunks, 1, te, contents(stw), contents(lvw));
+                v = contents(stw)[0];
+            }
+        }
+    }
+    unbox_slice(heap, slots);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    return tensor.fres(0, v);
+}
+
+fn ml_threads_ok(t: int) -> [] int {
+    if t < 1 || t > 64 {
+        return 1;
+    }
+    return 0;
+}
+
+pub fn gemv_t_par[&h, &x, &r, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], rt: tensor.Tensor, rd: &r [float], gt: tensor.Tensor, gd: &!g [float]) -> [heap, conc] int {
+    if ml_threads_ok(t) != 0 {
+        return refuse.threads();
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    let nchunks = chunks(n);
+    if t == 1 || nchunks < 2 || xt.t1 != 1 || xt.t0 < 0 || rt.t0 != 1 || rt.s0 != n || gt.s0 != d || tensor.expect(xt, 2, len(xd)) != 0 || tensor.expect(rt, 1, len(rd)) != 0 || tensor.expect(gt, 1, len(gd)) != 0 || tensor.writable(gt) != 0 || d == 0 {
+        return gemv.gemv_t(heap, xt, xd, rt, rd, gt, gd);
+    }
+    let te = threads_for(t, nchunks);
+    let slots = box_slice(heap, nchunks * d + 8, 0.0);
+    let st = box_slice(heap, gemv.stack_len(d) + 1, 0.0);
+    let lv = box_slice(heap, 41, 0);
+    borrow mut slots as &!sw in {
+        fan(heap, 2, xd[xt.off..len(xd)], xt.t0, d, rd[rt.off..rt.off + n], 0, d, n, nchunks, 0, te, contents(sw));
+    }
+    borrow slots as &sr in {
+        borrow mut st as &!stw in {
+            borrow mut lv as &!lvw in {
+                combine_roots(contents(sr), nchunks, d, te, contents(stw), contents(lvw));
+                var j = 0;
+                while j < d {
+                    gd[gt.off + j * gt.t0] = contents(stw)[j];
+                    j = j + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, slots);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    return 0;
+}
+
+pub fn syrk_par[&h, &x, &c](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], ct: tensor.Tensor, cd: &!c [float]) -> [heap, conc] int {
+    if ml_threads_ok(t) != 0 {
+        return refuse.threads();
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    let nchunks = chunks(n);
+    if t == 1 || nchunks < 2 || xt.t1 != 1 || xt.t0 < 0 || ct.s0 != d || ct.s1 != d || tensor.expect(xt, 2, len(xd)) != 0 || tensor.expect(ct, 2, len(cd)) != 0 || tensor.writable(ct) != 0 || d == 0 {
+        return syrk.syrk(heap, xt, xd, ct, cd);
+    }
+    let te = threads_for(t, nchunks);
+    let slots = box_slice(heap, nchunks * d * d + 8, 0.0);
+    let st = box_slice(heap, 40 * d * d + 1, 0.0);
+    let lv = box_slice(heap, 41, 0);
+    borrow mut slots as &!sw in {
+        fan(heap, 3, xd[xt.off..len(xd)], xt.t0, d, xd[0..0], 0, d * d, n, nchunks, 0, te, contents(sw));
+    }
+    borrow slots as &sr in {
+        borrow mut st as &!stw in {
+            borrow mut lv as &!lvw in {
+                combine_roots(contents(sr), nchunks, d * d, te, contents(stw), contents(lvw));
+                syrk.store_upper(contents(stw), ct, cd, d);
+            }
+        }
+    }
+    unbox_slice(heap, slots);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    return 0;
+}
+
+// y = X w with the rows cut among t threads (d <= 256, unit strides; otherwise sequential)
+pub fn gemv_n_par[&h, &x, &w, &y](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], wt: tensor.Tensor, wd: &w [float], yt: tensor.Tensor, yd: &!y [float]) -> [heap, conc] int {
+    if ml_threads_ok(t) != 0 {
+        return refuse.threads();
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    if t == 1 || n < 64 || d > 256 || d == 0 || xt.t1 != 1 || xt.t0 < 0 || wt.t0 != 1 || yt.t0 != 1 || wt.s0 != d || yt.s0 != n || tensor.expect(xt, 2, len(xd)) != 0 || tensor.expect(wt, 1, len(wd)) != 0 || tensor.expect(yt, 1, len(yd)) != 0 || tensor.writable(yt) != 0 {
+        return gemv.gemv_n(heap, xt, xd, wt, wd, yt, yd);
+    }
+    var te = t;
+    if te > n / 32 {
+        te = n / 32;
+    }
+    fan(heap, 4, xd[xt.off..len(xd)], xt.t0, d, wd[wt.off..wt.off + d], 0, 1, n, 0, 0, te, yd[yt.off..yt.off + n]);
+    return 0;
+}
+
+// C = A B with the rows of C cut among t threads (unit column strides; otherwise sequential)
+pub fn gemm_par[&h, &a, &b, &c](heap: &!h Heap, t: int, at: tensor.Tensor, ad: &a [float], bt: tensor.Tensor, bd: &b [float], ct: tensor.Tensor, cd: &!c [float]) -> [heap, conc] int {
+    if ml_threads_ok(t) != 0 {
+        return refuse.threads();
+    }
+    let m = at.s0;
+    let p = at.s1;
+    let n = bt.s1;
+    if t == 1 || m < 8 || p == 0 || n == 0 || at.t1 != 1 || bt.t1 != 1 || ct.t1 != 1 || at.t0 < 0 || bt.t0 != n || ct.t0 != n || bt.s0 != p || ct.s0 != m || ct.s1 != n || tensor.expect(at, 2, len(ad)) != 0 || tensor.expect(bt, 2, len(bd)) != 0 || tensor.expect(ct, 2, len(cd)) != 0 || tensor.writable(ct) != 0 {
+        return gemm.gemm(heap, at, ad, bt, bd, ct, cd);
+    }
+    var te = t;
+    if te > m / 4 {
+        te = m / 4;
+    }
+    fan(heap, 5, ad[at.off..len(ad)], at.t0, n, bd[bt.off..bt.off + p * n], p, 16, m, 0, 0, te, cd[ct.off..ct.off + m * n]);
+    return 0;
+}

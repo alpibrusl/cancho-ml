@@ -94,6 +94,9 @@ fn test_stages_use_the_registry() -> [] int {
     if kmeans.kind() != kinds.stream_kmeans() {
         bad = bad + 1;
     }
+    if splits.kind_strat_holdout() != kinds.stream_strat_holdout() || splits.kind_group() != kinds.stream_group() {
+        bad = bad + 1;
+    }
     if splits.kind_train_test() != kinds.stream_train_test() || splits.kind_kfold() != kinds.stream_kfold() || splits.kind_stratified() != kinds.stream_stratified() {
         bad = bad + 1;
     }

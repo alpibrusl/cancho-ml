@@ -18,7 +18,7 @@ import pathlib
 import sys
 import unittest
 
-from harness import ROOT
+from harness import ROOT, runs_here
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import golden_constant  # noqa: E402
@@ -33,7 +33,13 @@ CHANGED = {
     "ml-plan-model-not-built": "1d966eb36f993ca466d7c2856019eedc074988a9803d05363d4d53da0ef662ed",
     # the message of the refusal lists the models that can take the flag: kmeans is one of them
     "args-conflict-step-needs-a-model": "c04310948bae0754f026ed3b753c7ad1b0039b2e3b4beb96847dd65ef5d3ea23",
+    # the answer of a fit or an eval with --split gained `split.spec`, the canonical text of the split (docs/splits.md section 2); status and files are the record's
+    "fit-linear-split-seed-threads": "084103d88c9e88343acc673eabc4d17b661a77e652a1b2057492a82dcc763730",
+    "fit-logistic-split-holdout": "a2496e4b0e478267fbd4e33c1e9a75076177950551ac1fb7d69918f848bfc971",
+    "eval-linear-split": "f77f8244fa21bfadecf460ef363642ecebcc99f15233956594f68d403d55ef46",
 }
+# the cases whose answer gained `split.spec` after the re-record of M22: the pin is the hash of the answer with it, the record keeps the hash of the answer without it
+SPLIT_ANSWERS = {"fit-linear-split-seed-threads", "fit-logistic-split-holdout", "eval-linear-split"}
 # the file of that case that changed with it: the plan the fixture writes
 CHANGED_FILES = {"ml-plan-model-not-built": {"p.txt": hashlib.sha256(b"model kind=constant task=regression\n").hexdigest()}}
 
@@ -47,7 +53,7 @@ class NumericBaseline(unittest.TestCase):
     def test_every_old_fixture_gives_the_bytes_of_the_baseline(self):
         failures = []
         for c in golden_numeric.cases():
-            if c["id"] not in GOLDEN:
+            if c["id"] not in GOLDEN or not runs_here(c):
                 continue
             got = golden_constant.record(c)
             want = dict(GOLDEN[c["id"]])
@@ -62,8 +68,12 @@ class NumericBaseline(unittest.TestCase):
     def test_the_one_exception_is_the_old_hash_and_nothing_else(self):
         """the record of the deliberate re-record of M22 (docs/tracking.md section 8) holds the hash of the text these cases print now: the exceptions equal it"""
         for k, new in CHANGED.items():
-            self.assertEqual(GOLDEN[k]["stdout"], new)
-        self.assertEqual(sorted(CHANGED), ["args-conflict-step-needs-a-model", "ml-plan-model-not-built", "ml-plan-unknown-step"])
+            if k in SPLIT_ANSWERS:
+                # the record is the re-record of M22 (section 7 of the model file), written before the answer gained `split.spec`: it keeps the hash without it
+                self.assertNotEqual(GOLDEN[k]["stdout"], new)
+            else:
+                self.assertEqual(GOLDEN[k]["stdout"], new)
+        self.assertEqual(sorted(CHANGED), ["args-conflict-step-needs-a-model", "eval-linear-split", "fit-linear-split-seed-threads", "fit-logistic-split-holdout", "ml-plan-model-not-built", "ml-plan-unknown-step"])
 
     def test_the_record_holds_the_wired_models(self):
         wired = [k for k in GOLDEN if "linear" in k or "logistic" in k or "pipeline" in k or "plan" in k or "step" in k]

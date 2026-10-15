@@ -89,8 +89,18 @@ pub fn stream_stratified() -> [] int {
     return 6;
 }
 
+// stratified holdout of `ml fit --split ... --stratify` (docs/splits.md section 3), index = the class rank
+pub fn stream_strat_holdout() -> [] int {
+    return 7;
+}
+
+// the shuffle of the groups of `--split-group` (docs/splits.md section 3), index = the repeat
+pub fn stream_group() -> [] int {
+    return 8;
+}
+
 pub fn stream_count() -> [] int {
-    return 6;
+    return 8;
 }
 
 // ---- section tags of the CML1 file (docs/design.md section 4.1; only tools/ml/mfile.cho and lib/pipeline/file.cho write them)
@@ -273,6 +283,12 @@ pub fn stream_at(i: int) -> [] int {
     }
     if i == 6 {
         return stream_stratified();
+    }
+    if i == 7 {
+        return stream_strat_holdout();
+    }
+    if i == 8 {
+        return stream_group();
     }
     return 0;
 }

@@ -6,7 +6,7 @@
 
 **Status: early, alpha, not for production.** `ml` builds six models. `--model constant` is the baseline: the training mean for a regression, the majority class for a classification. `--model linear` (least squares, ridge with `--l2`), `--model logistic` (binary, Newton's method), `--model tree` (a CART decision tree with histogram splits) and `--model forest` (bagged trees, threaded over trees; `--task`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes`) and `--model kmeans` (a clustering with no target: `--k` centres, a fixed number of Lloyd `--iterations`, a seeded `--init`) go through a pipeline of steps (`impute`, `scale`, `encode`, `bucket`, and `freq` and `hash` for text) that `--step` or `--plan` describes and that is fitted on the training rows and stored, with the model, in **one** file: `predict` and `eval` apply the stored steps, and no flag can apply another transformation. `ml` reads integer, decimal and float CSV columns, takes an empty cell as a missing value that the plan must impute, holds rows out with a seeded `--split`, threads `fit` with `--threads`, gives probabilities with `predict --proba`, and scores with accuracy, precision, recall, F1, ROC-AUC, log-loss, RMSE, MAE and R2 (and, for k-means, the inertia). Text columns declared with `--cat` are read into a bounded dictionary, and the steps `encode` (one-hot, label), `freq` (the share of the training rows) and `hash` (SHA-256, a fixed number of buckets) turn them into numbers, with a rare-category bucket (`min-count`, the category `__other__`) and rules for an unseen string (`unknown`) and an empty cell (`missing`). The model file of such a fit holds a **string table**: the fitted vocabulary of every categorical step, with the training strings and their counts, so `predict` and `eval` read the text columns by name from the file alone, count a string the training rows never held, and hash it into its bucket under a `hash` step. A declared column that no step reads is refused (`ml.input.categorical-not-encoded`). A tree or forest takes a missing cell itself and learns a side for it at each split, where linear and logistic refuse a missing cell that no `impute` step covers (`ml.input.missing-value`); a tree or forest fit takes at most 2^20 (1,048,576) training rows (`ml.input.too-many-rows`). A tree or forest file is model kind 7, with the summation order 3 (sequential sums: no lane sum reaches its bytes). k-means has no target: `fit` needs no `--target` and refuses one, the file's schema has no target column, `predict` prints the cluster of each row (and with `--distance` the squared distance to its centre) and `eval` the inertia, the rows of each cluster and the mean distance of each; a missing cell is refused as for linear and logistic. A k-means file is model kind 6, with the summation order 2. A model is a module (a manifest, a fixed adapter, generated glue, an admission script) so that the next one cannot add a float order, a capability or an unregistered refusal: [docs/modules.md](docs/modules.md). One pre-registered gate is red (tree regression against scikit-learn, below). The whole list, with what each item was measured as: [docs/status.md](docs/status.md).
 
-This repository has no CI workflow. `scripts/check.sh` runs every gate, and `scripts/check_docs.sh` checks this README and the project pages (see Contributing).
+A GitHub Actions workflow, `.github/workflows/ci.yml` ([docs/ci.md](docs/ci.md)), builds the pinned compiler and `ml`, `ml-predict` and `ml-serve` on `ubuntu-24.04` and `ubuntu-26.04` (Linux x86-64), `ubuntu-24.04-arm` (Linux aarch64) and `macos-26` (macOS arm64) and runs the fast gates and a cross-platform determinism gate on each; the full gate runs on request and nightly, and a tag `v*` publishes the binaries. `scripts/check.sh` runs every gate, and `scripts/check_docs.sh` checks this README and the project pages (see Contributing).
 
 ## One complete flow
 
@@ -97,20 +97,20 @@ A model file remembers what it was fitted on. Every `fit` writes a **provenance 
 ```console
 # Every fit can write a run record: canonical JSON, named by the hash of the inputs that determine the model (not the thread count), no timestamp, no payload
 $ ml fit --model logistic --target virginica --iterations 25 --l2 0 --track runs --output iris-lr.ml iris_train.csv
-{"path": "iris-lr.ml", "bytes": 704, "sha256": "acf3cd6dadb9b840b6f7f81e8fc8257f09d1088c87afb01f620daf3ed318e8a0", "run": {"id": "d48aff930ce97139f243c3ec98848342518d4b23a6cb4a7151ee7ff35d777d74", "dir": "runs", "file": "d48aff930ce97139f243c3ec98848342518d4b23a6cb4a7151ee7ff35d777d74.json", "written": true, "sha256": "b4b02eceb71acc559fb71e097bd334d13172423779fd1df80dc94feba7f15f79"}}
+{"path": "iris-lr.ml", "bytes": 704, "sha256": "acf3cd6dadb9b840b6f7f81e8fc8257f09d1088c87afb01f620daf3ed318e8a0", "run": {"id": "3b5d6f415f44ef8c1346226f2df2f3a0257fa35ce8e4e7e1a7bb7bdb0497e0a7", "dir": "runs", "file": "3b5d6f415f44ef8c1346226f2df2f3a0257fa35ce8e4e7e1a7bb7bdb0497e0a7.json", "written": true, "sha256": "5f580f47ee7150678346c9d2fc98ff4f591cff189a57f8d27942a0dbb3803e43"}}
 $ ml fit --model forest --task classification --trees 20 --seed 2 --target virginica --track runs --output iris-rf.ml iris_train.csv
-{"path": "iris-rf.ml", "bytes": 17994, "sha256": "8e860be1f7367d4e42fc5f17af092b395dc67d79f795e720aca9dfffeed22647", "run": {"id": "e3a39f5fb6c8bea94a560d93e847c58b88e51d6e8d99237a0c879fa7badef5c9", "dir": "runs", "file": "e3a39f5fb6c8bea94a560d93e847c58b88e51d6e8d99237a0c879fa7badef5c9.json", "written": true, "sha256": "189174d5da1caa6c7b544e5990de8eb2dc7d0deeda2d4c6e8b25be9b89e15282"}}
+{"path": "iris-rf.ml", "bytes": 17994, "sha256": "8e860be1f7367d4e42fc5f17af092b395dc67d79f795e720aca9dfffeed22647", "run": {"id": "033518b9e6a7cbe7b2ad8b8f99bb10229d88b061dca20c421b301433dd664fc6", "dir": "runs", "file": "033518b9e6a7cbe7b2ad8b8f99bb10229d88b061dca20c421b301433dd664fc6.json", "written": true, "sha256": "77806366e26a334a55bb7d9cc71f36e4b5805ee74afa7531fd346740b30a7f53"}}
 # The directory lists the runs; a run is shown whole, and two are compared by the inputs that differ and the metrics side by side
 $ ml runs list runs
-{"count": 2, "runs": [{"id": "d48aff930ce97139f243c3ec98848342518d4b23a6cb4a7151ee7ff35d777d74", "model": "logistic", "task": "classification", "data_sha256": "e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b", "model_sha256": "acf3cd6dadb9b840b6f7f81e8fc8257f09d1088c87afb01f620daf3ed318e8a0", "train_rows": 75, "metrics_on": "train", "evals": 0}, {"id": "e3a39f5fb6c8bea94a560d93e847c58b88e51d6e8d99237a0c879fa7badef5c9", "model": "forest", "task": "classification", "data_sha256": "e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b", "model_sha256": "8e860be1f7367d4e42fc5f17af092b395dc67d79f795e720aca9dfffeed22647", "train_rows": 75, "metrics_on": "train", "evals": 0}]}
-$ ml runs show runs d48aff930ce97139f243c3ec98848342518d4b23a6cb4a7151ee7ff35d777d74
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"record":{"schema":"ml.run.v1","id":"d48aff930ce97139f243c3ec98848342518d4b23a6cb4a7151ee7ff35d777d74","inputs":{"data":{"path":"iris_train.csv","bytes":1422,"sha256":"e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b","rows":75},"target":"virginica","task":"classification","plan":"model kind=logistic iterations=25 l2=0.0\n","seed":0,"positive":null,"…
-$ ml runs compare runs d48aff930ce97139f243c3ec98848342518d4b23a6cb4a7151ee7ff35d777d74 e3a39f5fb6c8bea94a560d93e847c58b88e51d6e8d99237a0c879fa7badef5c9
+{"count": 2, "runs": [{"id": "033518b9e6a7cbe7b2ad8b8f99bb10229d88b061dca20c421b301433dd664fc6", "model": "forest", "task": "classification", "data_sha256": "e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b", "model_sha256": "8e860be1f7367d4e42fc5f17af092b395dc67d79f795e720aca9dfffeed22647", "train_rows": 75, "metrics_on": "train", "evals": 0}, {"id": "3b5d6f415f44ef8c1346226f2df2f3a0257fa35ce8e4e7e1a7bb7bdb0497e0a7", "model": "logistic", "task": "classification", "data_sha256": "e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b", "model_sha256": "acf3cd6dadb9b840b6f7f81e8fc8257f09d1088c87afb01f620daf3ed318e8a0", "train_rows": 75, "metrics_on": "train", "evals": 0}]}
+$ ml runs show runs 3b5d6f415f44ef8c1346226f2df2f3a0257fa35ce8e4e7e1a7bb7bdb0497e0a7
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"record":{"schema":"ml.run.v1","id":"3b5d6f415f44ef8c1346226f2df2f3a0257fa35ce8e4e7e1a7bb7bdb0497e0a7","inputs":{"data":{"path":"iris_train.csv","bytes":1422,"sha256":"e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b","rows":75},"target":"virginica","task":"classification","plan":"model kind=logistic iterations=25 l2=0.0\n","seed":0,"positive":null,"…
+$ ml runs compare runs 3b5d6f415f44ef8c1346226f2df2f3a0257fa35ce8e4e7e1a7bb7bdb0497e0a7 033518b9e6a7cbe7b2ad8b8f99bb10229d88b061dca20c421b301433dd664fc6
 {"model_equal": false, "inputs": [{"key": "plan", "a": "model kind=logistic iterations=25 l2=0.0\n", "b": "model kind=forest task=classification trees=20 max-depth=8 min-leaf=1 bins=64 mtry=0 bootstrap=1 max-nodes=4194304\n"}, {"key": "seed", "a": 0, "b": 2}, {"key": "sum_order", "a": 2, "b": 3}]}
 # A run is replayable: verify refits in memory and compares the SHA-256 of the model file, at any thread count
-$ ml runs verify runs d48aff930ce97139f243c3ec98848342518d4b23a6cb4a7151ee7ff35d777d74
+$ ml runs verify runs 3b5d6f415f44ef8c1346226f2df2f3a0257fa35ce8e4e7e1a7bb7bdb0497e0a7
 {"verified": true, "model_sha256": "acf3cd6dadb9b840b6f7f81e8fc8257f09d1088c87afb01f620daf3ed318e8a0", "threads": 1}
-$ ml runs verify --threads 8 runs e3a39f5fb6c8bea94a560d93e847c58b88e51d6e8d99237a0c879fa7badef5c9
+$ ml runs verify --threads 8 runs 033518b9e6a7cbe7b2ad8b8f99bb10229d88b061dca20c421b301433dd664fc6
 {"verified": true, "model_sha256": "8e860be1f7367d4e42fc5f17af092b395dc67d79f795e720aca9dfffeed22647", "threads": 8}
 # eval says whether it scored the file the model was fitted on, and counts the cells outside the range of the training rows
 $ ml eval --model-file iris-lr.ml --track runs iris_train.csv
@@ -183,7 +183,7 @@ Most ML tools optimise for how many models they offer. `ml` is built to be predi
 
 * **Explicit types.** A column is an integer, a decimal (an exact mantissa and a scale) or a float (the nearest double, ties to even, read by cancho-table's exact reader). `nan`, `inf`, an empty cell and a cell that is not a number are refused, with the line and the column; `--drop` ignores a column. [docs/reader.md](docs/reader.md), [docs/cli.md](docs/cli.md)
 * **Exact where a sum decides.** The mean of an integer or decimal target and the sum of squared errors are exact integers, kept in limbs, not floats; a float target is summed exactly and rounded once. A test compares every digit with Python's `fractions.Fraction`. The one step that is not exact, the `rmse` (three IEEE operations after the exact sum), is said so in the document. [docs/cli.md](docs/cli.md) section 3
-* **The same bytes.** A model file holds no timestamp, host or path. The same data, plan and seed give the same model bytes whatever the working directory, the spelling of the path or the repetition, and at every `--threads` from 1 to 16 (tested on one Mac, for linear, logistic, k-means, tree and forest); across machines it is **not tested**. [docs/cli.md](docs/cli.md) section 6, [docs/linalg.md](docs/linalg.md) section 5.4
+* **The same bytes.** A model file holds no timestamp, host or path. The same data, plan and seed give the same model bytes whatever the working directory, the spelling of the path or the repetition, and at every `--threads` from 1 to 16 (tested on one Mac, for linear, logistic, k-means, tree and forest); across machines it holds for 22 fits on macOS arm64 and Linux x86-64 and is **not tested** on any other platform (see the limits below). [docs/cli.md](docs/cli.md) section 6, [docs/linalg.md](docs/linalg.md) section 5.4
 * **Bounded resource use.** Rows, columns, cells, line length, model file size, log size and the categorical dictionary each have a flag, a default and a ceiling, checked before anything sized by the input is allocated. Peak memory is measured for one case, the reader's refusal of a 200 MB file (1.5 MB, `docs/reader.md` section 6); no gate measures the memory of a fit. `ml introspect` lists the limits. [docs/cli.md](docs/cli.md) section 2.2
 * **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, no standard input, and no write by path. `scripts/manifest.py --check` fails if the binary differs from the committed [`manifests/ml.authority.json`](manifests/ml.authority.json). [docs/cli.md](docs/cli.md) section 6
 * **Machine-readable errors.** One JSON line against a schema (`ml.v1`); a refusal is `{code, rule, message, hint, repair, detail}` with a stable `<area>.<name>` rule tag. [docs/design.md](docs/design.md) section 8
@@ -328,7 +328,7 @@ $ ml eval --model-file damaged.ml houses.csv
 
 ### It says what it does not do
 
-The `--model` list is the list of what is built. There are no stand-in models, and a test pins that.
+The `--model` list is the list of what is built. There are no stand-in models, and a test pins that. A prediction that is not a finite number (a feature near the largest double times a coefficient above 1) is a refusal too, `ml.predict.non-finite`, with the row and the column in `detail` and no cell written; `predict`, `ml-predict`, `eval` and `ml-serve` raise it from one function, over every row scored and not only the page ([docs/nonfinite.md](docs/nonfinite.md)).
 
 <!-- gen:t-honest -->
 ```console
@@ -338,6 +338,9 @@ $ ml fit --model knn --target price --output knn.ml houses.csv
 $ ml fit --target prize --output typo.ml houses.csv
 {"rule": "ml.input.unknown-column", "hint": "names are compared exactly, byte for byte", "detail": {"flag": "--target", "name": "prize"}}
 # exit status 3; the rule, hint, detail of the JSON line it prints
+$ ml predict --model-file houses-big.ml --drop id huge.csv
+{"rule": "ml.predict.non-finite", "hint": "scale the inputs, or check or drop the row.", "detail": {"row": 1, "column": "prediction"}}
+# exit status 8; the rule, hint, detail of the JSON line it prints
 ```
 <!-- /gen:t-honest -->
 
@@ -348,9 +351,77 @@ $ ml fit --target prize --output typo.ml houses.csv
 <!-- gen:t-split -->
 ```console
 $ ml fit --model linear --l2 0.1 --split train=0.8 --seed 3 --target price --output houses-lin.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"linear","task":"regression","rows":4,"columns":4,"target":"price","path":"houses-lin.ml","bytes":545,"sha256":"2fac81a3dfee5a79db81396d5a7b5ab20f1ea7cdd43ffea93de46a3cde3574f9","written":true,"summary":{"plan":"model kind=linear l2=0.1\n","steps":0,"features":3,"coefficients":[{"name":"id","value":"-1905.5649303915627"},{"name":"rooms","value":"-15667.071024324228"},{"name":"area","value":"3843.571373934476"}],"intercept":"25324.69546154733","split":{"train":4,"test":1,"seed":3},"holdout":{"rows":1,"on":"held-out","metrics":{"rmse":"8366.812920622935","mae":"8366.812920622935","r2":null}}}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"linear","task":"regression","rows":4,"columns":4,"target":"price","path":"houses-lin.ml","bytes":545,"sha256":"2fac81a3dfee5a79db81396d5a7b5ab20f1ea7cdd43ffea93de46a3cde3574f9","written":true,"summary":{"plan":"model kind=linear l2=0.1\n","steps":0,"features":3,"coefficients":[{"name":"id","value":"-1905.5649303915627"},{"name":"rooms","value":"-15667.071024324228"},{"name":"area","value":"3843.571373934476"}],"intercept":"25324.69546154733","split":{"train":4,"test":1,"seed":3,"spec":"holdout train=0.8 seed=3"},"holdout":{"rows":1,"on":"held-out","metrics":{"rmse":"8366.812920622935","mae":"8366.812920622935","r2":null}}}},"meta":{"version":"0.1.0"}}
 ```
 <!-- /gen:t-split -->
+
+### Splits and cross-validation
+
+`--split train=F` is a seeded random holdout; three flags change which rows are held out, and a verb scores a model by k-fold cross-validation. The reasons, the algorithms and the gates are in [docs/splits.md](docs/splits.md).
+
+| flag | what it does |
+|---|---|
+| `--stratify` | keeps the class proportions: per class the held-out rows (or the rows of a fold) are the floor or the ceiling of its exact share. A classification target only |
+| `--split-group COLUMN` | all the rows of a group are on one side (or in one fold). The column may be text or an integer; groups are compared byte for byte |
+| `--split-by time:COLUMN` | orders the rows by COLUMN, a number or an ISO-8601 date or datetime: the oldest rows train and the newest test; with `cv` the folds are an expanding window. Ties keep the order of the file |
+| `ml cv --folds K --repeats R` | `K` from 2 to 20 folds, `R` from 1 to 10 repeats; scores the model on every held-out fold and writes no file |
+| `--emit-folds` | puts the fold of every row (file order) in the answer, so a run can be replayed |
+
+At most one of the three strategies per command: they are different algorithms, and `ml.split.combination` refuses two. A text column that a rule reads still needs `--drop` when it is not a feature. Every fitted step (impute, scale, bucket, encode, freq, hash and the categorical vocabulary) is fitted on the training rows of each fold alone, by the function `fit` uses, and the held-out rows go through the stored steps, as `eval` does: a test in the repository cuts the fold files itself, runs `ml fit` and `ml eval` on them and compares the metrics of every fold with those of `ml cv`, string for string. A mutant that fits the steps on all rows fails that test. `summary.split.spec` and `split` carry one line that names any split (`holdout train=0.8 stratify seed=1`, `cv folds=5 repeats=1 group=customer seed=3`).
+
+The standard deviation is the sample one (divisor `K * R - 1`). The assignment is the library's seeded stream, not scikit-learn's, so the folds differ from `KFold(shuffle=True)`; what is compared with scikit-learn is the invariants and the metrics on the same explicit folds. `visits.csv` is generated data (`docs/examples/data/gen_visits.py`): 12 customers, 10 visits each, so the metrics show how the commands work and nothing about customers.
+
+<!-- gen:splitflow -->
+```console
+# A holdout that keeps the class proportions: 426 rows, 20 percent held out, per class the floor or the ceiling of its share
+$ ml fit --model tree --task classification --max-depth 4 --target benign --split train=0.8 --stratify --seed 7 --output bc.ml breast_cancer_train.csv
+{"split":{"train":340,"test":86,"seed":7,"spec":"holdout train=0.8 stratify seed=7"},"holdout":{"rows":86,"on":"held-out","metrics":{"accuracy":"0.9418604651162791","precision":"0.9454545454545454","recall":"0.9629629629629629","f1":"0.9541284403669725","roc_auc":"0.9461805555555556","log_loss":"1.3089414342386103"}}}
+# visits.csv: 12 customers with 10 visits each, an ISO date, a basket, the item count and whether the customer came back. The newest quarter of the visits is held out (the date column is dropped as a feature, not as a rule)
+$ ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-by time:visit_date --output visits-time.ml visits.csv
+{"split":{"train":90,"test":30,"seed":0,"spec":"holdout train=0.75 time=visit_date seed=0"},"holdout":{"rows":30,"on":"held-out","metrics":{"accuracy":"0.4","precision":"0.0","recall":"0.0","f1":"0.0","roc_auc":"0.5429864253393665","log_loss":"2.255239329249321"}}}
+# No customer on both sides: whole customers are held out
+$ ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-group customer --seed 2 --output visits-group.ml visits.csv
+{"split":{"train":90,"test":30,"seed":2,"spec":"holdout train=0.75 group=customer seed=2"},"holdout":{"rows":30,"on":"held-out","metrics":{"accuracy":"0.43333333333333335","precision":"0.3333333333333333","recall":"0.7","f1":"0.45161290322580644","roc_auc":"0.5425","log_loss":"3.080977491776084"}}}
+# Two rules for one split are refused, not blended
+$ ml fit --model tree --task classification --target returning --drop customer,visit_date --split train=0.75 --stratify --split-by time:visit_date --output x.ml visits.csv
+{"rule": "ml.split.combination", "hint": "keep one of them.", "repair": {"kind": "none", "reason": "keep one of the two: they are different algorithms, and dropping a group or a time rule can leak rows between the sides"}, "detail": {"flag": "--stratify", "other": "--split-by"}}
+# exit status 2; the rule, hint, repair, detail of the JSON line it prints
+# Five-fold cross-validation, stratified: every step is fitted on the four training folds of each fold alone. Per-fold metrics, then the mean and the sample standard deviation
+$ ml --format text cv --model logistic --task classification --step 'scale column=* kind=standard' --l2 0.1 --target virginica --folds 5 --seed 1 --stratify iris_train.csv
+cv: logistic classification, 75 rows, cv folds=5 repeats=1 stratify seed=1
+repeat 0 fold 0: train 60 test 15 accuracy=0.9333333333333333 precision=0.875 recall=1.0 f1=0.9333333333333333 roc_auc=0.9821428571428571 log_loss=0.2558531837774219
+repeat 0 fold 1: train 60 test 15 accuracy=0.9333333333333333 precision=1.0 recall=0.8571428571428571 f1=0.9230769230769231 roc_auc=1.0 log_loss=0.27371716218030023
+repeat 0 fold 2: train 60 test 15 accuracy=1.0 precision=1.0 recall=1.0 f1=1.0 roc_auc=1.0 log_loss=0.20536677751917837
+repeat 0 fold 3: train 60 test 15 accuracy=0.8666666666666667 precision=0.8 recall=1.0 f1=0.8888888888888888 roc_auc=0.9821428571428571 log_loss=0.3373620786165024
+repeat 0 fold 4: train 60 test 15 accuracy=0.9333333333333333 precision=1.0 recall=0.875 f1=0.9333333333333333 roc_auc=1.0 log_loss=0.29570178889623133
+accuracy mean 0.9333333333333332 std 0.04714045207910316
+precision mean 0.9349999999999999 std 0.09287087810503354
+recall mean 0.9464285714285715 std 0.07362688617174395
+f1 mean 0.9357264957264956 std 0.04029984772479705
+roc_auc mean 0.9928571428571429 std 0.009780759955449421
+log_loss mean 0.27360019819792686 std 0.04879761163429506
+$ ml --format text cv --model linear --step 'scale column=* kind=standard' --target progression --folds 5 --seed 1 diabetes_train.csv
+cv: linear regression, 331 rows, cv folds=5 repeats=1 seed=1
+repeat 0 fold 0: train 264 test 67 rmse=51.26915634092274 mae=40.079441504420245 r2=0.5444848475040903
+repeat 0 fold 1: train 265 test 66 rmse=56.47637996728807 mae=46.982995159007956 r2=0.4944111209775581
+repeat 0 fold 2: train 265 test 66 rmse=55.34388490502349 mae=46.384195252405554 r2=0.5269757178495083
+repeat 0 fold 3: train 265 test 66 rmse=55.00427633532207 mae=43.8457621841562 r2=0.5251682642236672
+repeat 0 fold 4: train 265 test 66 rmse=50.79903754016721 mae=41.62632028610556 r2=0.5706964245749535
+rmse mean 53.77854701774472 std 2.569314888294932
+mae mean 43.7837428772191 std 2.9739592721548647
+r2 mean 0.5323472750259555 std 0.028006791780639296
+# An expanding window: fold i trains on everything before block i + 1 and tests on that block
+$ ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-by time:visit_date --folds 4 visits.csv
+{"split":"cv folds=4 repeats=1 time=visit_date seed=0","strategy":"time","summary":{"count":4,"std":"sample","metrics":{"accuracy":{"mean":"0.625","std":"0.21783871029664056","n":4},"precision":{"mean":null,"std":null,"n":3},"recall":{"mean":"0.47619047619047616","std":"0.3868589716493314","n":4},"f1":{"mean":"0.44940476190476186","std":"0.33872830848485314","n":4},"roc_auc":{"mean":"0.6960930205415499","std":"0.18341201780759583","n":4},"log_loss":{"mean":"3.206846846909722","std":"1.3505716186412535","n":4}}}}
+# Whole customers per fold, and the assignment of every row (file order) as data, so that a run can be replayed
+$ ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-group customer --folds 4 --seed 5 --emit-folds visits.csv
+{"split":"cv folds=4 repeats=1 group=customer seed=5","strategy":"group","assignment":{"repeats":1,"rows":120,"folds":[[1,1,1,0,3,1,3,2,3,0,0,1,0,2,3,2,3,3,0,0,0,3,1,2,2,0,2,1,0,2,2,3,3,3,0,0,3,0,0,2,1,3,1,1,2,3,2,3,2,1,2,2,0,0,2,0,3,3,3,2,2,3,1,0,0,1,0,1,2,2,1,1,3,0,1,2,1,0,3,2,1,1,0,3,1,1,0,1,0,3,0,0,3,1,3,3,1,2,1,3,3,2,2,1,2,3,2,2,2,0,0,3,1,1,3,0,0,2,2,1]]}}
+# A regression has no classes to keep in proportion. The refusal offers the corrected command
+$ ml cv --model linear --step 'scale column=* kind=standard' --target progression --stratify diabetes_train.csv
+{"rule": "ml.split.stratify-target", "hint": "drop --stratify, or use --task classification with a model that has a class target.", "repair": {"kind": "retry", "argv": ["ml", "cv", "--model", "linear", "--step", "scale column=* kind=standard", "--target", "progression", "diabetes_train.csv"]}}
+# exit status 2; the rule, hint, repair of the JSON line it prints
+```
+<!-- /gen:splitflow -->
 
 ### Text columns: encode, fit, then predict and eval from the file
 
@@ -376,7 +447,7 @@ $ ml eval --model-file pets.ml --drop id pets.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":76,"on":"train","positive":1,"metrics":{"accuracy":"0.8289473684210527","precision":"0.8444444444444444","recall":"0.8636363636363636","f1":"0.8539325842696629","roc_auc":"0.8742897727272727","log_loss":"0.4847004611714956"},"unknown_categories":0,"out_of_range":{"cells":0,"rows":0,"columns":[]}},"meta":{"version":"0.1.0"}}
 # species hashed to 8 columns and city as a label: the file holds no string of species, and an unseen species lands in the bucket it hashes to
 $ ml fit --model logistic --cat species,city --step 'hash column=species buckets=8 missing=zero;encode column=city kind=label missing=zero;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets-hash.ml pets.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":57,"columns":5,"target":"adopted","path":"pets-hash.ml","bytes":1213,"sha256":"e17c13f3d0719c7403516862fe2d07286cfddffde095932e6a0babd71e492bd8","written":true,"summary":{"plan":"hash column=species buckets=8 missing=zero\nencode column=city kind=label max-categories=64 unknown=ignore missing=zero\nscale column=age,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":3,"steps_sha256":"2c9c79220429bb0793ac19d974f565566b77a08b03492bda2ccc1f26b3eefa86","categorical":[{"step":1,"kind":"hash","column":"species","categories":0,"output_columns":8},{"step":2,"kind":"label","column":"city","categories":3,"output_columns":1}],"string_table":{"entries":2,"strings":3,"pool_bytes":14,"bytes":241,"sha256":"b7ca8fa50923607db62ab75bf2e7ecd7267edaa4d78704e3af296ef7f1747a9f"},"features":11,"coefficients":[{"name":"age","value":"-0.6875723955849204"},{"name":"visits","value":"0.4151426140617374"},{"name":"species#0","value":"0.25559046581946027"},{"name":"species#1","value":"0.0"},{"name":"species#2","value":"0.0"},{"name":"species#3","value":"-0.07144881420245953"},{"name":"species#4","value":"0.2628888663105544"},{"name":"species#5","value":"0.0"},{"name":"species#6","value":"0.0"},{"name":"species#7","value":"-0.44703051792755505"},{"name":"city","value":"-0.35100088010733876"}],"intercept":"0.5909043953829989","classes":[0,1],"positive":1,"split":{"train":57,"test":19,"seed":3},"holdout":{"rows":19,"on":"held-out","metrics":{"accuracy":"0.7894736842105263","precision":"0.8181818181818182","recall":"0.8181818181818182","f1":"0.8181818181818182","roc_auc":"0.9318181818181818","log_loss":"0.4278208227654049"}}}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":57,"columns":5,"target":"adopted","path":"pets-hash.ml","bytes":1213,"sha256":"e17c13f3d0719c7403516862fe2d07286cfddffde095932e6a0babd71e492bd8","written":true,"summary":{"plan":"hash column=species buckets=8 missing=zero\nencode column=city kind=label max-categories=64 unknown=ignore missing=zero\nscale column=age,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":3,"steps_sha256":"2c9c79220429bb0793ac19d974f565566b77a08b03492bda2ccc1f26b3eefa86","categorical":[{"step":1,"kind":"hash","column":"species","categories":0,"output_columns":8},{"step":2,"kind":"label","column":"city","categories":3,"output_columns":1}],"string_table":{"entries":2,"strings":3,"pool_bytes":14,"bytes":241,"sha256":"b7ca8fa50923607db62ab75bf2e7ecd7267edaa4d78704e3af296ef7f1747a9f"},"features":11,"coefficients":[{"name":"age","value":"-0.6875723955849204"},{"name":"visits","value":"0.4151426140617374"},{"name":"species#0","value":"0.25559046581946027"},{"name":"species#1","value":"0.0"},{"name":"species#2","value":"0.0"},{"name":"species#3","value":"-0.07144881420245953"},{"name":"species#4","value":"0.2628888663105544"},{"name":"species#5","value":"0.0"},{"name":"species#6","value":"0.0"},{"name":"species#7","value":"-0.44703051792755505"},{"name":"city","value":"-0.35100088010733876"}],"intercept":"0.5909043953829989","classes":[0,1],"positive":1,"split":{"train":57,"test":19,"seed":3,"spec":"holdout train=0.75 seed=3"},"holdout":{"rows":19,"on":"held-out","metrics":{"accuracy":"0.7894736842105263","precision":"0.8181818181818182","recall":"0.8181818181818182","f1":"0.8181818181818182","roc_auc":"0.9318181818181818","log_loss":"0.4278208227654049"}}}},"meta":{"version":"0.1.0"}}
 $ ml predict --model-file pets-hash.ml --proba newpets.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","columns":["label","probability"],"rows":[["1","0.8560974272954618"],["1","0.5502566884050817"],["1","0.8204410175517777"]],"row_count":3,"total_rows":3,"truncated":false,"next":null,"unknown_categories":1,"out_of_range":{"cells":0,"rows":0,"columns":[]},"ignored_columns":[]},"meta":{"version":"0.1.0"}}
 ```
@@ -461,6 +532,19 @@ $ curl -s localhost:8080/openapi.json
 
 The model is read at start and changed by restarting. There is no TLS, no reload and no request deadline beyond the idle time. [docs/serving-http.md](docs/serving-http.md) has the endpoints, the status of every refusal, the limits and the gates.
 
+### The numeric stores other repositories pin
+
+The random generator, the matrix and its missing-cell bitmap, the exact sums, the linear algebra (Cholesky and the solves among it) and the ranks and splits are published as 23 pinned stores under `.cancho-vcs`, one per module (`ml.rng`, `ml.matrix`, `linalg.chol`, `metrics.splits` and the others), so that another repository, `cancho-stats` first, pins them and copies nothing. `python3 scripts/publish_stores.py` writes them, `--check` fails when a committed store differs from a fresh publish of the sources, and `python3 scripts/consume_stores.py` builds a scratch package outside the repository that pins the stores of a commit and calls every module. A consumer writes, for each module it imports:
+
+```
+[dependencies.ml-rng]
+git = "https://github.com/alpibrusl/cancho-ml"
+rev = "<a commit that holds the stores>"
+path = ".cancho-vcs/ml.rng"
+```
+
+The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`); a change to one is a pin move for the consumers. `ml` itself builds from `lib/core`, `lib/linalg` and `lib/metrics` and does not consume its own stores. [docs/stores.md](docs/stores.md)
+
 ## Built to be read by an agent
 
 `ml introspect` and `ml skill` come from the same tables the code parses its flags with, so they cannot disagree with the program: the interface, the limits, the rules and the authority can be learned from the binary itself. A test checks that every flag and every rule is in the table, in `introspect`, in `skill`, in the schema and in a fixture. [docs/cli.md](docs/cli.md) section 1.
@@ -470,7 +554,7 @@ The model is read at start and changed by restarting. There is no TLS, no reload
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler a4572ea3)
-flags       47, for example
+flags       53, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
@@ -482,7 +566,7 @@ limits      22, for example
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       89, for example
+rules       99, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes
@@ -533,10 +617,11 @@ ml-serve    args, clock, conn_accept, conn_read, conn_write, dir_read, err_write
 * **Six models are reachable.** `constant`, `linear`, `logistic`, `kmeans`, `tree` and `forest` ([docs/wiring-trees.md](docs/wiring-trees.md), [docs/wiring-kmeans.md](docs/wiring-kmeans.md)). A model is wired by its adapter and `wired = true`; the admission script is what checks it ([docs/modules.md](docs/modules.md)). k-means is not scored against a label, runs a fixed number of iterations with no stopping rule, scales nothing by itself (add a `scale` step), refuses a missing cell, and keeps the centroid of a cluster that empties where scikit-learn moves the farthest point to it. A tree or forest fit takes at most 1,048,576 training rows, the bound of the library's exact Gini comparison; a forest of many trees can write a file longer than the 16 MiB default of `--max-bytes`, which `fit` then refuses to write (`limit.input-too-large`) because `predict` could not read it. `--seed` is one flag: it is the seed of `--split` and of a forest's bootstrap. Linear and logistic report a prediction column that is empty in every row as a missing column (`ml.schema.mismatch`); a tree or forest predicts with it missing.
 * **The model file of a categorical step holds the training strings, within bounds.** `fit --cat NAMES` reads declared text columns into a dictionary sorted bytewise and an id matrix, with limits and refusals ([docs/categorical.md](docs/categorical.md)), and `encode`, `freq` and `hash` turn them into numbers ([docs/categorical-encoders.md](docs/categorical-encoders.md)). The file stores them in a string table ([docs/stringtable.md](docs/stringtable.md)): at most 131,072 strings, 8 MiB of string bytes and 12 MiB, else `ml.limit.string-table`; only the strings bound is reachable from the command line, because the reader's own limits refuse the others first. A hashed column is still interned while the fit reads the file, so `--max-categories` bounds it there; the file stores none of its strings. `predict` and `eval` take no `--cat`, `--na-values` or limit flag. A declared column that no step reads is `ml.input.categorical-not-encoded`; `--model constant` has no steps, so it refuses every declared column; a text column that is not declared is `ml.input.non-numeric`, with `--drop` as the repair. The same rows in any order give the same string table, the same schema and the same categorical steps; the numeric steps that sum (standardise, mean imputation) and the estimator's section follow the order of the rows, as the sums of the libraries do. Target encoding, native categorical splits in trees and free text are not built.
 * **Binary classification only.** More than two labels is `ml.label.not-binary`.
+* **`ml cv` scores the models of the pipeline only.** `--model constant` is `args.conflict`: its exact-decimal fit and eval read a whole file and take no subset of rows, so the baseline of a comparison is `ml fit` and `ml eval` on the fold files `--emit-folds` describes. A held-out side with one class has no ROC-AUC, and `ml.label.single-class` refuses the cross-validation as `ml eval` refuses that side; `--stratify` or fewer folds avoid it. A stratified group split (`StratifiedGroupKFold`) and a grouped time series are not built: they are refused as combinations.
 * **`--threads` is for `fit` only, in effect.** `eval` accepts and checks the flag, and nothing in it is threaded. The scores of `linear` and `logistic` are single-threaded.
 * **One red gate.** The regression forest against scikit-learn's: RMSE 8.1% apart where the tolerance is 3% (`docs/models-tree.md` section 10.8). The algorithms differ (histogram against exact splits) and most of the gap is attributed to that; the tolerance is kept and the maintainer has not decided. [docs/models-tree.md](docs/models-tree.md)
-* **Not tested across machines.** The bytes are verified on one Mac (arm64), at 1 to 16 threads. A Linux x86-64 run is not done.
-* **No CI workflow.** The reader is a pinned dependency on cancho-table's stores ([docs/reader.md](docs/reader.md) section 1), so the build needs no sibling clone, but `cancho install` needs the network and nothing in this repository runs `scripts/check.sh` automatically.
+* **Three platforms agree; no other is tested.** macOS arm64, Linux x86-64 and Linux aarch64 agree on 88 fingerprint lines for 22 fits (every model kind, 1 and 8 threads: the SHA-256 of each model file and of each `predict` and `eval` answer, `docs/bench/xplat_fp.txt`, checked by `scripts/xplat_check.py`), with compiler `a4572ea` at commit `cb08d5b`: a Mac (macOS 26.2), an Ubuntu 26.04 workstation (Intel Core i7-1260P) and a Raspberry Pi 5 (Linux 6.18, aarch64). The workflow repeats the comparison for macOS arm64 and Linux x86-64 on GitHub's runners for every push and pull request; the Raspberry Pi run was done by hand with `scripts/xplat_fp.py` at the same commit and compiler, built there from source, and is not in the workflow; any other platform is untested. Three conformance cases whose answer holds an errno or depends on `/dev/stdin` run on macOS only ([docs/ci.md](docs/ci.md) section 5).
+* **The CI covers the fast gates only, and the network is needed.** The workflow runs on every push and pull request what needs no numerical oracle; `scripts/check.sh` (30 to 40 minutes) runs on request and nightly in a separate job, and its result gates no pull request. `cancho install` and the compiler clone need the network ([docs/reader.md](docs/reader.md) section 1). The runner images are named, never `-latest`. The run of this matrix on GitHub (2026-10-15, run 38739883040) passed on `ubuntu-24.04` in 13 min, `ubuntu-26.04` in 17 min, `ubuntu-24.04-arm` (Linux aarch64) in 12 min and `macos-26` in 21 min, and the determinism gate printed 88 lines equal to the golden on each.
 * **`ml-serve` is one thread and has no TLS.** A long request holds the others, the idle timeout is the only deadline, the pinned compiler cannot bind one address, and a `dec` column's digits and a category's CR LF are refusals the OpenAPI document cannot state ([docs/serving-http.md](docs/serving-http.md) sections 5 and 11). An MCP server is not built.
 * **No neural networks and no GPU.** They need matrix kernels, a GPU path and automatic differentiation, which cancho does not have. Inference of small exported models may come later; it is not planned in v1.
 * **Not built, not promised here:** multiclass, boosting, naive Bayes, k-NN, feature importance, out-of-bag scores, a stopping rule or a choice of k for k-means.
@@ -577,6 +662,7 @@ The tables, the load of each cell and how to rerun them: [project page](https://
 | [docs/linalg.md](docs/linalg.md), [docs/rng.md](docs/rng.md) | the tensor and linear-algebra package and its summation order; the random generator |
 | [docs/reader.md](docs/reader.md) | the float and decimal CSV reader and the dependency on cancho-table |
 | [docs/metrics.md](docs/metrics.md) | metrics and splits |
+| [docs/stores.md](docs/stores.md) | the 23 numeric stores other repositories pin: the list and its import closure, the API, how a consumer pins, the gates |
 | [docs/models-linear.md](docs/models-linear.md), [docs/models-tree.md](docs/models-tree.md) | linear and logistic regression and k-means; trees and forests; the red gate |
 | [docs/spikes.md](docs/spikes.md), [docs/simd-ceiling.md](docs/simd-ceiling.md) | what was measured while deciding the design, with machine, load and minimum of N; the record of the decision, not a speed claim for `ml` |
 | [docs/upstream/](docs/upstream/) | reproducers for what cancho lacks, and the proposal to cancho-table |
