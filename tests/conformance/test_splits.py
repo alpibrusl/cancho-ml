@@ -1,5 +1,6 @@
 """SP -- the split strategies and cross-validation (docs/splits.md section 9). The gates A1, B1, C1, D1 and S1 are the oracle's
-(scripts/oracle_split.py: every rule written again in Python, the real binary fitted and evaluated on the files the oracle cuts);
+(scripts/oracle_split.py: every rule written again in Python, the real binary fitted and evaluated on the files the oracle cuts; S1, the
+scikit-learn comparison, is in test_splits_sklearn.py because its import needs numpy and scikit-learn, which the fast job of the workflow does not install);
 E1 (one fixture per tag, with its repair) runs in test_rules through tests/conformance/fixtures.py; this file adds the checks that
 need a file of their own: the hostile data and the arguments of F1, the canonical text, and the flags of the bins.
 
@@ -41,10 +42,6 @@ class Oracle(unittest.TestCase):
 
     def test_d1_thread_invariance(self):
         self.gate(O.gate_threads)
-
-    @unittest.skipIf(QUICK, "scikit-learn comparison runs in the full gate")
-    def test_s1_scikit_learn_on_the_same_folds(self):
-        self.gate(O.gate_sklearn)
 
 
 class Surface(unittest.TestCase):

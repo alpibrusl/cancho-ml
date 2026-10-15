@@ -163,7 +163,7 @@ Tags are registered in `tools/ml/spec.tmpl`, `docs/design.md` sections 8 and 8.1
 
 ## 9. The gates (written before the code; each can fail) **[choice]**
 
-All are run by `scripts/check.sh` through `tests/conformance/test_splits.py` and `scripts/oracle_split.py`; the mutants of section 9.1 prove that each can fail.
+All are run by `scripts/check.sh` through `tests/conformance/test_splits.py` (S1 through `tests/conformance/test_splits_sklearn.py`, which imports numpy and scikit-learn and which the fast job of the CI workflow lists as not run) and `scripts/oracle_split.py`; the mutants of section 9.1 prove that each can fail.
 
 | id | gate | would fail on |
 |---|---|---|
