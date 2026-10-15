@@ -290,14 +290,16 @@ pub res struct Paths {
     out: paths.Rp,
     logp: paths.Rp,
     planp: paths.Rp,
+    trackp: paths.Rp,
 }
 
 pub fn drop_paths[&h](heap: &!h Heap, ps: Paths) -> [heap] int {
-    let Paths { file, model, out, logp, planp } = ps;
+    let Paths { file, model, out, logp, planp, trackp } = ps;
     paths.drop(heap, file);
     paths.drop(heap, model);
     paths.drop(heap, out);
     paths.drop(heap, planp);
+    paths.drop(heap, trackp);
     return paths.drop(heap, logp);
 }
 
@@ -346,7 +348,7 @@ pub fn clean(errs: fail.Errors) -> [] (fail.Errors, bool) {
 pub fn resolve_all[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], verb: int, root: &r [byte], errs: fail.Errors) -> [heap, args] (Paths, fail.Errors) {
     let (e0, none) = clean(errs);
     if !none {
-        return (Paths { file: paths.absent(heap), model: paths.absent(heap), out: paths.absent(heap), logp: paths.absent(heap), planp: paths.absent(heap) }, e0);
+        return (Paths { file: paths.absent(heap), model: paths.absent(heap), out: paths.absent(heap), logp: paths.absent(heap), planp: paths.absent(heap), trackp: paths.absent(heap) }, e0);
     }
     // describe has no file operand, and predict reads standard input for `-` or for no operand
     var f2 = paths.absent(heap);
@@ -361,7 +363,8 @@ pub fn resolve_all[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli
     let (o2, e4) = paths.from_flag(heap, args, parsed, table, root, "output", e3);
     let (l2, e5) = paths.from_flag(heap, args, parsed, table, root, "log", e4);
     let (p2, e6) = paths.from_flag(heap, args, parsed, table, root, "plan", e5);
-    return (Paths { file: f2, model: m2, out: o2, logp: l2, planp: p2 }, e6);
+    let (t2, e7) = paths.from_flag(heap, args, parsed, table, root, "track", e6);
+    return (Paths { file: f2, model: m2, out: o2, logp: l2, planp: p2, trackp: t2 }, e7);
 }
 
 // whether the first error is none, the exit code of the answer and the rule of the first error as a buffer (empty when there is none). A dry run exits 9.
@@ -391,7 +394,7 @@ pub fn stdin_into[&h, &g, &p, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.
     if !none || !stdin_wanted(args, parsed, verb) {
         return (ps, e0);
     }
-    let Paths { file, model, out, logp, planp } = ps;
+    let Paths { file, model, out, logp, planp, trackp } = ps;
     paths.drop(heap, file);
     let cap = cli.nat(args, parsed, table, "max-bytes");
     let (f2, over) = paths.read_stdin(heap, io, cap);
@@ -404,5 +407,5 @@ pub fn stdin_into[&h, &g, &p, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.
         w = fail.detail_int(heap, w, "max", cap);
         e1 = fail.add(heap, e1, w);
     }
-    return (Paths { file: f2, model: model, out: out, logp: logp, planp: planp }, e1);
+    return (Paths { file: f2, model: model, out: out, logp: logp, planp: planp, trackp: trackp }, e1);
 }

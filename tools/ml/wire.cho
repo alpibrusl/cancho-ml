@@ -21,11 +21,13 @@ import ml.est;
 import ml.fbits;
 import ml.fsio;
 import ml.logrec;
+import ml.kinds;
 import ml.matrix;
 import ml.mfile;
 import ml.paths;
 import ml.prov;
 import ml.spec;
+import ml.track;
 import ml.verbs;
 import ml.wiredata;
 import ml.refuse;
@@ -791,7 +793,7 @@ fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd 
 }
 
 // the answer of a fit that wrote (or planned) the file `data`
-fn answer_fit[&h, &f, &r, &po, &d, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, o: verbs.Opts, name: &static [byte], task: &static [byte], rows: int, cols: int, tname: &s [byte], data: &d [byte], summary: buffer.Buffer, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] verbs.Out {
+fn answer_fit[&h, &f, &r, &po, &pt, &d, &s, &rj, &ac, &rn, &rt](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, name: &static [byte], task: &static [byte], rows: int, cols: int, tname: &s [byte], data: &d [byte], summary: buffer.Buffer, runjson: &rj [byte], action: &ac [byte], rec_name: &rn [byte], rec_text: &rt [byte], write_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] verbs.Out {
     var e = errs;
     var lg = log;
     var payload = buffer.empty(heap, 1);
@@ -843,6 +845,10 @@ fn answer_fit[&h, &f, &r, &po, &d, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [
             borrow summary as &sr in {
                 w = json.put_fragment(heap, w, buffer.bytes(sr));
             }
+            if len(runjson) > 0 {
+                w = json.put_key(heap, w, "run");
+                w = json.put_fragment(heap, w, runjson);
+            }
             w = json.end_object(heap, w);
             buffer.drop(heap, payload);
             payload = json.finish(w);
@@ -862,6 +868,9 @@ fn answer_fit[&h, &f, &r, &po, &d, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [
                 a = json.put_key(heap, a, "sha256");
                 a = json.put_string(heap, a, digest);
                 a = json.end_object(heap, a);
+                if len(action) > 0 {
+                    a = json.put_fragment(heap, a, action);
+                }
                 a = json.end_array(heap, a);
                 let arr = json.finish(a);
                 buffer.drop(heap, extra);
@@ -891,6 +900,13 @@ fn answer_fit[&h, &f, &r, &po, &d, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [
             plain = buffer.append(heap, plain, ")\n");
             if !o.dry {
                 lg = logrec.write(heap, lg, len(data), digest);
+                // the model is written: now the run record (nothing in the directory is replaced)
+                if write_rec {
+                    let (rs, ra) = track.write_in(heap, fs, root, trackp, rec_name, rec_text, false);
+                    if rs != 0 {
+                        e = verbs.write_failure(heap, e, rs, ra, paths.shown(trackp));
+                    }
+                }
             }
         }
     }
@@ -1508,26 +1524,140 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, fs: &f
     return made;
 }
 
-pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
+pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t, &pt](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, trackp: &pt paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
     let (ptxt, ok0, e0) = plan_source(heap, fs, root, planp, o, tokens, errs);
     let m = make(heap, args, fs, root, file, ptxt, ok0, o.target, o.na, o, o.track_given, e0, log);
+    var made_ok = false;
+    var kind = 0;
+    var task = 0;
+    var trows = 0;
+    var cols = 0;
+    borrow m as &mq in {
+        made_ok = mq.ok;
+        kind = mq.kind;
+        task = mq.task;
+        trows = mq.trows;
+        cols = mq.cols;
+    }
+    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    if !made_ok {
+        let Made { fbytes, summary, rec, ptext, sha, errs, log, ok, kind, task, trows, cols, ntest, file_rows, file_bytes, features, steps } = m;
+        buffer.drop(heap, fbytes);
+        buffer.drop(heap, summary);
+        buffer.drop(heap, rec);
+        buffer.drop(heap, ptext);
+        buffer.drop(heap, sha);
+        verbs.drop_out(heap, result);
+        return verbs.nothing(heap, errs, log);
+    }
+    // the run record, when --track was given: every check is made before the model file or the record is written
+    var recbuf = buffer.empty(heap, 1);
+    var idbuf = buffer.empty(heap, 1);
+    var write_rec = false;
+    var track_ok = true;
+    var terrs = fail.empty_in(heap, spec.extra());
+    if o.track_given {
+        borrow m as &mq in {
+            var sum_order = 0 - 1;
+            if est.kind_of(mq.kind) >= kinds.first_ordered_model() {
+                sum_order = kinds.sum_order_for(est.kind_of(mq.kind));
+            }
+            let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(mq.fbytes), buffer.bytes(mq.sha), mq.file_bytes, mq.file_rows, mq.trows, mq.ntest, mq.features, mq.steps, o.target, mq.task != 4, wiredata.task_word(mq.task), buffer.bytes(mq.ptext), buffer.bytes(mq.rec), sum_order, o.na, o, fail.empty_in(heap, spec.extra()));
+            buffer.drop(heap, recbuf);
+            buffer.drop(heap, idbuf);
+            recbuf = rb;
+            idbuf = ib;
+            write_rec = wr;
+            fail.drop(heap, terrs);
+            terrs = te;
+        }
+        borrow terrs as &ter in {
+            track_ok = fail.count(ter) == 0;
+        }
+    }
     let Made { fbytes, summary, rec, ptext, sha, errs, log, ok, kind, task, trows, cols, ntest, file_rows, file_bytes, features, steps } = m;
-    let e = errs;
-    let lg = log;
     buffer.drop(heap, rec);
     buffer.drop(heap, ptext);
     buffer.drop(heap, sha);
-    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
-    if ok {
-        verbs.drop_out(heap, result);
-        borrow fbytes as &fb in {
-            result = answer_fit(heap, fs, root, out, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, buffer.bytes(fb), summary, e, lg);
-        }
-    } else {
+    if !track_ok {
+        // the errors of the record (the fit itself had none: it was made)
+        fail.drop(heap, errs);
         buffer.drop(heap, summary);
         verbs.drop_out(heap, result);
-        result = verbs.nothing(heap, e, lg);
+        result = verbs.nothing(heap, terrs, log);
+    } else {
+        fail.drop(heap, terrs);
+        let e = errs;
+        var runjson = buffer.empty(heap, 1);
+        var action = buffer.empty(heap, 1);
+        var rname = buffer.empty(heap, 1);
+        if o.track_given {
+            // `"run":{"id":..,"path":..,"written":..}` and the record's entry in planned_actions
+            borrow idbuf as &idr in {
+                buffer.drop(heap, rname);
+                rname = track.run_name(heap, buffer.bytes(idr));
+            }
+            borrow rname as &rnr in {
+                borrow recbuf as &rcr in {
+                    let rhex = mfile.sha256_hex(heap, buffer.bytes(rcr));
+                    var rw = json.writer(heap, 256);
+                    rw = json.begin_object(heap, rw);
+                    rw = json.put_key(heap, rw, "id");
+                    borrow idbuf as &idr2 in {
+                        rw = json.put_string(heap, rw, buffer.bytes(idr2));
+                    }
+                    rw = verbs.put_name(heap, rw, "dir", paths.shown(trackp));
+                    rw = json.put_key(heap, rw, "file");
+                    rw = json.put_string(heap, rw, buffer.bytes(rnr));
+                    rw = json.put_key(heap, rw, "written");
+                    rw = json.put_bool(heap, rw, write_rec && !o.dry);
+                    rw = json.put_key(heap, rw, "sha256");
+                    borrow rhex as &rhr in {
+                        rw = json.put_string(heap, rw, buffer.bytes(rhr));
+                    }
+                    rw = json.end_object(heap, rw);
+                    buffer.drop(heap, runjson);
+                    runjson = json.finish(rw);
+                    if write_rec {
+                        var aw = json.writer(heap, 128);
+                        aw = json.begin_object(heap, aw);
+                        aw = json.put_key(heap, aw, "op");
+                        aw = json.put_string(heap, aw, "create");
+                        aw = verbs.put_name(heap, aw, "dir", paths.shown(trackp));
+                        aw = json.put_key(heap, aw, "file");
+                        aw = json.put_string(heap, aw, buffer.bytes(rnr));
+                        aw = json.put_key(heap, aw, "bytes");
+                        aw = json.put_int(heap, aw, buffer.size(rcr));
+                        aw = json.put_key(heap, aw, "sha256");
+                        borrow rhex as &rhr2 in {
+                            aw = json.put_string(heap, aw, buffer.bytes(rhr2));
+                        }
+                        aw = json.end_object(heap, aw);
+                        buffer.drop(heap, action);
+                        action = json.finish(aw);
+                    }
+                    buffer.drop(heap, rhex);
+                }
+            }
+        }
+        verbs.drop_out(heap, result);
+        borrow fbytes as &fb in {
+            borrow runjson as &rjr in {
+                borrow action as &acr in {
+                    borrow rname as &rnr in {
+                        borrow recbuf as &rcr in {
+                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, runjson);
+        buffer.drop(heap, action);
+        buffer.drop(heap, rname);
     }
+    buffer.drop(heap, recbuf);
+    buffer.drop(heap, idbuf);
     buffer.drop(heap, fbytes);
     return result;
 }

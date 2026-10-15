@@ -1,0 +1,642 @@
+edition 6;
+
+module ml.track;
+
+// Run records (docs/tracking.md section 5): the canonical JSON `ml fit --track DIR` writes, its id, the check at its end, the directory of records and the reading of one back.
+//
+//     {"schema":"ml.run.v1","id":"<64 hex>","inputs":{...},"threads":N,"model":{"path":..,"bytes":..,"sha256":..},"counts":{...},"metrics":{...}|null,"check":"<64 hex>"}\n
+//
+// `id` is the SHA-256 of the bytes of `inputs` exactly as they stand in the record; `check` is the SHA-256 of every byte before `,"check":"`. The record has no timestamp, no host name, no absolute path and
+// no payload. An eval record (`ml.eval.v1`) has the same end. Nothing here reads a file that was not named by a path beneath --root.
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.json;
+import ml.fsio;
+import ml.mfile;
+import ml.paths;
+import ml.prov;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import toolbox.built;
+import toolbox.fail;
+import toolbox.place;
+import toolbox.text;
+
+pub fn max_records() -> [] int {
+    return 1000;
+}
+
+pub fn max_record_bytes() -> [] int {
+    return 262144;
+}
+
+// the fixed head of a run record, up to the first hex digit of the id, and what follows the id
+fn head() -> [] &static [byte] {
+    return "{\"schema\":\"ml.run.v1\",\"id\":\"";
+}
+
+fn after_id() -> [] &static [byte] {
+    return "\",\"inputs\":";
+}
+
+fn threads_key() -> [] &static [byte] {
+    return ",\"threads\":";
+}
+
+// the tail of a sealed record: `,"check":"` 64 hex digits `"}` and a newline
+fn tail_len() -> [] int {
+    return 77;
+}
+
+fn gcd(a: int, b: int) -> [] int {
+    var x = a;
+    var y = b;
+    while y != 0 {
+        let t = x % y;
+        x = y;
+        y = t;
+    }
+    return x;
+}
+
+// ---------------------------------------------------------------- building
+
+// The `inputs` object (docs/tracking.md section 5.2): what determines the model's bytes. `split_den` 0 is no split; `sum_order` below 0 is none (the constant kinds); `positive_given` says whether the label is one.
+pub fn inputs[&h, &p, &s, &t, &pl, &dr, &fl, &ct, &nv, &cm](heap: &!h Heap, path: &p [byte], data_bytes: int, sha_hex: &s [byte], data_rows: int, target: &t [byte], has_target: bool, task: &static [byte], plan: &pl [byte], seed: int, positive: int, positive_given: bool, split_num: int, split_den: int, drops: &dr [byte], floats: &fl [byte], cats: &ct [byte], na: &nv [byte], cat_given: bool, max_cats: int, max_str: int, max_pool: int, max_catcols: int, compiler: &cm [byte], sum_order: int) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 512);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "data");
+    w = json.begin_object(heap, w);
+    w = verbs.put_name(heap, w, "path", path);
+    w = json.put_key(heap, w, "bytes");
+    w = json.put_int(heap, w, data_bytes);
+    w = json.put_key(heap, w, "sha256");
+    w = json.put_string(heap, w, sha_hex);
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, data_rows);
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "target");
+    if has_target {
+        w = text.put(heap, w, target);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, task);
+    w = verbs.put_name(heap, w, "plan", plan);
+    w = json.put_key(heap, w, "seed");
+    w = json.put_int(heap, w, seed);
+    w = json.put_key(heap, w, "positive");
+    if positive_given {
+        w = json.put_int(heap, w, positive);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.put_key(heap, w, "split");
+    if split_den > 0 {
+        let g = gcd(split_num, split_den);
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "num");
+        w = json.put_int(heap, w, split_num / g);
+        w = json.put_key(heap, w, "den");
+        w = json.put_int(heap, w, split_den / g);
+        w = json.end_object(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = verbs.put_name(heap, w, "drop", drops);
+    w = verbs.put_name(heap, w, "float", floats);
+    w = verbs.put_name(heap, w, "cat", cats);
+    w = verbs.put_name(heap, w, "na_values", na);
+    w = json.put_key(heap, w, "reader");
+    if cat_given {
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "max_categories");
+        w = json.put_int(heap, w, max_cats);
+        w = json.put_key(heap, w, "max_string_bytes");
+        w = json.put_int(heap, w, max_str);
+        w = json.put_key(heap, w, "max_pool_bytes");
+        w = json.put_int(heap, w, max_pool);
+        w = json.put_key(heap, w, "max_cat_columns");
+        w = json.put_int(heap, w, max_catcols);
+        w = json.end_object(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = verbs.put_name(heap, w, "compiler", compiler);
+    w = json.put_key(heap, w, "sum_order");
+    if sum_order >= 0 {
+        w = json.put_int(heap, w, sum_order);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.end_object(heap, w);
+    return json.finish(w);
+}
+
+// the run id: the SHA-256 of the `inputs` bytes, in lowercase hex
+pub fn run_id[&h, &i](heap: &!h Heap, inp: &i [byte]) -> [heap] buffer.Buffer {
+    return mfile.sha256_hex(heap, inp);
+}
+
+// `text` (a JSON object without its closing brace) sealed: the check member, the brace and a newline
+fn seal[&h, &t](heap: &!h Heap, open_text: &t [byte]) -> [heap] buffer.Buffer {
+    let hex = mfile.sha256_hex(heap, open_text);
+    var out = buffer.append(heap, buffer.empty(heap, len(open_text) + 100), open_text);
+    out = buffer.append(heap, out, ",\"check\":\"");
+    borrow hex as &hr in {
+        out = buffer.append(heap, out, buffer.bytes(hr));
+    }
+    buffer.drop(heap, hex);
+    out = buffer.append(heap, out, "\"}\n");
+    return out;
+}
+
+// the writer's text of a finished object without its last byte (the closing brace)
+fn without_close[&h, &t](heap: &!h Heap, whole: &t [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.empty(heap, len(whole) + 1), whole[0..len(whole) - 1]);
+}
+
+// The run record. `metrics` is the metrics object (rows, on, metrics), empty for none.
+pub fn record[&h, &i, &x, &mp, &ms, &me](heap: &!h Heap, id: &i [byte], inp: &x [byte], threads: int, model_path: &mp [byte], model_bytes: int, model_sha: &ms [byte], file_rows: int, train_rows: int, test_rows: int, features: int, steps: int, metrics: &me [byte]) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 1024);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "schema");
+    w = json.put_string(heap, w, "ml.run.v1");
+    w = json.put_key(heap, w, "id");
+    w = json.put_string(heap, w, id);
+    w = json.put_key(heap, w, "inputs");
+    w = json.put_fragment(heap, w, inp);
+    w = json.put_key(heap, w, "threads");
+    w = json.put_int(heap, w, threads);
+    w = json.put_key(heap, w, "model");
+    w = json.begin_object(heap, w);
+    w = verbs.put_name(heap, w, "path", model_path);
+    w = json.put_key(heap, w, "bytes");
+    w = json.put_int(heap, w, model_bytes);
+    w = json.put_key(heap, w, "sha256");
+    w = json.put_string(heap, w, model_sha);
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "counts");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "file_rows");
+    w = json.put_int(heap, w, file_rows);
+    w = json.put_key(heap, w, "train_rows");
+    w = json.put_int(heap, w, train_rows);
+    w = json.put_key(heap, w, "test_rows");
+    w = json.put_int(heap, w, test_rows);
+    w = json.put_key(heap, w, "features");
+    w = json.put_int(heap, w, features);
+    w = json.put_key(heap, w, "steps");
+    w = json.put_int(heap, w, steps);
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "metrics");
+    if len(metrics) > 0 {
+        w = json.put_fragment(heap, w, metrics);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.end_object(heap, w);
+    let whole = json.finish(w);
+    var out = buffer.empty(heap, 1);
+    borrow whole as &wr in {
+        let opened = without_close(heap, buffer.bytes(wr));
+        borrow opened as &or in {
+            buffer.drop(heap, out);
+            out = seal(heap, buffer.bytes(or));
+        }
+        buffer.drop(heap, opened);
+    }
+    buffer.drop(heap, whole);
+    return out;
+}
+
+// The eval record (`ml.eval.v1`): the run, the model and the file scored, whether it was the training file, and the metrics object of the eval.
+pub fn eval_record[&h, &ri, &ms, &dp, &ds, &on, &me](heap: &!h Heap, run: &ri [byte], model_sha: &ms [byte], data_path: &dp [byte], data_bytes: int, data_sha: &ds [byte], data_rows: int, onw: &on [byte], split_num: int, split_den: int, seed: int, positive: int, positive_given: bool, metrics: &me [byte]) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 512);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "schema");
+    w = json.put_string(heap, w, "ml.eval.v1");
+    w = json.put_key(heap, w, "run");
+    w = json.put_string(heap, w, run);
+    w = json.put_key(heap, w, "model_sha256");
+    w = json.put_string(heap, w, model_sha);
+    w = json.put_key(heap, w, "data");
+    w = json.begin_object(heap, w);
+    w = verbs.put_name(heap, w, "path", data_path);
+    w = json.put_key(heap, w, "bytes");
+    w = json.put_int(heap, w, data_bytes);
+    w = json.put_key(heap, w, "sha256");
+    w = json.put_string(heap, w, data_sha);
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, data_rows);
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "on");
+    w = json.put_string(heap, w, onw);
+    w = json.put_key(heap, w, "split");
+    if split_den > 0 {
+        let g = gcd(split_num, split_den);
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "num");
+        w = json.put_int(heap, w, split_num / g);
+        w = json.put_key(heap, w, "den");
+        w = json.put_int(heap, w, split_den / g);
+        w = json.put_key(heap, w, "seed");
+        w = json.put_int(heap, w, seed);
+        w = json.end_object(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.put_key(heap, w, "positive");
+    if positive_given {
+        w = json.put_int(heap, w, positive);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.put_key(heap, w, "metrics");
+    w = json.put_fragment(heap, w, metrics);
+    w = json.end_object(heap, w);
+    let whole = json.finish(w);
+    var out = buffer.empty(heap, 1);
+    borrow whole as &wr in {
+        let opened = without_close(heap, buffer.bytes(wr));
+        borrow opened as &or in {
+            buffer.drop(heap, out);
+            out = seal(heap, buffer.bytes(or));
+        }
+        buffer.drop(heap, opened);
+    }
+    buffer.drop(heap, whole);
+    return out;
+}
+
+// ---------------------------------------------------------------- checking a record that was read
+
+// whether `src` ends with a check member that is the SHA-256 of everything before it
+pub fn check_ok[&s](src: &s [byte]) -> [] bool {
+    let n = len(src);
+    if n < tail_len() + 2 {
+        return false;
+    }
+    if !bytes.equal(src[n - tail_len()..n - tail_len() + 10], ",\"check\":\"") || !bytes.equal(src[n - 3..n], "\"}\n") {
+        return false;
+    }
+    return true;
+}
+
+// the check of a record that passes check_ok: whether its 64 hex digits are the hash of the bytes before the check member
+pub fn check_matches[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] bool {
+    let n = len(src);
+    if !check_ok(src) {
+        return false;
+    }
+    let hex = mfile.sha256_hex(heap, src[0..n - tail_len()]);
+    var same = false;
+    borrow hex as &hr in {
+        same = bytes.equal(buffer.bytes(hr), src[n - 67..n - 3]);
+    }
+    buffer.drop(heap, hex);
+    return same;
+}
+
+// whether the id of a run record is the hash of its `inputs` bytes: the inputs lie between `,"inputs":` and the first `,"threads":` (a quote inside a string is escaped, so the text of the key
+// cannot be met inside one)
+pub fn id_matches[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] bool {
+    let id_at = len(head());
+    if len(src) < id_at + 64 + len(after_id()) + 2 || !bytes.equal(src[0..id_at], head()) {
+        return false;
+    }
+    if !bytes.equal(src[id_at + 64..id_at + 64 + len(after_id())], after_id()) {
+        return false;
+    }
+    let from = id_at + 64 + len(after_id());
+    let rest = src[from..len(src)];
+    let stop = bytes.find(rest, threads_key());
+    if stop < 0 {
+        return false;
+    }
+    let hex = mfile.sha256_hex(heap, rest[0..stop]);
+    var same = false;
+    borrow hex as &hr in {
+        same = bytes.equal(buffer.bytes(hr), src[id_at..id_at + 64]);
+    }
+    buffer.drop(heap, hex);
+    return same;
+}
+
+// a lowercase hex string of `digits` digits
+pub fn is_hex[&t](s: &t [byte], digits: int) -> [] bool {
+    if len(s) != digits {
+        return false;
+    }
+    var i = 0;
+    while i < len(s) {
+        let c = int_of(s[i]);
+        if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------- the directory
+
+// The names of the files ending in `.json` of the directory `dirp`, sorted, each followed by a NUL: (the names, how many, status, aux). Status 0, or 1 the open failed (aux: errno), 2 the
+// listing failed (aux: errno), 3 more than `most` entries (the names read are kept).
+pub fn json_names[&h, &f, &r, &pd](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, most: int) -> [heap, fs_read(""), dir_read] (buffer.Buffer, int, int, int) {
+    var out = buffer.empty(heap, 256);
+    var count = 0;
+    var status = 0;
+    var aux = 0;
+    match place.open_directory(fs, root, paths.shown(dirp), paths.full(dirp)) {
+        DirOpened::Failed(reason) => {
+            return (out, 0, 1, reason);
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &dh in {
+                let names = dirs.list(heap, dh, most);
+                borrow names as &nr in {
+                    var i = 0;
+                    while i < dirs.count(nr) {
+                        let nm = dirs.name(nr, i);
+                        if len(nm) > 5 && bytes.equal(nm[len(nm) - 5..len(nm)], ".json") {
+                            out = buffer.append(heap, out, nm);
+                            out = buffer.push(heap, out, byte_of(0));
+                            count = count + 1;
+                        }
+                        i = i + 1;
+                    }
+                    if dirs.failed(nr) != 0 {
+                        status = 2;
+                        aux = dirs.failed(nr);
+                    } else if dirs.truncated(nr) {
+                        status = 3;
+                    }
+                }
+                dirs.drop(heap, names);
+            }
+            dir_close(dir);
+        }
+    }
+    return (out, count, status, aux);
+}
+
+// the `k`-th name (from 0) of a list of NUL-terminated names
+pub fn name_at[&l](list: &l [byte], k: int) -> [] &l [byte] {
+    var at = 0;
+    var seen = 0;
+    var i = 0;
+    while i < len(list) {
+        if int_of(list[i]) == 0 {
+            if seen == k {
+                return list[at..i];
+            }
+            seen = seen + 1;
+            at = i + 1;
+        }
+        i = i + 1;
+    }
+    return list[0..0];
+}
+
+// The file `name` of the directory, whole, at most `cap` bytes: (bytes, status, aux) as fsio.read_whole
+pub fn read_in[&h, &f, &r, &pd, &n](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, name: &n [byte], cap: int) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, int, int) {
+    let rp = paths.child(heap, dirp, name);
+    var data = buffer.empty(heap, 1);
+    var st = 0;
+    var ax = 0;
+    borrow rp as &rr in {
+        let (d2, s2, a2) = fsio.read_whole(heap, fs, root, paths.shown(rr), paths.full(rr), cap);
+        buffer.drop(heap, data);
+        data = d2;
+        st = s2;
+        ax = a2;
+    }
+    paths.drop(heap, rp);
+    return (data, st, ax);
+}
+
+// Write the file `name` of the directory (nothing is replaced): fsio.write_atomic's (status, aux). `dry` checks and writes nothing.
+pub fn write_in[&h, &f, &r, &pd, &n, &d](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, name: &n [byte], data: &d [byte], dry: bool) -> [heap, fs_read(""), dir_read, dir_write, file_write] (int, int) {
+    let rp = paths.child(heap, dirp, name);
+    var got = (0, 0);
+    borrow rp as &rr in {
+        got = fsio.write_atomic(heap, fs, root, paths.shown(rr), paths.full(rr), data, false, dry);
+    }
+    paths.drop(heap, rp);
+    return got;
+}
+
+// `<id>.json`
+pub fn run_name[&h, &i](heap: &!h Heap, id: &i [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.append(heap, buffer.empty(heap, 80), id), ".json");
+}
+
+// `<run id>.eval-<scored sha256>.json`
+pub fn eval_name[&h, &i, &s](heap: &!h Heap, run: &i [byte], scored: &s [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 160), run);
+    b = buffer.append(heap, b, ".eval-");
+    b = buffer.append(heap, b, scored);
+    return buffer.append(heap, b, ".json");
+}
+
+// a run record's file name: 64 hex digits and `.json`
+pub fn is_run_name[&n](nm: &n [byte]) -> [] bool {
+    return len(nm) == 69 && is_hex(nm[0..64], 64);
+}
+
+// an eval record's file name: a run id, `.eval-`, 64 hex digits and `.json`
+pub fn is_eval_name[&n](nm: &n [byte]) -> [] bool {
+    return len(nm) == 139 && is_hex(nm[0..64], 64) && bytes.equal(nm[64..70], ".eval-") && is_hex(nm[70..134], 64);
+}
+
+// ---------------------------------------------------------------- reading members of a record that was parsed
+
+// the decoded bytes of the string at node `node` of the tape (empty for a node that is not a string)
+pub fn str_of[&h, &s, &t](heap: &!h Heap, src: &s [byte], tp: &t [int], node: int) -> [heap] buffer.Buffer {
+    let n = json.string_length(src, tp, node);
+    if n <= 0 {
+        return buffer.empty(heap, 1);
+    }
+    var out = buffer.empty(heap, n + 1);
+    var tmp = box_slice(heap, n + 1, byte_of(0));
+    borrow mut tmp as &!tw in {
+        json.string_into(src, tp, node, contents(tw));
+    }
+    borrow tmp as &tr in {
+        out = buffer.append(heap, out, contents(tr)[0..n]);
+    }
+    unbox_slice(heap, tmp);
+    return out;
+}
+
+// What a record holds that two writes of the same run may differ in: (the record parsed, its `threads`, its `model.path`)
+pub fn old_fields[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] (bool, int, buffer.Buffer) {
+    let tape = box_slice(heap, json.tape_len(src), 0);
+    var ok = false;
+    var threads = 0;
+    var path = buffer.empty(heap, 1);
+    var tw = tape;
+    borrow mut tw as &!tp in {
+        if json.parse(src, contents(tp)) > 0 {
+            let t = json.get(src, contents(tp), 0, "threads");
+            let m = json.get(src, contents(tp), 0, "model");
+            if t >= 0 && json.is_int(contents(tp), t) && m >= 0 && json.is_object(contents(tp), m) {
+                let p = json.get(src, contents(tp), m, "path");
+                if p >= 0 && json.is_string(contents(tp), p) {
+                    ok = true;
+                    threads = json.to_int(src, contents(tp), t);
+                    buffer.drop(heap, path);
+                    path = str_of(heap, src, contents(tp), p);
+                }
+            }
+        }
+    }
+    unbox_slice(heap, tw);
+    return (ok, threads, path);
+}
+
+// ---------------------------------------------------------------- refusals
+
+// an error of the rule `rule` (of spec.extra(), with its message and hint) whose detail is open: the caller adds the detail and `fail.add`s it
+pub fn open_error[&h](heap: &!h Heap, rule: &static [byte]) -> [heap] json.Writer {
+    var w = wiredata.open_tag(heap, rule);
+    w = fail.no_repair(heap, w);
+    return fail.detail_open(heap, w);
+}
+
+// ---------------------------------------------------------------- planning a fit
+
+// The run record of a fit, checked against the directory `trackp` (docs/tracking.md section 5.1): (the record's text, its id, whether it is to be written, the errors). Nothing is written. The record
+// is refused when it is too long, when the directory holds 1000 records already, or when a record with this id exists and differs from it in more than the thread count and the name of the model file.
+pub fn plan[&h, &f, &r, &pt, &dp, &op, &fb, &sh, &tn, &pl, &mt, &nv](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], trackp: &pt paths.Rp, data_path: &dp [byte], out_path: &op [byte], model: &fb [byte], sha: &sh [byte], file_bytes: int, file_rows: int, trows: int, ntest: int, features: int, steps: int, tg: &tn [byte], has_target: bool, task: &static [byte], ptext: &pl [byte], metrics: &mt [byte], sum_order: int, na: &nv [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
+    var e = errs;
+    let shex = prov.hex(heap, sha);
+    var inp = buffer.empty(heap, 1);
+    borrow shex as &sh in {
+        buffer.drop(heap, inp);
+        inp = inputs(heap, data_path, file_bytes, buffer.bytes(sh), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, o.split_num, o.split_den, o.drops, o.floats, o.cats, na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order);
+    }
+    buffer.drop(heap, shex);
+    var id = buffer.empty(heap, 1);
+    borrow inp as &ir in {
+        buffer.drop(heap, id);
+        id = run_id(heap, buffer.bytes(ir));
+    }
+    let mhex = mfile.sha256_hex(heap, model);
+    var rec = buffer.empty(heap, 1);
+    borrow id as &idr in {
+        borrow inp as &ir in {
+            borrow mhex as &mhr in {
+                if true {
+                    buffer.drop(heap, rec);
+                    rec = record(heap, buffer.bytes(idr), buffer.bytes(ir), o.threads, out_path, len(model), buffer.bytes(mhr), file_rows, trows, ntest, features, steps, metrics);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, mhex);
+    buffer.drop(heap, inp);
+    var write = true;
+    var go = true;
+    var recsize = 0;
+    borrow rec as &rzr in {
+        recsize = buffer.size(rzr);
+    }
+    if recsize > max_record_bytes() {
+        var w = open_error(heap, "ml.runs.record-too-large");
+        w = fail.detail_int(heap, w, "size", recsize);
+        w = fail.detail_int(heap, w, "max", max_record_bytes());
+        e = fail.add(heap, e, w);
+        go = false;
+    }
+    if go {
+        let (names, count, st, aux) = json_names(heap, fs, root, trackp, 100000);
+        buffer.drop(heap, names);
+        if st == 1 || st == 2 {
+            e = fail.io_error(heap, e, aux, false, paths.shown(trackp));
+            go = false;
+        } else if st == 3 {
+            var w = open_error(heap, "ml.runs.too-many");
+            w = fail.detail_int(heap, w, "max", max_records());
+            e = fail.add(heap, e, w);
+            go = false;
+        } else {
+            borrow id as &idr in {
+                let nm = run_name(heap, buffer.bytes(idr));
+                var present = false;
+                borrow nm as &nr in {
+                    let (old, rst, rax) = read_in(heap, fs, root, trackp, buffer.bytes(nr), max_record_bytes() + 1);
+                    if rst == 0 {
+                        present = true;
+                        // the same run again: equal to the record that is there but for the thread count and the name of the model file
+                        borrow old as &or in {
+                            let (pok, pthreads, ppath) = old_fields(heap, buffer.bytes(or));
+                            var same = false;
+                            if pok {
+                                borrow ppath as &ppr in {
+                                    let mhex2 = mfile.sha256_hex(heap, model);
+                                    let shex2 = prov.hex(heap, sha);
+                                    borrow mhex2 as &mh2 in {
+                                        borrow shex2 as &sh2 in {
+                                            let inp2 = inputs(heap, data_path, file_bytes, buffer.bytes(sh2), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, o.split_num, o.split_den, o.drops, o.floats, o.cats, na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order);
+                                            borrow inp2 as &i2 in {
+                                                if true {
+                                                    let cand = record(heap, buffer.bytes(idr), buffer.bytes(i2), pthreads, buffer.bytes(ppr), len(model), buffer.bytes(mh2), file_rows, trows, ntest, features, steps, metrics);
+                                                    borrow cand as &cr in {
+                                                        same = bytes.equal(buffer.bytes(cr), buffer.bytes(or));
+                                                    }
+                                                    buffer.drop(heap, cand);
+                                                }
+                                            }
+                                            buffer.drop(heap, inp2);
+                                        }
+                                    }
+                                    buffer.drop(heap, mhex2);
+                                    buffer.drop(heap, shex2);
+                                }
+                            }
+                            buffer.drop(heap, ppath);
+                            if !same {
+                                var w = open_error(heap, "ml.runs.conflict");
+                                w = fail.detail_str(heap, w, "id", buffer.bytes(idr));
+                                e = fail.add(heap, e, w);
+                                go = false;
+                            } else {
+                                // the record that is there is the record: its thread count and the name of its model file stay
+                                buffer.drop(heap, rec);
+                                rec = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(or)) + 1), buffer.bytes(or));
+                            }
+                        }
+                        write = false;
+                    } else if rst == 1 && rax == 2 {
+                        present = false;
+                    } else if rst == 3 {
+                        var w = open_error(heap, "ml.runs.damaged");
+                        w = fail.detail_text(heap, w, "file", buffer.bytes(nr));
+                        e = fail.add(heap, e, w);
+                        go = false;
+                    } else {
+                        e = fail.io_error(heap, e, rax, false, paths.shown(trackp));
+                        go = false;
+                    }
+                    buffer.drop(heap, old);
+                }
+                buffer.drop(heap, nm);
+                if go && !present && count >= max_records() {
+                    var w = open_error(heap, "ml.runs.too-many");
+                    w = fail.detail_int(heap, w, "max", max_records());
+                    e = fail.add(heap, e, w);
+                    go = false;
+                }
+            }
+        }
+    }
+    return (rec, id, write, e);
+}
+
