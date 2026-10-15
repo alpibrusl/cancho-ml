@@ -72,7 +72,7 @@ MUTANTS = [
     M("l-pool-field", ["diff", "unit"], "the pool bytes of the header are one too many", [(STR, "    table = put64(heap, table, pool);", "    table = put64(heap, table, pool + 1);")]),
     M("l-strings-field", ["diff", "unit"], "the number of strings of the header is one too many", [(STR, "    table = put64(heap, table, strings);", "    table = put64(heap, table, strings + 1);")]),
     M("l-na-not-stored", ["diff", "cli"], "the markers are not stored (the length is 0)", [(STR, "    table = put32(heap, table, len(na));\n    table = buffer.append(heap, table, na);", "    table = put32(heap, table, 0);")]),
-    M("l-na-not-passed", ["diff", "cli"], "the fit passes no markers to the table", [(WIRE, "strtab.pack(heap, buffer.bytes(tr.fitted.payload), o.na, o.max_cats", "strtab.pack(heap, buffer.bytes(tr.fitted.payload), \"\", o.max_cats")]),
+    M("l-na-not-passed", ["diff", "cli"], "the fit passes no markers to the table", [(WIRE, "strtab.pack(heap, buffer.bytes(tr.fitted.payload), na, o.max_cats", "strtab.pack(heap, buffer.bytes(tr.fitted.payload), \"\", o.max_cats")]),
     M("l-limits-swapped", ["diff", "unit"], "max_categories and max_string_bytes are written in the other order", [(STR, "    table = put32(heap, table, max_cats);\n    table = put32(heap, table, max_str);", "    table = put32(heap, table, max_str);\n    table = put32(heap, table, max_cats);")]),
     M("l-string-limit-constant", ["diff", "cli"], "the string limit stored is always 255", [(WIRE, "o.max_cats, o.max_str, o.max_pool, o.max_catcols);", "o.max_cats, 255, o.max_pool, o.max_catcols);")]),
     M("l-digest-span", ["diff", "unit"], "the digest covers the table but its first byte", [(STR, "        dg = digest_into(heap, dg, buffer.bytes(tr));", "        dg = digest_into(heap, dg, buffer.bytes(tr)[1..len(buffer.bytes(tr))]);")]),
@@ -81,7 +81,7 @@ MUTANTS = [
     M("l-stub-layout", ["diff", "unit"], "a stub carries the layout number of the table", [(STR, "            section = put32(heap, section, kinds.stub_layout());", "            section = put32(heap, section, kinds.table_layout());")]),
     M("l-schema-type", ["diff", "cli"], "a categorical column is typed as an integer in the schema", [(CW, "contents(tw)[2 * at] = kinds.schema_type_categorical();", "contents(tw)[2 * at] = 0;")]),
     M("l-meta-columns", ["diff", "roundtrip"], "the meta counts one column less than the schema", [(WIRE, "contents(mr)[0..end], tr.rows, fcols, o.seed", "contents(mr)[0..end], tr.rows, fcols - 1, o.seed")]),
-    M("l-table-always", ["cli"], "a file always has the sixth section, empty when no step needs it", [(FILE, "    if len(table) > 0 {\n        out = put32(heap, out, kinds.section_count());", "    if true {\n        out = put32(heap, out, kinds.section_count());")]),
+    M("l-table-always", ["cli"], "a file always has the sixth section, empty when no step needs it", [(FILE, "    if len(table) > 0 {\n        count = count + 1;\n    }", "    if true {\n        count = count + 1;\n    }")]),
     # ------------------------------------------------------------------ the bounds (S7)
     M("b-strings-bound", ["unit"], "the strings bound is 131,073", [fn_returns(STR, "max_strings", "131072", "131073")]),
     M("b-pool-bound", ["unit"], "the pool bound is 8 MiB + 1", [fn_returns(STR, "max_pool", "8388608", "8388609")]),

@@ -652,8 +652,9 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                 var snum = 0;
                 var sden = 0;
                 if sp >= 0 && json.is_object(contents(tp), sp) {
-                    snum = field_int(text, contents(tp), sp, "num", 0);
+                    // the record has the fraction that trains, the options the fraction that is held out
                     sden = field_int(text, contents(tp), sp, "den", 0);
+                    snum = sden - field_int(text, contents(tp), sp, "num", 0);
                 }
                 var cat_given = false;
                 var mc = 64;

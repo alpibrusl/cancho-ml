@@ -64,7 +64,7 @@ fn gcd(a: int, b: int) -> [] int {
 
 // ---------------------------------------------------------------- building
 
-// The `inputs` object (docs/tracking.md section 5.2): what determines the model's bytes. `split_den` 0 is no split; `sum_order` below 0 is none (the constant kinds); `positive_given` says whether the label is one.
+// The `inputs` object (docs/tracking.md section 5.2): what determines the model's bytes. `split_num` over `split_den` is the fraction held out (as the options hold it); the record has the fraction that trains. `split_den` 0 is no split; `sum_order` below 0 is none (the constant kinds); `positive_given` says whether the label is one.
 pub fn inputs[&h, &p, &s, &t, &pl, &dr, &fl, &ct, &nv, &cm](heap: &!h Heap, path: &p [byte], data_bytes: int, sha_hex: &s [byte], data_rows: int, target: &t [byte], has_target: bool, task: &static [byte], plan: &pl [byte], seed: int, positive: int, positive_given: bool, split_num: int, split_den: int, drops: &dr [byte], floats: &fl [byte], cats: &ct [byte], na: &nv [byte], cat_given: bool, max_cats: int, max_str: int, max_pool: int, max_catcols: int, compiler: &cm [byte], sum_order: int) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 512);
     w = json.begin_object(heap, w);
@@ -97,10 +97,12 @@ pub fn inputs[&h, &p, &s, &t, &pl, &dr, &fl, &ct, &nv, &cm](heap: &!h Heap, path
     }
     w = json.put_key(heap, w, "split");
     if split_den > 0 {
-        let g = gcd(split_num, split_den);
+        // the fraction of the rows that train, in lowest terms (the options hold the fraction that is held out)
+        let train = split_den - split_num;
+        let g = gcd(train, split_den);
         w = json.begin_object(heap, w);
         w = json.put_key(heap, w, "num");
-        w = json.put_int(heap, w, split_num / g);
+        w = json.put_int(heap, w, train / g);
         w = json.put_key(heap, w, "den");
         w = json.put_int(heap, w, split_den / g);
         w = json.end_object(heap, w);
@@ -238,10 +240,11 @@ pub fn eval_record[&h, &ri, &ms, &dp, &ds, &on, &me](heap: &!h Heap, run: &ri [b
     w = json.put_string(heap, w, onw);
     w = json.put_key(heap, w, "split");
     if split_den > 0 {
-        let g = gcd(split_num, split_den);
+        let train = split_den - split_num;
+        let g = gcd(train, split_den);
         w = json.begin_object(heap, w);
         w = json.put_key(heap, w, "num");
-        w = json.put_int(heap, w, split_num / g);
+        w = json.put_int(heap, w, train / g);
         w = json.put_key(heap, w, "den");
         w = json.put_int(heap, w, split_den / g);
         w = json.put_key(heap, w, "seed");
