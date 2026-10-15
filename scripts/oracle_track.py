@@ -119,8 +119,11 @@ def column_stats(cells):
 
     mn, mx = min(xs), max(xs)
     mean = rounded(sum(Fraction(x) for x in xs) / n)
-    sse = rounded(sum((Fraction(x) - Fraction(mean)) ** 2 for x in xs))
-    std = math.sqrt(sse / n)
+    try:
+        sse = rounded(sum((Fraction(x) - Fraction(mean)) ** 2 for x in xs))
+        std = math.sqrt(sse / n)
+    except OverflowError:
+        std = sys.float_info.max
     return n, bits(mn), bits(mx), bits(mean), bits(std)
 
 

@@ -389,7 +389,7 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.runs.model-differs` | 8 | the refit of `runs verify` gave a file whose SHA-256 is not the record's | none |
 | `ml.runs.not-replayable` | 8 | a column carrying `--drop`, `--float` or `--cat` is past the 62nd position of the header | none |
 
-`ml.model.malformed` also answers a damaged section 7 (`detail.section` 7); `io.not-found` a `--track` directory that does not exist; `ml.fit.non-finite` a column whose exact sum of squares is beyond the largest double.
+`ml.model.malformed` also answers a damaged section 7 (`detail.section` 7); `io.not-found` a `--track` directory that does not exist; 
 
 ## 8.1 The numeric codes of the libraries (added at integration)
 

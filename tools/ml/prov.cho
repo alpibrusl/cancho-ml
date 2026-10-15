@@ -93,12 +93,13 @@ pub fn stats[&h, &m, &s, &c](heap: &!h Heap, x: &m matrix.Matrix, sel: &s [int],
                             r = r + 1;
                         }
                         let (sse, st) = fsq.finish(contents(qw));
+                        contents(ow)[5 * k + 1] = norm_bits(mn);
+                        contents(ow)[5 * k + 2] = norm_bits(mx);
+                        contents(ow)[5 * k + 3] = mean_bits;
                         if st != 0 {
-                            bad = 1;
+                            // the exact sum of squares is beyond the largest double: the deviation is stored as the largest finite double (docs/tracking.md section 2.3)
+                            contents(ow)[5 * k + 4] = 9218868437227405311;
                         } else {
-                            contents(ow)[5 * k + 1] = norm_bits(mn);
-                            contents(ow)[5 * k + 2] = norm_bits(mx);
-                            contents(ow)[5 * k + 3] = mean_bits;
                             contents(ow)[5 * k + 4] = norm_bits(sqrt(sse / float_of(count)));
                         }
                     }

@@ -71,7 +71,7 @@ text; the reader is cancho-table's exact one):
 * `std` = `sqrt(v)` with `v = S / n` in IEEE double division, where `S = sum (x_i - mean)^2` is accumulated **exactly** (`ml.fsq`, the exact sum of squared differences of doubles) with the *stored* `mean` as the
   centre, and rounded once. So `std` is the population standard deviation about the stored mean: it differs from the exact population deviation by at most `(mu - mean)^2`, a relative 2^-106 of the variance
   for a column whose mean is not near zero. This is a definition, not an approximation claim: the oracle (`scripts/oracle_track.py`) computes `S` with Python fractions, rounds it once with `float(Fraction)`,
-  divides with the same IEEE division and takes `math.sqrt`, and compares the bits. A `S` beyond the largest double is `ml.fit.non-finite` (a column of values near 1e154).
+  divides with the same IEEE division and takes `math.sqrt`, and compares the bits. When `S` is beyond the largest double (a column of values near 1e154) the deviation is stored as the largest finite double, 1.7976931348623157e308: a fit is never refused for its statistics.
 * a column of one distinct value has `min = max = mean` and `std = 0.0` exactly (a check of the decoder, 2.4).
 
 Why exact and not the lane sums of the package: these numbers are stored in the file, so they must not depend on the order of the cells, on the thread count or on the summation order of the model kind.

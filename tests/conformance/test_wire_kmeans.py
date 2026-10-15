@@ -190,7 +190,7 @@ class KMeansWire(unittest.TestCase):
         # the text form: one line for each of the three numbers
         t = self.ml("--format", "text", "eval", "--model-file", "m.cml", "full.csv")
         lines = t.stdout.decode().splitlines()
-        self.assertEqual([l.split(" ")[0] for l in lines], ["inertia", "sizes", "mean_distance"])
+        self.assertEqual([l.split(" ")[0] for l in lines], ["on", "inertia", "sizes", "mean_distance"])
 
     def test_an_empty_cluster_has_a_null_mean_distance(self):
         # fitted on the six points, scored on rows that are all near the first centre: the other cluster is empty
