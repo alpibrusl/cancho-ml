@@ -281,7 +281,12 @@ def xplat(old_dir, new_dir):
 def write():
     for name, script in (("golden_constant.json", "golden_constant.py"), ("golden_numeric.json", "golden_numeric.py"), ("golden_planned.json", "golden_planned.py")):
         out = subprocess.run([sys.executable, str(HERE / script)], capture_output=True, text=True, check=True).stdout
-        (ROOT / "tests" / "conformance" / name).write_text(out)
+        path = ROOT / "tests" / "conformance" / name
+        # a record is re-recorded, never extended: the cases the generator now finds beyond the ids already in the file belong to later stages and stay out
+        old = json.loads(path.read_text())
+        new = json.loads(out)
+        out = json.dumps({k: v for k, v in new.items() if k in old}, indent=1, sort_keys=True) + "\n"
+        path.write_text(out)
         print("wrote", name)
     subprocess.run([sys.executable, str(HERE / "golden_describe.py")], check=True)
     print("wrote golden_describe.json")
