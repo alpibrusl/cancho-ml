@@ -116,6 +116,10 @@ blank lines. `nan` and `inf` are `ml.input.non-finite`, and so is a number past 
 reads as zero though it is not zero, or is longer than 1,100 bytes is `ml.input.non-numeric` with the reason in `detail`. A quote closed and
 followed by anything but a comma is `parse.csv-bad-quote`, a quote open at the end `parse.csv-unterminated-quote`.
 
+**A prediction that is not a number.** A finite input can make a model compute an infinity (a feature of 1e308 times a coefficient above 1) or a NaN (two infinite terms that cancel). `predict` and `eval` check every value of every
+row they score (a prediction, a probability, and with `--distance` or in `eval` a squared distance), not only the rows of the page `--limit` and `--from` select, and refuse the request with `ml.predict.non-finite` (exit 8, `detail` `row` and `column`)
+before any cell is written; `ml-predict` and `ml-serve` raise the same rule from the same function. `docs/nonfinite.md` has the cases and the gates.
+
 The modules of cancho-table are **not copied**: they are five `[dependencies.*]` of `cancho.toml` on cancho-table's `.cancho-vcs` stores, pinned to
 one commit (`docs/reader.md` section 1), fetched by `cancho install` into `build/deps`.
 

@@ -4,7 +4,7 @@ and the fuzz (cases are its seeds).
 
 A case: id, setup (steps run in a scratch directory that is the --root), argv (after `ml --root DIR`; "@ROOT" is the
 directory), expect {exit, rule, data (a subset the data must contain), stdout_starts, stderr_has}, and the switches
-close_stdin, close_stdout, noroot. A step: ("write", name, text) ("fit", args...) ("mutate", src, dst, fn) ("mkdir", name)
+close_stdin, close_stdout, noroot, darwin_only (a platform-specific answer: harness.runs_here). A step: ("write", name, text) ("fit", args...) ("mutate", src, dst, fn) ("mkdir", name)
 ("symlink", target, name) ("chmod", name, mode) ("raw", fn(sandbox)).
 """
 
@@ -158,9 +158,9 @@ CASES = [
     case("path-outside-root", ["fit", "--target", "y", "--output", "m.cml", "/etc/hosts"], bad("path.outside-root")),
     case("path-too-long", ["fit", "--target", "y", "--output", "m.cml", "a" * 5000], bad("path.too-long")),
     case("path-symlink", ["fit", "--target", "y", "--output", "m.cml", "link.csv"], bad("path.symlink"),
-         setup=BASE + [("symlink", "reg.csv", "link.csv")]),
+         setup=BASE + [("symlink", "reg.csv", "link.csv")], darwin_only=True),
     case("path-symlink-dir", ["fit", "--target", "y", "--output", "m.cml", "dirlink/reg.csv"], bad("path.symlink"),
-         setup=BASE + [("mkdir", "real"), ("symlink", "real", "dirlink")]),
+         setup=BASE + [("mkdir", "real"), ("symlink", "real", "dirlink")], darwin_only=True),
     case("path-bad-name", ["fit", "--target", "y", "--output", ".", "reg.csv"], bad("path.bad-name")),
     case("path-flag-value-with-equals", ["fit", "--target", "y", "--output=m.cml", "reg.csv"], bad("args.bad-value")),
     case("io-not-found", ["fit", "--target", "y", "--output", "m.cml", "missing.csv"], bad("io.not-found")),
@@ -171,7 +171,7 @@ CASES = [
     case("io-permission-denied", ["fit", "--target", "y", "--output", "m.cml", "secret.csv"], bad("io.permission-denied"),
          setup=BASE + [("write", "secret.csv", REG), ("chmod", "secret.csv", 0)], skip_if_root=True),
     case("io-read-failed", ["fit", "--target", "y", "--output", "m.cml", "/dev/stdin"], bad("io.read-failed"), close_stdin=True,
-         noroot=True),
+         noroot=True, darwin_only=True),
     case("io-write-failed-fit", FIT_REG, bad("io.write-failed", exit=1, stderr_has="io.write-failed"), close_stdout=True,
          no_json=True),
     case("io-write-failed-output-directory", ["fit", "--target", "y", "--output", "nodir/m.cml", "reg.csv"], bad("io.not-found")),
@@ -312,6 +312,11 @@ CASES = [
          setup=LBASE + [("write", "dup.csv", "a,b,y\n1,1,0\n2,2,1\n3,3,0\n4,4,1\n5,5,1\n")]),
     case("ml-fit-non-finite", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "big.csv"], bad("ml.fit.non-finite"),
          setup=LBASE + [("write", "big.csv", "x,y\n1e200,1\n2e200,0\n3e200,1\n-1e200,0\n")]),
+    case("ml-predict-non-finite", ["predict", "--model-file", "lf.cml", "bigx.csv"], bad("ml.predict.non-finite"),
+         setup=LBASE + [("fit", "--model", "linear", "--float", "a,b,y", "--target", "y", "--output", "lf.cml", "lin.csv"), ("write", "bigx.csv", "a,b\n1,2\n1.7e308,2\n")]),
+    case("ml-eval-non-finite-distance", ["eval", "--model-file", "k.cml", "kb.csv"], bad("ml.predict.non-finite"),
+         setup=BASE + [("write", "km.csv", "a,b\n1,1\n1.1,0.9\n5,5\n5.1,4.9\n"), ("fit", "--model", "kmeans", "--k", "2", "--float", "a,b", "--output", "k.cml", "km.csv"),
+                       ("write", "kb.csv", "a,b\n1,1\n1e200,1\n")]),
     case("ml-split-empty-fold", ["fit", "--model", "linear", "--split", "train=0.01", "--target", "y", "--output", "m.cml", "lin.csv"], bad("ml.split.empty-fold"), setup=LBASE),
     case("ml-param-threads", ["fit", "--model", "linear", "--threads", "0", "--target", "y", "--output", "m.cml", "lin.csv"], bad("ml.param.threads"), setup=LBASE),
     case("ml-param-threads-too-many", ["eval", "--model-file", "lin.cml", "--threads", "65", "lin.csv"], bad("ml.param.threads"), setup=WITH_LIN),
