@@ -183,7 +183,7 @@
   <ul class="plain">
     <li><strong>The command line.</strong> <code>ml fit</code>, <code>predict</code> and <code>eval</code> have no benchmark (the constant model needs no matrix; the pipeline models read one).</li>
     <li><strong>A quiet machine.</strong> No table above has a quiet-machine version.</li>
-    <li><strong>Another machine.</strong> Everything is one Mac, arm64. A Linux x86-64 box has not been used.</li>
+    <li><strong>Another machine.</strong> Every timing is one Mac, arm64. A Linux x86-64 workstation ran the determinism fingerprint (<code>scripts/xplat_check.py</code>), not a benchmark.</li>
     <li><strong>Memory.</strong> No gate measures it. The reader&rsquo;s refusal of a 200 MB file peaked at 1.5 MB, and the tree fit holds about 16 times 35 MB of thread copies at 16 threads for 800,000 rows (<code>docs/models-tree.md</code> section 10.9); there is no measurement of a model fit.</li>
     <li><strong>Rows above a million</strong> for the linear models, and 10,000,000 for anything. The tree fit is limited to 2<sup>20</sup> rows in the library.</li>
     <li><strong>How to run them:</strong> <code>python3 scripts/bench_models.py</code>, <code>bench_models_threads.py</code>, <code>bench_linalg.py --gate --c</code>, <code>bench_metrics.py</code>, <code>bench_tree.py</code> and <code>bench_reader.py</code>. No check runs them.</li>

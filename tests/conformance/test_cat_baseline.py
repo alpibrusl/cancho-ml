@@ -18,7 +18,7 @@ import pathlib
 import sys
 import unittest
 
-from harness import ROOT
+from harness import ROOT, runs_here
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import golden_constant  # noqa: E402
@@ -47,7 +47,7 @@ class NumericBaseline(unittest.TestCase):
     def test_every_old_fixture_gives_the_bytes_of_the_baseline(self):
         failures = []
         for c in golden_numeric.cases():
-            if c["id"] not in GOLDEN:
+            if c["id"] not in GOLDEN or not runs_here(c):
                 continue
             got = golden_constant.record(c)
             want = dict(GOLDEN[c["id"]])

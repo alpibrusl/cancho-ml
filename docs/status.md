@@ -62,9 +62,10 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 | boosting, naive Bayes, k-NN | in the plan ([design.md](design.md) section 1), not built |
 | imputation in the constant model | `--model constant` refuses an empty cell; the pipeline models take it as a missing value |
 | neural networks, GPU | not planned in v1 |
-| a second machine | the bytes of model files are untested across machines; the stores and the output of the consumption proof are equal on a Mac and on a Linux x86-64 host ([stores.md](stores.md) section 7) |
+| other platforms | macOS arm64, Linux x86-64 and Linux aarch64 (a Raspberry Pi 5, by hand, outside the workflow) agree on 88 fingerprint lines for 22 fits (`docs/bench/xplat_fp.txt`, `scripts/xplat_check.py`; compiler `a4572ea`, commit `cb08d5b`); the workflow covers the first two; any other platform is untested |
+| the stores on a second machine | the stores and the output of the consumption proof are equal on a Mac and on a Linux x86-64 host ([stores.md](stores.md) section 7) |
 | a fetch of the stores from GitHub | the consumption proof reads them through a `file://` URL of a clone; the GitHub form is the same command with `--url` and is run once a commit holding the stores is pushed |
-| CI | no workflow in this repository; `scripts/check.sh` needs the network for `cancho install` and `../ml-data` for the tree gate |
+| CI | `.github/workflows/ci.yml` ([ci.md](ci.md)): build, determinism gate and fast gates on `ubuntu-latest` and `macos-latest`; `scripts/check.sh` on request and nightly; binaries on a tag `v*`. Run by hand on a Mac and a Linux x86-64 workstation; no GitHub run is recorded here. `cancho install` needs the network |
 
 ## What was measured
 
