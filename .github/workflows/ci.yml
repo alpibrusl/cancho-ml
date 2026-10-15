@@ -133,8 +133,13 @@ jobs:
 
       # Every module of tests/conformance that imports without numpy, scipy and scikit-learn, four at a time; the ml-serve tests among them start the
       # server on an ephemeral port and compare one POST per model kind with the command line's cell text. The oracle modules run in the full gate.
+      # ST_STRIDE=5 flips every fifth byte of a damaged model file (the default, 1, flips every byte: about 27 minutes for test_describe alone on a Linux machine), and
+      # FUZZ_N=500 draws 500 argument vectors of the fuzz (the default is 2,500). The full gate runs the defaults.
       - name: Conformance tests, including the ml-serve tests
-        timeout-minutes: 40
+        timeout-minutes: 45
+        env:
+          ST_STRIDE: "5"
+          FUZZ_N: "500"
         run: python3 scripts/run_conformance.py --no-oracles 2>&1 | tee "../conformance-$(uname -s)-$(uname -m).log"
 
       - name: Documentation checks
