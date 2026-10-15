@@ -128,6 +128,8 @@ validation rows ascending; the score of a row over the rounds in order. **No sum
 another order is refused with `ml.model.version` (`sum_order` and `known = 3` in detail), and a kind 4 or 5 file that says 3 is refused with `known = 2`. The manifest
 declares `[sums] sequential` for the files that sum floats (`scripts/admit.py` Q4).
 
+**Why not exact arithmetic [choice].** The tree's Gini decision is exact because counts are integers. Here a gradient is a float (`F - y`, `p - y`, `p (1 - p)`), and an exact sum would need the gradients quantised to a fixed point (as the scaled-integer histograms of some libraries do), which changes the values the model learns. The decision is instead a float comparison whose inputs are sums in a fixed order that the algorithm defines, so the result is the same in every run, at every thread count and in an independent implementation that adds in the same order (the oracle checks it bit for bit); two splits whose true gains differ by less than the rounding can be ordered either way, identically every time (`models-tree.md` 3.2 says the same of its regression criterion).
+
 No histogram subtraction (the sibling's histogram as the parent's minus the child's) is used: it would give sums that differ from the direct sums in the last bits and
 would make the result depend on which child is built first. Every histogram is summed directly from its rows. This costs about one extra pass over the node's rows per
 level (**[estimate]**; the speed is not a claim of this document).
