@@ -211,3 +211,4 @@ SURVIVED  b-read-rounds-ceiling                            GB6
 SURVIVED  b-read-nodes-ceiling                             GB6  
 KILLED    wb-summary-nodes-field                           GB2  tests: test_the_file_of_a_regression_has_no_labels
 KILLED    wb-describe-requested-field                      GB8  tests: test_describe_says_the_number_of_trees
+# baselines (the unchanged copy, whole conformance suite, Linux x86-64): mutants_boost.py PASSED, mutants_wire_boost.py PASSED

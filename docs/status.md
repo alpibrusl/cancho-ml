@@ -68,7 +68,7 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 
 ## What was measured
 
-Correctness, by script, on this tree. `scripts/check.sh` exits 0: 497 conformance tests pass, none skipped, in 2,434 seconds (Mac, with other test runs beside it); `scripts/admit.py` admits `tree`, `forest`, `linear`, `logistic`, `kmeans` and `boost` with 12 of 12 checks, and refuses the six mutant modules.
+Correctness, by script, on this tree. `scripts/check.sh` exits 0: 497 conformance tests pass, none skipped, in 2,297 seconds (Mac, with other test runs beside it); `scripts/admit.py` admits `tree`, `forest`, `linear`, `logistic`, `kmeans` and `boost` with 12 of 12 checks, and refuses the six mutant modules.
 
 | what | figure | source |
 |---|---|---|
