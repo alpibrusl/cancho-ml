@@ -21,7 +21,7 @@ It is not a benchmark: no time is asserted by a gate, and nothing here measures 
 
 `scripts/xplat_check.py` fits 22 models (every kind: constant, linear, logistic, tree, forest, k-means; one-hot, label, frequency and hash steps; 1 and 8 threads) on
 the files of `docs/examples/data`, then predicts and scores each with the file it wrote. It prints one line per artefact: the SHA-256 of the whole model
-file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 88 lines in all (22 times `fit-exit`, `model-file`, `predict`, `eval`).
+file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 88 lines in all (22 times `fit-exit`, `model-file`, `predict`, `eval`), and two more fits read the same tables as JSON lines (`logistic-iris-jsonl`, `forest-pets-jsonl-cat`; `docs/jsonl.md`): 8 more lines, 96 for 24 fits. Their model files and answers hash to the lines of the CSV fits of the same tables.
 
 The **golden** is `docs/bench/xplat_fp.txt`. Each platform of the matrix compares its own fingerprint to the golden and fails on any difference. That is the
 whole cross-platform comparison [choice]: two platforms that each equal the same committed file are equal to each other, and the job needs no artefact passed
@@ -163,7 +163,7 @@ The conformance step is the long one: `test_describe` (every flipped byte of a d
 runner with four cores is slower in wall time than the 7 cores used here for `cancho build`, and the compiler build on it is an estimate, not a measurement: 294 s of CPU over
 four cores is about 75 s if the build scales, and a runner's CPUs are slower than this one's [estimate].
 
-The determinism gate on Linux x86-64 printed `ok, 88 lines for 22 fits equal docs/bench/xplat_fp.txt` for the golden that the Mac wrote, and its 15 mutants were each refused, at commit `cb08d5b`'s sources
+The determinism gate on Linux x86-64 printed `ok, 88 lines for 22 fits equal docs/bench/xplat_fp.txt` (and `ok, 96 lines for 24 fits` once the two JSON lines fits were appended: the Mac and the Ubuntu host `gram` agree) for the golden that the Mac wrote, and its 15 mutants were each refused, at commit `cb08d5b`'s sources
 (the tree of this branch has the same `lib/` and `tools/`).
 
 Findings of the Linux run (each fixed or marked in this branch):
