@@ -122,6 +122,35 @@ def remote(proj):
     return problems
 
 
+# The compiler on Linux leaves the name of its temporary file, `cancho-llvm-<pid>-<n>.ll`, in the symbol table of a binary, so two builds of one tree differ in those
+# digits (three builds of ml-predict on Linux x86-64 gave three hashes; on macOS two builds gave one). The digits are zeroed before the comparison, which keeps every byte
+# length, and nothing else is changed (docs/ci.md section 10).
+TMPNAME = re.compile(rb"cancho-llvm-(\d+)-(\d+)\.ll")
+
+
+def unpid(b):
+    return TMPNAME.sub(lambda m: b"cancho-llvm-" + b"0" * len(m.group(1)) + b"-" + b"0" * len(m.group(2)) + b".ll", b)
+
+
+def same_binary(a, c):
+    return unpid(a) == unpid(c)
+
+
+def selftest_same_binary():
+    """The normalisation hides the process id and nothing else: it is shown able to fail."""
+    base = b"\x7fELF....cancho-llvm-1810468-0.ll\x00lexs_argc\x00rest"
+    cases = [
+        (base, base.replace(b"1810468", b"1510769"), True),  # another process id of the same width
+        (base, base.replace(b"-0.ll", b"-1.ll"), True),  # another counter
+        (base, base.replace(b"rest", b"rexp"), False),  # a real byte differs
+        (base, base.replace(b"lexs_argc", b"lexs_argd"), False),
+        (base, base.replace(b"1810468", b"99999"), False),  # another width shifts the table: not hidden
+        (base, base[:-1], False),
+        (b"no name here", b"no name herf", False),
+    ]
+    return ["same_binary self-test %d: %r" % (i, want) for i, (a, c, want) in enumerate(cases) if same_binary(a, c) != want]
+
+
 def bins():
     """W2: ml and ml-predict, built from a copy of this tree without the three dependency blocks and without the ml-serve bin, are the bytes of build/ml and build/ml-predict."""
     cancho = os.environ.get("CANCHO") or str(ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho")
@@ -138,11 +167,11 @@ def bins():
             r = subprocess.run(cmd, cwd=work, capture_output=True, text=True)
             if r.returncode != 0:
                 return ["%s failed: %s" % (" ".join(cmd[1:]), (r.stdout + r.stderr)[-400:])]
-        problems = []
+        problems = selftest_same_binary()
         for b in ("ml", "ml-predict"):
             a = (ROOT / "build" / b).read_bytes()
             c = (work / "build" / b).read_bytes()
-            if a != c:
+            if not same_binary(a, c):
                 problems.append("build/%s differs from the build without the three dependencies (%d and %d bytes)" % (b, len(a), len(c)))
         return problems
     finally:
