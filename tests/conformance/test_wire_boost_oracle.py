@@ -66,6 +66,30 @@ class BoostOracle(unittest.TestCase):
         self.assertEqual(seen, {"missing kept", "missing imputed", "empty column", "constant column", "impute", "minmax", "standard", "onehot", "bucket", "split", "positive",
                                 "subsample", "early stopping", "rounds", "learning-rate", "max-depth", "min-leaf", "bins", "l2", "max-nodes"})
 
+    def test_the_sample_boundary_and_the_rounding_of_K(self):
+        # a draw equal to K is not in the sample (the comparison is strict), and K is the rounded product, not the truncated one: cases built so that both decide a byte
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            case = owb.gen_case(7919 + 57, "regression")
+            case.hp.update({"rounds": 6, "min-leaf": 2})
+            case.split, case.seed = None, 5
+            case.hp.pop("early-stopping", None)
+            n = len(case.rows)
+            s0 = owb.ob.derive(owb.ob.derive(5, 7), 0)
+            z = owb.ob.mix(s0 + owb.ob.GOLD)                                           # the first draw of round 0, for the first fit row
+            v = (z >> 1) % 1000000
+            for sub_ in ("%.6f" % (max(v, 1) / 1000000.0), "0.7000007"):
+                case.hp["subsample"] = sub_
+                expect, ctx = owb.fit_oracle(case)
+                self.assertIsNotNone(ctx)
+                (tmp / "d.csv").write_text(case.csv())
+                (tmp / "m.cml").unlink(missing_ok=True)
+                rc, out = owb.ow.ml("--root", tmp, *owb.fit_args(case, "m.cml"), "d.csv")
+                self.assertEqual(rc, 0, out)
+                self.assertEqual((tmp / "m.cml").read_bytes(), expect, sub_)
+            self.assertEqual(ctx["res"]["subk"], 700001)
+            self.assertGreater(n, 0)
+
     def test_the_oracle_is_sensitive(self):
         # the file of ml equals the oracle's; a file that says 2 where the oracle says 3 does not, and an oracle that changes a number of the algorithm does not match
         with tempfile.TemporaryDirectory() as td:

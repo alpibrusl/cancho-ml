@@ -81,7 +81,7 @@ class BoostFile(unittest.TestCase):
             head = list(header(self.files[key]))
             task, rounds, d, bins, total, maxd, minleaf, early, requested, subk = head
             for k, vals in ((0, [2, -1]), (1, [0, 10001, rounds + 1, rounds - 1, (1 << 63) - 1]), (2, [0, d + 1, d - 1, 4097, (1 << 63) - 1]), (3, [1, 256]),
-                            (4, [0, total + 1, total - 1, (1 << 22) + 1, 1 << 40, (1 << 63) - 1, -1]), (5, [0, 31, (1 << 63) - 1]), (6, [0, -1]),
+                            (4, [0, total + 1, total - 1, (1 << 22) + 1, 1 << 40, (1 << 63) - 1, -1]), (5, [0, 1, 31, (1 << 63) - 1]), (6, [0, -1]),
                             (7, [-1, 1001, (1 << 63) - 1]), (8, [0, 10001, rounds - 1, (1 << 63) - 1]), (9, [0, 1000001, -1, (1 << 63) - 1])):
                 for v in vals:
                     if v == head[k]:
@@ -90,6 +90,23 @@ class BoostFile(unittest.TestCase):
             # early stopping off but fewer rounds than requested, and requested below the rounds
             if early == 0:
                 self.refused(key, self.edit_model(key, 20 + 8 * 8, struct.pack("<q", rounds + 1)), "%s requested above the rounds with no early stopping" % key)
+
+    def test_counts_that_wrap_the_size_are_refused_before_any_allocation(self):
+        # size = 156 + 8 (rounds + 1) + 6 (16 + 8 total) is computed modulo 2^64: rounds + 2^61 and total + 2^60 give the same size, and with the extents of the records
+        # edited to match, only the ceilings of the reader stand between such a file and an allocation of 2^60 words
+        for key in self.files:
+            m = payloads(self.files[key])[4]
+            rounds, total = i64(m, 28), i64(m, 52)
+            for new_rounds, new_total in ((rounds + (1 << 61), total), (rounds, total + (1 << 60)), (rounds + (1 << 61), total + (1 << 60))):
+                data = self.files[key]
+                start = sections(data)[3][1]
+                data = set_bytes(data, start + 28, struct.pack("<q", new_rounds))
+                data = set_bytes(data, start + 52, struct.pack("<q", new_total))
+                data = set_bytes(data, start + 140 + 8, struct.pack("<Q", new_rounds + 1))
+                for r_ in range(4, 10):
+                    at = 156 + 8 * (rounds + 1) + (r_ - 4) * (16 + 8 * total) + 8
+                    data = set_bytes(data, start + at, struct.pack("<Q", new_total))
+                self.refused(key, fix_checksum(data), "%s wrapped counts %d %d" % (key, new_rounds, new_total))
 
     def test_the_floats_of_the_payload(self):
         # base score, learning rate, l2 at 116, 124, 132

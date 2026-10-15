@@ -155,6 +155,9 @@ class BoostWire(unittest.TestCase):
         task, rounds, d_, bins, total = header(d)[:5]
         self.assertEqual((task, rounds, d_), (1, 3, 3))
         self.assertEqual(len(model_section(d)), 156 + 8 * (rounds + 1) + 6 * (16 + 8 * total))
+        r = self.fit("y", "full.csv", "t2.cml", "--rounds", "3")
+        h = header(self.sb.read("t2.cml"))
+        self.assertEqual((r.data()["summary"]["boost"]["rounds"], r.data()["summary"]["boost"]["nodes"], r.data()["summary"]["boost"]["bins"]), (h[1], h[4], h[3]))
 
     def test_the_sum_order_is_three_for_kind_8(self):
         self.fit("y", "full.csv", "b.cml", "--rounds", "3")
@@ -182,12 +185,15 @@ class BoostWire(unittest.TestCase):
         self.assertEqual((r.status, r.first_rule()), (8, "ml.model.malformed"), r)
 
     def test_describe_says_the_number_of_trees(self):
-        self.fit("y", "full.csv", "b.cml", "--rounds", "6", "--early-stopping", "2", "--split", "train=0.8", "--seed", "1") if False else self.fit("y", "full.csv", "b.cml", "--rounds", "6")
+        rng = random.Random(8)
+        rows = ["a,b,y"] + ["%.3f,%.3f,%.3f" % (a, b, a + rng.gauss(0, 6)) for a, b in ((rng.uniform(0, 5), rng.uniform(0, 5)) for _ in range(300))]
+        self.sb.write("noisy2.csv", "\n".join(rows) + "\n")
+        self.fit("y", "noisy2.csv", "b.cml", "--rounds", "300", "--learning-rate", "0.4", "--early-stopping", "3", "--split", "train=0.8", "--seed", "2", "--min-leaf", "5")
+        h = header(self.sb.read("b.cml"))
         doc = self.ml("describe", "--model-file", "b.cml").data()
         self.assertEqual((doc["model"], doc["kind"], doc["file"]["sum_order"]), ("boost", 8, 3))
-        self.assertEqual(doc["ensemble"]["trees"], 6)
-        self.assertEqual(doc["ensemble"]["rounds_requested"], 6)
-        self.assertEqual(doc["ensemble"]["nodes"], header(self.sb.read("b.cml"))[4])
+        self.assertLess(h[1], 300)
+        self.assertEqual(doc["ensemble"], {"trees": h[1], "nodes": h[4], "rounds_requested": 300})
 
     # ------------------------------------------------------------------ the scores, by hand (GB3)
     def test_one_round_is_the_base_plus_the_shrunk_newton_step(self):
@@ -278,6 +284,15 @@ class BoostWire(unittest.TestCase):
         r = self.ml("fit", "--plan", "p.txt", "--split", "train=0.8", "--target", "y", "--output", "b.cml", "--overwrite", "full.csv")
         self.assertEqual(r.status, 0, r)
 
+    def test_early_stopping_needs_ten_training_rows(self):
+        rows = "a,y\n" + "".join("%d,%d\n" % (i, i * 2 % 7) for i in range(11))
+        self.sb.write("e11.csv", rows)
+        r = self.ml("fit", "--model", "boost", "--early-stopping", "2", "--min-leaf", "1", "--split", "train=0.9", "--target", "y", "--output", "e.cml", "--overwrite", "e11.csv")
+        self.assertEqual((r.status, r.first_rule()), (2, "ml.param.out-of-range"), r)    # 11 rows: 2 held out, 9 train rows
+        self.sb.write("e12.csv", rows + "11,3\n")
+        r = self.ml("fit", "--model", "boost", "--early-stopping", "2", "--min-leaf", "1", "--split", "train=0.9", "--target", "y", "--output", "e.cml", "--overwrite", "e12.csv")
+        self.assertEqual(r.status, 0, r)                                                  # 12 rows: 2 held out, 10 train rows, 1 validation row
+
     def test_early_stopping_stops_on_a_noisy_target_and_keeps_the_best_round(self):
         rng = random.Random(4)
         rows = ["a,b,y"] + ["%.3f,%.3f,%.3f" % (a, b, a + rng.gauss(0, 6)) for a, b in ((rng.uniform(0, 5), rng.uniform(0, 5)) for _ in range(400))]
@@ -362,6 +377,14 @@ class BoostWire(unittest.TestCase):
         r = self.ml("fit", "--model", "boost", "--max-columns", "8192", "--min-leaf", "1", "--rounds", "2", "--drop", "c0", "--target", "y", "--output", "wide.cml", "wide.csv")
         self.assertEqual(r.status, 0, r)
         self.assertEqual(self.ml("predict", "--model-file", "wide.cml", "--max-columns", "8192", "--limit", "2", "--drop", "y,c0", "wide.csv").status, 0)
+
+    def test_the_total_of_nodes_is_bounded_at_exactly_2_to_the_22(self):
+        self.sb.write("n300b.csv", regression_csv(n=300, missing=False))
+        base = ["--model", "boost", "--max-depth", "9", "--max-nodes", "512", "--min-leaf", "20", "--max-bytes", "268435456", "--target", "y", "--output", "edge.cml", "--overwrite"]
+        r = self.ml("fit", *base, "--rounds", "8193", "n300b.csv")                       # 8193 rounds of up to 512 nodes: over 4,194,304
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.limit.nodes"), r)
+        r = self.ml("fit", *base, "--rounds", "8192", "--learning-rate", "0.01", "n300b.csv")  # exactly 4,194,304: allowed
+        self.assertEqual(r.status, 0, r)
 
     def test_a_refused_fit_writes_nothing(self):
         self.sb.write("keep.cml", b"x")
