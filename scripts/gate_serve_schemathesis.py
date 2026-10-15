@@ -8,8 +8,9 @@ there the script says so and exits 0, or 1 with --require. Every check runs, wit
 
 * the seed is fixed, `--max-examples` is 100 for each operation;
 * `negative_data_rejection` expects 413 among the rejections, as it does 400 and 422 (a batch with more records than the document's `maxItems` is 413, and 413 is a rejection);
-* for a model that has a `dec` column, `positive_data_acceptance` is not run: cancho-schema at the pin states a `number` with no bounds and no multiple, so the document cannot say that a `dec` column
-  takes at most its scale's digits and 12 in all, and Schemathesis (rightly) sends numbers the server refuses with 422 `serve.number-not-exact`. The script prints this as the one exclusion.
+* for a model that has a `dec` column, or a categorical column with no `enum` (a `hash` step, a truncated vocabulary), `positive_data_acceptance` is not run: cancho-schema at the pin states a
+  `number` with no bounds and no multiple, so the document cannot say that a `dec` column takes at most its scale's digits and 12 in all, and a `string` with no pattern that can forbid a carriage
+  return directly before a line feed, and Schemathesis (rightly) sends values that the server refuses with 422 (`serve.number-not-exact`, `serve.string-not-renderable`). The script prints this as the one exclusion.
 """
 
 import os
@@ -22,10 +23,10 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "conformance"))
 
-# fixture id -> (model id of the corpus, token, has a dec column)
+# fixture id -> (model id of the corpus, token, whether the document cannot state all that the server refuses: a dec column, a string with no enum)
 FIXTURES = {
     "categorical-onehot": ("cat_linear_onehot", None, False),
-    "missing-cells-forest": ("cat_forest_hash", None, False),
+    "missing-cells-forest": ("cat_forest_hash", None, True),
     "regression-linear": ("linear", None, True),
     "classification-logistic": ("logistic", None, True),
     "clustering-kmeans": ("kmeans", None, True),

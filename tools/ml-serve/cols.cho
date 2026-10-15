@@ -139,7 +139,7 @@ pub fn close_header[&h](heap: &!h Heap, c: Cols) -> [heap] Cols {
 // ---------------------------------------------------------------------
 
 // the status of a render: 0 the row is appended; 1 a number that is not exactly what an int or dec column holds; 2 a number past the range of a double;
-// 3 a string that cannot be written to the CSV and read back as sent (it holds U+0000 or CR); 4 a value of a kind the schema should have refused
+// 3 a string that cannot be written to the CSV and read back as sent (it holds CR LF); 4 a value of a kind the schema should have refused
 pub fn rendered() -> [] int {
     return 0;
 }
@@ -173,8 +173,9 @@ fn string_cell[&h, &b, &t](heap: &!h Heap, out: buffer.Buffer, body: &b [byte], 
         let d = contents(rw);
         json.string_into(body, tape, node, d);
         var i = 0;
-        while i < len(d) {
-            if int_of(d[i]) == 0 || int_of(d[i]) == 13 {
+        // a carriage return directly before a line feed is read as the line feed (a CSV reader drops it, `ml.csv`); a lone one and U+0000 are kept, so they are written as sent
+        while i + 1 < len(d) {
+            if int_of(d[i]) == 13 && int_of(d[i + 1]) == 10 {
                 st = not_renderable();
             }
             i = i + 1;

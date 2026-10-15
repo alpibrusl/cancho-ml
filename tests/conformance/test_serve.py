@@ -448,12 +448,31 @@ class Kinds(unittest.TestCase):
             if v in vals:
                 r = s.request("POST", "/predict", body=json.dumps({"c0": v, "c1": "x", "n": 3}).encode(), headers=JSON)
                 self.assertEqual(r.status, 200, (v, r))
-        # a string the CSV cannot carry as sent is refused with its pointer, never changed
-        r = s.request("POST", "/predict", body=json.dumps({"c0": "a\rb", "c1": "x", "n": 3}).encode(), headers=JSON)
+        # a CR LF inside a category would be read as an LF: refused with its pointer, never changed
+        r = s.request("POST", "/predict", body=json.dumps({"c0": "a\r\nb", "c1": "x", "n": 3}).encode(), headers=JSON)
         self.assertEqual(r.status, 422)
         self.assertIn(r.json()["rule"], ("serve.string-not-renderable", "ml.schema.mismatch"))
-        r = s.request("POST", "/predict", body=b'{"c0":"a\\u0000b","c1":"x","n":3}', headers=JSON)
-        self.assertEqual(r.status, 422)
+
+    def test_strings_the_csv_carries_as_sent(self):
+        # the hash step has no vocabulary to list, so any string is a category: a lone CR, U+0000, a comma, quotes and a line feed are written as sent and read back as sent
+        mfile = MODELS["cat_forest_hash"][0]
+        s = self.serve(mfile)
+        base = None
+        seen = set()
+        for v in ("ab", "a\rb", "a\u0000b", "a,b", 'q"uote', "multi\nline", "caf\u00e9", "a\r", "\r", "\u0000"):
+            r = s.request("POST", "/predict", body=json.dumps({"c0": v, "c1": "x", "n": 3}).encode(), headers=JSON)
+            self.assertEqual(r.status, 200, (v, r))
+            # the command line reads the same text from a CSV and predicts the same
+            import csv as _csv, io as _io
+            out = _io.StringIO()
+            _csv.writer(out, lineterminator="\n").writerow(["c0", "c1", "n"])
+            _csv.writer(out, lineterminator="\n").writerow([v, "x", "3"])
+            SB.write("str.csv", out.getvalue().encode())
+            cli = SB.run("predict", "--model-file", mfile, "str.csv")
+            self.assertEqual(cli.status, 0, (v, cli))
+            self.assertEqual(r.json()["rows"], cli.data()["rows"], v)
+            seen.add(tuple(r.json()["rows"][0]))
+        self.assertGreater(len(seen), 2)
 
     def test_null_where_the_model_takes_it(self):
         mfile = MODELS["cat_forest_hash"][0]

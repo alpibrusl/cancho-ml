@@ -311,7 +311,7 @@ fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g 
                 } else if st == cols.out_of_range() {
                     answer = problem(heap, api.sha_of(sv.built), answer, 422, "serve.number-not-exact", "the number is outside the range of a double", buffer.bytes(pr), "range", "", keep);
                 } else if st == cols.not_renderable() {
-                    answer = problem(heap, api.sha_of(sv.built), answer, 422, "serve.string-not-renderable", "a category holds U+0000 or a carriage return, which a CSV cannot carry and read back as sent", buffer.bytes(pr), "string", "", keep);
+                    answer = problem(heap, api.sha_of(sv.built), answer, 422, "serve.string-not-renderable", "a category holds a carriage return directly followed by a line feed, which a CSV reader reads as the line feed alone", buffer.bytes(pr), "string", "", keep);
                 } else {
                     answer = problem(heap, api.sha_of(sv.built), answer, 500, "serve.internal", "a value of a kind the schema should have refused", "", "", "", keep);
                 }
