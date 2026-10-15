@@ -336,6 +336,7 @@ fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: 
     s = schema.add_field(heap, s, problem, "title", text, true);
     s = schema.add_field(heap, s, problem, "status", status, true);
     s = schema.add_field(heap, s, problem, "rule", text, false);
+    s = schema.add_field(heap, s, problem, "model_sha256", text, false);
     s = schema.add_field(heap, s, problem, "detail", text, false);
     s = schema.add_field(heap, s, problem, "count", count, false);
     s = schema.add_field(heap, s, problem, "errors", errors, false);

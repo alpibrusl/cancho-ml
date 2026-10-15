@@ -189,7 +189,7 @@ fn prepare[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
     var tokens = web.tokens_empty(heap);
     if go && guarded {
         borrow tp as &tpr in {
-            let (data, ok, e6) = read_file(heap, fs, root, tpr, 4097, e);
+            let (data, ok, e6) = read_file(heap, fs, root, tpr, 1048576, e);
             e = e6;
             go = ok;
             borrow data as &dr in {

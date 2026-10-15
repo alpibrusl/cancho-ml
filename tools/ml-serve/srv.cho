@@ -444,6 +444,9 @@ fn judged[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Ar
 }
 
 fn predict_route[&h, &s, &g, &f, &r, &q, &t, &b](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], body: &b [byte], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+    if len(body) > sv.max_body {
+        return simple(heap, api.sha_of(sv.built), out, 413, "serve.body-too-large", "the body is longer than --max-body-bytes", keep);
+    }
     if !is_json_type(http.header(request, table, "content-type")) {
         return simple(heap, api.sha_of(sv.built), out, 415, "serve.media-type", "send Content-Type: application/json", keep);
     }
