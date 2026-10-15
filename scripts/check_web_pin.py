@@ -132,6 +132,11 @@ def unpid(b):
     return TMPNAME.sub(lambda m: b"cancho-llvm-" + b"0" * len(m.group(1)) + b"-" + b"0" * len(m.group(2)) + b".ll", b)
 
 
+def pid_width(b):
+    m = TMPNAME.search(b)
+    return len(m.group(1)) if m else None
+
+
 def same_binary(a, c):
     return unpid(a) == unpid(c)
 
@@ -171,6 +176,12 @@ def bins():
         for b in ("ml", "ml-predict"):
             a = (ROOT / "build" / b).read_bytes()
             c = (work / "build" / b).read_bytes()
+            # a process id of another width moves the symbol table by a byte, which no normalisation can undo: build again (the id is new every time) until the widths agree
+            for _ in range(12):
+                if pid_width(a) == pid_width(c):
+                    break
+                subprocess.run([cancho, "build", "--bin", b], cwd=work, capture_output=True, text=True)
+                c = (work / "build" / b).read_bytes()
             if not same_binary(a, c):
                 problems.append("build/%s differs from the build without the three dependencies (%d and %d bytes)" % (b, len(a), len(c)))
         return problems
