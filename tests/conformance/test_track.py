@@ -608,7 +608,10 @@ class Tracking(Base):
     def test_a_directory_with_a_damaged_record_is_refused_by_list(self):
         a = self.track()
         (self.sb.dir / "runs" / (a["id"] + ".json")).write_text("{}")
-        self.assertEqual(self.sb.run("runs", "list", "runs").first_rule(), "ml.runs.damaged")
+        r = self.sb.run("runs", "list", "runs")
+        self.assertEqual(r.first_rule(), "ml.runs.damaged")
+        # a refused list prints no count and no part of the list
+        self.assertIsNone(r.data())
 
 
 class Serve(Base):
