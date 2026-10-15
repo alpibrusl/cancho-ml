@@ -316,7 +316,11 @@ class Damage(Base):
             "file_rows past 10^9": put(good, 44, "<Q", 1000000001),
             "rows 0": put(good, 52, "<Q", 0),
             "rows past file_rows": put(put(good, 44, "<Q", 7), 52, "<Q", 8),
-            "rows not the rows of meta": put(good, 52, "<Q", 7),
+            "rows not the rows of meta (counts still fit)": put(put(good, 44, "<Q", 9), 52, "<Q", 9),
+            "eight bytes more than the count says": good + bytes(8),
+            "eight bytes fewer than the count says": good[:-8],
+            "minimum negative zero": rec(good, 0, 1, -(1 << 63)),
+            "constant column of negative zeros": rec(rec(rec(rec(good, 0, 1, -(1 << 63)), 0, 2, -(1 << 63)), 0, 3, -(1 << 63)), 0, 4, 0),
             "one record fewer, features 2": put(good[:-40], 60, "<I", 2),
             "features 4 and one record more": put(good + good[-40:], 60, "<I", 4),
             "count past rows": rec(good, 0, 0, 9),
@@ -339,6 +343,26 @@ class Damage(Base):
         # the same edits that keep every bound are accepted
         fine = rec(rec(rec(rec(good, 0, 1, dbits(2.0)), 0, 2, dbits(2.0)), 0, 3, dbits(2.0)), 0, 4, 0)
         self.assertEqual(self.run_with(with_provenance(data, fine)).status, 0)
+
+    def test_a_constant_model_file_is_held_to_the_same_rules(self):
+        r = self.sb.run("fit", "--target", "y", "--drop", "c", "--output", "k.cml", "train.csv")
+        self.assertEqual(r.status, 0, r)
+        data = self.sb.read("k.cml")
+        s, n = section_at(data, 7)
+        good = data[s:s + n]
+        self.assertEqual(self.run_with(with_provenance(data, good)).status, 0)
+        bad_layout = struct.pack("<I", 2) + good[4:]
+        r = self.run_with(with_provenance(data, bad_layout))
+        self.assertEqual(r.first_rule(), "ml.model.malformed", r)
+        # a sixth section that is not the provenance (tag 6, the string table's) is not read as one
+        out = bytearray(data[:12])
+        for tag, start, length in sections(data):
+            if tag == 7:
+                out += struct.pack("<IQ", 6, len(good)) + good
+            else:
+                out += data[start - 12:start + length]
+        r = self.run_with(fix_checksum(bytes(out) + bytes(32)))
+        self.assertEqual(r.first_rule(), "ml.model.malformed", r)
 
     def test_a_section_out_of_order_or_repeated_is_malformed(self):
         self.fit()
@@ -516,7 +540,10 @@ class Tracking(Base):
         self.assertEqual(s["id"], a["id"])
         c = self.sb.run("runs", "compare", "runs", a["id"], b["id"]).data()
         self.assertEqual([x["key"] for x in c["inputs"]], ["seed"])
-        self.assertFalse(c["model_equal"] is True and False)
+        self.assertIs(c["model_equal"], True)  # the seed does not reach a linear fit: same bytes
+        o = self.track("--l2", "3", name="o.cml")
+        c2 = self.sb.run("runs", "compare", "runs", a["id"], o["id"]).data()
+        self.assertIs(c2["model_equal"], False)
         self.assertEqual(c["inputs"][0]["a"], 0)
         v = self.sb.run("runs", "verify", "runs", a["id"]).data()
         self.assertTrue(v["verified"])

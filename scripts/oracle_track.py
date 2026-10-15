@@ -230,6 +230,7 @@ def case_list():
         ("forest", ["--model", "forest", "--task", "classification", "--trees", "7", "--target", "virginica"], "iris_train.csv"),
         ("kmeans", ["--model", "kmeans", "--k", "3", "--drop", "virginica", "--seed", "5"], "iris_train.csv"),
         ("linear float drop", ["--model", "linear", "--target", "progression", "--float", "age", "--drop", "sex"], "diabetes_train.csv"),
+        ("linear float forced on an int column", ["--model", "linear", "--target", "adopted", "--float", "visits", "--drop", "id,species,city"], "pets.csv"),
         ("logistic categorical", ["--model", "logistic", "--l2", "1", "--target", "adopted", "--cat", "species,city", "--step", "encode column=species kind=onehot;encode column=city kind=label", "--drop", "id"], "pets.csv"),
         ("forest categorical split", ["--model", "forest", "--task", "classification", "--trees", "5", "--target", "adopted", "--cat", "species,city", "--step", "hash column=species buckets=8;freq column=city", "--drop", "id", "--na-values", "NA,?", "--split", "train=0.8"], "pets.csv"),
     ]

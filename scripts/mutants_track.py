@@ -76,15 +76,15 @@ MUTANTS = [
     M("t-decoder-skips-finite", "T9", "an infinite or NaN statistic is accepted", [(PS, "if !finite(mn) || !finite(mx) || !finite(me) || !finite(sd) || negative_zero(mn)", "if negative_zero(mn)", 1)], ["test_track.Damage"]),
     M("t-decoder-skips-negative-zero", "T9", "a negative zero is accepted", [(PS, "|| negative_zero(mn) || negative_zero(mx) || negative_zero(me) || sd < 0 {", "|| sd < 0 {", 1)], ["test_track.Damage"]),
     M("t-decoder-skips-the-std-sign", "T9", "a negative deviation is accepted", [(PS, "|| negative_zero(me) || sd < 0 {", "|| negative_zero(me) {", 1)], ["test_track.Damage"]),
-    M("t-decoder-skips-min-below-max", "T9", "a minimum above the maximum is accepted", [(PS, "if fmn > fmx || fme < fmn || fme > fmx {", "if fme < fmn || fme > fmx {", 1)], ["test_track.Damage"]),
+    M("t-decoder-skips-min-below-max", "T9", "a minimum above the maximum is accepted", [(PS, "if fmn > fmx || fme < fmn || fme > fmx {", "if fme < fmn || fme > fmx {", 1)], ["test_track.Damage"],
+      why="equivalent: a mean not below the minimum and not above the maximum implies minimum <= maximum, so the first term never decides"),
     M("t-decoder-skips-mean-in-range", "T9", "a mean outside [min, max] is accepted", [(PS, "if fmn > fmx || fme < fmn || fme > fmx {", "if fmn > fmx {", 1)], ["test_track.Damage"]),
     M("t-decoder-skips-the-constant-rule", "T9", "a constant column may have a deviation or another mean", [(PS, "if fmn == fmx && (me != mn || sd != 0) {\n                return 1;\n            }", "", 1)], ["test_track.Damage"]),
     M("t-structure-skips-the-order", "T9", "a section may repeat or come out of order", [(FILE, "if tag <= prev || tag != kinds.section_strings() && tag != kinds.section_provenance() {", "if tag != kinds.section_strings() && tag != kinds.section_provenance() {", 1)], ["test_track.Damage"]),
     M("t-structure-count-of-seven", "T9", "the header may promise more sections than the layout has", [(FILE, "if count < kinds.core_sections() || count > kinds.section_count() {", "if count < kinds.core_sections() || count > kinds.section_count() + 1 {", 1)], ["test_track.Damage"],
       why="a count of 8 reads an eighth section whose tag must be 6 or 7 and above the one before: the walk refuses it as malformed by the order rule (t-structure-skips-the-order), so the bound on the count is not what decides"),
     M("t-constant-reader-accepts-any-tag", "T9", "the constant model's reader takes any tag for a sixth section", [(MFILE, "|| s == 5 && tag != 7 {", "{", 1)], ["test_track.Damage"]),
-    M("t-section-not-validated-in-constants", "T9", "the constant model's reader does not look at section 7", [(MFILE, "if places[10] > 0 && provsec.validate(data[places[10]..places[10] + places[11]], rows, 0) != 0 {", "if false {", 1)], ["test_track.Damage"],
-      why="the constants carry 64 bytes with no record: the payloads the damage tests craft are for a planned model; the constant reader shares the validator and its bound is exercised through t-decoder-skips-the-length"),
+    M("t-section-not-validated-in-constants", "T9", "the constant model's reader does not look at section 7", [(MFILE, "if places[10] > 0 && provsec.validate(data[places[10]..places[10] + places[11]], rows, 0) != 0 {", "if false {", 1)], ["test_track.Damage"]),
     # ------------------------------------------------------------------ the answers (T5, T6, T7)
     M("t-on-always-train", "T5", "eval says train whatever the file", [(PROV, "    if same {\n        return (\"train\", 0, 0);\n    }", "    if true {\n        return (\"train\", 0, 0);\n    }", 1)], ["test_track.On"]),
     M("t-on-never-hashes", "T5", "eval says unknown for a model with provenance", [(PROV, "    if len(pv) == 0 {\n        return (\"unknown\", 0, 0);\n    }", "    if true {\n        return (\"unknown\", 0, 0);\n    }", 1)], ["test_track.On"]),
@@ -177,7 +177,7 @@ def baseline():
         built, log = build_ml(tree)
         if built is None:
             return "INVALID", "build failed: " + log[:600]
-        code, out = run_tests(tree, ["test_track"])
+        code, out = run_tests(tree, ["test_track." + c for c in ("Section", "On", "Range", "Damage", "Features", "Tracking", "Replay")])  # Serve needs ml-serve, which this script does not build
         return ("PASSED", "") if code == 0 else ("FAILED", out[-800:])
 
 
