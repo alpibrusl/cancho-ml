@@ -1,0 +1,57 @@
+KILLED    map-null-is-a-word                 oracle tests: test_booleans_and_null_and_absent, test_mixed_kinds_in_a_text_column, test_one_column_with_an_empty_cell_is_not_a_blank_line
+KILLED    map-true-is-false                  oracle tests: test_booleans_and_null_and_absent
+KILLED    map-number-loses-a-digit           oracle tests: test_blank_lines_bom_crlf_and_the_last_line, test_booleans_and_null_and_absent, test_duplicates
+KILLED    map-string-not-decoded             oracle tests: test_seeded, test_decoded_text_both_spellings, test_decoded_text_both_spellings
+KILLED    map-key-not-decoded                oracle tests: test_header_names_are_quoted_like_cells
+KILLED    map-object-array-swapped           oracle tests: test_nested_values_name_the_column, test_seeded
+KILLED    map-root-kind                      oracle tests: test_roots_that_are_not_objects
+KILLED    map-field-order                    oracle tests: test_booleans_and_null_and_absent, test_header_names_are_quoted_like_cells, test_nested_values_name_the_column
+KILLED    map-header-without-quote           oracle tests: test_header_names_are_quoted_like_cells
+KILLED    map-comma-not-quoted               oracle tests: test_seeded, test_decoded_text_both_spellings, test_decoded_text_both_spellings
+KILLED    map-lf-not-quoted                  oracle tests: test_seeded, test_decoded_text_both_spellings, test_decoded_text_both_spellings
+KILLED    map-quote-not-doubled              oracle tests: test_header_names_are_quoted_like_cells, test_seeded, test_decoded_text_both_spellings
+KILLED    map-single-column-blank            oracle tests: test_mixed_kinds_in_a_text_column, test_one_column_with_an_empty_cell_is_not_a_blank_line, test_seeded
+KILLED    absent-always-refused              oracle tests: test_booleans_and_null_and_absent, test_mixed_kinds_in_a_text_column, test_one_column_with_an_empty_cell_is_not_a_blank_line
+KILLED    absent-never-refused               oracle tests: test_booleans_and_null_and_absent, test_seeded
+KILLED    null-refused                       oracle tests: test_booleans_and_null_and_absent, test_mixed_kinds_in_a_text_column, test_one_column_with_an_empty_cell_is_not_a_blank_line
+KILLED    protect-string-in-number-column    oracle tests: test_a_boolean_in_a_numeric_column_is_refused_never_guessed, test_seeded, test_a_string_in_a_numeric_column_is_text_not_a_number
+KILLED    protect-number-in-text-column      oracle tests: test_blank_lines_bom_crlf_and_the_last_line, test_booleans_and_null_and_absent, test_duplicates
+KILLED    protect-mixed-kinds-allowed        oracle tests: test_mixed_kinds_in_a_text_column, test_seeded
+KILLED    protect-first-kind-not-kept        oracle tests: test_mixed_kinds_in_a_text_column, test_seeded
+KILLED    protect-first-line-not-kept        oracle tests: test_mixed_kinds_in_a_text_column, test_seeded
+KILLED    dup-allowed                        oracle tests: test_duplicates, test_keys_decoded
+KILLED    limit-line-off-by-one              oracle tests: test_the_line_bound
+KILLED    limit-line-removed                 oracle tests: test_the_line_bound
+KILLED    limit-nodes-one-more               oracle tests: test_the_node_bound_is_exact, test_seeded
+KILLED    limit-csv-off-by-one               oracle tests: test_the_csv_bound_is_exact
+KILLED    limit-csv-removed                  oracle tests: test_the_csv_bound_is_exact, test_the_input_bound_and_the_csv_bound
+KILLED    limit-depth-mapped-to-nodes        oracle tests: test_depth, test_not_numbers_are_syntax_errors, test_not_numbers_are_syntax_errors
+KILLED    input-bom-kept                     oracle tests: test_blank_lines_bom_crlf_and_the_last_line
+KILLED    input-blank-line-dropped           oracle tests: test_blank_lines_bom_crlf_and_the_last_line, test_seeded
+KILLED    input-cr-not-blank                 oracle tests: test_blank_lines_bom_crlf_and_the_last_line, test_seeded
+KILLED    input-row-counts-blank             oracle tests: test_mixed_kinds_in_a_text_column, test_seeded
+KILLED    cli-stdin-ignored                  cli    tests: test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
+KILLED    cli-fit-stdin-not-wanted           cli    tests: test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
+KILLED    cli-eval-stdin-not-wanted          cli    tests: test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
+KILLED    cli-ndjson-not-an-alias            cli    tests: test_ndjson_is_jsonl, test_every_jsonl_fixture
+KILLED    cli-cat-not-text                   cli    tests: test_mixed_kinds_name_both_lines, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
+KILLED    cli-predict-reads-the-target       cli    tests: test_predict_needs_no_target_key_and_eval_does
+KILLED    cli-eval-skips-the-target          cli    tests: test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
+KILLED    cli-fields-not-required            cli    tests: test_every_jsonl_fixture
+KILLED    cli-conflicts-not-refused          cli    tests: test_every_jsonl_fixture
+KILLED    cli-retry-never-offered            cli    tests: test_missing_field_repair_runs, test_every_jsonl_fixture
+KILLED    cli-absent-ignored                 cli    tests: test_cat_with_missing_markers_and_hard_text, test_cat_with_missing_markers_and_hard_text, test_missing_cells_as_null_absent_and_mixed
+KILLED    cli-input-bound-ignored            cli    tests: test_the_input_bound_for_a_file_and_the_csv_bound
+KILLED    cli-line-cap-ignored               cli    tests: test_every_jsonl_fixture
+KILLED    cli-nodes-ignored                  cli    tests: test_every_jsonl_fixture
+SURVIVED  cli-shown-name-lost                cli    
+PASSED    baseline (the unchanged tree)      -      
+
+47 mutants: 46 killed, 1 survived, 0 invalid
+SURVIVOR cli-shown-name-lost: NO REASON GIVEN
+
+--- the survivor re-run alone after its reason was written in scripts/mutants_jsonl.py:
+SURVIVED  cli-shown-name-lost                cli    
+
+1 mutants: 0 killed, 1 survived, 0 invalid
+SURVIVOR cli-shown-name-lost: equivalent: the name of the converted input is read by no answer. The refusals of the CSV reader carry a line and a column and no path, and a read of bytes in memory cannot fail with an errno; the refusals of the JSON lines reader take the name from the original Rp

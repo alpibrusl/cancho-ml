@@ -142,6 +142,7 @@ class Equivalence(unittest.TestCase):
     def test_linear_and_the_pipeline(self):
         self.iris("--model", "linear", "--target", "virginica")
         self.iris("--model", "linear", "--l2", "0.5", "--target", "virginica", "--step", "scale column=* kind=standard")
+        self.iris("--model", "linear", "--l2", "0.5", "--target", "virginica", "--step", "bucket column=sepal_length_cm kind=quantile bins=4; scale column=* kind=standard")
 
     def test_logistic(self):
         self.iris("--model", "logistic", "--target", "virginica", "--iterations", "30", "--step", "scale column=* kind=minmax")

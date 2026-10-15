@@ -82,7 +82,8 @@ MUTANTS = [
     M("cli-input-bound-ignored", "cli", "a file of JSON lines is read without the --max-bytes bound", [(C, "paths.full(ob.file), max_bytes);", "paths.full(ob.file), 268435456);", 1)]),
     M("cli-line-cap-ignored", "cli", "--max-line-bytes is not passed to the reader", [(C, "absent_empty, max_nodes, line_cap, max_bytes);", "absent_empty, max_nodes, 16777216, max_bytes);", 1)]),
     M("cli-nodes-ignored", "cli", "--max-json-nodes is not passed to the reader", [(C, "absent_empty, max_nodes, line_cap, max_bytes);", "absent_empty, 4096, line_cap, max_bytes);", 1)]),
-    M("cli-shown-name-lost", "cli", "the converted input is shown under another name", [(C, "nf = paths.of_mem(heap, buffer.bytes(cr), buffer.bytes(sr2));", "nf = paths.of_mem(heap, buffer.bytes(cr), \"x\");", 1)]),
+    M("cli-shown-name-lost", "cli", "the converted input is shown under another name", [(C, "nf = paths.of_mem(heap, buffer.bytes(cr), buffer.bytes(sr2));", "nf = paths.of_mem(heap, buffer.bytes(cr), \"x\");", 1)],
+      why="equivalent: the name of the converted input is read by no answer. The refusals of the CSV reader carry a line and a column and no path, and a read of bytes in memory cannot fail with an errno; the refusals of the JSON lines reader take the name from the original Rp"),
 ]
 
 
