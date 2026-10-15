@@ -307,7 +307,7 @@ $ ml fit --target prize --output typo.ml houses.csv
 <!-- gen:t-split -->
 ```console
 $ ml fit --model linear --l2 0.1 --split train=0.8 --seed 3 --target price --output houses-lin.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"linear","task":"regression","rows":4,"columns":4,"target":"price","path":"houses-lin.ml","bytes":349,"sha256":"5ccedf38b34a2a4b24edcae27ce13c569c6bcbce4fb1b5238ad419d354ecf5b6","written":true,"summary":{"plan":"model kind=linear l2=0.1\n","steps":0,"features":3,"coefficients":[{"name":"id","value":"-1905.5649303915627"},{"name":"rooms","value":"-15667.071024324228"},{"name":"area","value":"3843.571373934476"}],"intercept":"25324.69546154733","split":{"train":4,"test":1,"seed":3},"holdout":{"rows":1,"metrics":{"rmse":"8366.812920622935","mae":"8366.812920622935","r2":null}}}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"linear","task":"regression","rows":4,"columns":4,"target":"price","path":"houses-lin.ml","bytes":349,"sha256":"5ccedf38b34a2a4b24edcae27ce13c569c6bcbce4fb1b5238ad419d354ecf5b6","written":true,"summary":{"plan":"model kind=linear l2=0.1\n","steps":0,"features":3,"coefficients":[{"name":"id","value":"-1905.5649303915627"},{"name":"rooms","value":"-15667.071024324228"},{"name":"area","value":"3843.571373934476"}],"intercept":"25324.69546154733","split":{"train":4,"test":1,"seed":3,"spec":"holdout train=0.8 seed=3"},"holdout":{"rows":1,"metrics":{"rmse":"8366.812920622935","mae":"8366.812920622935","r2":null}}}},"meta":{"version":"0.1.0"}}
 ```
 <!-- /gen:t-split -->
 
@@ -328,6 +328,55 @@ At most one of the three strategies per command: they are different algorithms, 
 The standard deviation is the sample one (divisor `K * R - 1`). The assignment is the library's seeded stream, not scikit-learn's, so the folds differ from `KFold(shuffle=True)`; what is compared with scikit-learn is the invariants and the metrics on the same explicit folds. `visits.csv` is generated data (`docs/examples/data/gen_visits.py`): 12 customers, 10 visits each, so the metrics show how the commands work and nothing about customers.
 
 <!-- gen:splitflow -->
+```console
+# A holdout that keeps the class proportions: 426 training rows, 20 percent held out, per class the floor or the ceiling of its share
+$ ml fit --model tree --task classification --max-depth 4 --target benign --split train=0.8 --stratify --seed 7 --output bc.ml breast_cancer_train.csv
+{"split":{"train":340,"test":86,"seed":7,"spec":"holdout train=0.8 stratify seed=7"},"holdout":{"rows":86,"metrics":{"accuracy":"0.9418604651162791","precision":"0.9454545454545454","recall":"0.9629629629629629","f1":"0.9541284403669725","roc_auc":"0.9461805555555556","log_loss":"1.3089414342386103"}}}
+# visits.csv: 12 customers with 10 visits each, an ISO date, a basket, the item count and whether the customer came back. The newest quarter of the visits is held out (the date column is dropped as a feature, not as a rule)
+$ ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-by time:visit_date --output visits-time.ml visits.csv
+{"split":{"train":90,"test":30,"seed":0,"spec":"holdout train=0.75 time=visit_date seed=0"},"holdout":{"rows":30,"metrics":{"accuracy":"0.4","precision":"0.0","recall":"0.0","f1":"0.0","roc_auc":"0.5429864253393665","log_loss":"2.255239329249321"}}}
+# No customer on both sides: whole customers are held out
+$ ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-group customer --seed 2 --output visits-group.ml visits.csv
+{"split":{"train":90,"test":30,"seed":2,"spec":"holdout train=0.75 group=customer seed=2"},"holdout":{"rows":30,"metrics":{"accuracy":"0.43333333333333335","precision":"0.3333333333333333","recall":"0.7","f1":"0.45161290322580644","roc_auc":"0.5425","log_loss":"3.080977491776084"}}}
+# Two rules for one split are refused, not blended
+$ ml fit --model tree --task classification --target returning --drop customer,visit_date --split train=0.75 --stratify --split-by time:visit_date --output x.ml visits.csv
+{"rule": "ml.split.combination", "hint": "keep one of them.", "repair": {"kind": "none", "reason": "keep one of the two: they are different algorithms, and dropping a group or a time rule can leak rows between the sides"}, "detail": {"flag": "--stratify", "other": "--split-by"}}
+# exit status 2; the rule, hint, repair, detail of the JSON line it prints
+# Five-fold cross-validation, stratified: every step is fitted on the four training folds of each fold alone. Per-fold metrics, then the mean and the sample standard deviation
+$ ml --format text cv --model logistic --task classification --step 'scale column=* kind=standard' --l2 0.1 --target virginica --folds 5 --seed 1 --stratify iris_train.csv
+cv: logistic classification, 75 rows, cv folds=5 repeats=1 stratify seed=1
+repeat 0 fold 0: train 60 test 15 accuracy=0.9333333333333333 precision=0.875 recall=1.0 f1=0.9333333333333333 roc_auc=0.9821428571428571 log_loss=0.2558531837774219
+repeat 0 fold 1: train 60 test 15 accuracy=0.9333333333333333 precision=1.0 recall=0.8571428571428571 f1=0.9230769230769231 roc_auc=1.0 log_loss=0.27371716218030023
+repeat 0 fold 2: train 60 test 15 accuracy=1.0 precision=1.0 recall=1.0 f1=1.0 roc_auc=1.0 log_loss=0.20536677751917837
+repeat 0 fold 3: train 60 test 15 accuracy=0.8666666666666667 precision=0.8 recall=1.0 f1=0.8888888888888888 roc_auc=0.9821428571428571 log_loss=0.3373620786165024
+repeat 0 fold 4: train 60 test 15 accuracy=0.9333333333333333 precision=1.0 recall=0.875 f1=0.9333333333333333 roc_auc=1.0 log_loss=0.29570178889623133
+accuracy mean 0.9333333333333332 std 0.04714045207910316
+precision mean 0.9349999999999999 std 0.09287087810503354
+recall mean 0.9464285714285715 std 0.07362688617174395
+f1 mean 0.9357264957264956 std 0.04029984772479705
+roc_auc mean 0.9928571428571429 std 0.009780759955449421
+log_loss mean 0.27360019819792686 std 0.04879761163429506
+$ ml --format text cv --model linear --step 'scale column=* kind=standard' --target progression --folds 5 --seed 1 diabetes_train.csv
+cv: linear regression, 331 rows, cv folds=5 repeats=1 seed=1
+repeat 0 fold 0: train 264 test 67 rmse=51.26915634092274 mae=40.079441504420245 r2=0.5444848475040903
+repeat 0 fold 1: train 265 test 66 rmse=56.47637996728807 mae=46.982995159007956 r2=0.4944111209775581
+repeat 0 fold 2: train 265 test 66 rmse=55.34388490502349 mae=46.384195252405554 r2=0.5269757178495083
+repeat 0 fold 3: train 265 test 66 rmse=55.00427633532207 mae=43.8457621841562 r2=0.5251682642236672
+repeat 0 fold 4: train 265 test 66 rmse=50.79903754016721 mae=41.62632028610556 r2=0.5706964245749535
+rmse mean 53.77854701774472 std 2.569314888294932
+mae mean 43.7837428772191 std 2.9739592721548647
+r2 mean 0.5323472750259555 std 0.028006791780639296
+# An expanding window: fold i trains on everything before block i + 1 and tests on that block
+$ ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-by time:visit_date --folds 4 visits.csv
+{"split":"cv folds=4 repeats=1 time=visit_date seed=0","strategy":"time","summary":{"count":4,"std":"sample","metrics":{"accuracy":{"mean":"0.625","std":"0.21783871029664056","n":4},"precision":{"mean":null,"std":null,"n":3},"recall":{"mean":"0.47619047619047616","std":"0.3868589716493314","n":4},"f1":{"mean":"0.44940476190476186","std":"0.33872830848485314","n":4},"roc_auc":{"mean":"0.6960930205415499","std":"0.18341201780759583","n":4},"log_loss":{"mean":"3.206846846909722","std":"1.3505716186412535","n":4}}}}
+# Whole customers per fold, and the assignment of every row (file order) as data, so that a run can be replayed
+$ ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-group customer --folds 4 --seed 5 --emit-folds visits.csv
+{"split":"cv folds=4 repeats=1 group=customer seed=5","strategy":"group","assignment":{"repeats":1,"rows":120,"folds":[[1,1,1,0,3,1,3,2,3,0,0,1,0,2,3,2,3,3,0,0,0,3,1,2,2,0,2,1,0,2,2,3,3,3,0,0,3,0,0,2,1,3,1,1,2,3,2,3,2,1,2,2,0,0,2,0,3,3,3,2,2,3,1,0,0,1,0,1,2,2,1,1,3,0,1,2,1,0,3,2,1,1,0,3,1,1,0,1,0,3,0,0,3,1,3,3,1,2,1,3,3,2,2,1,2,3,2,2,2,0,0,3,1,1,3,0,0,2,2,1]]}}
+# A regression has no classes to keep in proportion. The refusal offers the corrected command
+$ ml cv --model linear --step 'scale column=* kind=standard' --target progression --stratify diabetes_train.csv
+{"rule": "ml.split.stratify-target", "hint": "drop --stratify, or use --task classification with a model that has a class target.", "repair": {"kind": "retry", "argv": ["ml", "cv", "--model", "linear", "--step", "scale column=* kind=standard", "--target", "progression", "diabetes_train.csv"]}}
+# exit status 2; the rule, hint, repair of the JSON line it prints
+```
 <!-- /gen:splitflow -->
 
 ### Text columns: encode, fit, then predict and eval from the file
@@ -354,7 +403,7 @@ $ ml eval --model-file pets.ml --drop id pets.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":76,"positive":1,"metrics":{"accuracy":"0.8289473684210527","precision":"0.8444444444444444","recall":"0.8636363636363636","f1":"0.8539325842696629","roc_auc":"0.8742897727272727","log_loss":"0.4847004611714956"},"unknown_categories":0},"meta":{"version":"0.1.0"}}
 # species hashed to 8 columns and city as a label: the file holds no string of species, and an unseen species lands in the bucket it hashes to
 $ ml fit --model logistic --cat species,city --step 'hash column=species buckets=8 missing=zero;encode column=city kind=label missing=zero;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets-hash.ml pets.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":57,"columns":5,"target":"adopted","path":"pets-hash.ml","bytes":1057,"sha256":"de1fd88e7ad23bb7fcdfc6964c5c828e73debba22cf874d4a21986ca37ec6a1b","written":true,"summary":{"plan":"hash column=species buckets=8 missing=zero\nencode column=city kind=label max-categories=64 unknown=ignore missing=zero\nscale column=age,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":3,"steps_sha256":"2c9c79220429bb0793ac19d974f565566b77a08b03492bda2ccc1f26b3eefa86","categorical":[{"step":1,"kind":"hash","column":"species","categories":0,"output_columns":8},{"step":2,"kind":"label","column":"city","categories":3,"output_columns":1}],"string_table":{"entries":2,"strings":3,"pool_bytes":14,"bytes":241,"sha256":"b7ca8fa50923607db62ab75bf2e7ecd7267edaa4d78704e3af296ef7f1747a9f"},"features":11,"coefficients":[{"name":"age","value":"-0.6875723955849204"},{"name":"visits","value":"0.4151426140617374"},{"name":"species#0","value":"0.25559046581946027"},{"name":"species#1","value":"0.0"},{"name":"species#2","value":"0.0"},{"name":"species#3","value":"-0.07144881420245953"},{"name":"species#4","value":"0.2628888663105544"},{"name":"species#5","value":"0.0"},{"name":"species#6","value":"0.0"},{"name":"species#7","value":"-0.44703051792755505"},{"name":"city","value":"-0.35100088010733876"}],"intercept":"0.5909043953829989","classes":[0,1],"positive":1,"split":{"train":57,"test":19,"seed":3},"holdout":{"rows":19,"metrics":{"accuracy":"0.7894736842105263","precision":"0.8181818181818182","recall":"0.8181818181818182","f1":"0.8181818181818182","roc_auc":"0.9318181818181818","log_loss":"0.4278208227654049"}}}},"meta":{"version":"0.1.0"}}
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":57,"columns":5,"target":"adopted","path":"pets-hash.ml","bytes":1057,"sha256":"de1fd88e7ad23bb7fcdfc6964c5c828e73debba22cf874d4a21986ca37ec6a1b","written":true,"summary":{"plan":"hash column=species buckets=8 missing=zero\nencode column=city kind=label max-categories=64 unknown=ignore missing=zero\nscale column=age,visits kind=standard ddof=0\nmodel kind=logistic iterations=50 l2=0.1\n","steps":3,"steps_sha256":"2c9c79220429bb0793ac19d974f565566b77a08b03492bda2ccc1f26b3eefa86","categorical":[{"step":1,"kind":"hash","column":"species","categories":0,"output_columns":8},{"step":2,"kind":"label","column":"city","categories":3,"output_columns":1}],"string_table":{"entries":2,"strings":3,"pool_bytes":14,"bytes":241,"sha256":"b7ca8fa50923607db62ab75bf2e7ecd7267edaa4d78704e3af296ef7f1747a9f"},"features":11,"coefficients":[{"name":"age","value":"-0.6875723955849204"},{"name":"visits","value":"0.4151426140617374"},{"name":"species#0","value":"0.25559046581946027"},{"name":"species#1","value":"0.0"},{"name":"species#2","value":"0.0"},{"name":"species#3","value":"-0.07144881420245953"},{"name":"species#4","value":"0.2628888663105544"},{"name":"species#5","value":"0.0"},{"name":"species#6","value":"0.0"},{"name":"species#7","value":"-0.44703051792755505"},{"name":"city","value":"-0.35100088010733876"}],"intercept":"0.5909043953829989","classes":[0,1],"positive":1,"split":{"train":57,"test":19,"seed":3,"spec":"holdout train=0.75 seed=3"},"holdout":{"rows":19,"metrics":{"accuracy":"0.7894736842105263","precision":"0.8181818181818182","recall":"0.8181818181818182","f1":"0.8181818181818182","roc_auc":"0.9318181818181818","log_loss":"0.4278208227654049"}}}},"meta":{"version":"0.1.0"}}
 $ ml predict --model-file pets-hash.ml --proba newpets.csv
 {"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","columns":["label","probability"],"rows":[["1","0.8560974272954618"],["1","0.5502566884050817"],["1","0.8204410175517777"]],"row_count":3,"total_rows":3,"truncated":false,"next":null,"unknown_categories":1},"meta":{"version":"0.1.0"}}
 ```
@@ -448,7 +497,7 @@ The model is read at start and changed by restarting. There is no TLS, no reload
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler a4572ea3)
-flags       45, for example
+flags       51, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
@@ -460,7 +509,7 @@ limits      21, for example
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       78, for example
+rules       87, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes

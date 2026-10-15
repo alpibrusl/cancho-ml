@@ -540,7 +540,7 @@ def gate_invariants(tmp, quick=False):
                 check(sorted(set(f)) == list(range(K)), "B1 group folds used")
                 cases += 1
             else:
-                check(len(set(gcol)) < K and doc["error"]["rule"] == "ml.split.too-few-groups", "B1 group refusal %s" % (doc and doc.get("error")))
+                check((len(set(gcol)) < K and doc["error"]["rule"] == "ml.split.too-few-groups") or doc["error"]["rule"] == "ml.label.single-class", "B1 group refusal %s" % (doc and doc.get("error")))
             # time: every fold's train (blocks <= i) is no later than its test (block i + 1); the blocks are contiguous
             code, doc, _ = run(cv_argv(os.path.basename(path), "time", K, 1, seed, "tree", model_flags("tree", "cls")))
             if doc and doc.get("ok"):

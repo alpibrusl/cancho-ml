@@ -51,9 +51,9 @@ class Surface(unittest.TestCase):
     def test_flags_are_in_the_table_and_the_verb_is_described(self):
         names = {f["name"] for f in introspect()["flags"]}
         for f in ("stratify", "split-by", "split-group", "folds", "repeats", "emit-folds"):
-            self.assertIn(f, names)
-        verbs = json.dumps(introspect()["tool"] if "tool" in introspect() else introspect())
-        self.assertIn("cv", verbs)
+            self.assertIn("--" + f, names)
+        from harness import skill
+        self.assertIn("cv FILE", skill())
 
     def test_predict_and_serve_binaries_have_none_of_the_flags(self):
         import subprocess
@@ -62,7 +62,7 @@ class Surface(unittest.TestCase):
             doc = json.loads(subprocess.run([b, "introspect"], capture_output=True, check=True).stdout)
             have = {f["name"] for f in doc["flags"]}
             for f in ("stratify", "split-by", "split-group", "folds", "repeats", "emit-folds"):
-                self.assertNotIn(f, have, "%s has --%s" % (b, f))
+                self.assertNotIn("--" + f, have, "%s has --%s" % (b, f))
 
     def test_canonical_text_is_one_line_without_spaces_in_a_token(self):
         sb = Sandbox()
@@ -117,7 +117,8 @@ class Hostile(unittest.TestCase):
         r = self.run_cv(header, rows, "group", 5)
         self.assertEqual(r.status, 0, r)
         r = self.run_cv(header, rows, "group", 20)
-        self.assertEqual(r.status, 0, r)
+        # two rows per fold: a fold of one class has no ROC-AUC, the refusal of `ml eval` on that side
+        self.assertIn(r.first_rule(), (None, "ml.label.single-class"), r)
 
     def test_ties_in_the_time_column(self):
         rnd = random.Random(3)

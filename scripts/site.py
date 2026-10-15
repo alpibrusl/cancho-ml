@@ -467,7 +467,7 @@ def kmflow_items(ctx):
 def splitflow_items(ctx):
     """Splits and cross-validation: a stratified holdout, a time split, a group split, a refused combination, k-fold cv of two models with the metrics of every fold and their mean and
     standard deviation, a time cv, a group cv with the folds as data, and a refusal with its repair."""
-    return [("# A holdout that keeps the class proportions: 426 training rows, 20 percent held out, per class the floor or the ceiling of its share", None, 0, None),
+    return [("# A holdout that keeps the class proportions: 426 rows, 20 percent held out, per class the floor or the ceiling of its share", None, 0, None),
             item(ctx, "sp_strat"),
             ("# visits.csv: 12 customers with 10 visits each, an ISO date, a basket, the item count and whether the customer came back. The newest quarter of the visits is held out (the date column is dropped as a feature, not as a rule)", None, 0, None),
             item(ctx, "sp_time"),

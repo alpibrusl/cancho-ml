@@ -22,7 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import mutants_cli as M  # noqa: E402
 
 ROOT = M.ROOT
-S, R = ["test_splits"], ["test_rules.Rules.test_every_fixture"]
+S, R = ["test_splits"], ["test_rules.Rules.test_every_fixture", "test_rules.Rules.test_retry_repairs_work_and_widen_nothing"]
 SR = S + R
 
 
@@ -73,8 +73,9 @@ MUTANTS = [
     mut("refuse-missing-cell", "an empty group cell is a group of its own", COL, "        if off[i + 1] == off[i] {\n            return i + 1;", "        if false {\n            return i + 1;", tests=SR),
     mut("refuse-offset-reason", "an offset is reported as a form", COL, "                        return (3, 0, 0, 0);", "                        return (2, 0, 0, 0);"),
     mut("refuse-stratum-cv", "a class smaller than the folds goes to the library", PLAN, "        if n0 < k {\n            return (2, lo, n0);", "        if n0 < 0 {\n            return (2, lo, n0);", tests=R),
+    mut("refuse-stratum-cv-high-class", "the larger class smaller than the folds goes to the library", PLAN, "        if n1 < k {\n            return (2, hi, n1);", "        if n1 < 0 {\n            return (2, hi, n1);", tests=R),
     mut("refuse-too-few-groups-cv", "fewer groups than folds are accepted", PLAN, "        if groups < k {", "        if groups < 0 {", tests=SR),
-    mut("repair-stratify-removed", "the repair of ml.split.stratify-target is none", SPEC, "    w = retry_edit(heap, w, args, \"--stratify\", false, false, \"\");", "    w = fail.no_repair(heap, w);", tests=R),
+    mut("repair-stratify-removed", "the repair of ml.split.stratify-target keeps a malformed --stratify= argument", SPEC, "    w = retry_edit(heap, w, args, \"--stratify\", false, false, \"\");", "    w = retry_edit(heap, w, args, \"--stratify\", false, true, \"\");", tests=R),
     mut("repair-folds-not-lowered", "the repair of a small class keeps --folds", SPEC, "    if cv && rows >= 2 {\n        var v = buffer.push_nat(heap, buffer.empty(heap, 8), rows);", "    if false {\n        var v = buffer.push_nat(heap, buffer.empty(heap, 8), rows);", tests=R),
     mut("repair-emit-kept", "the repair of ml.split.emit-too-large keeps --emit-folds", SPEC, "    w = retry_edit(heap, w, args, \"--emit-folds\", false, false, \"\");", "    w = retry_edit(heap, w, args, \"--emit-folds\", false, true, \"\");", tests=R),
     mut("refuse-single-class-fold", "a training fold with one class is fitted", CV, "                if lacking {", "                if false {", tests=SR),
@@ -85,11 +86,17 @@ MUTANTS = [
     mut("agg-fold-order", "the folds are aggregated in reverse", CV, "let frag = frags[ends[k]..ends[k + 1]];", "let frag = frags[ends[count - 1 - k]..ends[count - k]];"),
     # ---------------------------------------------------------------- the leak
     mut("leak-steps-fitted-on-all-rows", "the steps of the plan are fitted on all rows, the estimator on the training rows (C2)", "tools/ml/wire.cho",
-        "                    let (f2, xt2, flt) = run.fit(heap, pls.pl, nr, xr, o.max_rows, o.max_cols, o.max_cells);\n                    run.drop_fitted(heap, fitted);",
-        "                    borrow featcols as &fcr in {\n                    let (xall, callcode) = wiredata.take(heap, ds.x, sel, 0 - 1, contents(fcr), nfeat, o.max_rows, o.max_cols, o.max_cells);\n"
-        "                    let (f2, xtall, flt) = run.fit(heap, pls.pl, nr, xall, o.max_rows, o.max_cols, o.max_cells);\n"
-        "                    let (xt2, unkall, flall) = run.apply_steps(heap, buffer.bytes(f2.payload), xr, o.max_rows, o.max_cols, o.max_cells);\n"
-        "                    matrix.drop(heap, xtall);\n                    matrix.drop(heap, xall);\n                    }\n                    run.drop_fitted(heap, fitted);", tests=S),
+        "                    run.drop_fitted(heap, fitted);\n                    matrix.drop(heap, xt);\n                    fitted = f2;\n                    xt = xt2;\n                    if flt.code != 0 {\n                        e = wiredata.code_error(heap, e, flt.code, flt.a, flt.b, flt.c);",
+        "                    var xall = matrix.empty(heap);\n                    borrow featcols as &fcr in {\n                        let (xm, callcode) = wiredata.take(heap, ds.x, sel, 0 - 1, contents(fcr), nfeat, o.max_rows, o.max_cols, o.max_cells);\n                        matrix.drop(heap, xall);\n                        xall = xm;\n                    }\n"
+        "                    var leaked = run.empty_fitted(heap);\n                    var xtl = matrix.empty(heap);\n"
+        "                    borrow xall as &xar in {\n"
+        "                        let (fl, xl, fault) = run.fit(heap, pls.pl, nr, xar, o.max_rows, o.max_cols, o.max_cells);\n"
+        "                        borrow fl as &flr in {\n"
+        "                            let (xt3, unk3, f3) = run.apply_steps(heap, buffer.bytes(flr.payload), xr, o.max_rows, o.max_cols, o.max_cells);\n"
+        "                            matrix.drop(heap, xtl);\n                            xtl = xt3;\n                        }\n"
+        "                        run.drop_fitted(heap, leaked);\n                        leaked = fl;\n                        matrix.drop(heap, xl);\n                    }\n"
+        "                    matrix.drop(heap, xall);\n                    run.drop_fitted(heap, f2);\n                    matrix.drop(heap, xt2);\n"
+        "                    run.drop_fitted(heap, fitted);\n                    matrix.drop(heap, xt);\n                    fitted = leaked;\n                    xt = xtl;\n                    if flt.code != 0 {\n                        e = wiredata.code_error(heap, e, flt.code, flt.a, flt.b, flt.c);", tests=S),
     mut("leak-training-on-all-rows", "every fold is trained on all rows, the held-out ones included", CV, "wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, e);", "wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0 - 1, o, retry_ok, e);"),
     mut("leak-time-future-in-training", "a time fold trains on the blocks after the one it tests", CV, "} else if strategy == 3 && a > f {", "} else if strategy == 3 && a > f + 1 {"),
 ]

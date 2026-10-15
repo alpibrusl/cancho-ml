@@ -73,7 +73,8 @@
       <tr><th><code>mutants_pipe.py</code></th><td class="num">73</td><td class="num">72</td><td class="num">1</td><td class="num">0</td></tr>
       <tr><th><code>mutants_st.py</code></th><td class="num">62</td><td class="num">60</td><td class="num">2</td><td class="num">0</td></tr>
       <tr><th><code>mutants_serve.py</code></th><td class="num">59</td><td class="num">59</td><td class="num">0</td><td class="num">0</td></tr>
-      <tr class="us"><th>total</th><td class="num">1,091</td><td class="num">1,048</td><td class="num">43</td><td class="num">0</td></tr>
+      <tr><th><code>mutants_split.py</code></th><td class="num">47</td><td class="num">47</td><td class="num">0</td><td class="num">0</td></tr>
+      <tr class="us"><th>total</th><td class="num">1,138</td><td class="num">1,095</td><td class="num">43</td><td class="num">0</td></tr>
     </tbody>
   </table></div>
   <p class="note">The total is the sum of the rows. The suites for core, paths, linear algebra, metrics and trees were not run again on this tree (their code is unchanged): their rows are the counts of commit <code>01c7bee</code>, 2026-10-14. The others were run in copies of this tree. Beside them: 11 pin mutants of RD1 (in <code>mutants_reader.py</code>), 11 deliberately wrong oracles of the linear algebra (in <code>mutants_linalg.py</code>), 6 mutant modules of the admission script and 27 mutants of the prose lint (<code>scripts/check_prose.py --mutants</code>), all caught. A survivor is usually an equivalent mutant: the change cannot alter a result (an addition is commutative, a clamp removes only all-zero partials). The argument for each is in the script that holds it.</p>
@@ -301,6 +302,26 @@
     </tbody>
   </table></div>
   <p class="note">The metrics sum in the linear-algebra package&rsquo;s order (4 lanes in a block of 256 terms, a fixed tree over blocks; <code>docs/lanes.md</code>). There is no threaded variant.</p>
+</section>
+
+<section id="splits">
+  <h2>Split strategies and cross-validation</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/splits.md">docs/splits.md</a> section 9. The gates run <code>build/ml</code> and judge it from outside; the oracle is <code>scripts/oracle_split.py</code>, which shares no code with the tool.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>A1 assignment</th><td>286 cases (plain, stratified, group and time strategies; holdout and cross-validation; seeds, repeats, fractions) compared against the Python re-implementation of the stream, the CSV dialect and every rule: the vector of <code>--emit-folds</code> and the canonical text are equal.</td></tr>
+      <tr><th>B1 invariants</th><td>381 cases on generated and hostile data: per class and fold the count is the floor or the ceiling of its share; no group in two folds; the newest training row is no later than the oldest test row; every row is tested once.</td></tr>
+      <tr><th>C1 no leak</th><td>189 folds: for each fold the oracle writes the training and the held-out file, runs the real <code>ml fit</code> and <code>ml eval</code> on them, and the metrics equal those of <code>ml cv</code> string for string, for linear, logistic, tree, forest and k-means with <code>impute</code>, <code>scale</code>, <code>bucket</code>, <code>encode</code>, <code>freq</code> and <code>hash</code> steps and text columns. The mean and the standard deviation equal the oracle&rsquo;s, computed in the order of the metrics package.</td></tr>
+      <tr><th>C2 planted leak</th><td>The mutant that fits the steps on all rows and the estimator on the training rows fails C1.</td></tr>
+      <tr><th>D1 threads</th><td>18 answers of <code>ml cv</code> are identical at <code>--threads 1</code> and <code>--threads 8</code>.</td></tr>
+      <tr><th>E1 refusals</th><td>One fixture per <code>ml.split.*</code> tag, 9 tags, with the retry repair applied where there is one.</td></tr>
+      <tr><th>F1 fuzz and hostile data</th><td>A seeded fuzz of argument lists over the new flags and verb, and data with one class, one row per group, a group per row, 5,000 groups, ties in the time column, quoted cells with commas and line breaks, CRLF, a byte order mark, every accepted and refused date form: an answer of the contract in every case, no trap.</td></tr>
+      <tr><th>S1 scikit-learn</th><td>On the folds of <code>--emit-folds</code>, scikit-learn&rsquo;s linear regression gives the same RMSE and MAE within 6.1e-16 relative (the bound fixed first was 1e-6), and its logistic regression the same accuracy and a log-loss within 1.4e-8 absolute (bound 1e-4). <strong>The assignment is not compared with scikit-learn&rsquo;s:</strong> its generator is not SplitMix64.</td></tr>
+      <tr><th>mutants</th><td>47: 47 killed, 0 survive (<code>scripts/mutants_split.py</code>).</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">The unchanged answers of <code>fit --split</code> and <code>eval --split</code> gain <code>split.spec</code>; their status and their model files are the old ones, and the three golden answers that changed are pinned in the baseline tests with the new hash.</p>
 </section>
 
 <section id="trees">
