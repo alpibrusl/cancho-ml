@@ -342,7 +342,46 @@ The mutants of the new code are `scripts/mutants_http.py` (counts in section 10)
 
 ## 10. Results
 
-(filled from runs of this repository's scripts)
+Machine: Mac, arm64, Apple M4 Max, 16 cores, macOS 26.2, compiler `a4572ea`, Python 3.14.5; the machine was shared (load average 7 to 11 while the suites ran). `scripts/check.sh` exits 0 (the conformance suite: 408 tests in 850 seconds, none skipped).
+
+| gate | result | script |
+|---|---|---|
+| W1 | three dependencies pinned (`web` 5f404a7, `schema` 59a7028, `server` a4572ea), none copied; `CHECK_REMOTE=1` finds the three stores on GitHub and that the `web` store requires the pinned `schema` rev; 9 mutants refused | `scripts/check_web_pin.py` |
+| W2 | `ml` and `ml-predict` built from a copy without the three blocks and without the `ml-serve` bin are the bytes of the ones built with them; a flipped byte is refused | `scripts/check_web_pin.py --bins` |
+| S1 | 19 models x their inputs: 118 model/input pairs, 4,962 rows and 7,668 values compared as text, one request each and the whole input as a batch; 29 rows refused for a category the model lists in full, and the command line agrees on each (it accepts, or refuses with `ml.input.unknown-category` under `unknown=refuse`); 20 rows not sendable (an empty cell for a model that takes none) | `tests/conformance/test_serve_bytes.py` |
+| S2 | 43 end-to-end tests over real sockets plus the status table (S9) and the authority tests: every endpoint, every refusal, keep-alive, 7 pipelined requests, a request in one-byte writes, a chunked body, the token, the refusals at start, the log, a connection through the machine's non-loopback address (the bind is every address) | `tests/conformance/test_serve.py` |
+| S3 | 18,111 generated and adversarial numbers through `serve-check`: int, 976 rendered and 17,135 refused as `Decimal` says; dec at 6 scales; float 18,031 rendered (same double and as many digits as `repr`) and 80 refused; then 4,500 requests: 1,654 answered as the command line answers on Python's rendering, 2,842 refused with 422, 4 refused because the model's answer is infinite | `tests/conformance/test_serve_json.py` |
+| S4 | 3,001 cases (random bytes, flips, truncations, edits, hostile paths, headers, versions, chunked and JSON bodies) on 48 threads: no trap, no hang, every case answered or closed; resident set 2,368 KiB before and 4,496 KiB after; 252 of 400 simultaneous connections served at the default body limit; a check run by hand and not kept (100,000 requests of each of five kinds) left the resident set flat after the first 25,000 (linear 2,960 KiB, forest with null 5,232 KiB, a refusal 2,512 KiB) | `tests/conformance/test_serve_fuzz.py` |
+| O1 | seven documents checked in (`docs/serving/*.openapi.json`), each served by a process, equal to its file and valid for `openapi-spec-validator` | `scripts/gate_serve_openapi.py` |
+| O2 | Schemathesis 4.31.1, seed 20261015, 1,000 examples for each operation, six fixtures: 2,121 to 2,155 cases for each, 0 failures. Installed in `build/venv` of this clone. `positive_data_acceptance` is not run for the models with a `dec` column or a category with no `enum`, for the reason in 3.4 and 11 (an earlier run without the exclusion found exactly those two disagreements) | `scripts/gate_serve_schemathesis.py` |
+| A1 | the derived row is `args, clock, conn_accept, conn_read, conn_write, dir_read, err_write, file_read, fs_read(""), heap, io_write, net_in(""), poll`, bounded, no foreign symbol, within the exact ceiling; a row with `file_write`, `dir_write`, `conc`, `net_out`, `ffi`, `exec`, `env`, `io_read` or `fs_write` added fails, and so does `net_in` or `clock` for `ml` and `ml-predict` | `tests/conformance/test_authority.py`, `scripts/manifest.py --check` |
+| A2 | the list of `ml-serve` is the list of `ml-predict` with its own directories; 11 mutants of the lists refused | `scripts/check_bins.py` |
+| G | every fixture and golden file of the other binaries unchanged | the existing suite |
+
+**Mutants** (`scripts/mutants_http.py`, on a frozen copy of the tree): 74 patterns, 71 killed, 3 survive and are explained: `s-answer-limit` (the check of 60,000 bytes is a backstop that no request reaches),
+`s-unknown-count-dropped` (a category the model has not seen is refused by its `enum` before the predictor counts it) and `c-an-empty-string-is-text` (two quotes and nothing are one empty cell to the reader).
+A first run left six alive; four were killed by tests added for them (the pointer of an error the server makes, a CR LF in a category, `model_sha256` in a refusal, and the two others explained above).
+The baseline passes on the unchanged copy.
+
+**Load test** (`scripts/bench_serve.py --n 2000 --repeat 3`, best of 3 by throughput; closed loop, one keep-alive connection per Python client thread; Apple M4 Max, load average 7.2 before and 11.3 after; the Python client takes
+part of the time, the server is one thread, and the figures say nothing beyond this client on this machine):
+
+| scenario | clients | requests | req/s | p50 ms | p90 ms | p99 ms | max ms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `GET /health` | 1 | 2,000 | 41,122 | 0.022 | 0.031 | 0.043 | 0.054 |
+| `GET /health` | 4 | 8,000 | 54,327 | 0.064 | 0.125 | 0.205 | 0.376 |
+| `GET /health` | 16 | 32,000 | 42,041 | 0.331 | 0.686 | 1.122 | 2.245 |
+| `POST /predict`, linear model (645 bytes) | 1 | 2,000 | 22,028 | 0.043 | 0.055 | 0.068 | 0.088 |
+| `POST /predict`, linear | 4 | 8,000 | 37,658 | 0.080 | 0.160 | 0.170 | 0.217 |
+| `POST /predict`, linear | 16 | 32,000 | 36,613 | 0.401 | 0.579 | 0.949 | 1.828 |
+| `POST /predict/batch`, 100 records | 1 | 200 | 807 | 1.229 | 1.273 | 1.351 | 1.647 |
+| `POST /predict/batch`, 100 records | 4 | 800 | 845 | 3.569 | 7.144 | 7.168 | 7.194 |
+| `POST /predict`, forest of 200 trees, depth 12 (33,044,881 bytes) | 1 | 200 | 105 | 9.452 | 9.819 | 10.300 | 10.761 |
+| `POST /predict`, same forest | 4 | 800 | 106 | 28.152 | 56.642 | 58.371 | 59.819 |
+
+The model is read from disk and decoded once: before the single decode was made, the same forest took 155 ms for a request at one client (30 requests, an earlier run of this script, load about 9). One `ml predict`
+process on one record took 6.6 ms at the minimum and 6.8 ms at the median over 30 runs. The resident set of the server after 32,000 requests is 3.2 MiB for the small model and 164 MiB for the forest (its decoded copy and the bytes).
+With four clients the p50 of the forest is four times the time of a request: the loop answers one at a time.
 
 ## 11. Not done, limits
 
