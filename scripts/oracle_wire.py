@@ -224,12 +224,12 @@ def fit_oracle(case):
     if case.model == "linear":
         res = omod.linreg(Xn, yn, l2)
         if res is None:
-            return "ml.linalg.not-positive-definite", None
+            return "ml.fit.collinear", None
         w = res[0]
     else:
         res = omod.logreg(Xn, yn, case.iterations, l2)
         if res is None:
-            return "ml.linalg.not-positive-definite", None
+            return omod.logreg.last or "ml.linalg.not-positive-definite", None
         w = res[0]
     plan = op.canon_plan(case.plan_text()) if False else canon(case.plan_text())
     data = file_bytes(plan, schema_bytes(names, types, t), steps_bytes(stored), model_payload(KIND[case.model], w, d, *(labels or (0, 0))), len(tr), len(names), case.seed)

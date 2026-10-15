@@ -118,7 +118,7 @@ Multiclass (#37) will reuse `lib/models/rank.cho` per class block, and the loss 
 
 ## 4. The fixtures, written first (they fail on `main`)
 
-`tests/conformance/fixtures.py` `_refuse_cases()`: 17 cases. On `main` (run before the fix): the 7 collinear cases answer `ml.linalg.not-positive-definite`; `ml-fit-separable`
+`tests/conformance/fixtures.py` `_refuse_cases()`: 17 cases when written (20 now: the quasi-complete case, the ridge below the tolerance after the first pass, and a step that makes `--drop` unsafe). On `main` (run before the fix): the 7 collinear cases answer `ml.linalg.not-positive-definite`; `ml-fit-separable`
 and `-explicit-zero-l2-is-replaced` and `-in-a-plan-has-no-argv` answer the same (100 iterations); `ml-fit-separable-25-iterations` **succeeds** (exit 0, the coefficients of section 1); that is 11 failing.
 The 6 controls pass on `main` and must keep passing: a positive `l2` on separable data, two passes (too few to see it), overlapping classes, a nearly separable set with one
 contradicting row, near-collinear columns (`1e-5` apart), the full one-hot block with `l2 = 0.1`.
@@ -132,4 +132,62 @@ contradicting row, near-collinear columns (`1e-5` apart), the full one-hot block
 
 ## 6. Results
 
-(filled in after the code: measurements 6.1 to 6.4, gates, mutants.)
+Machine: Mac arm64, load average 90 to 100 from other jobs (so no timing is claimed), compiler a4572ea, seeds 20261015 (oracles) and 20261015 (`pivot_evidence_wide.py`).
+
+### 6.1 The tolerance, measured (`python3 scripts/pivot_evidence_wide.py`)
+
+No new number: `2^-40` stays (`models-linear.md` 3.1 has its measurements at p up to 21). What was not measured is its dependence on the size of the matrix. The relative pivot `s_jj / a_jj` is scale free by
+construction; the rounding noise it carries is measured here at the sizes the estimators take (`oracle_linalg.chol_o`, the twin of `lib/linalg/chol.cho`, p = d + 1):
+
+| data | d | n | smallest / largest relative pivot |
+|---|---|---|---|
+| well conditioned, standard normal | 8, 32, 64, 128, 256 | 500 and 5,000 | smallest 0.65 (d = 128, n = 500), 0.94 at d = 256, n = 5,000; 1.1e12 times the tolerance at n = 5,000 |
+| last feature = a random combination of all the others (exactly dependent) | 3, 8, 32, 64, 128, 256 | 500 and 5,000 | noise between -4.1e-16 and +3.0e-16: **at most 4.5e-4 of the tolerance, 2,200 times below it**, with no growth in d |
+| a constant column beside the intercept | 1, 8, 64, 256 | 2,000 | the intercept's relative pivot is +2.3e-16, -1.1e-16, 0, 0 (refused) |
+
+The exact oracle (gate B, 3,000 designs) puts 1,128 designs at a relative pivot of 0 or below and the others across the decades from 1e-35 to 1e-1; **at 1e-13 and 1e-12 there are 108 and 72 designs, and the verdict
+agrees with the exact one for every design**, so the decision at the boundary is the exact decision to the rounding of the sums. The dependency coefficients are the solution of a system whose matrix is the leading block
+of the Gram matrix: their error is about the unit roundoff times its condition number (a near pair before the failing column loosens it; the oracle allows `max(1e-5, 1e-14 / smallest relative pivot before j)` times the largest
+coefficient and the family "a near pair before a dependent column" exercises it). Not measured: p above 257 (the estimators refuse it), n above 20,000 for p above 3, other platforms (the fingerprint of `scripts/xplat_check.py` is equal, which says the bits agree, not that noise is the same).
+
+### 6.2 Separation, measured (`python3 scripts/oracle_refuse.py sep --n 600`)
+
+600 integer point sets (the line and the plane, coordinates -6 to 6, 6 to 14 points; the exact verdict by candidate normals in integer arithmetic): 282 complete separations, 292 overlaps, 26 separations with ties.
+With `--l2 0` and 100 passes: **281 of the 282 complete ones are refused by the loss test, the last by the scale test; the 292 overlaps are all fitted; of the 26 ties, 21 are refused by the scale test and 5 at a vanishing pivot.**
+No set of any kind is answered `ml.linalg.not-positive-definite` with `l2 = 0`; a positive `l2` (0.01 and 1e-9) is never refused for separation. An independent numpy Newton iteration (the same method, written apart) predicts
+303 refusals and their pass, and `ml` gives the same reason at the same pass for all of them, with the summed loss and the norm equal to 1e-6; it predicts 292 quiet ends, and all 292 fit.
+
+On the default data of the README (`shop.csv`, 6 rows): refused at pass 3 with a summed loss of 0.399, the norm of the coefficients 3.84. The first fixture (`sep.csv`): pass 2, loss 0.407, norm 1.447; with `--iterations 25`
+the fit used to succeed with `x1 = 15.16` (section 1); with `--iterations 2` it still does (fixture): two passes do not reach the bound.
+
+### 6.3 The gates
+
+| gate | result |
+|---|---|
+| A fixtures and repairs | 20 cases of `_refuse_cases()` (one keeps `ml.linalg.not-positive-definite`: a ridge below the tolerance after the first pass) plus the old id `ml-linalg-not-positive-definite`, now `ml.fit.collinear`: all pass; every argv of every repair is run in the same sandbox and gives a model (`test_every_argv_of_every_repair_runs_and_gives_a_model`) |
+| B rank oracle | 3,000 designs + 300 one-hot blocks, 0 disagreements (section 6.1) |
+| C separation | 600 sets, 0 disagreements (section 6.2) |
+| D README | the flow of pets.csv keeps `--l2 0.1` and its output is unchanged; the generated block `refuse` shows both refusals and runs the repair as offered (`scripts/site.py` raises if the repair does not run) |
+| E mutants | `scripts/mutants_refusals.py`: see 6.5 |
+| F fuzz, threads, fingerprint | `oracle_refuse.py fuzz --n 300`: 600 fits (both models) at 1, 2, 4, 8 and 16 threads, 0 traps, one answer each (verdicts: 42 fitted, 405 collinear, 88 non-finite, 6 separable, 59 single class); `scripts/xplat_check.py`: 88 lines for 22 fits equal `docs/bench/xplat_fp.txt` |
+
+### 6.4 What changed and why
+
+* `tests/conformance/fixtures.py` `ml-linalg-not-positive-definite` (two equal columns, `l2` 0): the tag is `ml.fit.collinear`. Status 8 and files are those of the baseline; the new stdout hash is pinned in `test_cat_baseline.py` `CHANGED`.
+* `tests/conformance/golden_planned.json`, 2 of 60: `logistic-5` (exit 0 with a model, now exit 8 and no file: separable data, 25 iterations, `l2` 0) and `logistic-14` (exit 8, tag changed). Pinned in `test_planned_baseline.py` `CHANGED` with the reason; the other 58 give the recorded bytes. `golden_planned.record` also replaces the binary path in the output (no case had one).
+* `tests/p_models.cho`: five expectations of the code 9 for a singular Gram matrix are the code 22; `named_refusals` is new.
+* The worked examples: the penalty-free fits of breast cancer and wine (`--l2 0`) are refused with `ml.fit.separable`; `scripts/examples_common.py` has one such run each (it had two and three); the generated pages and `docs/examples.md` item 5 say so.
+* Unchanged: the 22 fits of the fingerprint; the oracle suites of `lib/models` (bit for bit); every other conformance record. A fit that succeeded before and is not separable (completely, or with ties past the scale bound) succeeds with the same bytes.
+
+### 6.5 Mutants
+
+(filled below)
+
+### 6.6 The real session
+
+`python3 scripts/site.py` runs, in a temporary directory with `ml` on the PATH, the one-hot refusal of `pets.csv` and the separable refusal of `shop.csv`, each followed by the repair it offered, run as offered. The blocks are in the README
+(section "A fit that has no answer is refused by name") and `docs/index.html`.
+
+### 6.7 Not done
+
+Multiclass (#37); `drop-first` (does not exist); a minimal set of columns to drop (the dependency is data; the repair drops one input column); refusing separable data that the passes do not reach.
