@@ -77,6 +77,7 @@ def exact_pivots(cols):
     # LDL^T in exact arithmetic: D[j] = s_jj, L[i][j] = (G_ij - sum_k L_ik L_jk D_k) / D_j
     D = [Fraction(0)] * p
     minratio = None
+    minprev = Fraction(1)
     for j in range(p):
         s = G[j][j] - sum(L[j][k] * L[j][k] * D[k] for k in range(j))
         ratio = (s / G[j][j]) if G[j][j] != 0 else Fraction(0)
@@ -91,11 +92,12 @@ def exact_pivots(cols):
             c = [Fraction(0)] * j
             for q in reversed(range(j)):
                 c[q] = v[q] - sum(L[k][q] * c[k] for k in range(q + 1, j))
-            return j, ratio, c
+            return j, ratio, c, minprev
         D[j] = s
+        minprev = min(minprev, ratio)
         for i in range(j + 1, p):
             L[i][j] = (G[i][j] - sum(L[i][k] * L[j][k] * D[k] for k in range(j))) / s
-    return None, minratio, None
+    return None, minratio, None, None
 
 
 def exact_for(header_cols, texts):
@@ -138,6 +140,14 @@ def gen_rank(rng, kind):
         cols[j] = [x + eps * rng.uniform(-1, 1) for x in cols[i]]
         cols = [[v * scales[k] for v in c] for k, c in enumerate(cols)]
         note = "near eps=%.1e scales=%s" % (eps, scales)
+    elif kind == "mixed":
+        # a pair that is near but fine (relative pivot between 2^-40 and 2^-30, accepted) before a column that IS dependent: the failing pivot is the later one
+        p = max(p, 4)
+        cols = [[round(rng.uniform(-5, 5), 4) for _ in range(n)] for _ in range(p)]
+        eps = 10 ** rng.uniform(-5.4, -4.6)
+        cols[1] = [x + eps * rng.uniform(-1, 1) for x in cols[0]]
+        cols[p - 1] = [round(2 * u - 3 * v, 6) for u, v in zip(cols[2], cols[3])] if p == 5 else list(cols[2])
+        note = "mixed eps=%.1e" % eps
     elif kind == "well":
         pass
     y = [round(rng.uniform(-3, 3), 4) for _ in range(n)]
@@ -149,7 +159,7 @@ def case_rank(d, cols, y, note, stats):
     texts = [[fmt(v) for v in c] for c in cols]
     rows = [[texts[k][r] for k in range(len(cols))] + [fmt(y[r])] for r in range(len(y))]
     write_csv(d, header, rows)
-    j, ratio, c = exact_for(header[:-1], texts)
+    j, ratio, c, minprev = exact_for(header[:-1], texts)
     st, out, _ = run(d, "fit", "--model", "linear", "--float", ",".join(header), "--target", "y", "--output", "m.cml", "--overwrite", "d.csv")
     doc = doc_of(out)
     refused = not doc["ok"] and doc["error"]["rule"] == "ml.fit.collinear"
@@ -186,19 +196,22 @@ def case_rank(d, cols, y, note, stats):
         return
     stats["named"] += 1
     big = max([abs(float(v)) for v in c] or [0.0])
+    # the dependency is the solution of a system whose matrix is the leading block: its error is about the unit roundoff times that block's condition number, 1 / (the
+    # smallest relative pivot before j), times the largest coefficient. A near pair before j loosens it; docs/refusals-fit.md 6.1 states it
+    slack = max(1e-5, 1e-14 / float(minprev)) * max(1.0, big)
     shown = dict(zip(det["columns"], [float(v) for v in det["coefficients"]]))
     for k in range(j):
         ck = float(c[k])
         if abs(ck) >= big * 2 ** -20 * 1.01 and big > 0:
             if names[k] not in shown:
                 bad("%s: the dependency on %s (%g) is not named" % (note, names[k], ck))
-            elif abs(shown[names[k]] - ck) > 1e-5 * max(1.0, abs(ck)):
+            elif abs(shown[names[k]] - ck) > slack:
                 bad("%s: coefficient of %s is %g, exact %g" % (note, names[k], shown[names[k]], ck))
             else:
                 stats["coefficients"] += 1
     for nm in shown:
         k = names.index(nm)
-        if abs(float(c[k])) < big * 2 ** -20 * 0.99:
+        if abs(float(c[k])) < big * 2 ** -20 * 0.99 and big * 2 ** -20 > slack:
             bad("%s: %s is named but its exact coefficient is %g (largest %g)" % (note, nm, float(c[k]), big))
 
 
@@ -230,7 +243,7 @@ def rank_mode():
     rng = random.Random(SEED)
     stats = {k: 0 for k in ("refused", "fitted", "band", "named", "coefficients", "onehot", "nonfinite")}
     stats["decades"] = {}
-    kinds = ["dup", "scaled", "sum", "constant", "zero", "near", "near", "near", "well", "well"]
+    kinds = ["dup", "scaled", "sum", "constant", "zero", "near", "near", "near", "mixed", "well"]
     count = N or 300
     with tempfile.TemporaryDirectory() as d:
         for i in range(count):

@@ -29,6 +29,7 @@ generated:
     qs            README.md, index.html   the quick start's commands and output
     kmflow        README.md, index.html   k-means on docs/examples/data/iris_train.csv and iris_test.csv: no target (a --target is refused), k required, the label dropped,
                                           the features standardised, three clusters, predict with the squared distance, eval
+    refuse        README.md, index.html   a collinear design and separable classes: the refusal with the column and the dependency, and the repair run as offered
     catflow       README.md, index.html   the categorical flow on docs/examples/data/pets.csv: a declared column that no step
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
@@ -127,6 +128,9 @@ DEMOS = [
     ("c_eval", "ml eval --model-file pets.ml --drop id pets.csv"),
     ("c_hash", "ml fit --model logistic --cat species,city --step 'hash column=species buckets=8 missing=zero;encode column=city kind=label missing=zero;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets-hash.ml pets.csv"),
     ("c_hash_new", "ml predict --model-file pets-hash.ml --proba newpets.csv"),
+    # a fit that has no answer (docs/refusals-fit.md): the full one-hot block beside the intercept, and classes a hyperplane separates; the repair of each is run as offered
+    ("r_col", "ml fit --model logistic --cat species --step 'encode column=species kind=onehot' --drop id,city --target adopted --output pets-col.ml pets.csv"),
+    ("r_sep", "ml fit --model logistic --drop id --target bought --output shop-sep.ml shop.csv"),
     # standard input, describe and ml-predict (docs/serving.md); the last field of a demo is the file given on standard input
     ("s_stdin", "ml predict --model-file houses.ml -", "new.csv"),
     ("s_empty", "ml predict --model-file houses.ml", "empty.csv"),
@@ -154,6 +158,8 @@ SUMMARY = {
     "big": ["rule", "hint", "detail"],
     "p_bad": ["rule", "hint", "repair"],
     "c_bad": ["rule", "hint", "detail"],
+    "r_col": ["rule", "hint", "repair", "detail"],
+    "r_sep": ["rule", "hint", "repair", "detail"],
     "s_empty": ["rule", "hint"],
     "s_mp_fit": ["rule", "hint", "detail"],
     "s_mp_flag": ["rule", "hint", "detail"],
@@ -172,7 +178,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_col": "r_col_fixed", "r_sep": "r_sep_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -404,6 +410,18 @@ def catflow_items(ctx):
             item(ctx, "c_hash_new")]
 
 
+def refuse_items(ctx):
+    """A fit that has no answer is refused by name, with the repair as an argv that is run as offered (docs/refusals-fit.md)."""
+    return [("# The text column species is one-hot encoded: its columns add up to the intercept, so the normal equations of the first Newton pass are singular. The refusal names the column and the dependency", None, 0, None),
+            item(ctx, "r_col"),
+            ("# The repair the tool offered is a ridge just above the tolerance. Run it", None, 0, None),
+            item(ctx, "r_col_fixed"),
+            ("# The two classes of shop.csv are separated by a plane, so with no penalty the best fit is at infinity. It is refused at the pass where every row is right", None, 0, None),
+            item(ctx, "r_sep"),
+            ("# The repair is a penalty. Run it", None, 0, None),
+            item(ctx, "r_sep_fixed")]
+
+
 def sflow_items(ctx):
     """Standard input, describe and ml-predict."""
     return [("# predict reads the CSV from standard input for the operand - (or no operand): the answer is the file's answer", None, 0, None),
@@ -631,11 +649,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), refuse=lambda c: md_block(refuse_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), refuse=lambda c: html_pre(refuse_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }
