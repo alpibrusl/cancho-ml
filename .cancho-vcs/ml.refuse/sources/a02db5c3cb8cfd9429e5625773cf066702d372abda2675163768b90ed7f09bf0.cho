@@ -1,0 +1,231 @@
+module ml.refuse;
+
+// The refusals of the numeric core (design.md section 8): a code (an int, 0 is "no refusal"), a stable rule tag, an exit
+// code from the toolbox table (arguments 2, a limit or a parse failure 8) and a repair where one is safe. Every refusal in
+// lib/ answers one of these codes; tests/core.cho has a fixture for every one (and fails if a code has no tag).
+
+pub fn count() -> [] int {
+    return 21;
+}
+
+pub fn tensor_rank() -> [] int {
+    return 1;
+}
+
+pub fn tensor_shape() -> [] int {
+    return 2;
+}
+
+pub fn tensor_bounds() -> [] int {
+    return 3;
+}
+
+pub fn input_empty() -> [] int {
+    return 4;
+}
+
+pub fn too_many_rows() -> [] int {
+    return 5;
+}
+
+pub fn too_many_columns() -> [] int {
+    return 6;
+}
+
+pub fn too_many_cells() -> [] int {
+    return 7;
+}
+
+pub fn param_out_of_range() -> [] int {
+    return 8;
+}
+
+pub fn not_positive_definite() -> [] int {
+    return 9;
+}
+
+pub fn singular() -> [] int {
+    return 10;
+}
+
+pub fn threads() -> [] int {
+    return 11;
+}
+
+pub fn input_non_finite() -> [] int {
+    return 12;
+}
+
+pub fn label_single_class() -> [] int {
+    return 13;
+}
+
+pub fn label_not_binary() -> [] int {
+    return 14;
+}
+
+pub fn fit_non_finite() -> [] int {
+    return 15;
+}
+
+// 16 to 20: the dictionary of a categorical column (ml.dict, docs/categorical.md section 5). 16 is the tag transforms.codes also has (306)
+pub fn limit_categories() -> [] int {
+    return 16;
+}
+
+pub fn limit_string_bytes() -> [] int {
+    return 17;
+}
+
+pub fn limit_string_pool() -> [] int {
+    return 18;
+}
+
+pub fn limit_categorical_columns() -> [] int {
+    return 19;
+}
+
+pub fn input_invalid_utf8() -> [] int {
+    return 20;
+}
+
+// 21: a value the model computes for a row of the input (a prediction, a probability, a squared distance) is NaN or infinite (docs/nonfinite.md)
+pub fn predict_non_finite() -> [] int {
+    return 21;
+}
+
+pub fn tag(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "ml.tensor.rank";
+    }
+    if code == 2 {
+        return "ml.tensor.shape";
+    }
+    if code == 3 {
+        return "ml.tensor.bounds";
+    }
+    if code == 4 {
+        return "ml.input.empty";
+    }
+    if code == 5 {
+        return "ml.input.too-many-rows";
+    }
+    if code == 6 {
+        return "ml.input.too-many-columns";
+    }
+    if code == 7 {
+        return "ml.input.too-many-cells";
+    }
+    if code == 8 {
+        return "ml.param.out-of-range";
+    }
+    if code == 9 {
+        return "ml.linalg.not-positive-definite";
+    }
+    if code == 10 {
+        return "ml.linalg.singular";
+    }
+    if code == 11 {
+        return "ml.param.threads";
+    }
+    if code == 12 {
+        return "ml.input.non-finite";
+    }
+    if code == 13 {
+        return "ml.label.single-class";
+    }
+    if code == 14 {
+        return "ml.label.not-binary";
+    }
+    if code == 15 {
+        return "ml.fit.non-finite";
+    }
+    if code == 16 {
+        return "ml.limit.categories";
+    }
+    if code == 17 {
+        return "ml.limit.string-bytes";
+    }
+    if code == 18 {
+        return "ml.limit.string-pool";
+    }
+    if code == 19 {
+        return "ml.limit.categorical-columns";
+    }
+    if code == 20 {
+        return "ml.input.invalid-utf8";
+    }
+    if code == 21 {
+        return "ml.predict.non-finite";
+    }
+    return "";
+}
+
+// the toolbox exit code: arguments 2, a limit or a parse failure 8
+pub fn exit_code(code: int) -> [] int {
+    if code == 8 || code == 11 {
+        return 2;
+    }
+    if code >= 1 && code <= 10 || code >= 12 && code <= 21 {
+        return 8;
+    }
+    return 0;
+}
+
+pub fn repair(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "use a tensor of rank 1 to 4";
+    }
+    if code == 2 {
+        return "give every extent as an integer of at least 1, and reshape only a contiguous tensor to the same element count";
+    }
+    if code == 3 {
+        return "the offset, shape and strides must stay inside the data given beside the descriptor";
+    }
+    if code == 5 {
+        return "raise --max-rows, or fit on a row sample";
+    }
+    if code == 6 {
+        return "raise --max-columns, or drop columns";
+    }
+    if code == 7 {
+        return "raise --max-cells, or use fewer rows or columns";
+    }
+    if code == 8 {
+        return "see the allowed range of the parameter";
+    }
+    if code == 9 {
+        return "set l2 above 2^-40 times the largest diagonal element of the normal equations (n for standardised features), drop one of the dependent columns, or centre and scale the columns";
+    }
+    if code == 11 {
+        return "give a thread count of 1 to 64";
+    }
+    if code == 12 {
+        return "impute or drop the rows with a missing or infinite value";
+    }
+    if code == 14 {
+        return "the target must be exactly 0 or 1";
+    }
+    if code == 15 {
+        return "scale the features, add l2, or use fewer iterations";
+    }
+    if code == 16 {
+        return "raise --max-categories up to 1024, or bucket or drop the column";
+    }
+    if code == 17 {
+        return "raise --max-string-bytes up to 65536, or drop the column";
+    }
+    if code == 18 {
+        return "raise --max-pool-bytes up to 8388608, or drop a column with long or many categories";
+    }
+    if code == 19 {
+        return "raise --max-cat-columns up to 4096, or drop columns";
+    }
+    if code == 20 {
+        return "re-encode the file as UTF-8, or drop the column";
+    }
+    if code == 21 {
+        return "scale the inputs, or check or drop the row named in detail";
+    }
+    return "";
+}

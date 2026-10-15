@@ -3,7 +3,7 @@
 <!--
   Hand-written. Every number on this page is printed by a script of this repository (scripts/check.sh, the mutant
   scripts, the comparison with scikit-learn) run on this tree, and is copied next to the document that explains it:
-  docs/cli.md, docs/reader.md, docs/linalg.md, docs/models-linear.md, docs/metrics.md and docs/models-tree.md.
+  docs/cli.md, docs/reader.md, docs/linalg.md, docs/models-linear.md, docs/metrics.md, docs/stores.md and docs/models-tree.md.
   The page itself measures nothing.
 -->
 <head>
@@ -42,7 +42,7 @@
   <p class="lead">What each gate checks, against what, how it was shown able to fail, and what it does not prove.</p>
   <p class="sub">A gate is written before the code it judges. To show a gate can fail there is a <em>mutant</em>: a one-line change to the source (or to a table, a schema or the fixtures) that the gate must catch. A mutant that survives is explained or it is a gap. The oracles are programs written for the purpose, mostly in Python; they check the code against the document, not the document against anything outside it, and the page says where that matters.</p>
   <ul class="toc">
-    <li><a href="#conditions">Conditions</a></li><li><a href="#mutants">The mutants</a></li><li><a href="#cli">The command line</a></li><li><a href="#reader">The reader</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#models">Linear models, k-means</a></li><li><a href="#wiring">The wired models</a></li><li><a href="#pipeline">Transforms and pipeline</a></li><li><a href="#categorical">Categorical columns</a></li><li><a href="#encoders">Encoders of text columns</a></li><li><a href="#stringtable">String table</a></li><li><a href="#metrics">Metrics and splits</a></li><li><a href="#trees">Trees and forests</a></li><li><a href="#red">The red gate</a></li><li><a href="#determinism">Determinism</a></li><li><a href="#registries">The registries</a></li><li><a href="#notprove">What this does not prove</a></li>
+    <li><a href="#conditions">Conditions</a></li><li><a href="#mutants">The mutants</a></li><li><a href="#cli">The command line</a></li><li><a href="#reader">The reader</a></li><li><a href="#linalg">Linear algebra</a></li><li><a href="#models">Linear models, k-means</a></li><li><a href="#wiring">The wired models</a></li><li><a href="#pipeline">Transforms and pipeline</a></li><li><a href="#categorical">Categorical columns</a></li><li><a href="#encoders">Encoders of text columns</a></li><li><a href="#stringtable">String table</a></li><li><a href="#metrics">Metrics and splits</a></li><li><a href="#stores">Numeric stores</a></li><li><a href="#trees">Trees and forests</a></li><li><a href="#red">The red gate</a></li><li><a href="#determinism">Determinism</a></li><li><a href="#registries">The registries</a></li><li><a href="#notprove">What this does not prove</a></li>
   </ul>
 </div>
 
@@ -303,6 +303,23 @@
     </tbody>
   </table></div>
   <p class="note">The metrics sum in the linear-algebra package&rsquo;s order (4 lanes in a block of 256 terms, a fixed tree over blocks; <code>docs/lanes.md</code>). There is no threaded variant.</p>
+</section>
+
+<section id="stores">
+  <h2>Numeric stores</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/stores.md">docs/stores.md</a> sections 6 and 7. 23 modules of <code>lib/core</code>, <code>lib/linalg</code> and <code>lib/metrics</code> are committed as <code>.cancho-vcs</code> stores for other repositories to pin.</p>
+  <div class="fitwrap"><table class="fit wide">
+    <thead><tr><th>gate</th><th>result</th></tr></thead>
+    <tbody>
+      <tr><th>PS1 publish twice</th><td>Two publishes from two working directories into two output directories, and the committed stores: byte-identical. A Linux x86-64 host with its own build of the same compiler revision publishes the same bytes.</td></tr>
+      <tr><th>PS2, PS3 <code>--check</code></th><td>16 mutants killed: one byte of a source (comment and code), of a store file of each kind, a file, a store or the directory missing, an extra store or file, the interface file edited or missing, a changed <code>pub</code> signature, another compiler.</td></tr>
+      <tr><th>PS4 closure</th><td>The list is closed under imports (198 <code>pub</code> declarations in 23 modules). 5 mutants killed: a module listed without an import it needs, a source that gains an unlisted import, a file that declares another name.</td></tr>
+      <tr><th>PS5 no copy</th><td>No file declares a published module except its own source; <code>cancho.toml</code> has no dependency on this repository; the document and the publisher list the same modules. 11 mutants killed, 5 of them on a consumer&rsquo;s pins (two revs, a short rev, an unlisted module, a wrong path, a copy).</td></tr>
+      <tr><th>PS6 consumption</th><td>A package outside the tree pins the 23 stores by git, rev and path, installs, builds and calls each module: 66 lines, equal to values computed in Python from the definitions (SplitMix64, <code>float(Fraction)</code>, the k-fold specification, hand values). 6 mutants killed: a store removed, a store byte flipped, a source changed without republishing, a behaviour changed and republished, a rev without stores.</td></tr>
+      <tr><th>PS7 two machines</th><td>The proof prints the same output on the Mac and on the Linux host: SHA-256 <code>87c80b90289b&hellip;</code> on both.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">38 mutants, all killed. <strong>Not shown:</strong> a fetch from GitHub (the proof uses a <code>file://</code> URL), a compiler other than the pin as the consumer&rsquo;s, and that a changed meaning with an unchanged signature is caught by anything but the proof&rsquo;s values and the module tests.</p>
 </section>
 
 <section id="trees">

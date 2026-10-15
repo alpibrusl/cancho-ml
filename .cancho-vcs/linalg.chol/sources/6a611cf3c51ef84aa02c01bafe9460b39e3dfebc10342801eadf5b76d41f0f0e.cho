@@ -1,0 +1,451 @@
+module linalg.chol;
+
+import linalg.order;
+import linalg.tensor;
+import ml.refuse;
+
+// Cholesky A = L L^T and the two triangular solves (docs/linalg.md section 2.1). Only the lower triangle of A is read and only
+// the lower triangle of L is written. The factorisation is in PANELS of NB = 32 columns (order.panel()), the order a blocked
+// right-looking algorithm computes: for the entry (i, j) the value starts at A_ij, and for every panel of k (k = 32p .. 32p + 31,
+// cut at k < j) the panel's sum P of L_ik L_jk is formed by the lane rule (lane = k mod 4, each lane ascending from +0.0, the
+// partial (l0 + l1) + (l2 + l3)) and subtracted once: s = s - P_0; s = s - P_1; ... An empty last panel subtracts +0.0, which
+// changes no bit, so it is not formed.
+//   L_jj = sqrt(s_jj)                  refused (ml.linalg.not-positive-definite) unless s_jj > tol * A_jj, tol = 2^-40
+//                                      (`pivot_tol()`, `pivot_ok`; A_jj is the diagonal element of the matrix given, before any update:
+//                                      docs/linalg.md section 2.1, docs/models-linear.md 3.1: a pivot that rounding noise could
+//                                      have produced is not a pivot)
+//   L_ij = s_ij / L_jj                 for i > j
+// The triangular solves keep ONE running value (a recurrence, not a free reduction; they were not part of the lane experiment):
+//   forward  L x = b:   x_i = (b_i - L_i0 x_0 - ... - L_i,i-1 x_i-1) / L_ii               k ascending
+//   backward L^T x = b: x_i = (b_i - L_d-1,i x_d-1 - ... - L_i+1,i x_i+1) / L_ii          k DESCENDING (corrected from the
+//     first draft of the document: ascending k makes each row's first term the x just computed, one serial chain for the
+//     whole solve; descending k lets four columns be summed together)
+// The speed comes from independent chains: a column of L is computed 4 rows at a time (sixteen lane chains), a solve 4 rows
+// (forward) or 4 columns (backward) at a time; each entry's own additions keep the order above.
+
+// tol of the relative pivot test: 2^-40 (an exact power of two, so the division is exact). Measured evidence: docs/models-linear.md 3.1.
+pub fn pivot_tol() -> [] float {
+    return 1.0 / 1099511627776.0;
+}
+
+// the pivot test: s is the pivot sum of column j, a the diagonal element A_jj of the matrix given. NaN in either is a refusal (the
+// comparison is false). No separate `s > 0.0`: for a > 0 the test implies it, and for a <= 0 it is never true, because the updates
+// subtract sums of squares from the diagonal element, so s <= a: for a < 0, s <= a < tol * a, and for a = 0, s <= 0 = tol * a
+fn pivot_ok(s: float, a: float) -> [] bool {
+    return s > pivot_tol() * a;
+}
+
+// the entry sum s_ij of the fast path: `lv` is L (positioned at L[0][0], row stride ls); rows i and j (j <= i, row i has j entries
+// computed); `aij` is A_ij. Panels of 32, four lanes each.
+fn entry_sum[&l](lv: &l [float], ls: int, i: int, j: int, aij: float) -> [] float {
+    let ri = lv[i * ls..i * ls + j];
+    let rj = lv[j * ls..j * ls + j];
+    var s = aij;
+    var p0 = 0;
+    while p0 < j {
+        var e = p0 + 32;
+        if e > j {
+            e = j;
+        }
+        var a0 = 0.0;
+        var a1 = 0.0;
+        var a2 = 0.0;
+        var a3 = 0.0;
+        var k = p0;
+        while k + 4 <= e {
+            a0 = a0 + ri[k] * rj[k];
+            a1 = a1 + ri[k + 1] * rj[k + 1];
+            a2 = a2 + ri[k + 2] * rj[k + 2];
+            a3 = a3 + ri[k + 3] * rj[k + 3];
+            k = k + 4;
+        }
+        if k < e {
+            a0 = a0 + ri[k] * rj[k];
+        }
+        if k + 1 < e {
+            a1 = a1 + ri[k + 1] * rj[k + 1];
+        }
+        if k + 2 < e {
+            a2 = a2 + ri[k + 2] * rj[k + 2];
+        }
+        s = s - order.lane_combine(a0, a1, a2, a3);
+        p0 = p0 + 32;
+    }
+    return s;
+}
+
+// four rows i0 .. i0 + 3 (all < d) of column j, fast path: the sums s_ij by panels and the divisions by L_jj. `lv` is L
+// (positioned at L[0][0], row stride ls), `av` is A (positioned at A[0][0], row stride as_).
+fn rows4[&l, &a](lv: &!l [float], ls: int, av: &a [float], as_: int, j: int, i0: int, ljj: float) -> [] int {
+    let rj = lv[j * ls..j * ls + j];
+    let r0 = lv[(i0 + 0) * ls..(i0 + 0) * ls + j];
+    let r1 = lv[(i0 + 1) * ls..(i0 + 1) * ls + j];
+    let r2 = lv[(i0 + 2) * ls..(i0 + 2) * ls + j];
+    let r3 = lv[(i0 + 3) * ls..(i0 + 3) * ls + j];
+    var s0 = av[(i0 + 0) * as_ + j];
+    var s1 = av[(i0 + 1) * as_ + j];
+    var s2 = av[(i0 + 2) * as_ + j];
+    var s3 = av[(i0 + 3) * as_ + j];
+    var p0 = 0;
+    while p0 < j {
+        var e = p0 + 32;
+        if e > j {
+            e = j;
+        }
+        var a00 = 0.0;
+        var a01 = 0.0;
+        var a02 = 0.0;
+        var a03 = 0.0;
+        var a10 = 0.0;
+        var a11 = 0.0;
+        var a12 = 0.0;
+        var a13 = 0.0;
+        var a20 = 0.0;
+        var a21 = 0.0;
+        var a22 = 0.0;
+        var a23 = 0.0;
+        var a30 = 0.0;
+        var a31 = 0.0;
+        var a32 = 0.0;
+        var a33 = 0.0;
+        var k = p0;
+        while k + 4 <= e {
+            let c0 = rj[k + 0];
+            let c1 = rj[k + 1];
+            let c2 = rj[k + 2];
+            let c3 = rj[k + 3];
+            a00 = a00 + r0[k + 0] * c0;
+            a01 = a01 + r0[k + 1] * c1;
+            a02 = a02 + r0[k + 2] * c2;
+            a03 = a03 + r0[k + 3] * c3;
+            a10 = a10 + r1[k + 0] * c0;
+            a11 = a11 + r1[k + 1] * c1;
+            a12 = a12 + r1[k + 2] * c2;
+            a13 = a13 + r1[k + 3] * c3;
+            a20 = a20 + r2[k + 0] * c0;
+            a21 = a21 + r2[k + 1] * c1;
+            a22 = a22 + r2[k + 2] * c2;
+            a23 = a23 + r2[k + 3] * c3;
+            a30 = a30 + r3[k + 0] * c0;
+            a31 = a31 + r3[k + 1] * c1;
+            a32 = a32 + r3[k + 2] * c2;
+            a33 = a33 + r3[k + 3] * c3;
+            k = k + 4;
+        }
+        if k + 0 < e {
+            let c = rj[k + 0];
+            a00 = a00 + r0[k + 0] * c;
+            a10 = a10 + r1[k + 0] * c;
+            a20 = a20 + r2[k + 0] * c;
+            a30 = a30 + r3[k + 0] * c;
+        }
+        if k + 1 < e {
+            let c = rj[k + 1];
+            a01 = a01 + r0[k + 1] * c;
+            a11 = a11 + r1[k + 1] * c;
+            a21 = a21 + r2[k + 1] * c;
+            a31 = a31 + r3[k + 1] * c;
+        }
+        if k + 2 < e {
+            let c = rj[k + 2];
+            a02 = a02 + r0[k + 2] * c;
+            a12 = a12 + r1[k + 2] * c;
+            a22 = a22 + r2[k + 2] * c;
+            a32 = a32 + r3[k + 2] * c;
+        }
+        s0 = s0 - order.lane_combine(a00, a01, a02, a03);
+        s1 = s1 - order.lane_combine(a10, a11, a12, a13);
+        s2 = s2 - order.lane_combine(a20, a21, a22, a23);
+        s3 = s3 - order.lane_combine(a30, a31, a32, a33);
+        p0 = p0 + 32;
+    }
+    lv[(i0 + 0) * ls + j] = s0 / ljj;
+    lv[(i0 + 1) * ls + j] = s1 / ljj;
+    lv[(i0 + 2) * ls + j] = s2 / ljj;
+    lv[(i0 + 3) * ls + j] = s3 / ljj;
+    return 0;
+}
+
+// fast path (unit column strides on A and L, non-negative row strides): positioned slices, d x d
+fn chol_fast[&l, &a](lv: &!l [float], ls: int, av: &a [float], as_: int, d: int) -> [] int {
+    var j = 0;
+    while j < d {
+        let s = entry_sum(lv, ls, j, j, av[j * as_ + j]);
+        if !pivot_ok(s, av[j * as_ + j]) {
+            return refuse.not_positive_definite();
+        }
+        let ljj = sqrt(s);
+        lv[j * ls + j] = ljj;
+        var i = j + 1;
+        while i + 4 <= d {
+            rows4(lv, ls, av, as_, j, i, ljj);
+            i = i + 4;
+        }
+        while i < d {
+            let t = entry_sum(lv, ls, i, j, av[i * as_ + j]);
+            lv[i * ls + j] = t / ljj;
+            i = i + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// the same entry sum through any strides: element (r, k) of L at lt.off + r * lt.t0 + k * lt.t1
+fn entry_sum_generic[&l](lv: &l [float], lt: tensor.Tensor, i: int, j: int, aij: float) -> [] float {
+    var s = aij;
+    var p0 = 0;
+    while p0 < j {
+        var e = p0 + 32;
+        if e > j {
+            e = j;
+        }
+        var a0 = 0.0;
+        var a1 = 0.0;
+        var a2 = 0.0;
+        var a3 = 0.0;
+        var k = p0;
+        while k < e {
+            let p = lv[lt.off + i * lt.t0 + k * lt.t1] * lv[lt.off + j * lt.t0 + k * lt.t1];
+            let ln = (k - p0) % 4;
+            if ln == 0 {
+                a0 = a0 + p;
+            } else if ln == 1 {
+                a1 = a1 + p;
+            } else if ln == 2 {
+                a2 = a2 + p;
+            } else {
+                a3 = a3 + p;
+            }
+            k = k + 1;
+        }
+        s = s - order.lane_combine(a0, a1, a2, a3);
+        p0 = p0 + 32;
+    }
+    return s;
+}
+
+// generic path: any strides, one entry at a time, same sums
+fn chol_generic[&l, &a](lv: &!l [float], lt: tensor.Tensor, av: &a [float], at: tensor.Tensor, d: int) -> [] int {
+    var j = 0;
+    while j < d {
+        var i = j;
+        while i < d {
+            let s = entry_sum_generic(lv, lt, i, j, av[at.off + i * at.t0 + j * at.t1]);
+            if i == j {
+                if !pivot_ok(s, av[at.off + j * at.t0 + j * at.t1]) {
+                    return refuse.not_positive_definite();
+                }
+                lv[lt.off + j * lt.t0 + j * lt.t1] = sqrt(s);
+            } else {
+                lv[lt.off + i * lt.t0 + j * lt.t1] = s / lv[lt.off + j * lt.t0 + j * lt.t1];
+            }
+            i = i + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// A (d x d) -> L (d x d, lower triangle written; the rest untouched). Answers a refusal code, 0 when done. On
+// not-positive-definite the columns before the failing one are written and the rest is not (the contents are unspecified).
+pub fn cholesky[&a, &l](at: tensor.Tensor, ad: &a [float], lt: tensor.Tensor, ld: &!l [float]) -> [] int {
+    var c = tensor.expect(at, 2, len(ad));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.expect(lt, 2, len(ld));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.writable(lt);
+    if c != 0 {
+        return c;
+    }
+    let d = at.s0;
+    if at.s1 != d || lt.s0 != d || lt.s1 != d {
+        return refuse.tensor_shape();
+    }
+    if d == 0 {
+        return 0;
+    }
+    if at.t1 == 1 && lt.t1 == 1 && at.t0 >= 0 && lt.t0 >= 0 {
+        return chol_fast(ld[lt.off..len(ld)], lt.t0, ad[at.off..len(ad)], at.t0, d);
+    }
+    return chol_generic(ld, lt, ad, at, d);
+}
+
+// ---------------------------------------------------------------- triangular solves
+
+// forward, fast path: L positioned at L[0][0] (row stride ls, unit column stride), b and x unit stride
+fn fwd_fast[&l, &b, &x](lv: &l [float], ls: int, bv: &b [float], xv: &!x [float], d: int) -> [] int {
+    var i = 0;
+    while i + 4 <= d {
+        let r0 = lv[(i + 0) * ls..(i + 0) * ls + i];
+        let r1 = lv[(i + 1) * ls..(i + 1) * ls + i];
+        let r2 = lv[(i + 2) * ls..(i + 2) * ls + i];
+        let r3 = lv[(i + 3) * ls..(i + 3) * ls + i];
+        let xs = xv[0..i];
+        var s0 = bv[i + 0];
+        var s1 = bv[i + 1];
+        var s2 = bv[i + 2];
+        var s3 = bv[i + 3];
+        var k = 0;
+        while k < i {
+            let c = xs[k];
+            s0 = s0 - r0[k] * c;
+            s1 = s1 - r1[k] * c;
+            s2 = s2 - r2[k] * c;
+            s3 = s3 - r3[k] * c;
+            k = k + 1;
+        }
+        // the four diagonal entries are checked by the caller (nonzero)
+        let x0 = s0 / lv[(i + 0) * ls + i + 0];
+        s1 = s1 - lv[(i + 1) * ls + i] * x0;
+        let x1 = s1 / lv[(i + 1) * ls + i + 1];
+        s2 = s2 - lv[(i + 2) * ls + i] * x0;
+        s2 = s2 - lv[(i + 2) * ls + i + 1] * x1;
+        let x2 = s2 / lv[(i + 2) * ls + i + 2];
+        s3 = s3 - lv[(i + 3) * ls + i] * x0;
+        s3 = s3 - lv[(i + 3) * ls + i + 1] * x1;
+        s3 = s3 - lv[(i + 3) * ls + i + 2] * x2;
+        let x3 = s3 / lv[(i + 3) * ls + i + 3];
+        xv[i + 0] = x0;
+        xv[i + 1] = x1;
+        xv[i + 2] = x2;
+        xv[i + 3] = x3;
+        i = i + 4;
+    }
+    while i < d {
+        let r = lv[i * ls..i * ls + i];
+        let xs = xv[0..i];
+        var s = bv[i];
+        var k = 0;
+        while k < i {
+            s = s - r[k] * xs[k];
+            k = k + 1;
+        }
+        xv[i] = s / lv[i * ls + i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// backward, fast path: L^T x = b; four columns of L per pass, k descending from d - 1
+fn bwd_fast[&l, &b, &x](lv: &l [float], ls: int, bv: &b [float], xv: &!x [float], d: int) -> [] int {
+    var top = d;
+    // columns are taken from the right: groups [top - 4, top), then singles
+    while top - 4 >= 0 {
+        let i = top - 4;
+        var s0 = bv[i + 0];
+        var s1 = bv[i + 1];
+        var s2 = bv[i + 2];
+        var s3 = bv[i + 3];
+        var k = d - 1;
+        while k >= top {
+            let r = lv[k * ls + i..k * ls + i + 4];
+            let c = xv[k];
+            s0 = s0 - r[0] * c;
+            s1 = s1 - r[1] * c;
+            s2 = s2 - r[2] * c;
+            s3 = s3 - r[3] * c;
+            k = k - 1;
+        }
+        // k = i + 3 down to i + 1 within the group: x3 first
+        let x3 = s3 / lv[(i + 3) * ls + i + 3];
+        s2 = s2 - lv[(i + 3) * ls + i + 2] * x3;
+        s1 = s1 - lv[(i + 3) * ls + i + 1] * x3;
+        s0 = s0 - lv[(i + 3) * ls + i + 0] * x3;
+        let x2 = s2 / lv[(i + 2) * ls + i + 2];
+        s1 = s1 - lv[(i + 2) * ls + i + 1] * x2;
+        s0 = s0 - lv[(i + 2) * ls + i + 0] * x2;
+        let x1 = s1 / lv[(i + 1) * ls + i + 1];
+        s0 = s0 - lv[(i + 1) * ls + i + 0] * x1;
+        let x0 = s0 / lv[(i + 0) * ls + i + 0];
+        xv[i + 0] = x0;
+        xv[i + 1] = x1;
+        xv[i + 2] = x2;
+        xv[i + 3] = x3;
+        top = top - 4;
+    }
+    var i = top - 1;
+    while i >= 0 {
+        var s = bv[i];
+        var k = d - 1;
+        while k > i {
+            s = s - lv[k * ls + i] * xv[k];
+            k = k - 1;
+        }
+        xv[i] = s / lv[i * ls + i];
+        i = i - 1;
+    }
+    return 0;
+}
+
+// The solves. L is d x d (its lower triangle is read), b and x rank-1 of extent d, x writable. A zero diagonal entry is
+// refused (ml.linalg.singular) before anything is written. `trans` = 0: L x = b; any other: L^T x = b. b and x are
+// separate borrows (the solve is out of place).
+pub fn solve[&l, &b, &x](trans: int, lt: tensor.Tensor, ld: &l [float], bt: tensor.Tensor, bd: &b [float], xt: tensor.Tensor, xd: &!x [float]) -> [] int {
+    var c = tensor.expect(lt, 2, len(ld));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.expect(bt, 1, len(bd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.expect(xt, 1, len(xd));
+    if c != 0 {
+        return c;
+    }
+    c = tensor.writable(xt);
+    if c != 0 {
+        return c;
+    }
+    let d = lt.s0;
+    if lt.s1 != d || bt.s0 != d || xt.s0 != d {
+        return refuse.tensor_shape();
+    }
+    var i = 0;
+    while i < d {
+        if !(ld[lt.off + i * lt.t0 + i * lt.t1] != 0.0) {
+            return refuse.singular();
+        }
+        i = i + 1;
+    }
+    if d == 0 {
+        return 0;
+    }
+    if lt.t1 == 1 && lt.t0 >= 0 && bt.t0 == 1 && xt.t0 == 1 {
+        if trans == 0 {
+            return fwd_fast(ld[lt.off..len(ld)], lt.t0, bd[bt.off..bt.off + d], xd[xt.off..xt.off + d], d);
+        }
+        return bwd_fast(ld[lt.off..len(ld)], lt.t0, bd[bt.off..bt.off + d], xd[xt.off..xt.off + d], d);
+    }
+    if trans == 0 {
+        i = 0;
+        while i < d {
+            var s = bd[bt.off + i * bt.t0];
+            var k = 0;
+            while k < i {
+                s = s - ld[lt.off + i * lt.t0 + k * lt.t1] * xd[xt.off + k * xt.t0];
+                k = k + 1;
+            }
+            xd[xt.off + i * xt.t0] = s / ld[lt.off + i * lt.t0 + i * lt.t1];
+            i = i + 1;
+        }
+        return 0;
+    }
+    i = d - 1;
+    while i >= 0 {
+        var s = bd[bt.off + i * bt.t0];
+        var k = d - 1;
+        while k > i {
+            s = s - ld[lt.off + k * lt.t0 + i * lt.t1] * xd[xt.off + k * xt.t0];
+            k = k - 1;
+        }
+        xd[xt.off + i * xt.t0] = s / ld[lt.off + i * lt.t0 + i * lt.t1];
+        i = i - 1;
+    }
+    return 0;
+}
