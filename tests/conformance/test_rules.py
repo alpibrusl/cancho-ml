@@ -5,7 +5,7 @@ import os
 import unittest
 
 from fixtures import CASES
-from harness import ROOT, Sandbox, run, spec, validate
+from harness import ROOT, Sandbox, run, runs_here, spec, validate
 from runner import judge, run_case
 
 
@@ -14,6 +14,8 @@ class Rules(unittest.TestCase):
         failures = []
         for c in CASES:
             if c.get("skip_if_root") and os.geteuid() == 0:
+                continue
+            if not runs_here(c):
                 continue
             sb, r = run_case(c)
             try:

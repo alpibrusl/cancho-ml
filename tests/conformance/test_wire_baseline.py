@@ -10,7 +10,7 @@ import pathlib
 import sys
 import unittest
 
-from harness import ROOT
+from harness import ROOT, runs_here
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import golden_constant  # noqa: E402
@@ -27,6 +27,8 @@ class Baseline(unittest.TestCase):
     def test_every_constant_case_gives_the_bytes_of_v1_post(self):
         failures = []
         for c in golden_constant.cases():
+            if not runs_here(c):
+                continue
             got = golden_constant.record(c)
             want = GOLDEN[c["id"]]
             if got != want:

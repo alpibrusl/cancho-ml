@@ -1,0 +1,8 @@
+# The Python packages the fast gates of .github/workflows/ci.yml import (docs/ci.md section 5): jsonschema, for the conformance tests that validate documents against
+# schemas, and PyYAML, for scripts/check_workflow.py. Exact versions, as on the maintainer's Mac when the workflow was written; nothing else is installed for these gates.
+attrs==26.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+referencing==0.37.0
+rpds-py==2026.6.3
+PyYAML==6.0.3
