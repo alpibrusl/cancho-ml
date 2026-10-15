@@ -271,6 +271,9 @@ a parse failure 8, an I/O failure 1. The first set, to be completed in M2 to M9:
 | `ml.metric.undefined` | 8 | a metric with no defined value (empty fold, one class) | — |
 | `ml.model.bad-magic` / `version` / `truncated` / `checksum` | 8 | the model file fails a check in 4.1 | — |
 | `ml.model.schema-mismatch` | 8 | see `ml.schema.mismatch` | — |
+| `ml.jsonl.syntax` / `not-object` / `not-scalar` / `duplicate-key` / `too-many-nodes` | 8 | a line of JSON lines input that is not strict JSON, not an object, holds a nested value or a repeated key at a declared field, or has more nodes than `--max-json-nodes` (`docs/jsonl.md`) | — |
+| `ml.jsonl.missing-field` | 8 | a declared key a line lacks | `--absent empty` |
+| `ml.jsonl.type-mismatch` / `mixed-kinds` | 8 | a JSON string or boolean where a number is read, or a text column that mixes JSON kinds | `--cat`, or one kind |
 
 No refusal depends on running out of memory: every allocation sized by input is first compared to a limit (M2's gate).
 
@@ -592,3 +595,7 @@ names which); its `sum_order` is **3** (section 4.1: sequential sums, no lane or
 has one more cause that no fixture can reach (the memory ceiling of the thread copies, about 2.3e8 cells). A tree or forest takes missing cells itself (a learned default side per split); the linear models
 keep refusing them. The libraries are otherwise unchanged except for the order of two comparisons in the reader of the payload, which a fuzz of the wiring found to trap on a class count of 2^63 - 1
 (`docs/models-tree.md` 10.6).
+
+## 22. JSON lines as an input of `fit`, `predict` and `eval` (`docs/jsonl.md`)
+
+`--input-format jsonl|ndjson` with `--fields` (at `fit`), `--absent` and `--max-json-nodes`; `fit -` and `eval -` read standard input. The reader is `tools/ml/jsonl.cho`, written for `ml` over `std.json.parse` (cancho-table's reader was measured and not pinned: its closure holds the table's plan and needs a newer compiler, `docs/jsonl.md` section 1). It converts the lines to the CSV bytes the equivalent CSV file holds, so the model file and the answers are the CSV's byte for byte. Section 8: eight rules `ml.jsonl.*` in `extra()` and `rules()` with a fixture each; `limit.line-too-long` and `limit.input-too-large` have a JSON lines cause. The model file records nothing about the input format.

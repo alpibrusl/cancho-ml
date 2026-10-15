@@ -122,6 +122,7 @@ jobs:
           time cancho build --bin ml-predict
           time cancho build --bin ml-serve
           time cancho build --bin serve-check
+          time cancho build --bin jsonl-check
 
       - name: The three binaries are built from the same sources
         run: |

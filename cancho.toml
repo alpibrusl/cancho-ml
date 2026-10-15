@@ -142,3 +142,10 @@ name = "serve-check"
 sources = ["tools/ml-serve/num.cho", "tools/serve-check"]
 std = true
 out = "build/serve-check"
+
+# the driver of the JSON lines gates (tests/conformance/test_jsonl_oracle.py, test_jsonl_fuzz.py; docs/jsonl.md section 6): the CSV tools/ml/jsonl.cho makes of a file of JSON lines, for a script to compare with Python's json.
+[[bin]]
+name = "jsonl-check"
+sources = ["lib/core", "lib/linalg/tensor.cho", "tools/ml/jsonl.cho", "tools/ml/fsio.cho", "tools/ml/paths.cho", "tools/jsonl-check"]
+std = true
+out = "build/jsonl-check"

@@ -41,7 +41,7 @@ verdict of each, with the survivors.
 
 ```
 ml [FLAGS] fit FILE       fit a model on a CSV and write it
-ml [FLAGS] predict FILE   apply a stored model to a CSV (FILE, or - or nothing for standard input)
+ml [FLAGS] predict FILE   apply a stored model to a CSV or JSON lines (FILE, or - or nothing for standard input)
 ml [FLAGS] eval FILE      score a stored model on a CSV
 ml [FLAGS] describe       what a model file requires of its caller (docs/serving.md section 5)
 ml introspect             the tool as data (flags, rules, limits, authority, schema)
@@ -56,8 +56,8 @@ table to drift (gate T1 checks the one table against its projections).
 | verb | needs | takes also |
 |---|---|---|
 | `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) and, for `--model tree|forest`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes` (`docs/wiring-trees.md` section 2) |
-| `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
-| `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
+| `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba`, `--input-format`, `--absent`, `--max-json-nodes` |
+| `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads`, `--input-format`, `--absent`, `--max-json-nodes` |
 | `describe` | `--model-file MODEL` | `--limit` (category strings listed per column), `--max-bytes`, `--format` (no CSV operand) |
 
 **Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,
@@ -127,6 +127,10 @@ accumulators (an int or dec target: `ml.exact`; a float target: `facc`, the exac
 saw (the file changed between the passes) is an error, not a trap. `predict` and `eval` scan once; `eval` folds the target while it infers the
 shape and discards the fold if the schema check fails. The matrix loader (`csv.load`, `tools/reader-check`) is the same scan with a matrix
 as its sink; the CLI's constant model builds none.
+
+### 2.3b JSON lines as the input (`tools/ml/jsonl.cho`, `jsonlcli.cho`; `docs/jsonl.md`)
+
+`--input-format jsonl|ndjson` (default `csv`) makes the input of `fit`, `predict` and `eval` JSON lines: one object a line, converted in memory to the CSV bytes the equivalent CSV file holds, which the reader of 2.3 then reads. `fit` takes the columns from `--fields NAMES` (required, flat keys, the order of the table); `predict` and `eval` take them from the model file, read each line by key in any order and ignore other keys. `--absent refuse|empty` is what a declared key that a line lacks is; `--max-json-nodes N` (default 4,096, ceiling 1,048,576) bounds the nodes of a line. A file of JSON lines is read whole up to `--max-bytes` (default 16 MiB, ceiling 256 MiB), and so is the CSV made of it. `fit -` and `eval -` read standard input up to `--max-bytes`, for CSV and for JSON lines. The value-to-cell table, the eight rules `ml.jsonl.*` and the gates are `docs/jsonl.md` sections 3 and 6. The model file records nothing about the input format. A refusal of the JSON lines reader names the line of the input; a refusal of the CSV reader behind it names the line of the generated CSV (the input line plus one while no string holds a line break).
 
 ### 2.4 A session
 

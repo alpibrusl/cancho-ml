@@ -107,7 +107,7 @@ schema.
 | the key is not in the object | `--absent empty`: an empty cell. `--absent refuse` (default): not a cell | `ml.jsonl.missing-field`, repair `retry` with `--absent empty` |
 | an object or an array | not a cell | `ml.jsonl.not-scalar` (`kind`): `ml` has no nested columns; flatten with `table` first |
 | the key twice in the object | not a cell | `ml.jsonl.duplicate-key`, wherever the second is (the two keys compared decoded: `"a"` and `"a"` are one key). Only keys that are declared fields are judged |
-| a line that is not valid JSON | not a record | `ml.jsonl.syntax` (`offset` in the line, `code`, `reason`, `near`) |
+| a line that is not valid JSON | not a record | `ml.jsonl.syntax` (`offset` in the line, `code`, `reason`) |
 | a line that is valid JSON but not an object | not a record | `ml.jsonl.not-object` (`kind`) |
 | a line with more than `--max-json-nodes` nodes | not a record | `ml.jsonl.too-many-nodes` (`limit`), refused when the tape is full: nothing sized by the line exists beyond the tape of `--max-json-nodes` |
 | a line longer than `--max-line-bytes` | not a record | `limit.line-too-long`, before the line is parsed |
@@ -125,8 +125,7 @@ the rule above: the converter knows the type of every column before it writes a 
 cell is a category whatever it looks like, because the reader reads that column as text (`docs/categorical.md` section 2: "`007` and `7` are two
 categories").
 
-**Rule precedence in one line**, first match: line too long, syntax, nodes, not an object, then for each declared field in declaration order: duplicate
-key, absent or null, not scalar, type or mixed kinds. The first refusal is the answer (the other refusals of the file are not searched for).
+**Rule precedence**, first match, by line in file order: the line is longer than `--max-line-bytes`; it is not strict JSON, or has more nodes than `--max-json-nodes` (the parser fills its tape as it goes, so a line that is both too big and malformed further on is the node bound's); it is not an object; a declared key occurs twice (the first repeat in key order); then each declared field in declaration order: absent or null, nested, type, mixed kinds. The first refusal is the answer; the other refusals of the file are not searched for. A file larger than `--max-bytes` is refused before any line is read, and a CSV larger than `--max-bytes` after the line that passes it.
 
 ## 4. How the reader is built: the conversion to the CSV the reader already reads
 

@@ -60,6 +60,8 @@ $CANCHO build --bin ml-predict
 # the server (docs/serving-http.md): a third binary from the same sources, and the driver of the number gate
 $CANCHO build --bin ml-serve
 $CANCHO build --bin serve-check
+# the driver of the JSON lines gates (docs/jsonl.md section 6)
+$CANCHO build --bin jsonl-check
 $CANCHO test --std tools/ml-serve/num.cho build/deps/*.cho tests/serve_num.cho
 python3 scripts/check_bins.py
 python3 scripts/check_bins.py --mutants
