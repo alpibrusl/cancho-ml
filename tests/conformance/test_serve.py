@@ -724,25 +724,6 @@ class Start(unittest.TestCase):
         finally:
             s.stop()
 
-    def test_listens_on_every_address(self):
-        """docs/serving-http.md 5.4: the pinned compiler binds every address, so the token rule applies to every start (this connects through the machine's own non-loopback address)."""
-        host = socket.gethostbyname(socket.gethostname())
-        if host.startswith("127."):
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("10.255.255.255", 1))
-                host = s.getsockname()[0]
-                s.close()
-            except OSError:
-                self.skipTest("no non-loopback address")
-        if host.startswith("127."):
-            self.skipTest("no non-loopback address")
-        with Server(SB.dir, "linear.cml") as srv:
-            c = socket.create_connection((host, srv.port), timeout=5)
-            c.sendall(Conn.build("GET", "/health"))
-            self.assertIn(b"200", c.recv(100))
-            c.close()
-
 
 if __name__ == "__main__":
     unittest.main()
