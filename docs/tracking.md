@@ -285,25 +285,36 @@ The existing suites (`scripts/check.sh`) run unchanged apart from the goldens of
 
 ## 10. Results
 
-Measured on one machine (Apple silicon, macOS), 2026-10-15, with the tree at the commit that carries this text; the machine was shared with other builds, so no timing is claimed.
+Measured on a Mac (Apple silicon, macOS 26.2) and on a Linux x86-64 workstation (Ubuntu 26.04, Intel Core i7-1260P, `scripts/check.sh` pinned to 7 of 16 cores), 2026-10-15, with the tree that carries this text (it holds the split strategies of `docs/splits.md`
+and the numeric stores); the machines were shared with other work, so no timing of the code is claimed.
 
-**The re-record** is commit `08309e2`. It changes 11 files: `tests/conformance/golden_constant.json`, `golden_numeric.json`, `golden_planned.json`, `golden_describe.json` and the seven documents
+**The re-record** of the model-file goldens is commit `08309e2` (before the merge). It changes 11 files: `tests/conformance/golden_constant.json`, `golden_numeric.json`, `golden_planned.json`, `golden_describe.json` and the seven documents
 `docs/serving/*.openapi.json` (the `provenance` member of `describe` and the `on`, `out_of_range` and `ignored_columns` members of the answers are in their schemas). `scripts/golden_track.py --verify OLD_BIN`
 ran the recorded cases with the binary of the parent and with the new one before the commit: 126 recorded cases change, 0 differences are unexplained, and each of the 59 planned model files is the old file with
-section 7 added (removing it and repairing the count and the checksum gives the old bytes).
+section 7 added (removing it and repairing the count and the checksum gives the old bytes). The same script, run on this tree with the binary of the main branch as the old one, finds the same 126 changed recorded cases, 59 planned model files and 0
+unexplained differences.
+
+**The split strategies (issue 42) and the goldens.** Three goldens are affected, each shown by a script:
+
+* `docs/bench/xplat_fp.txt` is re-recorded in the commit `43efd8f`: `scripts/golden_track.py --xplat OLD_BUILD_DIR` fits the 22 cases with the main branch's build and with this tree's, and finds that 22 model files are the old file with section 7 added, that 20 `predict` and 22 `eval`
+  answers are the old answers without the new members, and that every exit code is the old one. Of the 88 lines, 64 change (22 `model-file`, 20 `predict`, 22 `eval`) and 24 stay (the 22 `fit-exit` lines and the `predict` lines of the two constant models); the case list is the same.
+  The golden is reproduced by the Mac (macOS arm64), by the Linux x86-64 workstation (`scripts/xplat_check.py --require-predict`, `ml-predict` equal to `ml`; its 15 `--mutants` are refused) and by a Raspberry Pi 5 (Linux aarch64, built there from this tree with the pinned compiler).
+* The answers of `fit --split` and `eval --split` gained `split.spec` (`docs/splits.md` section 2) after the record of M22 was written, so their output hash is pinned beside the record and not in it: 8 cases in `tests/conformance/test_cat_baseline.py` (3 re-pinned, 5 added) and 21 in `test_planned_baseline.py`.
+  The pins come from the answers of the binary that also writes section 7; the status and the files of every case stay the record's.
+* The seven `docs/serving/*.openapi.json` documents and `golden_describe.json` are unchanged by the merge (`gate_serve_openapi.py` and `golden_describe.py --check` pass).
 
 | gate | result |
 |---|---|
-| T1, T2 | `scripts/oracle_track.py --suite`: 13 cases (every model kind; categorical and `--split` fits; a float forced on an integer column); section 7 and the record equal the oracle's bytes, 0 mismatches |
-| T3 | the same 13 cases are refitted by `runs verify` at `--threads` 1 and 8: the model SHA-256 is reproduced in all 26 |
-| T4 to T11 | `tests/conformance/test_track.py` (42 tests, 7 classes without `Serve`; `Serve` needs `ml-serve`) and `test_serve_bytes`, inside the 451 tests of `scripts/check.sh` (all pass) |
-| T12 | `scripts/mutants_track.py`: 71 mutants, 66 killed, 5 survive and each has its reason in the script; the unmutated control passes |
+| T1, T2 | `scripts/oracle_track.py --suite`: 17 cases (every model kind; categorical and `--split` fits; a stratified, a group and a time holdout, the rows and the split text from `scripts/oracle_split.py`; a float forced on an integer column); section 7 and the record equal the oracle's bytes, 0 mismatches |
+| T3 | the same 17 cases are refitted by `runs verify` at `--threads` 1 and 8: the model SHA-256 is reproduced in all 34 |
+| T4 to T11 | `tests/conformance/test_track.py` (48 tests, 8 classes without `Serve`; `Serve` needs `ml-serve`; the class `Splits` is the six tests of the split text) and `test_serve_bytes`, inside the 512 tests of `scripts/check.sh` on the Linux workstation (all pass, none skipped) |
+| T12 | `scripts/mutants_track.py`: 75 mutants, 70 killed, 5 survive and each has its reason in the script; the unmutated control passes. The two mutants of the server's `out_of_range` are in `scripts/mutants_http.py` and are killed |
 | T13 | `check_registry.py`, `manifest.py --check`, `check_bins.py` (and its mutants), the schema tests: pass |
 
 The five survivors: the cap of 8192 features (redundant with the equal length and the schema's feature count), the minimum-below-maximum term (implied by the mean lying in `[min, max]`), the count of seven
 sections (the order rule refuses the eighth), a column with no training cell skipped at range time (no fixture has a column that is empty in training), and the second hash of the training file in `fit`
 (a file changing during the fit cannot be arranged from a test).
 
-**Limits.** The `--track` directory must exist (the pinned compiler has no primitive that creates one). A flag column (`--drop`, `--float`, `--cat`) at a header position of 62 or more is not
+**Limits.** `ml cv` takes no `--track` (section 5.7). The `--track` directory must exist (the pinned compiler has no primitive that creates one). A flag column (`--drop`, `--float`, `--cat`) at a header position of 62 or more is not
 replayable (`ml.runs.not-replayable`). A non-UTF-8 name is not replayable. `ml.input.changed` is reported as `io.read-failed` and no fixture reaches it. A standard deviation whose sum of squares
 overflows is stored as the largest finite double. A constant model has no feature record. `eval` reads the model file again to hash it.
