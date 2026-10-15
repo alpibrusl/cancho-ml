@@ -255,7 +255,8 @@ def model_flag_entry(models):
     how = {"linear": "linear fits by least squares", "logistic": "logistic by Newton's method",
            "kmeans": "kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed)",
            "tree": "tree is a CART decision tree with histogram splits (--task chooses classification or regression)",
-           "forest": "forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed)"}
+           "forest": "forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed)",
+           "boost": "boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed)"}
     sentences = [how[n] for n in names if n in how]
     help_ = ("the model fit builds: %s. constant (the default) is the training mean for a regression and the majority class with its probability for a "
              "classification. %s. All but constant are fitted through the pipeline of --plan or --step. A name outside "

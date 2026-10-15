@@ -8,7 +8,7 @@ import std.bytes;
 // strings (`name:type:rule`). The order is the manifests' plan_order; the keys of a model are in the order of its [[hyperparameter]] tables.
 
 pub fn count() -> [] int {
-    return 6;
+    return 7;
 }
 
 // the model names, in plan order
@@ -28,12 +28,15 @@ pub fn name(i: int) -> [] &static [byte] {
     if i == 4 {
         return "tree";
     }
-    return "forest";
+    if i == 5 {
+        return "forest";
+    }
+    return "boost";
 }
 
 pub fn defs[&s](verb: &s [byte]) -> [] &static [byte] {
     if bytes.equal(verb, "model") {
-        return "kind:enum=constant,linear,logistic,kmeans,tree,forest:req";
+        return "kind:enum=constant,linear,logistic,kmeans,tree,forest,boost:req";
     }
     if bytes.equal(verb, "model:constant") {
         return "task:enum=regression,classification:req";
@@ -52,6 +55,9 @@ pub fn defs[&s](verb: &s [byte]) -> [] &static [byte] {
     }
     if bytes.equal(verb, "model:forest") {
         return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 mtry:int=0,4096:=0 bootstrap:int=0,1:=1 max-nodes:int=1,999999999:=4194304";
+    }
+    if bytes.equal(verb, "model:boost") {
+        return "task:enum=classification,regression:req rounds:int=1,10000:=100 learning-rate:fnn:=0.1 max-depth:int=1,1000:=4 min-leaf:int=1,1000000:=10 bins:int=2,255:=64 l2:fnn:=1.0 subsample:fnn:=1.0 early-stopping:int=0,1000:=0 max-nodes:int=1,999999999:=4194304";
     }
     return "";
 }
@@ -75,6 +81,9 @@ pub fn model_defs[&s](name: &s [byte]) -> [] &static [byte] {
     }
     if bytes.equal(name, "forest") {
         return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 mtry:int=0,4096:=0 bootstrap:int=0,1:=1 max-nodes:int=1,999999999:=4194304";
+    }
+    if bytes.equal(name, "boost") {
+        return "task:enum=classification,regression:req rounds:int=1,10000:=100 learning-rate:fnn:=0.1 max-depth:int=1,1000:=4 min-leaf:int=1,1000000:=10 bins:int=2,255:=64 l2:fnn:=1.0 subsample:fnn:=1.0 early-stopping:int=0,1000:=0 max-nodes:int=1,999999999:=4194304";
     }
     return "";
 }

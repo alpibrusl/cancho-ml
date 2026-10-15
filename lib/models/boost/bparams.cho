@@ -1,0 +1,146 @@
+edition 5;
+
+module boost.bparams;
+
+import ml.refuse;
+import ml.limits;
+import tree.deny;
+import tree.params;
+
+// Parameters, ceilings and the checks made before any allocation sized by input (docs/models-boost.md sections 2 to 4). The refusal codes are the tree's
+// (tree.deny 101 to 108 and ml.refuse), so the wiring has one table of tags for the two libraries.
+
+pub struct Params {
+    task: int,
+    rounds: int,
+    lr: float,
+    max_depth: int,
+    min_leaf: int,
+    bins: int,
+    l2: float,
+    subsample: float,
+    early: int,
+    max_nodes: int,
+    seed: int,
+    threads: int,
+}
+
+pub fn rounds_max() -> [] int {
+    return 10000;
+}
+
+pub fn early_max() -> [] int {
+    return 1000;
+}
+
+// the nodes of all rounds together: the model is held in memory and written whole (section 4)
+pub fn nodes_total_max() -> [] int {
+    return 4194304;
+}
+
+// the hessian floor of a candidate side and of a leaf (section 2.4)
+pub fn hmin() -> [] float {
+    return 0.001;
+}
+
+// the largest l2 accepted (finite and far below any overflow of G * G / (H + l2) )
+pub fn l2_max() -> [] float {
+    return 1.0e100;
+}
+
+pub fn subsample_scale() -> [] int {
+    return 1000000;
+}
+
+// K = truncate(subsample * 1000000.0 + 0.5) (section 2.3); only meaningful for 0 < s <= 1
+pub fn subsample_k(s: float) -> [] int {
+    return truncate(s * 1000000.0 + 0.5);
+}
+
+fn min2(a: int, b: int) -> [] int {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// the nodes one tree can ever have: min(max_nodes, 2m - 1, 2^(depth+1) - 1), m the fit rows. Needs the parameters to have passed `check`.
+pub fn node_cap(p: Params, m: int) -> [] int {
+    var c = min2(p.max_nodes, 2 * m - 1);
+    c = min2(c, (1 << p.max_depth + 1) - 1);
+    return c;
+}
+
+// the number of validation rows of early stopping (section 2.7): n / 10 when early stopping is on, else 0
+pub fn validation_rows(p: Params, n: int) -> [] int {
+    if p.early == 0 {
+        return 0;
+    }
+    return n / 10;
+}
+
+// 0, or the code of the first refusal. Order: threads, the matrix caps, the row bound, then each parameter, then the node allocation. Nothing is allocated here.
+pub fn check(p: Params, n: int, d: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [] int {
+    let t = limits.check_threads(p.threads);
+    if t != 0 {
+        return t;
+    }
+    let m = limits.check_matrix(n, d, rows_cap, cols_cap, cells_cap);
+    if m != 0 {
+        return m;
+    }
+    if n > params.rows_max() {
+        return refuse.too_many_rows();
+    }
+    if p.task != 0 && p.task != 1 {
+        return refuse.param_out_of_range();
+    }
+    if p.rounds < 1 || p.rounds > rounds_max() {
+        return refuse.param_out_of_range();
+    }
+    if !(p.lr > 0.0 && p.lr <= 1.0) {
+        return refuse.param_out_of_range();
+    }
+    if p.max_depth < 1 {
+        return refuse.param_out_of_range();
+    }
+    if p.max_depth > params.depth_max() {
+        return deny.limit_depth();
+    }
+    if p.min_leaf < 1 || p.min_leaf > n {
+        return refuse.param_out_of_range();
+    }
+    if p.bins < 2 || p.bins > 255 {
+        return refuse.param_out_of_range();
+    }
+    if !(p.l2 >= 0.0 && p.l2 <= l2_max()) {
+        return refuse.param_out_of_range();
+    }
+    if !(p.subsample > 0.0 && p.subsample <= 1.0) || subsample_k(p.subsample) < 1 {
+        return refuse.param_out_of_range();
+    }
+    if p.early < 0 || p.early > early_max() {
+        return refuse.param_out_of_range();
+    }
+    if p.early > 0 && n < 10 {
+        return refuse.param_out_of_range();
+    }
+    if p.seed < 0 {
+        return refuse.param_out_of_range();
+    }
+    if p.max_nodes < 1 {
+        return refuse.param_out_of_range();
+    }
+    if p.max_nodes > params.nodes_max() {
+        return deny.limit_nodes();
+    }
+    let fit_rows = n - validation_rows(p, n);
+    if p.rounds > nodes_total_max() / node_cap(p, fit_rows) {
+        return deny.limit_nodes();
+    }
+    // the binning makes the copies of the tree's formula (docs/models-tree.md section 5)
+    if n * d * 9 + p.threads * (n * d + 24 * n) > params.copies_max() {
+        return refuse.threads();
+    }
+    return 0;
+}

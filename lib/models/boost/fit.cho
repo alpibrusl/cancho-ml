@@ -1,0 +1,515 @@
+edition 5;
+
+module boost.fit;
+
+import std.math;
+import ml.limits;
+import ml.refuse;
+import ml.rng;
+import ml.kinds;
+import models.logreg;
+import models.mexp;
+import tree.deny;
+import tree.bins;
+import tree.pbins;
+import boost.bparams;
+import boost.grow;
+
+// The boosted ensemble and its fit (docs/models-boost.md section 2). `fit` validates everything before it allocates anything sized by the input, bins the columns once
+// (tree.bins, or tree.pbins with several threads), then runs the rounds one after the other on one thread and packs the kept trees, in round order, into the arrays of
+// the model. The packed layout is the model's (section 5): the node arrays of all trees, field-major:
+//     ni[k * total + g] with k = 0 feat, 1 bin, 2 dleft, 3 left, 4 right (tree-local indices);   nv[g] = threshold or the stored leaf value
+// and toff[t] is the first node of tree t (toff[rounds] = total).
+
+pub res struct Boost {
+    task: int,
+    rounds: int,
+    requested: int,
+    d: int,
+    nbins: int,
+    total: int,
+    max_depth: int,
+    min_leaf: int,
+    early: int,
+    subk: int,
+    base: float,
+    lr: float,
+    l2: float,
+    toff: Box[[int]],
+    ni: Box[[int]],
+    nv: Box[[float]],
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] Boost {
+    return Boost { task: 0, rounds: 0, requested: 0, d: 0, nbins: 0, total: 0, max_depth: 0, min_leaf: 0, early: 0, subk: 0, base: 0.0, lr: 0.0, l2: 0.0, toff: box_slice(heap, 1, 0), ni: box_slice(heap, 1, 0), nv: box_slice(heap, 1, 0.0) };
+}
+
+pub fn drop[&h](heap: &!h Heap, f: Boost) -> [heap] int {
+    let Boost { task, rounds, requested, d, nbins, total, max_depth, min_leaf, early, subk, base, lr, l2, toff, ni, nv } = f;
+    unbox_slice(heap, toff);
+    unbox_slice(heap, ni);
+    unbox_slice(heap, nv);
+    return total;
+}
+
+// the scratch and the outputs of the rounds
+res struct Work {
+    yv: Box[[float]],
+    fv: Box[[float]],
+    gv: Box[[float]],
+    hv: Box[[float]],
+    bins: Box[[byte]],
+    ed: Box[[float]],
+    idx: Box[[int]],
+    tmp: Box[[int]],
+    frows: Box[[int]],
+    vrows: Box[[int]],
+    wk: Box[[int]],
+    wf: Box[[float]],
+    si: Box[[int]],
+    sv: Box[[float]],
+    counts: Box[[int]],
+    // out: 0 the code of a refusal, 1 the rounds kept
+    pr: Box[[int]],
+}
+
+fn copy_floats[&d2, &s](dst: &!d2 [float], src: &s [float], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn copy_ints[&d2, &s](dst: &!d2 [int], src: &s [int], n: int) -> [] int {
+    let o = dst[0..n];
+    let i = src[0..n];
+    var k = 0;
+    while k < n {
+        o[k] = i[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// 0, or the refusal for the labels / targets; ones = the number of labels equal to 1 (classification) is returned in `ones[0]`
+fn check_target[&y, &o](task: int, ys: &y [float], n: int, yv: &!o [float]) -> [] int {
+    var i = 0;
+    if task == 0 {
+        var ones = 0;
+        while i < n {
+            let v = ys[i];
+            if v == 1.0 {
+                yv[i] = 1.0;
+                ones = ones + 1;
+            } else if v != 0.0 {
+                return deny.not_binary();
+            }
+            i = i + 1;
+        }
+        if ones == 0 || ones == n {
+            return deny.single_class();
+        }
+        return 0;
+    }
+    let big = 1.0e100;
+    while i < n {
+        let v = ys[i];
+        if !(v == v && v - v == 0.0 && v <= big && v >= 0.0 - big) {
+            return deny.non_finite();
+        }
+        yv[i] = v;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// the loss of one validation row: regression (F - y)^2, classification max(F, 0) - y F + log1p(exp(-|F|)) (section 2.7)
+fn row_loss(task: int, f: float, y: float) -> [] float {
+    if task == 1 {
+        return (f - y) * (f - y);
+    }
+    var af = f;
+    var mx = f;
+    if f < 0.0 {
+        af = 0.0 - f;
+        mx = 0.0;
+    }
+    return (mx - y * f) + mexp.log1p(mexp.exp(0.0 - af));
+}
+
+// the rounds. Answers 0, or the refusal code; the rounds kept are in pr[1]. m fit rows (frows), nv validation rows (vrows), the cap of nodes of a tree, the base score.
+fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: int, cap: int, f0: float) -> [] int {
+    let yv = contents(w.yv);
+    let fv = contents(w.fv);
+    let gv = contents(w.gv);
+    let hv = contents(w.hv);
+    let bins = contents(w.bins);
+    let ed = contents(w.ed);
+    let idx = contents(w.idx);
+    let tmp = contents(w.tmp);
+    let frows = contents(w.frows);
+    let vrows = contents(w.vrows);
+    let wk = contents(w.wk);
+    let wf = contents(w.wf);
+    let si = contents(w.si);
+    let sv = contents(w.sv);
+    let counts = contents(w.counts);
+    let pr = contents(w.pr);
+    let subk = bparams.subsample_k(p.subsample);
+    let nbins = p.bins;
+    var round = 0;
+    var best = 0.0;
+    var best_round = 0;
+    var since = 0;
+    var done = 0;
+    var i = 0;
+    while i < n {
+        fv[i] = f0;
+        i = i + 1;
+    }
+    var stop = false;
+    while round < p.rounds && !stop {
+        // the gradients and hessians of the fit rows, in row order
+        var k = 0;
+        while k < m {
+            let r2 = frows[k];
+            if p.task == 1 {
+                gv[r2] = fv[r2] - yv[r2];
+                hv[r2] = 1.0;
+            } else {
+                let pp = logreg.proba_of(fv[r2]);
+                gv[r2] = pp - yv[r2];
+                hv[r2] = pp * (1.0 - pp);
+            }
+            k = k + 1;
+        }
+        // the sample of the round (section 2.3)
+        var m0 = 0;
+        if subk == bparams.subsample_scale() {
+            k = 0;
+            while k < m {
+                idx[k] = frows[k];
+                k = k + 1;
+            }
+            m0 = m;
+        } else {
+            var s = rng.derive(rng.derive(p.seed, kinds.stream_boost_sample()), round);
+            k = 0;
+            while k < m {
+                s = rng.advance(s);
+                if rng.uniform(rng.output(s), bparams.subsample_scale()) < subk {
+                    idx[m0] = frows[k];
+                    m0 = m0 + 1;
+                }
+                k = k + 1;
+            }
+        }
+        let c = grow.grow(p, m0, n, d, cap, bins, gv, hv, ed, idx, tmp, wk, wf, si[round * 5 * cap..(round + 1) * 5 * cap], sv[round * cap..(round + 1) * cap]);
+        if c < 0 {
+            return 0 - c;
+        }
+        counts[round] = c;
+        // every row walks the new tree by bins and takes its value (section 2.6)
+        let oi = si[round * 5 * cap..(round + 1) * 5 * cap];
+        let ov = sv[round * cap..(round + 1) * cap];
+        i = 0;
+        while i < n {
+            var g = 0;
+            var f = oi[0];
+            while f >= 0 {
+                let b = int_of(bins[f * n + i]);
+                var left = false;
+                if b == nbins {
+                    left = oi[2 * cap + g] == 1;
+                } else {
+                    left = b <= oi[cap + g];
+                }
+                if left {
+                    g = oi[3 * cap + g];
+                } else {
+                    g = oi[4 * cap + g];
+                }
+                f = oi[g];
+            }
+            fv[i] = fv[i] + ov[g];
+            i = i + 1;
+        }
+        i = 0;
+        while i < n {
+            let v = fv[i];
+            if !(v - v == 0.0) {
+                return refuse.fit_non_finite();
+            }
+            i = i + 1;
+        }
+        round = round + 1;
+        done = round;
+        if p.early > 0 {
+            var sum = 0.0;
+            k = 0;
+            while k < nv {
+                let r2 = vrows[k];
+                sum = sum + row_loss(p.task, fv[r2], yv[r2]);
+                k = k + 1;
+            }
+            let vl = sum / float_of(nv);
+            if best_round == 0 || vl < best {
+                best = vl;
+                best_round = round;
+                since = 0;
+            } else {
+                since = since + 1;
+                if since >= p.early {
+                    stop = true;
+                }
+            }
+        }
+    }
+    if p.early > 0 {
+        pr[1] = best_round;
+    } else {
+        pr[1] = done;
+    }
+    return 0;
+}
+
+// Fit a boosted model on the n x d row-major matrix xs (with the missing bitmap bm, or empty) and the targets ys. Answers the model and the code of the refusal (0 for none;
+// the model is then empty). The caps are those of ml.limits (the caller's flags).
+pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Boost, int) {
+    var code = bparams.check(p, n, d, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (empty(heap), code);
+    }
+    if len(xs) != n * d || len(ys) != n {
+        return (empty(heap), refuse.param_out_of_range());
+    }
+    code = bins.check_bitmap(bm, n, d);
+    if code != 0 {
+        return (empty(heap), code);
+    }
+    if bins.count_bad_cells(xs, bm, n, d) != 0 {
+        return (empty(heap), deny.non_finite());
+    }
+    let yv = box_slice(heap, n + 1, 0.0);
+    borrow mut yv as &!yw in {
+        code = check_target(p.task, ys, n, contents(yw));
+    }
+    if code != 0 {
+        unbox_slice(heap, yv);
+        return (empty(heap), code);
+    }
+    // the validation rows (section 2.7) and the fit rows
+    let nv = bparams.validation_rows(p, n);
+    let m = n - nv;
+    let frows = box_slice(heap, n + 1, 0);
+    let vrows = box_slice(heap, nv + 1, 0);
+    borrow mut frows as &!fw in {
+        borrow mut vrows as &!vw in {
+            let fr = contents(fw);
+            let vr = contents(vw);
+            if nv == 0 {
+                var i = 0;
+                while i < n {
+                    fr[i] = i;
+                    i = i + 1;
+                }
+            } else {
+                // a partial Fisher-Yates shuffle of 0 .. n - 1 driven by the stream of kind 8; the first nv entries are the validation rows, ascending
+                let perm = box_slice(heap, n + 1, 0);
+                let mark = box_slice(heap, n + 1, 0);
+                borrow mut perm as &!pw in {
+                    borrow mut mark as &!mw in {
+                        let pm = contents(pw);
+                        let mk = contents(mw);
+                        var i = 0;
+                        while i < n {
+                            pm[i] = i;
+                            mk[i] = 0;
+                            i = i + 1;
+                        }
+                        var s = rng.derive(p.seed, kinds.stream_boost_validation());
+                        i = 0;
+                        while i < nv {
+                            s = rng.advance(s);
+                            let j = i + rng.uniform(rng.output(s), n - i);
+                            let t = pm[i];
+                            pm[i] = pm[j];
+                            pm[j] = t;
+                            mk[pm[i]] = 1;
+                            i = i + 1;
+                        }
+                        var a = 0;
+                        var q = 0;
+                        i = 0;
+                        while i < n {
+                            if mk[i] == 1 {
+                                vr[a] = i;
+                                a = a + 1;
+                            } else {
+                                fr[q] = i;
+                                q = q + 1;
+                            }
+                            i = i + 1;
+                        }
+                    }
+                }
+                unbox_slice(heap, perm);
+                unbox_slice(heap, mark);
+            }
+        }
+    }
+    // the base score (section 2.4); a classification whose fit rows hold one class is refused
+    var f0 = 0.0;
+    var n1 = 0;
+    borrow frows as &fr in {
+        borrow yv as &yr in {
+            let fs = contents(fr);
+            let ysv = contents(yr);
+            var k = 0;
+            if p.task == 1 {
+                var sy = 0.0;
+                while k < m {
+                    sy = sy + ysv[fs[k]];
+                    k = k + 1;
+                }
+                f0 = sy / float_of(m);
+            } else {
+                while k < m {
+                    if ysv[fs[k]] == 1.0 {
+                        n1 = n1 + 1;
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    if p.task == 0 {
+        if n1 == 0 || n1 == m {
+            unbox_slice(heap, yv);
+            unbox_slice(heap, frows);
+            unbox_slice(heap, vrows);
+            return (empty(heap), deny.single_class());
+        }
+        f0 = math.log(float_of(n1) / float_of(m - n1));
+    }
+    let cap = bparams.node_cap(p, m);
+    let ne = p.bins - 1;
+    let ed = box_slice(heap, d * ne + 1, 0.0);
+    let binm = box_slice(heap, d * n + 1, byte_of(0));
+    // edges and bins, from all n rows. With one thread: the whole matrix in the parent. With more: the columns are cut among the threads (tree.pbins), the same arrays.
+    if p.threads > 1 && d > 1 {
+        borrow mut ed as &!edw in {
+            borrow mut binm as &!bw in {
+                pbins.run(heap, xs, bm, n, d, p.bins, p.threads, contents(edw), contents(bw));
+            }
+        }
+    } else {
+        let ka = box_slice(heap, n + 1, 0);
+        let kb = box_slice(heap, n + 1, 0);
+        let cn = box_slice(heap, 2048, 0);
+        borrow mut ka as &!kaw in {
+            borrow mut kb as &!kbw in {
+                borrow mut cn as &!cnw in {
+                    borrow mut ed as &!edw in {
+                        bins.make_edges(xs, bm, n, d, p.bins, contents(kaw), contents(kbw), contents(cnw), contents(edw));
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, ka);
+        unbox_slice(heap, kb);
+        unbox_slice(heap, cn);
+        let ep = box_slice(heap, d * 256, 0.0);
+        borrow ed as &edr in {
+            borrow mut ep as &!epw in {
+                borrow mut binm as &!bw in {
+                    bins.make_bins(xs, bm, contents(edr), n, d, p.bins, contents(epw), contents(bw));
+                }
+            }
+        }
+        unbox_slice(heap, ep);
+    }
+    var w = Work { yv: yv, fv: box_slice(heap, n + 1, 0.0), gv: box_slice(heap, n + 1, 0.0), hv: box_slice(heap, n + 1, 0.0), bins: binm, ed: ed, idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), frows: frows, vrows: vrows, wk: box_slice(heap, grow.work_ints(p.bins) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), si: box_slice(heap, p.rounds * 5 * cap + 1, 0), sv: box_slice(heap, p.rounds * cap + 1, 0.0), counts: box_slice(heap, p.rounds + 1, 0), pr: box_slice(heap, 4, 0) };
+    var rc = 0;
+    borrow mut w as &!wk2 in {
+        rc = rounds_loop(wk2, p, n, d, m, nv, cap, f0);
+    }
+    var kept = 0;
+    borrow w as &wr in {
+        kept = contents(wr.pr)[1];
+    }
+    var total = 0;
+    var toff = box_slice(heap, 1, 0);
+    var ni = box_slice(heap, 1, 0);
+    var nvv = box_slice(heap, 1, 0.0);
+    if rc == 0 {
+        borrow w as &wr in {
+            let cs = contents(wr.counts);
+            var t = 0;
+            while t < kept {
+                total = total + cs[t];
+                t = t + 1;
+            }
+        }
+        unbox_slice(heap, toff);
+        unbox_slice(heap, ni);
+        unbox_slice(heap, nvv);
+        toff = box_slice(heap, kept + 1, 0);
+        ni = box_slice(heap, 5 * total + 1, 0);
+        nvv = box_slice(heap, total + 1, 0.0);
+        borrow w as &wr in {
+            borrow mut toff as &!tow in {
+                borrow mut ni as &!niw in {
+                    borrow mut nvv as &!nvw in {
+                        let cs = contents(wr.counts);
+                        let sis = contents(wr.si);
+                        let svs = contents(wr.sv);
+                        var off = 0;
+                        var t = 0;
+                        while t < kept {
+                            contents(tow)[t] = off;
+                            let c = cs[t];
+                            var k = 0;
+                            while k < 5 {
+                                copy_ints(contents(niw)[k * total + off..k * total + off + c], sis[t * 5 * cap + k * cap..t * 5 * cap + k * cap + c], c);
+                                k = k + 1;
+                            }
+                            copy_floats(contents(nvw)[off..off + c], svs[t * cap..t * cap + c], c);
+                            off = off + c;
+                            t = t + 1;
+                        }
+                        contents(tow)[kept] = off;
+                    }
+                }
+            }
+        }
+    }
+    let Work { yv, fv, gv, hv, bins, ed, idx, tmp, frows, vrows, wk, wf, si, sv, counts, pr } = w;
+    unbox_slice(heap, yv);
+    unbox_slice(heap, fv);
+    unbox_slice(heap, gv);
+    unbox_slice(heap, hv);
+    unbox_slice(heap, bins);
+    unbox_slice(heap, ed);
+    unbox_slice(heap, idx);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, frows);
+    unbox_slice(heap, vrows);
+    unbox_slice(heap, wk);
+    unbox_slice(heap, wf);
+    unbox_slice(heap, si);
+    unbox_slice(heap, sv);
+    unbox_slice(heap, counts);
+    unbox_slice(heap, pr);
+    if rc != 0 {
+        unbox_slice(heap, toff);
+        unbox_slice(heap, ni);
+        unbox_slice(heap, nvv);
+        return (empty(heap), rc);
+    }
+    return (Boost { task: p.task, rounds: kept, requested: p.rounds, d: d, nbins: p.bins, total: total, max_depth: p.max_depth, min_leaf: p.min_leaf, early: p.early, subk: bparams.subsample_k(p.subsample), base: f0, lr: p.lr, l2: p.l2, toff: toff, ni: ni, nv: nvv }, 0);
+}

@@ -78,7 +78,7 @@ fn digest_into[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [
 
 // The file. plan: the canonical text; schema_payload: schema.encode; steps_payload: Fitted.payload; model_payload: u32 kind then the estimator's records;
 // columns: the number of columns of the schema; the meta section is `u64 rows | u64 columns | u64 seed | u32 0 | u32 length | pin`, and for a model
-// kind of 4 or above (the leading u32 of model_payload) `| u32 sum_order` (kinds.sum_order_for(kind): 2, or 3 for a tree or a forest; design.md section 4.1); kinds 1 to 3 have the bytes of mfile.cho.
+// kind of 4 or above (the leading u32 of model_payload) `| u32 sum_order` (kinds.sum_order_for(kind): 2, or 3 for a tree, a forest or a boosted model; design.md section 4.1); kinds 1 to 3 have the bytes of mfile.cho.
 pub fn encode[&h, &a, &b, &c, &e, &f](heap: &!h Heap, plan_text: &a [byte], schema_payload: &b [byte], steps_payload: &c [byte], model_payload: &e [byte], rows: int, columns: int, seed: int, pin: &f [byte]) -> [heap] buffer.Buffer {
     return encode_with_table(heap, plan_text, schema_payload, steps_payload, "", model_payload, rows, columns, seed, pin);
 }
@@ -330,6 +330,9 @@ fn model_family_ok(pk: int, mk: int) -> [] bool {
     }
     if pk == 3 {
         return mk == kinds.model_kmeans();
+    }
+    if pk == 6 {
+        return mk == kinds.model_boost();
     }
     return mk == kinds.model_tree();
 }

@@ -1,0 +1,193 @@
+edition 5;
+
+module models.adapter_boost;
+
+import std.buffer;
+import linalg.tensor;
+import ml.fbits;
+import ml.refuse;
+import models.record;
+import models.logreg;
+import models.adapt_trees;
+import tree.deny;
+import tree.params;
+import boost.bparams;
+import boost.fit;
+import boost.model;
+import boost.predict;
+
+// The adapter of the `boost` module (docs/modules.md section 4b, docs/models-boost.md): the blob interface over the library of lib/models/boost. Hyperparameters, in
+// manifest order: ints [task, rounds, max-depth, min-leaf, bins, early-stopping, max-nodes] (task: 0 classification, 1 regression, the library's numbers) and floats
+// [learning-rate, l2, subsample]. No arithmetic of its own but the class and the probability of a score; the seed is the contract's.
+
+pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    let p = bparams.Params { task: ip[0], rounds: ip[1], lr: fp[0], max_depth: ip[2], min_leaf: ip[3], bins: ip[4], l2: fp[1], subsample: fp[2], early: ip[5], max_nodes: ip[6], seed: seed, threads: threads };
+    let n = xt.s0;
+    let d = xt.s1;
+    let (bm, any) = adapt_trees.miss_bytes(heap, miss, wpc, n, d);
+    var f2 = fit.empty(heap);
+    var code = 0;
+    borrow bm as &br in {
+        let st = (n + 7) / 8;
+        if any {
+            let (b2, c2) = fit.fit(heap, p, n, d, xd, contents(br)[0..d * st], yd, rows_cap, cols_cap, cells_cap);
+            fit.drop(heap, f2);
+            f2 = b2;
+            code = c2;
+        } else {
+            let (b2, c2) = fit.fit(heap, p, n, d, xd, contents(br)[0..0], yd, rows_cap, cols_cap, cells_cap);
+            fit.drop(heap, f2);
+            f2 = b2;
+            code = c2;
+        }
+    }
+    unbox_slice(heap, bm);
+    if code != 0 {
+        fit.drop(heap, f2);
+        return (box_slice(heap, 1, byte_of(0)), code);
+    }
+    var buf = buffer.empty(heap, 1);
+    borrow f2 as &fr in {
+        buffer.drop(heap, buf);
+        buf = model.write(heap, fr);
+    }
+    fit.drop(heap, f2);
+    var size = 0;
+    borrow buf as &bq in {
+        size = buffer.size(bq);
+    }
+    var total = size;
+    if p.task == 0 {
+        total = size + 32;
+    }
+    var out = box_slice(heap, total, byte_of(0));
+    borrow buf as &bq in {
+        borrow mut out as &!ow in {
+            copy_into(contents(ow)[0..size], buffer.bytes(bq));
+            if p.task == 0 {
+                record.encode_labels(contents(ow), size, c0, c1);
+            }
+        }
+    }
+    buffer.drop(heap, buf);
+    return (out, 0);
+}
+
+// the size in bytes that the library payload at the start of `src` has by its own header, or -1 when the header cannot belong to one. Nothing is allocated; the sizes
+// are compared with the ceilings of the library before the product is made.
+pub fn lib_size[&s](src: &s [byte]) -> [] int {
+    if len(src) < 140 {
+        return 0 - 1;
+    }
+    let task = fbits.get64(src, 20);
+    let rounds = fbits.get64(src, 28);
+    let total = fbits.get64(src, 52);
+    if task < 0 || task > 1 || rounds < 1 || rounds > bparams.rounds_max() || total < rounds || total > bparams.nodes_total_max() {
+        return 0 - 1;
+    }
+    return model.size_of(rounds, total);
+}
+
+// code 0 or 1 (malformed), the two labels (0 for a regression), and in `end` the task as the wiring numbers it: 1 regression, 2 classification
+pub fn decode_blob[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] record.Decoded {
+    let ls = lib_size(src);
+    if ls < 0 {
+        return record.decoded(1, 0, 0, 0);
+    }
+    let task = fbits.get64(src, 20);
+    var want = ls;
+    if task == 0 {
+        want = ls + 32;
+    }
+    if len(src) != want {
+        return record.decoded(1, 0, 0, 0);
+    }
+    let (f, code) = model.read(heap, src[0..ls]);
+    var fd = 0;
+    borrow f as &fr in {
+        fd = fr.d;
+    }
+    fit.drop(heap, f);
+    if code != 0 || fd != d {
+        return record.decoded(1, 0, 0, 0);
+    }
+    if task == 1 {
+        return record.decoded(0, 0, 0, 1);
+    }
+    let lab = record.decode_labels(src, ls);
+    if lab.code != 0 || lab.end != len(src) {
+        return record.decoded(1, 0, 0, 0);
+    }
+    return record.decoded(0, lab.c0, lab.c1, 2);
+}
+
+fn walk[&fr, &x, &b, &o](f: &fr fit.Boost, xd: &x [float], bm: &b [byte], rows: int, d: int, out: &!o [float]) -> [] int {
+    if len(xd) != rows * d || d != f.d || len(out) < rows {
+        return refuse.param_out_of_range();
+    }
+    return predict.kernel(f.rounds, d, f.total, f.base, contents(f.toff), contents(f.ni), contents(f.nv), xd, bm, rows, out[0..rows]);
+}
+
+// the value for each row: mode 0 gives the class (1.0 where the score is above 0.0, else 0.0; a regression gives its score), mode 1 the probability of the positive
+// class (logreg.proba_of of the score; a regression is refused: ml.param.out-of-range)
+fn predict_rows[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float], mode: int) -> [heap] int {
+    let ls = lib_size(blob);
+    if ls < 0 || len(blob) < ls {
+        return deny.model_malformed();
+    }
+    let (f, code) = model.read(heap, blob[0..ls]);
+    if code != 0 {
+        fit.drop(heap, f);
+        return code;
+    }
+    let rows = xt.s0;
+    let d = xt.s1;
+    var task = 0;
+    borrow f as &fr in {
+        task = fr.task;
+    }
+    if mode == 1 && task != 0 {
+        fit.drop(heap, f);
+        return refuse.param_out_of_range();
+    }
+    let (bm, any) = adapt_trees.miss_bytes(heap, miss, wpc, rows, d);
+    var rc = 0;
+    borrow f as &fr in {
+        borrow bm as &br in {
+            let st = (rows + 7) / 8;
+            if any {
+                rc = walk(fr, xd, contents(br)[0..d * st], rows, d, out);
+            } else {
+                rc = walk(fr, xd, contents(br)[0..0], rows, d, out);
+            }
+        }
+    }
+    unbox_slice(heap, bm);
+    fit.drop(heap, f);
+    if rc == 0 && task == 0 {
+        var i = 0;
+        while i < rows {
+            if mode == 0 {
+                if out[i] > 0.0 {
+                    out[i] = 1.0;
+                } else {
+                    out[i] = 0.0;
+                }
+            } else {
+                out[i] = logreg.proba_of(out[i]);
+            }
+            i = i + 1;
+        }
+    }
+    return rc;
+}
+
+// 0.0 or 1.0 per row for a classification, the score for a regression
+pub fn predict_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
+    return predict_rows(heap, blob, xt, xd, miss, wpc, out, 0);
+}
+
+// the probability of the positive class per row; a regression answers a refusal
+pub fn proba_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
+    return predict_rows(heap, blob, xt, xd, miss, wpc, out, 1);
+}

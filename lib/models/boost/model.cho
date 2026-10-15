@@ -1,0 +1,298 @@
+edition 5;
+
+module boost.model;
+
+import std.buffer;
+import ml.fbits;
+import ml.kinds;
+import tree.deny;
+import tree.params;
+import boost.bparams;
+import boost.fit;
+
+// The boosted ensemble as tensor records, the content of the `model` section of a CML1 file (docs/models-boost.md section 5, design.md 4.1). Little-endian, no padding.
+// `u32 kind` = 8, then nine tensor records, each `u32 dtype` (1 i64, 2 f64), `u32 rank` (always 1 here), `u64` extent, the elements:
+//     1 header (10: task, rounds, d, bins, total_nodes, max_depth, min_leaf, early_stopping, rounds_requested, subsample_k)   2 floats (3: base_score, learning_rate, l2)
+//     3 tree_off (rounds + 1)   4 feat  5 bin  6 dleft  7 left  8 right (each total_nodes, i64)   9 val (total_nodes, f64)
+// `read` takes a file that may say anything: every size is compared with the byte length before anything is allocated, then every node is checked, and the trees must be
+// well-formed binary trees in preorder of depth at most max_depth, so that a walk ends. It never traps; it answers a refusal (ml.model.truncated, ml.model.malformed).
+
+pub fn kind() -> [] int {
+    return kinds.model_boost();
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+fn put32[&d](dst: &!d [byte], at: int, v: int) -> [] int {
+    var k = 0;
+    while k < 4 {
+        dst[at + k] = byte_of(v >> 8 * k & 255);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the payload size for `rounds` trees and `total` nodes
+pub fn size_of(rounds: int, total: int) -> [] int {
+    return 156 + 8 * (rounds + 1) + 6 * (16 + 8 * total);
+}
+
+// the start of record r (4 .. 9)
+pub fn record_at(r: int, rounds: int, total: int) -> [] int {
+    return 156 + 8 * (rounds + 1) + (r - 4) * (16 + 8 * total);
+}
+
+// the byte offset of element g of record r (4 .. 9): the fuzz uses it to damage one field whole
+pub fn elem_at(r: int, rounds: int, total: int, g: int) -> [] int {
+    return record_at(r, rounds, total) + 16 + 8 * g;
+}
+
+// ---------------------------------------------------------------- write
+
+fn put_record[&d](dst: &!d [byte], at: int, dtype: int, extent: int) -> [] int {
+    put32(dst, at, dtype);
+    put32(dst, at + 4, 1);
+    fbits.put64(dst, at + 8, extent);
+    return 0;
+}
+
+// the payload bytes of a boosted model
+pub fn write[&h, &fr](heap: &!h Heap, f: &fr fit.Boost) -> [heap] buffer.Buffer {
+    let size = size_of(f.rounds, f.total);
+    var out = buffer.empty(heap, size);
+    borrow mut out as &!cw in {
+        let b = buffer.room(cw);
+        put32(b, 0, kind());
+        put_record(b, 4, 1, 10);
+        fbits.put64(b, 20, f.task);
+        fbits.put64(b, 28, f.rounds);
+        fbits.put64(b, 36, f.d);
+        fbits.put64(b, 44, f.nbins);
+        fbits.put64(b, 52, f.total);
+        fbits.put64(b, 60, f.max_depth);
+        fbits.put64(b, 68, f.min_leaf);
+        fbits.put64(b, 76, f.early);
+        fbits.put64(b, 84, f.requested);
+        fbits.put64(b, 92, f.subk);
+        put_record(b, 100, 2, 3);
+        fbits.put64(b, 116, bits_of(f.base));
+        fbits.put64(b, 124, bits_of(f.lr));
+        fbits.put64(b, 132, bits_of(f.l2));
+        put_record(b, 140, 1, f.rounds + 1);
+        let toff = contents(f.toff);
+        var t = 0;
+        while t <= f.rounds {
+            fbits.put64(b, 156 + 8 * t, toff[t]);
+            t = t + 1;
+        }
+        let ni = contents(f.ni);
+        var r = 4;
+        while r <= 8 {
+            let at = record_at(r, f.rounds, f.total);
+            put_record(b, at, 1, f.total);
+            var g = 0;
+            while g < f.total {
+                fbits.put64(b, at + 16 + 8 * g, ni[(r - 4) * f.total + g]);
+                g = g + 1;
+            }
+            r = r + 1;
+        }
+        let at = record_at(9, f.rounds, f.total);
+        put_record(b, at, 2, f.total);
+        fbits.store(contents(f.nv), b, at + 16, f.total);
+        buffer.filled(cw, size);
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- read
+
+fn bad[&h](heap: &!h Heap, code: int) -> [heap] (fit.Boost, int) {
+    return (fit.empty(heap), code);
+}
+
+// the record header at `at` is (dtype, rank 1, extent)
+fn rec_ok[&s](data: &s [byte], at: int, dtype: int, extent: int) -> [] bool {
+    return get32(data, at) == dtype && get32(data, at + 4) == 1 && fbits.get64(data, at + 8) == extent;
+}
+
+// 0, or ml.model.malformed: the nodes of tree t (global nodes lo .. hi - 1) are a well-formed binary tree in preorder
+fn check_tree[&n](ni: &n [int], total: int, lo: int, hi: int, d: int, nbins: int, max_depth: int) -> [] int {
+    let sz = hi - lo;
+    // the right children still to come (index and depth), innermost last; `cur` is the depth of the current node
+    var stack = 0;
+    var i = 0;
+    var prev_internal = false;
+    region a {
+        let st = alloc_slice[a](32, 0);
+        let sd = alloc_slice[a](32, 0);
+        var cur = 0;
+        while i < sz {
+            let g = lo + i;
+            let feat = ni[g];
+            let bin = ni[total + g];
+            let dl = ni[2 * total + g];
+            let lc = ni[3 * total + g];
+            let rc = ni[4 * total + g];
+            // where this node must be: the left child of the previous node, or the pending right child
+            if i > 0 && !prev_internal {
+                if stack == 0 {
+                    return deny.model_malformed();
+                }
+                stack = stack - 1;
+                if st[stack] != i {
+                    return deny.model_malformed();
+                }
+                cur = sd[stack];
+            }
+            if feat == 0 - 1 {
+                if bin != 0 - 1 || dl != 0 || lc != 0 - 1 || rc != 0 - 1 {
+                    return deny.model_malformed();
+                }
+                prev_internal = false;
+            } else {
+                if feat < 0 || feat >= d || bin < 0 || bin > nbins - 2 || dl != 0 && dl != 1 {
+                    return deny.model_malformed();
+                }
+                if lc != i + 1 || cur >= max_depth {
+                    return deny.model_malformed();
+                }
+                st[stack] = rc;
+                sd[stack] = cur + 1;
+                stack = stack + 1;
+                cur = cur + 1;
+                prev_internal = true;
+            }
+            i = i + 1;
+        }
+    }
+    if stack != 0 {
+        return deny.model_malformed();
+    }
+    return 0;
+}
+
+// Read a payload. Answers (model, 0), or (empty model, the refusal).
+pub fn read[&h, &s](heap: &!h Heap, data: &s [byte]) -> [heap] (fit.Boost, int) {
+    let n = len(data);
+    if n < 140 {
+        return bad(heap, deny.model_truncated());
+    }
+    if get32(data, 0) != kind() || !rec_ok(data, 4, 1, 10) {
+        return bad(heap, deny.model_malformed());
+    }
+    let task = fbits.get64(data, 20);
+    let rounds = fbits.get64(data, 28);
+    let d = fbits.get64(data, 36);
+    let nbins = fbits.get64(data, 44);
+    let total = fbits.get64(data, 52);
+    let max_depth = fbits.get64(data, 60);
+    let min_leaf = fbits.get64(data, 68);
+    let early = fbits.get64(data, 76);
+    let requested = fbits.get64(data, 84);
+    let subk = fbits.get64(data, 92);
+    if task < 0 || task > 1 || rounds < 1 || rounds > bparams.rounds_max() || d < 1 || d > 4096 || nbins < 2 || nbins > 255 || max_depth < 1 || max_depth > params.depth_max() || min_leaf < 1 {
+        return bad(heap, deny.model_malformed());
+    }
+    if early < 0 || early > bparams.early_max() || requested < rounds || requested > bparams.rounds_max() || early == 0 && requested != rounds {
+        return bad(heap, deny.model_malformed());
+    }
+    if subk < 1 || subk > bparams.subsample_scale() || total < rounds || total > bparams.nodes_total_max() {
+        return bad(heap, deny.model_malformed());
+    }
+    let size = size_of(rounds, total);
+    if n < size {
+        return bad(heap, deny.model_truncated());
+    }
+    if n > size {
+        return bad(heap, deny.model_malformed());
+    }
+    if !rec_ok(data, 100, 2, 3) || !rec_ok(data, 140, 1, rounds + 1) {
+        return bad(heap, deny.model_malformed());
+    }
+    var r = 4;
+    while r <= 9 {
+        var dt = 1;
+        if r == 9 {
+            dt = 2;
+        }
+        if !rec_ok(data, record_at(r, rounds, total), dt, total) {
+            return bad(heap, deny.model_malformed());
+        }
+        r = r + 1;
+    }
+    let base = fbits.decode(fbits.get64(data, 116));
+    let lr = fbits.decode(fbits.get64(data, 124));
+    let l2 = fbits.decode(fbits.get64(data, 132));
+    // (fbits.decode answers NaN for an infinity or a NaN; the bits must also be reproduced, as `load` requires of the values)
+    if bits_of(base) != fbits.get64(data, 116) || bits_of(lr) != fbits.get64(data, 124) || bits_of(l2) != fbits.get64(data, 132) {
+        return bad(heap, deny.model_malformed());
+    }
+    if !(base - base == 0.0 && lr > 0.0 && lr <= 1.0 && l2 >= 0.0 && l2 <= bparams.l2_max()) {
+        return bad(heap, deny.model_malformed());
+    }
+    // the sizes are right; now the content
+    let toff = box_slice(heap, rounds + 1, 0);
+    let ni = box_slice(heap, 5 * total + 1, 0);
+    let nv = box_slice(heap, total + 1, 0.0);
+    var code = 0;
+    borrow mut toff as &!tw in {
+        let tof = contents(tw);
+        var t = 0;
+        while t <= rounds {
+            tof[t] = fbits.get64(data, 156 + 8 * t);
+            t = t + 1;
+        }
+        if tof[0] != 0 || tof[rounds] != total {
+            code = deny.model_malformed();
+        }
+        t = 0;
+        while t < rounds && code == 0 {
+            if tof[t + 1] <= tof[t] {
+                code = deny.model_malformed();
+            }
+            t = t + 1;
+        }
+    }
+    if code == 0 {
+        borrow mut ni as &!nw in {
+            let nis = contents(nw);
+            var rr = 4;
+            while rr <= 8 {
+                let at = record_at(rr, rounds, total) + 16;
+                var g = 0;
+                while g < total {
+                    nis[(rr - 4) * total + g] = fbits.get64(data, at + 8 * g);
+                    g = g + 1;
+                }
+                rr = rr + 1;
+            }
+        }
+        borrow mut nv as &!vw in {
+            let bad_vals = fbits.load(data, record_at(9, rounds, total) + 16, contents(vw), total);
+            if bad_vals != 0 {
+                code = deny.model_malformed();
+            }
+        }
+    }
+    if code == 0 {
+        borrow toff as &tr in {
+            borrow ni as &nr in {
+                var t = 0;
+                while t < rounds && code == 0 {
+                    code = check_tree(contents(nr), total, contents(tr)[t], contents(tr)[t + 1], d, nbins, max_depth);
+                    t = t + 1;
+                }
+            }
+        }
+    }
+    if code != 0 {
+        unbox_slice(heap, toff);
+        unbox_slice(heap, ni);
+        unbox_slice(heap, nv);
+        return bad(heap, code);
+    }
+    return (fit.Boost { task: task, rounds: rounds, requested: requested, d: d, nbins: nbins, total: total, max_depth: max_depth, min_leaf: min_leaf, early: early, subk: subk, base: base, lr: lr, l2: l2, toff: toff, ni: ni, nv: nv }, 0);
+}
