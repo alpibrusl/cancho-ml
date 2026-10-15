@@ -72,6 +72,8 @@ class Rules(unittest.TestCase):
                 for argv in argvs:
                     added = [a for a in argv[1:] if a not in r.argv[1:]]
                     self.assertFalse({"--root", "--overwrite", "--output", "--log"} & set(added), "%s: the repair adds %s" % (c["id"], added))
+                    for f in sb.dir.glob("*.cml"):
+                        f.unlink()
                     again = run(*argv[1:], cwd=sb.dir)
                     self.assertEqual(again.status, 0, "%s: the repair %r does not work: %r" % (c["id"], argv, again))
                     n += 1

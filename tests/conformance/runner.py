@@ -94,6 +94,12 @@ def judge(c, sb, r):
                 rep = doc["error"]["repair"]
                 if not (rep and rep["kind"] in ("retry", "choose")):
                     problems.append("expected a retry or choose repair, got %r" % rep)
+            if ex.get("repair_has"):
+                rep = doc["error"]["repair"]
+                argvs = [rep["argv"]] if rep and rep["kind"] == "retry" else [o["argv"] for o in (rep or {}).get("options", [])]
+                for pair in ex["repair_has"]:
+                    if not any(any(a[i:i + len(pair)] == pair for i in range(len(a))) for a in argvs):
+                        problems.append("no repair argv holds %r: %r" % (pair, argvs))
             if ex.get("repair_none"):
                 rep = doc["error"]["repair"]
                 if not (rep and rep["kind"] == "none" and rep.get("reason")):

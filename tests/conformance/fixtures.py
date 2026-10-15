@@ -308,7 +308,8 @@ CASES = [
     case("ml-input-unknown-category", ["predict", "--model-file", "cat.cml", "newcat.csv"], bad("ml.input.unknown-category"),
          setup=LBASE + [("write", "cat.csv", CAT), ("write", "newcat.csv", "c\n1\n9\n"),
                         ("fit", "--model", "linear", "--l2", "0.1", "--step", "encode column=c kind=onehot unknown=refuse", "--target", "y", "--output", "cat.cml", "cat.csv")]),
-    case("ml-linalg-not-positive-definite", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "dup.csv"], bad("ml.linalg.not-positive-definite"),
+    # issue 48: two equal columns with l2 = 0 are named now (ml.fit.collinear); the id stays, because the baseline record is keyed by it (test_cat_baseline CHANGED)
+    case("ml-linalg-not-positive-definite", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "dup.csv"], bad("ml.fit.collinear", repair_runs=True),
          setup=LBASE + [("write", "dup.csv", "a,b,y\n1,1,0\n2,2,1\n3,3,0\n4,4,1\n5,5,1\n")]),
     case("ml-fit-non-finite", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "big.csv"], bad("ml.fit.non-finite"),
          setup=LBASE + [("write", "big.csv", "x,y\n1e200,1\n2e200,0\n3e200,1\n-1e200,0\n")]),
@@ -636,6 +637,7 @@ CONSTC = "a,k,y\n1,5,0\n2,5,1\n3,5,0\n4,5,1\n5,5,1\n6,5,0\n"
 SPC = "id,sp,y\n1,cat,1\n2,dog,0\n3,cat,0\n4,bird,1\n5,dog,1\n6,bird,0\n7,cat,1\n8,dog,0\n9,bird,1\n10,cat,0\n11,dog,1\n12,bird,0\n"
 SEP = "x1,x2,y\n-3,1,0\n-2,-1,0\n-1,2,0\n1,-2,1\n2,1,1\n3,-1,1\n"
 NEARSEP = SEP + "3,-1,0\n"
+QUASI = "x,y\n-2,0\n-1,0\n0,0\n0,1\n1,1\n2,1\n"
 NEARCOL = "a,b,y\n1,1.00001,0\n2,2.00002,1\n3,2.99999,0\n4,4.00004,1\n5,5.00003,1\n6,5.99996,0\n7,7.00001,1\n"
 RBASE = [("write", "dup.csv", DUPC), ("write", "const.csv", CONSTC), ("write", "sp.csv", SPC), ("write", "sep.csv", SEP),
          ("write", "nearsep.csv", NEARSEP), ("write", "nearcol.csv", NEARCOL), ("write", "lcls.csv", LCLS)]
@@ -647,7 +649,8 @@ def _refuse_cases():
     sepa = lambda **kw: bad("ml.fit.separable", **kw)
     return [
         case("ml-fit-collinear-duplicate-column", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "dup.csv"],
-             col(repair_runs=True, detail={"model": "linear", "pivot": 1, "column": "b", "columns": ["a"], "coefficients": ["1.000000"]}), setup=RBASE),
+             col(repair_runs=True, repair_has=[["--l2", "1e-7"], ["--drop", "b"]],
+                 detail={"model": "linear", "pivot": 1, "column": "b", "columns": ["a"], "coefficients": ["1.000000"]}), setup=RBASE),
         case("ml-fit-collinear-constant-column-and-the-intercept", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "const.csv"],
              col(repair_runs=True, detail={"model": "linear", "column": "(intercept)", "columns": ["k"]}), setup=RBASE),
         case("ml-fit-collinear-full-one-hot-and-the-intercept", ["fit", "--model", "linear"] + FIT_SP,
@@ -662,13 +665,17 @@ def _refuse_cases():
         case("ml-fit-collinear-in-a-plan-has-no-argv", ["fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "dup.csv"],
              col(repair_none=True), setup=RBASE + [("write", "p.txt", "model kind=linear l2=0\n")]),
         case("ml-fit-separable", ["fit", "--model", "logistic", "--target", "y", "--output", "m.cml", "sep.csv"],
-             sepa(repair_runs=True, detail={"reason": "loss", "pass": 2, "l2": "0.0"}), setup=RBASE),
+             sepa(repair_runs=True, repair_has=[["--l2", "1e-2"]], detail={"reason": "loss", "pass": 2, "l2": "0.0", "loss_bound": "0.6931"}), setup=RBASE),
         case("ml-fit-separable-25-iterations", ["fit", "--model", "logistic", "--iterations", "25", "--target", "y", "--output", "m.cml", "sep.csv"],
              sepa(repair_runs=True, detail={"reason": "loss", "pass": 2}), setup=RBASE),
         case("ml-fit-separable-explicit-zero-l2-is-replaced", ["fit", "--model", "logistic", "--l2", "0", "--target", "y", "--output", "m.cml", "sep.csv"],
              sepa(repair_runs=True), setup=RBASE),
         case("ml-fit-separable-in-a-plan-has-no-argv", ["fit", "--plan", "p.txt", "--target", "y", "--output", "m.cml", "sep.csv"],
              sepa(repair_none=True), setup=RBASE + [("write", "p.txt", "model kind=logistic iterations=50 l2=0\n")]),
+        case("ml-fit-separable-quasi-complete-is-seen-by-the-predictor-scale", ["fit", "--model", "logistic", "--target", "y", "--output", "m.cml", "quasi.csv"],
+             sepa(repair_runs=True, detail={"reason": "scale", "pass": 39, "scale_bound": "50.0"}), setup=RBASE + [("write", "quasi.csv", QUASI)]),
+        case("ml-linalg-not-positive-definite-ridge-below-the-tolerance-after-the-first-pass", ["fit", "--model", "logistic", "--l2", "1e-20", "--target", "y", "--output", "m.cml", "sep.csv"],
+             bad("ml.linalg.not-positive-definite"), setup=RBASE),
         case("ml-fit-separable-a-positive-l2-is-fitted", ["fit", "--model", "logistic", "--l2", "0.01", "--target", "y", "--output", "m.cml", "sep.csv"],
              ok({"model": "logistic"}), setup=RBASE),
         case("ml-fit-separable-two-passes-are-not-enough-to-see-it", ["fit", "--model", "logistic", "--iterations", "2", "--target", "y", "--output", "m.cml", "sep.csv"],

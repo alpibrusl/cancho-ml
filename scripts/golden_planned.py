@@ -34,7 +34,7 @@ def record(case, tmp):
     (tmp / "d.csv").write_text(case.csv())
     rc, out = ow.ml("--root", tmp, *ow.fit_args(case, "m.cml"), "d.csv")
     f = tmp / "m.cml"
-    return {"status": rc, "stdout": hashlib.sha256(out.replace(str(tmp), "@ROOT").encode()).hexdigest(),
+    return {"status": rc, "stdout": hashlib.sha256(out.replace(str(tmp), "@ROOT").replace(str(ow.BIN), "@ML").encode()).hexdigest(),
             "file": hashlib.sha256(f.read_bytes()).hexdigest() if f.exists() else None}
 
 

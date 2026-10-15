@@ -21,9 +21,40 @@ pub fn separable_bound() -> [] float {
     return 0.6931;
 }
 
-// The record of a separation refusal in diag (floats): [0] the pass, [1] 0 = the summed loss was under the bound, 1 = the pivot test failed at a pass after the first,
-// [2] the summed loss of the pass, [3] the Euclidean norm of w (the bias included), [4] the largest diagonal element of the Hessian of pass 0 (diag holds its sums in slot 0).
-// Read before anything is written: the slot-0 sums and wv.
+// The scale bound of the second separation test (docs/refusals-fit.md D2): the root mean square of the linear predictor z over the training rows, which does not depend on the
+// units of the features. A maximum-likelihood fit has predictions that saturate only as far as the data force it (a probability of 1e-9 is z = -20.7); a root mean square
+// of 50 means probabilities of 2e-22: the fit is running away along a direction that separates the classes completely or with ties (quasi-complete separation, which the
+// loss test does not see: the tied rows keep a loss of ln 2 each).
+pub fn scale_bound() -> [] float {
+    return 50.0;
+}
+
+// sqrt(w' G w / n) for the Gram matrix G of the columns with the bias: slot 0 of diag holds the decisive sums of pass 0, where w = 0, so its Hessian part is G / (4 n)
+fn predictor_scale[&w, &g](p: int, nf: float, wv: &w [float], diag: &g [float]) -> [] float {
+    var q = 0.0;
+    var a = 0;
+    while a < p {
+        var b = 0;
+        while b <= a {
+            let t = wv[a] * wv[b] * (diag[p + a * (a + 1) / 2 + b] / nf);
+            if a == b {
+                q = q + t;
+            } else {
+                q = q + 2.0 * t;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    if q < 0.0 {
+        q = 0.0;
+    }
+    return sqrt(4.0 * q);
+}
+
+// The record of a separation refusal in diag (floats): [0] the pass, [1] the reason (0 the summed loss was under the bound, 1 the pivot test failed at a pass after the
+// first, 2 the predictor scale was over its bound), [2] the summed loss of the pass, [3] the Euclidean norm of w (the bias included), [4] the largest diagonal element of
+// the Hessian of pass 0 (diag holds its sums in slot 0), [5] the predictor scale. Everything is read before anything is written.
 fn note_separable[&w, &g](p: int, ww: int, nf: float, it: int, reason: int, loss: float, wv: &w [float], diag: &!g [float]) -> [] int {
     var hmax = 0.0;
     var a = 0;
@@ -40,11 +71,13 @@ fn note_separable[&w, &g](p: int, ww: int, nf: float, it: int, reason: int, loss
         q = q + wv[a] * wv[a];
         a = a + 1;
     }
+    let sc = predictor_scale(p, nf, wv, diag);
     diag[0] = float_of(it);
     diag[1] = float_of(reason);
     diag[2] = loss;
     diag[3] = sqrt(q);
     diag[4] = hmax;
+    diag[5] = sc;
     return 0;
 }
 
@@ -142,6 +175,9 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
                     let loss = contents(sr)[ww - 1];
                     if loss < separable_bound() {
                         note_separable(p, ww, nf, it, 0, loss, contents(wr), diag);
+                        code = refuse.fit_separable();
+                    } else if predictor_scale(p, nf, contents(wr), diag) > scale_bound() {
+                        note_separable(p, ww, nf, it, 2, loss, contents(wr), diag);
                         code = refuse.fit_separable();
                     }
                 }

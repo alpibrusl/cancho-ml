@@ -235,8 +235,8 @@ pub fn collinear[&h, &g, &d, &n](heap: &!h Heap, args: &g Args, e: fail.Errors, 
     return fail.add(heap, e, w);
 }
 
-// ml.fit.separable. diag is the record of lib/models/linear/logreg.cho: [0] pass, [1] reason (0 loss, 1 pivot), [2] the summed loss, [3] the norm of w, [4] the largest
-// diagonal element of the Hessian of pass 0.
+// ml.fit.separable. diag is the record of lib/models/linear/logreg.cho: [0] pass, [1] reason (0 loss, 1 pivot, 2 scale), [2] the summed loss, [3] the norm of w, [4] the largest
+// diagonal element of the Hessian of pass 0, [5] the predictor scale.
 pub fn separable[&h, &g, &d](heap: &!h Heap, args: &g Args, e: fail.Errors, diag: &d [float], iterations: int, l2: float, o: verbs.Opts) -> [heap, args] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.fit.separable");
     // the repair: l2 whose pivots stay at least about 2^-10 of the Hessian's diagonal at every pass
@@ -254,6 +254,8 @@ pub fn separable[&h, &g, &d](heap: &!h Heap, args: &g Args, e: fail.Errors, diag
     var reason: &static [byte] = "loss";
     if truncate(diag[1]) == 1 {
         reason = "pivot";
+    } else if truncate(diag[1]) == 2 {
+        reason = "scale";
     }
     w = fail.detail_str(heap, w, "reason", reason);
     w = fail.detail_int(heap, w, "pass", truncate(diag[0]));
@@ -263,6 +265,10 @@ pub fn separable[&h, &g, &d](heap: &!h Heap, args: &g Args, e: fail.Errors, diag
     w = verbs.put_double(heap, w, bits_of(logreg.separable_bound()));
     w = json.put_key(heap, w, "coefficient_norm");
     w = verbs.put_double(heap, w, bits_of(diag[3]));
+    w = json.put_key(heap, w, "predictor_scale");
+    w = verbs.put_double(heap, w, bits_of(diag[5]));
+    w = json.put_key(heap, w, "scale_bound");
+    w = verbs.put_double(heap, w, bits_of(logreg.scale_bound()));
     w = json.put_key(heap, w, "l2");
     w = verbs.put_double(heap, w, bits_of(l2));
     w = fail.detail_int(heap, w, "iterations", iterations);
