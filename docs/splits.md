@@ -184,4 +184,17 @@ All are run by `scripts/check.sh` through `tests/conformance/test_splits.py` and
 
 ## 10. Results
 
-*(filled in when the code and the gates have run)*
+Machine: a Mac (arm64, Apple M4 Max, macOS 26.2), compiler `a4572ea`, `build/ml`; the machine was shared. Correctness gates do not depend on the load. Counts are those of the run that printed them.
+
+| gate | result | command |
+|---|---|---|
+| A1 | 286 cases: the assignment of `--emit-folds` and the canonical text equal the oracle's | `python3 scripts/oracle_split.py --assign` |
+| B1 | 381 cases of invariants on generated and hostile data | `--invariants` |
+| C1 | 189 folds: `ml cv` metrics equal `ml fit` then `ml eval` on the oracle's fold files, string for string; plans with impute, scale, bucket, encode, freq, hash and text columns; linear, logistic, tree, forest, kmeans; the aggregate equals the oracle's | `--e2e` |
+| C2 | the mutant `leak-steps-fitted-on-all-rows` fails C1 (killed) | `python3 scripts/mutants_split.py --only leak` |
+| D1 | 18 answers identical at `--threads 1` and `8` | `--threads` |
+| S1 | linear: worst relative gap 6.13e-16 (bound 1e-6); logistic: accuracy gap 0 and log-loss gap 1.44e-08 (bound 1e-4 absolute) | `--sklearn` |
+| E1, F1 | the fixtures of every tag, with the repairs, and the hostile data and fuzz of `tests/conformance/test_splits.py` | `python3 -m unittest test_splits test_rules` |
+| M1 | 47 mutants, 47 killed, 0 survive | `python3 scripts/mutants_split.py` |
+
+Limits found while running: a held-out fold with one class has no ROC-AUC, and `ml.label.single-class` refuses the cross-validation as `ml eval` does on that file (a group or time split of few groups meets it; `--stratify` or fewer folds avoid it); `--model constant` is not cross-validated; `fit` and `eval` answers with `--split` gained `split.spec`, so three golden answers of the old records changed their hash and are pinned in `test_cat_baseline.py` and `test_planned_baseline.py` (status and files unchanged).

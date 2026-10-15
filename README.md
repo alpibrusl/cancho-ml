@@ -329,7 +329,7 @@ The standard deviation is the sample one (divisor `K * R - 1`). The assignment i
 
 <!-- gen:splitflow -->
 ```console
-# A holdout that keeps the class proportions: 426 training rows, 20 percent held out, per class the floor or the ceiling of its share
+# A holdout that keeps the class proportions: 426 rows, 20 percent held out, per class the floor or the ceiling of its share
 $ ml fit --model tree --task classification --max-depth 4 --target benign --split train=0.8 --stratify --seed 7 --output bc.ml breast_cancer_train.csv
 {"split":{"train":340,"test":86,"seed":7,"spec":"holdout train=0.8 stratify seed=7"},"holdout":{"rows":86,"metrics":{"accuracy":"0.9418604651162791","precision":"0.9454545454545454","recall":"0.9629629629629629","f1":"0.9541284403669725","roc_auc":"0.9461805555555556","log_loss":"1.3089414342386103"}}}
 # visits.csv: 12 customers with 10 visits each, an ISO date, a basket, the item count and whether the customer came back. The newest quarter of the visits is held out (the date column is dropped as a feature, not as a rule)
