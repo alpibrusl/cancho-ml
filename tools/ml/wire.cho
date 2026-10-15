@@ -144,7 +144,7 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             }
         }
     }
-    if verb == 1 || verb == 3 {
+    if verb == 1 || verb == 3 || verb == 5 {
         if cli.has(parsed, table, "threads") {
             let t = cli.nat(args, parsed, table, "threads");
             if t < 1 || t > 64 {
@@ -1274,6 +1274,16 @@ pub fn drop_made[&h](heap: &!h Heap, m: Made) -> [heap] int {
     buffer.drop(heap, sha);
     buffer.drop(heap, log);
     return fail.drop(heap, errs);
+}
+
+// The model file, the errors, the log and whether the file was made; the other products are dropped (a replay wants the bytes only)
+pub fn made_file[&h](heap: &!h Heap, m: Made) -> [heap] (buffer.Buffer, fail.Errors, buffer.Buffer, bool) {
+    let Made { fbytes, summary, rec, ptext, sha, errs, log, ok, kind, task, trows, cols, ntest, file_rows, file_bytes, features, steps } = m;
+    buffer.drop(heap, summary);
+    buffer.drop(heap, rec);
+    buffer.drop(heap, ptext);
+    buffer.drop(heap, sha);
+    return (fbytes, errs, log, ok);
 }
 
 fn failed_made[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer) -> [heap] Made {

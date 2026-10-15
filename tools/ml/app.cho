@@ -51,6 +51,9 @@ pub fn verb_of[&v](text: &v [byte], tool: int) -> [] int {
     if tool == 1 && bytes.equal(text, "eval") {
         return 3;
     }
+    if tool == 1 && bytes.equal(text, "runs") {
+        return 5;
+    }
     return 0;
 }
 
@@ -63,6 +66,9 @@ pub fn verb_name(verb: int) -> [] &static [byte] {
     }
     if verb == 4 {
         return "describe";
+    }
+    if verb == 5 {
+        return "runs";
     }
     return "eval";
 }
@@ -103,7 +109,7 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
         if !cli.has(parsed, table, "output") {
             e = flag_problem(heap, e, "args.required-flag", "fit needs --output, where to write the model file", "ml fit --target NAME --output MODEL FILE", "flag", "--output");
         }
-    } else if !cli.has(parsed, table, "model-file") {
+    } else if verb != 5 && !cli.has(parsed, table, "model-file") {
         e = flag_problem(heap, e, "args.required-flag", "this verb needs --model-file, the model to read", "ml predict --model-file MODEL FILE", "flag", "--model-file");
     }
     if verb == 1 {
@@ -242,6 +248,59 @@ pub fn stdin_wanted[&g, &p](args: &g Args, parsed: &p cli.Parsed, verb: int) -> 
     return cli.operand_count(parsed) == 1 || cli.operand_count(parsed) == 2 && bytes.equal(cli.operand(args, parsed, 1), "-");
 }
 
+// the operands of `ml runs`: list DIR, show DIR ID, compare DIR ID ID, verify DIR ID; an id is 64 lowercase hex digits
+pub fn runs_operands[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors) -> [heap, args] fail.Errors {
+    var e = errs;
+    let n = cli.operand_count(parsed);
+    if n < 2 {
+        return flag_problem(heap, e, "args.missing-operand", "runs takes list, show, compare or verify", "ml runs list DIR, ml runs show DIR ID, ml runs compare DIR ID ID, ml runs verify DIR ID", "operand", "SUBCOMMAND");
+    }
+    let sub = cli.operand(args, parsed, 1);
+    var want = 0 - 1;
+    if bytes.equal(sub, "list") {
+        want = 3;
+    } else if bytes.equal(sub, "show") || bytes.equal(sub, "verify") {
+        want = 4;
+    } else if bytes.equal(sub, "compare") {
+        want = 5;
+    }
+    if want < 0 {
+        var w = fail.open_in(heap, spec.extra(), "args.unknown-command", "the second operand of runs is not list, show, compare or verify", "ml runs list DIR, ml runs show DIR ID, ml runs compare DIR ID ID, ml runs verify DIR ID");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_text(heap, w, "command", sub);
+        return fail.add(heap, e, w);
+    }
+    if n < want {
+        return flag_problem(heap, e, "args.missing-operand", "this runs command needs the directory of the run records and the run ids", "ml runs list DIR, ml runs show DIR ID, ml runs compare DIR ID ID, ml runs verify DIR ID", "operand", "DIR");
+    }
+    if n > want {
+        return flag_problem(heap, e, "args.too-many-operands", "this runs command takes fewer operands", "ml runs list DIR, ml runs show DIR ID, ml runs compare DIR ID ID, ml runs verify DIR ID", "operand", "ID");
+    }
+    var k = 3;
+    while k < want {
+        let id = cli.operand(args, parsed, k);
+        var ok = len(id) == 64;
+        var i = 0;
+        while ok && i < len(id) {
+            let c = int_of(id[i]);
+            if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+                ok = false;
+            }
+            i = i + 1;
+        }
+        if !ok {
+            var w = fail.open_in(heap, spec.extra(), "args.bad-value", "a run id is 64 lowercase hexadecimal digits", "ml runs list DIR names the ids");
+            w = fail.no_repair(heap, w);
+            w = fail.detail_open(heap, w);
+            w = fail.detail_text(heap, w, "id", id);
+            e = fail.add(heap, e, w);
+        }
+        k = k + 1;
+    }
+    return e;
+}
+
 // the verb and the checks of the command line that need no file
 pub fn cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte], tool: int) -> [heap, args] (int, fail.Errors) {
     var e = errs;
@@ -266,6 +325,8 @@ pub fn cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
             if cli.operand_count(parsed) > 1 {
                 e = flag_problem(heap, e, "args.too-many-operands", "describe takes no file: it reads the model file named by --model-file", "ml describe --model-file MODEL", "operand", "FILE");
             }
+        } else if verb == 5 {
+            e = runs_operands(heap, args, parsed, e);
         } else if verb == 2 {
             if cli.operand_count(parsed) > 2 {
                 e = flag_problem(heap, e, "args.too-many-operands", "predict takes one CSV file, or - for standard input", "read one file per call", "operand", "FILE");
@@ -354,7 +415,11 @@ pub fn resolve_all[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli
     var f2 = paths.absent(heap);
     var e2 = e0;
     if verb != 4 && !stdin_wanted(args, parsed, verb) {
-        let (fa, ea) = paths.from_operand(heap, args, root, cli.operand_index(parsed, 1), e2);
+        var at = 1;
+        if verb == 5 {
+            at = 2;
+        }
+        let (fa, ea) = paths.from_operand(heap, args, root, cli.operand_index(parsed, at), e2);
         paths.drop(heap, f2);
         f2 = fa;
         e2 = ea;

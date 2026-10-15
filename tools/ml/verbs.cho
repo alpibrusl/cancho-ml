@@ -378,7 +378,7 @@ pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors,
 // ---------------------------------------------------------------- reading the CSV
 
 // open `file` and scan it (or scan the bytes of standard input, when `file` is that). The errors gain the reason if the open fails (the shape is then empty and the report 99).
-fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, csv.Sinks) {
+pub fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, csv.Sinks) {
     var e = errs;
     if paths.is_stdin(file) {
         let (src, sh, rep, k2) = csv.scan(heap, csv.Source::Mem(0), paths.mem(file), cfg, target, sk);
