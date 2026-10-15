@@ -488,6 +488,26 @@ class Kinds(unittest.TestCase):
         cli = SB.run("predict", "--model-file", mfile, "nul.csv")
         self.assertEqual(r.json()["rows"], cli.data()["rows"])
 
+    def test_a_refusal_of_the_predictor_is_the_command_lines_rule_with_its_status(self):
+        # a hash step has no vocabulary to list, so "" reaches the predictor as a missing cell, and a linear model with no impute step for it refuses (ml.input.missing-value)
+        fit = SB.run("fit", "--model", "linear", "--l2", "1", "--target", "y", "--cat", "c0", "--step", "hash column=c0 buckets=8;impute column=n strategy=mean", "--drop", "lab,c1", "--output", "hashlin.cml", "cat.csv")
+        self.assertEqual(fit.status, 0, fit)
+        s = self.serve("hashlin.cml")
+        r = s.request("POST", "/predict", body=b'{"c0":"","n":3}', headers=JSON)
+        self.assertEqual(r.status, 422, r)
+        self.assertEqual(r.ctype().split(";")[0], "application/problem+json")
+        d = json.loads(r.text())
+        self.assertEqual(d["rule"], "ml.input.missing-value")
+        SB.write("empty0.csv", "c0,n\n,3\n")
+        cli = SB.run("predict", "--model-file", "hashlin.cml", "empty0.csv")
+        self.assertEqual(cli.first_rule(), d["rule"])
+        self.assertEqual(d["error"]["rule"], d["rule"])
+        self.assertEqual(d["error"]["detail"], cli.error()["detail"])
+        self.assertEqual(s.request("POST", "/predict", body=b'{"c0":"red","n":3}', headers=JSON).status, 200)
+        # and the same record in a batch
+        r = s.request("POST", "/predict/batch", body=b'{"rows":[{"c0":"red","n":3},{"c0":"","n":3}]}', headers=JSON)
+        self.assertEqual((r.status, json.loads(r.text())["rule"]), (422, "ml.input.missing-value"))
+
     def test_a_model_with_a_column_named_rows(self):
         SB.write("rows.csv", "rows,x,y\n1,2,3\n2,3,5\n3,5,8\n4,7,11\n5,11,16\n")
         fit = SB.run("fit", "--target", "y", "--output", "rowsmodel.cml", "--model", "linear", "--step", "impute column=* strategy=mean", "rows.csv")
@@ -497,6 +517,52 @@ class Kinds(unittest.TestCase):
         self.assertEqual(r.status, 200, r)
         r = s.request("POST", "/predict/batch", body=b'{"rows":[{"rows":2,"x":3}]}', headers=JSON)
         self.assertEqual(r.status, 200, r)
+
+
+class Statuses(unittest.TestCase):
+    """S9: every refusal rule of the predictor has a status, and the table of docs/serving-http.md section 5.3 is the one in the source."""
+
+    def lists(self):
+        import re
+        src = (ROOT / "tools" / "ml-serve" / "srv.cho").read_text()
+        body = src[src.index("fn status_of"):src.index("// the 422 of the schema")]
+        found = re.findall(r'app\.listed\("([^"]*)", rule\) \{\s*return (\d+);', body)
+        return {int(code): set(names.split(",")) for names, code in found}
+
+    def test_the_source_and_the_document_agree_and_name_real_rules(self):
+        import re
+        lists = self.lists()
+        self.assertEqual(sorted(lists), [413, 422])
+        doc = (ROOT / "docs" / "serving-http.md").read_text()
+        for code, names in lists.items():
+            m = re.search(r"^\| %d \|[^\n]*predictor refuses[^\n]*\|" % code, doc, re.M)
+            self.assertTrue(m, "docs/serving-http.md section 5.3 has no row for %d with the predictor's rules" % code)
+            row = m.group(0)
+            for n in names:
+                self.assertIn("`%s`" % n, row, (code, n))
+        # every tag of the lists is a tag `ml` can emit
+        import subprocess
+        d = json.loads(subprocess.run([BIN, "introspect"], capture_output=True, check=True).stdout)
+        known = {r["rule"] for r in d["rules"]}
+        for code, names in lists.items():
+            self.assertLessEqual(names, known, (code, names - known))
+
+    def test_every_rule_of_ml_is_422_413_or_500(self):
+        import subprocess
+        d = json.loads(subprocess.run([BIN, "introspect"], capture_output=True, check=True).stdout)
+        lists = self.lists()
+        out = {}
+        for r in d["rules"]:
+            tag = r["rule"]
+            out[tag] = 422 if tag in lists[422] else 413 if tag in lists[413] else 500
+        # the rules a request can cause: its data is 422, its size 413; the model file, the plan, the fit, the paths and the flags cannot be a request's fault: 500
+        self.assertEqual(out["ml.schema.mismatch"], 422)
+        self.assertEqual(out["ml.input.missing-value"], 422)
+        self.assertEqual(out["limit.line-too-long"], 413)
+        for tag in out:
+            if tag.startswith(("ml.model.", "ml.plan.", "ml.fit.", "ml.linalg.", "ml.metric.", "ml.tensor.", "ml.split.", "io.", "path.", "args.", "conflict.")):
+                self.assertEqual(out[tag], 500, tag)
+        self.assertGreater(sum(1 for v in out.values() if v == 500), 40)
 
 
 class Token(unittest.TestCase):
