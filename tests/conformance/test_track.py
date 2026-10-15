@@ -34,6 +34,21 @@ def strip_provenance(data):
     return fix_checksum(bytes(out) + bytes(32))
 
 
+def with_provenance(data, payload):
+    """the file with the payload of section 7 replaced (the length and the checksum made again)"""
+    out = bytearray(data[:12])
+    for tag, start, length in sections(data):
+        if tag == 7:
+            out += struct.pack("<IQ", 7, len(payload)) + payload
+        else:
+            out += data[start - 12:start + length]
+    return fix_checksum(bytes(out) + bytes(32))
+
+
+def dbits(v):
+    return struct.unpack("<q", struct.pack("<d", v))[0]
+
+
 def section_at(data, tag):
     for t, start, length in sections(data):
         if t == tag:
@@ -279,6 +294,52 @@ class Damage(Base):
                 if value != struct.unpack_from("<Q", data, s + at)[0] and not (at == 4 and value == 0):
                     self.assertEqual(r.first_rule(), "ml.model.malformed", (at, value))
 
+    def test_a_payload_that_breaks_a_bound_is_malformed_whichever_bound_it_is(self):
+        self.fit()
+        data = self.sb.read("m.cml")
+        s, n = section_at(data, 7)
+        good = data[s:s + n]
+        self.assertEqual(self.run_with(with_provenance(data, good)).status, 0)
+
+        def put(p, at, fmt, *vals):
+            return p[:at] + struct.pack(fmt, *vals) + p[at + struct.calcsize(fmt):]
+
+        def rec(p, k, field, value):
+            return put(p, 64 + 40 * k + 8 * field, "<q", value)
+
+        mean0 = struct.unpack_from("<q", good, 64 + 24)[0]
+        crafted = {
+            "layout 2": put(good, 0, "<I", 2),
+            "file_bytes past 2^62": put(good, 4, "<Q", (1 << 62) + 1),
+            "file_bytes negative": put(good, 4, "<Q", 1 << 63),
+            "file_rows 0": put(good, 44, "<Q", 0),
+            "file_rows past 10^9": put(good, 44, "<Q", 1000000001),
+            "rows 0": put(good, 52, "<Q", 0),
+            "rows past file_rows": put(put(good, 44, "<Q", 7), 52, "<Q", 8),
+            "rows not the rows of meta": put(good, 52, "<Q", 7),
+            "one record fewer, features 2": put(good[:-40], 60, "<I", 2),
+            "features 4 and one record more": put(good + good[-40:], 60, "<I", 4),
+            "count past rows": rec(good, 0, 0, 9),
+            "count 0 with a minimum": rec(rec(good, 0, 0, 0), 0, 1, dbits(1.0)),
+            "minimum infinite": rec(good, 0, 1, 0x7FF0000000000000),
+            "mean nan": rec(good, 0, 3, 0x7FF8000000000000),
+            "std infinite": rec(good, 0, 4, 0x7FF0000000000000),
+            "maximum negative zero": rec(good, 0, 2, -(1 << 63)),
+            "minimum above maximum": rec(rec(good, 0, 1, dbits(9.0)), 0, 2, dbits(2.0)),
+            "mean below minimum": rec(good, 0, 3, dbits(0.5)),
+            "mean above maximum": rec(good, 0, 3, dbits(99.0)),
+            "std negative": rec(good, 0, 4, dbits(-1.0)),
+            "constant column with a deviation": rec(rec(rec(good, 0, 1, dbits(2.0)), 0, 2, dbits(2.0)), 0, 3, dbits(2.0)),
+            "constant column with another mean": rec(rec(rec(rec(good, 0, 1, dbits(2.0)), 0, 2, dbits(2.0)), 0, 3, dbits(2.5)), 0, 4, 0),
+        }
+        for label, payload in crafted.items():
+            r = self.run_with(with_provenance(data, payload))
+            self.assertEqual(r.first_rule(), "ml.model.malformed", (label, r))
+            self.assertEqual(r.error()["detail"]["section"], 7, label)
+        # the same edits that keep every bound are accepted
+        fine = rec(rec(rec(rec(good, 0, 1, dbits(2.0)), 0, 2, dbits(2.0)), 0, 3, dbits(2.0)), 0, 4, 0)
+        self.assertEqual(self.run_with(with_provenance(data, fine)).status, 0)
+
     def test_a_section_out_of_order_or_repeated_is_malformed(self):
         self.fit()
         data = self.sb.read("m.cml")
@@ -288,6 +349,24 @@ class Damage(Base):
         mut[8:12] = struct.pack("<I", 7)
         r = self.run_with(fix_checksum(bytes(mut) + bytes(32)))
         self.assertEqual(r.first_rule(), "ml.model.malformed")
+
+
+class Features(Base):
+    def test_the_target_is_never_a_feature_whatever_its_place(self):
+        self.sb.write("t.csv", "y,a,b\n5,1,3\n7,2,1\n9,3,4\n8,4,1\n13,5,5\n10,6,9\n")
+        r = self.sb.run("fit", "--model", "linear", "--target", "y", "--output", "t.cml", "t.csv")
+        self.assertEqual(r.status, 0, r)
+        d = self.sb.run("describe", "--model-file", "t.cml").data()["provenance"]
+        self.assertEqual([f["name"] for f in d["features"]], ["a", "b"])
+        self.sb.write("n.csv", "y,a,b\n500,1,3\n-900,6,9\n5,7,1\n")
+        p = self.sb.run("predict", "--model-file", "t.cml", "n.csv").data()
+        self.assertEqual(p["out_of_range"], {"cells": 1, "rows": 1, "columns": [{"name": "a", "count": 1}]})
+        self.assertEqual(p["ignored_columns"], ["y"])
+
+    def test_the_column_dropped_by_the_caller_is_not_an_ignored_column(self):
+        self.fit()
+        d = self.sb.run("predict", "--model-file", "m.cml", "--drop", "y", "train.csv").data()
+        self.assertEqual(d["ignored_columns"], [])
 
 
 class Tracking(Base):
@@ -332,6 +411,17 @@ class Tracking(Base):
         self.sb.write("copy.csv", TRAIN)
         r = self.sb.run("fit", *LIN, "--output", "c.cml", "--track", "runs", "copy.csv")
         self.assertNotIn(r.data()["run"]["id"], ids)
+
+    def test_the_metrics_of_a_record_say_which_rows_they_score(self):
+        a = self.track()
+        rec = json.loads((self.sb.dir / "runs" / (a["id"] + ".json")).read_text())
+        self.assertEqual((rec["metrics"]["on"], rec["metrics"]["rows"]), ("train", 8))
+        self.sb.write("big.csv", "a,y\n" + "".join("%d,%d\n" % (i, 2 * i + 1) for i in range(40)))
+        r = self.sb.run("fit", "--model", "linear", "--target", "y", "--split", "train=0.75", "--output", "s.cml", "--track", "runs", "big.csv")
+        rec = json.loads((self.sb.dir / "runs" / (r.data()["run"]["id"] + ".json")).read_text())
+        self.assertEqual((rec["metrics"]["on"], rec["metrics"]["rows"]), ("held-out", 10))
+        self.assertEqual(rec["counts"], {"file_rows": 40, "train_rows": 30, "test_rows": 10, "features": 1, "steps": 0})
+        self.assertEqual(rec["metrics"]["metrics"], r.data()["summary"]["holdout"]["metrics"])
 
     def test_the_split_spellings_of_one_fraction_are_one_run(self):
         self.sb.write("big.csv", "a,y\n" + "".join("%d,%d\n" % (i, 2 * i + 1) for i in range(40)))
