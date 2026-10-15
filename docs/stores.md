@@ -142,3 +142,55 @@ commit is pushed; the proof for a pushed commit is `python3 scripts/consume_stor
 
 `scripts/mutants_stores.py` runs the mutants of PS1 to PS6 (each on a copy of the tree) and reports each as killed, surviving, or killed for another
 reason than the one it is for (the script holds, for each mutant, the sentence of the gate that must appear). `--fast` runs those that need no compiler.
+
+## 7. Results (printed by the scripts of this repository)
+
+Conditions: the compiler is the pin `a4572ea` on both machines; Mac arm64 (the machine of the other documents), and a Linux x86-64 host, with the
+scripts pinned to cores 0 to 6 (`taskset -c 0-6`) and a clean clone of this branch. Times are one run each, not minimums.
+
+**The closure** (`publish_stores.py --closure`): 23 modules, 198 `pub` declarations (`docs/stores_api.txt`), 327 files and 1.5 MB under
+`.cancho-vcs` (publishing takes 8.7 s). The imports of each module, and so what a consumer reaches through `requires/`:
+
+| Module | Imports (published) |
+|---|---|
+| `ml.refuse`, `ml.rng`, `ml.exact`, `ml.fbits`, `ml.fsq`, `linalg.order`, `metrics.rules`, `metrics.ratio` | none |
+| `ml.limits`, `linalg.tensor` | `ml.refuse` |
+| `ml.matrix` | `ml.limits`, `ml.refuse`, `linalg.tensor` |
+| `linalg.axpy`, `linalg.dot`, `linalg.gemm`, `linalg.syrk`, `linalg.chol` | `linalg.tensor`, `ml.refuse`, and `linalg.order` (not `axpy`) |
+| `linalg.gemv` | those of `dot`, and `linalg.dot` |
+| `linalg.par` | `order`, `tensor`, `dot`, `gemv`, `syrk`, `gemm`, `ml.refuse` |
+| `metrics.classify` | `metrics.rules`, `metrics.ratio` |
+| `metrics.sums` | `linalg.order` |
+| `metrics.regress` | `metrics.rules`, `metrics.sums`, `metrics.classify` |
+| `metrics.rank` | `metrics.rules`, `metrics.ratio`, `metrics.classify`, `metrics.regress` |
+| `metrics.splits` | `ml.rng`, `ml.limits`, `metrics.rules` |
+
+**Determinism (PS1).** Two publishes of the tree, one from the repository directory into one output directory and one from another working directory
+into another, and the committed stores: byte-identical (`mutants_stores.py publish-twice`). The Linux host, with its own build of the same compiler
+revision, publishes stores byte-identical to the ones committed from the Mac (its `--check`, run by the consumption proof, passes).
+
+**The mutants** (`scripts/mutants_stores.py`, each on a copy of the tree): 38 killed, 0 survive.
+
+| Gate | Mutants (all killed, each by the sentence of its own gate) |
+|---|---|
+| PS4 closure | `ml.matrix` listed without `linalg.tensor`; `linalg.chol` without `linalg.order`; `metrics.splits` without `ml.rng`; a source that gains an import of an unlisted module (`ml.dict`); a file that declares another module than its name |
+| PS5 no copy | a copy of `ml.rng` under `tools/`; a copy of `linalg.chol` under `lib/models`; a `[dependencies.*]` of `cancho.toml` on this repository; the document listing an extra module, or missing one; `stores_api.txt` missing; five consumer mutants (two revs, a short rev, an unlisted module, a path outside `.cancho-vcs/<module>`, a copy of a published module in the consumer) |
+| PS2, PS3 `--check` | one comment byte and one code byte of `lib/core/rng.cho`, one byte of `lib/linalg/order.cho`; one byte of a store's source blob, op, manifest and `requires` file; a store file missing, a store missing, `.cancho-vcs` missing; an extra store directory and an extra file; `stores_api.txt` edited and missing; a `pub` signature changed in the source (an added space); the compiler `e47d647` instead of the pin |
+| PS6 consumption | a store removed (with `--no-check`: `cancho install` refuses, the signature "is no longer published"; without it, `--check` names the missing files); one byte of a store source blob (`cancho install` cannot read the blob); a source changed and the stores not republished; a source changed (the mix function of `ml.rng`) and the stores republished (the proof's values differ); a rev that holds no `.cancho-vcs` |
+
+**What the layers catch.** A stale or edited store is caught twice: by `publish_stores.py --check` (a tree comparison) and, when that is skipped, by
+`cancho install`, which re-parses and re-hashes the declarations. A republished change of behaviour is caught by neither: only the values of the proof
+(or the tests of the modules, which run on the sources the stores are published from) catch it, which is why the proof compares with values computed
+here in Python.
+
+**The consumption proof** (`scripts/consume_stores.py`): `cancho install` fetches 23 sources (one per store), the program calls the 23 modules and prints
+66 lines, all of which equal Python's (SplitMix64 and its derived streams, `float(Fraction)` for the exact sum, the k-fold specification, the hand
+values of the Cholesky factor, the solves, the ranks and the products), the dot product within 1e-12 of the exact one, and the three threaded dots
+equal to the single-thread one bit for bit. Output SHA-256, Mac and Linux x86-64: `87c80b90289b8189c9520612acae5291d7732ac74de20437fd6ac8ee1dc5fca0`
+on both (13.2 s and 13.4 s). A consumer that pins only `metrics.splits` installs 5 files (`metrics.splits`, `metrics.rules`, `ml.limits`,
+`ml.refuse`, `ml.rng`) and can `import ml.rng`: the closure comes through `requires/`.
+
+**Limits.** The stores were consumed through a `file://` URL of a clone; a fetch from GitHub is the same command with `--url` and is run when a commit
+holding the stores is pushed. Only the pinned compiler `a4572ea` was tried as the consumer's compiler. `publish_stores.py --check` is a step of
+`scripts/check.sh`; there is no CI workflow that runs it. Which `pub` functions are stable is a statement of this document, not something a compiler
+checks: the gate sees a changed signature, not a changed meaning (section 2).
