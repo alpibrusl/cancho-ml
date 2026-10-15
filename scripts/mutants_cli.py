@@ -160,6 +160,11 @@ def copy_tree(dest):
     if deps.is_dir():
         (dest / "build").mkdir(exist_ok=True)
         shutil.copytree(deps, dest / "build" / "deps")
+    # the other two binaries are not rebuilt from a mutant: the tests that run them (the baseline runs every test) need the ones of the real tree
+    for name in ("ml-predict", "ml-serve"):
+        if (ROOT / "build" / name).is_file():
+            (dest / "build").mkdir(exist_ok=True)
+            shutil.copy2(ROOT / "build" / name, dest / "build" / name)
 
 
 def apply_edits(tree, m, strict=True):
