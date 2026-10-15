@@ -229,7 +229,7 @@ MUTANTS = [
       why="a total above the ceiling gives a size the file cannot have (the length comparison that follows is malformed first) or, when the size equation holds, the library reader refuses the total again: two checks of one bound"),
     # ------------------------------------------------------------------ the registry
     M("b-kind-number", "GB11", "the kind of a boosted model is 9", [(K, "pub fn model_boost() -> [] int {\n    return 8;", "pub fn model_boost() -> [] int {\n    return 9;")], BOOST + ORACLE),
-    M("b-sum-order-of-kind-8-is-2", "GB1", "a boosted model records the lane order", [(K, "if kind == model_tree() || kind == model_boost() {", "if kind == model_tree() {")], BOOST + ORACLE),
+    M("b-sum-order-of-kind-8-is-2", "GB1", "a boosted model records the lane order", [(K, "    if kind == model_boost() {\n        return sum_order_sequential();", "    if false {\n        return sum_order_sequential();")], BOOST + ORACLE),
     M("b-sample-stream-number", "GB1", "the sample stream is kind 6", [(K, "pub fn stream_boost_sample() -> [] int {\n    return 7;", "pub fn stream_boost_sample() -> [] int {\n    return 6;")], ORACLE),
     M("b-validation-stream-number", "GB1", "the validation stream is kind 9", [(K, "pub fn stream_boost_validation() -> [] int {\n    return 8;", "pub fn stream_boost_validation() -> [] int {\n    return 9;")], ORACLE),
 ]

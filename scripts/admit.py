@@ -128,7 +128,9 @@ def git(root, *args):
 
 
 def first_commit(root, rel):
-    rc, out = git(root, "log", "--diff-filter=A", "--format=%H", "--follow", "--", rel)
+    # no --follow: git follows a COPY as it follows a rename, so a module file written from a copy of an older file (the boosted model's reader began as the tree's)
+    # would be dated by the file it was copied from, which is older than any doc written for the module
+    rc, out = git(root, "log", "--diff-filter=A", "--format=%H", "--", rel)
     lines = out.splitlines() if rc == 0 else []
     return lines[-1] if lines else None
 

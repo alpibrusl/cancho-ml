@@ -63,7 +63,10 @@ pub fn sum_order_sequential() -> [] int {
 
 // the sum order a model of `kind` (4 or above) records in its meta
 pub fn sum_order_for(kind: int) -> [] int {
-    if kind == model_tree() || kind == model_boost() {
+    if kind == model_tree() {
+        return sum_order_sequential();
+    }
+    if kind == model_boost() {
         return sum_order_sequential();
     }
     return sum_order();
