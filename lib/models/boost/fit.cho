@@ -138,7 +138,7 @@ fn row_loss(task: int, f: float, y: float) -> [] float {
         af = 0.0 - f;
         mx = 0.0;
     }
-    return (mx - y * f) + mexp.log1p(mexp.exp(0.0 - af));
+    return mx - y * f + mexp.log1p(mexp.exp(0.0 - af));
 }
 
 // the rounds. Answers 0, or the refusal code; the rounds kept are in pr[1]. m fit rows (frows), nv validation rows (vrows), the cap of nodes of a tree, the base score.
