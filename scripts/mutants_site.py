@@ -13,6 +13,7 @@ run of scripts/demo.sh, which needs ml-serve and curl), `site` (scripts/site.py 
 """
 import argparse
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -24,17 +25,34 @@ BINARY = ROOT / "build" / "ml"
 
 # (name, file, old, new, the gates that must catch it)
 IDX = "docs/index.html"
+
+
+def _fig(name):
+    """The figure the landing page shows now (a pattern that names a figure is written from it, so a change of the real number does not break the mutant)."""
+    m = re.search(r'<span data-n="%s">([^<]+)</span>' % name, (ROOT / IDX).read_text())
+    return m.group(1)
+
+
+def _more(value):
+    return "{:,}".format(int(value.replace(",", "")) + 1)
+
+
+def _less(value):
+    return "{:,}".format(int(value.replace(",", "")) - 1)
+
+
+TESTS, KILLED, RULES = _fig("tests"), _fig("mut_killed"), _fig("rules")
 MUTANTS = [
-    ("figure-tests-typed", IDX, '<span data-n="tests">520</span>', '<span data-n="tests">521</span>', {"landing", "site"}),
-    ("figure-mutants-typed", IDX, '<span data-n="mut_killed">1,310</span>', '<span data-n="mut_killed">1,311</span>', {"landing", "site"}),
-    ("figure-rules-typed", IDX, '<b><span data-n="rules">99</span></b>', '<b><span data-n="rules">100</span></b>', {"landing", "site"}),
+    ("figure-tests-typed", IDX, '<span data-n="tests">%s</span>' % TESTS, '<span data-n="tests">%s</span>' % _more(TESTS), {"landing", "site"}),
+    ("figure-mutants-typed", IDX, '<span data-n="mut_killed">%s</span>' % KILLED, '<span data-n="mut_killed">%s</span>' % _more(KILLED), {"landing", "site"}),
+    ("figure-rules-typed", IDX, '<b><span data-n="rules">%s</span></b>' % RULES, '<b><span data-n="rules">%s</span></b>' % _more(RULES), {"landing", "site"}),
     ("figure-red-gap-typed", IDX, '<span data-n="red_gap">8.1</span>', '<span data-n="red_gap">3.1</span>', {"landing", "site"}),
     ("figure-name-unknown", IDX, '<span data-n="red_tol">3</span>', '<span data-n="red_tolerance">3</span>', {"landing", "site"}),
-    ("source-tests-edited", "docs/status.md", "520 conformance tests pass, none skipped", "521 conformance tests pass, none skipped", {"landing", "site"}),
+    ("source-tests-edited", "docs/status.md", "%s conformance tests pass, none skipped" % TESTS, "%s conformance tests pass, none skipped" % _more(TESTS), {"landing", "site"}),
     ("source-golden-line-removed", "docs/bench/xplat_fp.txt",
      "linear-diabetes-t1\teval\t0\t6553db4528e032fd15cc7c61fae26f6a332fad84f73d9ebc25ecef417225a08d\n", "", {"landing", "site"}),
-    ("source-rule-count-stale", "docs/status.md", "| refusals | 99 rule tags in `introspect`", "| refusals | 77 rule tags in `introspect`", {"landing"}),
-    ("evidence-tests-differ", "docs/evidence.html", "520 tests pass", "519 tests pass", {"landing"}),
+    ("source-rule-count-stale", "docs/status.md", "| refusals | %s rule tags in `introspect`" % RULES, "| refusals | %s rule tags in `introspect`" % _less(RULES), {"landing"}),
+    ("evidence-tests-differ", "docs/evidence.html", "%s tests pass" % TESTS, "%s tests pass" % _less(TESTS), {"landing"}),
     ("replay-number-edited", IDX, "<span>accuracy   0.9333 -&gt; 0.8666</span>", "<span>accuracy   0.9334 -&gt; 0.8666</span>", {"demo", "site"}),
     ("replay-hash-edited", IDX, "verified: True  model 3d69715e3577", "verified: True  model 3d69715e3578", {"landing", "demo", "site"}),
     ("replay-whole-hash-shown", IDX, '<span>run d659c3217b4c\u2026</span>', '<span>run d659c3217b4c0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899a</span>', {"landing", "demo", "site"}),
