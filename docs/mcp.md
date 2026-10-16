@@ -156,12 +156,45 @@ shows the three older rows unchanged.
 
 ## 9. Not done
 
-Listed in section 11 after the results. 
+Section 11 lists what the server does not do and what was not run.
 
 ## 10. Results
 
-(Filled by the scripts of this stage.)
+Everything below was printed by a script of this repository on one machine: a Mac (arm64, Apple M4 Max, macOS 26.2) with compiler `0207556`, shared with other sessions, at a load average of 70 to 95 while the
+scripts ran. A time is therefore an upper bound for a quiet machine. The Linux runs wait (section 11).
+
+| gate | what ran | result |
+|---|---|---|
+| A, the fixtures through the tools | `tests/conformance/test_mcp.py` `CaseGate`: each of the 339 fixtures of the command line that can be run as a plain command is run by the command line with the arguments in the order the server builds them (`argv[0]` `ml`), by the server and by the command line in `--format text`, in one scratch directory wiped between the runs | 303 fixtures can be said as a tool call; for all 303 the `structuredContent` is the line the command line printed, byte for byte (repairs with their argv included), `_meta` `ml/exit` is the exit code, `isError` is whether the command refused, and for a success `content[0].text` is the `--format text` output. By exit code: 0 (86 fixtures), 2 (84), 3 (11), 4 (4), 5 (1), 8 (112), 9 (5). The 36 that cannot be said are a flag the server owns (`--format`, `--log`, `--root`), a form the JSON does not hold (`--flag=value`, `-`, an unknown flag) or standard input and output closed. Exit 1 has two fixtures and neither can be said as a call, so it is not tested through a call. 23 s |
+| B, the tools | `scripts/check_mcp_tools.py --introspect`: the 10 tools (9 read-only) regenerate to the committed bytes of `docs/mcp/tools.json` and `tools/ml-mcp/tools.cho`, every `inputSchema` and `outputSchema` passes the Draft 2020-12 meta-schema, the kind, role, default, ceiling and help of every property equal `ml introspect`, every flag of `introspect` is the property of a tool or one the server owns, a valid argument set (the required ones; every property at its lower and at its upper boundary) is accepted, and a wrong type, a value outside an enum, a negative number, a number above its ceiling, a malformed run id, a missing required property and an unknown property are each refused; `test_mcp_schema.py`: the same sets sent to the server get a tool result and never a protocol error, a number above its ceiling is refused with the refusal of the command line byte for byte (57 properties), and the real answers of 21 calls and 6 refusals validate against their `outputSchema` | pass; `--mutants`: 8 of 8 edits of the generator or of the file are refused |
+| C, refusals as data | `test_mcp.py` `Tools`: 12 refusals of 11 rules with rule, exit code in `_meta`, hint and repair; the read-only refusal; `runs_verify` of a record answers `verified: true`; the repair of a refusal is a command the command line runs | pass |
+| D, hostile input | `test_mcp_hostile.py`: 28 tests: invalid JSON (12 forms), non-messages, blank lines, a batch, unknown methods, a call before `initialize`, `initialize` with another revision, 17 wrong argument sets and 8 wrong `params`, a key twice, the same id twice, an id of each JSON type (7 echoed as written, 9 refused with `id: null`), the `jsonrpc` member, notifications and response-shaped messages (no answer), cancellation, the size limit at `cap - 1`, `cap`, `cap + 1` and 1,000,000 bytes, the default limit, the limit flag, nesting to 100,000, a million elements, invalid UTF-8 (6 forms), NUL and control bytes, CR LF, one-byte chunks, EOF in the middle of a message, EOF at once, one call for each exit code of the command line that a call can reach, and 400 random lines assembled from 25 fragments, each followed by a ping | pass; the process never traps or hangs, standard error stays empty |
+| E, mutants | `scripts/mutants_mcp.py`, 51 mutants of the framing, the id, the envelope, the lifecycle, the arguments, the read-only switch, the root, the records, the generator and the authority, on a copy of the tree with every built executable carried | @MUT@ |
+| F, authority | `scripts/manifest.py --check`; `test_authority.AuthorityMcp`; `scripts/check_bins.py` (17 mutants refused, 6 of them for `ml-mcp`) | the row of `ml-mcp` is `args`, `conc`, `dir_read`, `dir_write`, `err_write`, `file_read`, `file_write`, `fs_read("")`, `heap`, `io_read`, `io_write`; bounded; no foreign symbol; the rows of `ml`, `ml-predict` and `ml-serve` are unchanged; three mutants of the authority (the clock read in `main`, a ceiling narrower than the row, a network label in the ceiling) are refused |
+| G, CI | `scripts/check_mcp.py` runs the 48 tests of the four modules above (`test_mcp`, `test_mcp_schema`, `test_mcp_hostile`, `test_authority.AuthorityMcp`); `scripts/check_workflow.py` and its 26 mutants | 48 tests in 32 s; the workflow checks pass |
+| H, a real session | `scripts/site.py` runs `initialize`, `tools/list`, `fit` with `track`, `predict` with inline records and `runs_list` against `ml-mcp` and writes the lines into the README and the guide; `site.py --check` compares them with a fresh run | current |
+
+The change to the library (section 4.1) has its own evidence: the determinism gate `scripts/xplat_check.py --require-predict` prints 88 lines for 22 fits equal to the committed golden (darwin, arm64; `ml-predict` equal to `ml`), so every model file and
+every answer of the 22 fits is the byte sequence the golden holds; the 343 fixtures and the golden answers of the conformance suite pass on the three binaries; `ml`, `ml-predict` and `ml-serve` have the authority rows they had.
+@CONF@
+
+Sizes: `tools/list` is 126,876 bytes with `--allow-write` and 91,883 bytes without (compact JSON; the output schemas are 64 percent of the first and 67 percent of the second); `build/ml-mcp` is 1,682,504 bytes and `build/ml` 1,396,288.
 
 ## 11. Limits and what is not done
 
-(Filled with the results.)
+* **A running call is not cancelled and has no deadline.** The server reads its input between calls; `notifications/cancelled` for a call in progress is read after the answer (tested). There is no clock in the authority row, so
+  no `--timeout-seconds`. A host that needs a deadline kills the process. The work of a call is bounded by the limits of the library.
+* **Revision.** `2025-06-18` only. The stateless revision `2026-07-28` (`server/discover`, `_meta` on every request) is not implemented. A JSON-RPC batch is refused with `-32600`; the pinned revision removed batching
+  (from the changelog as remembered, not from a page fetched for this work).
+* **Not implemented:** resources, prompts, completions, logging, sampling, roots, elicitation, tasks, progress notifications, `listChanged` notifications, pagination, authorization, the streamable HTTP transport.
+* **`content[0].text`** is the text form of a success and the document for a refusal; the specification asks a tool that returns structured content to also return its serialisation as text, which a refusal does and a success does not.
+  `_meta` carries `ml/exit`; the name is a **choice**.
+* **The size of `tools/list`** is 92 to 127 KB: a client that keeps the list in a prompt pays for it. The output schemas are narrowed to the variants of the verb and self-contained.
+* **`introspect`** answers the document `ml introspect` prints with the authority row of `ml-mcp` (the row of `ml-mcp`'s own binary); the other members are equal (tested).
+* **`--log` and `--format` are not offered.** The server owns the format (the text form is in the result); a log file is the command line's.
+* **Exit code 1** (the operating system failed) is not reached by a test through a call: its two fixtures close standard output or read a device, which a call cannot state.
+* **`toolbox.path` is not called by `ml`.** Its `root` and `operand` read `Args` by index, so `tools/ml/paths.cho` has their rules over text (about 100 lines, the pinned `lexical`, `under`, `has_dotdot` and `longest` doing the work).
+  The conformance fixtures of the path rules and the fuzz of the arguments pass on the result; the pinned functions and the port were not run side by side on one corpus.
+* **What was not run here (Linux and the long suites):** the full `scripts/check.sh`; the conformance modules that need numpy, scipy or scikit-learn; `ST_STRIDE=1` of `test_describe`; the mutant scripts of the older gates
+  (their patterns apply: each `--check` passes, but the 1,542 mutants of their last runs were not rebuilt after the change of section 4.1); the `full-gate` of the workflow and the determinism fingerprint on Linux x86-64 and aarch64;
+  `scripts/check_web_pin.py --bins`. `docs/status.md` lists them for the Linux run.
