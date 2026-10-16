@@ -548,14 +548,14 @@ fn main(world: World) -> [] int {
                 borrow fs as &fr in {
                     let lists = argv.of_lists(hp, drops, floats, cats, nas);
                     borrow lists as &lr in {
-                    if mode == 3 {
-                        let cc = csv.CatCfg { cat_mask: 0, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
-                        code = cat_mode(hp, ip, fr, buffer.bytes(lr), file, file2, skip2, cfg, cc, target);
-                    } else if mode == 0 {
-                        code = shape_only(hp, ip, fr, buffer.bytes(lr), file, cfg);
-                    } else {
-                        code = whole(hp, ip, fr, buffer.bytes(lr), file, cfg, mode);
-                    }
+                        if mode == 3 {
+                            let cc = csv.CatCfg { cat_mask: 0, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
+                            code = cat_mode(hp, ip, fr, buffer.bytes(lr), file, file2, skip2, cfg, cc, target);
+                        } else if mode == 0 {
+                            code = shape_only(hp, ip, fr, buffer.bytes(lr), file, cfg);
+                        } else {
+                            code = whole(hp, ip, fr, buffer.bytes(lr), file, cfg, mode);
+                        }
                     }
                     buffer.drop(hp, lists);
                 }
