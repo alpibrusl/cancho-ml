@@ -87,7 +87,7 @@ Multiclass (#37) will reuse `lib/models/rank.cho` per class block, and the loss 
 * A fit that succeeds today produces the same bytes: the checks add no arithmetic to a success path **except one comparison per Newton pass for `l2 = 0`**, which refuses a fit
   whose training rows are all classified correctly with summed loss under `ln 2`. That fit did "succeed" before, with coefficients that grow with the iteration count: it is
   the behaviour the issue calls a defect. Section 6.4 lists every fixture, golden and gate data set with `l2 = 0` that is separable, by running them.
-* `ml-linalg-not-positive-definite` (two equal columns, `l2 = 0`) now answers `ml.fit.collinear`: its stdout changes by design and the test of the baseline pins the new hash (`test_cat_baseline.py` `CHANGED`).
+* `ml-linalg-not-positive-definite` (two equal columns, `l2 = 0`) now answers `ml.fit.collinear`: its stdout changes by design and the record `golden_numeric.json` holds the new answer (one commit re-records it with the two planned cases of section 6.4).
   The tag `ml.linalg.not-positive-definite` keeps a fixture of its own (D1).
 * The unit tests of `lib/` that expect the code 9 for a collinear Gram keep passing if the library returns the new code only where the estimators call it; section 6.4 lists the ones that change.
 
@@ -173,8 +173,8 @@ the fit used to succeed with `x1 = 15.16` (section 1); with `--iterations 2` it 
 
 ### 6.4 What changed and why
 
-* `tests/conformance/fixtures.py` `ml-linalg-not-positive-definite` (two equal columns, `l2` 0): the tag is `ml.fit.collinear`. Status 8 and files are those of the baseline; the new stdout hash is pinned in `test_cat_baseline.py` `CHANGED`.
-* `tests/conformance/golden_planned.json`, 2 of 60: `logistic-5` (exit 0 with a model, now exit 8 and no file: separable data, 25 iterations, `l2` 0) and `logistic-14` (exit 8, tag changed). Pinned in `test_planned_baseline.py` `CHANGED` with the reason; the other 58 give the recorded bytes. `golden_planned.record` also replaces the binary path in the output (no case had one).
+* `tests/conformance/fixtures.py` `ml-linalg-not-positive-definite` (two equal columns, `l2` 0): the tag is `ml.fit.collinear`. Status 8 and files are those of the baseline; the record `golden_numeric.json` holds the new answer.
+* `tests/conformance/golden_planned.json`, 2 of 60: `logistic-5` (exit 0 with a model, now exit 8 and no file: separable data, 25 iterations, `l2` 0) and `logistic-14` (exit 8, tag changed). Both are re-recorded in `golden_planned.json` (`scripts/golden_track.py --write`) in the same commit as `golden_numeric.json`, which changes in one entry only; the other 58 planned cases and the other 273 numeric ones give the bytes `main` recorded (a diff of the records against `main` shows exactly these three entries). `golden_planned.record` also replaces the binary path in the output (no case had one).
 * `tests/p_models.cho`: five expectations of the code 9 for a singular Gram matrix are the code 22; `named_refusals` is new.
 * The worked examples: the penalty-free fits of breast cancer and wine (`--l2 0`) are refused with `ml.fit.separable`; `scripts/examples_common.py` has one such run each (it had two and three); the generated pages and `docs/examples.md` item 5 say so.
 * Unchanged: the 22 fits of the fingerprint; the oracle suites of `lib/models` (bit for bit); every other conformance record. A fit that succeeded before and is not separable (completely, or with ties past the scale bound) succeeds with the same bytes.
