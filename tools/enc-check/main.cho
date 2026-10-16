@@ -17,6 +17,7 @@ edition 5;
 
 import std.buffer;
 import std.io;
+import ml.argv;
 import ml.catmat;
 import ml.csv;
 import ml.csvload;
@@ -247,7 +248,7 @@ fn refusal[&i, &p, &v](io: &!i Io, f: codes.Fault, pl: &p plan.Plan, rv: &v dict
     return codes.exit_code(f.code);
 }
 
-fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &static [byte], file2: &static [byte], target: &static [byte], cfg: csv.Cfg, cc: csv.CatCfg, steps_text: &static [byte]) -> [heap, io_write, fs_read(""), dir_read, file_read] int {
+fn run[&h, &i, &f, &cm](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), cmd: &cm [byte], file: &static [byte], file2: &static [byte], target: &static [byte], cfg: csv.Cfg, cc: csv.CatCfg, steps_text: &static [byte]) -> [heap, io_write, fs_read(""), dir_read, file_read] int {
     var text = buffer.empty(heap, 64);
     var i = 0;
     while i < len(steps_text) {
@@ -284,7 +285,7 @@ fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &static [byt
         plan.drop(heap, pl);
         return code;
     }
-    let l = csvload.load_cat(heap, fs, "", file, file, cfg, cc, target, false, dict.empty_vocab(heap), false);
+    let l = csvload.load_cat(heap, cmd, fs, "", file, file, cfg, cc, target, false, dict.empty_vocab(heap), false);
     let (mx, ids, voc, sh, rep, lcode) = csvload.cat_load_parts(l);
     if rep.status != 0 || lcode != 0 {
         code = load_refusal(io, rep, lcode, "");
@@ -349,7 +350,7 @@ fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &static [byt
     catmat.drop(heap, ids);
     csv.drop_shape(heap, sh);
     if code == 0 && len(file2) > 0 {
-        let l2 = csvload.load_cat(heap, fs, "", file2, file2, cfg, cc, target, len(target) > 0, voc, true);
+        let l2 = csvload.load_cat(heap, cmd, fs, "", file2, file2, cfg, cc, target, len(target) > 0, voc, true);
         let (mx2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l2);
         if rep2.status != 0 || code2 != 0 {
             code = load_refusal(io, rep2, code2, "p-");
@@ -484,12 +485,16 @@ fn main(world: World) -> [] int {
         }
         code = 2;
     } else {
-        let cfg = csv.Cfg { cap: 1048576, max_rows: limits.default_rows(), max_cols: limits.default_cols(), max_cells: limits.default_cells(), mode: 0, tscale: 0, pred: 0, drops: drops, floats: floats, drop_mask: 0, float_mask: 0, missing: true, mrows: 0, mcols: 0, wpc: 0 };
-        let cc = csv.CatCfg { cols: cats, cat_mask: 0, na: nas, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
+        let cfg = csv.Cfg { cap: 1048576, max_rows: limits.default_rows(), max_cols: limits.default_cols(), max_cells: limits.default_cells(), mode: 0, tscale: 0, pred: 0, drop_mask: 0, float_mask: 0, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+        let cc = csv.CatCfg { cat_mask: 0, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
         borrow mut heap as &!hp in {
             borrow mut io as &!ip in {
                 borrow fs as &fr in {
-                    code = run(hp, ip, fr, file, file2, target, cfg, cc, steps_text);
+                    let lists = argv.of_lists(hp, drops, floats, cats, nas);
+                    borrow lists as &lr in {
+                        code = run(hp, ip, fr, buffer.bytes(lr), file, file2, target, cfg, cc, steps_text);
+                    }
+                    buffer.drop(hp, lists);
                 }
             }
         }

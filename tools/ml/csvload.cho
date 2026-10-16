@@ -86,8 +86,8 @@ pub fn kept[&s](sh: &s csv.Shape) -> [] int {
 
 // (matrix, shape, report, code). code is 0, or the refusal of ml.refuse that stopped the matrix being made (no rows, a cap); when
 // report.status is not 0 the matrix is empty and the report says what stopped the read.
-pub fn load[&h, &f, &r, &pq, &pf](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &pq [byte], full: &pf [byte], cfg: csv.Cfg) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
-    return load_t(heap, "", fs, root, rel, full, cfg, "", false);
+pub fn load[&h, &f, &r, &pq, &pf, &cm](heap: &!h Heap, cmd: &cm [byte], fs: &f Fs(""), root: &r [byte], rel: &pq [byte], full: &pf [byte], cfg: csv.Cfg) -> [heap, fs_read(""), dir_read, file_read] (matrix.Matrix, csv.Shape, csv.Report, int) {
+    return load_t(heap, cmd, fs, root, rel, full, cfg, "", false);
 }
 
 // the same for a file named by text: the paths of ml.paths.of_path

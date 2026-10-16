@@ -181,6 +181,27 @@ pub fn pack_raw[&h, &a, &f, &o](heap: &!h Heap, n: int, argv: &a [byte], e: int,
     return buffer.append(heap, b, ops);
 }
 
+// A packed command line that holds the four lists a scan reads and nothing else (the check programs and the tests have no command line of `ml`): --drop, --float, --cat and --na-values, each
+// given when it is not empty
+pub fn of_lists[&h, &d, &f, &c, &n](heap: &!h Heap, drops: &d [byte], floats: &f [byte], cats: &c [byte], na: &n [byte]) -> [heap] buffer.Buffer {
+    var entries = buffer.empty(heap, 128);
+    entries = put_entry(heap, entries, "drop", len(drops) > 0, 0, false, drops);
+    entries = put_entry(heap, entries, "float", len(floats) > 0, 0, false, floats);
+    entries = put_entry(heap, entries, "cat", len(cats) > 0, 0, false, cats);
+    entries = put_entry(heap, entries, "na-values", len(na) > 0, 0, false, na);
+    let argv_fields = put_field(heap, buffer.empty(heap, 8), "ml");
+    var out = buffer.empty(heap, 1);
+    borrow argv_fields as &ar in {
+        borrow entries as &er in {
+            buffer.drop(heap, out);
+            out = pack_raw(heap, 1, buffer.bytes(ar), 4, buffer.bytes(er), 0, "");
+        }
+    }
+    buffer.drop(heap, argv_fields);
+    buffer.drop(heap, entries);
+    return out;
+}
+
 // The packed form of the command line the process was started with and the pinned parser's reading of it.
 pub fn from_cli[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [heap, args] buffer.Buffer {
     var argv = buffer.empty(heap, 256);
