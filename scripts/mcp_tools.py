@@ -119,6 +119,13 @@ def refs(node, acc):
             refs(v, acc)
 
 
+def own_rules():
+    """The tags `ml-mcp` raises itself (tools/ml-mcp/mspec.cho `extra()`): they are rules of the answer of a tool beside the rules of ml."""
+    text = (ROOT / "tools" / "ml-mcp" / "mspec.cho").read_text()
+    m = re.search(r'pub fn extra\(\)[^{]*\{\s*return "((?:[^"\\]|\\.)*)";', text)
+    return [entry.split("|")[0] for entry in m.group(1).split(";")]
+
+
 def output_schema(schema, verb):
     """The envelope of ml.v1 with `data` narrowed to the verb's variants; the definitions it reaches, no others."""
     if verb == "introspect":
@@ -126,6 +133,7 @@ def output_schema(schema, verb):
                 "description": "the tool as data: the document `ml introspect` prints (flags, rules, limits, authority, schema)",
                 "required": ["tool", "version", "flags", "rules", "limits", "authority"]}
     defs = copy.deepcopy(schema["$defs"])
+    defs["rule"]["enum"] = defs["rule"]["enum"] + [r for r in own_rules() if r not in defs["rule"]["enum"]]
     variants = data_variants(schema, verb)
     assert variants, verb
     defs["data"] = {"oneOf": variants} if len(variants) > 1 else variants[0]

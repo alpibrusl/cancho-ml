@@ -77,6 +77,19 @@ fn read_line[&h, &i](heap: &!h Heap, io: &!i Io, cap: int) -> [heap, io_read] (b
     return (data, status);
 }
 
+// whether a line holds nothing but JSON whitespace: it is no message, and nothing answers it
+fn blank[&x](line: &x [byte]) -> [] bool {
+    var i = 0;
+    while i < len(line) {
+        let c = int_of(line[i]);
+        if c != 32 && c != 9 && c != 13 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // the result of initialize
 fn initialize_result[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 512);
@@ -244,7 +257,7 @@ fn serve[&h, &f, &i, &r](heap: &!h Heap, fs: &f Fs(""), io: &!i Io, root: &r [by
             response = rpc.error_response(heap, "null", rpc.invalid_request(), "the message is longer than --max-message-bytes", "");
         } else {
             borrow line as &lr in {
-                if len(buffer.bytes(lr)) > 0 {
+                if !blank(buffer.bytes(lr)) {
                     let (r2, init2) = handle(heap, fs, root, allow_write, buffer.bytes(lr), init);
                     buffer.drop(heap, response);
                     response = r2;

@@ -288,6 +288,7 @@ class Tools(unittest.TestCase):
 
     def test_refusals_are_data(self):
         with_model(self.sb)
+        self.sb.write("short.csv", "id\n1\n")
         c = self.server("--allow-write")
         cases = [
             ("fit", {"file": "reg.csv", "output": "m.cml", "target": "y"}, "conflict.exists", 5),
@@ -301,7 +302,7 @@ class Tools(unittest.TestCase):
             ("fit", {"file": "reg.csv", "output": "n.cml", "target": "nope"}, "ml.input.unknown-column", 3),
             ("eval", {"model-file": "reg.csv", "file": "reg.csv"}, "ml.model.bad-magic", 8),
             ("describe", {"model-file": "m.cml", "limit": 99999999999999}, "ml.param.out-of-range", 2),
-            ("predict", {"model-file": "m.cml", "file": "reg.csv"}, "ml.schema.mismatch", 8),
+            ("predict", {"model-file": "m.cml", "file": "short.csv"}, "ml.schema.mismatch", 8),
         ]
         for tool, args, rule, exit_code in cases:
             r = c.call(tool, args)["result"]
