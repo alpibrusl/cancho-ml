@@ -10,7 +10,7 @@ Exit 1 if a mutant survives unexplained, is invalid, or cannot apply."""
 import os, pathlib, shutil, subprocess, sys, tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CANCHO = os.environ.get("CANCHO", str(ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"))
+CANCHO = os.environ.get("CANCHO", str(ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"))
 DEPS = os.environ.get("ML_DEPS", str(ROOT / "build" / "deps"))
 
 F = "lib/transforms/fit.cho"

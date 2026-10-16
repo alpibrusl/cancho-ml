@@ -26,9 +26,9 @@ import mutants  # noqa: E402
 def scratch(dest):
     ignore = shutil.ignore_patterns(".git", "build", "__pycache__", "*.pyc")
     shutil.copytree(ROOT, dest, ignore=ignore, symlinks=True)
-    comp = dest.parent / "cancho-compiler-a4572ea"
+    comp = dest.parent / "cancho-compiler-0207556"
     if not comp.exists():
-        comp.symlink_to(ROOT.parent / "cancho-compiler-a4572ea")
+        comp.symlink_to(ROOT.parent / "cancho-compiler-0207556")
     deps = ROOT / "build" / "deps"
     (dest / "build").mkdir(exist_ok=True)
     shutil.copytree(deps, dest / "build" / "deps")

@@ -161,6 +161,15 @@ h2 + .sub, h3 + .sub { margin-top: .3rem; }
 .replay pre { margin: 0; padding: 1rem 1.1rem; min-height: 24rem; overflow-x: auto; font: .82rem/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .replay pre:focus-visible { outline-offset: -3px; }
 .replay .g { color: var(--term-good); } .replay .b { color: var(--term-bad); } .replay .d { color: var(--term-dim); } .replay .a { color: var(--term-acc); }
+.replay .tabs { display: flex; flex-wrap: wrap; gap: .2rem .5rem; padding: .3rem .8rem 0; border-bottom: 1px solid #1f2a30; }
+.replay .tabs[hidden] { display: none; }
+.replay .tabs button { font: .78rem var(--mono); color: var(--term-dim); background: none; border: 0; border-bottom: 2px solid transparent; padding: .6rem .5rem; min-height: 2.75rem; cursor: pointer; }
+.replay .tabs button[aria-selected="true"] { color: var(--term-fg); border-bottom-color: var(--term-acc); }
+.replay .tabs button:focus-visible { outline: 2px solid var(--term-acc); outline-offset: -2px; }
+.replay .plabel { padding: .7rem 1.1rem 0; font: .78rem var(--mono); color: var(--term-dim); }
+.replay.js .plabel { display: none; }
+.replay pre[hidden] { display: none; }
+.replay:not(.js) pre { min-height: 0; }
 .caption { text-align: center; color: var(--muted); font-size: .88rem; max-width: 46rem; margin: .8rem auto 0; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1rem; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; min-width: 0; }

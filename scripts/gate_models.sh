@@ -4,7 +4,7 @@
 # non-zero on any failing test or any bit that differs. `scripts/mutants_models.py` runs this script on every mutant of the sources.
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-../cancho-compiler-a4572ea/target/release/cancho}
+CANCHO=${CANCHO:-../cancho-compiler-0207556/target/release/cancho}
 D=build/gate-models
 mkdir -p $D
 FILES="lib/core/*.cho lib/linalg/*.cho lib/models/*.cho lib/models/*/*.cho"

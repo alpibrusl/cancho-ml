@@ -4,7 +4,7 @@
 # fuzz. This is what scripts/mutants_metrics.py runs on each mutant. Exit non-zero on any failure.
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
+CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-0207556/target/release/cancho}
 D=$(mktemp -d)
 trap 'rm -rf $D' EXIT
 LIB="lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/*.cho"

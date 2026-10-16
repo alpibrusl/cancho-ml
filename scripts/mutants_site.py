@@ -32,7 +32,7 @@ MUTANTS = [
     ("source-tests-edited", "docs/status.md", "439 conformance tests pass, none skipped", "440 conformance tests pass, none skipped", {"landing", "site"}),
     ("source-golden-line-removed", "docs/bench/xplat_fp.txt",
      "linear-diabetes-t1\teval\t0\tb7b0b80d1e2a9722d14a493dbf65840db560bb462ab6147d4be7d670be17bc7b\n", "", {"landing", "site"}),
-    ("source-rule-count-stale", "docs/status.md", "| refusals | 79 rule tags in `introspect`", "| refusals | 77 rule tags in `introspect`", {"landing"}),
+    ("source-rule-count-stale", "docs/status.md", "| refusals | 99 rule tags in `introspect`", "| refusals | 77 rule tags in `introspect`", {"landing"}),
     ("evidence-tests-differ", "docs/evidence.html", "439 tests pass", "438 tests pass", {"landing"}),
     ("replay-number-edited", IDX, '"accuracy":"0.9333333333333333"', '"accuracy":"0.9333"', {"site"}),
     ("replay-repair-not-the-argv", IDX, "strategy=mean'</span>\n<span class=\"g\">", "strategy=median'</span>\n<span class=\"g\">", {"landing", "site"}),

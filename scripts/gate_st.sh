@@ -5,7 +5,7 @@
 # ST_FAST=1 runs the gates on fewer cases (the mutants of scripts/mutants_st.py). Needs build/ml (`cancho build --bin ml`) and the pinned packages in build/deps.
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
+CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-0207556/target/release/cancho}
 export CANCHO
 DEPS=${ML_DEPS:-$(pwd)/build/deps}
 LIB="lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/sums.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho $DEPS/*.cho tests/pt.cho"

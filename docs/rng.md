@@ -48,8 +48,10 @@ constant differs, and `scripts/check_registry.py` compares it with this table an
 | 4 | train/test split | the repeat | `lib/metrics/splits.cho` (`docs/metrics.md` 2.1) |
 | 5 | k-fold | the repeat | `lib/metrics/splits.cho` |
 | 6 | stratified k-fold | `2 * repeat + class` | `lib/metrics/splits.cho` |
+| 7 | stratified holdout (`ml fit --split train=F --stratify`) | the class rank (0 for the smaller label) | `lib/metrics/splits.cho`, used by `tools/ml/splitplan.cho` (`docs/splits.md` section 3) |
+| 8 | shuffle of the groups (`--split-group`) | the repeat (0 for a holdout) | `lib/metrics/splits.cho`, used by `tools/ml/splitplan.cho` |
 
-The next stream takes 7. *(Renumbered at integration: the metrics stage had 1, 2, 3 for its three splits, which met the tree's 1 and 2
+The next stream takes 9. *(Renumbered at integration: the metrics stage had 1, 2, 3 for its three splits, which met the tree's 1 and 2
 and k-means' 3, and this file had said "kinds 1 and 2 are the test-input streams". The splits' assignment vectors changed with the
 numbers; the reference vectors of `docs/metrics.md` were recomputed by its Python oracle, and the oracle and the library agree on all
 2,978 cases. The tree's and k-means' numbers did not move, because spike F's identity and the oracle of the models depend on them.)*

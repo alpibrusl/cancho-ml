@@ -105,6 +105,8 @@ metrics.rules: pub fn fail(code: int) -> [] Scored
 metrics.splits: pub fn kind_train_test() -> [] int
 metrics.splits: pub fn kind_kfold() -> [] int
 metrics.splits: pub fn kind_stratified() -> [] int
+metrics.splits: pub fn kind_strat_holdout() -> [] int
+metrics.splits: pub fn kind_group() -> [] int
 metrics.splits: pub fn ceiling_rows() -> [] int
 metrics.splits: pub fn default_rows() -> [] int
 metrics.splits: pub fn stream(seed: int, kind: int, index: int) -> [] int

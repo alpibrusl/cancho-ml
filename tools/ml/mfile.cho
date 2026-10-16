@@ -4,7 +4,7 @@ module ml.mfile;
 
 // The model file (docs/design.md section 4.1, docs/cli.md section 4): bytes, versioned, no timestamp, no host name, no path.
 //
-//     "CML1" | u32 version = 1 | u32 sections = 5 | section * 5 | SHA-256 (32 bytes) of every byte before it
+//     "CML1" | u32 version = 1 | u32 sections = 5 or 6 | section * 5 [| provenance] | SHA-256 (32 bytes) of every byte before it
 //     section = u32 tag | u64 length | payload              all integers little-endian, no padding
 //     1 plan    canonical pipeline text (design.md 4.2)
 //     2 schema  u32 columns | u32 target | per column: u32 name length | name | u32 type (0 int, 1 dec, 2 float) | u32 scale (0 for int and float)
@@ -13,6 +13,7 @@ module ml.mfile;
 //               target) | tensor record
 //     5 meta    u64 rows | u64 columns | u64 seed (0) | u32 hyperparameters (0) | u32 length | compiler pin, informational
 //               [ | u32 sum_order = 2, only for a model kind of 4 or above, which this tool reads but does not build (design.md 4.1) ]
+//     7 provenance (optional; present in every file `fit` of this version writes): the training file's SHA-256, size and rows; a constant model has no feature record (docs/tracking.md section 2, pipeline.provsec)
 //     tensor record = u32 dtype (1 = i64) | u32 rank | rank * u64 shape | elements row-major, i64
 //       regression stats    shape [4]: n, scale, sum of quotients, sum of remainders (the exact sum, as in ml.exact)
 //       classification      shape [6]: n, classes (2), c0, c1, n0, n1
@@ -31,6 +32,7 @@ import std.bytes;
 import std.vec;
 import ml.csv;
 import ml.fbits;
+import pipeline.provsec;
 import toolbox.sha;
 
 pub fn version() -> [] int {
@@ -98,11 +100,14 @@ pub res struct Model {
     // regression: n, scale, sq, sr. classification: n, 2, c0, c1, n0, n1. float regression: n, the bits of the mean
     stats: Box[[int]],
     nstats: int,
+    // the payload of the provenance section (pipeline.provsec), empty when the file has none (a file of an older version) or the model is a fit about to be written without one
+    prov: buffer.Buffer,
 }
 
 pub fn drop_model[&h](heap: &!h Heap, m: Model) -> [heap] int {
-    let Model { kind, rows, cols, target, names, ends, types, stats, nstats } = m;
+    let Model { kind, rows, cols, target, names, ends, types, stats, nstats, prov } = m;
     buffer.drop(heap, names);
+    buffer.drop(heap, prov);
     vec.drop(heap, ends);
     unbox_slice(heap, types);
     unbox_slice(heap, stats);
@@ -145,6 +150,11 @@ pub fn scale_of[&m](m: &m Model, i: int) -> [] int {
 
 pub fn stat[&m](m: &m Model, i: int) -> [] int {
     return contents(m.stats)[i];
+}
+
+// the provenance payload (empty when the file has none)
+pub fn prov_bytes[&m](m: &m Model) -> [] &m [byte] {
+    return buffer.bytes(m.prov);
 }
 
 // ---------------------------------------------------------------- bytes
@@ -260,7 +270,12 @@ pub fn encode[&h, &m, &c](heap: &!h Heap, mo: &m Model, compiler: &c [byte]) -> 
     var out = buffer.empty(heap, 256);
     out = buffer.append(heap, out, "CML1");
     out = put32(heap, out, 1);
-    out = put32(heap, out, 5);
+    let with_prov = buffer.size(mo.prov) > 0;
+    if with_prov {
+        out = put32(heap, out, 6);
+    } else {
+        out = put32(heap, out, 5);
+    }
     out = section(heap, out, 1, plan_text(mo.kind));
     borrow sc as &r in {
         out = section(heap, out, 2, buffer.bytes(r));
@@ -273,6 +288,9 @@ pub fn encode[&h, &m, &c](heap: &!h Heap, mo: &m Model, compiler: &c [byte]) -> 
     }
     borrow me as &r in {
         out = section(heap, out, 5, buffer.bytes(r));
+    }
+    if with_prov {
+        out = section(heap, out, 7, prov_bytes(mo));
     }
     buffer.drop(heap, sc);
     buffer.drop(heap, st);
@@ -292,11 +310,11 @@ pub fn encode[&h, &m, &c](heap: &!h Heap, mo: &m Model, compiler: &c [byte]) -> 
 // ---------------------------------------------------------------- decode
 
 pub fn empty_model[&h](heap: &!h Heap) -> [heap] Model {
-    return Model { kind: 0, rows: 0, cols: 0, target: 0, names: buffer.empty(heap, 1), ends: vec.empty(heap, 1, 0), types: box_slice(heap, 1, 0), stats: box_slice(heap, 8, 0), nstats: 0 };
+    return Model { kind: 0, rows: 0, cols: 0, target: 0, names: buffer.empty(heap, 1), ends: vec.empty(heap, 1, 0), types: box_slice(heap, 1, 0), stats: box_slice(heap, 8, 0), nstats: 0, prov: buffer.empty(heap, 1) };
 }
 
-// (status, aux). Walks the sections: 0, or 3 truncated, 5 malformed with aux 0. `at[i]` and `len[i]` receive where each
-// payload is.
+// (status, aux). Walks the sections: 0, or 3 truncated, 5 malformed with aux 0. `places[2 k]` and `places[2 k + 1]` receive where the payload of the k-th section is and how long (k = 5 is the
+// provenance section, tag 7, which a file may or may not have).
 fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
     let n = len(data);
     let body = n - 32;
@@ -304,12 +322,12 @@ fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
         return (3, 0);
     }
     let count = get32(data, 8);
-    if count != 5 {
+    if count != 5 && count != 6 {
         return (5, 0);
     }
     var pos = 12;
     var s = 0;
-    while s < 5 {
+    while s < count {
         if pos + 12 > body {
             return (3, 0);
         }
@@ -318,7 +336,7 @@ fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
         if length < 0 || length > body - pos - 12 {
             return (3, 0);
         }
-        if tag != s + 1 {
+        if s < 5 && tag != s + 1 || s == 5 && tag != 7 {
             return (5, tag);
         }
         places[2 * s] = pos + 12;
@@ -366,7 +384,7 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Model, int, in
     var aux = 0;
     var m = empty_model(heap);
     region a {
-        let places = alloc_slice[a](10, 0);
+        let places = alloc_slice[a](12, 0);
         let (st, ax) = structure(data, places);
         status = st;
         aux = ax;
@@ -564,7 +582,19 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
         unbox_slice(heap, stats);
         return bad_model(heap, 5);
     }
-    return (Model { kind: mk_kind, rows: rows, cols: cols, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats }, 0, 0);
+    // 7 provenance (only a file that has it): checked against the rows of `meta`, with no feature record
+    if places[10] > 0 && provsec.validate(data[places[10]..places[10] + places[11]], rows, 0) != 0 {
+        buffer.drop(heap, names);
+        vec.drop(heap, ends);
+        unbox_slice(heap, types);
+        unbox_slice(heap, stats);
+        return bad_model(heap, 7);
+    }
+    var prov = buffer.empty(heap, 1);
+    if places[10] > 0 {
+        prov = buffer.append(heap, prov, data[places[10]..places[10] + places[11]]);
+    }
+    return (Model { kind: mk_kind, rows: rows, cols: cols, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats, prov: prov }, 0, 0);
 }
 
 // the numbers of a model section are within the bounds the arithmetic needs (ml.exact)

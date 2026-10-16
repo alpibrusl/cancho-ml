@@ -1,0 +1,457 @@
+edition 6;
+
+module ml.splitcol;
+
+// One column of a CSV file as text, and the two things `--split-group` and `--split-by` make of it (docs/splits.md section 4): the rank of each row's group (the
+// distinct cells sorted bytewise) and the time key of each row with the stable order of the rows by that key. The file is read here a second time, with the dialect of
+// the reader (docs/reader.md section 2): a UTF-8 byte order mark dropped, a CR before the LF dropped, a blank line is not a record, RFC 4180 quotes. Nothing here allocates
+// by a size the input chooses before comparing it with a cap the caller gave, and nothing here traps on any byte string.
+
+import std.buffer;
+import std.bytes;
+import ml.csvcell;
+
+// ---------------------------------------------------------------- the cells of one column
+
+// the end of the blank lines that start at `pos`
+fn skip_blank[&d](data: &d [byte], pos0: int) -> [] int {
+    var pos = pos0;
+    let n = len(data);
+    var going = true;
+    while going && pos < n {
+        if int_of(data[pos]) == 10 {
+            pos = pos + 1;
+        } else if int_of(data[pos]) == 13 && pos + 1 < n && int_of(data[pos + 1]) == 10 {
+            pos = pos + 2;
+        } else {
+            going = false;
+        }
+    }
+    return pos;
+}
+
+// One field from `pos0`: its bytes, with the quotes of RFC 4180 removed, appended to `out` when `keep`. Answers the buffer, the position after the field and the
+// separator and `1` when the record ended (the line feed is consumed) or `0` when a comma followed (consumed).
+fn scan_field[&h, &d](heap: &!h Heap, data: &d [byte], pos0: int, keep: bool, out0: buffer.Buffer) -> [heap] (buffer.Buffer, int, int) {
+    var out = out0;
+    var pos = pos0;
+    let n = len(data);
+    if pos < n && int_of(data[pos]) == '"' {
+        pos = pos + 1;
+        var going = true;
+        while going && pos < n {
+            if int_of(data[pos]) == '"' {
+                if pos + 1 < n && int_of(data[pos + 1]) == '"' {
+                    if keep {
+                        out = buffer.push(heap, out, byte_of('"'));
+                    }
+                    pos = pos + 2;
+                } else {
+                    pos = pos + 1;
+                    going = false;
+                }
+            } else {
+                if keep {
+                    out = buffer.push(heap, out, data[pos]);
+                }
+                pos = pos + 1;
+            }
+        }
+        // after the closing quote the reader allows a comma or the line end only; what else follows is skipped (the reader refused such a file before this ran)
+        while pos < n && int_of(data[pos]) != ',' && int_of(data[pos]) != 10 {
+            pos = pos + 1;
+        }
+    } else {
+        let start = pos;
+        while pos < n && int_of(data[pos]) != ',' && int_of(data[pos]) != 10 {
+            pos = pos + 1;
+        }
+        var end = pos;
+        if end > start && pos < n && int_of(data[pos]) == 10 && int_of(data[pos - 1]) == 13 {
+            end = end - 1;
+        }
+        if keep {
+            out = buffer.append(heap, out, data[start..end]);
+        }
+    }
+    if pos < n && int_of(data[pos]) == ',' {
+        return (out, pos + 1, 0);
+    }
+    if pos < n {
+        pos = pos + 1;
+    }
+    return (out, pos, 1);
+}
+
+// The cells of the column `name` of the file `data`, one per record after the header, concatenated: (text, offsets, records, status). The cell of record i is
+// text[offsets[i] .. offsets[i + 1]]; `offsets` has cap + 2 entries. status 0 ok, 1 the header has no such column, 2 more than `cap` records, 3 a record ends before the column.
+pub fn extract[&h, &d, &m](heap: &!h Heap, data: &d [byte], name: &m [byte], cap: int) -> [heap] (buffer.Buffer, Box[[int]], int, int) {
+    var text = buffer.empty(heap, 64);
+    var off = box_slice(heap, cap + 2, 0);
+    let n = len(data);
+    var pos = 0;
+    if n >= 3 && int_of(data[0]) == 239 && int_of(data[1]) == 187 && int_of(data[2]) == 191 {
+        pos = 3;
+    }
+    pos = skip_blank(data, pos);
+    // the header
+    var col = 0 - 1;
+    var field = 0;
+    var term = 0;
+    while term == 0 {
+        let (s2, p2, t2) = scan_field(heap, data, pos, true, buffer.empty(heap, 32));
+        pos = p2;
+        term = t2;
+        borrow s2 as &sr in {
+            if col < 0 && bytes.equal(buffer.bytes(sr), name) {
+                col = field;
+            }
+        }
+        buffer.drop(heap, s2);
+        field = field + 1;
+    }
+    var rows = 0;
+    var status = 0;
+    if col < 0 {
+        status = 1;
+    }
+    pos = skip_blank(data, pos);
+    while status == 0 && pos < n {
+        if rows >= cap {
+            status = 2;
+        } else {
+            var f = 0;
+            var t = 0;
+            var got = false;
+            while t == 0 {
+                let keep = f == col;
+                let (o2, p2, t2) = scan_field(heap, data, pos, keep, text);
+                text = o2;
+                pos = p2;
+                t = t2;
+                if keep {
+                    got = true;
+                }
+                f = f + 1;
+            }
+            if !got {
+                status = 3;
+            }
+            var size = 0;
+            borrow text as &tr in {
+                size = buffer.size(tr);
+            }
+            borrow mut off as &!ow in {
+                contents(ow)[rows + 1] = size;
+            }
+            rows = rows + 1;
+            pos = skip_blank(data, pos);
+        }
+    }
+    return (text, off, rows, status);
+}
+
+// ---------------------------------------------------------------- sorting row indices (a stable merge sort: the left run wins a tie)
+
+// whether row a comes at or before row b: mode 0 by the bytes of its cell, mode 1 by the pair of keys (k1, k2)
+fn at_or_before[&t, &o, &x, &y](mode: int, a: int, b: int, text: &t [byte], off: &o [int], k1: &x [int], k2: &y [int]) -> [] bool {
+    if mode == 0 {
+        return bytes.compare(text[off[a]..off[a + 1]], text[off[b]..off[b + 1]]) <= 0;
+    }
+    if k1[a] != k1[b] {
+        return k1[a] < k1[b];
+    }
+    return k2[a] <= k2[b];
+}
+
+fn sort_rows[&p, &q, &t, &o, &x, &y](idx: &!p [int], tmp: &!q [int], n: int, mode: int, text: &t [byte], off: &o [int], k1: &x [int], k2: &y [int]) -> [] int {
+    var width = 1;
+    while width < n {
+        var lo = 0;
+        while lo < n {
+            var mid = lo + width;
+            if mid > n {
+                mid = n;
+            }
+            var hi = lo + 2 * width;
+            if hi > n {
+                hi = n;
+            }
+            var i = lo;
+            var j = mid;
+            var k = lo;
+            while i < mid && j < hi {
+                if at_or_before(mode, idx[i], idx[j], text, off, k1, k2) {
+                    tmp[k] = idx[i];
+                    i = i + 1;
+                } else {
+                    tmp[k] = idx[j];
+                    j = j + 1;
+                }
+                k = k + 1;
+            }
+            while i < mid {
+                tmp[k] = idx[i];
+                i = i + 1;
+                k = k + 1;
+            }
+            while j < hi {
+                tmp[k] = idx[j];
+                j = j + 1;
+                k = k + 1;
+            }
+            lo = lo + 2 * width;
+        }
+        var c = 0;
+        while c < n {
+            idx[c] = tmp[c];
+            c = c + 1;
+        }
+        width = width * 2;
+    }
+    return 0;
+}
+
+// 0, 1, .., n - 1 sorted by the key: a fresh box of n + 1 ints
+fn sorted_rows[&h, &t, &o, &x, &y](heap: &!h Heap, n: int, mode: int, text: &t [byte], off: &o [int], k1: &x [int], k2: &y [int]) -> [heap] Box[[int]] {
+    var idx = box_slice(heap, n + 1, 0);
+    var tmp = box_slice(heap, n + 1, 0);
+    borrow mut idx as &!iw in {
+        var i = 0;
+        while i < n {
+            contents(iw)[i] = i;
+            i = i + 1;
+        }
+        borrow mut tmp as &!tw in {
+            sort_rows(contents(iw), contents(tw), n, mode, text, off, k1, k2);
+        }
+    }
+    unbox_slice(heap, tmp);
+    return idx;
+}
+
+// the first row (from 1) whose cell is empty, or 0
+fn first_empty[&o](off: &o [int], n: int) -> [] int {
+    var i = 0;
+    while i < n {
+        if off[i + 1] == off[i] {
+            return i + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- groups
+
+// The rank of the group of each row (the distinct cells sorted bytewise: 0, 1, ..), and how many groups there are: (ranks, groups, row of the first empty cell or 0)
+pub fn group_ranks[&h, &t, &o](heap: &!h Heap, text: &t [byte], off: &o [int], n: int) -> [heap] (Box[[int]], int, int) {
+    var gid = box_slice(heap, n + 1, 0);
+    let miss = first_empty(off, n);
+    if miss > 0 || n < 1 {
+        return (gid, 0, miss);
+    }
+    let dummy = box_slice(heap, 2, 0);
+    var groups = 0;
+    borrow dummy as &dr in {
+        let order = sorted_rows(heap, n, 0, text, off, contents(dr), contents(dr));
+        borrow order as &ordr in {
+            borrow mut gid as &!gw in {
+                var k = 0;
+                var r = 0 - 1;
+                while k < n {
+                    let row = contents(ordr)[k];
+                    if k == 0 || bytes.compare(text[off[row]..off[row + 1]], text[off[contents(ordr)[k - 1]]..off[contents(ordr)[k - 1] + 1]]) != 0 {
+                        r = r + 1;
+                    }
+                    contents(gw)[row] = r;
+                    k = k + 1;
+                }
+                groups = r + 1;
+            }
+        }
+        unbox_slice(heap, order);
+    }
+    unbox_slice(heap, dummy);
+    return (gid, groups, 0);
+}
+
+// ---------------------------------------------------------------- time
+
+fn is_digit(c: int) -> [] bool {
+    return c >= '0' && c <= '9';
+}
+
+// the two digits at `at`, or -1
+fn two[&c](cell: &c [byte], at: int) -> [] int {
+    if at + 2 > len(cell) {
+        return 0 - 1;
+    }
+    let a = int_of(cell[at]);
+    let b = int_of(cell[at + 1]);
+    if !is_digit(a) || !is_digit(b) {
+        return 0 - 1;
+    }
+    return (a - '0') * 10 + (b - '0');
+}
+
+fn days_in(y: int, m: int) -> [] int {
+    if m == 2 {
+        if y % 4 == 0 && y % 100 != 0 || y % 400 == 0 {
+            return 29;
+        }
+        return 28;
+    }
+    if m == 4 || m == 6 || m == 9 || m == 11 {
+        return 30;
+    }
+    return 31;
+}
+
+// The reasons of ml.split.time-format, in the order of docs/splits.md section 4: 1 not a time, 2 the form of a date that is not one of the accepted, 3 a numeric offset, 4 a calendar
+// value out of range, 5 a cell of the other kind than the first (the caller's). (reason or 0, kind 1 date or 2 number, key1, key2)
+pub fn parse_time[&c](cell: &c [byte]) -> [] (int, int, int, int) {
+    let n = len(cell);
+    let looks = n >= 5 && two(cell, 0) >= 0 && two(cell, 2) >= 0 && int_of(cell[4]) == '-';
+    if n >= 10 && looks && two(cell, 5) >= 0 && int_of(cell[7]) == '-' && two(cell, 8) >= 0 {
+        let y = two(cell, 0) * 100 + two(cell, 2);
+        let mo = two(cell, 5);
+        let d = two(cell, 8);
+        var hh = 0;
+        var mi = 0;
+        var ss = 0;
+        var nanos = 0;
+        if n > 10 {
+            if int_of(cell[10]) != 'T' && int_of(cell[10]) != ' ' {
+                return (2, 0, 0, 0);
+            }
+            hh = two(cell, 11);
+            mi = two(cell, 14);
+            if hh < 0 || mi < 0 || n < 16 || int_of(cell[13]) != ':' {
+                return (2, 0, 0, 0);
+            }
+            var p = 16;
+            if p < n && int_of(cell[p]) == ':' {
+                ss = two(cell, p + 1);
+                if ss < 0 {
+                    return (2, 0, 0, 0);
+                }
+                p = p + 3;
+                if p < n && int_of(cell[p]) == '.' {
+                    var q = p + 1;
+                    var digs = 0;
+                    var fr = 0;
+                    var scale = 1000000000;
+                    while q < n && is_digit(int_of(cell[q])) && digs < 9 {
+                        fr = fr * 10 + int_of(cell[q]) - '0';
+                        scale = scale / 10;
+                        digs = digs + 1;
+                        q = q + 1;
+                    }
+                    if digs == 0 || q < n && is_digit(int_of(cell[q])) {
+                        return (2, 0, 0, 0);
+                    }
+                    nanos = fr * scale;
+                    p = q;
+                }
+            }
+            if p < n && int_of(cell[p]) == 'Z' {
+                p = p + 1;
+            }
+            if p != n {
+                // a numeric offset: a sign, two digits, and then nothing, two digits, or a colon and two digits
+                let sign = int_of(cell[p]) == '+' || int_of(cell[p]) == '-';
+                if sign && two(cell, p + 1) >= 0 {
+                    let rest = n - (p + 3);
+                    if rest == 0 || rest == 2 && two(cell, p + 3) >= 0 || rest == 3 && int_of(cell[p + 3]) == ':' && two(cell, p + 4) >= 0 {
+                        return (3, 0, 0, 0);
+                    }
+                }
+                return (2, 0, 0, 0);
+            }
+        }
+        if mo < 1 || mo > 12 || d < 1 || d > days_in(y, mo) || hh > 23 || mi > 59 || ss > 59 {
+            return (4, 0, 0, 0);
+        }
+        return (0, 1, (((y * 100 + mo) * 100 + d) * 100 + hh) * 10000 + mi * 100 + ss, nanos);
+    }
+    let (st, kind, m, frac, idig, key) = csvcell.read(cell);
+    if st == 0 {
+        return (0, 2, csvcell.key_of(kind, m, frac, key), 0);
+    }
+    if looks {
+        return (2, 0, 0, 0);
+    }
+    return (1, 0, 0, 0);
+}
+
+// The keys of the time column: (key1, key2, status, row, reason). status 0 ok, 1 an empty cell (row from 1), 2 a cell that is not a time or of the other kind (row, reason)
+pub fn time_keys[&h, &t, &o](heap: &!h Heap, text: &t [byte], off: &o [int], n: int) -> [heap] (Box[[int]], Box[[int]], int, int, int) {
+    var k1 = box_slice(heap, n + 1, 0);
+    var k2 = box_slice(heap, n + 1, 0);
+    var status = 0;
+    var row = 0;
+    var reason = 0;
+    var kind = 0;
+    borrow mut k1 as &!aw in {
+        borrow mut k2 as &!bw in {
+            var i = 0;
+            while i < n && status == 0 {
+                let cell = text[off[i]..off[i + 1]];
+                if len(cell) == 0 {
+                    status = 1;
+                    row = i + 1;
+                } else {
+                    let (r, kd, a, b) = parse_time(cell);
+                    if r != 0 {
+                        status = 2;
+                        row = i + 1;
+                        reason = r;
+                    } else if kind == 0 {
+                        kind = kd;
+                    } else if kind != kd {
+                        status = 2;
+                        row = i + 1;
+                        reason = 5;
+                    }
+                    contents(aw)[i] = a;
+                    contents(bw)[i] = b;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return (k1, k2, status, row, reason);
+}
+
+// the rows 0 .. n - 1 ordered by (key1, key2), equal keys in the order of the file
+pub fn time_order[&h, &x, &y](heap: &!h Heap, k1: &x [int], k2: &y [int], n: int) -> [heap] Box[[int]] {
+    let dummy = box_slice(heap, 2, 0);
+    var order = box_slice(heap, 2, 0);
+    borrow dummy as &dr in {
+        unbox_slice(heap, order);
+        order = sorted_rows(heap, n, 1, bytes_none(), contents(dr), k1, k2);
+    }
+    unbox_slice(heap, dummy);
+    return order;
+}
+
+fn bytes_none() -> [] &static [byte] {
+    return "";
+}
+
+pub fn reason_word(reason: int) -> [] &static [byte] {
+    if reason == 2 {
+        return "form";
+    }
+    if reason == 3 {
+        return "offset";
+    }
+    if reason == 4 {
+        return "range";
+    }
+    if reason == 5 {
+        return "mixed";
+    }
+    return "not-a-time";
+}

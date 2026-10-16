@@ -161,7 +161,7 @@ def figures(root):
     named = [p for p in ("macOS arm64", "Linux x86-64", "Linux aarch64") if p in row]
     out["platforms"] = str(len(named))
     out["tests"] = re.search(r"([\d,]+) conformance tests pass, none skipped", status).group(1)
-    m = re.search(r"([\d,]+) patterns across \w+ scripts: ([\d,]+) killed, (\d+) survive", status)
+    m = re.search(r"([\d,]+) patterns across [\w-]+ scripts: ([\d,]+) killed, (\d+) survive", status)
     out["mut_total"], out["mut_killed"], out["mut_survive"] = m.groups()
     m = re.search(r"RMSE [\d.]+ against scikit-learn's [\d.]+, ([\d.]+)% apart; the tolerance is (\d+)%", status)
     out["red_gap"], out["red_tol"] = m.groups()

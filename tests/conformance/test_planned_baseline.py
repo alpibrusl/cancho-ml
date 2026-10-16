@@ -18,7 +18,6 @@ import golden_planned  # noqa: E402
 
 GOLDEN = json.loads((pathlib.Path(__file__).parent / "golden_planned.json").read_text())
 
-
 class PlannedBaseline(unittest.TestCase):
     def test_the_record_covers_the_cases(self):
         self.assertEqual(sorted(GOLDEN), sorted(n for n, _ in golden_planned.cases()))
@@ -31,8 +30,9 @@ class PlannedBaseline(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             for name, case in golden_planned.cases():
                 got = golden_planned.record(case, pathlib.Path(td))
-                if got != GOLDEN[name]:
-                    failures.append((name, GOLDEN[name], got))
+                want = dict(GOLDEN[name])
+                if got != want:
+                    failures.append((name, want, got))
         self.assertEqual(failures, [], "a linear or logistic file or answer changed")
 
 

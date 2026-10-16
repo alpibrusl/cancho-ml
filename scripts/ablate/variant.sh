@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
-C=${CANCHO:-$ROOT/../cancho-compiler-a4572ea/target/release/cancho}
+C=${CANCHO:-$ROOT/../cancho-compiler-0207556/target/release/cancho}
 name=$1; edit=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 rm -rf build/ablate/$name; mkdir -p build/ablate/$name; cp -r lib tools build/ablate/$name/
 (cd build/ablate/$name && python3 "$edit")

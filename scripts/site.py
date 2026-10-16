@@ -33,6 +33,9 @@ generated:
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
                                           order, and a hashed column that stores no string
+    splitflow     README.md, guide.html   the split strategies and cross-validation (docs/splits.md): a stratified holdout on docs/examples/data/breast_cancer_train.csv, a time split and
+                                          a group split on docs/examples/data/visits.csv, a refused combination, `ml cv --folds 5` on iris and diabetes with the metrics of
+                                          each fold and their mean and standard deviation, a time cv, a group cv with --emit-folds, and a refusal with its repair
     hero          guide.html              the first example
     agentio       README.md, guide.html   excerpts of `ml introspect`
     skill         guide.html              the first lines of `ml skill`
@@ -149,19 +152,33 @@ DEMOS = [
     ("k_predict", "ml predict --model-file iris-km.ml --distance --drop virginica --limit 5 iris_test.csv"),
     ("k_eval", "ml eval --model-file iris-km.ml --drop virginica iris_test.csv"),
     ("k_text", "ml --format text eval --model-file iris-km.ml --drop virginica iris_train.csv"),
+    # split strategies and cross-validation (docs/splits.md)
+    ("sp_strat", "ml fit --model tree --task classification --max-depth 4 --target benign --split train=0.8 --stratify --seed 7 --output bc.ml breast_cancer_train.csv"),
+    ("sp_time", "ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-by time:visit_date --output visits-time.ml visits.csv"),
+    ("sp_group", "ml fit --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split train=0.75 --split-group customer --seed 2 --output visits-group.ml visits.csv"),
+    ("sp_combo", "ml fit --model tree --task classification --target returning --drop customer,visit_date --split train=0.75 --stratify --split-by time:visit_date --output x.ml visits.csv"),
+    ("sp_cv_iris", "ml --format text cv --model logistic --task classification --step 'scale column=* kind=standard' --l2 0.1 --target virginica --folds 5 --seed 1 --stratify iris_train.csv"),
+    ("sp_cv_diab", "ml --format text cv --model linear --step 'scale column=* kind=standard' --target progression --folds 5 --seed 1 diabetes_train.csv"),
+    ("sp_cv_time", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-by time:visit_date --folds 4 visits.csv"),
+    ("sp_cv_group", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-group customer --folds 4 --seed 5 --emit-folds visits.csv"),
+    ("sp_bad", "ml cv --model linear --step 'scale column=* kind=standard' --target progression --stratify diabetes_train.csv"),
     # the landing page (docs/index.html): a replayed run on the iris files of the worked examples, a refusal with its repair, and the commands of "One command"
     ("r_fit", "ml fit --model logistic --step 'scale column=* kind=standard' --l2 0.1 --split train=0.8 --seed 3 --target virginica --output iris.ml iris_train.csv"),
     ("r_predict", "ml predict --model-file iris.ml --proba --limit 3 iris_test.csv"),
     ("r_eval", "ml eval --model-file iris.ml iris_test.csv"),
     ("r_bad", "ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv"),
-    ("l_fit", "ml fit --model forest --task classification --trees 20 --seed 7 --target virginica --output iris-forest.ml iris_train.csv"),
-    ("l_predict", "ml predict --model-file iris-forest.ml --proba --limit 3 iris_test.csv"),
-    ("l_describe", "ml describe --model-file iris-forest.ml"),
-    ("l_mp", "ml-predict predict --model-file iris-forest.ml --proba --limit 3 iris_test.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
 SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"]}
+# demos whose answer is shown as members found by a path into `data`: the last name of a path is the key shown
+PICK_DATA = {
+    "sp_strat": [("summary", "split"), ("summary", "holdout")],
+    "sp_time": [("summary", "split"), ("summary", "holdout")],
+    "sp_group": [("summary", "split"), ("summary", "holdout")],
+    "sp_cv_time": [("split",), ("strategy",), ("summary",)],
+    "sp_cv_group": [("split",), ("strategy",), ("assignment",)],
+}
 SUMMARY = {
     "bad": ["rule", "hint", "repair"],
     "exists": ["rule", "hint", "detail"],
@@ -177,6 +194,8 @@ SUMMARY = {
     "s_mp_flag": ["rule", "hint", "detail"],
     "k_target": ["rule", "hint", "detail"],
     "k_nok": ["rule", "hint", "detail"],
+    "sp_combo": ["rule", "hint", "repair", "detail"],
+    "sp_bad": ["rule", "hint", "repair"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -190,7 +209,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_bad": "r_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_bad": "r_fixed", "sp_bad": "sp_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -229,11 +248,17 @@ HTTP_DEMOS = [
 ]
 
 
-def http_request(port, method, path, body):
+HTTP_TOKEN = "demo-token"
+HTTP_ALL_PORT_SHOWN = 8081
+
+
+def http_request(port, method, path, body, token=None):
     """The response as curl -i prints it (status line, headers, a blank line, the body), with the line ends of a terminal: the head, and the body of the length it says."""
     s = socket.create_connection(("127.0.0.1", port), timeout=10)
     try:
         head = "%s %s HTTP/1.1\r\nHost: localhost:%d\r\nAccept: */*\r\n" % (method, path, port)
+        if token is not None:
+            head += "Authorization: Bearer %s\r\n" % token
         if body is not None:
             head += "Content-Type: application/json\r\nContent-Length: %d\r\n" % len(body.encode())
         s.sendall((head + "\r\n").encode() + (body or "").encode())
@@ -270,7 +295,7 @@ def run_http_demos(binary, tmp):
     port = s0.getsockname()[1]
     s0.close()
     log = open(Path(tmp) / "serve.log", "w+")
-    proc = subprocess.Popen([str(serve), "--model-file", "pets.ml", "--no-token", "--port", str(port)], cwd=tmp, stdout=subprocess.PIPE, stderr=log, stdin=subprocess.DEVNULL,
+    proc = subprocess.Popen([str(serve), "--model-file", "pets.ml", "--port", str(port)], cwd=tmp, stdout=subprocess.PIPE, stderr=log, stdin=subprocess.DEVNULL,
                             env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
     out = {}
     try:
@@ -284,7 +309,7 @@ def run_http_demos(binary, tmp):
             raise Drift("ml-serve did not listen")
         log.seek(0)
         started = log.read().strip().replace(str(port), str(HTTP_PORT_SHOWN))
-        out["h_start"] = ("ml-serve --model-file pets.ml --no-token --port %d &" % HTTP_PORT_SHOWN, started, 0)
+        out["h_start"] = ("ml-serve --model-file pets.ml --port %d &" % HTTP_PORT_SHOWN, started, 0)
         for key, typed, method, path, body, shape in HTTP_DEMOS:
             head, text = http_request(port, method, path, body)
             status = int(head.split()[1])
@@ -301,6 +326,48 @@ def run_http_demos(binary, tmp):
             if status not in (200, 422):
                 raise Drift("the HTTP demo %s answered %d" % (key, status))
             out[key] = (typed, shown, status)
+        out.update(run_all_demo(serve, tmp))
+    finally:
+        proc.terminate()
+        proc.wait(5)
+        if proc.stdout:
+            proc.stdout.close()
+        log.close()
+    return out
+
+
+def run_all_demo(serve, tmp):
+    """The form for a network: `--bind all --token-file`, started on a free port (the text shows 8081); a request without the token is a 401, with it the answer."""
+    (Path(tmp) / "token.txt").write_text(HTTP_TOKEN + "\n")
+    s0 = socket.socket()
+    s0.bind(("127.0.0.1", 0))
+    port = s0.getsockname()[1]
+    s0.close()
+    log = open(Path(tmp) / "serve-all.log", "w+")
+    proc = subprocess.Popen([str(serve), "--model-file", "pets.ml", "--bind", "all", "--token-file", "token.txt", "--port", str(port)], cwd=tmp, stdout=subprocess.PIPE, stderr=log,
+                            stdin=subprocess.DEVNULL, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
+    out = {}
+    try:
+        for _ in range(100):
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            raise Drift("ml-serve --bind all did not listen")
+        log.seek(0)
+        out["h_all_start"] = ("ml-serve --model-file pets.ml --bind all --token-file token.txt --port %d &" % HTTP_ALL_PORT_SHOWN, log.read().strip().replace(str(port), str(HTTP_ALL_PORT_SHOWN)), 0)
+        head, text = http_request(port, "GET", "/model", None)
+        if int(head.split()[1]) != 401:
+            raise Drift("the demo without the token answered %s, not 401" % head.split()[1])
+        out["h_all_denied"] = ("curl -s -i localhost:%d/model" % HTTP_ALL_PORT_SHOWN, head + "\n\n" + text, 0)
+        head, text = http_request(port, "GET", "/model", None, token=HTTP_TOKEN)
+        if int(head.split()[1]) != 200:
+            raise Drift("the demo with the token answered %s, not 200" % head.split()[1])
+        d = json.loads(text)
+        out["h_all_ok"] = ("curl -s -H 'Authorization: Bearer %s' localhost:%d/model" % (HTTP_TOKEN, HTTP_ALL_PORT_SHOWN),
+                           json.dumps({k: d[k] for k in ("model", "task", "classes")}, ensure_ascii=False, separators=(",", ":")), 0)
     finally:
         proc.terminate()
         proc.wait(5)
@@ -320,6 +387,9 @@ def make_context(binary, tmp):
     for part in ("train", "test"):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
     (Path(tmp) / "iris_gaps.csv").write_text(iris_gaps())
+    # the split examples: the committed files of docs/examples/data
+    for name in ("breast_cancer_train.csv", "diabetes_train.csv", "visits.csv"):
+        (Path(tmp) / name).write_bytes((ROOT / "docs" / "examples" / "data" / name).read_bytes())
     results = {}
 
     def run(words, stdin=None):
@@ -347,12 +417,76 @@ def make_context(binary, tmp):
             if status2 != 0:
                 raise Drift("the repair of the demo `%s` does not run" % key)
             results[REPAIRED[key]] = (shlex.join(argv), out2, status2)
+    run_track_demos(run, tmp, results)
     http_results = run_http_demos(binary, tmp)
+    demo = run_demo(binary, tmp)
     ref = sx.reference()
     examples = sx.run_examples(run, tmp, ref)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
-    return {"results": results, "http": http_results, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
+    return {"results": results, "http": http_results, "demo": demo, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
+
+
+# Run tracking and the skew checks (docs/tracking.md) on docs/examples/data/iris_train.csv and iris_test.csv. The ids are the hashes of the inputs, so they are the same on every run; the
+# commands that name them are typed from the answers of the fits.
+TRACK_FITS = [
+    ("t_fit", "ml fit --model logistic --target virginica --iterations 25 --l2 0 --track runs --output iris-lr.ml iris_train.csv"),
+    ("t_fit2", "ml fit --model forest --task classification --trees 20 --seed 2 --target virginica --track runs --output iris-rf.ml iris_train.csv"),
+]
+SUMMARY_DATA.update({
+    "t_fit": ["path", "bytes", "sha256", "run"], "t_fit2": ["path", "bytes", "sha256", "run"], "t_list": ["count", "runs"], "t_compare": ["model_equal", "inputs"],
+    "t_eval_train": ["rows", "on", "metrics", "out_of_range"], "t_eval_test": ["rows", "on", "metrics", "out_of_range"],
+    "t_predict": ["row_count", "unknown_categories", "out_of_range", "ignored_columns"], "t_verify": ["verified", "model_sha256", "threads"],
+    "t_verify8": ["verified", "model_sha256", "threads"],
+})
+SUMMARY.update({"t_bound": ["rule", "hint", "detail"], "t_conflict": ["rule", "detail"]})
+
+
+def run_track_demos(run, tmp, results):
+    (Path(tmp) / "runs").mkdir()
+    ids = []
+    for key, typed in TRACK_FITS:
+        out, status = run(shlex.split(typed))
+        if status != 0:
+            raise Drift("the demo %s fails" % key)
+        results[key] = (typed, out, status)
+        ids.append(json.loads(out)["data"]["run"]["id"])
+    a, b = ids
+    for key, typed in [
+        ("t_list", "ml runs list runs"),
+        ("t_show", "ml runs show runs %s" % a),
+        ("t_compare", "ml runs compare runs %s %s" % (a, b)),
+        ("t_verify", "ml runs verify runs %s" % a),
+        ("t_verify8", "ml runs verify --threads 8 runs %s" % b),
+        ("t_eval_train", "ml eval --model-file iris-lr.ml --track runs iris_train.csv"),
+        ("t_eval_test", "ml eval --model-file iris-lr.ml --track runs iris_test.csv"),
+        ("t_predict", "ml predict --model-file iris-lr.ml --limit 2 iris_test.csv"),
+        ("t_bound", "ml predict --model-file iris-lr.ml --max-out-of-range 0 iris_test.csv"),
+    ]:
+        out, status = run(shlex.split(typed))
+        results[key] = (typed, out, status)
+
+
+def track_items(ctx):
+    """Track runs and check for skew: fit with --track, list, show, compare, verify; eval says what it scored; predict counts the cells outside the training range and can refuse."""
+    show = ctx["results"]["t_show"]
+    return [("# Every fit can write a run record: canonical JSON, named by the hash of the inputs that determine the model (not the thread count), no timestamp, no payload", None, 0, None),
+            item(ctx, "t_fit"),
+            item(ctx, "t_fit2"),
+            ("# The directory lists the runs; a run is shown whole, and two are compared by the inputs that differ and the metrics side by side", None, 0, None),
+            item(ctx, "t_list"),
+            (show[0], cut(show[1].strip(), 420), show[2], None),
+            item(ctx, "t_compare"),
+            ("# A run is replayable: verify refits in memory and compares the SHA-256 of the model file, at any thread count", None, 0, None),
+            item(ctx, "t_verify"),
+            item(ctx, "t_verify8"),
+            ("# eval says whether it scored the file the model was fitted on, and counts the cells outside the range of the training rows", None, 0, None),
+            item(ctx, "t_eval_train"),
+            item(ctx, "t_eval_test"),
+            ("# predict counts them too, and names the target column it ignored", None, 0, None),
+            item(ctx, "t_predict"),
+            ("# A bound on the rows outside the range refuses, naming the first column and row", None, 0, None),
+            item(ctx, "t_bound")]
 
 
 def item(ctx, key):
@@ -365,6 +499,17 @@ def item(ctx, key):
             raise Drift("the demo %s refuses" % key)
         out = json.dumps({k: doc["data"][k] for k in SUMMARY_DATA[key]}, ensure_ascii=False)
         return typed, out, status, None
+    if key in PICK_DATA:
+        doc = json.loads(out)
+        if not doc["ok"]:
+            raise Drift("the demo %s refuses" % key)
+        picked = {}
+        for path in PICK_DATA[key]:
+            v = doc["data"]
+            for step in path:
+                v = v[step]
+            picked[path[-1]] = v
+        return typed, json.dumps(picked, ensure_ascii=False, separators=(",", ":")), status, None
     if key in SUMMARY:
         doc = json.loads(out)
         if doc["ok"] or status == 0:
@@ -451,6 +596,28 @@ def kmflow_items(ctx):
             item(ctx, "k_text")]
 
 
+def splitflow_items(ctx):
+    """Splits and cross-validation: a stratified holdout, a time split, a group split, a refused combination, k-fold cv of two models with the metrics of every fold and their mean and
+    standard deviation, a time cv, a group cv with the folds as data, and a refusal with its repair."""
+    return [("# A holdout that keeps the class proportions: 426 rows, 20 percent held out, per class the floor or the ceiling of its share", None, 0, None),
+            item(ctx, "sp_strat"),
+            ("# visits.csv: 12 customers with 10 visits each, an ISO date, a basket, the item count and whether the customer came back. The newest quarter of the visits is held out (the date column is dropped as a feature, not as a rule)", None, 0, None),
+            item(ctx, "sp_time"),
+            ("# No customer on both sides: whole customers are held out", None, 0, None),
+            item(ctx, "sp_group"),
+            ("# Two rules for one split are refused, not blended", None, 0, None),
+            item(ctx, "sp_combo"),
+            ("# Five-fold cross-validation, stratified: every step is fitted on the four training folds of each fold alone. Per-fold metrics, then the mean and the sample standard deviation", None, 0, None),
+            item(ctx, "sp_cv_iris"),
+            item(ctx, "sp_cv_diab"),
+            ("# An expanding window: fold i trains on everything before block i + 1 and tests on that block", None, 0, None),
+            item(ctx, "sp_cv_time"),
+            ("# Whole customers per fold, and the assignment of every row (file order) as data, so that a run can be replayed", None, 0, None),
+            item(ctx, "sp_cv_group"),
+            ("# A regression has no classes to keep in proportion. The refusal offers the corrected command", None, 0, None),
+            item(ctx, "sp_bad")]
+
+
 def hflow_items(ctx):
     """Serve a model over HTTP: start, a record, a batch, a refusal with every error, what the model requires, and the document."""
     h = ctx["http"]
@@ -459,7 +626,7 @@ def hflow_items(ctx):
         typed, out, status = h[key]
         return (typed, "\n".join(cut(l, width) for l in out.splitlines()), 0, None)
 
-    return [("# ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080)", None, 0, None),
+    return [("# ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080). With no flag about the address it listens on 127.0.0.1 and needs no token", None, 0, None),
             one("h_start"),
             ("# liveness, and the SHA-256 of the model file being served", None, 0, None),
             one("h_health"),
@@ -471,7 +638,11 @@ def hflow_items(ctx):
             one("h_bad", 260),
             ("# what the model requires of a caller (excerpt), and the OpenAPI 3.1 document made from the same columns (excerpt)", None, 0, None),
             one("h_model"),
-            one("h_openapi")]
+            one("h_openapi"),
+            ("# the form for a network: every address of the host, and a token (a request without it is a 401; the token is the only line of the file)", None, 0, None),
+            one("h_all_start"),
+            one("h_all_denied"),
+            one("h_all_ok")]
 
 
 def render(items, html_mode):
@@ -650,12 +821,15 @@ def exit_codes(ctx):
 # --- the landing page (docs/index.html) -------------------------------------------------------------------------------------------
 
 
+SHA_SHOWN = 12  # digits of a SHA-256 or a run id the replay shows
+
+
 def jline(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
 def short_sha(s):
-    return s[:16] + "\u2026"
+    return s[:SHA_SHOWN] + "\u2026"
 
 
 def result_doc(ctx, key, ok):
@@ -666,63 +840,131 @@ def result_doc(ctx, key, ok):
     return typed, doc, status
 
 
-def replay_lines(ctx):
-    """The replayed run: (class, text) lines. The commands are the typed ones; each answer is one JSON line of which the members that matter are kept
-    (the elision is marked by a final ellipsis and said in the caption), and the sha256 is cut to 16 hex digits."""
+# The demo of scripts/demo.sh, run for real: two tracked experiments, their comparison and replay, train against other, a model served on a free port, two curl
+# requests. The replay shows its output with three changes, all said in the page's caption: a 64-digit hash or run id is cut to SHA_SHOWN digits, the port is the
+# one HTTP_PORT_SHOWN and a temporary path is a dot, and the two JSON answers of the server are cut to the members that matter (marked by an ellipsis).
+DEMO_NOTES = {  # the comment above each command of the demo, by its position (the demo's own comment, where it has one, comes after)
+    0: "# fit on 80% of the rows, seed 3, and keep a run record of the fit (--track)",
+    1: "# the same fit with a stronger penalty",
+    2: "# what differs between the two runs, and their metrics side by side (A and C stand for the two run ids)",
+    3: None, 4: None,
+    5: "# eval says whether it scored the file the model was fitted on, and counts cells outside the training range",
+    6: "# serve the model file: it listens on 127.0.0.1 unless --bind all is given",
+    7: "# a prediction, with the hash of the model that made it",
+    8: None,  # the demo says it: a refusal is data too
+}
+DEMO_TABS = [("fit", "Fit and compare", range(0, 6)), ("serve", "Serve and curl", range(6, 9))]
+
+
+def run_demo(binary, tmp):
+    """The text scripts/demo.sh prints, run with the built binaries (BIN is the directory of `ml` and `ml-serve`) in its own temporary directory."""
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "BIN": str(Path(binary).parent), "DATA": str(ROOT / "docs" / "examples" / "data"), "TMPDIR": str(tmp)}
+    p = subprocess.run(["sh", str(ROOT / "scripts" / "demo.sh")], capture_output=True, text=True, env=env, timeout=180, stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        raise Drift("scripts/demo.sh exits %d: %s" % (p.returncode, (p.stdout + p.stderr)[-300:]))
+    return p.stdout
+
+
+def demo_blocks(out):
+    """-> [(command, demo comment or None, [output lines])], with the port, the paths and the hashes normalised, as the replay shows them."""
+    import re
+    parts = out.split("\n$ ")[1:]
+    if len(parts) != 9:
+        raise Drift("scripts/demo.sh prints %d commands, the replay is written for 9" % len(parts))
+    m = re.search(r"--port (\d+)", parts[6])
+    if not m:
+        raise Drift("scripts/demo.sh no longer starts ml-serve with --port")
+    port = m.group(1)
+    blocks = []
+    for part in parts:
+        text = re.sub(r"[^\s'\"]*cancho-ml-demo\.\w+", ".", part)
+        text = re.sub(r"(?<![0-9])%s(?![0-9])" % port, str(HTTP_PORT_SHOWN), text)
+        text = re.sub(r"\b[0-9a-f]{64}\b", lambda mm: short_sha(mm.group(0)), text)
+        lines = text.rstrip("\n").split("\n")
+        cmd, comment = lines[0], None
+        mm = re.match(r"(.*?)\s{2,}# (.*)$", cmd)
+        if mm:
+            cmd, comment = mm.group(1), mm.group(2)
+        cmd = re.sub(r"\s&\s*$", "", cmd).rstrip()
+        blocks.append((cmd, comment, [l for l in lines[1:] if l != ""]))
+    return blocks
+
+
+def demo_answer(line):
+    """The two JSON answers of the server are cut to the members that matter; the refusal is already cut by the demo (cut -c1-260), so its members are read, not parsed."""
+    import re
+    if line.startswith('{"model_sha256"'):
+        d = json.loads(re.sub(r"[0-9a-f]{12}…", lambda mm: mm.group(0), line))
+        return jline({"model_sha256": d["model_sha256"], "model": d["model"], "columns": d["columns"], "rows": d["rows"], "row_count": d["row_count"],
+                      "out_of_range": {"cells": d["out_of_range"]["cells"]}}) + " …", "g"
+    if line.startswith('{"rule"'):
+        g = lambda pat: re.search(pat, line).group(1)
+        return ('{"rule":"%s","model_sha256":"%s","status":%s,"errors":[{"pointer":"%s","code":"%s"}]} …'
+                % (g(r'"rule":"([^"]+)"'), g(r'"model_sha256":"([^"]+)"'), g(r'"status":(\d+)'), g(r'"pointer":"([^"]+)"'), g(r'"code":"([^"]+)"'))), "b"
+    return line, ""
+
+
+def demo_lines(out, tab):
+    """The replay lines (class, text) of one tab of the demo."""
+    blocks = demo_blocks(out)
     L = []
-    typed, d, _ = result_doc(ctx, "r_fit", True)
-    dd = d["data"]
-    L += [("d", "# fit on 80% of the rows, 20% held out, seed 3"), ("a", "$ " + typed),
-          ("", jline({"ok": True, "data": {"model": dd["model"], "rows": dd["rows"], "bytes": dd["bytes"], "sha256": short_sha(dd["sha256"]),
-                                          "split": dd["summary"]["split"],
-                                          "holdout": {"rows": dd["summary"]["holdout"]["rows"], "accuracy": dd["summary"]["holdout"]["metrics"]["accuracy"]}}}) + " \u2026")]
-    typed, d, _ = result_doc(ctx, "r_predict", True)
-    dd = d["data"]
-    L += [("d", "# the model file alone is enough to predict"), ("a", "$ " + typed),
-          ("", jline({"ok": True, "data": {"columns": dd["columns"], "rows": dd["rows"], "total_rows": dd["total_rows"]}}) + " \u2026")]
-    typed, d, _ = result_doc(ctx, "r_eval", True)
-    dd = d["data"]
-    L += [("d", "# score it on the test file"), ("a", "$ " + typed),
-          ("", jline({"ok": True, "data": {"rows": dd["rows"], "metrics": {k: dd["metrics"][k] for k in ("accuracy", "roc_auc", "log_loss")}}}) + " \u2026")]
+    for i in dict((k, r) for k, _, r in DEMO_TABS)[tab]:
+        cmd, comment, lines = blocks[i]
+        if DEMO_NOTES[i]:
+            L.append(("d", DEMO_NOTES[i]))
+        if comment:
+            L.append(("d", "# " + comment))
+        L.append(("a", "$ " + cmd))
+        for l in lines:
+            text, cls = demo_answer(l)
+            if text.startswith("verified: True"):
+                cls = "g"
+            L.append((cls, text))
+    return L
+
+
+def refusal_lines(ctx):
+    """The third tab: a refusal and its repair, on a file with an empty cell (the demos r_bad and r_fixed)."""
+    L = []
     typed, d, status = result_doc(ctx, "r_bad", False)
     err = d["error"]
     L += [("d", "# one cell of the training file is empty and the plan does not say what to do with it"), ("a", "$ " + typed),
-          ("b", jline({"ok": False, "error": {"rule": err["rule"], "hint": err["hint"], "repair": err["repair"]}}) + " \u2026"),
+          ("b", jline({"ok": False, "error": {"rule": err["rule"], "hint": err["hint"], "repair": err["repair"]}}) + " …"),
           ("b", "# exit status %d" % status)]
     typed, out, status = ctx["results"]["r_fixed"]
     dd = json.loads(out)["data"]
     L += [("d", "# the repair is a command: run as offered"), ("a", "$ " + typed),
-          ("g", jline({"ok": True, "data": {"model": dd["model"], "rows": dd["rows"], "bytes": dd["bytes"], "sha256": short_sha(dd["sha256"])}}) + " \u2026")]
+          ("g", jline({"ok": True, "data": {"model": dd["model"], "rows": dd["rows"], "bytes": dd["bytes"], "sha256": short_sha(dd["sha256"])}}) + " …")]
     return L
 
 
+REPLAY_TABS = [("fit", "Fit and compare"), ("serve", "Serve and curl"), ("fix", "A refusal and its repair")]
+
+
 def replay_html(ctx):
-    return '<pre id="screen" tabindex="0" aria-label="Replayed log">' + "\n".join(
-        '<span%s>%s</span>' % (' class="%s"' % c if c else "", e(x)) for c, x in replay_lines(ctx)) + "</pre>"
-
-
-LAND_CMDS = [("# any of the six models, one verb each", None),
-             ("l_fit", None), ("l_predict", None),
-             ("# what a model file requires of a caller, as data", None), ("l_describe", None),
-             ("# the prediction half, a separate binary with no write and no thread", None), ("l_mp", None),
-             ("# the same file over HTTP, one request at a time (see the guide for the requests and what it answers)", None),
-             ("ml-serve --model-file iris-forest.ml --no-token --port 8080", "serve")]
+    """Three logs, each in its own <pre> (all shown without JavaScript, one at a time with it), and the tab buttons the script reveals."""
+    out = ['<div class="tabs" role="tablist" aria-label="Replayed runs" hidden>']
+    for k, (key, label) in enumerate(REPLAY_TABS):
+        out.append('<button type="button" role="tab" id="tab-%s" aria-controls="screen-%s" aria-selected="%s" tabindex="%d">%s</button>'
+                   % (key, key, "true" if k == 0 else "false", 0 if k == 0 else -1, e(label)))
+    out.append("</div>")
+    for key, label in REPLAY_TABS:
+        lines = demo_lines(ctx["demo"], key) if key != "fix" else refusal_lines(ctx)
+        out.append('<div class="plabel">%s</div>' % e(label))
+        out.append('<pre id="screen-%s" class="screen" role="tabpanel" aria-labelledby="tab-%s" tabindex="0">' % (key, key)
+                   + "\n".join('<span%s>%s</span>' % (' class="%s"' % c if c else "", e(x)) for c, x in lines) + "</pre>")
+    return "\n".join(out)
 
 
 def land_cmds(ctx):
+    """'One command, one model file, one server': the fit, the comparison, the replay of a run, the server and the request, as the demo ran them."""
+    blocks = demo_blocks(ctx["demo"])
     out = []
-    for key, kind in LAND_CMDS:
-        if key.startswith("#"):
-            out.append('<span class="c">%s</span>' % e(key))
-        elif kind == "serve":
-            if "ml-serve --model-file pets.ml --no-token --port 8080 &" != ctx["http"]["h_start"][0]:
-                raise Drift("the ml-serve command of the landing page is not the one the HTTP demos run")
-            out.append('<span class="c">$</span> ' + e(key))
-        else:
-            typed, _, status = ctx["results"][key]
-            if status != 0:
-                raise Drift("the landing command %s fails" % key)
-            out.append('<span class="c">$</span> ' + e(typed))
+    for i, note in ((0, "# any of the six models, one verb; --track keeps a run record"), (2, "# two runs: what differs, and the metrics side by side"),
+                    (3, "# replay a run: re-fit from its record and compare the SHA-256 of the model file"),
+                    (6, "# the same file over HTTP: it listens on 127.0.0.1 unless --bind all is given"), (7, "# one request")):
+        out.append('<span class="c">%s</span>' % e(note))
+        out.append('<span class="c">$</span> ' + e(blocks[i][0]))
     return '<pre class="code" tabindex="0">' + "\n".join(out) + "</pre>"
 
 
@@ -754,7 +996,7 @@ def landing_values(ctx):
     if not m:
         raise Drift("docs/status.md no longer says '<N> conformance tests pass, none skipped'")
     tests = m.group(1)
-    m = re.search(r"([\d,]+) patterns across \w+ scripts: ([\d,]+) killed, (\d+) survive, each explained, 0 unexplained", status)
+    m = re.search(r"([\d,]+) patterns across [\w-]+ scripts: ([\d,]+) killed, (\d+) survive, each explained, 0 unexplained", status)
     if not m:
         raise Drift("docs/status.md no longer gives the mutant totals in its usual words")
     total, killed, survive = m.groups()
@@ -763,7 +1005,9 @@ def landing_values(ctx):
     m = re.search(r"RMSE ([\d.]+) against scikit-learn's ([\d.]+), ([\d.]+)% apart; the tolerance is (\d+)%", status)
     if not m:
         raise Drift("docs/status.md no longer gives the red gate in its usual words")
-    return {"fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
+    import re as _re
+    runners = _re.findall(r"- \{os: ([\w.-]+),", (ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    return {"runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
             "mut_survive": survive, "rules": str(len(ctx["introspect"]["rules"])), "red_gap": m.group(3), "red_tol": m.group(4)}
 
 
@@ -816,11 +1060,11 @@ def foot_html(rel):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/guide.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

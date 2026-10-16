@@ -43,6 +43,7 @@ verdict of each, with the survivors.
 ml [FLAGS] fit FILE       fit a model on a CSV and write it
 ml [FLAGS] predict FILE   apply a stored model to a CSV (FILE, or - or nothing for standard input)
 ml [FLAGS] eval FILE      score a stored model on a CSV
+ml [FLAGS] cv FILE        cross-validate a model: fit and score it on every fold, write nothing (docs/splits.md)
 ml [FLAGS] describe       what a model file requires of its caller (docs/serving.md section 5)
 ml introspect             the tool as data (flags, rules, limits, authority, schema)
 ml skill                  the same as a SKILL.md for an agent
@@ -58,6 +59,7 @@ table to drift (gate T1 checks the one table against its projections).
 | `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) and, for `--model tree|forest`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes` (`docs/wiring-trees.md` section 2) |
 | `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
 | `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
+| `cv` | `--target NAME` (none for kmeans) and a model other than constant | the model flags of `fit` (`--model`, `--plan`, `--step`, the hyperparameters, `--task`, `--positive`, `--drop`, `--float`, `--cat`), `--folds`, `--repeats`, `--stratify`, `--split-group`, `--split-by`, `--emit-folds`, `--seed`, `--threads`, the `--max-*` caps, `--log`, `--format`; never `--output`, `--overwrite`, `--dry-run` or `--split` |
 | `describe` | `--model-file MODEL` | `--limit` (category strings listed per column), `--max-bytes`, `--format` (no CSV operand) |
 
 **Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,
@@ -215,6 +217,8 @@ ever accepted (gate M1 flips every byte three ways).
 
 *The string table.* A file written by `fit` for a model with a categorical step has a sixth section, tag 6, and `sections` is then 6 (a file without a categorical step has the five sections above and the bytes it always had). The section holds the fitted vocabulary of every categorical step (the raw training strings with their counts: a privacy point, `docs/categorical.md` section 11), the `--na-values` markers and the reader limits of the fit, behind a SHA-256 of its own; the `steps` section holds an 8-byte stub for each categorical step and the schema has the type code 3 for each categorical input column. Layout, bounds (131,072 strings, 8 MiB of string bytes, 12 MiB) and refusals (`ml.model.string-table`, `ml.limit.string-table`) are in `docs/stringtable.md`. `predict` and `eval` take no flag of the categorical reader: the file says what to read.
 
+*The provenance section.* Every file `fit` writes ends, before the trailer, with a section of tag 7: the SHA-256 and size of the training file, its rows, and the range of each numeric feature; the header's `sections` is 5, 6 or 7. A file of an older version has none and is read as before. The layout, the bounds and the statistics are `docs/tracking.md` section 2. `fit --track DIR` and the verbs `ml runs list|show|compare|verify` are `docs/tracking.md` section 5; `predict` and `eval` take `--max-out-of-range N`.
+
 ## 5. The log
 
 `--log FILE` appends one NDJSON record at the start of the run (`start`), after the read (`read`: rows, columns, bytes of the CSV), after
@@ -232,7 +236,7 @@ logged; gate L1 plants canaries in all three and in every kind of run. Bounded: 
 command line, and standard input for `predict -` and `predict` with no operand (`io_read`, `docs/serving.md` section 2.4); it creates, appends to, renames and removes only beneath a directory it opened itself, and holds no `fs_write`, so no
 path write; it spawns threads for `fit --threads N` (`conc`); it has no clock, no environment, no network, no foreign code. `ml-predict`, built from the same sources, has the row
 without `conc`, `dir_write` and `file_write` (`manifests/ml-predict.authority.json`, `docs/serving.md` section 3.3). `ml-serve` has the sockets of a server and the clock and writes nothing
-(`manifests/ml-serve.authority.json`, `docs/serving-http.md` section 6).
+(`manifests/ml-serve.authority.json`, `docs/serving-http.md` section 6). It listens on `127.0.0.1` unless `--bind all` is given (which requires `--token-file`); its row says `net_in("")` either way, so the loopback default is proved by a socket test, not by the row (`docs/serving-http.md` section 5.4).
 `design.md` section 7 expected `conc`. **The label arrived at stage W1, deliberately, in the same diff as the test that no thread count changes a byte**
 (`tests/conformance/test_determinism.py`, gate D1), as this section asked: `ml` now links `lib/linalg/par.cho`, which spawns, and the compiler derives
 `conc` from the code, so the label is in the row at `--threads 1` too. The reason is stated in `tools.toml` (`[ml.reasons]`), in the manifests of the two

@@ -42,6 +42,27 @@ pub fn of_path[&h, &f, &s](heap: &!h Heap, rel: &s [byte], full: &f [byte]) -> [
     return Rp { full: copy, shown: len(full) - len(rel), present: true, mem: buffer.empty(heap, 1), stdin: false };
 }
 
+// (child) The path of the file `name` in the directory `dir`: the directory's whole path, a slash, the name; shown from the same place as the directory is. A directory named `.` under --root is the
+// root itself, and its files are then shown by their names alone.
+pub fn child[&h, &r, &n](heap: &!h Heap, dir: &r Rp, name: &n [byte]) -> [heap] Rp {
+    let whole = buffer.bytes(dir.full);
+    var full = buffer.empty(heap, len(whole) + len(name) + 2);
+    full = buffer.append(heap, full, whole);
+    var at = dir.shown;
+    if len(whole) > 0 && int_of(whole[len(whole) - 1]) != '/' {
+        full = buffer.push(heap, full, byte_of('/'));
+    }
+    let leaf = whole[dir.shown..len(whole)];
+    if len(leaf) == 1 && int_of(leaf[0]) == '.' {
+        at = len(whole);
+        if len(whole) > 0 && int_of(whole[len(whole) - 1]) != '/' {
+            at = at + 1;
+        }
+    }
+    full = buffer.append(heap, full, name);
+    return Rp { full: full, shown: at, present: true, mem: buffer.empty(heap, 1), stdin: false };
+}
+
 pub fn is_stdin[&r](r: &r Rp) -> [] bool {
     return r.stdin;
 }

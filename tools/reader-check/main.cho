@@ -541,12 +541,12 @@ fn main(world: World) -> [] int {
         }
         code = 2;
     } else {
-        let cfg = csv.Cfg { cap: max_line, max_rows: max_rows, max_cols: max_cols, max_cells: max_cells, mode: 0, tscale: 0, pred: 0, drops: drops, floats: floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+        let cfg = csv.Cfg { cap: max_line, max_rows: max_rows, max_cols: max_cols, max_cells: max_cells, mode: 0, tscale: 0, pred: 0, drops: drops, floats: floats, drop_mask: 0, float_mask: 0, missing: true, mrows: 0, mcols: 0, wpc: 0 };
         borrow mut heap as &!hp in {
             borrow mut io as &!ip in {
                 borrow fs as &fr in {
                     if mode == 3 {
-                        let cc = csv.CatCfg { cols: cats, na: nas, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
+                        let cc = csv.CatCfg { cols: cats, cat_mask: 0, na: nas, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
                         code = cat_mode(hp, ip, fr, file, file2, skip2, cfg, cc, target);
                     } else if mode == 0 {
                         code = shape_only(hp, ip, fr, file, cfg);

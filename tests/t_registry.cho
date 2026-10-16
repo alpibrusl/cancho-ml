@@ -94,6 +94,9 @@ fn test_stages_use_the_registry() -> [] int {
     if kmeans.kind() != kinds.stream_kmeans() {
         bad = bad + 1;
     }
+    if splits.kind_strat_holdout() != kinds.stream_strat_holdout() || splits.kind_group() != kinds.stream_group() {
+        bad = bad + 1;
+    }
     if splits.kind_train_test() != kinds.stream_train_test() || splits.kind_kfold() != kinds.stream_kfold() || splits.kind_stratified() != kinds.stream_stratified() {
         bad = bad + 1;
     }
@@ -283,7 +286,7 @@ fn test_step_kinds_and_section_tags_are_distinct() -> [] int {
         }
         i = i + 1;
     }
-    if kinds.section_at(0) != 0 || kinds.section_at(kinds.section_count() + 1) != 0 || kinds.section_count() != 6 {
+    if kinds.section_at(0) != 0 || kinds.section_at(kinds.section_count() + 1) != 0 || kinds.section_count() != 7 {
         bad = bad + 1;
     }
     return bad;

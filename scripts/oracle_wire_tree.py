@@ -83,9 +83,11 @@ def labels_record(c0, c1):
     return struct.pack("<IIQqq", 1, 1, 2, c0, c1)
 
 
-def file_bytes(plan, schema, steps, model, rows, ncols, seed):
+def file_bytes(plan, schema, steps, model, rows, ncols, seed, prov=None):
     meta = struct.pack("<QQQII", rows, ncols, seed, 0, len(ow.PIN)) + ow.PIN.encode() + struct.pack("<I", SUM_ORDER_SEQUENTIAL)
-    body = b"CML1" + struct.pack("<II", 1, 5) + ow.section(1, plan.encode()) + ow.section(2, schema) + ow.section(3, steps) + ow.section(4, model) + ow.section(5, meta)
+    body = b"CML1" + struct.pack("<II", 1, 5 if prov is None else 6) + ow.section(1, plan.encode()) + ow.section(2, schema) + ow.section(3, steps) + ow.section(4, model) + ow.section(5, meta)
+    if prov is not None:
+        body += ow.section(7, prov)
     return body + hashlib.sha256(body).digest()
 
 
@@ -160,7 +162,7 @@ def fit_oracle(case):
     if labels:
         model += labels_record(*labels)
     plan = ow.canon(case.plan_text())
-    data = file_bytes(plan, ow.schema_bytes(names, types, t), ow.steps_bytes(stored), model, len(tr), len(names), case.seed)
+    data = file_bytes(plan, ow.schema_bytes(names, types, t), ow.steps_bytes(stored), model, len(tr), len(names), case.seed, ow.provenance_of(case, [names[j] for j in range(len(names)) if j != t], mask))
     ctx = {"stored": stored, "trees": trees, "T": T, "d": d, "labels": labels, "types": types, "mask": mask, "stats": stats, "missing": int(Mn.sum())}
     COVER["cases"] += 1
     COVER["with_missing"] += 1 if ctx["missing"] else 0

@@ -26,7 +26,7 @@ CAT = "lib/transforms/catenc.cho"
 
 
 def compiler():
-    here = ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"
+    here = ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"
     return os.environ.get("CANCHO") or (str(here) if here.exists() else "cancho")
 
 
@@ -212,7 +212,7 @@ MUTANTS = [
     M("e9-split-trained-on-all-rows", ["cli"], "the vocabulary of a split fit is built from all the rows",
       [("tools/ml/wire.cho", "catwire.take_ids(heap, cids, sel, want, o.max_rows, o.max_cols, o.max_cells);\n            if icode != 0 {", "catwire.take_ids(heap, cids, sel, 0 - 1, o.max_rows, o.max_cols, o.max_cells);\n            if icode != 0 {")]),
     M("e9-holdout-uses-train-ids", ["cli"], "the held-out rows are scored on the ids of the training rows",
-      [("tools/ml/wire.cho", "let (idt, icode) = catwire.take_ids(heap, cids, sel, 1, o.max_rows, o.max_cols, o.max_cells);", "let (idt, icode) = catwire.take_ids(heap, cids, sel, 0, o.max_rows, o.max_cols, o.max_cells);")]),
+      [("tools/ml/wire.cho", "let (idt, icode) = catwire.take_ids(heap, cids, sel, which, o.max_rows, o.max_cols, o.max_cells);", "let (idt, icode) = catwire.take_ids(heap, cids, sel, 0, o.max_rows, o.max_cols, o.max_cells);")]),
     # ------------------------------------------------------------------ E3: the thread count
     M("e3-threads-in-the-answer", ["threads"], "the thread count reaches the summary",
       [("tools/ml/wire.cho", "        w = catwire.put_categorical(heap, w, buffer.bytes(tr.fitted.payload));", "        w = catwire.put_categorical(heap, w, buffer.bytes(tr.fitted.payload));\n        w = json.put_key(heap, w, \"threads\");\n        w = json.put_int(heap, w, o.threads);")]),

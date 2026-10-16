@@ -96,6 +96,19 @@ def write_csv(name, desc, header, rows):
     SB.write(name, out.getvalue().encode("utf-8"))
 
 
+def as_text(v):
+    """a document with its integers as text: the client of the tests reads every number of an answer as the text the server wrote"""
+    if isinstance(v, bool) or v is None:
+        return v
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, list):
+        return [as_text(x) for x in v]
+    if isinstance(v, dict):
+        return {k: as_text(x) for k, x in v.items()}
+    return v
+
+
 def tokens(resp):
     d = resp.json()
     return d["columns"], d["rows"], d["unknown_categories"], d["model_sha256"]
@@ -167,6 +180,9 @@ class Bytes(unittest.TestCase):
                         self.assertEqual(cols, want["columns"])
                         self.assertEqual(vals, want["rows"], ("batch", mid, iid))
                         self.assertEqual(int(unk), want.get("unknown_categories", 0))
+                        # docs/tracking.md gate T8: the member the command line prints for the cells outside the training range is the member the server prints (null for a constant model)
+                        self.assertEqual(resp.json()["out_of_range"], as_text(want.get("out_of_range")), ("out_of_range", mid, iid))
+                        total["oor"] = total.get("oor", 0) + (1 if want.get("out_of_range") and want["out_of_range"]["cells"] else 0)
                         self.assertEqual(want["task"], resp.json()["task"])
                         self.assertEqual(want["model"], resp.json()["model"])
                         total["rows"] += len(rs)
