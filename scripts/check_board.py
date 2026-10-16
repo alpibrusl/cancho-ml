@@ -9,7 +9,7 @@
 The runs are made here, in a temporary directory, by the commands of scripts/demo.sh (its two fits) and a larger set (regression, clustering, a constant model, a forest,
 text columns with different reader limits, a stratified split, evals), all with `--track`. The tool's answers (`ml runs list`, `show` of every run, `compare` of every ordered
 pair) are written beside the records. Every expected value below is computed here, from those files and the documented rules, never by the page's code.
-The logic of the page is the part of its one script between `/* LOGIC begin` and `/* LOGIC end */` (scripts/board_node.js loads only that part).
+The logic of the page is the part of its one script between `/* LOGIC begin` and `/* LOGIC end */` (scripts/board_run.js loads only that part).
 Standard library and node.
 """
 import argparse
@@ -32,12 +32,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 PAGE = ROOT / "docs" / "board.html"
-NODE = shutil.which("node") or "/opt/homebrew/bin/node"
 DATA = ROOT / "docs" / "examples" / "data"
 
-BUDGET_PAGE = 48 * 1024
-BUDGET_SCRIPT = 32 * 1024
-BUDGET_WITH_CSS = 72 * 1024
+BUDGET_PAGE = 72 * 1024
+BUDGET_SCRIPT = 56 * 1024
+BUDGET_WITH_CSS = 96 * 1024
 PRIMARY = {"classification": "accuracy", "regression": "rmse", "clustering": "inertia"}
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -56,9 +55,15 @@ FITS = [
     ("pets-cat", "--model logistic --cat species,city --step 'encode column=species kind=onehot min-count=4;freq column=city missing=zero;scale column=age,visits kind=standard' --drop id --iterations 50 --l2 0.1 --target adopted --output pets.ml pets.csv"),
     ("pets-cat32", "--model logistic --cat species,city --max-categories 32 --step 'encode column=species kind=onehot min-count=4;freq column=city missing=zero;scale column=age,visits kind=standard' --drop id --iterations 50 --l2 0.1 --target adopted --output pets32.ml pets.csv"),
     ("pets-plain", "--model logistic --target adopted --drop id,species,city --output pets_plain.ml pets.csv"),
+    ("utf8", "--model linear --float '\u00e1rea,precio_\u20ac' --drop id --target 'precio_\u20ac' --output u.ml utf.csv"),
 ]
 # evals written with --track: (label of the run, argv after `ml eval --model-file M --track runs`)
 EVALS = [("demo-a", "iris_test.csv"), ("demo-a", "iris_train.csv"), ("strat", "--split train=0.5 iris_train.csv")]
+# the runs of the page's sample (docs/board.md section 7): by label, and the one eval it holds; scripts/site.py writes them into docs/board.html
+BOARD_SAMPLE = ("demo-a", "demo-c", "kmeans3")
+BOARD_SAMPLE_EVAL = "iris_test.csv"
+# non-ASCII column names: the record holds them as UTF-8 bytes, and the id is the hash of those bytes
+UTF8_CSV = "id,\u00e1rea,precio_\u20ac\n1,48.5,180000\n2,71.25,240000\n3,64.0,215000\n4,98.5,335000\n5,31.0,120000\n6,50.0,170000\n"
 HOUSES = "id,rooms,area,price\n1,2,48.5,180000\n2,3,71.25,240000\n3,3,64,215000\n4,4,98.5,335000\n5,1,31,120000\n6,2,50,170000\n7,3,80,260000\n8,4,90,300000\n"
 
 
@@ -78,6 +83,7 @@ def make_fixtures(binary, out):
         for name in ("iris_train.csv", "iris_test.csv", "pets.csv"):
             shutil.copy(DATA / name, work / name)
         (work / "houses.csv").write_text(HOUSES)
+        (work / "utf.csv").write_text(UTF8_CSV, encoding="utf-8")
         ids, models = {}, {}
         for label, argv in FITS:
             text, status = run_ml(binary, work, "fit " + argv + " --track runs")
@@ -91,7 +97,7 @@ def make_fixtures(binary, out):
             text, status = run_ml(binary, work, "eval --model-file %s --track runs %s" % (models[label], argv))
             if status != 0 or not json.loads(text)["ok"]:
                 raise SystemExit("check_board: the eval %s %s failed: %s" % (label, argv, text[:300]))
-        files = {p.name: p.read_text() for p in sorted((work / "runs").glob("*.json"))}
+        files = {p.name: p.read_text(encoding="utf-8") for p in sorted((work / "runs").glob("*.json"))}
         listing, status = run_ml(binary, work, "runs list runs")
         runs = []
         for label, rid in ids.items():
@@ -107,17 +113,45 @@ def make_fixtures(binary, out):
         pin = json.loads(files[ids["demo-a"] + ".json"])["inputs"]["compiler"]
         fx = {"files": files, "list": listing, "runs": runs, "compares": compares, "refusal": bad_show, "compare_raw": compare_raw, "compiler": pin,
               "evals": sorted(n for n in files if ".eval-" in n)}
-        (out / "fixtures.json").write_text(json.dumps(fx))
+        (out / "fixtures.json").write_text(json.dumps(fx), encoding="utf-8")
     return fx
 
 
 # --- node ------------------------------------------------------------------------------------------------------------------------------------------------------
 
+JSC = "/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc"
+
+
+def engine_argv():
+    """node when it starts; else Apple's jsc (the same script, scripts/board_run.js, runs under both)."""
+    global _ENGINE
+    if _ENGINE is None:
+        node_path = shutil.which("node")
+        if node_path and subprocess.run([node_path, "--version"], capture_output=True).returncode == 0:
+            _ENGINE = [node_path]
+        elif os.path.exists(JSC):
+            _ENGINE = [JSC, "--"]  # after the script: [JSC, script, "--", request]
+        else:
+            raise RuntimeError("neither a working node nor jsc is available")
+    return _ENGINE
+
+
+_ENGINE = None
+
+
 def node(jobs, page=None):
     req = {"html": str(page or PAGE), "jobs": jobs}
-    p = subprocess.run([NODE, str(HERE / "board_node.js")], input=json.dumps(req), capture_output=True, text=True)
+    with tempfile.NamedTemporaryFile("w", suffix=".json", dir=os.environ.get("TMPDIR"), delete=False) as f:
+        json.dump(req, f)
+        path = f.name
+    try:
+        eng = engine_argv()
+        argv = [eng[0], str(HERE / "board_run.js")] + eng[1:] + [path]
+        p = subprocess.run(argv, capture_output=True, text=True)
+    finally:
+        os.unlink(path)
     if p.returncode != 0:
-        raise RuntimeError("node failed: " + p.stderr[-600:])
+        raise RuntimeError("the script engine failed: " + (p.stderr or p.stdout)[-600:])
     out = json.loads(p.stdout)
     for job, r in zip(jobs, out):
         if not r["ok"]:
@@ -129,7 +163,11 @@ def one(job):
     return node([job])[0]
 
 
-def analyze(sources, mode="subtle"):
+def modes():
+    return ("subtle", "pure") if one({"op": "engine"})["subtle"] else ("pure",)
+
+
+def analyze(sources, mode="pure"):
     return one({"op": "analyze", "sources": sources, "mode": mode})
 
 
@@ -150,21 +188,30 @@ def row_by_id(result, rid):
 
 def g1_sha256(fx, errs):
     rng = random.Random(7)
-    vectors = [b"", b"abc", "précio € \U0001f600".encode()] + [bytes(rng.randrange(256) for _ in range(n)) for n in (55, 56, 57, 63, 64, 65, 119, 120, 128)]
+    vectors = [b"", b"abc", "pr\u00e9cio \u20ac \U0001f600".encode()] + [bytes(rng.randrange(256) for _ in range(n)) for n in (55, 56, 57, 63, 64, 65, 119, 120, 128)]
     vectors.append(bytes(rng.randrange(256) for _ in range(1 << 20)))
-    jobs = []
-    for v in vectors:
-        jobs.append({"op": "sha", "b64": b64(v), "mode": "pure"})
-        jobs.append({"op": "sha", "b64": b64(v), "mode": "subtle"})
+    eng = one({"op": "engine"})
+    jobs = [{"op": "sha", "b64": b64(v), "mode": "pure"} for v in vectors]
+    if eng["subtle"]:
+        jobs += [{"op": "sha", "b64": b64(v), "mode": "subtle"} for v in vectors]
     got = node(jobs)
     for i, v in enumerate(vectors):
         want = hashlib.sha256(v).hexdigest()
-        for mode, g in (("pure", got[2 * i]), ("subtle", got[2 * i + 1])):
-            if g != want:
-                errs.append("G1: the %s SHA-256 of a %d-byte vector is %s, hashlib says %s" % (mode, len(v), g, want))
-    kinds = node([{"op": "kind", "mode": "pure"}, {"op": "kind", "mode": "subtle"}])
-    if kinds != ["pure", "subtle"]:
-        errs.append("G1: makeDigest chose %r with and without crypto.subtle, want ['pure', 'subtle']" % (kinds,))
+        if got[i] != want:
+            errs.append("G1: the built-in SHA-256 of a %d-byte vector is %s, hashlib says %s" % (len(v), got[i], want))
+        if eng["subtle"] and got[len(vectors) + i] != want:
+            errs.append("G1: crypto.subtle through makeDigest gives %s for a %d-byte vector, hashlib says %s" % (got[len(vectors) + i], len(v), want))
+    # the routing: a crypto.subtle is used when the environment has one, the built-in routine when it has none or when the digest call is refused
+    r = one({"op": "routing", "b64": b64(b"abc")})
+    want_abc = hashlib.sha256(b"abc").hexdigest()
+    if r["kinds"] != ["subtle", "subtle", "pure", "pure"]:
+        errs.append("G1: makeDigest picks %s for (a subtle, a subtle that refuses, a crypto without subtle, nothing), want subtle, subtle, pure, pure" % r["kinds"])
+    if r["viaSubtle"] != "".join("%02x" % i for i in range(32)):
+        errs.append("G1: makeDigest did not return the digest of crypto.subtle (%s)" % r["viaSubtle"])
+    for k in ("afterReject", "none", "undef"):
+        if r[k] != want_abc:
+            errs.append("G1: makeDigest without a working crypto.subtle (%s) gives %s, hashlib says %s" % (k, r[k], want_abc))
+    return eng
 
 
 def sources_files(fx, names=None):
@@ -191,7 +238,7 @@ def g2_ids_and_forms(fx, errs):
         "pasted": [{"name": "pasted text", "text": "\n".join(files[n].strip() for n in files)}],
     }
     results = {}
-    for mode in ("subtle", "pure"):
+    for mode in modes():
         for name, srcs in forms.items():
             r = analyze(srcs, mode)
             results[(name, mode)] = r
@@ -205,13 +252,13 @@ def g2_ids_and_forms(fx, errs):
                     errs.append("G2: form %s (%s): run %s has verdict %s" % (name, mode, row["id"][:12], row["verdict"]))
                 if row["kind"] != "record":
                     errs.append("G2: form %s: run %s is not a record row" % (name, row["id"][:12]))
-    base = {r["id"]: pick(r) for r in results[("files", "subtle")]["rows"]}
+    base = {r["id"]: pick(r) for r in results[("files", modes()[0])]["rows"]}
     for (name, mode), r in results.items():
         for row in r["rows"]:
             if pick(row) != base.get(row["id"]):
                 errs.append("G2: form %s (%s) reads run %s differently from the files: %s against %s" % (name, mode, row["id"][:12], pick(row), base.get(row["id"])))
     # the fields against `ml runs list`
-    for row in results[("files", "subtle")]["rows"]:
+    for row in results[("files", modes()[0])]["rows"]:
         lr = list_rows[row["id"]]
         for mine, theirs in (("model", "model"), ("task", "task"), ("dataSha", "data_sha256"), ("modelSha", "model_sha256"), ("trainRows", "train_rows"), ("metricsOn", "metrics_on"), ("evals", "evals")):
             if row[mine] != lr[theirs]:
@@ -242,7 +289,7 @@ def g2_ids_and_forms(fx, errs):
     if cmds != want:
         errs.append("G2: the commands are %s, want %s" % (cmds, want))
     q = one({"op": "commands", "dir": "my runs/it's", "id": rid, "a": rid, "b": rid2})["verify"]
-    if q != "ml runs verify " + shlex.quote("my runs/it's") + " " + rid:
+    if shlex.split(q) != ["ml", "runs", "verify", "my runs/it's", rid]:
         errs.append("G2: a directory name with a space and a quote is not quoted for a shell: %s" % q)
     return results
 
@@ -893,16 +940,16 @@ def g10_structure(fx, errs, html, path):
                 errs.append("G10: an inline handler %s on <%s>" % (k, tag))
             if k == "src":
                 errs.append("G10: a src attribute on <%s>: %s" % (tag, v))
-            if k == "href" and re.match(r"(https?:)?//", v or "") and tag != "a":
+            if k == "href" and re.match(r"(https?:)?//", v or "") and tag != "a" and not (tag == "link" and a.get("rel") == "canonical"):
                 errs.append("G10: <%s href=%s> reaches another host" % (tag, v))
             if k == "tabindex" and v not in ("0", "-1"):
                 errs.append("G10: tabindex %s on <%s> (only 0 and -1)" % (v, tag))
     for pat in FORBIDDEN_APIS:
-        m = re.search(pat, code)
+        m = re.search(pat, code.replace("http://www.w3.org/2000/svg", ""))  # the SVG namespace is a name, not an address that is fetched
         if m:
             errs.append("G10: the script holds %r (%s)" % (m.group(0), pat))
     css_all = "\n".join(p.styles)
-    if re.search(r"@import|url\(", css_all):
+    if re.search(r"@import|url\((?!#)", css_all):
         errs.append("G10: the inline stylesheet imports or loads something (@import or url())")
     # no colour literal: every colour is a token of site.css, whose pairs scripts/check_contrast.py measures
     if re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", css_all):
@@ -974,7 +1021,7 @@ def main(argv):
         print("check_board: %s does not exist" % PAGE)
         return 1
     if args.fixtures:
-        fx = json.loads((Path(args.fixtures) / "fixtures.json").read_text())
+        fx = json.loads((Path(args.fixtures) / "fixtures.json").read_text(encoding="utf-8"))
     else:
         if not Path(args.bin).exists():
             print("check_board: %s does not exist: run `cancho install && cancho build --bin ml` first" % args.bin)

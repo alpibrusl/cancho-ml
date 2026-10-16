@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="en">
+<!--
+  The experiments board (docs/board.md). One page: the logic is the part of the one script between the markers LOGIC begin and LOGIC end, which scripts/check_board.py runs with node;
+  the DOM code after it only draws. Hand-written, except between the paired "gen:NAME" comment lines (the header, the footer and the sample runs: scripts/site.py writes them).
+  Nothing is requested from any other host and nothing is sent.
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cancho-ml experiments board: read run records locally</title>
+<meta name="description" content="Read the run records of ml runs in your browser: a table, a comparison, a chart and a list of problems. Nothing is sent anywhere.">
+<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/board.html">
+<meta name="robots" content="index, follow">
+<meta property="og:site_name" content="cancho-ml">
+<meta property="og:locale" content="en">
+<meta property="og:type" content="website">
+<meta property="og:title" content="cancho-ml experiments board: read run records locally">
+<meta property="og:description" content="Read the run records of ml runs in your browser: a table, a comparison, a chart and a list of problems. Nothing is sent anywhere.">
+<meta property="og:url" content="https://alpibrusl.github.io/cancho-ml/board.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="cancho-ml experiments board: read run records locally">
+<meta name="twitter:description" content="Read the run records of ml runs in your browser: a table, a comparison, a chart and a list of problems. Nothing is sent anywhere.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="assets/cancho-ml-icon.png">
+<link rel="stylesheet" href="assets/site.css">
+<style>
+/* The colours are the tokens of assets/site.css; no colour is written here (scripts/check_board.py, G10). */
+.bd section { padding: 2rem 0 0; }
+.bd h2 { margin: 0 0 .6rem; }
+.bd h3 { margin: 1.2rem 0 .4rem; }
+.bd .lede { color: var(--muted); max-width: 46rem; }
+.bd .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.2rem; }
+.bd .panel > :last-child { margin-bottom: 0; }
+.bd .dropzone { border: 2px dashed var(--muted); border-radius: 12px; padding: 1rem 1.2rem; background: var(--surface); }
+.bd.dragging .dropzone { border-color: var(--accent); background: var(--soft); }
+.bd .row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.bd .row + .row, .bd .row + label, .bd p + .row { margin-top: .8rem; }
+.bd button, .bd .filebtn { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--muted); border-radius: 8px; padding: .45rem .9rem; min-height: 2.75rem; cursor: pointer; display: inline-flex; align-items: center; }
+.bd button:hover, .bd .filebtn:hover { background: var(--soft); }
+.bd button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.bd button:disabled { cursor: not-allowed; color: var(--muted); }
+.bd :focus-visible, .bd .filebtn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.bd .filebtn { position: relative; }
+.bd .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.bd select, .bd textarea, .bd input[type="text"] { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--muted); border-radius: 8px; padding: .4rem .6rem; max-width: 100%; min-height: 2.75rem; }
+.bd textarea { width: 100%; min-height: 5rem; font: .85rem/1.5 var(--mono); }
+.bd label.field { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; color: var(--muted); min-width: 0; }
+.bd .filters { display: flex; flex-wrap: wrap; gap: .6rem 1rem; margin: 1rem 0; }
+.bd #status { margin: .8rem 0 0; font-weight: 600; min-height: 1.6rem; }
+.bd .chip { display: inline-block; border: 1px solid currentColor; border-radius: 999px; padding: 0 .55rem; font-size: .8rem; white-space: nowrap; background: var(--surface); }
+.bd .chip.ok { color: var(--good); } .bd .chip.error { color: var(--bad); } .bd .chip.note { color: var(--warn); }
+.bd ul.problems { list-style: none; margin: .6rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.bd ul.problems li { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: .5rem .8rem; overflow-wrap: anywhere; }
+.bd ul.problems li.error { border-left-color: var(--bad); }
+.bd .src { color: var(--muted); font-size: .85rem; }
+.bd table.fit { min-width: 56rem; }
+.bd table.fit th, .bd table.fit td { padding: .5rem .6rem; vertical-align: middle; }
+.bd table.fit thead th { white-space: nowrap; }
+.bd table.fit th button { border: 0; background: none; padding: .2rem .3rem; min-height: 2.75rem; font-weight: 600; font-size: .85rem; color: var(--muted); }
+.bd table.fit th[aria-sort] button { color: var(--fg); }
+.bd table.fit td.num { font-variant-numeric: tabular-nums; }
+.bd table.fit td.mono, .bd table.fit td button.idbtn { font: .85rem var(--mono); }
+.bd table.fit td button.idbtn { border: 0; background: none; color: var(--accent); text-decoration: underline; padding: .2rem .3rem; min-height: 2.75rem; }
+.bd table.fit tr.bad td:first-child { box-shadow: inset 4px 0 0 var(--bad); }
+.bd table.fit tr.sel td { background: var(--soft); }
+.bd table.fit input[type="checkbox"] { width: 1.3rem; height: 1.3rem; }
+.bd .fitwrap { border: 1px solid var(--line); border-radius: 12px; margin-top: 0; }
+.bd .fitwrap table.fit { margin: 0; }
+.bd .hint { color: var(--muted); font-size: .9rem; }
+.bd .cmd { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .4rem 0; }
+.bd .cmd input { flex: 1 1 18rem; font: .85rem var(--mono); }
+.bd dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: .2rem 1rem; margin: .4rem 0; }
+.bd dl.kv dt { color: var(--muted); } .bd dl.kv dd { margin: 0; overflow-wrap: anywhere; }
+.bd table.cmp { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.bd table.cmp th, .bd table.cmp td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.bd table.cmp th { color: var(--muted); font-weight: 600; }
+.bd table.cmp td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bd .chartbox svg { display: block; width: 100%; height: auto; max-width: 40rem; }
+.bd .chartbox .barheld { fill: var(--accent); }
+.bd .chartbox .bartrain { fill: url(#hatch); stroke: var(--accent); stroke-width: 1.5; }
+.bd .chartbox .hl { stroke: var(--accent); stroke-width: 2; }
+.bd .chartbox .zero { stroke: var(--muted); stroke-width: 1; }
+.bd details { margin-top: .8rem; }
+.bd summary { cursor: pointer; font-weight: 600; min-height: 2.75rem; display: flex; align-items: center; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+#drop { display: none; position: fixed; inset: 0; z-index: 20; align-items: center; justify-content: center; font-size: 1.4rem; font-weight: 700; background: color-mix(in srgb, var(--bg) 88%, transparent); border: 4px dashed var(--accent); }
+#drop.on { display: flex; }
+@media (max-width: 40rem) {
+  .bd section { padding-top: 1.6rem; }
+  .bd .filters label.field { flex: 1 1 100%; }
+  .bd select { width: 100%; }
+  .bd dl.kv { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body class="bd">
+<a class="skip" href="#main">Skip to content</a>
+<!-- gen:nav -->
+<header class="top"><div class="wrap">
+  <a class="brand" href="./">cancho-ml</a>
+  <nav aria-label="Site">
+    <a href="index.html#how" class="opt">How it works</a><a href="guide.html">Guide</a><a href="examples.html" class="opt">Examples</a><a href="board.html" class="opt" aria-current="page">Board</a><a href="evidence.html">Evidence</a><a href="benchmarks.html" class="opt">Benchmarks</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
+  </nav>
+</div></header>
+<!-- /gen:nav -->
+
+<main id="main">
+
+<div class="wrap pagehead">
+  <h1>Experiments board</h1>
+  <p class="sub">Load the run records of <code>ml runs</code> and read them as a table, a comparison and a chart. The page recomputes every run id from the record&rsquo;s bytes and lists everything that does not add up. Nothing is sent anywhere: the files are read and hashed in this page and never leave your machine.</p>
+</div>
+
+<div class="wrap">
+
+<section aria-labelledby="h-load">
+  <h2 id="h-load">Load runs</h2>
+  <div class="dropzone" id="dropzone">
+    <p class="lede">Drop files on this page, choose them, or paste text. It reads the output of <code>ml runs list DIR</code>, the output of <code>ml runs show DIR ID</code>, and the record files <code>DIR/*.json</code> (run records and eval records), several at once. Each load adds to the runs shown.</p>
+    <div class="row">
+      <label class="filebtn" for="pick">Choose files<input id="pick" type="file" multiple></label>
+      <button type="button" id="sample-btn" class="primary">Load the sample runs</button>
+      <button type="button" id="clear-btn">Clear</button>
+    </div>
+    <p class="hint" style="margin:.8rem 0 .4rem"><label for="paste">Or paste text here, then read it (you can also paste anywhere on the page):</label></p>
+    <textarea id="paste" rows="4" spellcheck="false" placeholder="{&quot;ok&quot;:true,&quot;command&quot;:&quot;ml&quot;,..."></textarea>
+    <div class="row"><button type="button" id="paste-btn">Read the pasted text</button></div>
+  </div>
+  <p class="hint">The sample is real records: three runs of <code>ml fit --track</code> on <code>docs/examples/data/iris_train.csv</code> (the two fits of <code>scripts/demo.sh</code> and a k-means) and the eval record <code>ml eval --track</code> wrote for the first, exactly as the tool wrote them.</p>
+  <p id="status" role="status" aria-live="polite"></p>
+  <noscript><p class="notice">This page needs JavaScript to read and hash the records. It sends nothing in either case.</p></noscript>
+</section>
+
+<section id="problems" aria-labelledby="h-problems">
+  <h2 id="h-problems">Problems <span id="pcount" class="chip note">0</span></h2>
+  <p id="pnone" class="lede"></p>
+  <ul id="plist" class="problems"></ul>
+</section>
+
+<section aria-labelledby="h-runs">
+  <h2 id="h-runs">Runs</h2>
+  <p class="hint" id="runs-hint">Load runs to fill the table. Tick two runs to compare them; select a run&rsquo;s id to see it whole.</p>
+  <div class="filters" id="filters">
+    <label class="field" for="f-model">Model<select id="f-model"></select></label>
+    <label class="field" for="f-data">Training data (SHA-256)<select id="f-data"></select></label>
+    <label class="field" for="f-key">Show an input that differs<select id="f-key"></select></label>
+    <label class="field" for="f-value">Keep runs where it is<select id="f-value"></select></label>
+  </div>
+  <p class="hint" id="shown"></p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Runs table. Scrolls sideways on a narrow screen.">
+    <table class="fit" id="runs">
+      <caption class="sr">Runs read from the loaded files, sortable by every column</caption>
+      <thead><tr id="runs-head"></tr></thead>
+      <tbody id="runs-body"></tbody>
+    </table>
+  </div>
+  <p class="hint">The metric column shows the primary metric of each run&rsquo;s task: accuracy for a classification, RMSE for a regression, inertia for a clustering. A metric scored on training rows is not comparable with one scored on held-out rows; the column says which.</p>
+</section>
+
+<section id="detail" aria-labelledby="h-detail" hidden>
+  <h2 id="h-detail">Run</h2>
+  <div class="panel" id="detail-body"></div>
+</section>
+
+<section id="compare" aria-labelledby="h-compare">
+  <h2 id="h-compare">Compare two runs</h2>
+  <p class="hint" id="cmp-hint">Tick two runs in the table. The comparison is the one <code>ml runs compare</code> prints: the inputs that differ and the metrics side by side, with their difference.</p>
+  <div id="cmp-body"></div>
+</section>
+
+<section id="chart" aria-labelledby="h-chart">
+  <h2 id="h-chart">One metric across the runs</h2>
+  <div class="filters"><label class="field" for="c-metric">Metric<select id="c-metric"></select></label></div>
+  <div class="chartbox" id="chart-body"></div>
+</section>
+
+<section aria-labelledby="h-limits">
+  <h2 id="h-limits">What the page checks, and what only the tool can</h2>
+  <div class="panel">
+    <p>For each run record the page hashes the bytes of its <code>inputs</code> with SHA-256 (the browser&rsquo;s <code>crypto.subtle</code>, or a built-in routine when the browser has none) and compares the result with the record&rsquo;s <code>id</code>, and hashes the record up to its <code>check</code> member and compares that too. A record edited by one byte is flagged. This shows that a record is consistent with itself.</p>
+    <p>It does not show that the model can be rebuilt. The page cannot verify a run: <code>ml runs verify DIR ID</code> re-fits from the training file the record names and compares the SHA-256 of the model file, and only the tool can do that, because it needs the training file and the same compiler build. The page never says &ldquo;verified&rdquo;; it gives the command to copy.</p>
+    <p>A list from <code>ml runs list</code> carries no <code>inputs</code>, so a run known only from a list is marked <em>list only</em> and its id is not recomputed. The design, the rules and the checks of this page are in <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/board.md">docs/board.md</a>.</p>
+  </div>
+</section>
+
+</div>
+</main>
+
+<!-- gen:foot -->
+<footer><div class="wrap">
+  <span class="brandline">cancho-ml</span><span>EUPL-1.2</span><span>written in <a href="https://github.com/alpibrusl/cancho">cancho</a></span>
+  <a href="https://github.com/alpibrusl/cancho-ml">Repository</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/status.md">Status</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">Command line</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/design.md">Design</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/board.md">Board: the design</a><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/tracking.md">Run records</a>
+</div></footer>
+<!-- /gen:foot -->
+
+<div id="drop" aria-hidden="true">Drop the files to read them</div>
+
+<!-- gen:sample -->
+<script type="text/plain" id="sample">
+{"schema":"ml.run.v1","id":"0c80a36faf4346a3a023e6317088b11a2cb48a25763d7ce5daf045897696b484","inputs":{"data":{"path":"iris_train.csv","bytes":1422,"sha256":"e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b","rows":75},"target":null,"task":"clustering","plan":"model kind=kmeans k=3 iterations=10 init=kmeans++\n","seed":0,"positive":null,"split":"none","drop":"virginica","float":"","cat":"","na_values":"","reader":null,"compiler":"0207556b4029a3ee73196cdfdb48e8efa7e9c519","sum_order":2},"threads":1,"model":{"path":"km3.ml","bytes":708,"sha256":"538f862b8b122c945eb060cf85a8beb480bfd6418ea953380c4545c3f691b4c7"},"counts":{"file_rows":75,"train_rows":75,"test_rows":0,"features":4,"steps":0},"metrics":{"rows":75,"on":"train","metrics":{"inertia":"30.809815217391304","sizes":[23,20,32],"mean_distance":["0.6499641453058824","0.5941210880169704","0.5587498841606974"]}},"check":"fd590f2e2a3caf456963b54b250c5eea282835e8320324901b66e88166af7ef3"}
+{"schema":"ml.run.v1","id":"519af537b8b7d4f4cbca3e8ec14e157fe3f576fa1e1b3443885b6a69caba5656","inputs":{"data":{"path":"iris_train.csv","bytes":1422,"sha256":"e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b","rows":75},"target":"virginica","task":"classification","plan":"scale column=* kind=standard ddof=0\nmodel kind=logistic iterations=100 l2=1.0\n","seed":3,"positive":null,"split":"holdout train=0.8 seed=3","drop":"","float":"","cat":"","na_values":"","reader":null,"compiler":"0207556b4029a3ee73196cdfdb48e8efa7e9c519","sum_order":2},"threads":1,"model":{"path":"iris_l2_1.ml","bytes":913,"sha256":"a07d94661b977a4f84bc58b138d3df4db1cd19a7042a6187b9164c5ca38a6188"},"counts":{"file_rows":75,"train_rows":60,"test_rows":15,"features":4,"steps":1},"metrics":{"rows":15,"on":"held-out","metrics":{"accuracy":"0.8666666666666667","precision":"0.875","recall":"0.875","f1":"0.875","roc_auc":"0.9464285714285714","log_loss":"0.5234162748162187"}},"check":"757324d806aadbde00f252dfb2a7f50a3e559348bd4d72bbf4c1b95cfb8117e7"}
+{"schema":"ml.run.v1","id":"d659c3217b4c089b216a60f13db742a14798bc9288350ad7c8e6889f9cd83f61","inputs":{"data":{"path":"iris_train.csv","bytes":1422,"sha256":"e510e80e5dccc8297dd2901ca624f7a81da274db462699dfab4eb961610a854b","rows":75},"target":"virginica","task":"classification","plan":"scale column=* kind=standard ddof=0\nmodel kind=logistic iterations=100 l2=0.1\n","seed":3,"positive":null,"split":"holdout train=0.8 seed=3","drop":"","float":"","cat":"","na_values":"","reader":null,"compiler":"0207556b4029a3ee73196cdfdb48e8efa7e9c519","sum_order":2},"threads":1,"model":{"path":"iris.ml","bytes":913,"sha256":"3d69715e357708f13b9d2d5d3fbee6eb76630f98f24a78c2eb4e992361f9c15f"},"counts":{"file_rows":75,"train_rows":60,"test_rows":15,"features":4,"steps":1},"metrics":{"rows":15,"on":"held-out","metrics":{"accuracy":"0.9333333333333333","precision":"0.8888888888888888","recall":"1.0","f1":"0.9411764705882353","roc_auc":"0.9821428571428571","log_loss":"0.2832196913284725"}},"check":"cf2ae3b81e333d7f0a3929415588863a4c496eaf021d1a81b2a0e063d2f3ca13"}
+{"schema":"ml.eval.v1","run":"d659c3217b4c089b216a60f13db742a14798bc9288350ad7c8e6889f9cd83f61","model_sha256":"3d69715e357708f13b9d2d5d3fbee6eb76630f98f24a78c2eb4e992361f9c15f","data":{"path":"iris_test.csv","bytes":522,"sha256":"2f2d0019bf6499c83794a19e06faa5f7860803e62ccfeac279d445867de3747b","rows":25},"on":"other","split":"none","positive":null,"metrics":{"accuracy":"1.0","precision":"1.0","recall":"1.0","f1":"1.0","roc_auc":"1.0","log_loss":"0.21015244741509848"},"check":"3317aa58636400b21de30397c422e5cc3c49a99588de1e8101af85ca47677807"}
+</script>
+<!-- /gen:sample -->
+
+<script>
+"use strict";
+/* LOGIC begin: pure functions; scripts/check_board.py runs this part with node. */
+var Board = (function () {
+  var TASKS = { classification: "accuracy", regression: "rmse", clustering: "inertia" };
+  var HEX64 = /^[0-9a-f]{64}$/;
+  var MAX_DOCS = 5000;
+
+  /* ---- SHA-256: the browser's, or this one ---- */
+  var K = [], H0 = [];
+  (function () {
+    for (var n = 2; K.length < 64; n++) {
+      var p = true;
+      for (var d = 2; d * d <= n; d++) { if (n % d === 0) { p = false; break; } }
+      if (!p) { continue; }
+      if (H0.length < 8) { H0.push((Math.sqrt(n) % 1) * 4294967296 >>> 0); }
+      K.push((Math.cbrt(n) % 1) * 4294967296 >>> 0);
+    }
+  })();
+  function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+  function sha256Hex(bytes) {
+    var h = H0.slice(), n = bytes.length, total = ((n + 9 + 63) >> 6) << 6;
+    var buf = new Uint8Array(total), dv = new DataView(buf.buffer), w = new Uint32Array(64);
+    buf.set(bytes);
+    buf[n] = 128;
+    dv.setUint32(total - 8, Math.floor(n / 536870912));
+    dv.setUint32(total - 4, (n * 8) >>> 0);
+    for (var off = 0; off < total; off += 64) {
+      var i;
+      for (i = 0; i < 16; i++) { w[i] = dv.getUint32(off + 4 * i); }
+      for (i = 16; i < 64; i++) {
+        var s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+      }
+      var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+      for (i = 0; i < 64; i++) {
+        var t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+        var t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+        hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
+      h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+    }
+    return h.map(function (x) { return ("00000000" + x.toString(16)).slice(-8); }).join("");
+  }
+  function hexOf(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (x) { return (x < 16 ? "0" : "") + x.toString(16); }).join(""); }
+  /* env.crypto.subtle when it exists, else the routine above; the result is a function from bytes to a promise of the hex digest, with .kind */
+  function makeDigest(env) {
+    var sub = env && env.crypto && env.crypto.subtle && typeof env.crypto.subtle.digest === "function" ? env.crypto.subtle : null;
+    var f = sub ? function (bytes) { return sub.digest("SHA-256", bytes).then(hexOf, function () { return sha256Hex(bytes); }); }
+                : function (bytes) { return Promise.resolve(sha256Hex(bytes)); };
+    f.kind = sub ? "subtle" : "pure";
+    return f;
+  }
+  function enc(s) { return new TextEncoder().encode(s); }
+
+  /* ---- JSON documents in a text ---- */
+  function skipString(t, i) {
+    for (i++; i < t.length; i++) {
+      var c = t.charCodeAt(i);
+      if (c === 92) { i++; } else if (c === 34) { return i + 1; }
+    }
+    return -1;
+  }
+  function valueEnd(t, i) {
+    var c = t.charAt(i);
+    if (c === '"') { return skipString(t, i); }
+    if (c === "{" || c === "[") {
+      var depth = 0;
+      for (; i < t.length; i++) {
+        c = t.charAt(i);
+        if (c === '"') { i = skipString(t, i); if (i < 0) { return -1; } i--; }
+        else if (c === "{" || c === "[") { depth++; }
+        else if (c === "}" || c === "]") { depth--; if (depth === 0) { return i + 1; } }
+      }
+      return -1;
+    }
+    var j = i;
+    while (j < t.length && ",}] \t\r\n".indexOf(t.charAt(j)) < 0) { j++; }
+    return j;
+  }
+  /* the objects and arrays at the top level of a text, with the text around them (junk) and where it was cut */
+  function splitDocs(text) {
+    var docs = [], junk = [], cut = null, i = 0, n = text.length;
+    while (i < n) {
+      var c = text.charAt(i);
+      if (c === "{" || c === "[") {
+        var e = valueEnd(text, i);
+        if (e < 0) { cut = { start: i, text: text.slice(i, i + 60) }; break; }
+        docs.push({ raw: text.slice(i, e), start: i });
+        i = e;
+      } else if (/\s/.test(c)) {
+        i++;
+      } else {
+        var j = i;
+        while (j < n && text.charAt(j) !== "{" && text.charAt(j) !== "[" && text.charAt(j) !== "\n") { j++; }
+        junk.push({ text: text.slice(i, j).trim(), start: i });
+        i = j;
+      }
+    }
+    return { docs: docs, junk: junk, cut: cut };
+  }
+  /* the members of the object that starts a raw text: [{key, vs, ve, ks}], or null */
+  function scanMembers(raw) {
+    var out = [], i = 1, n = raw.length;
+    function ws() { while (i < n && /\s/.test(raw.charAt(i))) { i++; } }
+    ws();
+    if (raw.charAt(i) === "}") { return out; }
+    for (;;) {
+      ws();
+      if (raw.charAt(i) !== '"') { return null; }
+      var ks = i, ke = skipString(raw, i);
+      if (ke < 0) { return null; }
+      var key;
+      try { key = JSON.parse(raw.slice(ks, ke)); } catch (x) { return null; }
+      i = ke; ws();
+      if (raw.charAt(i) !== ":") { return null; }
+      i++; ws();
+      var ve = valueEnd(raw, i);
+      if (ve < 0) { return null; }
+      out.push({ key: key, ks: ks, vs: i, ve: ve });
+      i = ve; ws();
+      if (raw.charAt(i) === ",") { i++; continue; }
+      return raw.charAt(i) === "}" ? out : null;
+    }
+  }
+  function member(raw, key) {
+    var ms = scanMembers(raw);
+    if (!ms) { return null; }
+    for (var k = 0; k < ms.length; k++) { if (ms[k].key === key) { return raw.slice(ms[k].vs, ms[k].ve); } }
+    return null;
+  }
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function dict() { return Object.create(null); }
+  function isObj(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
+  function isHex(v) { return typeof v === "string" && HEX64.test(v); }
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+  function short12(s) { return typeof s === "string" ? s.slice(0, 12) : ""; }
+  function at(o) {
+    for (var k = 1; k < arguments.length; k++) { if (!isObj(o) || !has(o, arguments[k])) { return undefined; } o = o[arguments[k]]; }
+    return o;
+  }
+
+  /* ---- what a record says ---- */
+  function primaryMetric(task, metrics) {
+    var name = has(TASKS, task) ? TASKS[task] : null;
+    if (!name || !isObj(metrics) || !has(metrics, name)) { return null; }
+    var v = metrics[name];
+    if (typeof v === "string") { var x = Number(v); return { name: name, text: v, value: isFinite(x) && v.trim() !== "" ? x : null }; }
+    if (isNum(v)) { return { name: name, text: String(v), value: v }; }
+    return null;
+  }
+  function scalar(v) {
+    if (typeof v === "string") { var x = Number(v); return isFinite(x) && v.trim() !== "" ? x : null; }
+    return isNum(v) ? v : null;
+  }
+  function modelOf(plan) {
+    var m = typeof plan === "string" ? plan.match(/^model kind=([A-Za-z0-9_-]+)/gm) : null;
+    return m ? m[m.length - 1].slice(11) : null;
+  }
+  function shapeProblems(o) {
+    var bad = [];
+    function need(ok, what) { if (!ok) { bad.push(what); } }
+    need(isHex(o.id), "id");
+    var inp = o.inputs, d = at(o, "inputs", "data");
+    need(isObj(inp), "inputs");
+    need(isObj(d) && typeof d.path === "string" && isNum(d.bytes) && isHex(d.sha256) && isNum(d.rows), "inputs.data");
+    need(isObj(inp) && has(TASKS, inp.task), "inputs.task");
+    need(isObj(inp) && typeof inp.plan === "string", "inputs.plan");
+    need(isObj(inp) && typeof inp.split === "string", "inputs.split");
+    need(isObj(inp) && isNum(inp.seed), "inputs.seed");
+    need(isObj(o.model) && isHex(o.model.sha256) && typeof o.model.path === "string", "model");
+    need(isObj(o.counts) && isNum(o.counts.train_rows), "counts.train_rows");
+    need(o.metrics === null || (isObj(o.metrics) && isNum(o.metrics.rows) && (o.metrics.on === "train" || o.metrics.on === "held-out") && isObj(o.metrics.metrics)), "metrics");
+    need(isHex(o.check), "check");
+    return bad;
+  }
+  function evalShapeProblems(o) {
+    var bad = [];
+    function need(ok, what) { if (!ok) { bad.push(what); } }
+    need(isHex(o.run), "run");
+    need(isHex(o.model_sha256), "model_sha256");
+    need(isObj(o.data) && typeof o.data.path === "string" && isHex(o.data.sha256), "data");
+    need(o.on === "train" || o.on === "other" || o.on === "unknown", "on");
+    need(typeof o.split === "string", "split");
+    need(isObj(o.metrics), "metrics");
+    need(isHex(o.check), "check");
+    return bad;
+  }
+  var LISTED = ["model", "task", "data_sha256", "model_sha256", "train_rows", "metrics_on", "evals"];
+  function listRowOk(r) {
+    return isObj(r) && isHex(r.id) && typeof r.model === "string" && typeof r.task === "string" && isHex(r.data_sha256) && isHex(r.model_sha256) && isNum(r.train_rows) &&
+      (r.metrics_on === null || r.metrics_on === "train" || r.metrics_on === "held-out") && isNum(r.evals);
+  }
+
+  /* ---- reading ---- */
+  var SEV = { "not-json": "error", empty: "error", "not-a-record": "error", refusal: "error", "schema-version": "error", malformed: "error", "id-mismatch": "error",
+              "check-mismatch": "error", "name-mismatch": "error", "duplicate-id": "error", "list-disagrees": "error", "compare-answer": "note", junk: "note", reformatted: "note",
+              "list-only": "note", "eval-orphan": "note", "duplicate-eval": "note", "evals-count": "note", "too-many": "error", unreadable: "error" };
+  function readSource(src, st) {
+    function P(code, message, extra) { var p = { code: code, severity: SEV[code], source: src.name, message: message }; if (extra) { p.id = extra; } st.problems.push(p); }
+    if (src.error) { P("unreadable", src.error); return; }
+    var text = typeof src.text === "string" ? src.text : "";
+    if (text.replace(/^﻿/, "").trim() === "") { P("empty", "the input is empty: there is nothing to read"); return; }
+    var sp = splitDocs(text);
+    if (!sp.docs.length) {
+      P("not-json", sp.cut ? "the text ends inside a JSON object (it was cut): " + sp.cut.text + "..." : "no JSON object in the text; it starts with: " + text.trim().slice(0, 40));
+      return;
+    }
+    if (sp.cut) { P("not-json", "the text ends inside a JSON object (it was cut): " + sp.cut.text + "..."); }
+    if (sp.junk.length) { P("junk", sp.junk.length + " piece(s) of text outside any JSON object were ignored; the first: " + sp.junk[0].text.slice(0, 60)); }
+    var docs = sp.docs;
+    if (docs.length > MAX_DOCS) { P("too-many", docs.length + " documents in one input; the first " + MAX_DOCS + " are read"); docs = docs.slice(0, MAX_DOCS); }
+    docs.forEach(function (d) {
+      var obj;
+      try { obj = JSON.parse(d.raw); } catch (x) { P("not-json", String(x.message).slice(0, 120)); return; }
+      classify(obj, d.raw, src, st, P);
+    });
+  }
+  function classify(obj, raw, src, st, P) {
+    if (!isObj(obj)) { P("not-a-record", Array.isArray(obj) ? "a JSON array, not a run record or an answer of ml runs" : "a JSON value that is not an object"); return; }
+    if (obj.ok === false) { P("refusal", "a refusal of the tool, not a record: " + (isObj(obj.error) && typeof obj.error.rule === "string" ? obj.error.rule : "no rule given")); return; }
+    var inner = obj, innerRaw = raw;
+    if (obj.ok === true && isObj(obj.data)) {
+      if (obj.schema !== "ml.v1") { P("schema-version", "an answer of schema " + JSON.stringify(obj.schema) + "; the page reads ml.v1"); return; }
+      inner = obj.data; innerRaw = member(raw, "data") || raw;
+    }
+    if (Array.isArray(inner.runs) && (inner === obj.data || typeof inner.dir === "string")) {
+      var seenHere = dict();
+      inner.runs.forEach(function (r) {
+        if (!listRowOk(r)) { P("malformed", "a row of the list is missing a member (id, model, task, data_sha256, model_sha256, train_rows, metrics_on, evals)"); return; }
+        if (has(seenHere, r.id)) { P("duplicate-id", "the list names run " + short12(r.id) + " twice", r.id); return; }
+        seenHere[r.id] = 1;
+        st.lists.push({ row: r, source: src.name, dir: typeof inner.dir === "string" ? inner.dir : null });
+      });
+      st.listCount++;
+      return;
+    }
+    if (isObj(inner.record) && (inner === obj.data || !has(inner, "schema"))) {
+      var rr = member(innerRaw, "record");
+      classify(inner.record, rr || JSON.stringify(inner.record), src, st, P);
+      return;
+    }
+    if (isObj(obj.data) && has(obj.data, "inputs") && has(obj.data, "a") && has(obj.data, "b")) { P("compare-answer", "the answer of ml runs compare, not a record; the page compares the runs by itself"); return; }
+    if (obj.ok === true) { P("not-a-record", "an answer of the tool that holds no runs and no record"); return; }
+    var sc = obj.schema;
+    if (typeof sc !== "string") { P("not-a-record", "a JSON object with no schema member; its members: " + Object.keys(obj).slice(0, 6).join(", ")); return; }
+    if (sc === "ml.run.v1") { st.recs.push({ obj: obj, raw: raw, source: src.name }); return; }
+    if (sc === "ml.eval.v1") { st.evs.push({ obj: obj, raw: raw, source: src.name }); return; }
+    if (/^ml\.(run|eval)\b/.test(sc)) { P("schema-version", "a record of schema " + sc + "; the page reads ml.run.v1 and ml.eval.v1", isHex(obj.id) ? obj.id : undefined); return; }
+    P("not-a-record", "a JSON object of schema " + JSON.stringify(sc) + ", not a run or eval record");
+  }
+
+  /* the check of one record: which of the id, the check and the shape fail */
+  async function checkRaw(o, raw, digest, wantId) {
+    var out = { idBad: false, checkBad: false, reformatted: false, calcId: null };
+    var inRaw = member(raw, "inputs");
+    if (inRaw !== null && wantId) {
+      out.calcId = await digest(enc(inRaw));
+      if (out.calcId !== o.id) {
+        var compact = JSON.stringify(o.inputs);
+        if (compact !== inRaw && (await digest(enc(compact))) === o.id) { out.reformatted = true; } else { out.idBad = true; }
+      }
+    }
+    if (!out.reformatted && isHex(o.check)) {
+      var pos = raw.lastIndexOf(',"check":"');
+      if (pos >= 0) { out.checkBad = (await digest(enc(raw.slice(0, pos)))) !== o.check; } else { out.reformatted = true; }
+    }
+    return out;
+  }
+
+  async function analyze(sources, digest) {
+    var st = { problems: [], recs: [], evs: [], lists: [], listCount: 0 };
+    sources.forEach(function (s) { readSource(s, st); });
+    function P(code, source, message, id) { var p = { code: code, severity: SEV[code], source: source, message: message }; if (id) { p.id = id; } st.problems.push(p); }
+    var byId = dict(), rows = [], k, evHashes = dict(), noId = 0;
+    for (k = 0; k < st.recs.length; k++) {
+      var r = st.recs[k], o = r.obj, flags = [];
+      var bad = shapeProblems(o);
+      var tops = scanMembers(r.raw) || [];
+      ["id", "inputs", "check"].forEach(function (key) {
+        if (tops.filter(function (m) { return m.key === key; }).length > 1) { bad.push("a repeated member " + key); }
+      });
+      if (bad.length) { flags.push("malformed"); P("malformed", r.source, "run " + (isHex(o.id) ? short12(o.id) : "(no valid id)") + ": missing or wrong member " + bad.join(", "), isHex(o.id) ? o.id : undefined); }
+      var chk = await checkRaw(o, r.raw, digest, isObj(o.inputs));
+      var shownId = typeof o.id === "string" ? o.id : "(no id " + (++noId) + ")";
+      if (chk.idBad) {
+        flags.push("id-mismatch");
+        P("id-mismatch", r.source, "run " + short12(shownId) + ": the bytes of inputs hash to " + short12(chk.calcId) + "..., not to the record's id; the record was edited or is not the one its id names", shownId);
+      }
+      if (chk.checkBad) { flags.push("check-mismatch"); P("check-mismatch", r.source, "run " + short12(shownId) + ": the record's bytes do not hash to its check member; the record was edited", shownId); }
+      if (chk.reformatted) { flags.push("reformatted"); P("reformatted", r.source, "run " + short12(shownId) + ": the file was reformatted; its id matches the compact form of inputs, and its check cannot be checked", shownId); }
+      var nm = /(?:^|[\/\\])([0-9a-f]{64})\.json$/.exec(r.source || "");
+      if (nm && nm[1] !== o.id) { flags.push("name-mismatch"); P("name-mismatch", r.source, "the file is named for run " + short12(nm[1]) + " but holds run " + short12(shownId), shownId); }
+      if (has(byId, shownId)) {
+        var first = byId[shownId], same = first.raw.trim() === r.raw.trim();
+        P("duplicate-id", r.source, "run " + short12(shownId) + " is also in " + first.source + (same ? " (the same record twice)" : " and the two records differ"), shownId);
+        if (!same) { st.problems[st.problems.length - 1].severity = "error"; } else { st.problems[st.problems.length - 1].severity = "note"; }
+        continue;
+      }
+      var mt = isObj(o.metrics) && isObj(o.metrics.metrics) ? o.metrics.metrics : null;
+      var pm = primaryMetric(at(o, "inputs", "task"), mt);
+      var row = {
+        kind: "record", id: shownId, id12: short12(shownId), model: modelOf(at(o, "inputs", "plan")), task: at(o, "inputs", "task") || null, trainRows: at(o, "counts", "train_rows"),
+        split: at(o, "inputs", "split") === undefined ? null : o.inputs.split, metricsOn: isObj(o.metrics) ? o.metrics.on : null,
+        metricName: pm ? pm.name : null, metricText: pm ? pm.text : null, metricValue: pm ? pm.value : null, dataSha: at(o, "inputs", "data", "sha256") || null,
+        modelSha: at(o, "model", "sha256") || null, evals: 0, flags: flags, source: r.source, record: o, uid: ""
+      };
+      if (row.trainRows === undefined) { row.trainRows = null; }
+      byId[shownId] = { source: r.source, raw: r.raw, row: row };
+      rows.push(row);
+    }
+    /* eval records attach to their run */
+    var attached = dict(), attachedSrc = dict();
+    for (k = 0; k < st.evs.length; k++) {
+      var ev = st.evs[k], eo = ev.obj;
+      var ebad = evalShapeProblems(eo);
+      if (ebad.length) { P("malformed", ev.source, "eval record: missing or wrong member " + ebad.join(", "), isHex(eo.run) ? eo.run : undefined); }
+      var epos = ev.raw.lastIndexOf(',"check":"');
+      if (epos >= 0 && isHex(eo.check) && (await digest(enc(ev.raw.slice(0, epos)))) !== eo.check) { P("check-mismatch", ev.source, "eval record of run " + short12(eo.run) + ": the record's bytes do not hash to its check member", eo.run); }
+      var ekey = String(eo.check) + String(eo.run);
+      if (has(evHashes, ekey)) { P("duplicate-eval", ev.source, "eval record of run " + short12(eo.run) + " is also in " + evHashes[ekey]); continue; }
+      evHashes[ekey] = ev.source;
+      attached[eo.run] = (attached[eo.run] || 0) + 1;
+      attachedSrc[eo.run] = ev.source;
+    }
+    /* the list rows: those with a record are checked against it, the others are rows of their own */
+    var listed = dict(), listOnly = [];
+    st.lists.forEach(function (L) {
+      var r = L.row;
+      if (has(listed, r.id)) { P("duplicate-id", L.source, "run " + short12(r.id) + " is in two lists", r.id); return; }
+      listed[r.id] = r;
+      if (has(byId, r.id)) {
+        var row2 = byId[r.id].row, diffs = [];
+        var mine = { model: row2.model, task: row2.task, data_sha256: row2.dataSha, model_sha256: row2.modelSha, train_rows: row2.trainRows, metrics_on: row2.metricsOn };
+        Object.keys(mine).forEach(function (f) { if (mine[f] !== r[f]) { diffs.push(f + " (list " + JSON.stringify(r[f]) + ", record " + JSON.stringify(mine[f]) + ")"); } });
+        if (diffs.length) { row2.flags.push("list-disagrees"); P("list-disagrees", L.source, "run " + short12(r.id) + ": the list and the record differ in " + diffs.join(", "), r.id); }
+        row2.listEvals = r.evals;
+        row2.dir = L.dir;
+      } else {
+        listOnly.push({ kind: "list", id: r.id, id12: short12(r.id), model: r.model, task: r.task, trainRows: r.train_rows, split: null, metricsOn: r.metrics_on, metricName: null, metricText: null,
+                        metricValue: null, dataSha: r.data_sha256, modelSha: r.model_sha256, evals: r.evals, flags: ["list-only"], source: L.source, record: null, uid: "", dir: L.dir });
+      }
+    });
+    if (listOnly.length) { P("list-only", listOnly[0].source, listOnly.length + " run(s) are known only from a list: a list holds no inputs, so their ids and records are not checked; load the records to check them"); }
+    rows.forEach(function (row) {
+      var n = attached[row.id] || 0;
+      if (has(row, "listEvals")) {
+        if (n > 0 && n !== row.listEvals) { P("evals-count", row.source, "run " + row.id12 + ": the list says " + row.listEvals + " evals, " + n + " eval records are loaded", row.id); }
+        row.evals = row.listEvals;
+      } else { row.evals = n; }
+    });
+    Object.keys(attached).forEach(function (rid) {
+      if (!has(byId, rid) && !has(listed, rid)) { P("eval-orphan", attachedSrc[rid], "eval records for run " + short12(rid) + ", which is not loaded: " + attached[rid] + " ignored in the table", rid); }
+    });
+    rows = rows.concat(listOnly);
+    rows.forEach(function (row, i) {
+      row.uid = "r" + i;
+      row.verdict = verdictOf(row.flags);
+    });
+    return { rows: rows, problems: st.problems, inputs: sources.length, evalRecords: st.evs.length };
+  }
+  var ORDER = ["list-only", "malformed", "id+check", "id-mismatch", "check-mismatch", "name-mismatch", "list-disagrees", "reformatted"];
+  function verdictOf(flags) {
+    var f = {};
+    flags.forEach(function (x) { f[x] = 1; });
+    if (f["list-only"]) { return "list-only"; }
+    if (f.malformed) { return "malformed"; }
+    if (f["id-mismatch"] && f["check-mismatch"]) { return "id-check-mismatch"; }
+    for (var k = 3; k < ORDER.length; k++) { if (f[ORDER[k]]) { return ORDER[k]; } }
+    return "ok";
+  }
+
+  /* ---- comparing ---- */
+  function deepEqual(a, b) {
+    if (a === b) { return true; }
+    if (Array.isArray(a) && Array.isArray(b)) { return a.length === b.length && a.every(function (x, i) { return deepEqual(x, b[i]); }); }
+    if (isObj(a) && isObj(b)) {
+      var ka = Object.keys(a), kb = Object.keys(b);
+      return ka.length === kb.length && ka.every(function (k) { return has(b, k) && deepEqual(a[k], b[k]); });
+    }
+    return false;
+  }
+  function diffObj(prefix, x, y, out) {
+    var keys = Object.keys(x);
+    Object.keys(y).forEach(function (k) { if (!has(x, k)) { keys.push(k); } });
+    keys.forEach(function (k) {
+      var xv = has(x, k) ? x[k] : null, yv = has(y, k) ? y[k] : null;
+      if (isObj(xv) && isObj(yv)) { diffObj(prefix + k + ".", xv, yv, out); }
+      else if (!deepEqual(xv, yv)) { out.push({ key: prefix + k, a: xv, b: yv }); }
+    });
+  }
+  /* ml runs compare (docs/tracking.md 5.4), from two record rows; `delta` is b - a for two numbers, else null */
+  function compareRows(ra, rb) {
+    if (!ra.record || !rb.record) { throw new Error("a run known only from a list cannot be compared: load its record"); }
+    var a = ra.record, b = rb.record, inputs = [], metrics = [];
+    diffObj("", a.inputs, b.inputs, inputs);
+    var ma = isObj(a.metrics) && isObj(a.metrics.metrics) ? a.metrics.metrics : {}, mb = isObj(b.metrics) && isObj(b.metrics.metrics) ? b.metrics.metrics : {};
+    var names = Object.keys(ma);
+    Object.keys(mb).forEach(function (k) { if (!has(ma, k)) { names.push(k); } });
+    names.forEach(function (k) {
+      var x = has(ma, k) ? ma[k] : null, y = has(mb, k) ? mb[k] : null, sx = scalar(x), sy = scalar(y);
+      metrics.push({ name: k, a: x, b: y, equal: deepEqual(x, y), delta: sx !== null && sy !== null ? sy - sx : null });
+    });
+    return { a: a.id, b: b.id, model_equal: at(a, "model", "sha256") === at(b, "model", "sha256"), inputs: inputs, metrics: metrics };
+  }
+
+  /* ---- the table ---- */
+  var SORTS = {
+    id: function (r) { return r.id; }, model: function (r) { return r.model; }, task: function (r) { return r.task; }, train_rows: function (r) { return r.trainRows; },
+    split: function (r) { return r.split; }, metrics_on: function (r) { return r.metricsOn; }, metric: function (r) { return r.metricValue; }, data: function (r) { return r.dataSha; },
+    evals: function (r) { return r.evals; }, verdict: function (r) { return r.verdict; }
+  };
+  function idCmp(x, y) { return x.id < y.id ? -1 : x.id > y.id ? 1 : 0; }
+  function sortRows(rows, key, dir) {
+    var f = has(SORTS, key) ? SORTS[key] : SORTS.id, sign = dir === "desc" ? -1 : 1;
+    return rows.map(function (r, i) { return { r: r, i: i }; }).sort(function (x, y) {
+      var a = f(x.r), b = f(y.r), am = a === null || a === undefined, bm = b === null || b === undefined;
+      if (am || bm) { return am && bm ? idCmp(x.r, y.r) || x.i - y.i : am ? 1 : -1; }
+      if (a !== b) { return (a < b ? -1 : 1) * sign; }
+      return idCmp(x.r, y.r) || x.i - y.i;
+    }).map(function (x) { return x.r; });
+  }
+  function flatInputs(o, prefix, out) {
+    out = out || dict();
+    Object.keys(o).forEach(function (k) {
+      if (isObj(o[k])) { flatInputs(o[k], prefix + k + ".", out); } else { out[prefix + k] = o[k]; }
+    });
+    return out;
+  }
+  function inputText(row, key) {
+    if (!row.record || !isObj(row.record.inputs)) { return null; }
+    var f = flatInputs(row.record.inputs, "", dict());
+    if (!has(f, key)) { return null; }
+    var v = f[key];
+    return typeof v === "string" ? v.replace(/\n+$/, "").replace(/\n/g, " ; ") : JSON.stringify(v);
+  }
+  function filterRows(rows, f) {
+    return rows.filter(function (r) {
+      if (f.model && r.model !== f.model) { return false; }
+      if (f.data && r.dataSha !== f.data) { return false; }
+      if (f.key && f.value && inputText(r, f.key) !== f.value) { return false; }
+      return true;
+    });
+  }
+  function varyingKeys(rows) {
+    var keys = [], seen = dict(), flats = [];
+    rows.forEach(function (r) {
+      if (!r.record || !isObj(r.record.inputs)) { return; }
+      var f = flatInputs(r.record.inputs, "", dict());
+      flats.push(f);
+      Object.keys(f).forEach(function (k) { if (!has(seen, k)) { seen[k] = 1; keys.push(k); } });
+    });
+    return keys.filter(function (k) {
+      var vals = dict(), n = 0;
+      flats.forEach(function (f) { var s = has(f, k) ? "v" + JSON.stringify(f[k]) : "m"; if (!has(vals, s)) { vals[s] = 1; n++; } });
+      return n > 1;
+    });
+  }
+
+  /* ---- the chart ---- */
+  function metricNames(rows) {
+    var names = [];
+    rows.forEach(function (r) {
+      var m = r.record && isObj(r.record.metrics) ? r.record.metrics.metrics : null;
+      if (!isObj(m)) { return; }
+      Object.keys(m).forEach(function (k) { if (names.indexOf(k) < 0 && rows.some(function (x) { var mm = x.record && isObj(x.record.metrics) ? x.record.metrics.metrics : null; return isObj(mm) && has(mm, k) && scalar(mm[k]) !== null; })) { names.push(k); } });
+    });
+    return names;
+  }
+  function defaultMetric(rows) {
+    var counts = dict(), order = [];
+    rows.forEach(function (r) { if (r.metricName) { if (!has(counts, r.metricName)) { counts[r.metricName] = 0; order.push(r.metricName); } counts[r.metricName]++; } });
+    var best = null;
+    order.forEach(function (n) { if (best === null || counts[n] > counts[best]) { best = n; } });
+    return best;
+  }
+  function chartData(rows, metric) {
+    var bars = [], left = [];
+    rows.forEach(function (r) {
+      var m = r.record && isObj(r.record.metrics) ? r.record.metrics : null, v = m && isObj(m.metrics) && has(m.metrics, metric) ? scalar(m.metrics[metric]) : null;
+      if (v === null) { left.push(r.id); return; }
+      bars.push({ uid: r.uid, id: r.id, id12: r.id12, model: r.model, on: m.on, text: typeof m.metrics[metric] === "string" ? m.metrics[metric] : String(m.metrics[metric]), value: v });
+    });
+    var vals = bars.map(function (b) { return b.value; });
+    return { metric: metric, bars: bars, left: left, lo: Math.min.apply(null, [0].concat(vals)), hi: Math.max.apply(null, [0].concat(vals)) };
+  }
+  function layoutBars(data, width) {
+    var span = data.hi - data.lo, scale = span > 0 ? width / span : 0, zero = -data.lo * scale;
+    return data.bars.map(function (b) { return { uid: b.uid, x: b.value >= 0 ? zero : zero + b.value * scale, w: Math.abs(b.value) * scale, zero: zero }; });
+  }
+
+  /* ---- the commands to copy ---- */
+  function quote(s) {
+    if (s === "") { return "''"; }
+    return /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
+  }
+  function dirOf(dir) { return dir ? quote(dir) : "DIR"; }
+  function verifyCommand(dir, id) { return "ml runs verify " + dirOf(dir) + " " + id; }
+  function showCommand(dir, id) { return "ml runs show " + dirOf(dir) + " " + id; }
+  function compareCommand(dir, a, b) { return "ml runs compare " + dirOf(dir) + " " + a + " " + b; }
+
+  return { sha256Hex: sha256Hex, makeDigest: makeDigest, splitDocs: splitDocs, analyze: analyze, compareRows: compareRows, sortRows: sortRows, filterRows: filterRows,
+           varyingKeys: varyingKeys, inputText: inputText, chartData: chartData, layoutBars: layoutBars, defaultMetric: defaultMetric, metricNames: metricNames,
+           primaryMetric: primaryMetric, verifyCommand: verifyCommand, showCommand: showCommand, compareCommand: compareCommand, short12: short12, flatInputs: flatInputs };
+})();
+/* LOGIC end */
+
+(function () {
+  if (typeof document === "undefined") { return; }
+  var $ = function (id) { return document.getElementById(id); };
+  var digest = Board.makeDigest(window);
+  var MAX_BYTES = 16 * 1024 * 1024;
+  var COLS = [["id", "Run"], ["model", "Model"], ["task", "Task"], ["train_rows", "Train rows"], ["split", "Split"], ["metrics_on", "Metrics on"], ["metric", "Metric"],
+              ["data", "Data SHA-256"], ["evals", "Evals"], ["verdict", "Record"]];
+  var VERDICT = { ok: ["ok", "ok"], "list-only": ["list only", "note"], reformatted: ["reformatted", "note"], malformed: ["malformed", "error"], "id-check-mismatch": ["id and check differ", "error"],
+                  "id-mismatch": ["id differs", "error"], "check-mismatch": ["check differs", "error"], "name-mismatch": ["file name differs", "error"], "list-disagrees": ["list differs", "error"] };
+  var st = { sources: [], res: { rows: [], problems: [], inputs: 0 }, sort: "id", dir: "asc", f: { model: "", data: "", key: "", value: "" }, sel: [], detail: null, metric: null };
+
+  function h(tag, props, kids) {
+    var e = document.createElement(tag), k;
+    for (k in props || {}) {
+      var v = props[k];
+      if (k === "text") { e.textContent = v; } else if (k === "class") { e.className = v; } else if (v === true) { e.setAttribute(k, ""); } else if (v !== false && v !== null && v !== undefined) { e.setAttribute(k, v); }
+    }
+    (kids || []).forEach(function (c) { if (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); } });
+    return e;
+  }
+  function sv(tag, props, kids) {
+    var e = document.createElementNS("http://www.w3.org/2000/svg", tag), k;
+    for (k in props || {}) { if (k === "text") { e.textContent = props[k]; } else { e.setAttribute(k, props[k]); } }
+    (kids || []).forEach(function (c) { e.appendChild(c); });
+    return e;
+  }
+  function clear(e) { while (e.firstChild) { e.removeChild(e.firstChild); } return e; }
+  function say(t) { $("status").textContent = t; }
+  function fmt(v) { return v === null || v === undefined ? "" : String(Number(Number(v).toPrecision(6))); }
+  function dirName() { var r = st.res.rows.filter(function (x) { return x.dir; })[0]; return r ? r.dir : "DIR"; }
+  function byId(id) { return st.res.rows.filter(function (r) { return r.id === id; })[0]; }
+
+  function copy(text, what) {
+    function done(ok) { say(ok ? "Copied: " + text : "Could not copy " + what + "; select the command and copy it."); }
+    if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(function () { done(true); }, function () { fallback(); }); } else { fallback(); }
+    function fallback() {
+      var t = h("textarea", { class: "sr", "aria-hidden": "true", tabindex: "-1" });
+      t.value = text; document.body.appendChild(t); t.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (x) { ok = false; }
+      document.body.removeChild(t); done(ok);
+    }
+  }
+
+  /* ---- loading ---- */
+  function load(sources, label) {
+    sources.forEach(function (s) { st.sources.push(s); });
+    return Board.analyze(st.sources, digest).then(function (res) {
+      st.res = res; render();
+      var runs = res.rows.length, errs = res.problems.filter(function (p) { return p.severity === "error"; }).length;
+      say((label || "Read") + ": " + runs + " run" + (runs === 1 ? "" : "s") + " from " + res.inputs + " input" + (res.inputs === 1 ? "" : "s") + ", " + errs + " error" + (errs === 1 ? "" : "s") + ", " + (res.problems.length - errs) + " note" + (res.problems.length - errs === 1 ? "" : "s") + ".");
+    });
+  }
+  function readFiles(files) {
+    var list = Array.prototype.slice.call(files);
+    if (!list.length) { return; }
+    Promise.all(list.map(function (f) {
+      if (f.size > MAX_BYTES) { return { name: f.name, error: "the file is " + f.size + " bytes; the page reads at most " + MAX_BYTES + " bytes of one file" }; }
+      return f.text().then(function (t) { return { name: f.name, text: t }; }, function () { return { name: f.name, error: "the browser could not read the file" }; });
+    })).then(function (srcs) { load(srcs, "Read " + list.length + " file" + (list.length === 1 ? "" : "s")); });
+  }
+  function loadSample() {
+    var text = $("sample") ? $("sample").textContent : "";
+    load([{ name: "sample", text: text }], "Sample loaded");
+  }
+
+  /* ---- drawing ---- */
+  function render() {
+    var res = st.res, rows = res.rows;
+    drawProblems(res);
+    var models = [], datas = {};
+    rows.forEach(function (r) { if (r.model && models.indexOf(r.model) < 0) { models.push(r.model); } if (r.dataSha) { datas[r.dataSha] = (datas[r.dataSha] || 0) + 1; } });
+    models.sort();
+    if (st.f.model && models.indexOf(st.f.model) < 0) { st.f.model = ""; }
+    if (st.f.data && !datas[st.f.data]) { st.f.data = ""; }
+    options($("f-model"), [["", "All models"]].concat(models.map(function (m) { return [m, m]; })), st.f.model);
+    options($("f-data"), [["", "All data"]].concat(Object.keys(datas).sort().map(function (d) { return [d, d.slice(0, 12) + " (" + datas[d] + " run" + (datas[d] === 1 ? "" : "s") + ")"; })), st.f.data);
+    var vary = Board.varyingKeys(rows);
+    if (st.f.key && vary.indexOf(st.f.key) < 0) { st.f.key = ""; st.f.value = ""; }
+    options($("f-key"), [["", "None"]].concat(vary.map(function (k) { return [k, k]; })), st.f.key);
+    var vals = [];
+    if (st.f.key) { rows.forEach(function (r) { var t = Board.inputText(r, st.f.key); if (t !== null && vals.indexOf(t) < 0) { vals.push(t); } }); vals.sort(); }
+    if (st.f.value && vals.indexOf(st.f.value) < 0) { st.f.value = ""; }
+    options($("f-value"), [["", st.f.key ? "Any value" : "Choose an input first"]].concat(vals.map(function (v) { return [v, v.length > 70 ? v.slice(0, 70) + "..." : v]; })), st.f.value);
+    $("f-value").disabled = !st.f.key;
+    drawTable(rows);
+    drawDetail();
+    drawCompare();
+    drawChart(rows);
+  }
+  function options(sel, list, cur) {
+    clear(sel);
+    list.forEach(function (o) { var op = h("option", { value: o[0], text: o[1] }); if (o[0] === cur) { op.selected = true; } sel.appendChild(op); });
+  }
+  function drawProblems(res) {
+    var n = res.problems.length, errs = res.problems.filter(function (p) { return p.severity === "error"; }).length;
+    var c = $("pcount");
+    c.textContent = errs + " error" + (errs === 1 ? "" : "s") + ", " + (n - errs) + " note" + (n - errs === 1 ? "" : "s");
+    c.className = "chip " + (errs ? "error" : n ? "note" : "ok");
+    $("pnone").textContent = n ? "" : res.inputs ? "No problem found in " + res.inputs + " input" + (res.inputs === 1 ? "" : "s") + ": every id and check hash matches." : "Nothing is loaded. A file that is not a record, a record of another schema version, a duplicate id and a record that was edited are listed here.";
+    var ul = clear($("plist"));
+    res.problems.forEach(function (p) {
+      ul.appendChild(h("li", { class: p.severity }, [h("span", { class: "chip " + p.severity, text: p.severity }), " ", h("strong", { text: p.code }), " ", p.message, " ", h("span", { class: "src", text: "(" + p.source + ")" })]));
+    });
+  }
+  function drawTable(all) {
+    var head = clear($("runs-head")), body = clear($("runs-body"));
+    head.appendChild(h("th", { scope: "col" }, [h("span", { class: "sr", text: "Select to compare" })]));
+    var cols = COLS.slice();
+    if (st.f.key) { cols.splice(7, 0, ["input", st.f.key]); }
+    cols.forEach(function (c) {
+      var th = h("th", { scope: "col" });
+      if (c[0] === "input") { th.textContent = c[1]; head.appendChild(th); return; }
+      if (st.sort === c[0]) { th.setAttribute("aria-sort", st.dir === "asc" ? "ascending" : "descending"); }
+      var b = h("button", { type: "button", text: c[1] + (st.sort === c[0] ? (st.dir === "asc" ? " ▲" : " ▼") : "") });
+      b.addEventListener("click", function () { if (st.sort === c[0]) { st.dir = st.dir === "asc" ? "desc" : "asc"; } else { st.sort = c[0]; st.dir = "asc"; } drawTable(all); });
+      th.appendChild(b); head.appendChild(th);
+    });
+    head.appendChild(h("th", { scope: "col", text: "Verify" }));
+    var rows = Board.sortRows(Board.filterRows(all, st.f), st.sort, st.dir);
+    $("shown").textContent = all.length ? "Showing " + rows.length + " of " + all.length + " run" + (all.length === 1 ? "" : "s") + "." : "";
+    if (!all.length) { body.appendChild(h("tr", {}, [h("td", { colspan: "13", class: "hint", text: "No runs yet. Load the sample runs, or give the page your own records." })])); return; }
+    rows.forEach(function (r) {
+      var v = VERDICT[r.verdict] || [r.verdict, "error"], sel = st.sel.indexOf(r.id) >= 0;
+      var cb = h("input", { type: "checkbox", "aria-label": "Select run " + r.id12 + " to compare", disabled: !r.record });
+      cb.checked = sel;
+      cb.addEventListener("change", function () {
+        var i = st.sel.indexOf(r.id);
+        if (i >= 0) { st.sel.splice(i, 1); } else { st.sel.push(r.id); if (st.sel.length > 2) { st.sel.shift(); } }
+        drawTable(all); drawCompare();
+      });
+      var idb = h("button", { type: "button", class: "idbtn", text: r.id12, title: r.id });
+      idb.addEventListener("click", function () { st.detail = r.id; drawDetail(); var d = $("detail"); if (d.scrollIntoView) { d.scrollIntoView(); } });
+      var cp = h("button", { type: "button", text: "Copy", "aria-label": "Copy the command ml runs verify for run " + r.id12 });
+      cp.addEventListener("click", function () { copy(Board.verifyCommand(dirName(), r.id), "the command"); });
+      var mt = r.metricText === null ? h("td", { class: "num", text: "" }) : h("td", { class: "num", title: r.metricName + " " + r.metricText }, [r.metricName + " ", h("strong", { text: fmt(r.metricValue) })]);
+      var cells = [h("td", {}, [cb]), h("td", {}, [idb]), h("td", { text: r.model || "" }), h("td", { text: r.task || "" }), h("td", { class: "num", text: r.trainRows === null ? "" : String(r.trainRows) }),
+                   h("td", { text: r.split === null ? "" : r.split }), h("td", { text: r.metricsOn || (r.kind === "record" ? "none" : "") }), mt];
+      if (st.f.key) { cells.push(h("td", { text: Board.inputText(r, st.f.key) || "" })); }
+      cells.push(h("td", { class: "mono", title: r.dataSha || "", text: Board.short12(r.dataSha) }), h("td", { class: "num", text: String(r.evals) }), h("td", {}, [h("span", { class: "chip " + v[1], text: v[0] })]), h("td", {}, [cp]));
+      body.appendChild(h("tr", { class: (v[1] === "error" ? "bad " : "") + (sel ? "sel" : "") }, cells));
+    });
+  }
+  function kv(pairs) {
+    var dl = h("dl", { class: "kv" });
+    pairs.forEach(function (p) { dl.appendChild(h("dt", { text: p[0] })); dl.appendChild(h("dd", { text: p[1] === null || p[1] === undefined ? "" : String(p[1]) })); });
+    return dl;
+  }
+  function cmdBox(label, text) {
+    var inp = h("input", { type: "text", readonly: true, value: text, "aria-label": label });
+    var b = h("button", { type: "button", text: "Copy" });
+    b.addEventListener("click", function () { copy(text, "the command"); });
+    return h("div", { class: "cmd" }, [inp, b]);
+  }
+  function drawDetail() {
+    var r = st.detail ? byId(st.detail) : null, sec = $("detail");
+    sec.hidden = !r;
+    if (!r) { return; }
+    var body = clear($("detail-body")), v = VERDICT[r.verdict] || [r.verdict, "error"];
+    $("h-detail").textContent = "Run " + r.id12;
+    body.appendChild(h("p", {}, [h("span", { class: "chip " + v[1], text: v[0] }), " ", r.kind === "record" ? "The page recomputed this run's id and check hash from the record's bytes." : "Known from a list only: its id is not recomputed."]));
+    body.appendChild(kv([["Run id", r.id], ["Model", r.model], ["Task", r.task], ["Training rows", r.trainRows], ["Split", r.split], ["Metrics on", r.metricsOn], ["Training data SHA-256", r.dataSha],
+                         ["Model file SHA-256", r.modelSha], ["Evals", r.evals], ["Source", r.source]]));
+    body.appendChild(h("h3", { text: "Commands to copy" }));
+    body.appendChild(cmdBox("ml runs verify command", Board.verifyCommand(dirName(), r.id)));
+    body.appendChild(cmdBox("ml runs show command", Board.showCommand(dirName(), r.id)));
+    body.appendChild(h("p", { class: "hint", text: "The page cannot verify a run. Only the tool can: ml runs verify re-fits from the training file and compares the model file's SHA-256." }));
+    if (r.record) {
+      var o = r.record, flat = Board.flatInputs(o.inputs);
+      body.appendChild(h("h3", { text: "Inputs" }));
+      body.appendChild(kv(Object.keys(flat).map(function (k) { return [k, typeof flat[k] === "string" ? flat[k].replace(/\n+$/, "").replace(/\n/g, " ; ") : JSON.stringify(flat[k])]; })));
+      if (o.counts) { body.appendChild(h("h3", { text: "Counts" })); body.appendChild(kv(Object.keys(o.counts).map(function (k) { return [k, o.counts[k]]; }))); }
+      if (o.metrics && o.metrics.metrics) {
+        body.appendChild(h("h3", { text: "Metrics on " + o.metrics.on + " rows (" + o.metrics.rows + ")" }));
+        body.appendChild(kv(Object.keys(o.metrics.metrics).map(function (k) { return [k, typeof o.metrics.metrics[k] === "string" ? o.metrics.metrics[k] : JSON.stringify(o.metrics.metrics[k])]; })));
+      } else { body.appendChild(h("p", { class: "hint", text: "This run has no metrics (a constant model)." })); }
+    }
+  }
+  function show(v) { return v === null || v === undefined ? "none" : typeof v === "string" ? v.replace(/\n+$/, "").replace(/\n/g, " ; ") : JSON.stringify(v); }
+  function drawCompare() {
+    var body = clear($("cmp-body")), two = st.sel.map(byId).filter(function (r) { return r && r.record; });
+    $("cmp-hint").hidden = two.length === 2;
+    if (two.length !== 2) { return; }
+    var c;
+    try { c = Board.compareRows(two[0], two[1]); } catch (x) { body.appendChild(h("p", { class: "hint", text: "These records cannot be compared: " + x.message })); return; }
+    body.appendChild(h("p", {}, ["A is ", h("code", { text: two[0].id12 }), ", B is ", h("code", { text: two[1].id12 }), ". The model files are ", h("strong", { text: c.model_equal ? "the same" : "not the same" }), "."]));
+    body.appendChild(cmdBox("ml runs compare command", Board.compareCommand(dirName(), c.a, c.b)));
+    body.appendChild(h("h3", { text: "Inputs that differ (" + c.inputs.length + ")" }));
+    if (c.inputs.length) {
+      var t = h("table", { class: "cmp" }, [h("thead", {}, [h("tr", {}, ["Input", "A", "B"].map(function (x) { return h("th", { scope: "col", text: x }); }))])]);
+      var tb = h("tbody"); t.appendChild(tb);
+      c.inputs.forEach(function (i) { tb.appendChild(h("tr", {}, [h("th", { scope: "row", text: i.key }), h("td", { text: show(i.a) }), h("td", { text: show(i.b) })])); });
+      body.appendChild(h("div", { class: "fitwrap", tabindex: "0", role: "region", "aria-label": "Inputs that differ" }, [t]));
+    } else { body.appendChild(h("p", { class: "hint", text: "No input differs: the two records are the same run." })); }
+    body.appendChild(h("h3", { text: "Metrics side by side" }));
+    if (c.metrics.length) {
+      var t2 = h("table", { class: "cmp" }, [h("thead", {}, [h("tr", {}, ["Metric", "A", "B", "B minus A", "Equal"].map(function (x) { return h("th", { scope: "col", text: x }); }))])]);
+      var tb2 = h("tbody"); t2.appendChild(tb2);
+      c.metrics.forEach(function (m) {
+        tb2.appendChild(h("tr", {}, [h("th", { scope: "row", text: m.name }), h("td", { class: "num", text: show(m.a) }), h("td", { class: "num", text: show(m.b) }),
+                                    h("td", { class: "num", text: m.delta === null ? "" : (m.delta > 0 ? "+" : "") + fmt(m.delta) }), h("td", { text: m.equal ? "yes" : "no" })]));
+      });
+      body.appendChild(h("div", { class: "fitwrap", tabindex: "0", role: "region", "aria-label": "Metrics side by side" }, [t2]));
+    } else { body.appendChild(h("p", { class: "hint", text: "Neither run has metrics." })); }
+  }
+  function drawChart(all) {
+    var rows = Board.sortRows(Board.filterRows(all, st.f), st.sort, st.dir), names = Board.metricNames(rows), box = clear($("chart-body")), sel = $("c-metric");
+    if (!names.length) {
+      options(sel, [["", "No metric"]], ""); sel.disabled = true;
+      box.appendChild(h("p", { class: "hint", text: all.length ? "The runs shown have no numeric metric." : "Load runs to draw a metric." }));
+      return;
+    }
+    sel.disabled = false;
+    if (!st.metric || names.indexOf(st.metric) < 0) { st.metric = Board.defaultMetric(rows) && names.indexOf(Board.defaultMetric(rows)) >= 0 ? Board.defaultMetric(rows) : names[0]; }
+    options(sel, names.map(function (n) { return [n, n]; }), st.metric);
+    var d = Board.chartData(rows, st.metric), W = 440, LW = 150, RW = 70, rowH = 30, H = d.bars.length * rowH + 24, plot = W - LW - RW;
+    var lay = Board.layoutBars(d, plot), svg = sv("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-labelledby": "ch-t ch-d" });
+    var desc = d.metric + (d.bars.length ? ": " + d.bars.map(function (b) { return b.id12 + " " + b.model + " " + fmt(b.value) + " on " + b.on; }).join("; ") : ": no run has it");
+    svg.appendChild(sv("title", { id: "ch-t", text: "Bar chart of " + d.metric + " across " + d.bars.length + " runs" }));
+    svg.appendChild(sv("desc", { id: "ch-d", text: desc }));
+    var pat = sv("pattern", { id: "hatch", width: "6", height: "6", patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, [sv("line", { x1: "0", y1: "0", x2: "0", y2: "6", class: "hl" })]);
+    svg.appendChild(sv("defs", {}, [pat]));
+    d.bars.forEach(function (b, i) {
+      var y = 8 + i * rowH, l = lay[i];
+      svg.appendChild(sv("text", { x: String(LW - 8), y: String(y + 17), "text-anchor": "end", class: "s", text: b.id12 + " " + (b.model || "") + (b.on === "train" ? " (train)" : "") }));
+      svg.appendChild(sv("rect", { x: String(LW + l.x), y: String(y + 2), width: String(Math.max(l.w, 1)), height: "20", class: b.on === "train" ? "bartrain" : "barheld" }));
+      svg.appendChild(sv("text", { x: String(LW + l.x + (b.value >= 0 ? l.w + 6 : -6)), y: String(y + 17), "text-anchor": b.value >= 0 ? "start" : "end", class: "t", text: fmt(b.value) }));
+    });
+    if (d.bars.length) { var z = LW + lay[0].zero; svg.appendChild(sv("line", { x1: String(z), y1: "4", x2: String(z), y2: String(H - 8), class: "zero" })); }
+    if (d.bars.length) { box.appendChild(svg); }
+    box.appendChild(h("p", { class: "hint", text: "Bars start at zero. A hatched bar was scored on training rows, a solid bar on held-out rows." + (d.left.length ? " Left out, with no " + d.metric + ": " + d.left.map(function (x) { return x.slice(0, 12); }).join(", ") + "." : "") }));
+    var det = h("details", {}, [h("summary", { text: "Values as a table" })]);
+    var tb = h("tbody"), t = h("table", { class: "cmp" }, [h("thead", {}, [h("tr", {}, ["Run", "Model", "Metrics on", d.metric].map(function (x) { return h("th", { scope: "col", text: x }); }))]), tb]);
+    d.bars.forEach(function (b) { tb.appendChild(h("tr", {}, [h("th", { scope: "row", text: b.id12 }), h("td", { text: b.model || "" }), h("td", { text: b.on }), h("td", { class: "num", text: b.text })])); });
+    det.appendChild(h("div", { class: "fitwrap", tabindex: "0", role: "region", "aria-label": "Chart values" }, [t]));
+    box.appendChild(det);
+  }
+
+  /* ---- events ---- */
+  $("pick").addEventListener("change", function (e) { readFiles(e.target.files); e.target.value = ""; });
+  $("sample-btn").addEventListener("click", loadSample);
+  $("paste-btn").addEventListener("click", function () {
+    var t = $("paste").value;
+    load([{ name: "pasted text", text: t }], "Pasted text read"); $("paste").value = "";
+  });
+  $("clear-btn").addEventListener("click", function () { st.sources = []; st.sel = []; st.detail = null; st.f = { model: "", data: "", key: "", value: "" }; st.metric = null; st.res = { rows: [], problems: [], inputs: 0 }; render(); say("Cleared."); });
+  [["f-model", "model"], ["f-data", "data"], ["f-key", "key"], ["f-value", "value"]].forEach(function (p) {
+    $(p[0]).addEventListener("change", function (e) { st.f[p[1]] = e.target.value; if (p[1] === "key") { st.f.value = ""; } render(); });
+  });
+  $("c-metric").addEventListener("change", function (e) { st.metric = e.target.value; drawChart(st.res.rows); });
+  var depth = 0;
+  function hasFiles(e) { var t = e.dataTransfer && e.dataTransfer.types; return t && Array.prototype.indexOf.call(t, "Files") >= 0; }
+  window.addEventListener("dragenter", function (e) { if (hasFiles(e)) { e.preventDefault(); depth++; $("drop").className = "on"; document.body.classList.add("dragging"); } });
+  window.addEventListener("dragleave", function () { depth = Math.max(0, depth - 1); if (!depth) { $("drop").className = ""; document.body.classList.remove("dragging"); } });
+  window.addEventListener("dragover", function (e) { if (hasFiles(e)) { e.preventDefault(); } });
+  window.addEventListener("drop", function (e) {
+    depth = 0; $("drop").className = ""; document.body.classList.remove("dragging");
+    if (!e.dataTransfer) { return; }
+    if (e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); readFiles(e.dataTransfer.files); }
+  });
+  document.addEventListener("paste", function (e) {
+    var tag = e.target && e.target.tagName;
+    if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") { return; }
+    var t = e.clipboardData ? e.clipboardData.getData("text") : "";
+    if (t) { e.preventDefault(); load([{ name: "pasted text", text: t }], "Pasted text read"); }
+  });
+  render();
+  if (location.hash === "#sample") { loadSample(); }
+})();
+</script>
+</body>
+</html>
