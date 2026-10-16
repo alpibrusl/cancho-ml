@@ -39,7 +39,7 @@ def data_of(name, n, seed):
     return O.to_csv(header, rows), X, y
 
 
-def sk_tree(M, t, X, y):
+def sk_tree(M, t, X, y, flip=False):
     """scikit-learn's Tree for tree t of our model M: the structure and the thresholds are ours, the impurities are computed here from the rows routed down our tree"""
     T = M["tree"]
     lo, hi = T["off"][t], T["off"][t + 1]
@@ -54,7 +54,9 @@ def sk_tree(M, t, X, y):
         g = lo + i
         r = rows_of[i]
         yy = y[r]
-        if cls:
+        if len(yy) == 0:
+            imp = 0.0
+        elif cls:
             p1 = float((yy == 1).sum()) / len(yy)
             imp = 1.0 - p1 * p1 - (1 - p1) * (1 - p1)
             values[i, 0, :] = [len(yy) - (yy == 1).sum(), (yy == 1).sum()]
@@ -75,7 +77,7 @@ def sk_tree(M, t, X, y):
             nodes[i]["right_child"] = T["right"][g]
             nodes[i]["feature"] = f
             nodes[i]["threshold"] = T["val"][g]
-            go = X[r, f] < T["val"][g]
+            go = (X[r, f] < T["val"][g]) != flip
             rows_of[T["left"][g]] = r[go]
             rows_of[T["right"][g]] = r[~go]
     tree = Tree(len(FEATURES), np.array([2 if cls else 1], dtype=np.intp), 1)
@@ -83,10 +85,10 @@ def sk_tree(M, t, X, y):
     return tree
 
 
-def sk_importances_of_our_model(M, X, y):
+def sk_importances_of_our_model(M, X, y, flip=False):
     per = []
     for t in range(M["tree"]["trees"]):
-        v = sk_tree(M, t, X, y).compute_feature_importances(normalize=True)
+        v = sk_tree(M, t, X, y, flip).compute_feature_importances(normalize=True)
         per.append(v)
     avg = sum(per) / len(per)
     return avg / avg.sum()
@@ -104,7 +106,7 @@ class OurTreesInScikitLearn(unittest.TestCase):
     def fit(self, name, model, task, extra, n=1500):
         text, X, y = data_of(name, n, 21)
         self.sb.write(name + ".csv", text)
-        r = self.sb.run("fit", "--model", model, "--task", task, "--target", "y", "--output", name + model + ".ml", name + ".csv", *extra)
+        r = self.sb.run("fit", "--model", model, "--task", task, "--target", "y", "--overwrite", "--output", name + model + ".ml", name + ".csv", *extra)
         self.assertEqual(r.status, 0, r)
         M = O.read_model(self.sb.read(name + model + ".ml"))
         got = self.sb.run("importance", "--model-file", name + model + ".ml").data()["importance"]
@@ -132,15 +134,9 @@ class OurTreesInScikitLearn(unittest.TestCase):
         self.assertLessEqual(float(np.max(np.abs(ours - theirs) / np.maximum(theirs, 1e-300) * (theirs > 0))), 1e-9, (ours, theirs))
 
     def test_i4a_the_check_can_fail(self):
-        # the same comparison with the counts of the wrong child must be outside the bound: swap the two children's rows in the harness
+        # the same comparison with the rows routed down the wrong side of every threshold (so that the node impurities no longer belong to the stored counts) is outside the bound
         M, X, y, ours = self.fit("cls", "tree", "classification", ["--max-depth", "7"])
-        T = M["tree"]
-        T2 = dict(T)
-        T2["left"], T2["right"] = list(T["right"]), list(T["left"])
-        M2 = dict(M)
-        M2["tree"] = T2
-        # with the children exchanged the routed rows are the other side: the node impurities no longer match the stored counts, and the importances differ
-        theirs = sk_importances_of_our_model(M2, X, y)
+        theirs = sk_importances_of_our_model(M, X, y, flip=True)
         self.assertGreater(float(np.max(np.abs(ours - theirs))), 1e-3, (ours, theirs))
 
 
@@ -162,7 +158,7 @@ class RandomForestImportances(unittest.TestCase):
     def compare(self, name, task, shuffled=False):
         text, X, y = data_of(name, 2000, 31)
         self.sb.write(name + ".csv", text)
-        r = self.sb.run("fit", "--model", "forest", "--task", task, "--trees", "100", "--max-depth", "8", "--seed", "1", "--target", "y", "--output", name + ".ml", name + ".csv")
+        r = self.sb.run("fit", "--model", "forest", "--task", task, "--trees", "100", "--max-depth", "8", "--seed", "1", "--target", "y", "--overwrite", "--output", name + ".ml", name + ".csv")
         self.assertEqual(r.status, 0, r)
         got = self.sb.run("importance", "--model-file", name + ".ml").data()["importance"]
         ours = np.array([float(c["importance"]) for c in got["columns"]])
@@ -190,7 +186,7 @@ class RandomForestImportances(unittest.TestCase):
             self.assertFalse(self.within(ours, theirs), (name, ours, theirs))
 
 
-class MLEstimator(BaseEstimator):
+class MLBase(BaseEstimator):
     """an estimator whose predict is `ml predict` on the rows it is given"""
 
     def __init__(self, sb=None, model=None, classification=False, columns=None):
@@ -219,6 +215,14 @@ class MLEstimator(BaseEstimator):
         return np.column_stack([1.0 - p, p])
 
 
+class MLRegressor(RegressorMixin, MLBase):
+    pass
+
+
+class MLClassifier(ClassifierMixin, MLBase):
+    pass
+
+
 class PermutationAgainstScikitLearn(unittest.TestCase):
     R = 30
 
@@ -236,7 +240,7 @@ class PermutationAgainstScikitLearn(unittest.TestCase):
         self.sb.write(name + ".csv", text)
         self.sb.write(name + "_new.csv", text2)
         extra = ["--max-depth", "7", "--trees", "40", "--seed", "1"] if model == "forest" else (["--step", "scale column=* kind=standard"] if model in ("linear", "logistic") else [])
-        r = self.sb.run("fit", "--model", model, *(["--task", task] if model in ("forest", "tree") else []), "--target", "y", "--output", name + model + ".ml", name + ".csv", *extra)
+        r = self.sb.run("fit", "--model", model, *(["--task", task] if model in ("forest", "tree") else []), "--target", "y", "--overwrite", "--output", name + model + ".ml", name + ".csv", *extra)
         self.assertEqual(r.status, 0, r)
         return X2, y2
 
@@ -245,7 +249,7 @@ class PermutationAgainstScikitLearn(unittest.TestCase):
         return d, np.array([float(c["importance"]) for c in d["columns"]]), np.array([float(c["std"]) for c in d["columns"]])
 
     def theirs(self, name, model, X2, y2, scoring, classification, drop_signal=False):
-        est = MLEstimator(self.sb, name + model + ".ml", classification, FEATURES)
+        est = (MLClassifier if classification else MLRegressor)(self.sb, name + model + ".ml", classification, FEATURES)
         est.fit(X2, y2)
         yy = y2
         if drop_signal:

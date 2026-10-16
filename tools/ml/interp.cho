@@ -463,8 +463,18 @@ fn source_word(s: int) -> [] &static [byte] {
     return "provenance";
 }
 
-// The importance object of a linear or logistic model. (the text, 0, the names without a deviation as a comma separated list) or (the text of an unavailable object, 1, the names)
-fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage) -> [heap] (buffer.Buffer, int, buffer.Buffer) {
+// A double as text, appended to `into` (the shortest decimal that reads back)
+pub fn put_num[&h](heap: &!h Heap, into: buffer.Buffer, x: float) -> [heap] buffer.Buffer {
+    let (b, fin) = verbs.put_float_text(heap, into, bits(x));
+    if !fin {
+        return buffer.append(heap, b, "null");
+    }
+    return b;
+}
+
+// The importance object of a linear or logistic model. (the text, 0, the names without a deviation as a comma separated list, the lines of --format text) or (the text of an
+// unavailable object, 1, the names, the line)
+fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage) -> [heap] (buffer.Buffer, int, buffer.Buffer, buffer.Buffer) {
     let lr = wireio.stored_file(st);
     let sc = wireio.stored_schema(st);
     let wv = wireio.stored_weights(st);
@@ -506,8 +516,14 @@ fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage)
         }
         out = json.end_array(heap, out);
         out = json.end_object(heap, out);
-        return (json.finish(out), 1, missing);
+        var line = buffer.append(heap, buffer.empty(heap, 64), "standardised_coefficient unavailable: ml.importance.no-scale (no stored standard deviation for: ");
+        borrow missing as &mr in {
+            line = buffer.append(heap, line, buffer.bytes(mr));
+        }
+        line = buffer.append(heap, line, ")\n");
+        return (json.finish(out), 1, missing, line);
     }
+    var plain = buffer.append(heap, buffer.empty(heap, 128), "standardised_coefficient total ");
     var z = box_slice(heap, w + 1, 0.0);
     var imp = box_slice(heap, w + 1, 0.0);
     var total = 0.0;
@@ -544,8 +560,10 @@ fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage)
     out = json.put_key(heap, out, "total");
     if total > 0.0 {
         out = json.put_string(heap, out, "1.0");
+        plain = buffer.append(heap, plain, "1.0\n");
     } else {
         out = json.put_string(heap, out, "0.0");
+        plain = buffer.append(heap, plain, "0.0\n");
     }
     out = json.put_key(heap, out, "columns");
     out = json.begin_array(heap, out);
@@ -566,6 +584,16 @@ fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage)
                 out = json.put_key(heap, out, "rank");
                 out = json.put_int(heap, out, rank_of(contents(ir), w, j));
                 out = json.end_object(heap, out);
+                plain = buffer.push_nat(heap, plain, rank_of(contents(ir), w, j));
+                plain = buffer.append(heap, plain, ". ");
+                plain = buffer.append(heap, plain, l_name(lin, j));
+                plain = buffer.append(heap, plain, "  importance ");
+                plain = put_num(heap, plain, contents(ir)[j]);
+                plain = buffer.append(heap, plain, "  coefficient ");
+                plain = put_num(heap, plain, wv[j]);
+                plain = buffer.append(heap, plain, "  std ");
+                plain = put_num(heap, plain, sd);
+                plain = buffer.push(heap, plain, byte_of(10));
                 j = j + 1;
             }
         }
@@ -574,7 +602,7 @@ fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage)
     out = json.end_object(heap, out);
     unbox_slice(heap, z);
     unbox_slice(heap, imp);
-    return (json.finish(out), 0, missing);
+    return (json.finish(out), 0, missing, plain);
 }
 
 // ---------------------------------------------------------------- the impurity decrease (kind 7, docs/interpret.md 3.2)
@@ -738,13 +766,22 @@ fn tree_scores[&h, &p](heap: &!h Heap, m: &p [byte]) -> [heap] (Box[[float]], Bo
     return (imp, splits, srows, positive);
 }
 
-fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage) -> [heap] buffer.Buffer {
+fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage) -> [heap] (buffer.Buffer, buffer.Buffer) {
     let lr = wireio.stored_file(st);
     let sc = wireio.stored_schema(st);
     let m = file.model_bytes(lr);
     let trees = fbits.get64(m, 28);
     let d = fbits.get64(m, 36);
     let (imp, splits, srows, positive) = tree_scores(heap, m);
+    var plain = buffer.append(heap, buffer.empty(heap, 128), "impurity_decrease total ");
+    if positive {
+        plain = buffer.append(heap, plain, "1.0");
+    } else {
+        plain = buffer.append(heap, plain, "0.0");
+    }
+    plain = buffer.append(heap, plain, " trees ");
+    plain = buffer.push_nat(heap, plain, trees);
+    plain = buffer.push(heap, plain, byte_of(10));
     var out = json.writer(heap, 256);
     out = json.begin_object(heap, out);
     out = json.put_key(heap, out, "method");
@@ -779,6 +816,16 @@ fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage
                     out = json.put_key(heap, out, "split_rows");
                     out = json.put_int(heap, out, contents(rr)[j]);
                     out = json.end_object(heap, out);
+                    plain = buffer.push_nat(heap, plain, rank_of(contents(ir), d, j));
+                    plain = buffer.append(heap, plain, ". ");
+                    plain = buffer.append(heap, plain, l_name(lin, j));
+                    plain = buffer.append(heap, plain, "  importance ");
+                    plain = put_num(heap, plain, contents(ir)[j]);
+                    plain = buffer.append(heap, plain, "  splits ");
+                    plain = buffer.push_nat(heap, plain, contents(sr)[j]);
+                    plain = buffer.append(heap, plain, "  rows ");
+                    plain = buffer.push_nat(heap, plain, contents(rr)[j]);
+                    plain = buffer.push(heap, plain, byte_of(10));
                     j = j + 1;
                 }
             }
@@ -789,14 +836,15 @@ fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage
     unbox_slice(heap, imp);
     unbox_slice(heap, splits);
     unbox_slice(heap, srows);
-    return json.finish(out);
+    return (json.finish(out), plain);
 }
 
 // ---------------------------------------------------------------- one function per model kind
 
-// The `importance` object of a decoded model: (its JSON text, a status, the names without a deviation). Status 0 an available table, 1 the standardised coefficients cannot be computed (the
-// text is the object with `available: false`), 2 the model has none (constant and k-means: the text is `null`). Boosting adds its own function and one arm here.
-pub fn table[&h, &s](heap: &!h Heap, st: &s wireio.Stored) -> [heap] (buffer.Buffer, int, buffer.Buffer) {
+// The `importance` object of a decoded model: (its JSON text, a status, the names without a deviation, the lines of --format text). Status 0 an available table, 1 the standardised
+// coefficients cannot be computed (the text is the object with `available: false`), 2 the model has none (constant and k-means: the text is `null`). Boosting adds its own function
+// and one arm here.
+pub fn table[&h, &s](heap: &!h Heap, st: &s wireio.Stored) -> [heap] (buffer.Buffer, int, buffer.Buffer, buffer.Buffer) {
     let key = wireio.stored_kind(st);
     let kind = est.kind_of(key);
     if kind == 4 || kind == 5 {
@@ -804,27 +852,33 @@ pub fn table[&h, &s](heap: &!h Heap, st: &s wireio.Stored) -> [heap] (buffer.Buf
         var body = buffer.empty(heap, 1);
         var status = 2;
         var missing = buffer.empty(heap, 1);
+        var plain = buffer.empty(heap, 1);
         borrow lin as &lr in {
-            let (b2, s2, m2) = std_member(heap, st, lr);
+            let (b2, s2, m2, p2) = std_member(heap, st, lr);
             buffer.drop(heap, body);
             buffer.drop(heap, missing);
+            buffer.drop(heap, plain);
             body = b2;
             status = s2;
             missing = m2;
+            plain = p2;
         }
         drop_lineage(heap, lin);
-        return (body, status, missing);
+        return (body, status, missing, plain);
     }
     if kind == 7 {
         let lin = lineage_of(heap, st);
         var body = buffer.empty(heap, 1);
+        var plain = buffer.empty(heap, 1);
         borrow lin as &lr in {
-            let b2 = tree_member(heap, st, lr);
+            let (b2, p2) = tree_member(heap, st, lr);
             buffer.drop(heap, body);
+            buffer.drop(heap, plain);
             body = b2;
+            plain = p2;
         }
         drop_lineage(heap, lin);
-        return (body, 0, buffer.empty(heap, 1));
+        return (body, 0, buffer.empty(heap, 1), plain);
     }
-    return (buffer.append(heap, buffer.empty(heap, 8), "null"), 2, buffer.empty(heap, 1));
+    return (buffer.append(heap, buffer.empty(heap, 8), "null"), 2, buffer.empty(heap, 1), buffer.empty(heap, 1));
 }

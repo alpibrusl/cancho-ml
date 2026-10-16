@@ -146,7 +146,7 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             }
         }
     }
-    if verb == 1 || verb == 3 || verb == 5 {
+    if verb == 1 || verb == 3 || verb == 5 || verb == 7 {
         if cli.has(parsed, table, "threads") {
             let t = cli.nat(args, parsed, table, "threads");
             if t < 1 || t > 64 {

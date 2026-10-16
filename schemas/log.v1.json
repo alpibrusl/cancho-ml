@@ -228,7 +228,14 @@
         "ml.runs.damaged",
         "ml.runs.data-changed",
         "ml.runs.model-differs",
-        "ml.runs.not-replayable"
+        "ml.runs.not-replayable",
+        "ml.importance.unsupported-model",
+        "ml.importance.no-scale",
+        "ml.importance.bad-metric",
+        "ml.importance.undefined-metric",
+        "ml.importance.too-few-rows",
+        "ml.limit.work",
+        "ml.dump.unsupported-model"
       ]
     }
   }

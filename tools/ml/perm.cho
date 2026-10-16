@@ -1,0 +1,777 @@
+edition 5;
+
+module ml.perm;
+
+// `importance --model-file M [--data FILE --metric NAME --repeats R --seed S]` (docs/interpret.md sections 3 and 4.2): the table of the model that needs no data (ml.interp) and, with
+// --data, the permutation importance on a held-out file. The file is read as `eval` reads it (wireio.read_input), one RAW column at a time is replaced by itself shuffled among the
+// rows of the same file, the stored steps are applied to the shuffled raw input (wireio.apply_taken), the model predicts, the metric of lib/metrics is computed. The stream of a
+// shuffle is derive(derive(derive(seed, kind), repeat), column) with the column's index in the model's schema, so neither the thread count nor the order of the columns of the data
+// file nor the order of the loop reaches a draw. Nothing here is threaded.
+
+import std.buffer;
+import std.json;
+import std.math;
+import ml.catmat;
+import ml.dict;
+import ml.est;
+import ml.fsio;
+import ml.interp;
+import ml.kinds;
+import ml.matrix;
+import ml.mdesc;
+import ml.mfile;
+import ml.paths;
+import ml.rng;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import ml.wireio;
+import metrics.classify;
+import metrics.logloss;
+import metrics.rank;
+import metrics.regress;
+import metrics.rules;
+import metrics.splits;
+import pipeline.file;
+import pipeline.schema;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.text;
+
+// what `importance` and `dump` read from the command line besides the options every verb has
+pub struct Req {
+    tree: int,
+    tree_given: bool,
+    max_nodes: int,
+    max_nodes_given: bool,
+    data_given: bool,
+    metric: &static [byte],
+    metric_given: bool,
+    repeats: int,
+    repeats_given: bool,
+    seed_given: bool,
+    max_work: int,
+    max_work_given: bool,
+    drop_given: bool,
+}
+
+pub fn request[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] Req {
+    return Req { tree: cli.nat(args, parsed, table, "tree"), tree_given: cli.has(parsed, table, "tree"), max_nodes: cli.nat(args, parsed, table, "max-nodes"), max_nodes_given: cli.has(parsed, table, "max-nodes"), data_given: cli.has(parsed, table, "data"), metric: cli.text(args, parsed, table, "metric"), metric_given: cli.has(parsed, table, "metric"), repeats: cli.nat(args, parsed, table, "repeats"), repeats_given: cli.has(parsed, table, "repeats"), seed_given: cli.has(parsed, table, "seed"), max_work: cli.nat(args, parsed, table, "max-work"), max_work_given: cli.has(parsed, table, "max-work"), drop_given: cli.has(parsed, table, "drop") };
+}
+
+pub fn default_repeats() -> [] int {
+    return 5;
+}
+
+pub fn max_repeats() -> [] int {
+    return 100;
+}
+
+// ---------------------------------------------------------------- the metrics (docs/interpret.md 3.4)
+
+// 1 rmse, 2 mae, 3 r2, 4 roc_auc, 5 accuracy, 6 precision, 7 recall, 8 f1, 9 log_loss; 0 for a name that is none of them
+fn metric_id[&n](name: &n [byte]) -> [] int {
+    if bytes_eq(name, "rmse") {
+        return 1;
+    }
+    if bytes_eq(name, "mae") {
+        return 2;
+    }
+    if bytes_eq(name, "r2") {
+        return 3;
+    }
+    if bytes_eq(name, "roc_auc") {
+        return 4;
+    }
+    if bytes_eq(name, "accuracy") {
+        return 5;
+    }
+    if bytes_eq(name, "precision") {
+        return 6;
+    }
+    if bytes_eq(name, "recall") {
+        return 7;
+    }
+    if bytes_eq(name, "f1") {
+        return 8;
+    }
+    if bytes_eq(name, "log_loss") {
+        return 9;
+    }
+    return 0;
+}
+
+fn bytes_eq[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if int_of(x[i]) != int_of(y[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn metric_word(m: int) -> [] &static [byte] {
+    if m == 1 {
+        return "rmse";
+    }
+    if m == 2 {
+        return "mae";
+    }
+    if m == 3 {
+        return "r2";
+    }
+    if m == 4 {
+        return "roc_auc";
+    }
+    if m == 5 {
+        return "accuracy";
+    }
+    if m == 6 {
+        return "precision";
+    }
+    if m == 7 {
+        return "recall";
+    }
+    if m == 8 {
+        return "f1";
+    }
+    return "log_loss";
+}
+
+// whether a smaller value of the metric is better: a loss (rmse, mae, log_loss); the importance is then permuted minus baseline, else baseline minus permuted
+fn is_loss(m: int) -> [] bool {
+    return m == 1 || m == 2 || m == 9;
+}
+
+// the metrics of a task (1 regression, 2 classification), comma separated, the default first
+fn metrics_of(task: int) -> [] &static [byte] {
+    if task == 1 {
+        return "rmse,mae,r2";
+    }
+    return "roc_auc,accuracy,precision,recall,f1,log_loss";
+}
+
+// the value of metric m for the predictions of a model on n rows: (value, 0), or (0.0, the code of metrics.rules: undefined or a refusal)
+fn metric_value[&h, &y, &t, &p, &q](heap: &!h Heap, m: int, yv: &y [float], yt: &t [int], pred: &p [float], prob: &q [float], c0: int, c1: int, n: int, cap: int) -> [heap] (float, int) {
+    if m <= 3 {
+        var sc = rules.fail(rules.undefined());
+        if m == 1 {
+            sc = regress.rmse(heap, yv[0..n], pred[0..n], cap);
+        } else if m == 2 {
+            sc = regress.mae(heap, yv[0..n], pred[0..n], cap);
+        } else {
+            sc = regress.r2(heap, yv[0..n], pred[0..n], cap);
+        }
+        return (sc.v, sc.code);
+    }
+    var yp = box_slice(heap, n + 1, 0);
+    borrow mut yp as &!pw in {
+        var i = 0;
+        while i < n {
+            if pred[i] > 0.5 {
+                contents(pw)[i] = c1;
+            } else {
+                contents(pw)[i] = c0;
+            }
+            i = i + 1;
+        }
+    }
+    var sc = rules.fail(rules.undefined());
+    borrow yp as &pr in {
+        if m == 4 {
+            sc = rank.auc(heap, yt[0..n], prob[0..n], c1, cap);
+        } else if m == 5 {
+            sc = classify.accuracy(yt[0..n], contents(pr)[0..n], cap);
+        } else if m == 6 {
+            sc = classify.precision(yt[0..n], contents(pr)[0..n], c1, cap);
+        } else if m == 7 {
+            sc = classify.recall(yt[0..n], contents(pr)[0..n], c1, cap);
+        } else if m == 8 {
+            sc = classify.f1(yt[0..n], contents(pr)[0..n], c1, cap);
+        } else {
+            sc = logloss.logloss(heap, yt[0..n], prob[0..n], c1, cap);
+        }
+    }
+    unbox_slice(heap, yp);
+    return (sc.v, sc.code);
+}
+
+// the metric of the model on the matrix xs: (value, code); code 0 a value, rules.undefined() no value, any other a refusal
+fn score_of[&h, &x, &w, &b, &y, &t](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w [float], blob: &b [byte], yv: &y [float], yt: &t [int], c0: int, c1: int, m: int, cap: int) -> [heap] (float, int) {
+    let n = matrix.rows(xs);
+    var pred = box_slice(heap, n + 1, 0.0);
+    var prob = box_slice(heap, n + 1, 0.0);
+    var code = 0;
+    borrow mut pred as &!pw in {
+        code = wiredata.predict_into(heap, kind, xs, wv, blob, contents(pw));
+    }
+    if code == 0 && task == 2 {
+        borrow mut prob as &!qw in {
+            code = wiredata.proba_into(heap, kind, xs, wv, blob, contents(qw));
+        }
+    }
+    var v = 0.0;
+    if code == 0 {
+        borrow pred as &pr in {
+            borrow prob as &qr in {
+                let (v2, c2) = metric_value(heap, m, yv, yt, contents(pr), contents(qr), c0, c1, n, cap);
+                v = v2;
+                code = c2;
+            }
+        }
+    }
+    unbox_slice(heap, pred);
+    unbox_slice(heap, prob);
+    return (v, code);
+}
+
+// ---------------------------------------------------------------- the shuffled copies of the input
+
+// A copy of the numeric features of x in the fitted order (cols[0 .. nc)), all rows, where feature `pj` (an index into cols, or -1) is read through the row permutation `perm`: row r takes
+// the cell (the value, or the missing flag) of row perm[r]. (matrix, 0) or (empty, a code of ml.refuse).
+fn take_permuted[&h, &m, &c, &p](heap: &!h Heap, x: &m matrix.Matrix, cols: &c [int], nc: int, pj: int, perm: &p [int], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (matrix.Matrix, int) {
+    let (out, code) = matrix.make(heap, matrix.rows(x), nc, rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (out, code);
+    }
+    let (t, data, miss, rows, ncols, wpc) = matrix.parts(out);
+    var d = data;
+    var b = miss;
+    borrow mut d as &!dw in {
+        borrow mut b as &!bw in {
+            var r = 0;
+            while r < rows {
+                var j = 0;
+                while j < nc {
+                    var src = r;
+                    if j == pj {
+                        src = perm[r];
+                    }
+                    if matrix.is_missing(x, src, cols[j]) {
+                        matrix.mark_missing(contents(bw), wpc, r, j);
+                    } else {
+                        matrix.put(contents(dw), ncols, r, j, matrix.value(x, src, cols[j]));
+                    }
+                    j = j + 1;
+                }
+                r = r + 1;
+            }
+        }
+    }
+    return (matrix.assemble(t, d, b, rows, ncols, wpc), 0);
+}
+
+// the same for the ids of the categorical columns: column `pc` (or -1) is read through the row permutation
+fn take_ids_permuted[&h, &m, &p](heap: &!h Heap, ids: &m catmat.Ids, pc: int, perm: &p [int], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (catmat.Ids, int) {
+    let (out, code) = catmat.make(heap, catmat.rows(ids), catmat.cols(ids), rows_cap, cols_cap, cells_cap);
+    if code != 0 {
+        return (out, code);
+    }
+    let (t, data, miss, unseen, rows, cols, wpc) = catmat.parts(out);
+    var d = data;
+    var b = miss;
+    borrow mut d as &!dw in {
+        borrow mut b as &!bw in {
+            var r = 0;
+            while r < rows {
+                var c = 0;
+                while c < cols {
+                    var src = r;
+                    if c == pc {
+                        src = perm[r];
+                    }
+                    let v = catmat.id(ids, src, c);
+                    catmat.put(contents(dw), cols, r, c, v);
+                    if v == catmat.missing_id() {
+                        catmat.mark_missing(contents(bw), wpc, r, c);
+                    }
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+        }
+    }
+    return (catmat.assemble(t, d, b, unseen, rows, cols, wpc), 0);
+}
+
+// ---------------------------------------------------------------- refusals
+
+fn refuse[&h](heap: &!h Heap, errs: fail.Errors, rule: &static [byte], message: &static [byte], hint: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    return fail.add(heap, errs, w);
+}
+
+fn bad_metric[&h, &n](heap: &!h Heap, errs: fail.Errors, given: &n [byte], task: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.importance.bad-metric", "--metric is not a metric of the task of the model", "the metrics of the task are in the detail, the first is the default");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "metric", given);
+    w = fail.detail_str(heap, w, "task", wiredata.task_word(task));
+    w = fail.detail_str(heap, w, "metrics", metrics_of(task));
+    return fail.add(heap, errs, w);
+}
+
+fn no_scale[&h, &l](heap: &!h Heap, errs: fail.Errors, columns: &l [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.importance.no-scale", "a standardised coefficient needs the standard deviation of the column the model sees and the file stores none for the columns in the detail", "give --data FILE for the permutation importance, which needs no stored deviation, or refit with a scale standard step");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "columns", columns);
+    return fail.add(heap, errs, w);
+}
+
+fn too_much_work[&h](heap: &!h Heap, errs: fail.Errors, work: int, max: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.limit.work", "rows times columns times repeats of the permutation importance is above --max-work", "use fewer --repeats or a smaller file, or raise --max-work");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "work", work);
+    w = fail.detail_int(heap, w, "max", max);
+    return fail.add(heap, errs, w);
+}
+
+fn put_header[&h](heap: &!h Heap, w0: json.Writer, name: &static [byte], task: int, kind: int) -> [heap] json.Writer {
+    var w = json.put_key(heap, w0, "model");
+    w = json.put_string(heap, w, name);
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, wiredata.task_word(task));
+    w = json.put_key(heap, w, "kind");
+    return json.put_int(heap, w, kind);
+}
+
+// ---------------------------------------------------------------- the permutation run
+
+// The permutation object for the stored model `st` on the file `datafile`: (the JSON text, the lines of --format text, ok, errors, log). When not ok the first two are empty.
+fn permutation[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, st: &ss wireio.Stored, rq: Req, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (buffer.Buffer, buffer.Buffer, bool, fail.Errors, buffer.Buffer) {
+    var e = errs;
+    var lg = log;
+    var go = true;
+    let task = wireio.stored_task(st);
+    let key = wireio.stored_kind(st);
+    var m = 0;
+    if rq.metric_given {
+        m = metric_id(rq.metric);
+        if m == 0 || (task == 1 && m > 3) || (task == 2 && m <= 3) {
+            e = bad_metric(heap, e, rq.metric, task);
+            return (buffer.empty(heap, 1), buffer.empty(heap, 1), false, e, lg);
+        }
+    } else if task == 1 {
+        m = 1;
+    } else {
+        m = 4;
+    }
+    var reps = default_repeats();
+    if rq.repeats_given {
+        reps = rq.repeats;
+    }
+    var inp = wireio.empty_input(heap);
+    let (i2, ok2, e2, lg2) = wireio.read_input(heap, args, fs, root, datafile, st, o, true, e, lg);
+    wireio.drop_input(heap, inp);
+    inp = i2;
+    e = e2;
+    lg = lg2;
+    go = ok2;
+    var out = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if go {
+        borrow inp as &ir in {
+            let x = wireio.input_x(ir);
+            let n = matrix.rows(x);
+            let sc = wireio.stored_schema(st);
+            let lr = wireio.stored_file(st);
+            let c0 = wireio.stored_c0(st);
+            let c1 = wireio.stored_c1(st);
+            let is_cat = file.has_table(lr);
+            var nf = 0;
+            var jj = 0;
+            while jj < schema.columns(sc) {
+                if jj != schema.target(sc) {
+                    nf = nf + 1;
+                }
+                jj = jj + 1;
+            }
+            if n < 2 {
+                e = refuse(heap, e, "ml.importance.too-few-rows", "--data holds fewer than 2 rows, so no column can be permuted", "give a file with at least 2 rows");
+                go = false;
+            }
+            var max_work = 4294967296;
+            if rq.max_work_given {
+                max_work = rq.max_work;
+            }
+            if go && n * nf * reps > max_work {
+                e = too_much_work(heap, e, n * nf * reps, max_work);
+                go = false;
+            }
+            // the target as doubles and as labels
+            var sel = box_slice(heap, n + 1, 0);
+            var yv = box_slice(heap, 2, 0.0);
+            var yt = box_slice(heap, n + 1, 0);
+            if go {
+                borrow sel as &selr in {
+                    let (y2, bad) = wiredata.take_col(heap, x, contents(selr), 0 - 1, wireio.input_target(ir));
+                    unbox_slice(heap, yv);
+                    yv = y2;
+                    if bad > 0 {
+                        e = wiredata.empty_target(heap, e, schema.name(sc, schema.target(sc)), bad);
+                        go = false;
+                    }
+                }
+            }
+            if go && task == 2 {
+                var foreign = 0 - 1;
+                borrow yv as &yr in {
+                    borrow mut yt as &!tw in {
+                        var i = 0;
+                        while i < n {
+                            let lab = truncate(contents(yr)[i]);
+                            contents(tw)[i] = lab;
+                            if lab != c0 && lab != c1 && foreign < 0 {
+                                foreign = i;
+                            }
+                            i = i + 1;
+                        }
+                    }
+                }
+                if foreign >= 0 {
+                    var w = fail.open_in(heap, spec.extra(), "ml.label.not-binary", "a classification target has more than two values", "the file holds a label the model was not fitted on");
+                    w = fail.no_repair(heap, w);
+                    w = fail.detail_open(heap, w);
+                    w = fail.detail_int(heap, w, "row", foreign + 1);
+                    e = fail.add(heap, e, w);
+                    go = false;
+                }
+            }
+            if go {
+                var nres = nf * reps;
+                var diffs = box_slice(heap, nres + 1, 0.0);
+                var slots = box_slice(heap, nf + 1, 0);
+                var base = 0.0;
+                var perm = box_slice(heap, n + 1, 0);
+                var nfeat = schema.features(sc) - file.categorical_columns(lr);
+                let cols = wireio.input_cols(ir);
+                let ids = wireio.input_ids(ir);
+                let voc = wireio.input_voc(ir);
+                borrow yv as &yr in {
+                    borrow yt as &tr in {
+                        // the baseline (pj = -1, pc = -1: nothing is permuted), then every column and repeat
+                        var slot = 0 - 1;
+                        var k = 0;
+                        var j = 0 - 1;
+                        var rep = 0;
+                        while go && j < schema.columns(sc) {
+                            var pj = 0 - 1;
+                            var pc = 0 - 1;
+                            var live = true;
+                            if j >= 0 {
+                                if j == schema.target(sc) {
+                                    live = false;
+                                } else if schema.type_of(sc, j) == kinds.schema_type_categorical() {
+                                    pc = dict.find_column(voc, schema.name(sc, j));
+                                    slot = slot + 1;
+                                } else {
+                                    pj = k;
+                                    k = k + 1;
+                                    slot = slot + 1;
+                                }
+                            }
+                            if live {
+                                borrow mut slots as &!sw in {
+                                    if j >= 0 {
+                                        contents(sw)[slot] = j;
+                                    }
+                                }
+                                var reps_here = reps;
+                                if j < 0 {
+                                    reps_here = 1;
+                                }
+                                rep = 0;
+                                while go && rep < reps_here {
+                                    if j >= 0 {
+                                        borrow mut perm as &!pw in {
+                                            var i = 0;
+                                            while i < n {
+                                                contents(pw)[i] = i;
+                                                i = i + 1;
+                                            }
+                                            let s0 = rng.derive(splits.stream(o.seed, kinds.stream_permutation(), rep), j);
+                                            let ended = splits.shuffle(contents(pw), 0, n, s0);
+                                        }
+                                    }
+                                    var xa = matrix.empty(heap);
+                                    var idt = catmat.empty(heap);
+                                    var code = 0;
+                                    borrow perm as &prr in {
+                                        if nfeat > 0 || !is_cat {
+                                            let (xa2, c2) = take_permuted(heap, x, cols, nfeat, pj, contents(prr), o.max_rows, o.max_cols, o.max_cells);
+                                            matrix.drop(heap, xa);
+                                            xa = xa2;
+                                            code = c2;
+                                        }
+                                        if code == 0 && is_cat {
+                                            let (idt2, c3) = take_ids_permuted(heap, ids, pc, contents(prr), o.max_rows, o.max_cols, o.max_cells);
+                                            catmat.drop(heap, idt);
+                                            idt = idt2;
+                                            code = c3;
+                                        }
+                                    }
+                                    if code != 0 {
+                                        e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                                        go = false;
+                                    }
+                                    if go {
+                                        borrow xa as &xar in {
+                                            borrow idt as &idr in {
+                                                let (xs, unk, ok4, e4) = wireio.apply_taken(heap, args, xar, idr, voc, st, o, e);
+                                                e = e4;
+                                                if !ok4 {
+                                                    go = false;
+                                                } else {
+                                                    borrow xs as &xsr in {
+                                                        let (v, c5) = score_of(heap, key_of(st), task, xsr, wireio.stored_weights(st), file.model_bytes(lr), contents(yr), contents(tr), c0, c1, m, o.max_rows);
+                                                        if c5 == rules.undefined() || c5 == rules.single_class() {
+                                                            var w = fail.open_in(heap, spec.extra(), "ml.importance.undefined-metric", "the metric has no value on the baseline or on a permuted run", "choose another --metric");
+                                                            w = fail.no_repair(heap, w);
+                                                            w = fail.detail_open(heap, w);
+                                                            w = fail.detail_str(heap, w, "metric", metric_word(m));
+                                                            e = fail.add(heap, e, w);
+                                                            go = false;
+                                                        } else if c5 != 0 {
+                                                            e = wiredata.bad_metric(heap, e, wiredata.Failed { code: c5, name: metric_word(m), row: 0 });
+                                                            go = false;
+                                                        } else if j < 0 {
+                                                            base = v;
+                                                        } else {
+                                                            var dv = base - v;
+                                                            if is_loss(m) {
+                                                                dv = v - base;
+                                                            }
+                                                            borrow mut diffs as &!rw in {
+                                                                contents(rw)[slot * reps + rep] = dv;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                matrix.drop(heap, xs);
+                                            }
+                                        }
+                                    }
+                                    matrix.drop(heap, xa);
+                                    catmat.drop(heap, idt);
+                                    rep = rep + 1;
+                                }
+                            }
+                            j = j + 1;
+                        }
+                    }
+                }
+                if go {
+                    // mean, standard deviation and rank per column, in the order of the schema
+                    var means = box_slice(heap, nf + 1, 0.0);
+                    var sds = box_slice(heap, nf + 1, 0.0);
+                    borrow diffs as &rr in {
+                        borrow mut means as &!mw in {
+                            borrow mut sds as &!dw in {
+                                var s = 0;
+                                while s < nf {
+                                    var mean = 0.0;
+                                    var q = 0;
+                                    while q < reps {
+                                        mean = mean + contents(rr)[s * reps + q];
+                                        q = q + 1;
+                                    }
+                                    mean = mean / float_of(reps);
+                                    var vr = 0.0;
+                                    q = 0;
+                                    while q < reps {
+                                        let dd = contents(rr)[s * reps + q] - mean;
+                                        vr = vr + dd * dd;
+                                        q = q + 1;
+                                    }
+                                    contents(mw)[s] = mean;
+                                    contents(dw)[s] = math.sqrt(vr / float_of(reps));
+                                    s = s + 1;
+                                }
+                            }
+                        }
+                    }
+                    var w = json.writer(heap, 256);
+                    buffer.drop(heap, plain);
+                    plain = buffer.append(heap, buffer.empty(heap, 128), "permutation ");
+                    plain = buffer.append(heap, plain, metric_word(m));
+                    if is_loss(m) {
+                        plain = buffer.append(heap, plain, " (loss), repeats ");
+                    } else {
+                        plain = buffer.append(heap, plain, " (score), repeats ");
+                    }
+                    plain = buffer.push_nat(heap, plain, reps);
+                    plain = buffer.append(heap, plain, ", rows ");
+                    plain = buffer.push_nat(heap, plain, n);
+                    plain = buffer.append(heap, plain, ", baseline ");
+                    plain = interp.put_num(heap, plain, base);
+                    plain = buffer.push(heap, plain, byte_of(10));
+                    w = json.begin_object(heap, w);
+                    w = json.put_key(heap, w, "metric");
+                    w = json.put_string(heap, w, metric_word(m));
+                    w = json.put_key(heap, w, "direction");
+                    if is_loss(m) {
+                        w = json.put_string(heap, w, "loss");
+                    } else {
+                        w = json.put_string(heap, w, "score");
+                    }
+                    w = json.put_key(heap, w, "repeats");
+                    w = json.put_int(heap, w, reps);
+                    w = json.put_key(heap, w, "seed");
+                    w = json.put_int(heap, w, o.seed);
+                    w = json.put_key(heap, w, "rows");
+                    w = json.put_int(heap, w, n);
+                    w = json.put_key(heap, w, "baseline");
+                    w = verbs.put_double(heap, w, interp.bits(base));
+                    w = json.put_key(heap, w, "columns");
+                    w = json.begin_array(heap, w);
+                    borrow means as &mr in {
+                        borrow sds as &sdr in {
+                            borrow slots as &slr in {
+                                var s = 0;
+                                while s < nf {
+                                    w = json.begin_object(heap, w);
+                                    w = json.put_key(heap, w, "column");
+                                    w = text.put(heap, w, schema.name(sc, contents(slr)[s]));
+                                    w = json.put_key(heap, w, "importance");
+                                    w = verbs.put_double(heap, w, interp.bits(contents(mr)[s]));
+                                    w = json.put_key(heap, w, "std");
+                                    w = verbs.put_double(heap, w, interp.bits(contents(sdr)[s]));
+                                    w = json.put_key(heap, w, "rank");
+                                    w = json.put_int(heap, w, interp.rank_of(contents(mr), nf, s));
+                                    w = json.end_object(heap, w);
+                                    plain = buffer.push_nat(heap, plain, interp.rank_of(contents(mr), nf, s));
+                                    plain = buffer.append(heap, plain, ". ");
+                                    plain = buffer.append(heap, plain, schema.name(sc, contents(slr)[s]));
+                                    plain = buffer.append(heap, plain, "  importance ");
+                                    plain = interp.put_num(heap, plain, contents(mr)[s]);
+                                    plain = buffer.append(heap, plain, "  std ");
+                                    plain = interp.put_num(heap, plain, contents(sdr)[s]);
+                                    plain = buffer.push(heap, plain, byte_of(10));
+                                    s = s + 1;
+                                }
+                            }
+                        }
+                    }
+                    w = json.end_array(heap, w);
+                    w = json.end_object(heap, w);
+                    buffer.drop(heap, out);
+                    out = json.finish(w);
+                    unbox_slice(heap, means);
+                    unbox_slice(heap, sds);
+                }
+                unbox_slice(heap, diffs);
+                unbox_slice(heap, slots);
+                unbox_slice(heap, perm);
+            }
+            unbox_slice(heap, sel);
+            unbox_slice(heap, yv);
+            unbox_slice(heap, yt);
+        }
+    }
+    wireio.drop_input(heap, inp);
+    return (out, plain, go, e, lg);
+}
+
+fn key_of[&s](st: &s wireio.Stored) -> [] int {
+    return wireio.stored_kind(st);
+}
+
+// ---------------------------------------------------------------- the verb
+
+pub fn run[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, model: &pm paths.Rp, rq: Req, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = errs;
+    var lg = log;
+    let (data, st, aux) = fsio.read_model(heap, fs, root, model, o.max_bytes);
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if st != 0 {
+        e = mdesc.read_problem(heap, e, st, aux, o.max_bytes, paths.shown(model));
+        buffer.drop(heap, data);
+        return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
+    }
+    borrow data as &dr in {
+        let bytes_of = buffer.bytes(dr);
+        if wireio.planned_file(bytes_of) {
+            let (stored, ok, e2) = wireio.load_stored(heap, bytes_of, paths.shown(model), e);
+            e = e2;
+            if ok {
+                borrow stored as &sr in {
+                    let kind = est.kind_of(wireio.stored_kind(sr));
+                    if kind != 4 && kind != 5 && kind != 7 {
+                        e = refuse(heap, e, "ml.importance.unsupported-model", "the model is a constant or a k-means, which have no importance per feature", "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means");
+                    } else {
+                        let (ib, ist, imiss, ipl) = interp.table(heap, sr);
+                        var go = true;
+                        if ist == 1 && !rq.data_given {
+                            borrow imiss as &mr in {
+                                e = no_scale(heap, e, buffer.bytes(mr));
+                            }
+                            go = false;
+                        }
+                        var pb = buffer.append(heap, buffer.empty(heap, 8), "null");
+                        var pp = buffer.empty(heap, 1);
+                        if go && rq.data_given {
+                            let (pb2, pp2, ok3, e3, lg3) = permutation(heap, args, fs, root, datafile, sr, rq, o, e, lg);
+                            buffer.drop(heap, pb);
+                            buffer.drop(heap, pp);
+                            pb = pb2;
+                            pp = pp2;
+                            e = e3;
+                            lg = lg3;
+                            go = ok3;
+                        }
+                        if go {
+                            var w = json.writer(heap, 512);
+                            w = json.begin_object(heap, w);
+                            w = put_header(heap, w, est.name(wireio.stored_kind(sr)), wireio.stored_task(sr), kind);
+                            w = json.put_key(heap, w, "importance");
+                            borrow ib as &ibr in {
+                                w = json.put_fragment(heap, w, buffer.bytes(ibr));
+                            }
+                            w = json.put_key(heap, w, "permutation");
+                            borrow pb as &pbr in {
+                                w = json.put_fragment(heap, w, buffer.bytes(pbr));
+                            }
+                            w = json.end_object(heap, w);
+                            buffer.drop(heap, payload);
+                            payload = json.finish(w);
+                            buffer.drop(heap, plain);
+                            plain = buffer.empty(heap, 128);
+                            borrow ipl as &plr in {
+                                plain = buffer.append(heap, plain, buffer.bytes(plr));
+                            }
+                            borrow pp as &ppr in {
+                                plain = buffer.append(heap, plain, buffer.bytes(ppr));
+                            }
+                        }
+                        buffer.drop(heap, ib);
+                        buffer.drop(heap, imiss);
+                        buffer.drop(heap, ipl);
+                        buffer.drop(heap, pb);
+                        buffer.drop(heap, pp);
+                    }
+                }
+            }
+            wireio.drop_stored(heap, stored);
+        } else {
+            let (mo, ds, da) = mfile.decode(heap, bytes_of);
+            if ds != 0 {
+                e = verbs.model_error(heap, e, ds, da, paths.shown(model));
+            } else {
+                e = refuse(heap, e, "ml.importance.unsupported-model", "the model is a constant or a k-means, which have no importance per feature", "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means");
+            }
+            mfile.drop_model(heap, mo);
+        }
+    }
+    buffer.drop(heap, data);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
+}

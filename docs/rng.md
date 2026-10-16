@@ -50,8 +50,11 @@ constant differs, and `scripts/check_registry.py` compares it with this table an
 | 6 | stratified k-fold | `2 * repeat + class` | `lib/metrics/splits.cho` |
 | 7 | stratified holdout (`ml fit --split train=F --stratify`) | the class rank (0 for the smaller label) | `lib/metrics/splits.cho`, used by `tools/ml/splitplan.cho` (`docs/splits.md` section 3) |
 | 8 | shuffle of the groups (`--split-group`) | the repeat (0 for a holdout) | `lib/metrics/splits.cho`, used by `tools/ml/splitplan.cho` |
+| 9 | row sample of a boosting round (reserved) | the round | the boosting stage (draft pull request 62): listed so that the table stays one contiguous list |
+| 10 | validation split of boosting's early stopping (reserved) | none | the same |
+| 11 | shuffle of one raw column by `ml importance --data` | the repeat, then the index of the column in the model's schema | `tools/ml/perm.cho` (`docs/interpret.md` section 3.4); the shuffle is `shuffle` of `lib/metrics/splits.cho` |
 
-The next stream takes 9. *(Renumbered at integration: the metrics stage had 1, 2, 3 for its three splits, which met the tree's 1 and 2
+The next stream takes 12. *(Renumbered at integration: the metrics stage had 1, 2, 3 for its three splits, which met the tree's 1 and 2
 and k-means' 3, and this file had said "kinds 1 and 2 are the test-input streams". The splits' assignment vectors changed with the
 numbers; the reference vectors of `docs/metrics.md` were recomputed by its Python oracle, and the oracle and the library agree on all
 2,978 cases. The tree's and k-means' numbers did not move, because spike F's identity and the oracle of the models depend on them.)*

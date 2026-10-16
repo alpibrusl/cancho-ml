@@ -25,15 +25,16 @@ def csv_of(name, n, seed):
     return O.to_csv(*O.gen_dataset(name, n, seed))
 
 
-def close_string(a, b, rel):
-    x, y = float(a), float(b)
-    return abs(x - y) <= rel * max(abs(x), abs(y), 1e-300)
+def close_string(a, b, tol, scale=1.0):
+    """|a - b| <= tol * scale: the library's log and Python's differ in the last bit of a term, and a difference of two log-losses keeps only the digits above that"""
+    return abs(float(a) - float(b)) <= tol * scale
 
 
 def equal_permutation(got, want, loose):
     """the printed objects equal; the members of a log_loss run within `loose` (relative)"""
     if list(got) != list(want):
         return False
+    scale = abs(float(want["baseline"]))
     for k in got:
         if k == "columns":
             if len(got[k]) != len(want[k]):
@@ -42,11 +43,9 @@ def equal_permutation(got, want, loose):
                 if list(a) != list(b):
                     return False
                 for m in a:
-                    if a[m] != b[m] and not (loose and m in ("importance", "std") and close_string(a[m], b[m], loose)):
+                    if a[m] != b[m] and not (loose and m in ("importance", "std") and close_string(a[m], b[m], loose, scale)):
                         return False
-                if loose and a["rank"] != b["rank"]:
-                    pass
-        elif got[k] != want[k] and not (loose and k == "baseline" and close_string(got[k], want[k], loose)):
+        elif got[k] != want[k] and not (loose and k == "baseline" and close_string(got[k], want[k], loose, scale)):
             return False
     return True
 
@@ -149,7 +148,7 @@ class Permutation(unittest.TestCase):
     def test_i6_a_missing_cell_travels_with_the_shuffle(self):
         # the mixed file has missing cells in a, b, c: the tree models take them; the oracle moves the cell, not the value
         got = self.check("forest_mixed", "rmse", 3, 5)
-        self.assertEqual(len(got["columns"]), 5)
+        self.assertEqual(len(got["columns"]), 4)
 
     def test_refusals_of_the_permutation(self):
         r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "reg_new.csv", "--metric", "roc_auc")

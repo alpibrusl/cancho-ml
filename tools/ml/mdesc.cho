@@ -483,7 +483,7 @@ fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static 
 }
 
 // the problem of reading the model file (the cases of verbs.load_model that come before the decoder)
-fn read_problem[&h, &p](heap: &!h Heap, errs: fail.Errors, st: int, aux: int, max: int, shown: &p [byte]) -> [heap] fail.Errors {
+pub fn read_problem[&h, &p](heap: &!h Heap, errs: fail.Errors, st: int, aux: int, max: int, shown: &p [byte]) -> [heap] fail.Errors {
     if st == 3 {
         var w = fail.open(heap, "limit.input-too-large", "the model file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
         w = fail.no_repair(heap, w);
@@ -513,7 +513,7 @@ pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte],
             if ok {
                 borrow stored as &sr in {
                     let lr = wireio.stored_file(sr);
-                    let (ib, ist, imiss) = interp.table(heap, sr);
+                    let (ib, ist, imiss, ipl) = interp.table(heap, sr);
                     borrow ib as &ibr in {
                         let (p2, t2) = emit(heap, bytes_of, est.name(wireio.stored_kind(sr)), est.kind_of(wireio.stored_kind(sr)), wireio.stored_task(sr), wireio.stored_c0(sr), wireio.stored_c1(sr), wireio.stored_schema(sr), file.steps_bytes(lr), file.table_bytes(lr), file.has_table(lr), est.takes_missing(wireio.stored_kind(sr)), buffer.bytes(ibr), o);
                         buffer.drop(heap, payload);
@@ -523,6 +523,7 @@ pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte],
                     }
                     buffer.drop(heap, ib);
                     buffer.drop(heap, imiss);
+                    buffer.drop(heap, ipl);
                 }
             }
             wireio.drop_stored(heap, stored);

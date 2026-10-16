@@ -58,6 +58,12 @@ pub fn verb_of[&v](text: &v [byte], tool: int) -> [] int {
     if tool == 1 && bytes.equal(text, "runs") {
         return 6;
     }
+    if tool == 1 && bytes.equal(text, "importance") {
+        return 7;
+    }
+    if tool == 1 && bytes.equal(text, "dump") {
+        return 8;
+    }
     return 0;
 }
 
@@ -76,6 +82,12 @@ pub fn verb_name(verb: int) -> [] &static [byte] {
     }
     if verb == 6 {
         return "runs";
+    }
+    if verb == 7 {
+        return "importance";
+    }
+    if verb == 8 {
+        return "dump";
     }
     return "eval";
 }
@@ -128,6 +140,9 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
     if tool == 1 && (verb == 1 || verb == 3 || verb == 5) {
         e = splitspec.check_flags(heap, args, parsed, e, verb, table);
     }
+    if tool == 1 && verb == 7 {
+        e = importance_flags(heap, args, parsed, e, table);
+    }
     if tool == 2 {
         // `ml-predict` has no fit flag to check (wire.check_flags judges the flags of fit and eval)
         return e;
@@ -137,6 +152,42 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
         return wire.check_flags(heap, args, parsed, e, 1);
     }
     return wire.check_flags(heap, args, parsed, e, verb);
+}
+
+// the flags of `importance` that mean something only with --data, and the range of --repeats (docs/interpret.md section 4.1)
+pub fn importance_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte]) -> [heap, args] fail.Errors {
+    var e = errs;
+    if !cli.has(parsed, table, "data") {
+        if cli.has(parsed, table, "metric") {
+            e = flag_problem(heap, e, "args.conflict", "this flag needs --data, the file on which the permutation importance is measured", "give --data FILE", "flag", "--metric");
+        }
+        if cli.has(parsed, table, "repeats") {
+            e = flag_problem(heap, e, "args.conflict", "this flag needs --data, the file on which the permutation importance is measured", "give --data FILE", "flag", "--repeats");
+        }
+        if cli.has(parsed, table, "seed") {
+            e = flag_problem(heap, e, "args.conflict", "this flag needs --data, the file on which the permutation importance is measured", "give --data FILE", "flag", "--seed");
+        }
+        if cli.has(parsed, table, "drop") {
+            e = flag_problem(heap, e, "args.conflict", "this flag needs --data, the file on which the permutation importance is measured", "give --data FILE", "flag", "--drop");
+        }
+        if cli.has(parsed, table, "max-work") {
+            e = flag_problem(heap, e, "args.conflict", "this flag needs --data, the file on which the permutation importance is measured", "give --data FILE", "flag", "--max-work");
+        }
+    }
+    if cli.has(parsed, table, "repeats") {
+        let v = cli.nat(args, parsed, table, "repeats");
+        if v < 1 || v > 100 {
+            var w = fail.open_in(heap, spec.extra(), "ml.param.out-of-range", "a numeric flag is outside its range", "the range is in the detail and in introspect limits");
+            w = fail.no_repair(heap, w);
+            w = fail.detail_open(heap, w);
+            w = fail.detail_str(heap, w, "flag", "repeats");
+            w = fail.detail_int(heap, w, "value", v);
+            w = fail.detail_int(heap, w, "min", 1);
+            w = fail.detail_int(heap, w, "max", 100);
+            e = fail.add(heap, e, w);
+        }
+    }
+    return e;
 }
 
 // the flags of the categorical columns that fit takes (docs/categorical.md section 2): the limits and --na-values mean something only with --cat, --cat names a column,
@@ -226,7 +277,7 @@ pub fn check_nats[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
     while k <= count {
         let name = bytes.field(bytes.field(table, ';', k), '|', 1);
         var least = 1;
-        if bytes.equal(name, "from") || bytes.equal(name, "max-out-of-range") {
+        if bytes.equal(name, "from") || bytes.equal(name, "max-out-of-range") || bytes.equal(name, "tree") {
             least = 0;
         }
         if est.hparam_flag(name) {
@@ -338,9 +389,9 @@ pub fn cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
             w = fail.detail_open(heap, w);
             w = fail.detail_text(heap, w, "command", cli.operand(args, parsed, 0));
             e = fail.add(heap, e, w);
-        } else if verb == 4 {
+        } else if verb == 4 || verb == 7 || verb == 8 {
             if cli.operand_count(parsed) > 1 {
-                e = flag_problem(heap, e, "args.too-many-operands", "describe takes no file: it reads the model file named by --model-file", "ml describe --model-file MODEL", "operand", "FILE");
+                e = flag_problem(heap, e, "args.too-many-operands", "this verb takes no file: it reads the model file named by --model-file", "ml describe|importance|dump --model-file MODEL", "operand", "FILE");
             }
         } else if verb == 6 {
             e = runs_operands(heap, args, parsed, e);
@@ -369,15 +420,17 @@ pub res struct Paths {
     logp: paths.Rp,
     planp: paths.Rp,
     trackp: paths.Rp,
+    datap: paths.Rp,
 }
 
 pub fn drop_paths[&h](heap: &!h Heap, ps: Paths) -> [heap] int {
-    let Paths { file, model, out, logp, planp, trackp } = ps;
+    let Paths { file, model, out, logp, planp, trackp, datap } = ps;
     paths.drop(heap, file);
     paths.drop(heap, model);
     paths.drop(heap, out);
     paths.drop(heap, planp);
     paths.drop(heap, trackp);
+    paths.drop(heap, datap);
     return paths.drop(heap, logp);
 }
 
@@ -426,12 +479,12 @@ pub fn clean(errs: fail.Errors) -> [] (fail.Errors, bool) {
 pub fn resolve_all[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], verb: int, root: &r [byte], errs: fail.Errors) -> [heap, args] (Paths, fail.Errors) {
     let (e0, none) = clean(errs);
     if !none {
-        return (Paths { file: paths.absent(heap), model: paths.absent(heap), out: paths.absent(heap), logp: paths.absent(heap), planp: paths.absent(heap), trackp: paths.absent(heap) }, e0);
+        return (Paths { file: paths.absent(heap), model: paths.absent(heap), out: paths.absent(heap), logp: paths.absent(heap), planp: paths.absent(heap), trackp: paths.absent(heap), datap: paths.absent(heap) }, e0);
     }
     // describe has no file operand, and predict reads standard input for `-` or for no operand
     var f2 = paths.absent(heap);
     var e2 = e0;
-    if verb != 4 && !stdin_wanted(args, parsed, verb) {
+    if verb != 4 && verb != 7 && verb != 8 && !stdin_wanted(args, parsed, verb) {
         var at = 1;
         if verb == 6 {
             at = 2;
@@ -446,7 +499,8 @@ pub fn resolve_all[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli
     let (l2, e5) = paths.from_flag(heap, args, parsed, table, root, "log", e4);
     let (p2, e6) = paths.from_flag(heap, args, parsed, table, root, "plan", e5);
     let (t2, e7) = paths.from_flag(heap, args, parsed, table, root, "track", e6);
-    return (Paths { file: f2, model: m2, out: o2, logp: l2, planp: p2, trackp: t2 }, e7);
+    let (d2, e8) = paths.from_flag(heap, args, parsed, table, root, "data", e7);
+    return (Paths { file: f2, model: m2, out: o2, logp: l2, planp: p2, trackp: t2, datap: d2 }, e8);
 }
 
 // whether the first error is none, the exit code of the answer and the rule of the first error as a buffer (empty when there is none). A dry run exits 9.
@@ -476,7 +530,7 @@ pub fn stdin_into[&h, &g, &p, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.
     if !none || !stdin_wanted(args, parsed, verb) {
         return (ps, e0);
     }
-    let Paths { file, model, out, logp, planp, trackp } = ps;
+    let Paths { file, model, out, logp, planp, trackp, datap } = ps;
     paths.drop(heap, file);
     let cap = cli.nat(args, parsed, table, "max-bytes");
     let (f2, over) = paths.read_stdin(heap, io, cap);
@@ -489,5 +543,5 @@ pub fn stdin_into[&h, &g, &p, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.
         w = fail.detail_int(heap, w, "max", cap);
         e1 = fail.add(heap, e1, w);
     }
-    return (Paths { file: f2, model: model, out: out, logp: logp, planp: planp, trackp: trackp }, e1);
+    return (Paths { file: f2, model: model, out: out, logp: logp, planp: planp, trackp: trackp, datap: datap }, e1);
 }

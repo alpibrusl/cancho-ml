@@ -185,7 +185,49 @@ def data_defs():
                 "summary": obj({"count": NAT, "std": {"const": "sample"}, "metrics": {"type": "object", "additionalProperties": agg}}),
                 "assignment": obj({"repeats": NAT, "rows": NAT, "folds": {"type": "array", "items": {"type": "array", "items": {"type": "integer", "minimum": -1}}}})},
                ["model", "task", "target", "rows", "columns", "plan", "split", "strategy", "folds", "repeats", "results", "summary"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p, cv_p, describe_data()] + runs_data()}
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p, cv_p, describe_data(), importance_data()] + dump_data() + runs_data()}
+
+
+RANK = {"type": "integer", "minimum": 1}
+
+
+def importance_object():
+    """The `importance` object of describe and of the verb (docs/interpret.md sections 4.2 and 6)"""
+    std_col = obj({"column": TB, "source": TB, "coefficient": FLT, "std": FLT, "std_source": {"enum": ["scale", "provenance"]}, "standardised": FLT, "importance": FLT, "rank": RANK})
+    std = obj({"method": {"const": "standardised_coefficient"}, "available": {"const": True}, "measure": {"type": "string"}, "total": FLT, "columns": {"type": "array", "items": std_col}})
+    mdi_col = obj({"column": TB, "source": TB, "importance": FLT, "rank": RANK, "splits": NAT, "split_rows": NAT})
+    mdi = obj({"method": {"const": "impurity_decrease"}, "available": {"const": True}, "measure": {"type": "string"}, "trees": NAT, "total": FLT, "columns": {"type": "array", "items": mdi_col}})
+    none = obj({"method": {"const": "standardised_coefficient"}, "available": {"const": False}, "reason": {"const": "ml.importance.no-scale"}, "measure": {"type": "string"},
+                "missing": {"type": "array", "items": TB}})
+    return [std, mdi, none]
+
+
+def importance_member():
+    return {"oneOf": importance_object() + [{"type": "null"}]}
+
+
+def importance_data():
+    """The answer of `ml importance` (docs/interpret.md section 4.2)"""
+    col = obj({"column": TB, "importance": FLT, "std": FLT, "rank": RANK})
+    perm = obj({"metric": {"enum": ["rmse", "mae", "r2", "roc_auc", "accuracy", "precision", "recall", "f1", "log_loss"]}, "direction": {"enum": ["loss", "score"]},
+                "repeats": NAT, "seed": NAT, "rows": NAT, "baseline": FLT, "columns": {"type": "array", "items": col}})
+    return obj({"model": {"enum": ["linear", "logistic", "tree", "forest"]}, "task": {"enum": ["regression", "classification"]}, "kind": {"enum": [4, 5, 7]},
+                "importance": {"oneOf": importance_object()}, "permutation": {"oneOf": [{"type": "null"}, perm]}})
+
+
+def dump_data():
+    """The answers of `ml dump` (docs/interpret.md section 4.3): a tree, the coefficients of a linear model, the centroids of a k-means"""
+    leaf = obj({"id": NAT, "depth": NAT, "leaf": {"const": True}, "value": FLT, "counts": {"type": "array", "items": NAT, "minItems": 1, "maxItems": 2}, "rows": NAT})
+    inner = obj({"id": NAT, "depth": NAT, "leaf": {"const": False}, "column": TB, "source": TB, "threshold": FLT, "cell": {"oneOf": [{"type": "null"}, {"type": "string"}]},
+                 "missing": {"enum": ["left", "right"]}, "left": NAT, "right": NAT, "counts": {"type": "array", "items": NAT, "minItems": 1, "maxItems": 2}, "rows": NAT})
+    tree = obj({"model": {"enum": ["tree", "forest"]}, "task": {"enum": ["regression", "classification"]}, "kind": {"const": 7}, "trees": NAT, "tree": NAT, "nodes": NAT, "depth": NAT,
+                "list": {"type": "array", "items": {"oneOf": [leaf, inner]}}})
+    lin = obj({"model": {"enum": ["linear", "logistic"]}, "task": {"enum": ["regression", "classification"]}, "kind": {"enum": [4, 5]}, "intercept": FLT,
+               "coefficients": {"type": "array", "items": obj({"column": TB, "source": TB, "coefficient": FLT})}})
+    value = obj({"column": TB, "source": TB, "value": FLT, "raw": {"oneOf": [{"type": "null"}, FLT]}})
+    km = obj({"model": {"const": "kmeans"}, "task": {"const": "clustering"}, "kind": {"const": 6}, "k": NAT,
+              "centroids": {"type": "array", "items": obj({"cluster": NAT, "values": {"type": "array", "items": value}})}})
+    return [tree, lin, km]
 
 
 def describe_data():
@@ -213,7 +255,7 @@ def describe_data():
         "columns": {"type": "array", "items": column, "minItems": 1}, "request": request,
         "categorical": {"type": "array", "items": cat}, "na_values": {"type": "array", "items": TB}, "reader": opt(reader),
         "classes": opt({"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}), "positive": opt({"type": "integer"}),
-        "output": output, "limits": obj({"values_per_column": NAT, "max_bytes": NAT}),
+        "output": output, "limits": obj({"values_per_column": NAT, "max_bytes": NAT}), "importance": importance_member(),
     })
 
 
