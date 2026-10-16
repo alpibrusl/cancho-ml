@@ -5,8 +5,9 @@ the tree), the gates are run there, and the mutant is killed if a gate that must
     python3 scripts/mutants_site.py [--bin build/ml] [NAME ...]     # the mutants whose name contains one of the words (default: all)
     python3 scripts/mutants_site.py --check                         # only check that every pattern applies once (no gate run)
 
-The gates: `landing` (scripts/check_landing.py: the figures against the sources, the header of the five pages, the shape of the replay, the build commands, the limits
-and the basics), `site` (scripts/site.py --check: the generated regions and the figures against the built binary and the documents), `links`
+The gates: `landing` (scripts/check_landing.py: the figures against the sources, the header of the five pages, the shape of the three replays, the experiments and
+the server in words, the runners of the workflow, the build commands, the limits and the basics), `demo` (check_landing.py --demo: the first two replays against a fresh
+run of scripts/demo.sh, which needs ml-serve and curl), `site` (scripts/site.py --check: the generated regions and the figures against the built binary and the documents), `links`
 (scripts/check_links.py) and `seo` (scripts/seo_check.py). The colour pairs have their own mutants (scripts/check_contrast.py --mutants). Needs the built binary
 (`cancho install && cancho build --bin ml`). Exit 1 if the control fails, a pattern does not apply, or a mutant survives.
 """
@@ -24,17 +25,27 @@ BINARY = ROOT / "build" / "ml"
 # (name, file, old, new, the gates that must catch it)
 IDX = "docs/index.html"
 MUTANTS = [
-    ("figure-tests-typed", IDX, '<span data-n="tests">439</span>', '<span data-n="tests">440</span>', {"landing", "site"}),
-    ("figure-mutants-typed", IDX, '<span data-n="mut_killed">1,144</span>', '<span data-n="mut_killed">1,145</span>', {"landing", "site"}),
-    ("figure-rules-typed", IDX, '<b><span data-n="rules">79</span></b>', '<b><span data-n="rules">80</span></b>', {"landing", "site"}),
+    ("figure-tests-typed", IDX, '<span data-n="tests">520</span>', '<span data-n="tests">521</span>', {"landing", "site"}),
+    ("figure-mutants-typed", IDX, '<span data-n="mut_killed">1,310</span>', '<span data-n="mut_killed">1,311</span>', {"landing", "site"}),
+    ("figure-rules-typed", IDX, '<b><span data-n="rules">99</span></b>', '<b><span data-n="rules">100</span></b>', {"landing", "site"}),
     ("figure-red-gap-typed", IDX, '<span data-n="red_gap">8.1</span>', '<span data-n="red_gap">3.1</span>', {"landing", "site"}),
     ("figure-name-unknown", IDX, '<span data-n="red_tol">3</span>', '<span data-n="red_tolerance">3</span>', {"landing", "site"}),
-    ("source-tests-edited", "docs/status.md", "439 conformance tests pass, none skipped", "440 conformance tests pass, none skipped", {"landing", "site"}),
+    ("source-tests-edited", "docs/status.md", "520 conformance tests pass, none skipped", "521 conformance tests pass, none skipped", {"landing", "site"}),
     ("source-golden-line-removed", "docs/bench/xplat_fp.txt",
-     "linear-diabetes-t1\teval\t0\tb7b0b80d1e2a9722d14a493dbf65840db560bb462ab6147d4be7d670be17bc7b\n", "", {"landing", "site"}),
+     "linear-diabetes-t1\teval\t0\t6553db4528e032fd15cc7c61fae26f6a332fad84f73d9ebc25ecef417225a08d\n", "", {"landing", "site"}),
     ("source-rule-count-stale", "docs/status.md", "| refusals | 99 rule tags in `introspect`", "| refusals | 77 rule tags in `introspect`", {"landing"}),
-    ("evidence-tests-differ", "docs/evidence.html", "439 tests pass", "438 tests pass", {"landing"}),
-    ("replay-number-edited", IDX, '"accuracy":"0.9333333333333333"', '"accuracy":"0.9333"', {"site"}),
+    ("evidence-tests-differ", "docs/evidence.html", "520 tests pass", "519 tests pass", {"landing"}),
+    ("replay-number-edited", IDX, "<span>accuracy   0.9333 -&gt; 0.8666</span>", "<span>accuracy   0.9334 -&gt; 0.8666</span>", {"demo", "site"}),
+    ("replay-hash-edited", IDX, "verified: True  model 3d69715e3577", "verified: True  model 3d69715e3578", {"landing", "demo", "site"}),
+    ("replay-whole-hash-shown", IDX, '<span>run d659c3217b4c\u2026</span>', '<span>run d659c3217b4c0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899a</span>', {"landing", "demo", "site"}),
+    ("replay-port-leaks", IDX, "localhost:8080/predict -d '{\"sepal_length_cm\":\"abc\"}'", "localhost:63440/predict -d '{\"sepal_length_cm\":\"abc\"}'", {"landing", "demo", "site"}),
+    ("replay-temp-path-leaks", IDX, "<span>run 519af537b8b7\u2026</span>", "<span>run 519af537b8b7\u2026 /var/folders/x/cancho-ml-demo.AbC</span>", {"landing", "demo", "site"}),
+    ("replay-serve-not-loopback", IDX, "listening on 127.0.0.1:8080", "listening on 0.0.0.0:8080", {"landing", "demo", "site"}),
+    ("replay-serve-flag-shown", IDX, "$ ml-serve --model-file iris.ml --port 8080</span>", "$ ml-serve --model-file iris.ml --port 8080 --no-token</span>", {"landing", "demo", "site"}),
+    ("replay-train-marker-wrong", IDX, "iris_train.csv  on: train", "iris_train.csv  on: other", {"landing", "demo", "site"}),
+    ("replay-compare-removed", IDX, '<span class="a">$ ml runs compare runs A C</span>\n', "", {"landing", "demo", "site"}),
+    ("replay-tab-removed", IDX, '<pre id="screen-serve"', '<pre id="screen-sv"', {"landing", "demo", "site"}),
+    ("replay-prediction-edited", IDX, '"rows":[[1,0.678121207688661]]', '"rows":[[1,0.678121207688662]]', {"demo", "site"}),
     ("replay-repair-not-the-argv", IDX, "strategy=mean'</span>\n<span class=\"g\">", "strategy=median'</span>\n<span class=\"g\">", {"landing", "site"}),
     ("replay-refusal-no-exit-status", IDX, '<span class="b"># exit status 8</span>\n', "", {"landing", "site"}),
     ("replay-control-not-a-button", IDX, '<button id="replay" type="button" hidden>&#8635; replay</button>', '<div id="replay">&#8635; replay</div>', {"landing"}),
@@ -57,24 +68,41 @@ MUTANTS = [
     ("seo-title-too-long", IDX, "<title>cancho-ml: machine learning on a CSV that refuses clearly</title>",
      "<title>cancho-ml: machine learning on a CSV that refuses clearly and repeats</title>", {"landing", "seo"}),
     ("link-to-missing-file", IDX, '<a href="evidence.html">Evidence</a></h3>', '<a href="evidenz.html">Evidence</a></h3>', {"links"}),
+    # the server, the experiments and the platforms, in words
+    ("serve-text-every-address", IDX, "It listens on 127.0.0.1 unless you pass <code>--bind all</code>, which needs a token file (<code>--token-file</code>).",
+     "It listens on every address of the host and so needs <code>--token-file</code> or <code>--no-token</code>.", {"landing"}),
+    ("serve-text-no-token-added", IDX, "which needs a token file (<code>--token-file</code>)", "which needs a token file (<code>--token-file</code> or <code>--no-token</code>)", {"landing"}),
+    ("serve-text-token-file-removed", IDX, " (<code>--token-file</code>)", "", {"landing"}),
+    ("serve-comment-says-every-address", "scripts/site.py", '"# the same file over HTTP: it listens on 127.0.0.1 unless --bind all is given"',
+     '"# the same file over HTTP: it listens on every address of the host"', {"landing"}),
+    ("experiments-card-removed", IDX, "<h3>Experiments you can replay</h3>", "<h3>Experiments</h3>", {"landing"}),
+    ("experiments-verify-claim-removed", IDX, "<code>ml runs verify</code> re-fits and reproduces the model&rsquo;s hash.", "<code>ml runs verify</code> checks it.", {"landing"}),
+    ("experiments-on-marker-removed", IDX, "(<code>on</code>) and counts the cells outside its range", "and counts the cells outside the range", {"landing"}),
+    ("experiments-track-removed", IDX, "(<code>--track</code>)", "", {"landing"}),
+    ("platforms-runner-dropped-from-text", IDX, "<code>ubuntu-24.04-arm</code>, ", "", {"landing"}),
+    ("platforms-figure-typed", IDX, '<span data-n="runners">4</span>', '<span data-n="runners">3</span>', {"landing", "site"}),
+    ("platforms-matrix-grows", ".github/workflows/ci.yml", "          - {os: macos-26, label: darwin-arm64}\n",
+     "          - {os: macos-26, label: darwin-arm64}\n          - {os: windows-2025, label: windows-x86_64}\n", {"landing", "site"}),
+    ("platforms-pin-moves", "cancho.toml", 'cancho = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"', 'cancho = "1234567b4029a3ee73196cdfdb48e8efa7e9c519"', {"landing"}),
     ("lang-removed", IDX, '<html lang="en">', "<html>", {"landing", "seo"}),
 ]
 
 
 def copy_tree(dst):
-    for d in ("docs", "scripts", "manifests"):
+    for d in ("docs", "scripts", "manifests", ".github"):
         shutil.copytree(ROOT / d, dst / d, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "mutants_*.log"))
     shutil.copy(ROOT / "README.md", dst / "README.md")
     shutil.copy(ROOT / "cancho.toml", dst / "cancho.toml")
     # the other files are only linked to (check_links.py asks that they exist): link them, so that nothing is copied that no mutant edits
     for entry in ROOT.iterdir():
-        if entry.name not in ("docs", "scripts", "manifests", "README.md", "cancho.toml", "build", ".git") and not (dst / entry.name).exists():
+        if entry.name not in ("docs", "scripts", "manifests", ".github", "README.md", "cancho.toml", "build", ".git") and not (dst / entry.name).exists():
             (dst / entry.name).symlink_to(entry)
 
 
 def gates(tree, binary):
     cmds = {"landing": [PY, "scripts/check_landing.py"], "site": [PY, "scripts/site.py", "--check", "--bin", str(binary)],
-            "links": [PY, "scripts/check_links.py"], "seo": [PY, "scripts/seo_check.py"]}
+            "links": [PY, "scripts/check_links.py"], "seo": [PY, "scripts/seo_check.py"],
+            "demo": [PY, "scripts/check_landing.py", "--demo", "--bin", str(binary)]}
     failed = set()
     for name, cmd in cmds.items():
         r = subprocess.run(cmd, cwd=tree, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

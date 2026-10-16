@@ -10,16 +10,24 @@ What fails it:
     states, and the rule count is the one docs/status.md states. A figure typed by hand and wrong, or a source edited and the page not, is a failure;
   * the navigation: the header of the five pages is the same list of links, every link is a file of docs/ (or an https address) and an in-page link names an id,
     and the link of the page itself is marked aria-current (the landing page's "How it works" is an in-page link and is not);
-  * the replayed run: the <pre id="screen"> holds its lines as spans, the refusal names a rule and an exit status, the repair is a command, and the command
-    that follows it is the repair's own argv (the page cannot show a repair that is not the one printed);
+  * the replayed runs: three <pre class="screen"> panels (fit and compare, serve and curl, a refusal and its repair) hold their lines as spans; in the last one
+    the refusal names a rule and an exit status, the repair is a command, and the command that follows it is the repair's own argv; the first two carry the
+    experiment commands and the loopback line of ml-serve, show no whole hash, no port but 8080 and no temporary path; with --demo they are compared with a fresh
+    run of scripts/demo.sh (the built binaries), line by line;
+  * the experiments and the server, in words: the card "Experiments you can replay" and the commands it names (`--track`, `ml runs compare`, `ml runs verify`,
+    `on`, the cells outside the range) are on the page; the text about ml-serve says it listens on 127.0.0.1, that `--bind all` needs `--token-file`, and never
+    says it listens on every address by default or mentions `--no-token`; every runner of the matrix of .github/workflows/ci.yml is named on the page, and the
+    figure "runners" is their number;
   * the build commands of "Try it" are the lines of the README's quick start (the same sh block);
   * the honest limits are on the page: the red gate with its two numbers, "No speed is claimed", the platforms that are not covered;
   * the basics: one <h1>, `lang`, a skip link to <main id="main">, a <title> and a description inside the SEO limits, the diagram has a <title> and a <desc> and the
     page a sentence that says it in words, the replay control is a <button>, a <noscript>-free fallback (the full log is in the HTML), no external request
     (no <script src>, no stylesheet or image from another host, no @import), an inline script of at most 3 KB;
-  * the size budget: docs/index.html is at most 25 KB (25,600 bytes) and, with docs/assets/site.css, at most 40 KB.
+  * the size budget: docs/index.html is at most 28 KB (28,672 bytes) and, with docs/assets/site.css, at most 45 KB.
 
     python3 scripts/check_landing.py --budget     # print the sizes
+    python3 scripts/check_landing.py --demo       # also run scripts/demo.sh (needs build/ml, build/ml-serve, curl) and compare the replay with it
+    python3 scripts/check_landing.py --demo --bin DIR   # the directory that holds ml and ml-serve
 """
 import json
 import re
@@ -30,9 +38,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 PAGES = ["index.html", "guide.html", "examples.html", "evidence.html", "benchmarks.html"]
-BUDGET_INDEX = 25 * 1024
-BUDGET_WITH_CSS = 40 * 1024
-BUDGET_SCRIPT = 3 * 1024
+BUDGET_INDEX = 28 * 1024
+BUDGET_WITH_CSS = 45 * 1024
+BUDGET_SCRIPT = 3 * 1024 + 512
 
 
 def src(root=ROOT):
@@ -160,6 +168,7 @@ def figures(root):
     row = next(l for l in status.splitlines() if l.startswith("| other platforms"))
     named = [p for p in ("macOS arm64", "Linux x86-64", "Linux aarch64") if p in row]
     out["platforms"] = str(len(named))
+    out["runners"] = str(len(ci_runners(root)))
     out["tests"] = re.search(r"([\d,]+) conformance tests pass, none skipped", status).group(1)
     m = re.search(r"([\d,]+) patterns across [\w-]+ scripts: ([\d,]+) killed, (\d+) survive", status)
     out["mut_total"], out["mut_killed"], out["mut_survive"] = m.groups()
@@ -168,6 +177,11 @@ def figures(root):
     guide = (root / "docs" / "guide.html").read_text()
     out["rules"] = re.search(r"<!-- gen:nrules -->\n(\d+)\n<!-- /gen:nrules -->", guide).group(1)
     return out
+
+
+def ci_runners(root):
+    """The runner images of the matrix of the workflow, in order."""
+    return re.findall(r"- \{os: ([\w.-]+),", (root / ".github" / "workflows" / "ci.yml").read_text())
 
 
 def check_figures(root, p, errs):
@@ -180,7 +194,7 @@ def check_figures(root, p, errs):
         seen[name] = val
         if val != want[name]:
             errs.append("index.html: %s is %r, the sources say %r" % (name, val, want[name]))
-    for name in ("fp_lines", "tests", "mut_killed", "mut_total", "rules", "red_gap", "red_tol", "platforms"):
+    for name in ("fp_lines", "tests", "mut_killed", "mut_total", "rules", "red_gap", "red_tol", "platforms", "runners"):
         if name not in seen:
             errs.append("index.html: the figure %s is missing" % name)
     status = (root / "docs" / "status.md").read_text()
@@ -234,25 +248,28 @@ def check_nav(root, errs):
 
 
 class Replay(HTMLParser):
+    """The panels of the replay: id of each <pre class="screen"> -> its lines [(class, text)]."""
+
     def __init__(self):
         super().__init__()
-        self.in_pre = False
-        self.lines = []
+        self.panel = None
+        self.panels = {}
         self._cls = None
         self._buf = None
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
-        if tag == "pre" and a.get("id") == "screen":
-            self.in_pre = True
-        elif tag == "span" and self.in_pre:
+        if tag == "pre" and "screen" in (a.get("class") or "").split():
+            self.panel = a.get("id")
+            self.panels[self.panel] = []
+        elif tag == "span" and self.panel:
             self._cls, self._buf = a.get("class", ""), ""
 
     def handle_endtag(self, tag):
         if tag == "pre":
-            self.in_pre = False
-        if tag == "span" and self.in_pre and self._buf is not None:
-            self.lines.append((self._cls, self._buf))
+            self.panel = None
+        if tag == "span" and self.panel and self._buf is not None:
+            self.panels[self.panel].append((self._cls, self._buf))
             self._buf = None
 
     def handle_data(self, d):
@@ -260,19 +277,65 @@ class Replay(HTMLParser):
             self._buf += d
 
 
+PANELS = ["screen-fit", "screen-serve", "screen-fix"]
+
+
 def check_replay(root, text, errs):
     r = Replay()
     r.feed(text)
-    L = r.lines
-    if len(L) < 12:
-        errs.append("index.html: the replay holds %d lines, want 12 or more (the full log is in the HTML, for a browser without JavaScript)" % len(L))
+    if list(r.panels) != PANELS:
+        errs.append("index.html: the replay panels are %r, want %r (the full logs are in the HTML, for a browser without JavaScript)" % (list(r.panels), PANELS))
         return
+    for tab in ("tab-fit", "tab-serve", "tab-fix"):
+        if 'id="%s"' % tab not in text:
+            errs.append("index.html: the replay has no tab %s" % tab)
+    fit, serve, fix = (r.panels[k] for k in PANELS)
+    every = fit + serve + fix
+    if len(fit) < 15 or len(serve) < 8 or len(fix) < 5:
+        errs.append("index.html: the replay panels hold %d, %d and %d lines, want at least 15, 8 and 5" % (len(fit), len(serve), len(fix)))
+    for c, t in every:
+        if re.search(r"\b[0-9a-f]{64}\b", t):
+            errs.append("index.html: the replay shows a whole 64-digit hash (it shows 12 digits): %s" % t[:60])
+        if re.search(r"/var/folders|/tmp/|cancho-ml-demo|/Users/", t):
+            errs.append("index.html: the replay shows a temporary or local path: %s" % t[:60])
+        for port in re.findall(r"(?:localhost|127\.0\.0\.1):(\d+)|--port (\d+)", t):
+            if (port[0] or port[1]) != "8080":
+                errs.append("index.html: the replay shows a port other than 8080: %s" % t[:60])
+    # fit and compare: two tracked fits, compare, verify, eval train against other
+    cmds = [t for c, t in fit if c == "a"]
+    for want in ("$ ml fit ", "--track runs", "$ ml runs compare ", "$ ml runs verify ", "$ ml eval "):
+        if not any(want in t for t in cmds):
+            errs.append("index.html: the first replay has no command with %r" % want)
+    ftext = "\n".join(t for c, t in fit)
+    for want in ("verified: True", "on: train", "on: other", "differs: plan"):
+        if want not in ftext:
+            errs.append("index.html: the first replay does not show %r" % want)
+    ids = re.findall(r"^run ([0-9a-f]{12})…$", ftext, re.M)
+    if len(ids) != 2 or ids[0] == ids[1]:
+        errs.append("index.html: the first replay shows %r as run ids, want two different ones" % ids)
+    # serve and curl: loopback by default, a prediction and a refusal that name the model's hash
+    scmds = [t for c, t in serve if c == "a"]
+    if len(scmds) != 3 or not scmds[0].startswith("$ ml-serve --model-file iris.ml") or not all(t.startswith("$ curl ") for t in scmds[1:]):
+        errs.append("index.html: the second replay is not ml-serve and two curl requests: %r" % scmds)
+    elif re.search(r"--bind|--no-token|--token-file", scmds[0]):
+        errs.append("index.html: the second replay starts ml-serve with a flag besides the model and the port (it shows the default)")
+    stext = "\n".join(t for c, t in serve)
+    if "listening on 127.0.0.1:8080" not in stext or "0.0.0.0" in stext:
+        errs.append("index.html: the second replay does not show that ml-serve listens on 127.0.0.1")
+    if '"rule":"ml.schema.mismatch"' not in stext or '"status":422' not in stext or '"row_count":1' not in stext:
+        errs.append("index.html: the second replay shows no prediction and no refusal (ml.schema.mismatch, 422)")
+    shas = re.findall(r'"model_sha256":"([0-9a-f]{12})…"', stext)
+    verified = re.findall(r"model ([0-9a-f]{12})…", ftext)
+    if len(shas) != 2 or len(set(shas) | set(verified)) != 1:
+        errs.append("index.html: the model hash of the requests (%r) is not the one the first replay verified (%r)" % (shas, verified))
+    # a refusal and its repair
+    L = fix
     cmds = [t for c, t in L if c == "a"]
-    if not all(t.startswith("$ ml ") for t in cmds) or len(cmds) < 5:
-        errs.append("index.html: the replay's commands are not `$ ml ...` lines (%d)" % len(cmds))
+    if not all(t.startswith("$ ml ") for t in cmds) or len(cmds) != 2:
+        errs.append("index.html: the third replay's commands are not two `$ ml ...` lines (%d)" % len(cmds))
     ref = [(i, t) for i, (c, t) in enumerate(L) if c == "b" and t.startswith('{"ok":false')]
     if len(ref) != 1:
-        errs.append("index.html: the replay holds %d refusals, want 1" % len(ref))
+        errs.append("index.html: the third replay holds %d refusals, want 1" % len(ref))
         return
     i, line = ref[0]
     body = line[:-2] if line.endswith(" …") else line
@@ -297,8 +360,53 @@ def check_replay(root, text, errs):
     ok_after = [t for c, t in L[i + 1:] if c == "g"]
     if not ok_after or not ok_after[0].startswith('{"ok":true'):
         errs.append("index.html: the repaired run is not shown as a success")
-    if not any("held out" in t or "split" in t for c, t in L[:3]):
-        errs.append("index.html: the replay does not begin with a fit that holds rows out")
+
+
+def load_site(root):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("cancho_site", root / "scripts" / "site.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(root / "scripts"))
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path.pop(0)
+    return mod
+
+
+def check_demo(root, text, binary, errs):
+    """The first two logs are a fresh run of scripts/demo.sh, cut as the page's caption says (the cuts are scripts/site.py's: demo_lines)."""
+    import tempfile
+    if not (binary.parent / "ml-serve").exists() or not binary.exists():
+        errs.append("check_landing --demo: %s and ml-serve are needed (cancho build --bin ml; cancho build --bin ml-serve)" % binary)
+        return
+    mod = load_site(root)
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            out = mod.run_demo(binary, tmp)
+        except Exception as exc:  # noqa: BLE001  (the demo's own failure is the finding)
+            errs.append("check_landing --demo: scripts/demo.sh failed: %s" % exc)
+            return
+    r = Replay()
+    r.feed(text)
+    for tab, panel in (("fit", "screen-fit"), ("serve", "screen-serve")):
+        want = mod.demo_lines(out, tab)
+        got = r.panels.get(panel, [])
+        if want != got:
+            k = next((i for i, (a, b) in enumerate(zip(want, got)) if a != b), min(len(want), len(got)))
+            errs.append("index.html: the replay %r differs from a fresh run of scripts/demo.sh at line %d: page %r, demo %r (run python3 scripts/site.py)"
+                        % (tab, k + 1, got[k] if k < len(got) else None, want[k] if k < len(want) else None))
+    # independent of the cuts: the facts of the raw output are on the page
+    page = "\n".join(t for p in r.panels.values() for c, t in p)
+    for h in sorted(set(re.findall(r"\b[0-9a-f]{64}\b", out))):
+        if h[:12] + "…" not in page:
+            errs.append("index.html: the hash %s... of the fresh demo is not on the page" % h[:12])
+    m = re.search(r"listening on (\S+):\d+", out)
+    if not m or m.group(1) != "127.0.0.1":
+        errs.append("check_landing --demo: ml-serve printed %r, not a listening line on 127.0.0.1" % (m and m.group(0)))
+    for m in re.finditer(r"^(\S+\.csv)  on: (\w+)  rows: (\d+)  out_of_range cells: (\d+)  accuracy: (\S+)$", out, re.M):
+        if m.group(0) not in page:
+            errs.append("index.html: the eval line %r of the fresh demo is not on the page" % m.group(0))
 
 
 # --- the rest ------------------------------------------------------------------------------------------------------
@@ -332,6 +440,38 @@ def check_basics(root, path, p, text, errs, landing=True):
             errs.append("%s: the inline script is %d bytes, over %d" % (n, len(s.encode()), BUDGET_SCRIPT))
 
 
+EXPERIMENT_CLAIMS = [("Experiments you can replay", "the card of the experiments"), ("<code>--track</code>", "the flag that writes a run record"),
+                     ("ml runs compare", "the comparison of runs"), ("ml runs verify", "the replay of a run that reproduces the model's hash"),
+                     ("(<code>on</code>)", "the marker that says which file eval scored"), ("outside its range", "the count of cells outside the training range"),
+                     ("scripts/demo.sh", "the demo the first two logs are")]
+SERVE_REQUIRED = [("127.0.0.1", "that ml-serve listens on 127.0.0.1"), ("--bind all", "the flag that opens it to every address"),
+                  ("--token-file", "that a token file goes with --bind all")]
+SERVE_FORBIDDEN = [(r"listens on every address", "ml-serve is said to listen on every address"), (r"--no-token", "the flag --no-token is shown"),
+                   (r"0\.0\.0\.0", "the address 0.0.0.0 is shown"), (r"needs\s+<code>--token-file</code>\s+or\s+<code>--no-token", "the old rule of the token flags")]
+
+
+def check_claims(root, text, errs):
+    for needle, what in EXPERIMENT_CLAIMS:
+        if needle not in text:
+            errs.append("index.html: %s is missing (looked for %r)" % (what, needle))
+    for needle, what in SERVE_REQUIRED:
+        if needle not in text:
+            errs.append("index.html: the text says nothing of %s (looked for %r)" % (what, needle))
+    for pat, what in SERVE_FORBIDDEN:
+        if re.search(pat, text):
+            errs.append("index.html: %s (matched %r); ml-serve listens on 127.0.0.1 by default" % (what, pat))
+    # the platforms: every runner of the matrix is named, with nothing else in its place
+    for os_name in ci_runners(root):
+        if "<code>%s</code>" % os_name not in text:
+            errs.append("index.html: the runner %s of .github/workflows/ci.yml is not named on the page" % os_name)
+    pins = re.search(r'^cancho *= *"([0-9a-f]{7})', (root / "cancho.toml").read_text(), re.M)
+    if pins and "<code>%s</code>" % pins.group(1) not in text:
+        errs.append("index.html: the compiler pin %s of cancho.toml is not named on the page" % pins.group(1))
+    for old in re.findall(r"<code>([0-9a-f]{7})</code>", text):
+        if pins and old != pins.group(1) and "previous" not in text:
+            errs.append("index.html: a compiler revision %s other than the pin is named without saying it is the previous one" % old)
+
+
 def check_landing_page(root, errs):
     path = root / "docs" / "index.html"
     text = path.read_text()
@@ -348,6 +488,7 @@ def check_landing_page(root, errs):
                          ("no release is published", "what exists of releases")):
         if needle not in text:
             errs.append("index.html: %s is missing (looked for %r)" % (what, needle))
+    check_claims(root, text, errs)
     size = len(text.encode())
     css = len((root / "docs" / "assets" / "site.css").read_bytes())
     if size > BUDGET_INDEX:
@@ -372,12 +513,17 @@ def check_landing_page(root, errs):
 def main(argv):
     root = ROOT
     errs = []
+    binary = ROOT / "build" / "ml"
+    if "--bin" in argv:
+        binary = Path(argv[argv.index("--bin") + 1]).resolve()
     if "--budget" in argv:
         t = (DOCS / "index.html").read_bytes()
         c = (DOCS / "assets" / "site.css").read_bytes()
         print("index.html %d bytes (budget %d), site.css %d bytes, together %d (budget %d)" % (len(t), BUDGET_INDEX, len(c), len(t) + len(c), BUDGET_WITH_CSS))
         return 0
     check_landing_page(root, errs)
+    if "--demo" in argv:
+        check_demo(root, (DOCS / "index.html").read_text(), binary, errs)
     check_nav(root, errs)
     for name in PAGES[1:]:
         p = parse(root / "docs" / name)
@@ -386,7 +532,8 @@ def main(argv):
         print("check_landing:", e)
     if not errs:
         t = len((DOCS / "index.html").read_bytes())
-        print("check_landing: ok (figures, header of %d pages, replay, build commands, limits, basics; index.html %d bytes of %d)" % (len(PAGES), t, BUDGET_INDEX))
+        print("check_landing: ok (figures, header of %d pages, replays%s, experiments, server, runners, build commands, limits, basics; index.html %d bytes of %d)"
+              % (len(PAGES), " against a fresh run of the demo" if "--demo" in argv else "", t, BUDGET_INDEX))
     return 1 if errs else 0
 
 
