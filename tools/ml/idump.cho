@@ -67,7 +67,7 @@ fn put_cell[&h](heap: &!h Heap, into: buffer.Buffer, ty: int, scale: int, v: flo
             if t >= 0.0 {
                 k = truncate(t + 0.5);
             } else {
-                k = 0 - truncate((0.0 - t) + 0.5);
+                k = 0 - truncate(0.0 - t + 0.5);
             }
             var a = k;
             if k < 0 {

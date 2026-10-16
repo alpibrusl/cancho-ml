@@ -356,7 +356,7 @@ fn permutation[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f F
     var m = 0;
     if rq.metric_given {
         m = metric_id(rq.metric);
-        if m == 0 || (task == 1 && m > 3) || (task == 2 && m <= 3) {
+        if m == 0 || task == 1 && m > 3 || task == 2 && m <= 3 {
             e = bad_metric(heap, e, rq.metric, task);
             return (buffer.empty(heap, 1), buffer.empty(heap, 1), false, e, lg);
         }

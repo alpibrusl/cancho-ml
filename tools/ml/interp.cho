@@ -716,7 +716,7 @@ fn gini_decrease(na: int, nb: int, la: int, lb: int, ra: int, rb: int) -> [] flo
     }
     let dd = lb * nr - rb * nl;
     let df = float_of(dd);
-    let v = (2.0 * (df * df)) / (float_of(n) * (float_of(nl) * float_of(nr)));
+    let v = 2.0 * (df * df) / (float_of(n) * (float_of(nl) * float_of(nr)));
     if !finite(v) {
         return 0.0;
     }
@@ -730,7 +730,7 @@ fn variance_decrease(n: int, nl: int, nr: int, sl: float, sr: float) -> [] float
     let ml = sl / float_of(nl);
     let mr = sr / float_of(nr);
     let d = ml - mr;
-    let v = ((float_of(nl) * float_of(nr)) / float_of(n)) * (d * d);
+    let v = float_of(nl) * float_of(nr) / float_of(n) * (d * d);
     if !finite(v) {
         return 0.0;
     }
