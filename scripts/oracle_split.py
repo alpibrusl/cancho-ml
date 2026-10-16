@@ -612,6 +612,10 @@ E2E_PLANS = [
     ("logistic", "cls", ["--cat", "cat", "--l2", "1.0", "--step", "impute column=x2 strategy=mean;encode column=cat kind=onehot;scale column=x1,x2,x3 kind=standard"]),
     ("linear", "reg", ["--cat", "cat", "--step", "impute column=x2 strategy=mean;freq column=cat;scale column=* kind=minmax"]),
     ("tree", "reg", ["--cat", "cat", "--task", "regression", "--max-depth", "3", "--step", "hash column=cat buckets=8"]),
+    # boosted trees: no early stopping (it needs --split in a fit and is refused under the group and time strategies), a row sample whose stream is the seed's
+    ("boost", "reg", ["--task", "regression", "--rounds", "8", "--max-depth", "3", "--min-leaf", "3", "--step", "impute column=x2 strategy=mean"]),
+    ("boost", "cls", ["--task", "classification", "--rounds", "8", "--max-depth", "3", "--min-leaf", "3", "--subsample", "0.8"]),
+    ("boost", "cls", ["--cat", "cat", "--task", "classification", "--rounds", "6", "--min-leaf", "3", "--step", "hash column=cat buckets=8"]),
 ]
 
 
