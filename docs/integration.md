@@ -69,7 +69,7 @@ stage's own recorded verdict (`docs/models-tree.md` 10.8, `docs/bench/gate_sklea
 
 ## 3. The gates on the merged tree
 
-All commands from the repository root, `CANCHO=../cancho-compiler-a4572ea/target/release/cancho`.
+All commands from the repository root, `CANCHO=../cancho-compiler-0207556/target/release/cancho`.
 
 | gate | command | result |
 |---|---|---|

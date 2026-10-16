@@ -97,9 +97,10 @@ class Rules(unittest.TestCase):
                 return 5
             if area in ("limit", "parse"):
                 return 8
-            if tag in ("ml.param.out-of-range", "ml.param.threads"):
+            if tag in ("ml.param.out-of-range", "ml.param.threads", "ml.split.stratify-target", "ml.split.combination", "ml.split.out-of-range", "ml.split.column-target"):
                 return 2
-            if tag == "ml.input.unknown-column":
+            if tag in ("ml.input.unknown-column", "ml.runs.not-found"):
+                # a named input (a column, a run id) that does not exist
                 return 3
             return 8
 

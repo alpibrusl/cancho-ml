@@ -312,6 +312,7 @@ fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: 
     s = schema.add_field(heap, s, prediction, "rows", all_rows, true);
     s = schema.add_field(heap, s, prediction, "row_count", count, true);
     s = schema.add_field(heap, s, prediction, "unknown_categories", count, true);
+    s = schema.add_field(heap, s, prediction, "out_of_range", anything, true);
     let (s13, alive) = schema.new_bool(heap, s);
     let (s14, health) = schema.new_object(heap, s13, true);
     s = schema.add_field(heap, s14, health, "ok", alive, true);

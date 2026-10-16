@@ -139,10 +139,20 @@ def section(tag, payload):
     return struct.pack("<IQ", tag, len(payload)) + payload
 
 
-def file_bytes(plan, schema, steps, model, rows, ncols, seed):
+def file_bytes(plan, schema, steps, model, rows, ncols, seed, prov=None):
+    """the file; `prov` is the payload of the provenance section (tag 7, docs/tracking.md section 2, scripts/oracle_track.py), None for a file without one"""
     meta = struct.pack("<QQQII", rows, ncols, seed, 0, len(PIN)) + PIN.encode() + struct.pack("<I", SUM_ORDER)
-    body = b"CML1" + struct.pack("<II", 1, 5) + section(1, plan.encode()) + section(2, schema) + section(3, steps) + section(4, model) + section(5, meta)
+    body = b"CML1" + struct.pack("<II", 1, 5 if prov is None else 6) + section(1, plan.encode()) + section(2, schema) + section(3, steps) + section(4, model) + section(5, meta)
+    if prov is not None:
+        body += section(7, prov)
     return body + hashlib.sha256(body).digest()
+
+
+def provenance_of(case, features, mask):
+    """section 7 of the file `ml fit` writes for `case`: the oracle of docs/tracking.md, from the CSV alone"""
+    import oracle_track
+
+    return oracle_track.provenance(case.csv().encode(), features, None if mask is None else [m == 0 for m in mask])
 
 
 # ---------------------------------------------------------------- the fit
@@ -232,7 +242,7 @@ def fit_oracle(case):
             return omod.logreg.last or "ml.linalg.not-positive-definite", None
         w = res[0]
     plan = op.canon_plan(case.plan_text()) if False else canon(case.plan_text())
-    data = file_bytes(plan, schema_bytes(names, types, t), steps_bytes(stored), model_payload(KIND[case.model], w, d, *(labels or (0, 0))), len(tr), len(names), case.seed)
+    data = file_bytes(plan, schema_bytes(names, types, t), steps_bytes(stored), model_payload(KIND[case.model], w, d, *(labels or (0, 0))), len(tr), len(names), case.seed, provenance_of(case, fnames, mask))
     ctx = {"stored": stored, "w": w, "d": d, "labels": labels, "types": types, "fnames": fnames, "mask": mask}
     return data, ctx
 

@@ -1,0 +1,52 @@
+{
+  "entries": {
+    "1a7276e81eed3ae143891c44ea69b3926c18c1227fa6d59dc6fb6e92a0a98552": {
+      "name": "mant_of",
+      "stage_id": "b5af10d6ff34943c6fd8b85fc9c017604e38e9bee5c0da0944e21cb06c996346",
+      "source_hash": "90a7be73ddd89530f098cb11f79a662d36706059c0786357709cce4e2c683a7d",
+      "uses_std": true
+    },
+    "3848305fa282f0ae9c4716660d69dd1c532f0fb7e0dbb5f33d55b0251b476e0f": {
+      "name": "size",
+      "stage_id": "8cb56e3ccffd3ac4ceb1d5f94b7f153a0878c1a8431875a35068dfc52b2b9e27",
+      "source_hash": "90a7be73ddd89530f098cb11f79a662d36706059c0786357709cce4e2c683a7d",
+      "uses_std": true
+    },
+    "6393804ee49219910c8b66daf726da5f444c0be2f02faebf969a71627466a4c3": {
+      "name": "add_square",
+      "stage_id": "7f3b099c5a740d9a5ca49d21a0b3060f5d915afa3a605f5f5e409f39d9caf321",
+      "source_hash": "90a7be73ddd89530f098cb11f79a662d36706059c0786357709cce4e2c683a7d",
+      "uses_std": true
+    },
+    "b7b9de3575d63bf66a310ce87fe2aa3a677625a8fe7a6841cb18beaa63cdc375": {
+      "name": "bit_at",
+      "stage_id": "79f169f7360a970eac05911576273b5fa4bd60b2b7ccc74280a63b841861da07",
+      "source_hash": "90a7be73ddd89530f098cb11f79a662d36706059c0786357709cce4e2c683a7d",
+      "uses_std": true
+    },
+    "cae14ab08ca20f281b82c493dc9b9a590fce1c3a5298a681490b040798e3f94c": {
+      "name": "finish",
+      "stage_id": "7980a31b92ea978760c072b0d6dd20d15768154fee97f140f3b05992cd6879be",
+      "source_hash": "90a7be73ddd89530f098cb11f79a662d36706059c0786357709cce4e2c683a7d",
+      "uses_std": true
+    },
+    "cdf4123eecc98cc3da3447ca46d9d316c754238e19a44448627c03ffcd97e7b6": {
+      "name": "mask",
+      "stage_id": "0f767f16b2d9573295aa891cc77e23399a9e2986fbd0fad1406b6835631f20cc",
+      "source_hash": "90a7be73ddd89530f098cb11f79a662d36706059c0786357709cce4e2c683a7d",
+      "uses_std": true
+    },
+    "d60166b5423d838df22405a7051acd971b5acfe5147a39010f80a5b73774acaa": {
+      "name": "place",
+      "stage_id": "ffb2ee67b727799835e6732f448dec30d71fe609b7a6f796570cd00c63e501e4",
+      "source_hash": "90a7be73ddd89530f098cb11f79a662d36706059c0786357709cce4e2c683a7d",
+      "uses_std": true
+    },
+    "d78a7ee60850891d9d6d9310f99c3f8a15404f72cd54ddc33eee8fabe1a860b0": {
+      "name": "exp_of",
+      "stage_id": "2ee32b6a07a872999842047a2bcc9ccabd13e9d9d74b9c86a967b55f7e4177d6",
+      "source_hash": "90a7be73ddd89530f098cb11f79a662d36706059c0786357709cce4e2c683a7d",
+      "uses_std": true
+    }
+  }
+}

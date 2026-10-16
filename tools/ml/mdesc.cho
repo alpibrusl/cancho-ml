@@ -17,12 +17,14 @@ import ml.fsio;
 import ml.kinds;
 import ml.mfile;
 import ml.paths;
+import ml.prov;
 import ml.spec;
 import ml.verbs;
 import ml.wiredata;
 import ml.wireio;
 import pipeline.file;
 import pipeline.mixed;
+import pipeline.provsec;
 import pipeline.schema;
 import transforms.catenc;
 import transforms.strtab;
@@ -39,7 +41,7 @@ fn section_at[&d](data: &d [byte], tag: int) -> [] (int, int) {
     let count = int_of(data[8]) | int_of(data[9]) << 8 | int_of(data[10]) << 16 | int_of(data[11]) << 24;
     var pos = 12;
     var s = 0;
-    while s < count && s < 6 {
+    while s < count && s < 7 {
         if pos + 12 > n - 32 {
             return (0, 0 - 1);
         }
@@ -213,6 +215,52 @@ fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byt
     w = put_key_text(heap, w, "plan", plan_bytes);
     w = json.put_key(heap, w, "rows");
     w = json.put_int(heap, w, rows);
+    // provenance: null for a file with no section (a file of an older version), else the training file's identity and the range of each numeric feature
+    w = json.put_key(heap, w, "provenance");
+    let (vat, vlen) = section_at(data, 7);
+    if vlen < provsec.header_len() {
+        w = json.put_null(heap, w);
+    } else {
+        let pv = data[vat..vat + vlen];
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "file_sha256");
+        let vhex = prov.hex(heap, provsec.file_sha(pv));
+        borrow vhex as &vhr in {
+            w = json.put_string(heap, w, buffer.bytes(vhr));
+        }
+        buffer.drop(heap, vhex);
+        w = json.put_key(heap, w, "file_bytes");
+        w = json.put_int(heap, w, provsec.file_bytes(pv));
+        w = json.put_key(heap, w, "file_rows");
+        w = json.put_int(heap, w, provsec.file_rows(pv));
+        w = json.put_key(heap, w, "rows");
+        w = json.put_int(heap, w, provsec.rows(pv));
+        w = json.put_key(heap, w, "features");
+        w = json.begin_array(heap, w);
+        var vk = 0;
+        var vj = 0;
+        while vj < schema.columns(sc) && vk < provsec.features(pv) {
+            if vj != tcol && schema.type_of(sc, vj) != 3 {
+                w = json.begin_object(heap, w);
+                w = put_key_text(heap, w, "name", schema.name(sc, vj));
+                w = json.put_key(heap, w, "count");
+                w = json.put_int(heap, w, provsec.field(pv, vk, 0));
+                w = json.put_key(heap, w, "min");
+                w = verbs.put_double(heap, w, provsec.field(pv, vk, 1));
+                w = json.put_key(heap, w, "max");
+                w = verbs.put_double(heap, w, provsec.field(pv, vk, 2));
+                w = json.put_key(heap, w, "mean");
+                w = verbs.put_double(heap, w, provsec.field(pv, vk, 3));
+                w = json.put_key(heap, w, "std");
+                w = verbs.put_double(heap, w, provsec.field(pv, vk, 4));
+                w = json.end_object(heap, w);
+                vk = vk + 1;
+            }
+            vj = vj + 1;
+        }
+        w = json.end_array(heap, w);
+        w = json.end_object(heap, w);
+    }
     // file
     w = json.put_key(heap, w, "file");
     w = json.begin_object(heap, w);

@@ -186,6 +186,15 @@
         "ml.fit.separable",
         "ml.predict.non-finite",
         "ml.split.empty-fold",
+        "ml.split.stratify-target",
+        "ml.split.stratum-too-small",
+        "ml.split.too-few-groups",
+        "ml.split.time-format",
+        "ml.split.missing-cell",
+        "ml.split.combination",
+        "ml.split.out-of-range",
+        "ml.split.column-target",
+        "ml.split.emit-too-large",
         "ml.fit.all-missing",
         "ml.limit.categories",
         "ml.limit.string-bytes",
@@ -210,7 +219,18 @@
         "ml.input.missing-value",
         "ml.plan.model-not-built",
         "ml.limit.depth",
-        "ml.limit.nodes"
+        "ml.limit.nodes",
+        "ml.predict.out-of-range",
+        "ml.predict.no-provenance",
+        "ml.runs.conflict",
+        "ml.runs.too-many",
+        "ml.runs.record-too-large",
+        "ml.runs.not-found",
+        "ml.runs.unknown-model",
+        "ml.runs.damaged",
+        "ml.runs.data-changed",
+        "ml.runs.model-differs",
+        "ml.runs.not-replayable"
       ]
     }
   }

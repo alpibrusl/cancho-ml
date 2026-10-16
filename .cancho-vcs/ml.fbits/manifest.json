@@ -1,0 +1,40 @@
+{
+  "entries": {
+    "0b20fb242181476f575423b4198f2dd1f0c0f0d5009d3e1c998613118ddbcba9": {
+      "name": "decode",
+      "stage_id": "f2020763a1e33fe655d37b7409806c720ad39af53b51c86842390a5bafc4745c",
+      "source_hash": "791cd2c749f7abccb46febfa7041c03fad8ffdb9bd67d61caa4274329c83d04a",
+      "uses_std": true
+    },
+    "1a9af246755a896a198c1497fc34627c8b5028e9868ce503c3da8dee9123d244": {
+      "name": "scale",
+      "stage_id": "67b1503e0d6900bf4286a2e4fd539b2b16c82ed96bfee375ee38ccd35a0035fe",
+      "source_hash": "791cd2c749f7abccb46febfa7041c03fad8ffdb9bd67d61caa4274329c83d04a",
+      "uses_std": true
+    },
+    "72bd5d084d4c09f8dd3b1bf081bc46df9404dc30b6f383a5805ecffb1cf5fb97": {
+      "name": "put64",
+      "stage_id": "fc4bda0b33bad05ac926823ed815eb1814e5f7ae0f58b1e496d8458c62f46b7c",
+      "source_hash": "791cd2c749f7abccb46febfa7041c03fad8ffdb9bd67d61caa4274329c83d04a",
+      "uses_std": true
+    },
+    "8b46defc445b2c613de63541dde027187dee165d5a0bbe4d26e7f0c0dc4987ff": {
+      "name": "store",
+      "stage_id": "1ef05c248decf24f96d7198d382282b7c37897f8b2d1504d56c029566f05f327",
+      "source_hash": "791cd2c749f7abccb46febfa7041c03fad8ffdb9bd67d61caa4274329c83d04a",
+      "uses_std": true
+    },
+    "e15417cc1f987b4b364a9d44d2d2d40e0de17e0b7e7f21baf777c789c95eb2cf": {
+      "name": "load",
+      "stage_id": "f6d6b37ded3ded562bba974fb7275852a8b582904641ee1287905f2b3fe606d6",
+      "source_hash": "791cd2c749f7abccb46febfa7041c03fad8ffdb9bd67d61caa4274329c83d04a",
+      "uses_std": true
+    },
+    "efe6506a3e84cf4f2911ee7ce68ef3f23f377c8b169d71af85b8586ca5a58dcc": {
+      "name": "get64",
+      "stage_id": "ea06538ad2fbe72a1397ba084c6c5a8a9dc844ae8ec23c4bbe463952db3330eb",
+      "source_hash": "791cd2c749f7abccb46febfa7041c03fad8ffdb9bd67d61caa4274329c83d04a",
+      "uses_std": true
+    }
+  }
+}

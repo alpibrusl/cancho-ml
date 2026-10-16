@@ -36,6 +36,8 @@ ALLOW = [
     ("docs/reader.md", "docs/package-system.md", "a document of the cancho compiler repository"),
     ("docs/reader.md", "docs/numbers.md", "cancho-table's document of its public functions"),
     ("docs/reader.md", "docs/readers.md", "cancho-table's document on readers"),
+    ("docs/serving-http.md", "docs/native-sockets.md", "a document of the cancho compiler repository at 0207556 (section 12: tcp_listen_on)"),
+    ("docs/serving-http.md", "docs/http-server.md", "a document of the cancho compiler repository at 0207556 (the http.server package)"),
 ]
 
 # The sibling clones in which the experiments were run are not places a reader can follow. Their names appear only in the two documents

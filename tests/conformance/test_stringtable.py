@@ -40,7 +40,7 @@ class Base(unittest.TestCase):
 class Layout(Base):
     def test_a_categorical_fit_has_six_sections_and_the_table_the_oracle_writes(self):
         secs = S.parse_file(self.file)
-        self.assertEqual(sorted(secs), [1, 2, 3, 4, 5, 6])
+        self.assertEqual(sorted(secs), [1, 2, 3, 4, 5, 6, 7])  # the provenance section (tag 7) follows the table
         self.assertIsNone(S.table_verdict(secs[6]))
         # the steps section holds a stub of 8 bytes: u32 n = 1, u64 length 8, kind 7, layout 2
         self.assertEqual(secs[3], struct.pack("<IQII", 1, 8, 7, 2))
@@ -72,8 +72,8 @@ class Layout(Base):
             r = self.sb.run("fit", "--model", model, "--target", "y", "--output", "n.cml", "--overwrite", "n.csv")
             self.assertEqual(r.status, 0, r)
             data = self.sb.read("n.cml")
-            self.assertEqual(struct.unpack_from("<I", data, 8)[0], 5)
-            self.assertEqual(sorted(S.parse_file(data)), [1, 2, 3, 4, 5])
+            self.assertEqual(struct.unpack_from("<I", data, 8)[0], 6)
+            self.assertEqual(sorted(S.parse_file(data)), [1, 2, 3, 4, 5, 7])  # five core sections and the provenance, no table
             self.assertNotIn("string_table", r.data()["summary"])
 
     def test_the_same_fit_twice_gives_the_same_bytes_and_a_hash_step_stores_no_string(self):

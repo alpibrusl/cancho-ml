@@ -1,0 +1,147 @@
+module linalg.order;
+
+// The normative summation order (docs/linalg.md section 2), in one place, for the linear algebra, the models' decisive sums and the
+// metrics. A reduction is cut into blocks of K = 256 terms; inside a block there are L = 4 lanes: term i of the block (counted from
+// its start) is added to lane i mod 4, each lane ascending from +0.0, and the block's partial is (l0 + l1) + (l2 + l3)
+// (`lane_combine`); the partials of consecutive blocks are combined by a fixed binary tree by block index (level by level, left
+// operand first, an odd last one carried up), evaluated as a stack so that only log2(blocks) + 1 partials are alive. The Cholesky
+// factorisation adds panels of NB = 32 columns, each summed by the lane rule (docs/linalg.md 2.1). A chunk of G consecutive blocks starting at a multiple of G is an aligned subtree. Nothing here depends on the
+// number of threads; a thread is only given whole chunks.
+//
+// THE SWAP POINT: `combine` and the stack functions are the only places that add two partials. The exact-accumulator
+// alternative replaces this file's partial type and these functions; the kernels keep calling `settle` and `finish`.
+
+// K, the block length (a constant of the package)
+pub fn block() -> [] int {
+    return 256;
+}
+
+// L, the lanes inside a block: term i of a block goes to lane i mod lanes() (a constant of the package; the kernels unroll exactly
+// four accumulators, so changing this number alone breaks them: the mutant list says so)
+pub fn lanes() -> [] int {
+    return 4;
+}
+
+// NB, the width of a Cholesky panel (a constant of the package; a multiple of lanes())
+pub fn panel() -> [] int {
+    return 32;
+}
+
+// G, blocks per chunk (a constant of the package)
+pub fn group() -> [] int {
+    return 8;
+}
+
+// stack depth: at most log2(blocks) + 1 live partials; 40 covers 2^39 blocks
+pub fn slots() -> [] int {
+    return 40;
+}
+
+// the one function that adds two partials
+pub fn combine(a: float, b: float) -> [] float {
+    return a + b;
+}
+
+// the four lanes of a block -> the block's partial: (l0 + l1) + (l2 + l3), the left operand first (the lane combine order)
+pub fn lane_combine(l0: float, l1: float, l2: float, l3: float) -> [] float {
+    return combine(combine(l0, l1), combine(l2, l3));
+}
+
+// the partial of the terms buf[0 .. m), m <= 256, of one block, by the lane rule: for terms that are already products or squares
+// (the metrics, the models' staged sums). Term i goes to lane i mod 4; a lane with no term is +0.0.
+pub fn block_partial[&b](buf: &b [float], m: int) -> [] float {
+    var s0 = 0.0;
+    var s1 = 0.0;
+    var s2 = 0.0;
+    var s3 = 0.0;
+    var j = 0;
+    while j + 4 <= m {
+        s0 = s0 + buf[j];
+        s1 = s1 + buf[j + 1];
+        s2 = s2 + buf[j + 2];
+        s3 = s3 + buf[j + 3];
+        j = j + 4;
+    }
+    if j < m {
+        s0 = s0 + buf[j];
+        j = j + 1;
+    }
+    if j < m {
+        s1 = s1 + buf[j];
+        j = j + 1;
+    }
+    if j < m {
+        s2 = s2 + buf[j];
+    }
+    return lane_combine(s0, s1, s2, s3);
+}
+
+// number of blocks of n terms
+pub fn blocks(n: int) -> [] int {
+    if n <= 0 {
+        return 0;
+    }
+    return (n - 1) / block() + 1;
+}
+
+// The stack of width-w partials: `st` holds slot s at st[s*w .. s*w+w), `lv` the level of each slot, `sp` the number of
+// slots in use. A block's partial has been written into slot sp by the caller; `settle` makes it live (level 0) and merges
+// while the two top slots have equal level (left slot = the earlier blocks). Answers the new sp.
+pub fn settle[&s, &l](st: &!s [float], lv: &!l [int], sp0: int, w: int) -> [] int {
+    var sp = sp0;
+    lv[sp] = 0;
+    sp = sp + 1;
+    while sp >= 2 && lv[sp - 1] == lv[sp - 2] {
+        let a = (sp - 2) * w;
+        let b = (sp - 1) * w;
+        var j = 0;
+        while j < w {
+            st[a + j] = combine(st[a + j], st[b + j]);
+            j = j + 1;
+        }
+        lv[sp - 2] = lv[sp - 2] + 1;
+        sp = sp - 1;
+    }
+    return sp;
+}
+
+// Like settle, but the pushed partial is a whole chunk's root (level = log2(G) = 3, an aligned subtree), taken from `src`
+// at `at` (width w); used by the parent to continue the stack with the roots the threads return.
+pub fn settle_root[&s, &l, &r](st: &!s [float], lv: &!l [int], sp0: int, w: int, src: &r [float], at: int, level: int) -> [] int {
+    var j = 0;
+    while j < w {
+        st[sp0 * w + j] = src[at + j];
+        j = j + 1;
+    }
+    var sp = sp0;
+    lv[sp] = level;
+    sp = sp + 1;
+    while sp >= 2 && lv[sp - 1] == lv[sp - 2] {
+        let a = (sp - 2) * w;
+        let b = (sp - 1) * w;
+        j = 0;
+        while j < w {
+            st[a + j] = combine(st[a + j], st[b + j]);
+            j = j + 1;
+        }
+        lv[sp - 2] = lv[sp - 2] + 1;
+        sp = sp - 1;
+    }
+    return sp;
+}
+
+// the end: merge the remaining slots right to left into slot 0 (the result). sp >= 1.
+pub fn finish[&s](st: &!s [float], sp0: int, w: int) -> [] int {
+    var sp = sp0;
+    while sp >= 2 {
+        let a = (sp - 2) * w;
+        let b = (sp - 1) * w;
+        var j = 0;
+        while j < w {
+            st[a + j] = combine(st[a + j], st[b + j]);
+            j = j + 1;
+        }
+        sp = sp - 1;
+    }
+    return 0;
+}

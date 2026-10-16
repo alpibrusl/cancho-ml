@@ -25,14 +25,21 @@ defaults:
     working-directory: ml # the checkout of this repository; the compiler is built next to it, in ../cancho
 
 jobs:
-  # The fast gates, on Linux x86-64 and macOS arm64: build, the determinism gate (each platform equals the committed golden, so the two
-  # equal each other), the conformance tests, the documentation checks.
+  # The fast gates on Linux x86-64 (Ubuntu 24.04 and 26.04), Linux aarch64 (Ubuntu 24.04) and macOS arm64: build, the determinism gate (each
+  # platform equals the committed golden, so they equal each other), the conformance tests, the documentation checks. The runner images are
+  # named, never `-latest`: a moving label changes the platform under a green run. The `release` job publishes the Ubuntu 24.04 builds (the
+  # oldest glibc of each architecture, so the binary runs on the newer images too) and the macOS build.
+
   build-test:
     if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - {os: ubuntu-24.04, label: linux-x86_64-ubuntu24}
+          - {os: ubuntu-26.04, label: linux-x86_64-ubuntu26}
+          - {os: ubuntu-24.04-arm, label: linux-aarch64-ubuntu24}
+          - {os: macos-26, label: darwin-arm64}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -63,7 +70,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: cancho/target/release/cancho
-          key: cancho-compiler-${{ steps.pins.outputs.rev }}-${{ runner.os }}-${{ runner.arch }}
+          key: cancho-compiler-${{ steps.pins.outputs.rev }}-${{ matrix.label }}
 
       - name: Check out the compiler
         if: steps.compiler.outputs.cache-hit != 'true'
@@ -131,6 +138,13 @@ jobs:
       - name: The determinism gate can fail (its mutants)
         run: python3 scripts/xplat_check.py --require-predict --mutants
 
+      # scripts/demo.sh on the built binaries: two tracked experiments, ml runs compare and verify, eval on the training file and on another, ml-serve on its default
+      # bind (127.0.0.1) and two curl requests; its key facts are asserted and the edits of the script that must be refused are refused (a few seconds)
+      - name: The demo script runs and its facts hold
+        run: |
+          python3 scripts/check_demo.py
+          python3 scripts/check_demo.py --mutants
+
       # Every module of tests/conformance that imports without numpy, scipy and scikit-learn, four at a time; the ml-serve tests among them start the
       # server on an ephemeral port and compare one POST per model kind with the command line's cell text. The oracle modules run in the full gate.
       # ST_STRIDE=5 flips every fifth byte of a damaged model file (the default, 1, flips every byte: about 27 minutes for test_describe alone on a Linux machine), and
@@ -164,7 +178,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: cancho-ml-${{ runner.os }}-${{ runner.arch }}
+          name: cancho-ml-${{ matrix.label }}
           path: |
             dist/
             conformance-*.log
@@ -175,7 +189,7 @@ jobs:
   # scripts/check.sh: every gate (30 to 40 minutes on the maintainer's Mac), on request and nightly.
   full-gate:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
       - name: Check out this repository
@@ -259,15 +273,15 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - name: Download the binaries of both platforms
+      - name: Download the binaries of the three release platforms
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: cancho-ml-*
+          pattern: cancho-ml-{linux-x86_64-ubuntu24,linux-aarch64-ubuntu24,darwin-arm64}
           path: assets
           merge-multiple: true
 
@@ -284,6 +298,6 @@ jobs:
         run: |
           set -e
           files=$(ls dist/cancho-ml-*.tar.gz dist/cancho-ml-*.sha256 dist/cancho-ml-*.fingerprint.txt)
-          test "$(ls dist/cancho-ml-*.tar.gz | wc -l)" -eq 2 || { echo "expected the binaries of two platforms" >&2; exit 1; }
+          test "$(ls dist/cancho-ml-*.tar.gz | wc -l)" -eq 3 || { echo "expected the binaries of three platforms" >&2; exit 1; }
           # shellcheck disable=SC2086
           gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes "Binaries of ml, ml-predict and ml-serve built and gated by this workflow run: $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID. Unsigned; the .sha256 files are for a download check." --verify-tag $files

@@ -52,6 +52,10 @@ pub struct Cfg {
     pred: int,
     drops: &static [byte],
     floats: &static [byte],
+    // the columns of the header, by position, that --drop and --float name: bit j for column j below 62. A runtime list cannot be a field of this structure (it holds `static` text), so a replay of
+    // a recorded fit (ml runs verify) turns the names of the record into positions of the header before it reads, and the reader ORs them in
+    drop_mask: int,
+    float_mask: int,
     missing: bool,
     mrows: int,
     mcols: int,
@@ -84,6 +88,8 @@ pub struct Report {
 // `no_cats()` is the numeric-only reader.
 pub struct CatCfg {
     cols: &static [byte],
+    // the categorical columns by position in the header (bit j for column j below 62), as drop_mask of Cfg
+    cat_mask: int,
     na: &static [byte],
     max_cats: int,
     max_str: int,
@@ -93,7 +99,7 @@ pub struct CatCfg {
 }
 
 pub fn no_cats() -> [] CatCfg {
-    return CatCfg { cols: "", na: "", max_cats: dict.default_categories(), max_str: dict.default_string_bytes(), max_pool: dict.default_pool_bytes(), max_catcols: dict.default_columns(), lenient: false };
+    return CatCfg { cols: "", cat_mask: 0, na: "", max_cats: dict.default_categories(), max_str: dict.default_string_bytes(), max_pool: dict.default_pool_bytes(), max_catcols: dict.default_columns(), lenient: false };
 }
 
 // What the categorical part of a scan holds. kind: 0 none (the numeric reader), 1 BUILD (pass 1 of a fit: the strings go into `bld`), 2 LOOKUP (pass 2
@@ -366,6 +372,18 @@ fn apply_list[&s, &n, &e](flags: &!s [int], names: &n [byte], ends: &e vec.Vec[i
     return (0, 0);
 }
 
+// the columns whose bit is set in `mask`: flags[slot * cols + j] = value (the columns past the 62nd have no bit)
+fn apply_mask[&s](flags: &!s [int], cols: int, mask: int, slot: int, value: int) -> [] int {
+    var j = 0;
+    while j < cols && j < 62 {
+        if mask >> j & 1 == 1 {
+            flags[slot * cols + j] = value;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
 // the column named `want`, -1 if none
 fn column_of[&n, &e, &w](names: &n [byte], ends: &e vec.Vec[int], cols: int, want: &w [byte]) -> [] int {
     if len(want) == 0 {
@@ -557,6 +575,7 @@ fn cat_header[&h, &s, &n, &e](heap: &!h Heap, flags: &!s [int], names: &n [byte]
         return (cs, 0, 0, 0);
     }
     if kind == 1 {
+        apply_mask(flags, cols, cc.cat_mask, 4, 1);
         let (st, k) = apply_list(flags, names, ends, cols, cc.cols, 4, 1, 25);
         if st != 0 {
             return (cs, st, 0, k);
@@ -1008,6 +1027,8 @@ pub fn scan_cat[&h, &m, &t](heap: &!h Heap, src0: Source, mem: &m [byte], cfg: C
                         borrow mut cells as &!cw in {
                             borrow names as &nr in {
                                 borrow ends as &er in {
+                                    apply_mask(contents(cw), cols, cfg.drop_mask, 3, 1);
+                                    apply_mask(contents(cw), cols, cfg.float_mask, 0, 3);
                                     let (ds, k) = apply_list(contents(cw), buffer.bytes(nr), er, cols, cfg.drops, 3, 1, 12);
                                     if ds != 0 {
                                         rep = report(ds, rec_line, 0, k);

@@ -27,8 +27,15 @@ def apply_setup(sb, steps):
             raise AssertionError("unknown setup step %r" % (kind,))
 
 
+def first_run_id(sb):
+    """the id of the first run record of the directory `runs` of the sandbox ("" when there is none)"""
+    d = sb.dir / "runs"
+    names = sorted(p.name for p in d.iterdir() if p.name.endswith(".json") and ".eval-" not in p.name and len(p.name) == 69) if d.is_dir() else []
+    return names[0][:64] if names else ""
+
+
 def substitute(argv, sb):
-    return [a.replace("@ROOT", str(sb.dir)) for a in argv]
+    return [a.replace("@ROOT", str(sb.dir)).replace("@ID", first_run_id(sb)) for a in argv]
 
 
 def run_case(c, sb=None):

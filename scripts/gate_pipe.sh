@@ -5,7 +5,7 @@
 # error prints BUILD_ERROR (a mutant that does not compile is not a kill).
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
+CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-0207556/target/release/cancho}
 # the pinned packages (cancho-table's numeric modules among them), installed by `cancho install`; ML_DEPS names another directory (the mutants)
 DEPS=${ML_DEPS:-$(pwd)/build/deps}
 D=$(mktemp -d)

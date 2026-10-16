@@ -3,6 +3,6 @@
 # from the contract package, so it is built from lib/ alone; `ml` is built in package mode (`cancho build --bin ml`, see check.sh).
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-../cancho-compiler-a4572ea/target/release/cancho}
+CANCHO=${CANCHO:-../cancho-compiler-0207556/target/release/cancho}
 mkdir -p build
 $CANCHO build --std lib/core/*.cho lib/linalg/*.cho tools/linalg-check/main.cho -o ${1:-build/linalg-check}

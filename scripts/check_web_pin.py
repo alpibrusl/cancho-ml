@@ -158,7 +158,7 @@ def selftest_same_binary():
 
 def bins():
     """W2: ml and ml-predict, built from a copy of this tree without the three dependency blocks and without the ml-serve bin, are the bytes of build/ml and build/ml-predict."""
-    cancho = os.environ.get("CANCHO") or str(ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho")
+    cancho = os.environ.get("CANCHO") or str(ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho")
     work = pathlib.Path(tempfile.mkdtemp(prefix="webpin-"))
     try:
         for d in ("lib", "tools", "generated", "schemas"):

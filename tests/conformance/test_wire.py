@@ -74,7 +74,8 @@ class Wire(unittest.TestCase):
     def test_text_outputs(self):
         r = self.sb.run("eval", "--model-file", "log.cml", "--format", "text", "cls.csv")
         lines = r.stdout.decode().splitlines()
-        self.assertEqual([l.split()[0] for l in lines], ["accuracy", "precision", "recall", "f1", "roc_auc", "log_loss"])
+        self.assertEqual(lines[0], "on train")
+        self.assertEqual([l.split()[0] for l in lines[1:]], ["accuracy", "precision", "recall", "f1", "roc_auc", "log_loss"])
         r = self.sb.run("fit", "--model", "linear", "--step", "impute column=b strategy=mean", "--target", "y", "--output", "lin.cml", "--format", "text", "lin.csv")
         self.assertTrue(r.stdout.decode().startswith("fit: linear regression, 60 rows, wrote lin.cml (") and r.stdout.decode().endswith(")\n"), r.stdout)
 

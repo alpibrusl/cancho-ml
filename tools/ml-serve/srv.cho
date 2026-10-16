@@ -16,6 +16,7 @@ import web;
 import ml.app;
 import ml.paths;
 import ml.spec;
+import ml.track;
 import ml.verbs;
 import ml.wireio;
 import toolbox.fail;
@@ -46,9 +47,12 @@ pub res struct Served {
     max_rows: int,
     max_model: int,
     max_body: int,
+    // --max-out-of-range: the most rows of a request outside the training range (docs/tracking.md section 3.3), when given
+    max_oor: int,
+    max_oor_given: bool,
 }
 
-pub fn make[&h](heap: &!h Heap, built: api.Built, model: buffer.Buffer, model_doc: buffer.Buffer, stored: wireio.Stored, planned: bool, tokens: web.Tokens, guarded: bool, max_rows: int, max_model: int, max_body: int) -> [heap] Served {
+pub fn make[&h](heap: &!h Heap, built: api.Built, model: buffer.Buffer, model_doc: buffer.Buffer, stored: wireio.Stored, planned: bool, tokens: web.Tokens, guarded: bool, max_rows: int, max_model: int, max_body: int, max_oor: int, max_oor_given: bool) -> [heap] Served {
     var health = buffer.append(heap, buffer.empty(heap, 96), "{\"ok\":true,\"model_sha256\":\"");
     var header = buffer.append(heap, buffer.empty(heap, 96), "X-Model-Sha256: ");
     borrow built as &br in {
@@ -57,11 +61,11 @@ pub fn make[&h](heap: &!h Heap, built: api.Built, model: buffer.Buffer, model_do
     }
     health = buffer.append(heap, health, "\"}");
     header = buffer.append(heap, header, "\r\n");
-    return Served { built: built, model: model, model_doc: model_doc, health: health, sha_header: header, stored: stored, planned: planned, tokens: tokens, guarded: guarded, max_rows: max_rows, max_model: max_model, max_body: max_body };
+    return Served { built: built, model: model, model_doc: model_doc, health: health, sha_header: header, stored: stored, planned: planned, tokens: tokens, guarded: guarded, max_rows: max_rows, max_model: max_model, max_body: max_body, max_oor: max_oor, max_oor_given: max_oor_given };
 }
 
 pub fn drop[&h](heap: &!h Heap, s: Served) -> [heap] int {
-    let Served { built, model, model_doc, health, sha_header, stored, planned, tokens, guarded, max_rows, max_model, max_body } = s;
+    let Served { built, model, model_doc, health, sha_header, stored, planned, tokens, guarded, max_rows, max_model, max_body, max_oor, max_oor_given } = s;
     api.drop(heap, built);
     wireio.drop_stored(heap, stored);
     buffer.drop(heap, model);
@@ -143,7 +147,7 @@ fn simple[&h, &s, &d](heap: &!h Heap, sha: &s [byte], out: buffer.Buffer, status
 // the HTTP status of a rule of the predictor (docs/serving-http.md section 5.3): the request's data is 422, a limit of the request's size 413, and anything else a
 // fault of the server, 500
 fn status_of[&r](rule: &r [byte]) -> [] int {
-    if app.listed("ml.predict.non-finite,ml.schema.mismatch,ml.input.non-numeric,ml.input.non-finite,ml.input.missing-value,ml.input.unknown-category,ml.input.invalid-utf8,ml.input.reserved-category,ml.input.duplicate-column,ml.input.unknown-column,ml.limit.string-bytes,ml.limit.string-pool,ml.limit.categories,ml.limit.categorical-columns", rule) {
+    if app.listed("ml.predict.non-finite,ml.schema.mismatch,ml.input.non-numeric,ml.input.non-finite,ml.input.missing-value,ml.input.unknown-category,ml.input.invalid-utf8,ml.input.reserved-category,ml.input.duplicate-column,ml.input.unknown-column,ml.limit.string-bytes,ml.limit.string-pool,ml.limit.categories,ml.limit.categorical-columns,ml.predict.out-of-range", rule) {
         return 422;
     }
     if app.listed("limit.line-too-long,limit.input-too-large,ml.input.too-many-rows,ml.input.too-many-columns,ml.input.too-many-cells", rule) {
@@ -186,6 +190,7 @@ fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) ->
             let rows = json.get(payload, tp, 0, "rows");
             let count = json.get(payload, tp, 0, "row_count");
             let unknown = json.get(payload, tp, 0, "unknown_categories");
+            let oor = json.get(payload, tp, 0, "out_of_range");
             good = model >= 0 && json.is_string(tp, model) && task >= 0 && json.is_string(tp, task) && columns >= 0 && json.is_array(tp, columns) && rows >= 0 && json.is_array(tp, rows) && json.is_int(tp, count) && (unknown < 0 || json.is_int(tp, unknown));
             var r = 0;
             while good && r < json.count(tp, rows) {
@@ -242,6 +247,13 @@ fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) ->
                     unseen = json.to_int(payload, tp, unknown);
                 }
                 w = json.put_int(heap, w, unseen);
+                // how far outside the training range the request is (docs/tracking.md section 3.2): the member of `ml predict`, null for a model without provenance and for a constant model
+                w = json.put_key(heap, w, "out_of_range");
+                if oor >= 0 {
+                    w = track.put_node(heap, w, payload, tp, oor);
+                } else {
+                    w = json.put_null(heap, w);
+                }
                 w = json.end_object(heap, w);
             }
         }
@@ -282,13 +294,13 @@ fn is_json_type[&c](value: &c [byte]) -> [] bool {
 }
 
 // the options the predictor is called with: the rows of a request, as many cells as the model's columns allow, the answer's columns the model has
-fn options(columns: int, rows: int, max_bytes: int, proba: bool, distance: bool, body_cap: int, limit: int) -> [] verbs.Opts {
-    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, drops: "", floats: "", target: "", model: "", plan_given: false, step: "", step_given: false, positive: "", positive_given: false, split: "", split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cats: "", cat_given: false, na: "", max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128 };
+fn options(columns: int, rows: int, max_bytes: int, proba: bool, distance: bool, body_cap: int, limit: int, max_oor: int, max_oor_given: bool) -> [] verbs.Opts {
+    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, drops: "", floats: "", target: "", model: "", plan_given: false, step: "", step_given: false, positive: "", positive_given: false, split: "", split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cats: "", cat_given: false, na: "", max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128, max_oor: max_oor, max_oor_given: max_oor_given, drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: 0, split_num: 0, split_den: 0, track_given: false };
 }
 
 // the options `describe` is called with: the most category strings listed per column, and the largest model file
 pub fn describe_opts(limit: int, max_bytes: int) -> [] verbs.Opts {
-    return options(1, 1, max_bytes, false, false, 0, limit);
+    return options(1, 1, max_bytes, false, false, 0, limit, 0, false);
 }
 
 // The CSV of the records and the predictor on it. `first` is the tape node of the first record, `n` how many, `batch` whether a pointer names the row.
@@ -343,7 +355,7 @@ fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g 
     } else {
         model = paths.of_mem(heap, buffer.bytes(sv.model), "model");
     }
-    let o = options(cols.count(cs), n, sv.max_model, api.with_proba(sv.built), api.with_distance(sv.built), sv.max_body, n);
+    let o = options(cols.count(cs), n, sv.max_model, api.with_proba(sv.built), api.with_distance(sv.built), sv.max_body, n, sv.max_oor, sv.max_oor_given);
     var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
     borrow data as &dr in {
         borrow model as &mr in {

@@ -17,7 +17,9 @@ import ml.fsio;
 import ml.logrec;
 import ml.mfile;
 import ml.paths;
+import ml.prov;
 import ml.fsq;
+import pipeline.provsec;
 import ml.spec;
 import facc;
 import flt;
@@ -67,6 +69,19 @@ pub struct Opts {
     max_str: int,
     max_pool: int,
     max_catcols: int,
+    // predict, eval: --max-out-of-range N (docs/tracking.md section 3.3), and whether it was given
+    max_oor: int,
+    max_oor_given: bool,
+    // a replay of a recorded fit (ml runs verify, docs/tracking.md section 5.4): the positions of the header that --drop, --float and --cat name, as the bit masks of csv.Cfg, the positive label and
+    // the split as numbers (a recorded text cannot be a field of this structure); 0 on every command line but the numbers --positive and --split give
+    drop_mask: int,
+    float_mask: int,
+    cat_mask: int,
+    positive_v: int,
+    split_num: int,
+    split_den: int,
+    // fit, eval: whether --track was given
+    track_given: bool,
 }
 
 // What a verb hands back. `payload` is the `data` object, `plain` the text of --format text, `extra` the keys of a dry run
@@ -363,7 +378,7 @@ pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors,
 // ---------------------------------------------------------------- reading the CSV
 
 // open `file` and scan it (or scan the bytes of standard input, when `file` is that). The errors gain the reason if the open fails (the shape is then empty and the report 99).
-fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, csv.Sinks) {
+pub fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, csv.Sinks) {
     var e = errs;
     if paths.is_stdin(file) {
         let (src, sh, rep, k2) = csv.scan(heap, csv.Source::Mem(0), paths.mem(file), cfg, target, sk);
@@ -384,11 +399,11 @@ fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte]
 }
 
 pub fn cat_config(o: Opts) -> [] csv.CatCfg {
-    return csv.CatCfg { cols: o.cats, na: o.na, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols, lenient: false };
+    return csv.CatCfg { cols: o.cats, cat_mask: o.cat_mask, na: o.na, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols, lenient: false };
 }
 
 pub fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {
-    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops, floats: o.floats, missing: false, mrows: 0, mcols: 0, wpc: 0 };
+    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops, floats: o.floats, drop_mask: o.drop_mask, float_mask: o.float_mask, missing: false, mrows: 0, mcols: 0, wpc: 0 };
 }
 
 // ---------------------------------------------------------------- text
@@ -530,7 +545,7 @@ pub fn task_name(kind: int) -> [] &static [byte] {
 // ---------------------------------------------------------------- fit
 
 // the model of a scanned file: its kept columns and the target's statistics (acc as ml.csv.fold leaves it)
-fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a csv.Sinks, mean_bits: int) -> [heap] mfile.Model {
+fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a csv.Sinks, mean_bits: int, prov: buffer.Buffer) -> [heap] mfile.Model {
     var names = buffer.empty(heap, 64);
     var ends = vec.empty(heap, 16, 0);
     let all = csv.cols(sh);
@@ -605,7 +620,7 @@ fn build_model[&h, &s, &a](heap: &!h Heap, sh: &s csv.Shape, task: int, acc: &a 
     if float_target {
         mkind = 3;
     }
-    return mfile.Model { kind: mkind, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats };
+    return mfile.Model { kind: mkind, rows: csv.rows(sh), cols: kept, target: target, names: names, ends: ends, types: types, stats: stats, nstats: nstats, prov: prov };
 }
 
 pub fn write_failure[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, aux: int, shown: &p [byte]) -> [heap] fail.Errors {
@@ -637,14 +652,14 @@ pub fn model_too_large[&h](heap: &!h Heap, errs: fail.Errors, size: int, max: in
 }
 
 // the file bytes of a fitted model are written (or planned) and the answer built
-fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, o: Opts, mo: mfile.Model, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] Out {
+// `file_bytes` is the model file (mfile.encode of `mo`); `runjson`, `action`, `rec_name` and `rec_text` are the run record of --track (empty without it), written after the model when `write_rec`
+pub fn finish_fit[&h, &f, &r, &po, &pt, &rj, &ac, &rn, &rt](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, trackp: &pt paths.Rp, o: Opts, mo: mfile.Model, file_bytes: buffer.Buffer, runjson: &rj [byte], action: &ac [byte], rec_name: &rn [byte], rec_text: &rt [byte], write_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] Out {
     var e = errs;
     var lg = log;
     var payload = buffer.empty(heap, 1);
     var plain = buffer.empty(heap, 1);
     var extra = buffer.empty(heap, 1);
     borrow mo as &mr in {
-        let file_bytes = mfile.encode(heap, mr, built.compiler());
         borrow file_bytes as &br in {
             let data = buffer.bytes(br);
             let hex = mfile.sha256_hex(heap, data);
@@ -684,6 +699,10 @@ fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], o
                     w = json.put_key(heap, w, "written");
                     w = json.put_bool(heap, w, !o.dry);
                     w = summary(heap, w, mr);
+                    if len(runjson) > 0 {
+                        w = json.put_key(heap, w, "run");
+                        w = json.put_fragment(heap, w, runjson);
+                    }
                     w = json.end_object(heap, w);
                     buffer.drop(heap, payload);
                     payload = json.finish(w);
@@ -703,6 +722,9 @@ fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], o
                         a = json.put_key(heap, a, "sha256");
                         a = json.put_string(heap, a, digest);
                         a = json.end_object(heap, a);
+                        if len(action) > 0 {
+                            a = json.put_fragment(heap, a, action);
+                        }
                         a = json.end_array(heap, a);
                         let arr = json.finish(a);
                         buffer.drop(heap, extra);
@@ -730,22 +752,34 @@ fn finish_fit[&h, &f, &r, &po](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], o
                     plain = buffer.append(heap, plain, ")\n");
                     if !o.dry {
                         lg = logrec.write(heap, lg, len(data), digest);
+                        if write_rec {
+                            let rp = paths.child(heap, trackp, rec_name);
+                            borrow rp as &rpr in {
+                                let (rs, ra) = fsio.write_atomic(heap, fs, root, paths.shown(rpr), paths.full(rpr), rec_text, false, false);
+                                if rs != 0 {
+                                    e = write_failure(heap, e, rs, ra, paths.shown(trackp));
+                                }
+                            }
+                            paths.drop(heap, rp);
+                        }
                     }
                 }
             }
             buffer.drop(heap, hex);
         }
-        buffer.drop(heap, file_bytes);
     }
+    buffer.drop(heap, file_bytes);
     mfile.drop_model(heap, mo);
     return Out { payload: payload, plain: plain, extra: extra, errs: e, log: lg, dry: o.dry };
 }
 
 // pass 1 for the shape, pass 2 for the target: the model, and whether there is one (else the errors say why)
-fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors, buffer.Buffer) {
+pub fn fit_prepare[&h, &g, &f, &r, &pf, &tn](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: Opts, tg: &tn [byte], errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
-    let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, 0, 0, 0), o.target, csv.plain_sinks(heap, 8, false), e);
+    // the SHA-256 of the training file before it is read (docs/tracking.md section 6); a file that cannot be opened is reported by the scan, which names the reason
+    let (dg1, size1, hst, haux) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+    let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, 0, 0, 0), tg, csv.plain_sinks(heap, 8, false), e);
     e = e1;
     csv.drop_sinks(heap, sk1);
     var sk = csv.plain_sinks(heap, 8, false);
@@ -764,7 +798,7 @@ fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs("")
             w = fail.no_repair(heap, w);
             w = fail.detail_open(heap, w);
             w = fail.detail_str(heap, w, "flag", "--target");
-            w = fail.detail_text(heap, w, "name", o.target);
+            w = fail.detail_text(heap, w, "name", tg);
             e = fail.add(heap, e, w);
             go = false;
         } else if o.task == 2 && csv.kind(sr, csv.tcol(sr)) != 1 {
@@ -782,7 +816,7 @@ fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs("")
                 wide = true;
             }
             csv.drop_sinks(heap, sk);
-            let (sh2, rep2, e2, sk2) = scan_file(heap, fs, root, file, config(o, mode, csv.scale(sr, csv.tcol(sr)), 0), o.target, csv.plain_sinks(heap, 8, wide), e);
+            let (sh2, rep2, e2, sk2) = scan_file(heap, fs, root, file, config(o, mode, csv.scale(sr, csv.tcol(sr)), 0), tg, csv.plain_sinks(heap, 8, wide), e);
             e = e2;
             sk = sk2;
             if rep2.status != 0 {
@@ -817,24 +851,45 @@ fn fit_prepare[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs("")
             sk = csv.sink_join(a3, fvv, d3, m3);
         }
         if go {
-            mfile.drop_model(heap, mo);
-            borrow sk as &kr in {
-                mo = build_model(heap, sr, o.task, kr, mean_bits);
+            // the provenance of a constant model: the identity of the training file, no feature record (docs/tracking.md section 2.2); the file must be the one that was read
+            let (dg2, size2, hst2, haux2) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+            var same = hst == 0 && hst2 == 0 && size1 == size2;
+            if same {
+                borrow dg1 as &d1 in {
+                    borrow dg2 as &d2 in {
+                        same = bytes.equal(buffer.bytes(d1), buffer.bytes(d2));
+                    }
+                }
+            }
+            buffer.drop(heap, dg2);
+            if !same {
+                if hst != 0 || hst2 != 0 {
+                    e = fail.io_error(heap, e, haux + haux2, false, paths.shown(file));
+                } else {
+                    e = problem(heap, e, "io.read-failed", "the training file changed while the fit read it: its SHA-256 before and after the fit differ", "fit again once the file is no longer being written", "", "");
+                }
+                go = false;
+            } else {
+                mfile.drop_model(heap, mo);
+                var pv = buffer.empty(heap, 1);
+                borrow dg1 as &d1 in {
+                    let none = box_slice(heap, 1, 0);
+                    borrow none as &nr in {
+                        buffer.drop(heap, pv);
+                        pv = provsec.pack(heap, size1, buffer.bytes(d1), csv.rows(sr), csv.rows(sr), 0, contents(nr));
+                    }
+                    unbox_slice(heap, none);
+                }
+                borrow sk as &kr in {
+                    mo = build_model(heap, sr, o.task, kr, mean_bits, pv);
+                }
             }
         }
     }
     csv.drop_shape(heap, sh);
     csv.drop_sinks(heap, sk);
+    buffer.drop(heap, dg1);
     return (mo, go, e, lg);
-}
-
-pub fn fit[&h, &g, &f, &r, &pf, &po](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write] Out {
-    let (mo, ok, e, lg) = fit_prepare(heap, args, fs, root, file, o, errs, log);
-    if ok {
-        return finish_fit(heap, fs, root, out, o, mo, e, lg);
-    }
-    mfile.drop_model(heap, mo);
-    return nothing(heap, e, lg);
 }
 
 // ---------------------------------------------------------------- the stored model
@@ -1294,7 +1349,7 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
 // ---------------------------------------------------------------- eval
 
 // the metrics object and the text of an eval, from the accumulators `ml.csv.scan` left
-fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer, bool) {
+fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, onw: &static [byte], acc: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer, bool) {
     var undefined = false;
     var w = json.writer(heap, 512);
     var plain = buffer.empty(heap, 64);
@@ -1305,6 +1360,11 @@ fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, acc: &
     w = json.put_string(heap, w, task_name(mfile.kind(mo)));
     w = json.put_key(heap, w, "rows");
     w = json.put_int(heap, w, rows);
+    w = json.put_key(heap, w, "on");
+    w = json.put_string(heap, w, onw);
+    plain = buffer.append(heap, plain, "on ");
+    plain = buffer.append(heap, plain, onw);
+    plain = buffer.push(heap, plain, byte_of(10));
     w = json.put_key(heap, w, "metrics");
     w = json.begin_object(heap, w);
     if mfile.kind(mo) == 3 {
@@ -1404,8 +1464,12 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                     let (e2, same) = schema_check(heap, args, e, mr, sr, o, true, false);
                     e = e2;
                     if same {
+                        let (onw, ost, oaux) = prov.on_word(heap, fs, root, file, mfile.prov_bytes(mr));
+                        if ost != 0 {
+                            e = fail.io_error(heap, e, oaux, false, paths.shown(file));
+                        }
                         borrow mut accv as &!aw in {
-                            let (p2, t2, undefined) = eval_answer(heap, mr, csv.rows(sr), contents(aw));
+                            let (p2, t2, undefined) = eval_answer(heap, mr, csv.rows(sr), onw, contents(aw));
                             buffer.drop(heap, payload);
                             buffer.drop(heap, plain);
                             payload = p2;
