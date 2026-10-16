@@ -61,7 +61,7 @@ Memory is the input plus what the file case needs. This is the price of two pass
 * **A read error of standard input is the end of the input**: `getchar` answers the same value for an error and for the end, so the bytes read so far are the input (a truncated stream is then a refusal of the reader if it ends inside a record, `parse.csv-unterminated-quote` or `parse.csv-ragged-row`, or a shorter input). A closed standard input is an empty one, so `ml.input.empty`.
 * **The order of the refusals [choice]:** the command line first (as before), then standard input is read (so a model file that is missing is found after the bytes were read), then the model file, then the parse. A caller that sends
   standard input to a command that is going to refuse its flags is not made to wait: the command line is checked before any read.
-* The reads are `getchar` calls on `Io` (`io_read`): **[read]** the compiler of the pin has no bulk read of standard input (`read_bytes` is edition 9, cancho #363, after the pin). `cancho-table` measured `getchar`
+* The reads are `getchar` calls on `Io` (`io_read`): **[read]** the sources are edition 5 and read with `getchar`; `read_bytes` (edition 9, cancho #363) is in the pinned compiler and no file of `ml` adopts edition 9 for it (only `tools/ml-serve/main.cho` is edition 9, for `tcp_listen_on`). `cancho-table` measured `getchar`
   at 71 MB/s on the Mac and 264 MB/s on Linux. The speed of standard input here is not claimed; section 9 prints what was measured. Moving the pin to a compiler with `read_bytes` is section 10.
 
 ### 2.4 The authority of `ml`
@@ -130,6 +130,7 @@ One JSON object in `data` of the envelope `ml.v1`. A field is always present; a 
 | `kind` | integer 1 to 8 | the registry number of the file's model section (`lib/core/kinds.cho`): 1 and 3 constant regression, 2 constant classification, 4 linear, 5 logistic, 6 kmeans, 7 tree and forest, 8 boost |
 | `plan` | string | the canonical plan text, section 1 of the file |
 | `rows` | integer | training rows |
+| `provenance` | object or `null` | `null` for a model file with no provenance section; else `file_sha256`, `file_bytes`, `file_rows`, `rows` and `features`: for each numeric feature `name` (TB), `count`, `min`, `max`, `mean`, `std` (doubles as strings), `docs/tracking.md` section 2 |
 | `file` | object | `bytes` (integer), `sha256` (hex of the file's bytes, the digest of the whole file), `format` (`"CML1"`), `version` (1), `sections` (5, or 6 with a string table), `compiler` (the pin the file records, TB), `sum_order` (the summation order the file records for a model of kind 4 or above, 2 or 3; `null` for the constant kinds) |
 | `ensemble` | object | present for a boosted model (kind 8) only, after `file`: `trees` (the rounds the file holds), `nodes` (the nodes of all its trees) and `rounds_requested` (the rounds `fit` was asked for; more than `trees` when early stopping ended the fit, `docs/models-boost.md` section 6) |
 | `target` | object or `null` | `name` (TB), `type` (`int`, `dec`, `float`), `scale` (integer for `dec`, else `null`); `null` for a clustering, which has no target |
@@ -144,6 +145,8 @@ One JSON object in `data` of the envelope `ml.v1`. A field is always present; a 
 | `limits` | object | `values_per_column` (the `--limit` in force) and `max_bytes` (the `--max-bytes` in force) |
 
 The JSON Schema of the answer (`schemas/ml.v1.json`, the `describe` member of `data`) is generated from this table by `scripts/schemas.py`; D4 compares the schema, the table and the answers.
+
+`describe` also prints `provenance`: `null` for a model file with no provenance section, else `file_sha256`, `file_bytes`, `file_rows`, `rows` and for each numeric feature its `name`, `count`, `min`, `max`, `mean` and `std` (`docs/tracking.md` sections 2 and 3.4); `file.sections` is 5, 6 or 7. The answers of `predict` and `eval` carry `out_of_range` (and `predict` `ignored_columns`, `eval` `on`): `docs/tracking.md` section 3.
 
 ## 6. How one request row becomes the CSV the predictor reads
 
@@ -191,7 +194,7 @@ Machine: Mac, arm64, Apple M4 Max, macOS 26.2, compiler `a4572ea`, load about 8 
 
 ## 10. Open for the server
 
-1. **Bulk read of standard input.** The pinned compiler has `getchar` only. `read_bytes` (cancho #363, edition 9) is the bulk read; using it is a move of the pin of the whole repository (its sources are `edition 5`). The in-process server needs no standard input at all: it can hand the CSV text to the same library call. Whether `ml-serve` links `ml.csv` with `Source::Mem` directly (no `io_read`) is a decision for that stage.
+1. **Bulk read of standard input.** The sources read with `getchar`. `read_bytes` (cancho #363, edition 9) is the bulk read and the pinned compiler has it; using it means moving the files that read standard input to edition 9, which is not done. The in-process server needs no standard input at all: it can hand the CSV text to the same library call. Whether `ml-serve` links `ml.csv` with `Source::Mem` directly (no `io_read`) is a decision for that stage.
 2. **The library boundary.** `ml-serve` should call `wireio.predict`-level code in-process. Today that function takes `Rp` paths, `Args` and `Fs`; a memory-in, memory-out entry (a CSV text and a model file's bytes in, the document out) is the missing piece and is a small refactor of `tools/ml/wireio.cho` and `verbs.cho` (the `Source::Mem` plumbing is already there).
 3. **Single-row type inference.** Section 6 step 4: the reader types a column from its cells, so a one-row request must render `int` columns as integers and `dec` columns within their scale. The server can pre-check against `describe` or let the reader refuse.
 4. **`describe` size.** Bounded by the file (a table of 12 MiB can list about that much); `--limit` caps the strings per column. A server would call it once at start.

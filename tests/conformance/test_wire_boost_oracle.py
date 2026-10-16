@@ -75,7 +75,7 @@ class BoostOracle(unittest.TestCase):
             case.split, case.seed = None, 5
             case.hp.pop("early-stopping", None)
             n = len(case.rows)
-            s0 = owb.ob.derive(owb.ob.derive(5, 7), 0)
+            s0 = owb.ob.derive(owb.ob.derive(5, 9), 0)
             z = owb.ob.mix(s0 + owb.ob.GOLD)                                           # the first draw of round 0, for the first fit row
             v = (z >> 1) % 1000000
             for sub_ in ("%.6f" % (max(v, 1) / 1000000.0), "0.7000007"):

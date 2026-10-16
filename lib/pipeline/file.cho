@@ -9,6 +9,7 @@ import transforms.codes;
 import transforms.strtab;
 import pipeline.mixed;
 import pipeline.plan;
+import pipeline.provsec;
 import pipeline.names;
 import pipeline.schema;
 import pipeline.run;
@@ -86,6 +87,12 @@ pub fn encode[&h, &a, &b, &c, &e, &f](heap: &!h Heap, plan_text: &a [byte], sche
 // The same with a string table: `table` is the section payload of strtab.pack, and is empty for a file with no categorical step (then the file has five sections and is
 // the file `encode` writes). `steps_payload` is then the section strtab.pack made, with the stubs.
 pub fn encode_with_table[&h, &a, &b, &c, &t, &e, &f](heap: &!h Heap, plan_text: &a [byte], schema_payload: &b [byte], steps_payload: &c [byte], table: &t [byte], model_payload: &e [byte], rows: int, columns: int, seed: int, pin: &f [byte]) -> [heap] buffer.Buffer {
+    return encode_full(heap, plan_text, schema_payload, steps_payload, table, "", model_payload, rows, columns, seed, pin);
+}
+
+// The same with the provenance section (tag 7, docs/tracking.md section 2): `prov` is the payload of pipeline.provsec.pack, and is empty for a file with no provenance (then the file is the one
+// `encode_with_table` writes). The section follows the string table when there is one, and the header's count is 5 plus one for each of the two optional sections that is there.
+pub fn encode_full[&h, &a, &b, &c, &t, &v, &e, &f](heap: &!h Heap, plan_text: &a [byte], schema_payload: &b [byte], steps_payload: &c [byte], table: &t [byte], prov: &v [byte], model_payload: &e [byte], rows: int, columns: int, seed: int, pin: &f [byte]) -> [heap] buffer.Buffer {
     var me = put64(heap, buffer.empty(heap, 64), rows);
     me = put64(heap, me, columns);
     me = put64(heap, me, seed);
@@ -98,11 +105,14 @@ pub fn encode_with_table[&h, &a, &b, &c, &t, &e, &f](heap: &!h Heap, plan_text: 
     var out = buffer.empty(heap, 256);
     out = buffer.append(heap, out, "CML1");
     out = put32(heap, out, 1);
+    var count = kinds.core_sections();
     if len(table) > 0 {
-        out = put32(heap, out, kinds.section_count());
-    } else {
-        out = put32(heap, out, kinds.core_sections());
+        count = count + 1;
     }
+    if len(prov) > 0 {
+        count = count + 1;
+    }
+    out = put32(heap, out, count);
     out = section(heap, out, kinds.section_plan(), plan_text);
     out = section(heap, out, kinds.section_schema(), schema_payload);
     out = section(heap, out, kinds.section_steps(), steps_payload);
@@ -113,6 +123,9 @@ pub fn encode_with_table[&h, &a, &b, &c, &t, &e, &f](heap: &!h Heap, plan_text: 
     buffer.drop(heap, me);
     if len(table) > 0 {
         out = section(heap, out, kinds.section_strings(), table);
+    }
+    if len(prov) > 0 {
+        out = section(heap, out, kinds.section_provenance(), prov);
     }
     var sum = buffer.empty(heap, 40);
     borrow out as &r in {
@@ -149,7 +162,7 @@ pub fn reseal[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] buffer.Buffer {
 // A file that passed every check. The file is kept as it is; the sections are views into it.
 pub res struct Loaded {
     data: buffer.Buffer,
-    // payload start and length of sections 1 to 5, and of the string table (the last two cells, zero when the file has none)
+    // payload start and length of sections 1 to 5, of the string table and of the provenance (the last four cells, zero for a section the file does not have)
     places: Box[[int]],
     nsteps: int,
     features: int,
@@ -172,7 +185,7 @@ pub fn drop[&h](heap: &!h Heap, l: Loaded) -> [heap] int {
 }
 
 pub fn empty[&h](heap: &!h Heap) -> [heap] Loaded {
-    return Loaded { data: buffer.empty(heap, 1), places: box_slice(heap, 12, 0), nsteps: 0, features: 0, width: 0, columns: 0, rows: 0, seed: 0, model_kind: 0, ncat: 0, full: buffer.empty(heap, 1) };
+    return Loaded { data: buffer.empty(heap, 1), places: box_slice(heap, 14, 0), nsteps: 0, features: 0, width: 0, columns: 0, rows: 0, seed: 0, model_kind: 0, ncat: 0, full: buffer.empty(heap, 1) };
 }
 
 fn sec[&l](l: &l Loaded, i: int) -> [] &l [byte] {
@@ -208,6 +221,15 @@ pub fn has_table[&l](l: &l Loaded) -> [] bool {
 
 pub fn table_bytes[&l](l: &l Loaded) -> [] &l [byte] {
     return sec(l, 5);
+}
+
+// whether the file has a provenance section, and its payload (empty when it has none)
+pub fn has_provenance[&l](l: &l Loaded) -> [] bool {
+    return contents(l.places)[12] > 0;
+}
+
+pub fn provenance_bytes[&l](l: &l Loaded) -> [] &l [byte] {
+    return sec(l, 6);
 }
 
 // the categorical input columns of the schema
@@ -280,7 +302,8 @@ fn checksum_ok[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] bool {
     return same;
 }
 
-// the structure: where each of the five payloads is (and the sixth, the string table, when the file says it has six sections).
+// the structure: where each of the five payloads is, and then, in the order of their tags, the string table (tag 6) and the provenance (tag 7) when the file has them. The header's count
+// is 5, 6 or 7 and a count of 6 can be either optional section: the walk reads the tags. places[2 k], places[2 k + 1] is the payload of slot k: 0 to 4 the core sections, 5 the string table, 6 the provenance.
 // (code, a): 0, or truncated, or malformed with a = the tag at fault
 fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
     let n = len(data);
@@ -289,11 +312,12 @@ fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
         return (codes.truncated(), 0);
     }
     let count = get32(data, 8);
-    if count != kinds.core_sections() && count != kinds.section_count() {
+    if count < kinds.core_sections() || count > kinds.section_count() {
         return (codes.malformed(), 0);
     }
     var pos = 12;
     var s = 0;
+    var prev = 0;
     while s < count {
         if pos + 12 > body {
             return (codes.truncated(), 0);
@@ -303,11 +327,20 @@ fn structure[&d, &o](data: &d [byte], places: &!o [int]) -> [] (int, int) {
         if length < 0 || length > body - pos - 12 {
             return (codes.truncated(), 0);
         }
-        if tag != kinds.section_at(s + 1) {
-            return (codes.malformed(), tag);
+        var slot = s;
+        if s < kinds.core_sections() {
+            if tag != kinds.section_at(s + 1) {
+                return (codes.malformed(), tag);
+            }
+        } else {
+            if tag <= prev || tag != kinds.section_strings() && tag != kinds.section_provenance() {
+                return (codes.malformed(), tag);
+            }
+            slot = tag - 1;
         }
-        places[2 * s] = pos + 12;
-        places[2 * s + 1] = length;
+        places[2 * slot] = pos + 12;
+        places[2 * slot + 1] = length;
+        prev = tag;
         pos = pos + 12 + length;
         s = s + 1;
     }
@@ -543,6 +576,12 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
     if rows < 1 || rows > 1000000000 || mc != scols || nh != 0 || cl < 0 || cl > 255 || len(me) != 32 + cl + tail {
         return (mal(5, 0), 0, 0, 0, 0, 0, 0);
     }
+    // 7 provenance (only a file that has it): the training identity and the range of each numeric feature, checked against the rows of `meta` and the numeric features of the schema
+    if places[12] > 0 {
+        if provsec.validate(data[places[12]..places[12] + places[13]], rows, feats - ncat) != 0 {
+            return (mal(7, 0), 0, 0, 0, 0, 0, 0);
+        }
+    }
     return (none, feats, width, nsteps, rows, seed, mk);
 }
 
@@ -563,7 +602,7 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Loaded, codes.
     if v != 1 {
         return (empty(heap), codes.fault(codes.bad_version(), v, 0, 0));
     }
-    let places = box_slice(heap, 12, 0);
+    let places = box_slice(heap, 14, 0);
     var pw = places;
     var code = 0;
     var tag = 0;

@@ -64,6 +64,23 @@ def read_table(t):
     return na, lims, out
 
 
+def fnum(bits):
+    """a double given as its bits, as `flt.put_float` prints it: the shortest decimal that reads back, positional from 1e-6 to 1e21 with a point"""
+    v = struct.unpack("<d", struct.pack("<q", bits))[0]
+    if v == 0:
+        return "0.0"
+    if not 1e-6 <= abs(v) < 1e21:
+        # scientific: the shortest mantissa, `e`, the exponent without a plus sign or leading zeros
+        mant, _, exp = repr(v).partition("e")
+        if not exp:
+            mant, exp = ("%e" % v).split("e")
+        return "%se%d" % (mant, int(exp))
+    from decimal import Decimal
+
+    s = format(Decimal(repr(v)), "f")
+    return s if "." in s else s + ".0"
+
+
 def describe(data, limit=1000, max_bytes=16777216):
     sec = S.parse_file(data)
     plan = sec[1]
@@ -122,6 +139,17 @@ def describe(data, limit=1000, max_bytes=16777216):
                     "column": tb(name), "encoder": ENCODERS[p["kind"]], "categories": len(strs), "buckets": p["par"] if p["kind"] == 10 else None,
                     "listed": listed, "truncated": listed < len(strs), "values": [{"value": tb(s), "count": c} for s, c in strs[:listed]],
                 })
+    provenance = None
+    if 7 in sec:
+        pv = sec[7]
+        nf = struct.unpack_from("<I", pv, 60)[0]
+        names = [c[0] for j, c in enumerate(cols) if j != target and c[1] != 3]
+        feats = []
+        for k in range(nf):
+            n, mn, mx, me, sd = struct.unpack_from("<Qqqqq", pv, 64 + 40 * k)
+            feats.append({"name": tb(names[k]), "count": n, "min": fnum(mn), "max": fnum(mx), "mean": fnum(me), "std": fnum(sd)})
+        provenance = {"file_sha256": pv[12:44].hex(), "file_bytes": struct.unpack_from("<Q", pv, 4)[0], "file_rows": struct.unpack_from("<Q", pv, 44)[0],
+                      "rows": struct.unpack_from("<Q", pv, 52)[0], "features": feats}
     if task == "regression":
         output = {"columns": ["prediction"], "with_proba": None, "with_distance": None, "label_threshold": None}
     elif task == "clustering":
@@ -137,7 +165,7 @@ def describe(data, limit=1000, max_bytes=16777216):
         target_obj = {"name": tb(tname), "type": TYPES[tty], "scale": tscale if tty == 1 else None}
         optional = [tb(tname)]
     doc = {
-        "model": model, "task": task, "kind": kind, "plan": ptext, "rows": rows,
+        "model": model, "task": task, "kind": kind, "plan": ptext, "rows": rows, "provenance": provenance,
         "file": {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "format": "CML1", "version": struct.unpack_from("<I", data, 4)[0],
                  "sections": struct.unpack_from("<I", data, 8)[0], "compiler": tb(pin), "sum_order": sum_order},
         "target": target_obj,
@@ -161,7 +189,7 @@ def describe(data, limit=1000, max_bytes=16777216):
 
 
 # the order of the keys of `describe`; a boosted model has "ensemble" after "file" (field_order)
-FIELD_ORDER = ["model", "task", "kind", "plan", "rows", "file", "target", "columns", "request", "categorical", "na_values", "reader", "classes", "positive", "output", "limits"]
+FIELD_ORDER = ["model", "task", "kind", "plan", "rows", "provenance", "file", "target", "columns", "request", "categorical", "na_values", "reader", "classes", "positive", "output", "limits"]
 
 def field_order(kind):
     if kind == 8:

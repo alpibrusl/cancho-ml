@@ -3,7 +3,7 @@
 # against the numpy oracle at 1, 2, 3, 4, 8 and 16 threads. Exit non-zero on any difference.
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-../cancho-compiler-a4572ea/target/release/cancho}
+CANCHO=${CANCHO:-../cancho-compiler-0207556/target/release/cancho}
 D=$(mktemp -d)
 $CANCHO build --std lib/core/*.cho lib/linalg/*.cho tests/lref.cho tests/t_par.cho -o $D/t_par
 $D/t_par | grep -q FAILED && { $D/t_par; exit 1; }

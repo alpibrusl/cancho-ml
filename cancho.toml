@@ -1,6 +1,6 @@
 [package]
 name = "ml"
-cancho = "a4572ea3b506e4bcec1c4be43deda1043c11ba9f"   # the compiler these sources were written for
+cancho = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"   # the compiler these sources were written for
 
 # `contract` is cancho-tools' package, one store per module, pinned to a commit, as in cancho-table (never copied).
 # The linear algebra (lib/linalg) and the core (lib/core) import nothing from it; `ml` (tools/ml) does. `cancho install` fetches
@@ -97,7 +97,7 @@ path = ".cancho-vcs"
 
 [dependencies.server]
 git = "https://github.com/alpibrusl/cancho"
-rev = "a4572ea3b506e4bcec1c4be43deda1043c11ba9f"
+rev = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"
 path = "packages/http-server/.cancho-vcs"
 
 [[bin]]
@@ -124,7 +124,7 @@ out = "build/ml"
 # one by one because a directory would bring in the main of `ml`; scripts/check_bins.py fails when this list and the directory disagree.
 [[bin]]
 name = "ml-predict"
-sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/boost", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml/app.cho", "tools/ml/catcli.cho", "tools/ml/catwire.cho", "tools/ml/csv.cho", "tools/ml/csvcell.cho", "tools/ml/csvload.cho", "tools/ml/est.cho", "tools/ml/fsio.cho", "tools/ml/logrec.cho", "tools/ml/mdesc.cho", "tools/ml/mfile.cho", "tools/ml/paths.cho", "tools/ml/spec.cho", "tools/ml/verbs.cho", "tools/ml/wire.cho", "tools/ml/wiredata.cho", "tools/ml/wireio.cho", "tools/ml-predict", "generated/ml-predict"]
+sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/boost", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml/app.cho", "tools/ml/catcli.cho", "tools/ml/catwire.cho", "tools/ml/cfit.cho", "tools/ml/csv.cho", "tools/ml/csvcell.cho", "tools/ml/csvload.cho", "tools/ml/cv.cho", "tools/ml/cvagg.cho", "tools/ml/est.cho", "tools/ml/fsio.cho", "tools/ml/logrec.cho", "tools/ml/mdesc.cho", "tools/ml/mfile.cho", "tools/ml/paths.cho", "tools/ml/prov.cho", "tools/ml/runs.cho", "tools/ml/spec.cho", "tools/ml/splitcol.cho", "tools/ml/splitplan.cho", "tools/ml/splitspec.cho", "tools/ml/splitwire.cho", "tools/ml/track.cho", "tools/ml/verbs.cho", "tools/ml/wire.cho", "tools/ml/wiredata.cho", "tools/ml/wireio.cho", "tools/ml-predict", "generated/ml-predict"]
 std = true
 out = "build/ml-predict"
 
@@ -132,7 +132,7 @@ out = "build/ml-predict"
 # imports the pinned `web`, `schema` and `http.server`. scripts/check_bins.py fails when this list and the directory tools/ml disagree.
 [[bin]]
 name = "ml-serve"
-sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/boost", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml/app.cho", "tools/ml/catcli.cho", "tools/ml/catwire.cho", "tools/ml/csv.cho", "tools/ml/csvcell.cho", "tools/ml/csvload.cho", "tools/ml/est.cho", "tools/ml/fsio.cho", "tools/ml/logrec.cho", "tools/ml/mdesc.cho", "tools/ml/mfile.cho", "tools/ml/paths.cho", "tools/ml/spec.cho", "tools/ml/verbs.cho", "tools/ml/wire.cho", "tools/ml/wiredata.cho", "tools/ml/wireio.cho", "tools/ml-serve", "generated/ml-serve"]
+sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/boost", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml/app.cho", "tools/ml/catcli.cho", "tools/ml/catwire.cho", "tools/ml/cfit.cho", "tools/ml/csv.cho", "tools/ml/csvcell.cho", "tools/ml/csvload.cho", "tools/ml/cv.cho", "tools/ml/cvagg.cho", "tools/ml/est.cho", "tools/ml/fsio.cho", "tools/ml/logrec.cho", "tools/ml/mdesc.cho", "tools/ml/mfile.cho", "tools/ml/paths.cho", "tools/ml/prov.cho", "tools/ml/runs.cho", "tools/ml/spec.cho", "tools/ml/splitcol.cho", "tools/ml/splitplan.cho", "tools/ml/splitspec.cho", "tools/ml/splitwire.cho", "tools/ml/track.cho", "tools/ml/verbs.cho", "tools/ml/wire.cho", "tools/ml/wiredata.cho", "tools/ml/wireio.cho", "tools/ml-serve", "generated/ml-serve"]
 std = true
 out = "build/ml-serve"
 

@@ -44,8 +44,8 @@ threshold.
 
 ### 2.2 Streams [choice]
 
-Two stream kinds are appended to the registry (`lib/core/kinds.cho`, `docs/rng.md`; the numbers are append-only): **7**, the row sample of a round: state
-`derive(derive(seed, 7), round)` with `round` 0-based; **8**, the validation split: state `derive(seed, 8)`. No draw depends on a thread.
+Two stream kinds are appended to the registry (`lib/core/kinds.cho`, `docs/rng.md`; the numbers are append-only): **9**, the row sample of a round: state
+`derive(derive(seed, 9), round)` with `round` 0-based; **10**, the validation split: state `derive(seed, 10)`. No draw depends on a thread. (This stage first wrote 7 and 8; the split strategies took those numbers on main, and boost was renumbered to 9 and 10 when the two were integrated. No boost file existed outside the branch.)
 
 ### 2.3 Rows and sampling
 
@@ -103,7 +103,7 @@ above 0) without `--split train=F` with `args.conflict`. The `--split` rows are 
 its own validation rows out of the *train* side, so the reported held-out metrics stay an honest estimate. Rule:
 
 1. `nv = n / 10` (integer division) validation rows, `n >= 10` else `ml.param.out-of-range`; the rows are the first `nv` entries of a partial Fisher-Yates shuffle of
-   `0 .. n-1` driven by the stream of kind 8: for `i = 0 .. nv-1`: `j = i + uniform(n - i)`; swap `a[i], a[j]`. The fit rows are the others, in ascending order.
+   `0 .. n-1` driven by the stream of kind 10: for `i = 0 .. nv-1`: `j = i + uniform(n - i)`; swap `a[i], a[j]`. The fit rows are the others, in ascending order.
 2. After round `r` (`rr = r + 1` rounds done) the validation loss `V_rr` is the sequential sum over the validation rows in ascending row order of the per-row loss,
    divided by `float(nv)`. Regression: `(F_i - y_i) * (F_i - y_i)`. Classification: `max(F,0) - y*F + log1p(exp(-|F|))`, the logistic loss as `models.logreg` writes it
    (`mexp.exp`, `mexp.log1p`).
@@ -243,7 +243,7 @@ histogram build is open (section 10).
 | GB8 | **Serving.** `ml-predict` equals `ml predict` byte for byte; `describe` equals its Python oracle (`scripts/oracle_describe.py`); `ml-serve` equals `ml predict` byte for byte; the OpenAPI document validates and Schemathesis runs against the server for a boosted model | `test_serving.py`, `test_serve_bytes.py`, `gate_serve_openapi.py`, `gate_serve_schemathesis.py` | a different byte on any door |
 | GB9 | **Cross-platform fingerprint.** `scripts/xplat_fp.py` gains boost cases (regression, classification, 1 and 8 threads, a categorical plan) and `docs/bench/xplat_fp.txt` gains lines **appended** after its 88 existing ones; `scripts/xplat_check.py` is extended and its own mutants still refuse; the new lines are reproduced bit for bit on gram (Linux x86-64, `taskset -c 0-6`) | `scripts/xplat_check.py`, a run on gram | a line that differs on another machine |
 | GB10 | **Golden.** The golden records of the existing fixtures (`golden_constant.json`, `golden_numeric.json`, `golden_planned.json`, `golden_describe.json` for the models that existed) are unchanged | `test_wire_baseline.py`, `golden_describe.py --check` | a changed byte of an existing model |
-| GB11 | **Tables and tags.** Every new flag and rule tag is reached by a fixture; the generated files are fresh; the registry (kinds 8, streams 7 and 8, `sum_order_for`) agrees with `docs/design.md` 4.1 | `test_tables.py`, `gen_models.py --check`, `check_registry.py` | a flag with no fixture |
+| GB11 | **Tables and tags.** Every new flag and rule tag is reached by a fixture; the generated files are fresh; the registry (kind 8, streams 9 and 10, `sum_order_for`) agrees with `docs/design.md` 4.1 | `test_tables.py`, `gen_models.py --check`, `check_registry.py` | a flag with no fixture |
 
 ### 8.1 The scikit-learn comparison: the bounds, fixed before the run [choice]
 

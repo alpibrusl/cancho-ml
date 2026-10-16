@@ -116,7 +116,22 @@ def expected_file(data, cfg, plan, got_sections, seed=0, rows_override=None):
     meta = got_sections[5]
     pin = meta[32:32 + u32(meta, 28)]
     new_meta = S.meta_bytes(L.rows if rows_override is None else rows_override, ncols, seed, pin, u32(model))
-    return S.build_file(got_sections[1], schema, sec, model, new_meta, tab), payload
+    # the provenance section (docs/tracking.md section 2): written by the oracle of scripts/oracle_track.py from the CSV when the fit trains on every row, taken from the file when it holds rows out
+    if rows_override is None:
+        import oracle_track
+
+        feats = [L.names[j].decode() for j in range(L.cols) if j not in L.drops and j not in L.place and L.names[j] != cfg.target.encode()]
+        prov = oracle_track.provenance(data, feats, None)
+    else:
+        prov = got_sections.get(7, b"")
+    return S.build_file(got_sections[1], schema, sec, model, new_meta, tab, prov), payload
+
+
+def norm(raw):
+    """an answer without its `ignored_columns` (the target column a predict file holds is named there, docs/tracking.md section 3.2; the rest is the answer to compare)"""
+    import re
+
+    return re.sub(rb',"ignored_columns":\[[^\]]*\]', b"", raw)
 
 
 class Count(G.Count):
@@ -153,7 +168,7 @@ def compare_file(cnt, label, data, cfg, plan, rnd, model="tree"):
         return False
     want, payload = expected_file(data, cfg, plan, secs)
     if want != got:
-        bad = [t for t in (1, 2, 3, 4, 5, 6) if t in secs and (want is None or t not in S.parse_file(want) or S.parse_file(want)[t] != secs[t])]
+        bad = [t for t in (1, 2, 3, 4, 5, 6, 7) if t in secs and (want is None or t not in S.parse_file(want) or S.parse_file(want)[t] != secs[t])]
         detail = ""
         if want is not None:
             ws = S.parse_file(want)
@@ -602,14 +617,15 @@ def gate_align(seed):
                 random.Random(perm * 7 + 1).shuffle(order)
                 st2, doc2, raw2 = predict_cli(csv_bytes([header[i] for i in order], [[r[i] for i in order] for r in test_rows]), extra=(["--proba"] if cls else []))
                 cnt.runs += 1
-                if st2 != 0 or raw2 != base_raw:
+                if st2 != 0 or norm(raw2) != norm(base_raw):
                     cnt.note("%s %s permutation %d" % (model, mix, perm), "the answer differs from the file in the fitted order (%r)" % (rules(doc2),))
             # the target present in the predict file is ignored, and a different position for it too
             full_cols = list(range(len(header)))
             random.Random(3).shuffle(full_cols)
             st3, doc3, raw3 = predict_cli(csv_bytes([header[i] for i in full_cols], [[r[i] for i in full_cols] for r in test_rows]), extra=(["--proba"] if cls else []))
             cnt.runs += 1
-            if st3 != 0 or raw3 != base_raw:
+            # the answer names the target column it ignored (docs/tracking.md section 3.2): everything else is the answer of the file without it
+            if st3 != 0 or norm(raw3) != norm(base_raw):
                 cnt.note("%s %s" % (model, mix), "a predict file that also holds the target differs (%r)" % (rules(doc3),))
             # a missing numeric column, a missing categorical column, a dropped categorical column
             for what, removed in (("numeric", b"x2"), ("categorical", b"c1")):
@@ -640,7 +656,7 @@ def gate_align(seed):
                     argv = rep["argv"][1:]
                     p = subprocess.run([ML] + argv, capture_output=True)
                     cnt.runs += 1
-                    if p.returncode != 0 or p.stdout != base_raw:
+                    if p.returncode != 0 or norm(p.stdout) != norm(base_raw):
                         cnt.note("%s extra %s" % (model, label), "the repair %r does not give the answer of the fitted columns" % (argv,))
             # a numeric column holding text is the numeric reader's refusal, naming the column
             hx = list(ph)
@@ -678,7 +694,7 @@ def gate_align(seed):
         for k, order in enumerate(([2, 1, 0], [1, 2, 0], [3, 2, 0, 1], [1, 0, 2, 3])):
             s1, d1, raw = pred(order)
             cnt.runs += 1
-            if s1 != 0 or raw != base:
+            if s1 != 0 or norm(raw) != norm(base):
                 cnt.note("numeric %s order %r" % (model, order), "the answer differs from the file in the fitted order (%r)" % (rules(d1),))
     return cnt.report()
 

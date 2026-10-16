@@ -1,0 +1,266 @@
+edition 6;
+
+module ml.splitplan;
+
+// The assignment of rows to the train and test side, or to folds, for every strategy of docs/splits.md section 3. Pure: a function of the counts, the labels, the group ranks, the
+// order of the rows by time and the seed; no thread, no clock, no file. The answers are `(kind, a, b)`: kind 0 is success, otherwise a refusal of the caller to word:
+//   1 a side or a fold would be empty                              (ml.split.empty-fold)
+//   2 a class has too few rows: a is its label, b its rows         (ml.split.stratum-too-small)
+//   3 too few groups: a is how many there are, b how many are needed (ml.split.too-few-groups)
+// The strategies: 0 the library's plain split, 1 stratified, 2 by group, 3 by time.
+
+import metrics.rules;
+import metrics.splits;
+
+// the two labels of a classification and how many rows each has: (lo, hi, rows of lo, rows of hi); hi == lo when there is one class
+fn two_classes[&y](labels: &y [int], n: int) -> [] (int, int, int, int) {
+    var lo = labels[0];
+    var hi = labels[0];
+    var i = 0;
+    while i < n {
+        if labels[i] < lo {
+            lo = labels[i];
+        }
+        if labels[i] > hi {
+            hi = labels[i];
+        }
+        i = i + 1;
+    }
+    var n0 = 0;
+    i = 0;
+    while i < n {
+        if labels[i] == lo {
+            n0 = n0 + 1;
+        }
+        i = i + 1;
+    }
+    return (lo, hi, n0, n - n0);
+}
+
+// the group of `perm` positions in shuffled order: perm = the ranks 0 .. g - 1 shuffled with the stream of kind 8 and index `rep`
+fn shuffled_groups[&h](heap: &!h Heap, g: int, seed: int, rep: int) -> [heap] Box[[int]] {
+    var perm = box_slice(heap, g + 1, 0);
+    borrow mut perm as &!pw in {
+        let a = contents(pw);
+        var i = 0;
+        while i < g {
+            a[i] = i;
+            i = i + 1;
+        }
+        splits.shuffle(a, 0, g, splits.stream(seed, splits.kind_group(), rep));
+    }
+    return perm;
+}
+
+// The holdout: out[i] = 1 for a test row, 0 for a train row. `n_test` rows are held out (a group split holds out at least that many).
+pub fn holdout[&h, &y, &g, &k, &o](heap: &!h Heap, strategy: int, n: int, n_test: int, seed: int, cap: int, labels: &y [int], gid: &g [int], groups: int, order: &k [int], out: &!o [int]) -> [heap] (int, int, int) {
+    if n < 2 || n_test < 1 || n_test > n - 1 {
+        return (1, 0, 0);
+    }
+    var i = 0;
+    while i < n {
+        out[i] = 0;
+        i = i + 1;
+    }
+    if strategy == 0 {
+        let code = splits.train_test(heap, n, n_test, seed, 0, cap, out);
+        if code != 0 {
+            return (1, 0, 0);
+        }
+        return (0, 0, 0);
+    }
+    if strategy == 1 {
+        let (lo, hi, n0, n1) = two_classes(labels, n);
+        if n0 < 2 {
+            return (2, lo, n0);
+        }
+        if n1 < 2 {
+            return (2, hi, n1);
+        }
+        var perm = box_slice(heap, n + 1, 0);
+        var c0test = 0;
+        var c1test = 0;
+        borrow mut perm as &!pw in {
+            let a = contents(pw);
+            var p0 = 0;
+            var p1 = n0;
+            i = 0;
+            while i < n {
+                if labels[i] == lo {
+                    a[p0] = i;
+                    p0 = p0 + 1;
+                } else {
+                    a[p1] = i;
+                    p1 = p1 + 1;
+                }
+                i = i + 1;
+            }
+            splits.shuffle(a, 0, n0, splits.stream(seed, splits.kind_strat_holdout(), 0));
+            splits.shuffle(a, n0, n1, splits.stream(seed, splits.kind_strat_holdout(), 1));
+            var t = 0;
+            while t < n {
+                if (t + 1) * n_test / n - t * n_test / n == 1 {
+                    out[a[t]] = 1;
+                    if t < n0 {
+                        c0test = c0test + 1;
+                    } else {
+                        c1test = c1test + 1;
+                    }
+                }
+                t = t + 1;
+            }
+        }
+        unbox_slice(heap, perm);
+        if c0test == n0 {
+            return (2, lo, n0);
+        }
+        if c1test == n1 {
+            return (2, hi, n1);
+        }
+        return (0, 0, 0);
+    }
+    if strategy == 2 {
+        if groups < 2 {
+            return (3, groups, 2);
+        }
+        var size = box_slice(heap, groups + 1, 0);
+        var side = box_slice(heap, groups + 1, 0);
+        borrow mut size as &!sw in {
+            i = 0;
+            while i < n {
+                contents(sw)[gid[i]] = contents(sw)[gid[i]] + 1;
+                i = i + 1;
+            }
+        }
+        let perm = shuffled_groups(heap, groups, seed, 0);
+        borrow size as &sr in {
+            borrow perm as &pr in {
+                borrow mut side as &!dw in {
+                    var rows = 0;
+                    var taken = 0;
+                    var p = 0;
+                    while p < groups {
+                        if rows < n_test && taken < groups - 1 {
+                            contents(dw)[contents(pr)[p]] = 1;
+                            rows = rows + contents(sr)[contents(pr)[p]];
+                            taken = taken + 1;
+                        }
+                        p = p + 1;
+                    }
+                }
+            }
+        }
+        borrow side as &dr in {
+            i = 0;
+            while i < n {
+                out[i] = contents(dr)[gid[i]];
+                i = i + 1;
+            }
+        }
+        unbox_slice(heap, size);
+        unbox_slice(heap, side);
+        unbox_slice(heap, perm);
+        return (0, 0, 0);
+    }
+    // by time: the oldest n - n_test rows train
+    var p = n - n_test;
+    while p < n {
+        out[order[p]] = 1;
+        p = p + 1;
+    }
+    return (0, 0, 0);
+}
+
+// The folds of one repeat: out[i] = the fold of row i, 0 .. k - 1; for a time split the block of the row minus 1 (-1 for the initial block, never tested).
+pub fn folds[&h, &y, &g, &k, &o](heap: &!h Heap, strategy: int, n: int, k: int, rep: int, seed: int, cap: int, labels: &y [int], gid: &g [int], groups: int, order: &k [int], out: &!o [int]) -> [heap] (int, int, int) {
+    if strategy == 0 {
+        if k > n {
+            return (1, 0, 0);
+        }
+        let code = splits.kfold(heap, n, k, seed, rep, cap, out);
+        if code != 0 {
+            return (1, 0, 0);
+        }
+        return (0, 0, 0);
+    }
+    if strategy == 1 {
+        let (lo, hi, n0, n1) = two_classes(labels, n);
+        if n0 < k {
+            return (2, lo, n0);
+        }
+        if n1 < k {
+            return (2, hi, n1);
+        }
+        let code = splits.stratified(heap, labels, k, seed, rep, cap, out);
+        if code != 0 {
+            return (1, 0, 0);
+        }
+        return (0, 0, 0);
+    }
+    if strategy == 2 {
+        if groups < k {
+            return (3, groups, k);
+        }
+        var size = box_slice(heap, groups + 1, 0);
+        var where_ = box_slice(heap, groups + 1, 0);
+        var load = box_slice(heap, k + 1, 0);
+        borrow mut size as &!sw in {
+            var i = 0;
+            while i < n {
+                contents(sw)[gid[i]] = contents(sw)[gid[i]] + 1;
+                i = i + 1;
+            }
+        }
+        let perm = shuffled_groups(heap, groups, seed, rep);
+        borrow size as &sr in {
+            borrow perm as &pr in {
+                borrow mut where_ as &!ww in {
+                    borrow mut load as &!lw in {
+                        var p = 0;
+                        while p < groups {
+                            let grp = contents(pr)[p];
+                            var best = 0;
+                            var f = 1;
+                            while f < k {
+                                if contents(lw)[f] < contents(lw)[best] {
+                                    best = f;
+                                }
+                                f = f + 1;
+                            }
+                            contents(ww)[grp] = best;
+                            contents(lw)[best] = contents(lw)[best] + contents(sr)[grp];
+                            p = p + 1;
+                        }
+                    }
+                }
+            }
+        }
+        borrow where_ as &wr in {
+            var i = 0;
+            while i < n {
+                out[i] = contents(wr)[gid[i]];
+                i = i + 1;
+            }
+        }
+        unbox_slice(heap, size);
+        unbox_slice(heap, where_);
+        unbox_slice(heap, load);
+        unbox_slice(heap, perm);
+        return (0, 0, 0);
+    }
+    // by time: k + 1 blocks of the ordered rows, fold i tests block i + 1
+    if n < k + 1 {
+        return (1, 0, 0);
+    }
+    var b = 0;
+    while b <= k {
+        var p = splits.fold_start(n, k + 1, b);
+        let hi = splits.fold_start(n, k + 1, b + 1);
+        while p < hi {
+            out[order[p]] = b - 1;
+            p = p + 1;
+        }
+        b = b + 1;
+    }
+    return (0, 0, 0);
+}

@@ -1,0 +1,237 @@
+edition 6;
+
+module ml.prov;
+
+// The numbers of the provenance section (docs/tracking.md sections 2 and 3), computed from the matrix the reader produced.
+//
+// `stats`: for each numeric feature column, over the training rows and the non-missing cells, the count, the minimum and the maximum, the exact mean rounded once (cancho-table's
+// superaccumulator, `facc`) and the population standard deviation about that stored mean: `sqrt(S / n)` where S is the exact sum of squared differences (ml.fsq) rounded once and the
+// division and the square root are IEEE operations. No lane sum, no thread and no order of rows reaches these numbers.
+// `out_of_range`: how many non-missing cells of the scored rows lie strictly outside [min, max] of the stored records.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import ml.csvcell;
+import ml.fbits;
+import ml.fsio;
+import ml.fsq;
+import ml.matrix;
+import ml.paths;
+import facc;
+import pipeline.provsec;
+import toolbox.sha;
+
+// the bits of a double, with every zero as +0.0 (there is no -0 in a model file)
+fn norm_bits(v: float) -> [] int {
+    if v == 0.0 {
+        return 0;
+    }
+    return bits_of(v);
+}
+
+fn clear_sum[&v](acc: &!v vec.Vec[int]) -> [] int {
+    var i = 0;
+    while i < facc.width() {
+        vec.set(acc, i, 0);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// (stats, code). `cols[k]` is the column of `x` of feature k, `nfeat` how many; the rows are those of `sel` equal to `want` (all when want < 0). `stats` holds five ints per feature: the
+// count, then the bits of min, max, mean and std. code 0, or 1 when a sum of squares is beyond the largest double (a column of values near 1e154).
+pub fn stats[&h, &m, &s, &c](heap: &!h Heap, x: &m matrix.Matrix, sel: &s [int], want: int, cols: &c [int], nfeat: int) -> [heap] (Box[[int]], int) {
+    var out = box_slice(heap, 5 * nfeat + 1, 0);
+    var bad = 0;
+    var acc = vec.empty(heap, facc.width() + 1, 0);
+    var z = 0;
+    while z < facc.width() {
+        acc = vec.push(heap, acc, 0);
+        z = z + 1;
+    }
+    var sq = box_slice(heap, fsq.size(), 0);
+    let n = matrix.rows(x);
+    borrow mut out as &!ow in {
+        borrow mut acc as &!av in {
+            borrow mut sq as &!qw in {
+                var k = 0;
+                while k < nfeat && bad == 0 {
+                    let j = cols[k];
+                    clear_sum(av);
+                    var count = 0;
+                    var mn = 0.0;
+                    var mx = 0.0;
+                    var r = 0;
+                    while r < n {
+                        if (want < 0 || sel[r] == want) && !matrix.is_missing(x, r, j) {
+                            let v = matrix.value(x, r, j);
+                            if count == 0 || v < mn {
+                                mn = v;
+                            }
+                            if count == 0 || v > mx {
+                                mx = v;
+                            }
+                            facc.add_bits(av, 0, bits_of(v));
+                            count = count + 1;
+                        }
+                        r = r + 1;
+                    }
+                    contents(ow)[5 * k] = count;
+                    if count > 0 {
+                        let mean_bits = csvcell.bits_of_key(facc.mean_key(av, 0, count));
+                        var i = 0;
+                        while i < fsq.size() {
+                            contents(qw)[i] = 0;
+                            i = i + 1;
+                        }
+                        r = 0;
+                        while r < n {
+                            if (want < 0 || sel[r] == want) && !matrix.is_missing(x, r, j) {
+                                fsq.add_square(contents(qw), bits_of(matrix.value(x, r, j)), mean_bits);
+                            }
+                            r = r + 1;
+                        }
+                        let (sse, st) = fsq.finish(contents(qw));
+                        contents(ow)[5 * k + 1] = norm_bits(mn);
+                        contents(ow)[5 * k + 2] = norm_bits(mx);
+                        contents(ow)[5 * k + 3] = mean_bits;
+                        if st != 0 {
+                            // the exact sum of squares is beyond the largest double: the deviation is stored as the largest finite double (docs/tracking.md section 2.3)
+                            contents(ow)[5 * k + 4] = 9218868437227405311;
+                        } else {
+                            contents(ow)[5 * k + 4] = norm_bits(sqrt(sse / float_of(count)));
+                        }
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    vec.drop(heap, acc);
+    unbox_slice(heap, sq);
+    return (out, bad);
+}
+
+// What `out_of_range` counted: per feature the number of out-of-range cells, the number of rows with at least one, and where the first one is (its 1-based row in `x`, and its feature place;
+// 0 and -1 when none)
+pub res struct Range {
+    counts: Box[[int]],
+    cells: int,
+    rows: int,
+    first_row: int,
+    first_col: int,
+}
+
+pub fn drop_range[&h](heap: &!h Heap, r: Range) -> [heap] int {
+    let Range { counts, cells, rows, first_row, first_col } = r;
+    unbox_slice(heap, counts);
+    return cells;
+}
+
+pub fn empty_range[&h](heap: &!h Heap) -> [heap] Range {
+    return Range { counts: box_slice(heap, 1, 0), cells: 0, rows: 0, first_row: 0, first_col: 0 - 1 };
+}
+
+// A non-missing cell of a feature column is out of range when it is strictly below the stored minimum or strictly above the stored maximum; a column that no training cell filled (count 0) has no
+// range. `prov` is the provenance payload (validated), `cols[k]` the column of `x` of feature k, the rows those of `sel` equal to `want` (all when want < 0).
+pub fn out_of_range[&h, &m, &s, &c, &p](heap: &!h Heap, x: &m matrix.Matrix, sel: &s [int], want: int, cols: &c [int], nfeat: int, prov: &p [byte]) -> [heap] Range {
+    var counts = box_slice(heap, nfeat + 1, 0);
+    var cells = 0;
+    var rows = 0;
+    var first_row = 0;
+    var first_col = 0 - 1;
+    let n = matrix.rows(x);
+    var lo = box_slice(heap, nfeat + 1, 0.0);
+    var hi = box_slice(heap, nfeat + 1, 0.0);
+    var live = box_slice(heap, nfeat + 1, 0);
+    borrow mut lo as &!lw in {
+        borrow mut hi as &!hw in {
+            borrow mut live as &!vw in {
+                var k = 0;
+                while k < nfeat {
+                    if provsec.field(prov, k, 0) > 0 {
+                        contents(vw)[k] = 1;
+                        contents(lw)[k] = fbits.decode(provsec.field(prov, k, 1));
+                        contents(hw)[k] = fbits.decode(provsec.field(prov, k, 2));
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    borrow lo as &lr in {
+        borrow hi as &hr in {
+            borrow live as &vr in {
+                borrow mut counts as &!cw in {
+                    var r = 0;
+                    while r < n {
+                        if want < 0 || sel[r] == want {
+                            var here = 0;
+                            var k = 0;
+                            while k < nfeat {
+                                if contents(vr)[k] == 1 && !matrix.is_missing(x, r, cols[k]) {
+                                    let v = matrix.value(x, r, cols[k]);
+                                    if v < contents(lr)[k] || v > contents(hr)[k] {
+                                        contents(cw)[k] = contents(cw)[k] + 1;
+                                        cells = cells + 1;
+                                        here = here + 1;
+                                        if first_row == 0 {
+                                            first_row = r + 1;
+                                            first_col = k;
+                                        }
+                                    }
+                                }
+                                k = k + 1;
+                            }
+                            if here > 0 {
+                                rows = rows + 1;
+                            }
+                        }
+                        r = r + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, lo);
+    unbox_slice(heap, hi);
+    unbox_slice(heap, live);
+    return Range { counts: counts, cells: cells, rows: rows, first_row: first_row, first_col: first_col };
+}
+
+// Whether the file `file` is the file the model was fitted on, by the SHA-256 of its bytes: ("train" | "other" | "unknown", status, aux). A model with no provenance (`pv` empty) says "unknown" and
+// the file is not read; status is 0, or 1 and 2 as fsio.sha_file when the hash of the file could not be made (aux: errno).
+pub fn on_word[&h, &f, &r, &pf, &p](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, pv: &p [byte]) -> [heap, fs_read(""), dir_read, file_read] (&static [byte], int, int) {
+    if len(pv) == 0 {
+        return ("unknown", 0, 0);
+    }
+    let (dg, size, st, aux) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+    if st != 0 {
+        buffer.drop(heap, dg);
+        return ("unknown", st, aux);
+    }
+    var same = false;
+    borrow dg as &dr in {
+        same = bytes.equal(buffer.bytes(dr), provsec.file_sha(pv));
+    }
+    buffer.drop(heap, dg);
+    if same {
+        return ("train", 0, 0);
+    }
+    return ("other", 0, 0);
+}
+
+// the 32 raw bytes of a digest as 64 lowercase hex digits
+pub fn hex[&h, &d](heap: &!h Heap, raw: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var hx = box_slice(heap, 64, byte_of(0));
+    borrow mut hx as &!hw in {
+        sha.hex_into(raw, 32, contents(hw));
+    }
+    borrow hx as &hr in {
+        out = buffer.append(heap, out, contents(hr));
+    }
+    unbox_slice(heap, hx);
+    return out;
+}

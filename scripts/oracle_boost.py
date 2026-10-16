@@ -175,7 +175,7 @@ def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed,
         frows = np.arange(n, dtype=np.int64)
         vrows = np.zeros(0, dtype=np.int64)
     else:
-        sm = SM(derive(seed, 8))
+        sm = SM(derive(seed, 10))
         perm = list(range(n))
         for i in range(nv):
             j = i + sm.uniform(n - i)
@@ -209,7 +209,7 @@ def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed,
         if K == SCALE:
             sample = frows
         else:
-            s0 = derive(derive(seed, 7), r)
+            s0 = derive(derive(seed, 9), r)
             k = np.arange(1, m + 1, dtype=np.uint64)
             with np.errstate(over="ignore"):
                 z = np.uint64(s0) + k * np.uint64(GOLD)

@@ -11,7 +11,7 @@ import stat
 import tempfile
 import unittest
 
-from harness import ROOT, Sandbox, run, spec
+from harness import ROOT, Sandbox, run, spec, without_provenance
 
 REG = "id,x,y\n1,2.5,10\n2,3.5,20\n3,1.0,30\n4,0.25,41\n"
 CLS = "a,b,lab\n1,2,0\n2,3,1\n3,4,1\n4,5,1\n5,6,0\n"
@@ -71,7 +71,8 @@ class Determinism(unittest.TestCase):
             r = sb.run("fit", "--target", "y", "--output", "m.cml", "reg.csv")
             self.assertEqual(r.status, 0, (v, r))
             models.append(sb.read("m.cml"))
-        self.assertEqual(len(set(models)), 1)
+        # the provenance section holds the SHA-256 of the file as it was written (line endings and all): everything else is one model
+        self.assertEqual(len({without_provenance(m) for m in models}), 1)
 
     def test_caps_do_not_change_the_model(self):
         sb = self.sandbox()

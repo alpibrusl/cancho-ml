@@ -1,0 +1,275 @@
+module metrics.splits;
+
+import ml.rng;
+import ml.limits;
+import metrics.rules;
+
+// Seeded splits (docs/metrics.md sections 2.1 to 2.3). Every function answers a code of metrics.rules (0 = ok) and writes an
+// assignment vector: out[i] is the group of row i. Nothing here spawns a thread or reads a clock; a split is a pure function of
+// (n, k or n_test, seed, repeat). The caps are compared before any allocation.
+
+// the stream kinds 4, 5 and 6 (docs/rng.md is the registry; 1 to 3 belong to the tree and k-means streams)
+pub fn kind_train_test() -> [] int {
+    return 4;
+}
+
+pub fn kind_kfold() -> [] int {
+    return 5;
+}
+
+pub fn kind_stratified() -> [] int {
+    return 6;
+}
+
+// the stream kinds 7 and 8 (docs/splits.md section 3): the stratified holdout and the shuffle of the groups, used by tools/ml/splitplan.cho
+pub fn kind_strat_holdout() -> [] int {
+    return 7;
+}
+
+pub fn kind_group() -> [] int {
+    return 8;
+}
+
+// the largest row cap a caller may ask for (2^30): keeps every product of two counts below 2^60
+pub fn ceiling_rows() -> [] int {
+    return 1073741824;
+}
+
+pub fn default_rows() -> [] int {
+    return 10000000;
+}
+
+// stream(seed, kind, index) = derive(derive(seed, kind), index): the state before the first draw
+pub fn stream(seed: int, kind: int, index: int) -> [] int {
+    return rng.derive(rng.derive(seed, kind), index);
+}
+
+// the largest accepted 63-bit value for a modulus m (2 <= m <= 2^63 - 1): 2^63 - 1 - r with r = 2^63 mod m, so that exactly
+// 2^63 - r values are accepted, a multiple of m (docs/metrics.md 2.1)
+pub fn reject_limit(m: int) -> [] int {
+    let top = 9223372036854775807;
+    let r = (top % m + 1) % m;
+    return top - r;
+}
+
+// bounded(stream, m), 2 <= m <= 2^63 - 1: rejection sampling on the top 63 bits of each draw (docs/metrics.md 2.1). Answers the
+// value and the stream state after the draws it used.
+pub fn bounded(s0: int, m: int) -> [] (int, int) {
+    let limit = reject_limit(m);
+    var s = s0;
+    var v = 0;
+    var going = true;
+    while going {
+        s = rng.advance(s);
+        v = rng.output(s) >> 1 & 9223372036854775807;
+        if v <= limit {
+            going = false;
+        }
+    }
+    return (v % m, s);
+}
+
+// Fisher-Yates from the end over a[lo .. lo + len): for i = len - 1 down to 1: j = bounded(i + 1); swap a[lo + i], a[lo + j]
+pub fn shuffle[&p](a: &!p [int], lo: int, len: int, s0: int) -> [] int {
+    var s = s0;
+    var i = len - 1;
+    while i >= 1 {
+        let (j, s2) = bounded(s, i + 1);
+        s = s2;
+        let t = a[lo + i];
+        a[lo + i] = a[lo + j];
+        a[lo + j] = t;
+        i = i - 1;
+    }
+    return s;
+}
+
+// the checks every split starts with: the cap, the repeat, the size, the output length. 0 or a code.
+fn check_common(n: int, cap: int, rep: int, out_len: int) -> [] int {
+    if cap < 1 || cap > ceiling_rows() || rep < 0 || n < 0 {
+        return rules.out_of_range();
+    }
+    if n == 0 {
+        return rules.input_empty();
+    }
+    if n > cap {
+        return rules.too_many_rows();
+    }
+    if out_len != n {
+        return rules.length_mismatch();
+    }
+    return 0;
+}
+
+// the first n integers 0, 1, .., n-1 in a fresh box of n + 1 ints
+fn identity[&h](heap: &!h Heap, n: int) -> [heap] Box[[int]] {
+    let b = box_slice(heap, n + 1, 0);
+    var o = b;
+    borrow mut o as &!w in {
+        let a = contents(w);
+        var i = 0;
+        while i < n {
+            a[i] = i;
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// ceil(n * num / den) for 1 <= num < den <= 10^6 and 1 <= n <= 2^30 (the product stays below 2^50). Answers -1 outside those ranges.
+pub fn n_test_for(n: int, num: int, den: int) -> [] int {
+    if n < 1 || n > ceiling_rows() || num < 1 || num >= den || den > 1000000 {
+        return 0 - 1;
+    }
+    return (n * num + den - 1) / den;
+}
+
+// Train/test: out[i] = 1 if row i is a test row, else 0. n_test rows are test: the first n_test of the shuffled permutation.
+pub fn train_test[&h, &o](heap: &!h Heap, n: int, n_test: int, seed: int, rep: int, cap: int, out: &!o [int]) -> [heap] int {
+    let c = check_common(n, cap, rep, len(out));
+    if c != 0 {
+        return c;
+    }
+    if n_test < 1 {
+        return rules.out_of_range();
+    }
+    if n < 2 || n_test > n - 1 {
+        return rules.empty_fold();
+    }
+    var perm = identity(heap, n);
+    borrow mut perm as &!pw in {
+        let a = contents(pw);
+        shuffle(a, 0, n, stream(seed, kind_train_test(), rep));
+        var i = 0;
+        while i < n {
+            out[i] = 0;
+            i = i + 1;
+        }
+        var p = 0;
+        while p < n_test {
+            out[a[p]] = 1;
+            p = p + 1;
+        }
+    }
+    unbox_slice(heap, perm);
+    return 0;
+}
+
+// start of fold f: f * (n div k) + min(f, n mod k)
+pub fn fold_start(n: int, k: int, f: int) -> [] int {
+    var extra = f;
+    if n % k < extra {
+        extra = n % k;
+    }
+    return f * (n / k) + extra;
+}
+
+// K-fold: out[i] = the fold (0 .. k-1) of row i
+pub fn kfold[&h, &o](heap: &!h Heap, n: int, k: int, seed: int, rep: int, cap: int, out: &!o [int]) -> [heap] int {
+    let c = check_common(n, cap, rep, len(out));
+    if c != 0 {
+        return c;
+    }
+    if k < 2 {
+        return rules.out_of_range();
+    }
+    if k > n {
+        return rules.empty_fold();
+    }
+    var perm = identity(heap, n);
+    borrow mut perm as &!pw in {
+        let a = contents(pw);
+        shuffle(a, 0, n, stream(seed, kind_kfold(), rep));
+        var f = 0;
+        while f < k {
+            let lo = fold_start(n, k, f);
+            let hi = fold_start(n, k, f + 1);
+            var p = lo;
+            while p < hi {
+                out[a[p]] = f;
+                p = p + 1;
+            }
+            f = f + 1;
+        }
+    }
+    unbox_slice(heap, perm);
+    return 0;
+}
+
+// Stratified k-fold over two classes (docs/metrics.md 2.3): the position t of (class 0 shuffled, class 1 shuffled) is in fold t mod k
+pub fn stratified[&h, &y, &o](heap: &!h Heap, labels: &y [int], k: int, seed: int, rep: int, cap: int, out: &!o [int]) -> [heap] int {
+    let n = len(labels);
+    let c = check_common(n, cap, rep, len(out));
+    if c != 0 {
+        return c;
+    }
+    if k < 2 {
+        return rules.out_of_range();
+    }
+    // the two values
+    let first = labels[0];
+    var second = first;
+    var seen2 = false;
+    var third = false;
+    var i = 0;
+    while i < n {
+        let v = labels[i];
+        if v != first {
+            if seen2 == false {
+                second = v;
+                seen2 = true;
+            } else if v != second {
+                third = true;
+            }
+        }
+        i = i + 1;
+    }
+    if third {
+        return rules.not_binary();
+    }
+    if seen2 == false {
+        return rules.single_class();
+    }
+    var lo_label = first;
+    if second < first {
+        lo_label = second;
+    }
+    var n0 = 0;
+    i = 0;
+    while i < n {
+        if labels[i] == lo_label {
+            n0 = n0 + 1;
+        }
+        i = i + 1;
+    }
+    let n1 = n - n0;
+    if n0 < k || n1 < k {
+        return rules.stratum_too_small();
+    }
+    var perm = box_slice(heap, n + 1, 0);
+    borrow mut perm as &!pw in {
+        let a = contents(pw);
+        var p0 = 0;
+        var p1 = n0;
+        i = 0;
+        while i < n {
+            if labels[i] == lo_label {
+                a[p0] = i;
+                p0 = p0 + 1;
+            } else {
+                a[p1] = i;
+                p1 = p1 + 1;
+            }
+            i = i + 1;
+        }
+        shuffle(a, 0, n0, stream(seed, kind_stratified(), 2 * rep));
+        shuffle(a, n0, n1, stream(seed, kind_stratified(), 2 * rep + 1));
+        var t = 0;
+        while t < n {
+            out[a[t]] = t % k;
+            t = t + 1;
+        }
+    }
+    unbox_slice(heap, perm);
+    return 0;
+}

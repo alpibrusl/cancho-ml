@@ -13,8 +13,9 @@ The rules:
   W6  the compiler revision is read from cancho.toml, and no 40-hex digit string is a literal in the workflow
   W7  every script the workflow runs (`scripts/...`, `ci/...`) is a file of the repository
   W8  triggers: push, pull_request and workflow_dispatch; `full-gate` runs only for workflow_dispatch and schedule
-  W9  the matrix of `build-test` has a Linux runner and a macOS runner
+  W9  the matrix of `build-test` has a Linux x86-64 runner, a Linux arm64 runner (`-arm`) and a macOS runner
   W10 every job has `timeout-minutes`
+  W11 no `runs-on` and no matrix `os` is a `-latest` label (a moving label changes the platform under a green run)
 """
 import pathlib
 import re
@@ -101,9 +102,14 @@ def check(text, root=ROOT):
         if "workflow_dispatch" not in cond or "schedule" not in cond or "push" in cond or "pull_request" in cond:
             out.append(("W8", "full-gate must run only for workflow_dispatch and schedule (its `if` is %r)" % cond))
     bt = jobs.get("build-test")
-    oses = str(((bt or {}).get("strategy") or {}).get("matrix", {}).get("os", ""))
-    if "ubuntu" not in oses or "macos" not in oses:
-        out.append(("W9", "build-test's matrix does not have both a ubuntu and a macos runner (%s)" % oses))
+    matrix = ((bt or {}).get("strategy") or {}).get("matrix", {}) or {}
+    labels = [str(e.get("os", "")) for e in (matrix.get("include") or [])] + [str(o) for o in (matrix.get("os") or [])]
+    if not any(l.startswith("ubuntu") and not l.endswith("-arm") for l in labels) or not any(l.startswith("ubuntu") and l.endswith("-arm") for l in labels) \
+            or not any(l.startswith("macos") for l in labels):
+        out.append(("W9", "build-test's matrix needs a ubuntu x86-64 runner, a ubuntu arm runner and a macos runner (%s)" % labels))
+    moving = [l for l in labels if l.endswith("-latest")] + [str(j.get("runs-on")) for j in jobs.values() if str(j.get("runs-on", "")).endswith("-latest")]
+    if moving:
+        out.append(("W11", "a moving runner label: %s" % ", ".join(sorted(set(moving)))))
     return out
 
 
@@ -132,7 +138,11 @@ def mutants(text):
         ("workflow_dispatch removed", rep("  workflow_dispatch:\n", ""), "W8"),
         ("pull_request removed", rep("  pull_request:\n", ""), "W8"),
         ("full-gate runs on every push", rep("if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'", "if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event_name == 'push'"), "W8"),
-        ("no macOS in the matrix", rep("os: [ubuntu-latest, macos-latest]", "os: [ubuntu-latest]"), "W9"),
+        ("no macOS in the matrix", rep("          - {os: macos-26, label: darwin-arm64}\n", ""), "W9"),
+        ("no Linux arm64 in the matrix", rep("          - {os: ubuntu-24.04-arm, label: linux-aarch64-ubuntu24}\n", ""), "W9"),
+        ("no Linux x86-64 in the matrix", rep("          - {os: ubuntu-24.04, label: linux-x86_64-ubuntu24}\n          - {os: ubuntu-26.04, label: linux-x86_64-ubuntu26}\n", ""), "W9"),
+        ("a moving label in the matrix", rep("{os: macos-26, label: darwin-arm64}", "{os: macos-latest, label: darwin-arm64}"), "W11"),
+        ("a moving label for the release job", rep("    runs-on: ubuntu-24.04\n    timeout-minutes: 15", "    runs-on: ubuntu-latest\n    timeout-minutes: 15"), "W11"),
         ("a job without a timeout", rep("    timeout-minutes: 15\n", ""), "W10"),
         ("not YAML", text + "\n  - : [\n", "W0"),
     ]

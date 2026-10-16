@@ -29,10 +29,11 @@ def parse(data):
     """An independent reader of CML1, from design.md 4.1: the fields of a model file, checked as it goes."""
     assert data[:4] == b"CML1"
     assert u32(data, 4) == 1
-    assert u32(data, 8) == 5
+    count = u32(data, 8)
+    assert count in (5, 6)  # a file of this version has the provenance section (tag 7, docs/tracking.md section 2) after the five
     secs = {}
     pos = 12
-    for want in range(1, 6):
+    for want in list(range(1, 6)) + ([7] if count == 6 else []):
         tag = u32(data, pos)
         n = struct.unpack_from("<Q", data, pos + 4)[0]
         assert tag == want
@@ -41,6 +42,11 @@ def parse(data):
     assert pos == len(data) - 32
     assert hashlib.sha256(data[:-32]).digest() == data[-32:]
     out = {"plan": secs[1].decode()}
+    if 7 in secs:
+        pv = secs[7]
+        # layout, file bytes, SHA-256, file rows, rows, features (none for a constant model)
+        assert len(pv) == 64 and u32(pv, 0) == 1 and u32(pv, 60) == 0
+        out["provenance"] = {"file_bytes": struct.unpack_from("<Q", pv, 4)[0], "sha256": pv[12:44], "file_rows": struct.unpack_from("<Q", pv, 44)[0], "rows": struct.unpack_from("<Q", pv, 52)[0]}
     sc = secs[2]
     ncols, target = u32(sc, 0), u32(sc, 4)
     cols = []
@@ -74,8 +80,9 @@ SUM_ORDER = 2  # design.md 4.1: the order of docs/linalg.md section 2; 1 is reti
 
 def write_file(secs):
     """An independent WRITER of CML1 from design.md 4.1: the five payloads (tag 1 to 5) in order, then the SHA-256 trailer."""
-    out = b"CML1" + struct.pack("<II", 1, 5)
-    for tag in range(1, 6):
+    tags = [t for t in (1, 2, 3, 4, 5, 7) if t in secs]
+    out = b"CML1" + struct.pack("<II", 1, len(tags))
+    for tag in tags:
         out += struct.pack("<IQ", tag, len(secs[tag])) + secs[tag]
     return out + hashlib.sha256(out).digest()
 
@@ -84,7 +91,7 @@ def payloads(data):
     """{tag: payload} of a model file"""
     out = {}
     pos = 12
-    for _ in range(5):
+    for _ in range(u32(data, 8)):
         tag = u32(data, pos)
         n = struct.unpack_from("<Q", data, pos + 4)[0]
         out[tag] = data[pos + 12:pos + 12 + n]
@@ -99,6 +106,7 @@ def ordered_file(base, kind, order, pin=None):
     its layout and says `ml.model.malformed`; for kinds 6 and 7 (not wired) `ml` says the kind is not built, with the same tag. Real files of kinds 4 and 5 are
     judged by test_wire_file.py and test_wire_oracle.py."""
     secs = payloads(base)
+    secs.pop(7, None)
     secs[4] = struct.pack("<I", kind) + secs[4][4:]
     me = secs[5]
     if pin is not None:
@@ -144,7 +152,7 @@ class ModelFile(unittest.TestCase):
         self.assertEqual((n, scale), (4, 0))
         self.assertEqual(sq * 10**9 + sr, 101)
         self.assertEqual((m["rows"], m["cols"], m["seed"]), (4, 3, 0))
-        self.assertTrue(m["compiler"].startswith("a4572ea"))
+        self.assertTrue(m["compiler"].startswith("0207556"))
 
     def test_layout_classification(self):
         m = parse(self.cls)

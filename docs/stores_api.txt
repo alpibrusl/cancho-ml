@@ -1,0 +1,201 @@
+# The pub declarations of the published modules (scripts/publish_stores.py writes it; docs/stores.md section 2).
+linalg.axpy: pub fn axpy_unit[&x, &y](a: float, xs: &x [float], ys: &!y [float], n: int) -> [] int
+linalg.axpy: pub fn axpy[&x, &y](a: float, xt: tensor.Tensor, xd: &x [float], yt: tensor.Tensor, yd: &!y [float]) -> [] int
+linalg.chol: pub fn pivot_tol() -> [] float
+linalg.chol: pub fn cholesky[&a, &l](at: tensor.Tensor, ad: &a [float], lt: tensor.Tensor, ld: &!l [float]) -> [] int
+linalg.chol: pub fn solve[&l, &b, &x](trans: int, lt: tensor.Tensor, ld: &l [float], bt: tensor.Tensor, bd: &b [float], xt: tensor.Tensor, xd: &!x [float]) -> [] int
+linalg.dot: pub fn run_blocks[&x, &y, &s, &l](xs: &x [float], ys: &y [float], n: int, b0: int, b1: int, st: &!s [float], lv: &!l [int], sp0: int) -> [] int
+linalg.dot: pub fn dot_unit[&x, &y, &s, &l](xs: &x [float], ys: &y [float], n: int, st: &!s [float], lv: &!l [int]) -> [] float
+linalg.dot: pub fn block_strided[&x, &y](xd: &x [float], xo: int, xs: int, yd: &y [float], yo: int, ys: int, b: int, n: int) -> [] float
+linalg.dot: pub fn dot[&h, &x, &y](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], yt: tensor.Tensor, yd: &y [float]) -> [heap] tensor.FRes
+linalg.gemm: pub fn gemm_rows[&a, &b, &c, &s, &l](av: &a [float], ars: int, bv: &b [float], brs: int, cv: &!c [float], crs: int, ccs: int, r0: int, r1: int, n: int, p: int, st: &!s [float], lv: &!l [int]) -> [] int
+linalg.gemm: pub fn gemm[&h, &a, &b, &c](heap: &!h Heap, at: tensor.Tensor, ad: &a [float], bt: tensor.Tensor, bd: &b [float], ct: tensor.Tensor, cd: &!c [float]) -> [heap] int
+linalg.gemv: pub fn gemv_n_rows[&x, &w, &y](xs: &x [float], rs: int, wv: &w [float], ys: &!y [float], i0: int, i1: int, d: int) -> [] int
+linalg.gemv: pub fn gemv_n[&h, &x, &w, &y](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], wt: tensor.Tensor, wd: &w [float], yt: tensor.Tensor, yd: &!y [float]) -> [heap] int
+linalg.gemv: pub fn stack_len(d: int) -> [] int
+linalg.gemv: pub fn gemv_t_blocks[&x, &r, &s, &l](xs: &x [float], rs: int, rv: &r [float], n: int, d: int, b0: int, b1: int, st: &!s [float], lv: &!l [int], sp0: int) -> [] int
+linalg.gemv: pub fn gemv_t[&h, &x, &r, &g](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], rt: tensor.Tensor, rd: &r [float], gt: tensor.Tensor, gd: &!g [float]) -> [heap] int
+linalg.order: pub fn block() -> [] int
+linalg.order: pub fn lanes() -> [] int
+linalg.order: pub fn panel() -> [] int
+linalg.order: pub fn group() -> [] int
+linalg.order: pub fn slots() -> [] int
+linalg.order: pub fn combine(a: float, b: float) -> [] float
+linalg.order: pub fn lane_combine(l0: float, l1: float, l2: float, l3: float) -> [] float
+linalg.order: pub fn block_partial[&b](buf: &b [float], m: int) -> [] float
+linalg.order: pub fn blocks(n: int) -> [] int
+linalg.order: pub fn settle[&s, &l](st: &!s [float], lv: &!l [int], sp0: int, w: int) -> [] int
+linalg.order: pub fn settle_root[&s, &l, &r](st: &!s [float], lv: &!l [int], sp0: int, w: int, src: &r [float], at: int, level: int) -> [] int
+linalg.order: pub fn finish[&s](st: &!s [float], sp0: int, w: int) -> [] int
+linalg.par: pub fn bound(k: int, t: int, nchunks: int) -> [] int
+linalg.par: pub fn combine_roots[&r, &s, &l](roots: &r [float], nchunks: int, w: int, t: int, st: &!s [float], lv: &!l [int]) -> [] int
+linalg.par: pub fn threads_for(t: int, nchunks: int) -> [] int
+linalg.par: pub fn chunks(n: int) -> [] int
+linalg.par: pub fn dot_par[&h, &x, &y](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yt: tensor.Tensor, yd: &y [float]) -> [heap, conc] tensor.FRes
+linalg.par: pub fn gemv_t_par[&h, &x, &r, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], rt: tensor.Tensor, rd: &r [float], gt: tensor.Tensor, gd: &!g [float]) -> [heap, conc] int
+linalg.par: pub fn syrk_par[&h, &x, &c](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], ct: tensor.Tensor, cd: &!c [float]) -> [heap, conc] int
+linalg.par: pub fn gemv_n_par[&h, &x, &w, &y](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], wt: tensor.Tensor, wd: &w [float], yt: tensor.Tensor, yd: &!y [float]) -> [heap, conc] int
+linalg.par: pub fn gemm_par[&h, &a, &b, &c](heap: &!h Heap, t: int, at: tensor.Tensor, ad: &a [float], bt: tensor.Tensor, bd: &b [float], ct: tensor.Tensor, cd: &!c [float]) -> [heap, conc] int
+linalg.syrk: pub fn syrk_blocks[&x, &s, &l](xs: &x [float], rs: int, n: int, d: int, b0: int, b1: int, st: &!s [float], lv: &!l [int], sp0: int) -> [] int
+linalg.syrk: pub fn store_upper[&r, &c](sq: &r [float], ct: tensor.Tensor, cd: &!c [float], d: int) -> [] int
+linalg.syrk: pub fn syrk[&h, &x, &c](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], ct: tensor.Tensor, cd: &!c [float]) -> [heap] int
+linalg.tensor: pub struct Tensor
+linalg.tensor: pub enum Made
+linalg.tensor: pub fn rmax() -> [] int
+linalg.tensor: pub fn ceiling() -> [] int
+linalg.tensor: pub fn shape_at(t: Tensor, a: int) -> [] int
+linalg.tensor: pub fn stride_at(t: Tensor, a: int) -> [] int
+linalg.tensor: pub fn normalised(t: Tensor) -> [] bool
+linalg.tensor: pub fn sane(t: Tensor) -> [] bool
+linalg.tensor: pub fn make(off: int, rank: int, s0: int, s1: int, s2: int, s3: int, t0: int, t1: int, t2: int, t3: int) -> [] Made
+linalg.tensor: pub fn vector(off: int, n: int, stride: int) -> [] Made
+linalg.tensor: pub fn matrix(off: int, rows: int, cols: int) -> [] Made
+linalg.tensor: pub fn matrix_strided(off: int, rows: int, cols: int, rs: int, cs: int) -> [] Made
+linalg.tensor: pub fn count(t: Tensor) -> [] int
+linalg.tensor: pub fn check(t: Tensor, len: int) -> [] int
+linalg.tensor: pub fn slice(t: Tensor, axis: int, lo: int, hi: int) -> [] Made
+linalg.tensor: pub fn transpose(t: Tensor) -> [] Made
+linalg.tensor: pub fn contiguous(t: Tensor) -> [] bool
+linalg.tensor: pub fn reshape(t: Tensor, rank: int, n0: int, n1: int, n2: int, n3: int) -> [] Made
+linalg.tensor: pub fn broadcast(t: Tensor, axis: int, n: int) -> [] Made
+linalg.tensor: pub fn row(t: Tensor, i: int) -> [] Made
+linalg.tensor: pub fn column(t: Tensor, j: int) -> [] Made
+linalg.tensor: pub struct FRes
+linalg.tensor: pub fn fres(code: int, v: float) -> [] FRes
+linalg.tensor: pub fn expect(t: Tensor, r: int, len: int) -> [] int
+linalg.tensor: pub fn writable(t: Tensor) -> [] int
+metrics.classify: pub fn check_size(n1: int, n2: int, cap: int, ceiling: int) -> [] int
+metrics.classify: pub fn ceiling_rows() -> [] int
+metrics.classify: pub fn default_rows() -> [] int
+metrics.classify: pub fn accuracy[&a, &b](y_true: &a [int], y_pred: &b [int], cap: int) -> [] rules.Scored
+metrics.classify: pub struct Counts
+metrics.classify: pub fn counts[&a, &b](y_true: &a [int], y_pred: &b [int], pos: int, cap: int) -> [] Counts
+metrics.classify: pub fn precision[&a, &b](y_true: &a [int], y_pred: &b [int], pos: int, cap: int) -> [] rules.Scored
+metrics.classify: pub fn recall[&a, &b](y_true: &a [int], y_pred: &b [int], pos: int, cap: int) -> [] rules.Scored
+metrics.classify: pub fn f1[&a, &b](y_true: &a [int], y_pred: &b [int], pos: int, cap: int) -> [] rules.Scored
+metrics.rank: pub fn min_int() -> [] int
+metrics.rank: pub fn key_of(x: float) -> [] int
+metrics.rank: pub fn sort_range[&x, &y, &c](a: &!x [int], t: &!y [int], cnt: &!c [int], lo: int, hi: int) -> [] int
+metrics.rank: pub fn auc[&h, &y, &s](heap: &!h Heap, y_true: &y [int], score: &s [float], pos: int, cap: int) -> [heap] rules.Scored
+metrics.ratio: pub fn ratio(a: int, b: int) -> [] float
+metrics.regress: pub fn all_finite[&v](v: &v [float]) -> [] bool
+metrics.regress: pub fn rmse[&h, &a, &b](heap: &!h Heap, y: &a [float], p: &b [float], cap: int) -> [heap] rules.Scored
+metrics.regress: pub fn mae[&h, &a, &b](heap: &!h Heap, y: &a [float], p: &b [float], cap: int) -> [heap] rules.Scored
+metrics.regress: pub fn r2[&h, &a, &b](heap: &!h Heap, y: &a [float], p: &b [float], cap: int) -> [heap] rules.Scored
+metrics.rules: pub fn count() -> [] int
+metrics.rules: pub fn first() -> [] int
+metrics.rules: pub fn last() -> [] int
+metrics.rules: pub fn input_empty() -> [] int
+metrics.rules: pub fn too_many_rows() -> [] int
+metrics.rules: pub fn non_finite() -> [] int
+metrics.rules: pub fn single_class() -> [] int
+metrics.rules: pub fn not_binary() -> [] int
+metrics.rules: pub fn undefined() -> [] int
+metrics.rules: pub fn out_of_range() -> [] int
+metrics.rules: pub fn length_mismatch() -> [] int
+metrics.rules: pub fn bad_probability() -> [] int
+metrics.rules: pub fn empty_fold() -> [] int
+metrics.rules: pub fn stratum_too_small() -> [] int
+metrics.rules: pub fn tag(code: int) -> [] &static [byte]
+metrics.rules: pub fn exit_code(code: int) -> [] int
+metrics.rules: pub fn table() -> [] &static [byte]
+metrics.rules: pub struct Scored
+metrics.rules: pub fn ok(v: float) -> [] Scored
+metrics.rules: pub fn fail(code: int) -> [] Scored
+metrics.splits: pub fn kind_train_test() -> [] int
+metrics.splits: pub fn kind_kfold() -> [] int
+metrics.splits: pub fn kind_stratified() -> [] int
+metrics.splits: pub fn kind_strat_holdout() -> [] int
+metrics.splits: pub fn kind_group() -> [] int
+metrics.splits: pub fn ceiling_rows() -> [] int
+metrics.splits: pub fn default_rows() -> [] int
+metrics.splits: pub fn stream(seed: int, kind: int, index: int) -> [] int
+metrics.splits: pub fn reject_limit(m: int) -> [] int
+metrics.splits: pub fn bounded(s0: int, m: int) -> [] (int, int)
+metrics.splits: pub fn shuffle[&p](a: &!p [int], lo: int, len: int, s0: int) -> [] int
+metrics.splits: pub fn n_test_for(n: int, num: int, den: int) -> [] int
+metrics.splits: pub fn train_test[&h, &o](heap: &!h Heap, n: int, n_test: int, seed: int, rep: int, cap: int, out: &!o [int]) -> [heap] int
+metrics.splits: pub fn fold_start(n: int, k: int, f: int) -> [] int
+metrics.splits: pub fn kfold[&h, &o](heap: &!h Heap, n: int, k: int, seed: int, rep: int, cap: int, out: &!o [int]) -> [heap] int
+metrics.splits: pub fn stratified[&h, &y, &o](heap: &!h Heap, labels: &y [int], k: int, seed: int, rep: int, cap: int, out: &!o [int]) -> [heap] int
+metrics.sums: pub fn kind_sq() -> [] int
+metrics.sums: pub fn kind_abs() -> [] int
+metrics.sums: pub fn kind_dev() -> [] int
+metrics.sums: pub fn kind_val() -> [] int
+metrics.sums: pub fn terms[&x, &y, &o](kind: int, a: &x [float], b: &y [float], center: float, at: int, m: int, buf: &!o [float]) -> [] int
+metrics.sums: pub fn reduce[&x, &y, &o, &s, &l](kind: int, a: &x [float], b: &y [float], center: float, n: int, buf: &!o [float], st: &!s [float], lv: &!l [int]) -> [] float
+ml.exact: pub fn base() -> [] int
+ml.exact: pub fn pow10(k: int) -> [] int
+ml.exact: pub fn sum_add[&a](acc: &!a [int], at: int, m: int) -> [] int
+ml.exact: pub fn mean_scaled(sq: int, sr: int, n: int) -> [] int
+ml.exact: pub fn fraction_scaled(num: int, den: int) -> [] int
+ml.exact: pub fn square_add[&a](acc: &!a [int], at: int, e: int) -> [] int
+ml.exact: pub fn normalise[&a](acc: &!a [int], at: int) -> [] int
+ml.exact: pub fn to_float[&a](acc: &a [int], at: int) -> [] float
+ml.exact: pub fn limbs_digits[&h, &a](heap: &!h Heap, out: buffer.Buffer, acc: &a [int], at: int) -> [heap] buffer.Buffer
+ml.exact: pub fn put_digits_scaled[&h, &d](heap: &!h Heap, out: buffer.Buffer, digits: &d [byte], scale: int) -> [heap] buffer.Buffer
+ml.exact: pub fn put_scaled[&h](heap: &!h Heap, out: buffer.Buffer, v: int, scale: int) -> [heap] buffer.Buffer
+ml.fbits: pub fn get64[&s](src: &s [byte], at: int) -> [] int
+ml.fbits: pub fn put64[&d](dst: &!d [byte], at: int, bits: int) -> [] int
+ml.fbits: pub fn decode(bits: int) -> [] float
+ml.fbits: pub fn load[&s, &o](src: &s [byte], at: int, out: &!o [float], count: int) -> [] int
+ml.fbits: pub fn store[&s, &d](src: &s [float], dst: &!d [byte], at: int, count: int) -> [] int
+ml.fsq: pub fn size() -> [] int
+ml.fsq: pub fn add_square[&a](acc: &!a [int], y: int, p: int) -> [] int
+ml.fsq: pub fn finish[&a](acc: &!a [int]) -> [] (float, int)
+ml.limits: pub fn default_rows() -> [] int
+ml.limits: pub fn default_cols() -> [] int
+ml.limits: pub fn default_cells() -> [] int
+ml.limits: pub fn ceiling_dim() -> [] int
+ml.limits: pub fn ceiling_cells() -> [] int
+ml.limits: pub fn check_matrix(rows: int, cols: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [] int
+ml.limits: pub fn check_threads(t: int) -> [] int
+ml.matrix: pub res struct Matrix
+ml.matrix: pub fn empty[&h](heap: &!h Heap) -> [heap] Matrix
+ml.matrix: pub fn make[&h](heap: &!h Heap, rows: int, cols: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (Matrix, int)
+ml.matrix: pub fn drop[&h](heap: &!h Heap, m: Matrix) -> [heap] int
+ml.matrix: pub fn rows[&m](m: &m Matrix) -> [] int
+ml.matrix: pub fn cols[&m](m: &m Matrix) -> [] int
+ml.matrix: pub fn wpc[&m](m: &m Matrix) -> [] int
+ml.matrix: pub fn shape[&m](m: &m Matrix) -> [] tensor.Tensor
+ml.matrix: pub fn parts(m: Matrix) -> [] (tensor.Tensor, Box[[float]], Box[[int]], int, int, int)
+ml.matrix: pub fn assemble(t: tensor.Tensor, data: Box[[float]], miss: Box[[int]], rows: int, cols: int, wpc: int) -> [] Matrix
+ml.matrix: pub fn value[&m](m: &m Matrix, r: int, c: int) -> [] float
+ml.matrix: pub fn is_missing[&m](m: &m Matrix, r: int, c: int) -> [] bool
+ml.matrix: pub fn put[&d](data: &!d [float], cols: int, r: int, c: int, v: float) -> [] int
+ml.matrix: pub fn mark_missing[&b](miss: &!b [int], wpc: int, r: int, c: int) -> [] int
+ml.matrix: pub fn missing_at[&b](miss: &b [int], wpc: int, r: int, c: int) -> [] bool
+ml.matrix: pub fn missing_count[&m](m: &m Matrix, c: int) -> [] int
+ml.refuse: pub fn count() -> [] int
+ml.refuse: pub fn tensor_rank() -> [] int
+ml.refuse: pub fn tensor_shape() -> [] int
+ml.refuse: pub fn tensor_bounds() -> [] int
+ml.refuse: pub fn input_empty() -> [] int
+ml.refuse: pub fn too_many_rows() -> [] int
+ml.refuse: pub fn too_many_columns() -> [] int
+ml.refuse: pub fn too_many_cells() -> [] int
+ml.refuse: pub fn param_out_of_range() -> [] int
+ml.refuse: pub fn not_positive_definite() -> [] int
+ml.refuse: pub fn singular() -> [] int
+ml.refuse: pub fn threads() -> [] int
+ml.refuse: pub fn input_non_finite() -> [] int
+ml.refuse: pub fn label_single_class() -> [] int
+ml.refuse: pub fn label_not_binary() -> [] int
+ml.refuse: pub fn fit_non_finite() -> [] int
+ml.refuse: pub fn limit_categories() -> [] int
+ml.refuse: pub fn limit_string_bytes() -> [] int
+ml.refuse: pub fn limit_string_pool() -> [] int
+ml.refuse: pub fn limit_categorical_columns() -> [] int
+ml.refuse: pub fn input_invalid_utf8() -> [] int
+ml.refuse: pub fn predict_non_finite() -> [] int
+ml.refuse: pub fn tag(code: int) -> [] &static [byte]
+ml.refuse: pub fn exit_code(code: int) -> [] int
+ml.refuse: pub fn repair(code: int) -> [] &static [byte]
+ml.rng: pub fn gold() -> [] int
+ml.rng: pub fn mix(z0: int) -> [] int
+ml.rng: pub fn advance(s: int) -> [] int
+ml.rng: pub fn output(s: int) -> [] int
+ml.rng: pub fn derive(h: int, c: int) -> [] int
+ml.rng: pub fn uniform(z: int, m: int) -> [] int
+ml.rng: pub fn unit(z: int) -> [] float
+ml.rng: pub fn element(seed: int, i: int) -> [] float

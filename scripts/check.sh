@@ -1,5 +1,5 @@
 #!/bin/sh
-# What CI runs: fmt check, unit tests, the numeric gates of stage 1, then the command line (stage 2, docs/cli.md section 1):
+# What CI runs: the store gates (docs/stores.md), fmt check, unit tests, the numeric gates of stage 1, then the command line (stage 2, docs/cli.md section 1):
 # package-mode build of `ml`, the schemas and the authority manifest checked against the sources, the conformance gates, and a
 # check that every edit of the mutant list still applies. The gates of lib/metrics and
 # lib/models/tree and the registry check are run here too. The mutants themselves (scripts/mutants_cli.py) rebuild the tool
@@ -8,14 +8,22 @@
 set -e
 cd "$(dirname "$0")/.."
 # absolute, because the conformance tests run from tests/conformance
-CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
+CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-0207556/target/release/cancho}
 export CANCHO
 # RD1: the cancho-table modules the reader compiles are a pinned package dependency and are not copied here (docs/reader.md section 1)
 sh scripts/check_table_pin.sh
 # W1 (docs/serving-http.md section 1): cancho-web, cancho-schema and http-server are pinned stores, none copied
 python3 scripts/check_web_pin.py
+# PS1 to PS5 (docs/stores.md): the numeric stores other repositories pin (lib/core, lib/linalg, lib/metrics) are what a fresh publish of these sources gives, the list is closed
+# under imports, and nothing is copied or consumed back; the mutants that need no compiler (scripts/mutants_stores.py without --fast runs all of them and the consumption ones, on request)
+python3 scripts/publish_stores.py --check
+python3 scripts/publish_stores.py --closure > /dev/null
+python3 scripts/check_stores_pin.py
+python3 scripts/mutants_stores.py --fast
 # the pinned packages, fetched into build/deps (needs the network the first time; build/deps is not committed)
 $CANCHO install
+# PS6: a scratch package outside this tree pins the stores of the committed HEAD by file:// URL, installs, builds and calls every published module (commit the stores first)
+python3 scripts/consume_stores.py
 $CANCHO fmt --check lib tests tools
 $CANCHO test --std lib/core/*.cho lib/linalg/tensor.cho tests/core.cho
 $CANCHO test --std lib/core/exact.cho tests/exact.cho
@@ -116,5 +124,9 @@ ST_STRIDE=5 sh scripts/gate_st.sh
 # registries and the Python oracles (scripts/oracle_pipe.py --sklearn and scripts/mutants_pipe.py run on request, as the other mutants do)
 python3 scripts/mutants_pipe.py --check
 sh scripts/gate_pipe.sh
+# the demo script (scripts/demo.sh): two tracked experiments, compare and verify, train versus held-out, ml-serve on its default bind and two curl requests, run with the built
+# binaries; its key facts are asserted and the edits of the script that must be refused are shown refused
+python3 scripts/check_demo.py
+python3 scripts/check_demo.py --mutants
 # the documentation checks (docs: program output in README and the page, links, the pages' basics); they need build/ml, built above
 sh scripts/check_docs.sh

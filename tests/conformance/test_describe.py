@@ -70,7 +70,7 @@ class Oracle(unittest.TestCase):
         self.assertEqual({d["task"] for d in docs.values()}, {"regression", "classification", "clustering"})
         self.assertEqual({c["encoder"] for d in docs.values() for c in d["categorical"]}, {"onehot", "label", "freq", "hash"})
         self.assertEqual({c["type"] for d in docs.values() for c in d["columns"]}, {"int", "dec", "float", "categorical"})
-        self.assertEqual({d["file"]["sections"] for d in docs.values()}, {5, 6})
+        self.assertEqual({d["file"]["sections"] for d in docs.values()}, {6, 7})
         self.assertEqual({d["request"]["missing_cells"] for d in docs.values()}, {"refused", "needs_impute", "handled"})
         self.assertTrue(any(d["na_values"] for d in docs.values()))
         self.assertTrue(any(c["truncated"] for d in (describe(mf, "--limit", "3").data() for mf, _, _ in MODELS.values()) for c in d["categorical"]))

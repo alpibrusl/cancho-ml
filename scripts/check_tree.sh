@@ -5,7 +5,7 @@
 # 90 builds) and G-ref (scripts/gate_sklearn.py) run on request.
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-a4572ea/target/release/cancho}
+CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-0207556/target/release/cancho}
 export CANCHO
 $CANCHO fmt --check lib/models tests/t_tree.cho tools/tree-check
 python3 scripts/gen_tree_data.py
