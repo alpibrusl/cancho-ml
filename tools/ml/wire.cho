@@ -19,6 +19,7 @@ import ml.csvload;
 import ml.dict;
 import ml.est;
 import ml.fbits;
+import ml.fitfail;
 import ml.fsio;
 import ml.kinds;
 import ml.logrec;
@@ -573,7 +574,7 @@ pub fn feature_count[&d](ds: &d Data) -> [] int {
 }
 
 // Fit the steps on the training rows (those of `sel` equal to `want`, all when want < 0), then the estimator on what the steps leave
-pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
+pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, rep: int, fold: int, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
     var e = errs;
     var go = true;
     let nfeat = feature_count(ds);
@@ -784,9 +785,22 @@ pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: 
                     }
                 }
             }
+            if code == refuse.fit_collinear() {
+                borrow diag as &dgr in {
+                    borrow fitted as &fq2 in {
+                        e = fitfail.collinear(heap, args, e, kind == 5, contents(dgr), fq2.nm, contents(pls.fp)[0], o, rep, fold);
+                    }
+                }
+            } else if code == refuse.fit_separable() {
+                borrow diag as &dgr in {
+                    e = fitfail.separable(heap, args, e, contents(dgr), contents(pls.ip)[0], contents(pls.fp)[0], o, rep, fold);
+                }
+            }
             unbox_slice(heap, diag);
             unbox_slice(heap, yfit);
-            if code != 0 {
+            if code == refuse.fit_collinear() || code == refuse.fit_separable() {
+                go = false;
+            } else if code != 0 {
                 e = wiredata.code_error(heap, e, code, 0, 0, 0);
                 go = false;
             }
@@ -1474,7 +1488,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
                 borrow cvoc as &cvr in {
                     borrow pls as &pr in {
                         borrow sel as &sr in {
-                            let (t3, ok4, e4) = train(heap, args, dr, cir, cvr, pr, contents(sr), want, o, retry_ok, e);
+                            let (t3, ok4, e4) = train(heap, args, dr, cir, cvr, pr, contents(sr), want, o, retry_ok, 0, 0 - 1, e);
                             drop_trained(heap, t2);
                             t2 = t3;
                             ok3 = ok4;

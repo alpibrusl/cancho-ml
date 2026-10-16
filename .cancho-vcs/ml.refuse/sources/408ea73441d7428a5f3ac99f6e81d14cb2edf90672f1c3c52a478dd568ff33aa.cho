@@ -5,7 +5,7 @@ module ml.refuse;
 // lib/ answers one of these codes; tests/core.cho has a fixture for every one (and fails if a code has no tag).
 
 pub fn count() -> [] int {
-    return 21;
+    return 23;
 }
 
 pub fn tensor_rank() -> [] int {
@@ -94,6 +94,16 @@ pub fn predict_non_finite() -> [] int {
     return 21;
 }
 
+// 22 and 23: a fit that cannot have an answer (docs/refusals-fit.md). 22: a column that the ones before it explain to within 2^-40 of its own sum of squares
+// (the pivot test of linalg.chol, named: the column, the dependency); 23: logistic regression with l2 = 0 on data that a hyperplane separates
+pub fn fit_collinear() -> [] int {
+    return 22;
+}
+
+pub fn fit_separable() -> [] int {
+    return 23;
+}
+
 pub fn tag(code: int) -> [] &static [byte] {
     if code == 1 {
         return "ml.tensor.rank";
@@ -158,6 +168,12 @@ pub fn tag(code: int) -> [] &static [byte] {
     if code == 21 {
         return "ml.predict.non-finite";
     }
+    if code == 22 {
+        return "ml.fit.collinear";
+    }
+    if code == 23 {
+        return "ml.fit.separable";
+    }
     return "";
 }
 
@@ -166,7 +182,7 @@ pub fn exit_code(code: int) -> [] int {
     if code == 8 || code == 11 {
         return 2;
     }
-    if code >= 1 && code <= 10 || code >= 12 && code <= 21 {
+    if code >= 1 && code <= 10 || code >= 12 && code <= 23 {
         return 8;
     }
     return 0;
@@ -195,7 +211,7 @@ pub fn repair(code: int) -> [] &static [byte] {
         return "see the allowed range of the parameter";
     }
     if code == 9 {
-        return "set l2 above 2^-40 times the largest diagonal element of the normal equations (n for standardised features), drop one of the dependent columns, or centre and scale the columns";
+        return "set l2 larger, scale the features, or use fewer iterations";
     }
     if code == 11 {
         return "give a thread count of 1 to 64";
@@ -226,6 +242,12 @@ pub fn repair(code: int) -> [] &static [byte] {
     }
     if code == 21 {
         return "scale the inputs, or check or drop the row named in detail";
+    }
+    if code == 22 {
+        return "set l2 above 2^-40 times the largest diagonal element of the normal equations, or drop one of the columns named in detail";
+    }
+    if code == 23 {
+        return "set l2 above 0: the classes are separated by a hyperplane, so no penalty-free optimum exists";
     }
     return "";
 }

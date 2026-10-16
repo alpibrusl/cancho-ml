@@ -7,6 +7,7 @@ import ml.refuse;
 import ml.limits;
 import models.common;
 import models.score;
+import models.rank;
 
 // Linear regression by the normal equations (docs/models-linear.md 3.1): the decisive sums G = X^T X (syrk), the column sums
 // X^T 1 (gemv_t with ones), X^T y (gemv_t) and sum(y) (dot with ones) are the package's kernels with the package's order; then
@@ -109,6 +110,12 @@ fn run[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [fl
         borrow gr as &grr in {
             borrow mut lm as &!lw in {
                 code = chol.cholesky(common.mat(p, p), contents(grr), common.mat(p, p), contents(lw));
+            }
+            if code == refuse.not_positive_definite() {
+                // the pivot test failed: name the column and the dependency (docs/refusals-fit.md D1); the Gram matrix of the fit is in gr
+                if rank.record(heap, p, contents(grr), 0, diag) >= 0 {
+                    code = refuse.fit_collinear();
+                }
             }
             if code == 0 {
                 borrow lm as &lr in {

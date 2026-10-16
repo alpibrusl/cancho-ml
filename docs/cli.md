@@ -153,6 +153,10 @@ $ ml --root . fit --target y --output g.cml flt2.csv                # flt2.csv: 
 {"ok":true,...,"data":{...,"bytes":300,"summary":{"mean":"6.375"}},...}                       # the exact sum of the doubles over n, rounded once, the shortest decimal back
 ```
 
+### 2.5 Refusals of a fit that has no answer (issue 48)
+
+`ml fit --model linear|logistic` (with or without `--step` and `--plan`) refuses two designs by name, after the steps ran, so the columns named are the columns of the fitted matrix (`age`, `species#0`, `(intercept)`): `ml.fit.collinear` (exit 8; the column, the dependency on the columns before it, the relative pivot and the tolerance `2^-40` in `detail`) and, for logistic regression with `--l2 0`, `ml.fit.separable` (exit 8; the pass, the reason, the summed loss and its bound, the norm of the coefficients in `detail`). The repair is an argv of the same command with `--l2 X` set (the value of an explicit `--l2` is replaced, not repeated), a `choose` between that and `--drop NAME` for a collinear design when the command line names no step, plan or `--drop`; with `--plan` it is `none`, because `l2` is a key of the plan's model line. `ml cv` fits every training fold the same way, so a fold can be refused when the whole data is not, and the `detail` then also holds `repeat` and `fold`; a refused `fit --track` writes no run record. `tree`, `forest`, `kmeans` and `constant` do not answer them. The decisions and measurements: [refusals-fit.md](refusals-fit.md).
+
 ## 3. The constant model and its arithmetic
 
 `--model constant` is the model this slice built, and it is a real one (stage W1 added `linear` and `logistic`: `docs/wiring.md`): it is the baseline every other model is compared with, and the
@@ -257,9 +261,9 @@ Everything below was printed by a script of this repository, on one machine (thi
 The first version of this section (the CLI slice) ran under a 1-minute load average of 3.8 to 6.0; **the counts below were refreshed at `v1-post`** under a load average of
 about 8 to 10 (other processes on the machine, and the mutant suites running in parallel). It is not a quiet-machine run and no figure here is a benchmark.
 
-**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`; the reader stage's verdicts are in `docs/reader.md` section 6, the wiring stage's in `docs/wiring.md` section 8): **138 tests, all
-pass, none skipped** (the `--threads` branch of D1 runs since W1). The run inside `scripts/check.sh` took 85.9 s under a load average of about 4 to 6 (the mutant suites ran beside it). 163 fixtures
-(`tests/conformance/fixtures.py`) reach all 29 flags, all 67 rules and all 4 log records of the tables. *(The numbers at `v1-post` were 105 tests, 1 skipped, 99 fixtures, 20 flags and 49 rules; the CLI slice had 88 tests, 90 fixtures, 19 flags and 48 rules; the integration run of `docs/integration.md` had 101.
+**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`; the reader stage's verdicts are in `docs/reader.md` section 6, the wiring stage's in `docs/wiring.md` section 8): **533 tests, all
+pass, none skipped** (the `--threads` branch of D1 runs since W1). 365 fixtures
+(`tests/conformance/fixtures.py`) reach all 53 flags, all 101 rules and all 4 log records of the tables. *(The numbers at `v1-post` were 105 tests, 1 skipped, 99 fixtures, 20 flags and 49 rules; the CLI slice had 88 tests, 90 fixtures, 19 flags and 48 rules; the integration run of `docs/integration.md` had 101.
 W1 added `test_wire_baseline.py`, `test_wire.py`, `test_wire_file.py`, `test_wire_oracle.py`, two tests of `test_authority.py` and one each of `test_log.py`, `test_fuzz_args.py` and `test_honesty.py`, enabled the determinism test of `--threads`, and 64 fixtures.)* The numeric gates of stage 1
 and the unit tests of `lib/core/exact.cho` (7) pass in `scripts/check.sh`, which exits 0.
 
