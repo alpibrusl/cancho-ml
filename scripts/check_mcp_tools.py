@@ -141,7 +141,10 @@ def check_introspect(d, errors):
                 continue
             if f["kind"] != p["kind"] or f["role"] != p["role"]:
                 errors.append("%s: %s kind/role %s/%s != introspect %s/%s" % (t["name"], p["name"], p["kind"], p["role"], f["kind"], f["role"]))
-            ps = t["inputSchema"]["properties"][p["name"]]
+            ps = t["inputSchema"]["properties"].get(p["name"])
+            if ps is None:
+                errors.append("%s: property %s of the call table is not in the inputSchema" % (t["name"], p["name"]))
+                continue
             if f["default"] is not None and str(ps.get("default")) != str(f["default"]):
                 errors.append("%s: %s default %r != introspect %r" % (t["name"], p["name"], ps.get("default"), f["default"]))
             if p["name"] in limits and ps.get("maximum") != limits[p["name"]]["ceiling"]:
