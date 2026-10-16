@@ -7,7 +7,7 @@ Also importable: scripts/mutants_tree.py uses `build`, `run`, `CONFIGS`, `oracle
 import argparse, os, subprocess, sys, hashlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CANCHO = os.environ.get("CANCHO", os.path.join(os.path.dirname(ROOT), "cancho-compiler-a4572ea", "target", "release", "cancho"))
+CANCHO = os.environ.get("CANCHO", os.path.join(os.path.dirname(ROOT), "cancho-compiler-0207556", "target", "release", "cancho"))
 ML = os.environ.get("ML_DATA", os.path.join(os.path.dirname(ROOT), "ml-data"))
 TD = os.path.join(ROOT, "build", "tree-data")
 SEED = "20261012"

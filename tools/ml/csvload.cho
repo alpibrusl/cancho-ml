@@ -116,7 +116,7 @@ pub fn load_t_rp[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [b
         m1 = 5;
         m2 = 9;
     }
-    let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m1, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+    let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m1, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, drop_mask: cfg.drop_mask, float_mask: cfg.float_mask, missing: true, mrows: 0, mcols: 0, wpc: 0 };
     let (sh, rep, sk) = pass_rp(heap, fs, root, file, c1, target, csv.plain_sinks(heap, 8, false));
     csv.drop_sinks(heap, sk);
     if rep.status != 0 {
@@ -136,7 +136,7 @@ pub fn load_t_rp[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [b
         return (mx, sh, rep, code);
     }
     let (t, data, miss, mrows, mcols, wpc) = matrix.parts(mx);
-    let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m2, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
+    let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m2, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, drop_mask: cfg.drop_mask, float_mask: cfg.float_mask, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
     let (sh2, rep2, sk2) = pass_rp(heap, fs, root, file, c2, target, csv.sinks(heap, 8, false, data, miss));
     csv.drop_shape(heap, sh2);
     let (a2, f2, d2, m2s) = csv.sink_parts(sk2);
@@ -204,13 +204,14 @@ pub fn load_cat_with[&h, &f, &r, &pf, &t, &n](heap: &!h Heap, fs: &f Fs(""), roo
         m1 = 5;
         m2 = 9;
     }
-    let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m1, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+    let c1 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m1, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, drop_mask: cfg.drop_mask, float_mask: cfg.float_mask, missing: true, mrows: 0, mcols: 0, wpc: 0 };
     var st1 = csv.build_state(heap);
     if given {
         csv.drop_state(heap, st1);
         st1 = csv.set_markers(heap, csv.lookup_state(heap, 3, vocab, box_slice(heap, 1, 0), box_slice(heap, 1, 0), box_slice(heap, 1, 0), 0, 0, 0), na);
     } else {
         dict.drop_vocab(heap, vocab);
+        st1 = csv.set_markers(heap, st1, na);
     }
     let (sh, rep, sk, s1) = pass_cat(heap, fs, root, file, c1, cc, target, csv.plain_sinks(heap, 8, false), st1);
     csv.drop_sinks(heap, sk);
@@ -264,15 +265,13 @@ pub fn load_cat_with[&h, &f, &r, &pf, &t, &n](heap: &!h Heap, fs: &f Fs(""), roo
     }
     let (t, data, miss, mrows, mcols, wpc) = matrix.parts(mx);
     let (it, ids, cmiss, unseen, irows, icols, iwpc) = catmat.parts(im);
-    let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m2, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
+    let c2 = csv.Cfg { cap: cfg.cap, max_rows: cfg.max_rows, max_cols: cfg.max_cols, max_cells: cfg.max_cells, mode: m2, tscale: 0, pred: 0, drops: cfg.drops, floats: cfg.floats, drop_mask: cfg.drop_mask, float_mask: cfg.float_mask, missing: true, mrows: mrows, mcols: mcols, wpc: wpc };
     var kind2 = 2;
     if given {
         kind2 = 3;
     }
     var st2 = csv.lookup_state(heap, kind2, voc, ids, cmiss, unseen, icols, irows, iwpc);
-    if given {
-        st2 = csv.set_markers(heap, st2, na);
-    }
+    st2 = csv.set_markers(heap, st2, na);
     let (sh2, rep2, sk2, s2) = pass_cat(heap, fs, root, file, c2, cc, target, csv.sinks(heap, 8, false, data, miss), st2);
     csv.drop_shape(heap, sh2);
     let (a2, f2, d2, m2s) = csv.sink_parts(sk2);

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Lint: the README, the project pages and docs/status.md describe the current state, in the present tense, and keep no history.
 
-    python3 scripts/check_prose.py            # fail (exit 1) if one of the six files holds a changelog or stage-history phrase
+    python3 scripts/check_prose.py            # fail (exit 1) if one of the eight files holds a changelog or stage-history phrase
     python3 scripts/check_prose.py --list     # the phrases, the allowlist and the files
     python3 scripts/check_prose.py --mutants  # the lint can fail: inject each phrase into a copy of a file, it must be refused
 
-The six files are README.md, docs/index.html, docs/evidence.html, docs/benchmarks.html, docs/examples.html and docs/status.md. The rule
+The eight files are README.md, docs/index.html, docs/guide.html, docs/evidence.html, docs/benchmarks.html, docs/examples.html, docs/board.html and docs/status.md. The rule
 (the maintainer's): do not append information, and keep only the information that is current. What happened, in which order and at which
 stage of the work is in git; these files say what `ml` does, what it does not do, and what was measured with its conditions.
 
@@ -21,7 +21,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FILES = ["README.md", "docs/index.html", "docs/evidence.html", "docs/benchmarks.html", "docs/examples.html", "docs/status.md"]
+FILES = ["README.md", "docs/index.html", "docs/guide.html", "docs/evidence.html", "docs/benchmarks.html", "docs/examples.html", "docs/board.html", "docs/status.md"]
 
 # (regex, what it catches, an injected sentence for the mutants: it must be refused)
 PHRASES = [

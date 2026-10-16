@@ -26,14 +26,18 @@ NEW_FLAGS = {"--plan", "--step", "--l2", "--iterations", "--positive", "--split"
              # k-means (docs/wiring-kmeans.md section 2)
              "--k", "--init", "--distance",
              # JSON lines as an input (docs/jsonl.md section 2)
-             "--input-format", "--fields", "--absent", "--max-json-nodes"}
+             "--input-format", "--fields", "--absent", "--max-json-nodes",
+             # the split strategies and cross-validation (docs/splits.md)
+             "--stratify", "--split-by", "--split-group", "--folds", "--repeats", "--emit-folds"}
 # the refusal of an unknown model name lists the models: it changes with the list, by design
 LISTS_THE_MODELS = {"args-bad-value-model"}
 
 
 def uses_new(c):
     argv = [a for a in c["argv"] if isinstance(a, str)]
-    if any(a in NEW_FLAGS for a in argv) or "--threads" in argv:
+    if "runs" in argv or "--track" in argv or "--max-out-of-range" in argv:
+        return True
+    if any(a in NEW_FLAGS for a in argv) or "--threads" in argv or "cv" in argv:
         return True
     if "fit" in argv and "--max-bytes" in argv:
         # --max-bytes limits the file a fit writes (docs/wiring-trees.md section 10); for predict and eval it is older

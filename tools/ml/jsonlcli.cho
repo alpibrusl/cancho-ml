@@ -412,7 +412,7 @@ pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p 
             }
         }
         if fl.code == 0 {
-            let app.Paths { file, model, out, logp, planp } = cur;
+            let app.Paths { file, model, out, logp, planp, trackp } = cur;
             var nf = paths.absent(heap);
             borrow csv as &cr in {
                 borrow shown as &sr2 in {
@@ -421,7 +421,7 @@ pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p 
                 }
             }
             paths.drop(heap, file);
-            cur = app.Paths { file: nf, model: model, out: out, logp: logp, planp: planp };
+            cur = app.Paths { file: nf, model: model, out: out, logp: logp, planp: planp, trackp: trackp };
         }
         buffer.drop(heap, csv);
         buffer.drop(heap, shown);

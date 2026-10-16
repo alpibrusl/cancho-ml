@@ -139,6 +139,21 @@ jobs:
       - name: The determinism gate can fail (its mutants)
         run: python3 scripts/xplat_check.py --require-predict --mutants
 
+      # scripts/demo.sh on the built binaries: two tracked experiments, ml runs compare and verify, eval on the training file and on another, ml-serve on its default
+      # bind (127.0.0.1) and two curl requests; its key facts are asserted and the edits of the script that must be refused are refused (a few seconds)
+      - name: The demo script runs and its facts hold
+        run: |
+          python3 scripts/check_demo.py
+          python3 scripts/check_demo.py --mutants
+
+      # docs/board.html: the page's logic runs headlessly under node (preinstalled on the runner images) against records the built ml makes (12 runs, 3 evals):
+      # its compare equals `ml runs compare` on every ordered pair, its recomputed ids equal the tool's (crypto.subtle against hashlib included), a damaged
+      # record is flagged. The mutants of the page are in the full gate.
+      - name: The experiments board (its logic against the records of the tool)
+        run: |
+          node --version
+          python3 scripts/check_board.py
+
       # Every module of tests/conformance that imports without numpy, scipy and scikit-learn, four at a time; the ml-serve tests among them start the
       # server on an ephemeral port and compare one POST per model kind with the command line's cell text. The oracle modules run in the full gate.
       # ST_STRIDE=5 flips every fifth byte of a damaged model file (the default, 1, flips every byte: about 27 minutes for test_describe alone on a Linux machine), and

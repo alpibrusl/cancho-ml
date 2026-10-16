@@ -59,8 +59,8 @@ BLOB_ADAPTER = {
 
 
 def compiler(root):
-    here = pathlib.Path(root).parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"
-    cand = [os.environ.get("CANCHO"), str(here), str(HERE.parent.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho")]
+    here = pathlib.Path(root).parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"
+    cand = [os.environ.get("CANCHO"), str(here), str(HERE.parent.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho")]
     for c in cand:
         if c and pathlib.Path(c).exists():
             return c

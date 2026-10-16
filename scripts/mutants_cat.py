@@ -25,7 +25,7 @@ PY = sys.executable
 
 
 def compiler():
-    here = ROOT.parent / "cancho-compiler-a4572ea" / "target" / "release" / "cancho"
+    here = ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"
     return os.environ.get("CANCHO") or (str(here) if here.exists() else "cancho")
 
 
@@ -168,7 +168,7 @@ MUTANTS = [
       [("tools/ml/csv.cho", "                if cs.kind == 2 {\n                    return (15, 0);\n                }\n", "")],
       "pass 2 of a fit reads the file the first pass read; the gates read a file that does not change between the passes, so the branch (a file changed under the reader) is not reachable from them. A gap, named in docs/categorical.md section 9"),
     M("c7-predict-columns-from-the-flag", ["roundtrip"], "a predict takes its categorical columns from the names given, not from the vocabulary",
-      [("tools/ml/csv.cho", "    if kind == 1 {\n        let (st, k) = apply_list(", "    if kind != 0 {\n        let (st, k) = apply_list(")]),
+      [("tools/ml/csv.cho", "    if kind == 1 {\n        apply_mask(flags, cols, cc.cat_mask, 4, 1);\n        let (st, k) = apply_list(", "    if kind != 0 {\n        apply_mask(flags, cols, cc.cat_mask, 4, 1);\n        let (st, k) = apply_list(")]),
     # ------------------------------------------------------------------ C3, C11: the command line
     M("c3-threads-in-the-detail", ["threads"], "the thread count reaches the answer of the refusal",
       [("tools/ml/catwire.cho", "pub fn not_encoded[&h, &v, &n](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab, rem: &n names.Names)", "pub fn not_encoded[&h, &v, &n](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab, rem: &n names.Names, extra: int)"),

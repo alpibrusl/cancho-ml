@@ -5,7 +5,7 @@ existed then, the exit status, the SHA-256 of standard output and the SHA-256 of
 model files of the constant, linear and logistic models with their steps, and every refusal of the reader, byte for byte. The record is never rewritten to
 make a test pass. A fixture added since (the categorical ones) is not in it.
 
-THREE exceptions, pinned here and not in the record. Two of them are the texts that name the wired models (docs/wiring-kmeans.md section 2): the refusal of a flag that needs a
+THREE exceptions, pinned here and in the record. Two of them are the texts that name the wired models (docs/wiring-kmeans.md section 2): the refusal of a flag that needs a
 model other than constant lists the models, and the plan of `ml-plan-model-not-built` names constant, since kmeans is built. The third (docs/categorical-encoders.md section 9): stage 2 of issue 21 added the plan verbs `freq` and `hash`, and the
 text of `ml.plan.unknown-step` lists the verbs ("not impute, scale, encode, bucket, freq, hash or model", "one of the seven verbs"). Leaving the old text would
 make `introspect` and the refusal say something false. The standard output of that one case is therefore compared with the hash of the new text, and everything
@@ -60,9 +60,9 @@ class NumericBaseline(unittest.TestCase):
         self.assertEqual(failures, [], "a numeric case changed")
 
     def test_the_one_exception_is_the_old_hash_and_nothing_else(self):
-        """the record still holds the OLD hash of that case (it is not rewritten), and the exception differs from it"""
+        """the record of the deliberate re-record of M22 (docs/tracking.md section 8) holds the hash of the text these cases print now: the exceptions equal it"""
         for k, new in CHANGED.items():
-            self.assertNotEqual(GOLDEN[k]["stdout"], new)
+            self.assertEqual(GOLDEN[k]["stdout"], new)
         self.assertEqual(sorted(CHANGED), ["args-conflict-step-needs-a-model", "ml-plan-model-not-built", "ml-plan-unknown-step"])
 
     def test_the_record_holds_the_wired_models(self):

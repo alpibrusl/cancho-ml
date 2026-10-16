@@ -13,7 +13,7 @@ import random
 import unittest
 from fractions import Fraction
 
-from harness import Sandbox
+from harness import Sandbox, without_provenance
 
 
 def finite(rnd):
@@ -110,7 +110,7 @@ class Floats(unittest.TestCase):
             self.sb.write("d.csv", "y\n" + "\n".join(repr(y) for y in ys) + "\n")
             self.sb.run("fit", "--overwrite", "--target", "y", "--output", "m.cml", "d.csv")
             r = self.sb.run("eval", "--model-file", "m.cml", "d.csv")
-            digest = (self.sb.read("m.cml"), r.stdout)
+            digest = (without_provenance(self.sb.read("m.cml")), r.stdout)
             if first is None:
                 first = digest
             self.assertEqual(digest, first)

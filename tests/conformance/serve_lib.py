@@ -149,8 +149,8 @@ def _no_constant(name):
 
 
 class Conn:
-    def __init__(self, port, timeout=10):
-        self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    def __init__(self, port, timeout=10, host="127.0.0.1"):
+        self.sock = socket.create_connection((host, port), timeout=timeout)
         self.buf = b""
 
     def close(self):

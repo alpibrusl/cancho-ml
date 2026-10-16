@@ -83,6 +83,26 @@ def cluster_metrics_def():
     return obj({"inertia": val, "sizes": {"type": "array", "items": NAT}, "mean_distance": {"type": "array", "items": val}})
 
 
+ON = {"enum": ["train", "other", "unknown"]}
+# the run record of --track (docs/tracking.md section 5.1): the answer of fit names it
+RUN = obj({"id": SHA, "dir": TB, "file": TB, "written": {"type": "boolean"}, "sha256": SHA})
+# docs/tracking.md section 3.2: null for a model with no provenance
+OOR = {"oneOf": [{"type": "null"}, obj({"cells": NAT, "rows": NAT, "columns": {"type": "array", "items": obj({"name": TB, "count": NAT})}})]}
+
+
+def runs_data():
+    """The answers of ml runs list, show, compare and verify (docs/tracking.md section 5.4)."""
+    entry = obj({"id": SHA, "model": {"type": "string"}, "task": {"enum": ["regression", "classification", "clustering"]}, "data_sha256": SHA, "model_sha256": SHA,
+                 "train_rows": NAT, "metrics_on": {"oneOf": [{"enum": ["train", "held-out"]}, {"type": "null"}]}, "evals": NAT})
+    lst = obj({"dir": TB, "count": NAT, "truncated": {"type": "boolean"}, "runs": {"type": "array", "items": entry}})
+    show = obj({"record": {"type": "object"}})
+    diff = obj({"key": {"type": "string"}, "a": {}, "b": {}})
+    met = obj({"name": {"type": "string"}, "a": {}, "b": {}, "equal": {"type": "boolean"}})
+    cmp_ = obj({"a": SHA, "b": SHA, "model_equal": {"type": "boolean"}, "inputs": {"type": "array", "items": diff}, "metrics": {"type": "array", "items": met}})
+    ver = obj({"id": SHA, "verified": {"const": True}, "model_sha256": SHA, "data_sha256": SHA, "threads": NAT, "compiler": TB})
+    return [lst, show, cmp_, ver]
+
+
 def data_defs():
     fit_summary = {"oneOf": [
         obj({"mean": DEC}),
@@ -93,8 +113,8 @@ def data_defs():
     fit = obj({
         "model": {"const": "constant"}, "task": {"enum": ["regression", "classification"]},
         "rows": NAT, "columns": NAT, "target": TB, "path": TB, "bytes": NAT, "sha256": SHA,
-        "written": {"type": "boolean"}, "summary": fit_summary,
-    })
+        "written": {"type": "boolean"}, "summary": fit_summary, "run": RUN,
+    }, ["model", "task", "rows", "columns", "target", "path", "bytes", "sha256", "written", "summary"])
     predict = obj({
         "model": {"const": "constant"}, "task": {"enum": ["regression", "classification"]},
         "columns": {"type": "array", "items": {"type": "string"}},
@@ -103,19 +123,20 @@ def data_defs():
         "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]},
     })
     eval_reg = obj({
-        "model": {"const": "constant"}, "task": {"const": "regression"}, "rows": NAT,
+        "model": {"const": "constant"}, "task": {"const": "regression"}, "rows": NAT, "on": ON,
         "metrics": obj({"rmse": DEC, "sse": DEC, "prediction": DEC}),
     })
     eval_cls = obj({
-        "model": {"const": "constant"}, "task": {"const": "classification"}, "rows": NAT,
+        "model": {"const": "constant"}, "task": {"const": "classification"}, "rows": NAT, "on": ON,
         "metrics": obj({"accuracy": DEC, "correct": NAT, "total": NAT, "prediction": {"type": "integer"}}),
     })
     # the models that go through the pipeline (docs/wiring.md section 2)
     names = {"enum": wired_models()}
     mreg, mcls = metrics_defs()
-    split = obj({"train": NAT, "test": NAT, "seed": NAT})
-    holdout_reg = obj({"rows": NAT, "metrics": mreg})
-    holdout_cls = obj({"rows": NAT, "metrics": mcls})
+    # a holdout says how the rows were chosen: the canonical text of the split (docs/splits.md section 2) and, with --emit-folds, 1 for each held-out row
+    split = obj({"train": NAT, "test": NAT, "seed": NAT, "spec": {"type": "string"}, "assignment": {"type": "array", "items": {"enum": [0, 1]}}}, ["train", "test", "seed", "spec"])
+    holdout_reg = obj({"rows": NAT, "on": {"const": "held-out"}, "metrics": mreg})
+    holdout_cls = obj({"rows": NAT, "on": {"const": "held-out"}, "metrics": mcls})
     summary_keys = {
         "plan": {"type": "string"}, "steps": NAT, "features": NAT,
         "coefficients": {"type": "array", "items": obj({"name": TB, "value": FLT})}, "intercept": FLT,
@@ -137,25 +158,34 @@ def data_defs():
     mclu = cluster_metrics_def()
     cluster_keys = {"plan": {"type": "string"}, "steps": NAT, "features": NAT,
                     "clusters": obj({"k": NAT, "iterations": NAT, "init": {"enum": ["random", "kmeans++"]}, "rows": NAT, "metrics": mclu})}
-    summary_clu = obj({**cluster_keys, **cat_keys, "split": split, "holdout": obj({"rows": NAT, "metrics": mclu})}, list(cluster_keys))
+    summary_clu = obj({**cluster_keys, **cat_keys, "split": split, "holdout": obj({"rows": NAT, "on": {"const": "held-out"}, "metrics": mclu})}, list(cluster_keys))
     fit_p = obj({
         "model": names, "task": {"enum": ["regression", "classification", "clustering"]}, "rows": NAT, "columns": NAT, "target": {"oneOf": [TB, {"type": "null"}]}, "path": TB,
-        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls, summary_clu]},
-    })
+        "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls, summary_clu]}, "run": RUN,
+    }, ["model", "task", "rows", "columns", "target", "path", "bytes", "sha256", "written", "summary"])
     predict_p = obj({
         "model": names, "task": {"enum": ["regression", "classification", "clustering"]},
         "columns": {"type": "array", "items": {"type": "string"}},
         "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
         "row_count": NAT, "total_rows": NAT, "truncated": {"type": "boolean"},
-        "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]}, "unknown_categories": NAT,
+        "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]}, "unknown_categories": NAT, "out_of_range": OOR, "ignored_columns": {"type": "array", "items": TB},
     })
-    eval_reg_p = obj({"model": names, "task": {"const": "regression"}, "rows": NAT, "metrics": mreg, "unknown_categories": NAT, "split": split},
-                     ["model", "task", "rows", "metrics", "unknown_categories"])
-    eval_cls_p = obj({"model": names, "task": {"const": "classification"}, "rows": NAT, "positive": {"type": "integer"}, "metrics": mcls,
-                      "unknown_categories": NAT, "split": split}, ["model", "task", "rows", "positive", "metrics", "unknown_categories"])
-    eval_clu_p = obj({"model": names, "task": {"const": "clustering"}, "rows": NAT, "clusters": NAT, "metrics": mclu, "unknown_categories": NAT, "split": split},
-                     ["model", "task", "rows", "clusters", "metrics", "unknown_categories"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p, describe_data()]}
+    eval_reg_p = obj({"model": names, "task": {"const": "regression"}, "rows": NAT, "on": ON, "metrics": mreg, "unknown_categories": NAT, "out_of_range": OOR, "split": split},
+                     ["model", "task", "rows", "on", "metrics", "unknown_categories", "out_of_range"])
+    eval_cls_p = obj({"model": names, "task": {"const": "classification"}, "rows": NAT, "on": ON, "positive": {"type": "integer"}, "metrics": mcls,
+                      "unknown_categories": NAT, "out_of_range": OOR, "split": split}, ["model", "task", "rows", "on", "positive", "metrics", "unknown_categories", "out_of_range"])
+    eval_clu_p = obj({"model": names, "task": {"const": "clustering"}, "rows": NAT, "on": ON, "clusters": NAT, "metrics": mclu, "unknown_categories": NAT, "out_of_range": OOR, "split": split},
+                     ["model", "task", "rows", "on", "clusters", "metrics", "unknown_categories", "out_of_range"])
+    # `ml cv` (docs/splits.md section 6)
+    agg = obj({"mean": {"oneOf": [FLT, {"type": "null"}]}, "std": {"oneOf": [FLT, {"type": "null"}]}, "n": NAT})
+    result = obj({"repeat": NAT, "fold": NAT, "train": NAT, "test": NAT, "metrics": {"oneOf": [mreg, mcls, mclu]}})
+    cv_p = obj({"model": names, "task": {"enum": ["regression", "classification", "clustering"]}, "target": {"oneOf": [TB, {"type": "null"}]}, "rows": NAT, "columns": NAT,
+                "plan": {"type": "string"}, "split": {"type": "string"}, "strategy": {"enum": ["kfold", "stratified", "group", "time"]}, "folds": NAT, "repeats": NAT,
+                "results": {"type": "array", "items": result, "minItems": 2},
+                "summary": obj({"count": NAT, "std": {"const": "sample"}, "metrics": {"type": "object", "additionalProperties": agg}}),
+                "assignment": obj({"repeats": NAT, "rows": NAT, "folds": {"type": "array", "items": {"type": "array", "items": {"type": "integer", "minimum": -1}}}})},
+               ["model", "task", "target", "rows", "columns", "plan", "split", "strategy", "folds", "repeats", "results", "summary"])
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_clu_p, cv_p, describe_data()] + runs_data()}
 
 
 def describe_data():
@@ -166,7 +196,7 @@ def describe_data():
     value = obj({"value": TB, "count": NAT})
     cat = obj({"column": TB, "encoder": {"enum": ["onehot", "label", "freq", "hash"]}, "categories": NAT, "buckets": opt(NAT),
                "listed": NAT, "truncated": {"type": "boolean"}, "values": {"type": "array", "items": value}})
-    file_ = obj({"bytes": NAT, "sha256": SHA, "format": {"const": "CML1"}, "version": {"const": 1}, "sections": {"enum": [5, 6]},
+    file_ = obj({"bytes": NAT, "sha256": SHA, "format": {"const": "CML1"}, "version": {"const": 1}, "sections": {"enum": [5, 6, 7]},
                  "compiler": TB, "sum_order": opt(NAT)})
     target = obj({"name": TB, "type": {"enum": ["int", "dec", "float"]}, "scale": opt(NAT)})
     request = obj({"header": {"type": "array", "items": TB}, "optional": {"type": "array", "items": TB},
@@ -175,9 +205,11 @@ def describe_data():
     output = obj({"columns": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 2},
                   "with_proba": opt({"type": "array", "items": {"type": "string"}}),
                   "with_distance": opt({"type": "array", "items": {"type": "string"}}), "label_threshold": opt({"type": "string"})})
+    feature = obj({"name": TB, "count": NAT, "min": FLT, "max": FLT, "mean": FLT, "std": FLT})
+    provenance = obj({"file_sha256": SHA, "file_bytes": NAT, "file_rows": NAT, "rows": NAT, "features": {"type": "array", "items": feature}})
     return obj({
         "model": {"enum": ["constant"] + wired_models()}, "task": {"enum": ["regression", "classification", "clustering"]},
-        "kind": {"type": "integer", "minimum": 1, "maximum": 7}, "plan": TB, "rows": NAT, "file": file_, "target": opt(target),
+        "kind": {"type": "integer", "minimum": 1, "maximum": 7}, "plan": TB, "rows": NAT, "provenance": opt(provenance), "file": file_, "target": opt(target),
         "columns": {"type": "array", "items": column, "minItems": 1}, "request": request,
         "categorical": {"type": "array", "items": cat}, "na_values": {"type": "array", "items": TB}, "reader": opt(reader),
         "classes": opt({"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}), "positive": opt({"type": "integer"}),
@@ -186,8 +218,9 @@ def describe_data():
 
 
 def planned():
-    return {"type": "array", "items": obj({
-        "op": {"enum": ["create", "replace"]}, "path": TB, "bytes": NAT, "sha256": SHA})}
+    return {"type": "array", "items": {"oneOf": [
+        obj({"op": {"enum": ["create", "replace"]}, "path": TB, "bytes": NAT, "sha256": SHA}),
+        obj({"op": {"const": "create"}, "dir": TB, "file": TB, "bytes": NAT, "sha256": SHA})]}}
 
 
 def envelope(t):

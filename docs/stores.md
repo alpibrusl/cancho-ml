@@ -145,7 +145,7 @@ reason than the one it is for (the script holds, for each mutant, the sentence o
 
 ## 7. Results (printed by the scripts of this repository)
 
-Conditions: the compiler is the pin `a4572ea` on both machines; Mac arm64 (the machine of the other documents), and a Linux x86-64 host, with the
+Conditions of the first measurements below: the compiler is `a4572ea`, the pin then, on both machines; Mac arm64 (the machine of the other documents), and a Linux x86-64 host, with the
 scripts pinned to cores 0 to 6 (`taskset -c 0-6`) and a clean clone of this branch. Times are one run each, not minimums.
 
 **The closure** (`publish_stores.py --closure`): 23 modules, 198 `pub` declarations (`docs/stores_api.txt`), 327 files and 1.5 MB under
@@ -193,6 +193,12 @@ on both (13.2 s and 13.4 s). A consumer that pins only `metrics.splits` installs
 **The repository.** `scripts/check.sh`, which now begins with the store gates and runs the consumption proof, passes on this tree; `check_docs.sh`, `check_prose.py`, `check_links.py` and `check_doc_refs.py` pass.
 
 **Limits.** The stores were consumed through a `file://` URL of a clone; a fetch from GitHub is the same command with `--url` and is run when a commit
-holding the stores is pushed. Only the pinned compiler `a4572ea` was tried as the consumer's compiler. `publish_stores.py --check` is a step of
+holding the stores is pushed. Only the pinned compiler was tried as the consumer's compiler (`a4572ea` for the first measurements, `0207556` for section 7.1). `publish_stores.py --check` is a step of
 `scripts/check.sh`; there is no CI workflow that runs it. Which `pub` functions are stable is a statement of this document, not something a compiler
 checks: the gate sees a changed signature, not a changed meaning (section 2).
+
+### 7.1 The pin `0207556`
+
+`publish_stores.py` refuses a compiler other than the one `cancho.toml` names, so the move of the pin from `a4572ea` to `0207556` makes it demand the new one. Republished with `0207556` (Mac arm64), the 23 stores and `docs/stores_api.txt`
+are the committed bytes: `git status` shows no change and `git diff <commit before the move> HEAD -- .cancho-vcs` is empty, so the pin move changes no store byte and no pin of a consumer. A consumer that pins these stores by commit (cancho-stats) keeps a commit that holds them.
+With the new compiler: `publish_stores.py --check` passes, `consume_stores.py` installs the 23 stores from `file://` of a clone at the committed HEAD and prints 66 lines with output SHA-256 `87c80b90289b8189c9520612acae5291d7732ac74de20437fd6ac8ee1dc5fca0`, the same as in section 7, and `mutants_stores.py --fast` kills 16 of 16.

@@ -21,6 +21,15 @@ pub fn kind_stratified() -> [] int {
     return 6;
 }
 
+// the stream kinds 7 and 8 (docs/splits.md section 3): the stratified holdout and the shuffle of the groups, used by tools/ml/splitplan.cho
+pub fn kind_strat_holdout() -> [] int {
+    return 7;
+}
+
+pub fn kind_group() -> [] int {
+    return 8;
+}
+
 // the largest row cap a caller may ask for (2^30): keeps every product of two counts below 2^60
 pub fn ceiling_rows() -> [] int {
     return 1073741824;
