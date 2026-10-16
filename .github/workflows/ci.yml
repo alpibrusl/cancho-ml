@@ -145,6 +145,14 @@ jobs:
           python3 scripts/check_demo.py
           python3 scripts/check_demo.py --mutants
 
+      # docs/board.html: the page's logic runs headlessly under node (preinstalled on the runner images) against records the built ml makes (12 runs, 3 evals):
+      # its compare equals `ml runs compare` on every ordered pair, its recomputed ids equal the tool's (crypto.subtle against hashlib included), a damaged
+      # record is flagged. The mutants of the page are in the full gate.
+      - name: The experiments board (its logic against the records of the tool)
+        run: |
+          node --version
+          python3 scripts/check_board.py
+
       # Every module of tests/conformance that imports without numpy, scipy and scikit-learn, four at a time; the ml-serve tests among them start the
       # server on an ephemeral port and compare one POST per model kind with the command line's cell text. The oracle modules run in the full gate.
       # ST_STRIDE=5 flips every fifth byte of a damaged model file (the default, 1, flips every byte: about 27 minutes for test_describe alone on a Linux machine), and
