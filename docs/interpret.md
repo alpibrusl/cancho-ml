@@ -157,6 +157,7 @@ ml dump       --model-file M [--tree I] [--max-nodes N] [--format text]
 | `--metric NAME` | importance | section 3.4; default `rmse` (regression) or `roc_auc` (classification); a name that does not fit the task is `ml.importance.bad-metric` |
 | `--repeats R` | importance | permutations per column, 1 to 100 (the flag `cv` already has; the range is the verb's) |
 | `--seed S` | importance | the seed of the permutation streams (an existing flag) |
+| `--max-work N` | importance | refuse (`ml.limit.work`) a permutation run that would score more than `N` row evaluations (`rows * raw columns * repeats`), before the first shuffle; default 4,294,967,296, ceiling 2^40 (the limits table, like `--max-cells`) |
 | `--tree I` | dump | the tree to print, 0-based (0 for a tree); `ml.param.out-of-range` when `I >= trees` |
 | `--max-nodes N` | dump | refuse (`ml.limit.nodes`) a tree with more than `N` nodes, **before** the node list is built; default 10,000 when not given, ceiling 4,194,304 (the flag `fit` has) |
 | `--drop`, `--max-rows`, `--max-columns`, `--max-cells`, `--max-line-bytes`, `--max-bytes`, `--threads`, `--log`, `--log-max-bytes`, `--format`, `--root`, `--model-file` | as `eval` | `--threads` is accepted and changes no byte (D10) |
@@ -198,11 +199,11 @@ The node list is built only after `nodes <= --max-nodes` has been checked on the
 | tag | exit | when | repair |
 |---|---|---|---|
 | `ml.importance.unsupported-model` | 8 | the model is a constant or a k-means | none |
-| `ml.importance.no-scale` | 8 | a standardised coefficient needs the deviation of a column and the file stores none (D5); the columns are in `detail` | `retry` with `--data FILE` is the permutation importance, which needs no stored deviation (stated in the text); no automatic repair |
+| `ml.importance.no-scale` | 8 | a standardised coefficient needs the deviation of a column and the file stores none (D5); the columns are in `detail` | none: the hint names `--data FILE`, the permutation importance, which needs no stored deviation |
 | `ml.importance.bad-metric` | 8 | `--metric` is not a metric of the task, or `--metric`, `--repeats` or `--seed` without `--data` (`args.conflict`) | the metrics of the task are in `detail` |
 | `ml.importance.undefined-metric` | 8 | the metric has no value on the baseline or on a permuted run | choose another metric |
 | `ml.importance.too-few-rows` | 8 | `--data` holds fewer than 2 rows | none |
-| `ml.limit.work` | 8 | `columns * repeats * rows` above 2^32 (the permutation would score that many row evaluations) | fewer repeats, or a smaller file |
+| `ml.limit.work` | 8 | `columns * repeats * rows` above `--max-work` (default 2^32: the permutation would score that many row evaluations) | none: fewer repeats, a smaller file or a higher `--max-work` (said in the hint) |
 | `ml.dump.unsupported-model` | 8 | the model is a constant | none |
 | `ml.limit.nodes` | 8 | `dump`: the tree has more nodes than `--max-nodes` | raise `--max-nodes` (existing tag; second fixture) |
 | `ml.param.out-of-range` | 2 | `--tree I` with `I >= trees`, `--repeats` outside 1 to 100 (existing tag) | the range is in `detail` |
@@ -255,7 +256,7 @@ that decides the target. The noise column is `uniform(-1, 1)` from `derive(seed,
 
 ## 9. Limits and authority
 
-* Before anything sized by the input is allocated: `--max-nodes` against the stated node count; `columns * repeats * rows` against 2^32; `--repeats` 1 to 100; the file is read with `--max-bytes`.
+* Before anything sized by the input is allocated: `--max-nodes` against the stated node count; `columns * repeats * rows` against `--max-work` (before the first shuffle); `--repeats` 1 to 100; the file is read with `--max-bytes`.
 * `importance` and `dump` are verbs of `ml` only. They open the model file and the data file as `eval` does (`file_read`, `dir_read`); the authority row of `ml` is unchanged, as are the rows of `ml-predict`
   and `ml-serve` (the data-free table is computed by the code of `describe`, which they already contain).
 * No file over 2,000 lines; the new code is in `tools/ml/interp.cho` (lineage and tables, in the sources of all three binaries), `tools/ml/idump.cho` and `tools/ml/perm.cho` (`ml` only).
