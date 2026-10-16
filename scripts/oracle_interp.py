@@ -338,6 +338,9 @@ def std_member(M, limit=1000):
 
 
 # ---------------------------------------------------------------- the impurity decrease (docs/interpret.md 3.2)
+MAX_COUNT = 1 << 30
+
+
 def tree_decreases(T, t):
     """-> [(node index in the tree, feature, decrease)] for the internal nodes of tree t in preorder; and the node rows"""
     lo, hi = T["off"][t], T["off"][t + 1]
@@ -358,7 +361,7 @@ def tree_decreases(T, t):
         L, R = lo + left[i], lo + right[i]
         if cls:
             n, nl, nr = na[i] + nb[i], na[L] + nb[L], na[R] + nb[R]
-            if n < 1 or nl < 1 or nr < 1:
+            if any(c < 0 or c > MAX_COUNT for c in (na[i], nb[i], na[L], nb[L], na[R], nb[R])) or n < 1 or nl < 1 or nr < 1:
                 dec = 0.0
             else:
                 D = nb[L] * nr - nb[R] * nl
@@ -366,7 +369,7 @@ def tree_decreases(T, t):
                 dec = (2.0 * (df * df)) / (float(n) * (float(nl) * float(nr)))
         else:
             n, nl, nr = na[i], na[L], na[R]
-            if n < 1 or nl < 1 or nr < 1:
+            if n < 1 or nl < 1 or nr < 1 or n > MAX_COUNT or nl > MAX_COUNT or nr > MAX_COUNT:
                 dec = 0.0
             else:
                 ml_, mr = S_[L] / float(nl), S_[R] / float(nr)

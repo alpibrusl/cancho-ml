@@ -813,7 +813,7 @@ IBASE = [("write", "itr.csv", ITR), ("write", "itc.csv", ITC), ("write", "itr2.c
 WITH_IF = IBASE + [("fit", "--model", "forest", "--task", "regression", "--trees", "3", "--max-depth", "3", "--target", "y", "--output", "f.cml", "itr.csv")]
 WITH_IT = IBASE + [("fit", "--model", "tree", "--task", "classification", "--max-depth", "3", "--target", "y", "--output", "t.cml", "itc.csv")]
 WITH_IL = IBASE + [("fit", "--model", "linear", "--target", "y", "--output", "l.cml", "itr.csv"),
-                   ("fit", "--model", "logistic", "--target", "y", "--step", "scale column=* kind=standard", "--output", "g.cml", "itc.csv")]
+                   ("fit", "--model", "logistic", "--target", "y", "--l2", "0.5", "--step", "scale column=* kind=standard", "--output", "g.cml", "itc.csv")]
 WITH_IK = IBASE + [("fit", "--model", "kmeans", "--k", "2", "--seed", "1", "--drop", "y", "--output", "k.cml", "itr.csv"),
                    ("fit", "--model", "constant", "--task", "regression", "--target", "y", "--output", "c.cml", "itr.csv")]
 
