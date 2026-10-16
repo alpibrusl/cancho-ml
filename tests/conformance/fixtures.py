@@ -665,6 +665,8 @@ def _jsonl_cases():
         case("jsonl-args-conflict-nodes-with-csv", ["fit", "--max-json-nodes", "9", "--target", "y", "--output", "m.cml", "reg.csv"], bad("args.conflict")),
         case("jsonl-args-conflict-fields-at-predict", ["predict", "--model-file", "m.cml", "--input-format", "jsonl", "--fields", "a", "d.jsonl"], bad("args.conflict"), setup=WITH_MODEL),
         case("jsonl-args-bad-value-format", ["fit", "--input-format", "yaml", "--target", "y", "--output", "m.cml", "reg.csv"], bad("args.bad-value")),
+        case("jsonl-cv", ["cv", "--model", "linear", "--target", "y", "--folds", "2", "--input-format", "jsonl", "--fields", "a,y", "d.jsonl"], ok({"strategy": "kfold", "folds": 2, "rows": 4}), setup=base),
+        case("jsonl-args-required-flag-fields-at-cv", ["cv", "--model", "linear", "--target", "y", "--input-format", "jsonl", "d.jsonl"], bad("args.required-flag"), setup=base),
         case("jsonl-ml-param-out-of-range-nodes", jfit + ["--max-json-nodes", "0", "d.jsonl"], bad("ml.param.out-of-range"), setup=base),
     ]
 
