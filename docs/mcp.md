@@ -68,7 +68,7 @@ write-enabled list gets a rule and not a silent write. With the flag, `fit` writ
 
 The command line and the library are joined by `Args`, the capability that holds the command line the process was started with, and by `&static [byte]` slices of it: `cli.text(args, parsed, table, name)` returns a
 slice of `argv`, and `Opts` (`tools/ml/verbs.cho`) holds `target`, `drops`, `step`, `positive`, ... as `&static [byte]`. A call arriving as JSON has no `Args`, and a string read from the wire is not `static`; the pinned
-compiler has no way to build either (`docs/arguments.md` of the compiler: argv is written once before any code runs; a struct cannot carry a region). `ml serve` avoided it because it needs numbers only; `ml runs verify`
+compiler has no way to build either (the compiler's document on arguments: argv is written once before any code runs; a struct cannot carry a region). `ml serve` avoided it because it needs numbers only; `ml runs verify`
 avoided it with masks and by passing texts to `wire.make` as parameters. A tool call needs all the flags, so **the library is changed so that nothing below `main` reads `Args`**:
 
 * `ml.argv` (`tools/ml/argv.cho`): a parsed command line is one byte slice, `src`, built once by `main` from the real `Args` and `cli.Parsed` (`argv.from_cli`), or by `ml-mcp` from the JSON arguments

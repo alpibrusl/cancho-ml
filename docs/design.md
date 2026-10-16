@@ -656,7 +656,7 @@ results, output schemas, newline-delimited stdio); the revision `2026-07-28`, wh
 not written: `scripts/mcp_tools.py` emits `docs/mcp/tools.json` and `tools/ml-mcp/tools.cho`, and `scripts/check_mcp_tools.py` fails on drift. A call runs the code of `ml` in the same process.
 
 **What the library gave up for it [read, measured].** The command line and the library were joined by `Args` and by `&static [byte]` slices of it (`Opts` held `target`, `drops`, `step`, ...), and a string that arrives as data is not
-static and cannot be made so by the pinned compiler (`docs/arguments.md` of the compiler: argv is written once, before any code runs; a struct cannot carry a region). The command line is therefore read through one module,
+static and cannot be made so by the pinned compiler (the compiler's document on arguments: argv is written once, before any code runs; a struct cannot carry a region). The command line is therefore read through one module,
 `ml.argv`: `main` packs the real `Args` and the pinned parser's reading of it into one byte slice, and everything below reads that slice; `ml-mcp` packs the equivalent command line of a call. The texts of the scans (the target and the lists
 of `--drop`, `--float`, `--cat` and `--na-values`) travel as one slice beside the configuration. `toolbox.path.root` and `.operand` read `Args` by index, so `ml.paths` has their rules over text (the pinned `lexical`, `under`,
 `has_dotdot` and `longest` do the work); the command line's conformance tests are the check that the rules are the same. The authority rows of `ml`, `ml-predict` and `ml-serve` are unchanged.
