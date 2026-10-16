@@ -1,0 +1,55 @@
+KILLED    f-long-line-is-kept                          D  tests: test_message_size_limit, test_the_default_limit_is_a_mebibyte
+KILLED    f-limit-is-one-byte-more                     D  tests: test_message_size_limit
+KILLED    f-limit-is-one-byte-less                     D  tests: test_message_size_limit
+KILLED    f-limit-ceiling-raised                       D  tests: test_the_limit_flag_is_checked
+KILLED    f-limit-zero-allowed                         D  tests: test_the_limit_flag_is_checked
+KILLED    f-blank-line-answered                        D  tests: test_empty_lines_are_not_messages
+KILLED    f-carriage-return-counted                    D  tests: test_message_size_limit
+KILLED    f-eof-in-a-line-is-dropped                   D  tests: test_eof_after_a_complete_message_without_a_line_feed, test_eof_in_the_middle_of_a_message
+KILLED    i-string-id-unquoted                         A  tests: test_unknown_method, test_ids_of_every_json_type, test_the_same_id_twice
+KILLED    i-integer-id-rewritten                       A  tests: test_random_lines, test_a_batch_is_refused_whole, test_a_call_before_initialize, test_a_carriage_return_ends_nothing_but_the_line
+KILLED    i-float-id-accepted                          D  tests: test_ids_of_every_json_type
+KILLED    i-notification-answered                      D  tests: test_a_call_before_initialize, test_eof_after_a_complete_message_without_a_line_feed, test_every_exit_code_of_the_command_line_is_a_tool_result, test_one_byte_chunks
+KILLED    i-null-id-accepted                           D  tests: test_ids_of_every_json_type
+KILLED    i-jsonrpc-version-unchecked                  D  tests: test_jsonrpc_member
+KILLED    e-isError-always-false                       A  tests: test_refusals_are_data, test_runs_and_verify
+KILLED    e-exit-code-zero                             A  tests: test_refusals_are_data
+KILLED    e-text-is-the-document                       A  tests: test_every_fixture_a_call_can_say
+KILLED    e-structured-content-is-the-data             A  tests: test_every_fixture_a_call_can_say
+KILLED    l-no-initialize-needed                       D  tests: test_a_call_before_initialize
+KILLED    l-unknown-method-is-empty                    D  tests: test_unknown_method
+KILLED    l-batch-is-served-as-an-object               D  tests: test_a_batch_is_refused_whole
+KILLED    l-other-version-echoed                       D  tests: test_handshake_and_list, test_initialize_is_checked_and_negotiates
+KILLED    l-cursor-ignored                             D  tests: test_unknown_method
+KILLED    a-duplicate-key-accepted                     D  tests: test_a_key_twice
+KILLED    a-nat-negative-accepted                      D  tests: test_wrong_arguments
+KILLED    a-nul-accepted                               D  tests: test_wrong_arguments
+KILLED    a-float-nat-accepted                         D  tests: test_wrong_arguments
+KILLED    a-unknown-tool-is-a-tool-result              D  tests: test_wrong_arguments
+KILLED    a-both-file-and-records                      D  tests: test_records_are_the_file
+KILLED    r-read-only-switch-removed                   C  tests: test_read_only_refuses_what_writes
+KILLED    r-write-flags-not-checked                    C  tests: test_read_only_refuses_what_writes
+KILLED    r-list-is-always-the-full-one                C  tests: test_handshake_and_list, test_the_list_without_write_is_the_generated_one
+KILLED    r-write-needs-no-root                        C  tests: test_write_needs_a_root
+KILLED    r-refusal-is-not-exit-4                      C  tests: test_read_only_refuses_what_writes
+KILLED    t-root-not-passed                            C  tests: test_refusals_are_data
+SURVIVED  t-root-checked-twice-skipped                 C  
+KILLED    c-header-dropped                             A  tests: test_records_are_the_file
+KILLED    c-scale-forgotten                            A  tests: test_records_are_the_file
+KILLED    c-any-key-is-a-column                        A  tests: test_records_are_the_file
+KILLED    c-key-twice-accepted                         A  tests: test_records_are_the_file
+KILLED    c-inexact-number-accepted                    A  tests: test_records_are_the_file
+KILLED    c-pointer-without-the-row                    A  tests: test_records_are_the_file
+KILLED    g-a-tool-is-missing-from-the-list            B  tests: test_the_list_with_write_is_the_generated_one
+KILLED    g-a-ceiling-is-wrong-in-the-generator        B  check_mcp_tools.py --introspect: FAIL stale: docs/mcp/tools.json differs from the regeneration (python3 scripts/mcp_tools.py)
+KILLED    g-a-kind-is-wrong-in-the-generator           B  check_mcp_tools.py: FAIL stale: docs/mcp/tools.json differs from the regeneration (python3 scripts/mcp_tools.py)
+KILLED    g-the-table-is-not-the-source                B  check_mcp_tools.py: FAIL stale: docs/mcp/tools.json differs from the regeneration (python3 scripts/mcp_tools.py)
+KILLED    x-the-clock-is-read                          F  manifest.py --tree: FAIL ml-mcp: manifests/ml-mcp.authority.json is not the compiler's report | FAIL ml-mcp: generated/ml-mcp/built.cho is stale | FAIL ml-mcp: build/ml-mcp introspect prints an authority that is not the compiler's (a stale build?) | FAIL ml-mcp: clock is forbidden to every tool | FAIL ml-mcp: clock is 
+KILLED    x-the-ceiling-is-wider-than-the-row          F  manifest.py --tree: FAIL ml-mcp: conc is not within the ceiling in tools.toml
+KILLED    g-the-call-table-loses-a-flag                B  tests: test_refusals_are_data, test_an_invalid_argument_is_refused_by_the_schema_and_by_the_library, test_a_valid_argument_set_is_accepted_by_the_server
+KILLED    x-a-network-label-in-the-ceiling             F  manifest.py --tree: FAIL ml-mcp: net_in("") is allowed beyond the base row and has no reason in [ml-mcp.reasons] of tools.toml
+KILLED    f-answer-not-flushed                         D  tests: test_a_batch_is_refused_whole, test_a_call_before_initialize, test_a_carriage_return_ends_nothing_but_the_line, test_a_key_twice
+PASSED    baseline (the unchanged tree)                -  
+
+51 mutants: 50 killed, 1 survived, 0 invalid
+SURVIVOR t-root-checked-twice-skipped: equivalent: the root of a call is the root the server checked at its start, with the same function, so a root with two dots in a row never reaches a call
