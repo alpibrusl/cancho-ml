@@ -73,7 +73,7 @@ Each has gates, an oracle and mutants (see [the evidence page](https://alpibrusl
 
 ## What was measured
 
-Correctness, by script, on this tree. `scripts/check.sh` exits 0 on gram in one pass (57 min): 520 conformance tests pass, none skipped; `scripts/admit.py`, without `--fast`, on gram, admits `tree`, `forest`, `linear`, `logistic` and `kmeans` with 12 of 12 checks and `constant` with 9 passes and 3 skips (no threaded fit, no model file of its own, no scikit-learn comparison), and refuses the six mutant modules (`tests/modules/run.py`).
+**The single clean pass of `scripts/check.sh` on this tree (main with the boosted model, 588 conformance tests) has not run: the Linux workstation was unreachable.** Run on this tree: the golden of 112 lines (on the Mac, on the workstation and on the Raspberry Pi 5), the oracle, tracking, non-finite, split and serving gates named in [models-boost.md](models-boost.md) section 10, the fast admission of all seven models, and the board, demo, landing and documentation checks; of the boosted mutants, 33 wiring mutants ran, all killed, and the rest have not run. The figures below are those of main's last full pass, before the boosted model: `scripts/check.sh` exits 0 on gram in one pass (57 min): 520 conformance tests pass, none skipped; `scripts/admit.py`, without `--fast`, on gram, admits `tree`, `forest`, `linear`, `logistic` and `kmeans` with 12 of 12 checks and `constant` with 9 passes and 3 skips (no threaded fit, no model file of its own, no scikit-learn comparison), and refuses the six mutant modules (`tests/modules/run.py`).
 
 | what | figure | source |
 |---|---|---|
