@@ -71,7 +71,7 @@ MUTANTS = [
     ("eval-orphan-not-reported", PAGE, "if (!has(byId, rid) && !has(listed, rid)) {", "if (false) {", {"G4"}),
     ("eval-count-not-compared", PAGE, "if (n > 0 && n !== row.listEvals) {", "if (n < 0 && n !== row.listEvals) {", {"G4"}),
     ("evals-counted-once", PAGE, "attached[eo.run] = (attached[eo.run] || 0) + 1;", "attached[eo.run] = 1;", {"G2"}),
-    ("model-from-first-line", PAGE, "return m ? m[m.length - 1].slice(11) : null;", 'return m ? m[0].slice(11) : "x";', {"G2"}),
+    ("model-from-first-line", PAGE, "return m ? m[m.length - 1].slice(11) : null;", 'return m ? m[0].slice(11) : "x";', {"G7"}),
     ("split-ignores-escapes", PAGE, "if (c === 92) { i++; } else if (c === 34) { return i + 1; }", "if (c === 34) { return i + 1; }", {"G4"}),
     # the primary metric
     ("primary-regression-mae", PAGE, 'regression: "rmse"', 'regression: "mae"', {"G7"}),

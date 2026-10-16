@@ -1091,6 +1091,8 @@ def main(argv):
                 stats["compare"] = r
         except RuntimeError as exc:
             errs.append("%s: %s" % (name, exc))
+        except Exception as exc:  # a gate that cannot read what the page gave is a failed gate, not a crash
+            errs.append("%s: the gate stopped on %s: %s" % (name, type(exc).__name__, str(exc)[:200]))
         print("check_board: %s %s" % (name, "ok" if len(errs) == before else "FAILED"))
     if not only or "G9" in only:
         before = len(errs)
