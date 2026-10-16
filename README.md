@@ -6,7 +6,7 @@
 
 **Status: early, alpha, not for production.** `ml` builds six models. `--model constant` is the baseline: the training mean for a regression, the majority class for a classification. `--model linear` (least squares, ridge with `--l2`), `--model logistic` (binary, Newton's method), `--model tree` (a CART decision tree with histogram splits) and `--model forest` (bagged trees, threaded over trees; `--task`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes`) and `--model kmeans` (a clustering with no target: `--k` centres, a fixed number of Lloyd `--iterations`, a seeded `--init`) go through a pipeline of steps (`impute`, `scale`, `encode`, `bucket`, and `freq` and `hash` for text) that `--step` or `--plan` describes and that is fitted on the training rows and stored, with the model, in **one** file: `predict` and `eval` apply the stored steps, and no flag can apply another transformation. `ml` reads integer, decimal and float CSV columns, takes an empty cell as a missing value that the plan must impute, holds rows out with a seeded `--split`, threads `fit` with `--threads`, gives probabilities with `predict --proba`, and scores with accuracy, precision, recall, F1, ROC-AUC, log-loss, RMSE, MAE and R2 (and, for k-means, the inertia). Text columns declared with `--cat` are read into a bounded dictionary, and the steps `encode` (one-hot, label), `freq` (the share of the training rows) and `hash` (SHA-256, a fixed number of buckets) turn them into numbers, with a rare-category bucket (`min-count`, the category `__other__`) and rules for an unseen string (`unknown`) and an empty cell (`missing`). The model file of such a fit holds a **string table**: the fitted vocabulary of every categorical step, with the training strings and their counts, so `predict` and `eval` read the text columns by name from the file alone, count a string the training rows never held, and hash it into its bucket under a `hash` step. A declared column that no step reads is refused (`ml.input.categorical-not-encoded`). A tree or forest takes a missing cell itself and learns a side for it at each split, where linear and logistic refuse a missing cell that no `impute` step covers (`ml.input.missing-value`); a tree or forest fit takes at most 2^20 (1,048,576) training rows (`ml.input.too-many-rows`). A tree or forest file is model kind 7, with the summation order 3 (sequential sums: no lane sum reaches its bytes). k-means has no target: `fit` needs no `--target` and refuses one, the file's schema has no target column, `predict` prints the cluster of each row (and with `--distance` the squared distance to its centre) and `eval` the inertia, the rows of each cluster and the mean distance of each; a missing cell is refused as for linear and logistic. A k-means file is model kind 6, with the summation order 2. A model is a module (a manifest, a fixed adapter, generated glue, an admission script) so that the next one cannot add a float order, a capability or an unregistered refusal: [docs/modules.md](docs/modules.md). One pre-registered gate is red (tree regression against scikit-learn, below). The whole list, with what each item was measured as: [docs/status.md](docs/status.md).
 
-A GitHub Actions workflow, `.github/workflows/ci.yml` ([docs/ci.md](docs/ci.md)), builds the pinned compiler and `ml`, `ml-predict` and `ml-serve` on `ubuntu-24.04` and `ubuntu-26.04` (Linux x86-64), `ubuntu-24.04-arm` (Linux aarch64) and `macos-26` (macOS arm64) and runs the fast gates and a cross-platform determinism gate on each; the full gate runs on request and nightly, and a tag `v*` publishes the binaries. `scripts/check.sh` runs every gate, and `scripts/check_docs.sh` checks this README and the project pages (see Contributing).
+A GitHub Actions workflow, `.github/workflows/ci.yml` ([docs/ci.md](docs/ci.md)), builds the pinned compiler and `ml`, `ml-predict`, `ml-serve` and `ml-mcp` on `ubuntu-24.04` and `ubuntu-26.04` (Linux x86-64), `ubuntu-24.04-arm` (Linux aarch64) and `macos-26` (macOS arm64) and runs the fast gates and a cross-platform determinism gate on each; the full gate runs on request and nightly, and a tag `v*` publishes the binaries. `scripts/check.sh` runs every gate, and `scripts/check_docs.sh` checks this README and the project pages (see Contributing).
 
 ## One complete flow
 
@@ -546,6 +546,30 @@ $ curl -s -H 'Authorization: Bearer demo-token' localhost:8081/model
 
 The model is read at start and changed by restarting. There is no TLS, no reload and no request deadline beyond the idle time. [docs/serving-http.md](docs/serving-http.md) has the endpoints, the status of every refusal, the limits and the gates.
 
+### An MCP server
+
+`ml-mcp` is the fourth binary, built from the same sources ([docs/mcp.md](docs/mcp.md)). It speaks the [Model Context Protocol](https://modelcontextprotocol.io) (revision `2025-06-18`) over standard input and output, one JSON-RPC message per line, and exposes ten tools: `fit`, `predict`, `eval`, `cv`, `describe`, `introspect`, `runs_list`, `runs_show`, `runs_compare` and `runs_verify`. The tools are derived from the flag table that drives the parser, `introspect` and the schemas: `scripts/mcp_tools.py` writes `docs/mcp/tools.json` (the name, description, `inputSchema` and `outputSchema` of each tool) and `tools/ml-mcp/tools.cho`, and `scripts/check_mcp_tools.py` regenerates both and fails when a flag, a model or a rule is added to the table and the files are not. A tool call runs the code of `ml` in the same process, with no subprocess and no `exec`: `structuredContent` is the line `ml` prints for the same command (the bytes are compared, over 303 fixtures of the command line), `content[0].text` is its text form, a refusal is a tool result with `isError: true` that carries the rule, the exit code and the repair as `ml` prints them, and a malformed message is a JSON-RPC error.
+
+A client registers the server with a command and arguments. For a client that reads an `mcpServers` object:
+
+```json
+{
+  "mcpServers": {
+    "cancho-ml": {
+      "command": "/path/to/ml-mcp",
+      "args": ["--root", "/path/to/data"]
+    }
+  }
+}
+```
+
+The server is **read-only unless it is started with `--allow-write`** (which requires `--root`): without the flag `fit` is not listed, the write flags (`output`, `overwrite`, `dry-run`, `track`) are not offered by the other tools, and a call that names one is the tool error `mcp.read-only` (exit code 4). Paths are relative to `--root` and checked as the command line checks them (no `..`, no absolute path, no symbolic link). `predict` takes `file` or `records`, a JSON array of objects rendered to the CSV the predictor reads by the byte rule of `ml-serve` (a number that cannot be written exactly for its column is `serve.number-not-exact`, with the JSON Pointer of the value). A message longer than `--max-message-bytes` (1 MiB by default, 16 MiB at most) is refused before it is kept. The server reads one message at a time; it has no clock, so there is no deadline, and a `notifications/cancelled` for a call in progress is read after the call has answered. Its authority row is the row of `ml` and nothing more: no network, no listener, no subprocess, no clock. A session on the data of the first example (the list of tools is shown by its names):
+
+<!-- gen:mcp-session -->
+<!-- /gen:mcp-session -->
+
+Not implemented: resources, prompts, completions, logging, sampling, roots, elicitation, tasks, progress, pagination, JSON-RPC batches (refused with `-32600`), the streamable HTTP transport and the stateless revision `2026-07-28` (`docs/mcp.md` sections 1 and 11).
+
 ### The numeric stores other repositories pin
 
 The random generator, the matrix and its missing-cell bitmap, the exact sums, the linear algebra (Cholesky and the solves among it) and the ranks and splits are published as 23 pinned stores under `.cancho-vcs`, one per module (`ml.rng`, `ml.matrix`, `linalg.chol`, `metrics.splits` and the others), so that another repository, `cancho-stats` first, pins them and copies nothing. `python3 scripts/publish_stores.py` writes them, `--check` fails when a committed store differs from a fresh publish of the sources, and `python3 scripts/consume_stores.py` builds a scratch package outside the repository that pins the stores of a commit and calls every module. A consumer writes, for each module it imports:
@@ -611,20 +635,21 @@ authority   args, conc, dir_read, dir_write, err_write, file_read, file_write, f
 | 9 | `DRY_RUN` | a --dry-run completed; planned_actions lists what an apply would do |
 <!-- /gen:exit-codes -->
 
-* **The authority row.** What the compiler says the program can reach. It reads the files named on its command line and, for `predict -`, standard input (`io_read`), creates, appends to, renames and removes only beneath a directory it opened itself, and keeps its working data on the heap. `ml-predict` has the same row without `conc`, `dir_write` and `file_write`. `ml-serve` has the row of `ml-predict` without standard input and with the sockets of a server (`net_in`, `conn_accept`, `conn_read`, `conn_write`, `poll`) and `clock` (the idle timeout and the access log): no write of any file, no thread, no process, no foreign code, no outbound connection. `conc` is in the row of `ml` because `fit --threads N` calls the threaded kernels of `lib/linalg`; `tools.toml` states the reason, and the test that no thread count changes a byte is in `tests/conformance` ([docs/wiring.md](docs/wiring.md) section 6).
+* **The authority row.** What the compiler says the program can reach. It reads the files named on its command line and, for `predict -`, standard input (`io_read`), creates, appends to, renames and removes only beneath a directory it opened itself, and keeps its working data on the heap. `ml-predict` has the same row without `conc`, `dir_write` and `file_write`. `ml-serve` has the row of `ml-predict` without standard input and with the sockets of a server (`net_in`, `conn_accept`, `conn_read`, `conn_write`, `poll`) and `clock` (the idle timeout and the access log): no write of any file, no thread, no process, no foreign code, no outbound connection. `ml-mcp` has the row of `ml`: no network, no listener, no clock, no process, no foreign code. `conc` is in the row of `ml` because `fit --threads N` calls the threaded kernels of `lib/linalg`; `tools.toml` states the reason, and the test that no thread count changes a byte is in `tests/conformance` ([docs/wiring.md](docs/wiring.md) section 6).
 
 <!-- gen:authority -->
 ```console
-# manifests/ml.authority.json, manifests/ml-predict.authority.json and manifests/ml-serve.authority.json
+# manifests/ml.authority.json, manifests/ml-predict.authority.json, manifests/ml-serve.authority.json and manifests/ml-mcp.authority.json
 ml          args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_read, io_write
 ml-predict  args, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write
 ml-serve    args, clock, conn_accept, conn_read, conn_write, dir_read, err_write, file_read, fs_read(""), heap, io_write, net_in(""), poll
-# bounded: true; foreign symbols: none; ffi, net_out: absent from all three; net_in, clock: ml-serve only
+ml-mcp      args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap, io_read, io_write
+# bounded: true; foreign symbols: none; ffi, net_out: absent from all four; net_in, clock: ml-serve only
 ```
 <!-- /gen:authority -->
 
 * **Where the output is the contract package's text, not a measurement for `ml`.** `introspect.guarantees` and parts of `skill` are written by the pinned `cancho-tools` package and are wrong or too narrow for `ml` in six places, for example "read-only: it never writes" although `fit` writes. They are listed in [docs/cli.md](docs/cli.md) section 8 so that nobody reads them as claims.
-* **An MCP server is not built.** `docs/cli.md` section 9 says how it would be derived from `introspect`.
+* **`ml-mcp` serves one client over standard input and output, one call at a time.** A call in progress cannot be cancelled and has no deadline (the limits on rows, columns, bytes, trees and depth bound the work), a message over `--max-message-bytes` is refused, and the revision implemented is `2025-06-18` (`docs/mcp.md` section 11).
 
 ## What it cannot do
 

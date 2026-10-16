@@ -648,3 +648,19 @@ standard deviation of the training cells as the reader read them. `eval` says wh
 (`out_of_range`, bounded by `--max-out-of-range`); `fit --track DIR` writes a canonical run record whose id is the hash of the inputs that determine the model bytes; `ml runs list|show|compare|verify`
 read the records and replay a fit in memory. The split of a record is the canonical split text of section 22 (`none`, `holdout train=0.8 stratify seed=1`, ...), and a replay holds the same rows out for every strategy. `ml cv` takes no `--track`
 (`docs/tracking.md` section 5.7). The registries are unchanged except the section tag (7) and the rule tags of section 8; no model kind, step kind or stream kind is added, and no capability.
+
+## 24. Issue 45: `ml-mcp`, an MCP server derived from the flag table (`docs/mcp.md`)
+
+**Decision [choice].** The agent surface over the Model Context Protocol is a fourth binary, `ml-mcp`, with its own entry point and the sources of `ml`. The protocol revision is `2025-06-18` (handshake, structured tool
+results, output schemas, newline-delimited stdio); the revision `2026-07-28`, which has no handshake, is not implemented. The tools (`fit`, `predict`, `eval`, `cv`, `describe`, `introspect`, `runs_*`) are generated from the flag table,
+not written: `scripts/mcp_tools.py` emits `docs/mcp/tools.json` and `tools/ml-mcp/tools.cho`, and `scripts/check_mcp_tools.py` fails on drift. A call runs the code of `ml` in the same process.
+
+**What the library gave up for it [read, measured].** The command line and the library were joined by `Args` and by `&static [byte]` slices of it (`Opts` held `target`, `drops`, `step`, ...), and a string that arrives as data is not
+static and cannot be made so by the pinned compiler (`docs/arguments.md` of the compiler: argv is written once, before any code runs; a struct cannot carry a region). The command line is therefore read through one module,
+`ml.argv`: `main` packs the real `Args` and the pinned parser's reading of it into one byte slice, and everything below reads that slice; `ml-mcp` packs the equivalent command line of a call. The texts of the scans (the target and the lists
+of `--drop`, `--float`, `--cat` and `--na-values`) travel as one slice beside the configuration. `toolbox.path.root` and `.operand` read `Args` by index, so `ml.paths` has their rules over text (the pinned `lexical`, `under`,
+`has_dotdot` and `longest` do the work); the command line's conformance tests are the check that the rules are the same. The authority rows of `ml`, `ml-predict` and `ml-serve` are unchanged.
+
+**Authority [choice].** The row of `ml-mcp` is the row of `ml`: `conc` because `fit` and `cv` share the threaded kernels, `io_read` because the protocol is read from standard input. It has no clock, so no deadline
+(`--timeout-seconds` is not offered), and no listener, so no second transport.
+

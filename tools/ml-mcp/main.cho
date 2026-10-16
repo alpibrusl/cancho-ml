@@ -181,7 +181,7 @@ fn dispatch[&h, &f, &l, &t, &r](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], 
                 var cursor_ok = true;
                 if params >= 0 {
                     let c = json.get(line, tape, params, "cursor");
-                    if !json.is_object(tape, params) || (c >= 0 && !(json.is_string(tape, c) && json.string_length(line, tape, c) == 0)) {
+                    if !json.is_object(tape, params) || c >= 0 && !(json.is_string(tape, c) && json.string_length(line, tape, c) == 0) {
                         cursor_ok = false;
                     }
                 }

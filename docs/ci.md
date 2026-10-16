@@ -8,7 +8,7 @@ that the claim names the machines it holds on, and fails when it stops holding o
 
 ## 1. What the workflow is for
 
-1. **Build** the pinned compiler and the three binaries `ml`, `ml-predict` and `ml-serve` on Linux x86-64 and macOS arm64, from nothing but the repository
+1. **Build** the pinned compiler and the four binaries `ml`, `ml-predict`, `ml-serve` and `ml-mcp` on Linux x86-64 and macOS arm64, from nothing but the repository
    and the pins in `cancho.toml`.
 2. **Determinism gate**: on each of those two platforms, the fingerprint of the built `ml` equals one committed file (section 2).
 3. **Fast gates**: the checks that need no numerical oracle (section 5).
@@ -104,7 +104,8 @@ The fast gates (`build-test`, in this order; each can fail, and the first failur
 2. the compiler: cache restore, and on a miss clone at the revision and `cargo build --release -p cancho`. The key holds the revision, so a pin that has not run yet has no cache entry: its first run builds the compiler uncached on each of the four runners, and the later runs restore it;
 3. `scripts/check_table_pin.sh`, `scripts/check_web_pin.py` (the pins agree with the documents);
 4. `cancho install`, `cancho fmt --check lib tests tools`;
-5. `cancho build --bin ml`, `--bin ml-predict`, `--bin ml-serve`, then `scripts/check_bins.py` and `scripts/check_web_pin.py --bins` (the three are built from the same sources);
+5. `cancho build --bin ml`, `--bin ml-predict`, `--bin ml-serve`, `--bin ml-mcp`, then `scripts/check_bins.py` and `scripts/check_web_pin.py --bins` (the four are built from the same sources);
+5b. **the MCP server** (`docs/mcp.md`): `scripts/check_mcp_tools.py --introspect` (the tools of `ml-mcp` regenerate to the committed `docs/mcp/tools.json` and `tools/ml-mcp/tools.cho`, equal to `ml introspect`, valid JSON Schema, with generated valid and invalid arguments), `--mutants` (eight edits of the generator are refused) and `scripts/check_mcp.py` (the protocol client starts `ml-mcp`, lists the tools and calls every one on the bundled data against the command line, then the refusals, the schemas against the real answers and the hostile input: 48 tests, 32 s on a Mac at a load average near 80, so a runner is expected to need less);
 6. **the determinism gate**: `scripts/xplat_check.py --require-predict` and `--mutants`;
 7. **the demo script**: `scripts/check_demo.py` runs `scripts/demo.sh` with the built binaries (two tracked experiments, `ml runs compare` and `verify`, `eval` on the training file and on another, `ml-serve` on its default bind and two `curl` requests) and asserts its key facts, and `--mutants` shows that ten edits of the script are refused; `curl` and `python3` are on all four runner images, and the step takes seconds;
 8. **the experiments board**: `scripts/check_board.py` runs the page's logic under `node` (preinstalled on the runner images; the script falls back to another engine only where `node` cannot start) against records the built `ml` makes: its compare equals `ml runs compare` on every ordered pair and its recomputed ids equal the tool's (`crypto.subtle` against `hashlib` included), in about 5 s.

@@ -44,9 +44,7 @@ is not speaking MCP). The names and the set come from the `usage` lines of the f
 * `description`: the verb's line of `usage`, the summary of the flag table, and the help of each property is the help of its flag (the text of `ml introspect`, not a copy: the generator reads it).
 * `inputSchema` (JSON Schema 2020-12): one property per flag the verb takes (`allowed(verb)` of `spec.cho`) except those the server owns (`root`, `format`, `log`, `log-max-bytes`, and the guard flags when the server
   is started read-only), plus the operands: `file` (the CSV), and for `runs_*` `dir` and `id` / `id_a`, `id_b`. By kind: `nat` is an `integer` with `minimum` 0 and, for a flag with an entry in `limits`, the ceiling as `maximum` and the
-  default as `default`; `choice:a/b` an `enum`; `bool` a `boolean`; `text` and `path` a `string` (`minLength` 1). `required`: the flags the verb needs (`fit`: `target`, `output`, but `target` is optional for `--model kmeans`, which the schema cannot state: it says
-  so in the description and the library refuses); `file` for `fit`, `eval`, `cv`; `model-file` for `predict`, `eval`, `describe`. `additionalProperties: false`. Conflicts the schema can state become `dependentRequired` / `not`
-  (`overwrite` needs `output`); the rest (`plan` against `step`, `split-by` against `stratify`, the hyperparameters a model does not take) are `args.conflict` from the library and the description says so.
+  default as `default`; `choice:a/b` an `enum`; `bool` a `boolean`; `text` and `path` a `string` (`minLength` 1). `required`: the flags the usage line of the verb writes outside brackets (`fit`: `output`; `target` is optional there because `--model kmeans` has none), the operands the verb needs (`file` for `fit`, `eval`, `cv`; `dir` and the ids for `runs_*`), and `model-file` for `predict`, `eval`, `describe`; the library refuses what is missing as the command line does. `additionalProperties: false`. No conflict between flags is stated in the schema (the schema has no `dependentRequired` or `not`): `plan` against `step`, `split-by` against `stratify` and the hyperparameters a model does not take are `args.conflict` from the library, and the description of each tool says so.
 * `predict` takes `file` **or** `records` (section 4.3): `oneOf` over the two.
 * `outputSchema`: the envelope of `schemas/ml.v1.json` with the `data` member narrowed to the variants of that verb (chosen by the property names of each variant, `scripts/mcp_tools.py`), self-contained.
 * `annotations`: `readOnlyHint` true for every tool but `fit` (and `eval`/`cv` never write unless `track`/`output` are given, which the tools offer only with `--allow-write`); `destructiveHint` false;
@@ -87,11 +85,10 @@ So a call is **the same checks, the same code, the same refusals**: the call is 
 ### 4.2 The result
 
 `structuredContent` is the document the CLI prints on one line (`schemas/ml.v1.json`: `ok`, `command`, `schema`, `data` or `errors`, `meta`), parsed. `content[0]` is `{"type":"text","text":...}` with the text form
-(`--format text`) of a success, and for a refusal the sentence(s) of the refusal. Byte equality is tested on the document: the server builds it with the same function (`toolbox.out.document`) from the same
-buffers, and the test client compares the **canonical serialisation** of `structuredContent` (keys in order, no space) with the CLI's line (gate A).
+(`--format text`) of a success, and for a refusal the document itself (the sentences of a refusal are what `--format text` writes to standard error, which a tool has none of). Byte equality is tested on the document: the server builds it with the same function (`toolbox.out.document`) from the same
+buffers, and the test client compares the **exact bytes** of the `structuredContent` member of the response line with the line the CLI prints (gate A).
 
-* A **success** is `isError: false`. A dry run (exit 9) is a success with `dry_run: true`; the exit code does not exist in the MCP result, so `structuredContent` carries it in `_meta`-free form as the CLI does:
-  `ok: true`, `dry_run: true`. The result's `_meta` is `{"ml/exit": N}` with the exit code of the equivalent command (0 or 9, or the refusal's) **[choice]**.
+* A **success** is `isError: false`, with `_meta` `{"ml/exit": 0}`. A dry run (`fit` with `dry-run`) is a success too: the document says `dry_run: true`, and `_meta` says `{"ml/exit": 9}`, the exit code of the equivalent command **[choice]**.
 * A **refusal** (`ok: false`: any `errors` of the CLI: `args.*`, `path.*`, `io.*`, `ml.*`, `limit.*`, `parse.*`, `conflict.exists`) is a **tool result** with `isError: true`, `structuredContent` the document with `error` / `errors`
   (rule, code, message, hint, repair, detail) **exactly** as the CLI prints it, and `_meta` `{"ml/exit": N}` with the exit code of its first error.
 * A **protocol problem** is a JSON-RPC error: malformed JSON `-32700`; not a request object, a batch, a message over the limit, an `id` that is an object or an array `-32600`; unknown method `-32601`; unknown tool, `arguments`
@@ -114,7 +111,7 @@ model's order), a number is judged from its text and never from a double (`serve
 
 | limit | flag | default | ceiling | refused with, before allocation |
 |---|---|---|---|---|
-| one message | `--max-message-bytes` | 1,048,576 | 16,777,216 | the line is read up to the limit + 1 bytes and no more is kept; the rest of the line is discarded as it arrives; the answer is `-32600` `mcp.message-too-large` with `id: null` |
+| one message | `--max-message-bytes` | 1,048,576 | 16,777,216 | no more than the limit is kept; the rest of the line is read and dropped as it arrives; the answer is the JSON-RPC error `-32600` (the message names `--max-message-bytes`) with `id: null` |
 | JSON nesting | the depth limit of `std.json` | its own | | `-32700` (parse error) |
 | inline records | the `limit` of `predict` | 1000 | 1,000,000 | `ml.param.out-of-range` |
 | every limit of the CLI | `max-rows`, `max-bytes`, `max-line-bytes`, ... | as `introspect` | as `introspect` | by the library, with its rule |

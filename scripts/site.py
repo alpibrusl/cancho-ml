@@ -225,7 +225,7 @@ def run_words(words, binary, cwd, stdin=None):
     """The command, run as `words` say (argv[0] is what the tool prints in a repair) with `binary`, or its sibling `ml-predict` for that command;
     `stdin` is the name of a file in `cwd` given on standard input (none: an empty one)."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"}
-    exe = Path(binary).parent / words[0] if words and words[0] in ("ml-predict", "ml-serve") else binary
+    exe = Path(binary).parent / words[0] if words and words[0] in ("ml-predict", "ml-serve", "ml-mcp") else binary
     data = (Path(cwd) / stdin).read_bytes() if stdin else b""
     r = subprocess.run(words, executable=str(exe), cwd=cwd, env=env, input=data,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -425,8 +425,64 @@ def make_context(binary, tmp):
     examples = sx.run_examples(run, tmp, ref)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
-    return {"results": results, "http": http_results, "demo": demo, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref,
+    mcp = mcp_session(binary, tmp)
+    return {"mcp": mcp, "results": results, "http": http_results, "demo": demo, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref,
             "board_sample": board_sample_lines(binary)}
+
+
+# The MCP session (docs/mcp.md gate H): `ml-mcp` is started on a directory, and a client does the handshake, lists the tools, fits a model with a run record, predicts with inline records
+# and lists the runs. The lines are the lines the protocol client (tests/conformance/mcp_client.py) wrote and read; the list of the tools, which is long, is shown by its names.
+MCP_CSV = "id,rooms,area,price\n1,2,48.5,180000\n2,3,71.25,240000\n3,3,64,215000\n4,4,98.5,335000\n5,1,31,120000\n"
+
+
+def mcp_session(binary, tmp):
+    sys.path.insert(0, str(ROOT / "tests" / "conformance"))
+    import mcp_client
+    server = Path(binary).parent / "ml-mcp"
+    if not server.exists():
+        raise Drift("%s does not exist: run `cancho build --bin ml-mcp`" % server)
+    work = Path(tmp) / "mcp"
+    (work / "runs").mkdir(parents=True)
+    (work / "houses.csv").write_text(MCP_CSV)
+    lines = []
+    c = mcp_client.Client("--root", ".", "--allow-write", cwd=str(work), binary=str(server))
+    try:
+        def exchange(method, params=None, show=None):
+            msg = {"jsonrpc": "2.0", "id": c.next_id, "method": method}
+            if params is not None:
+                msg["params"] = params
+            c.next_id += 1
+            line = json.dumps(msg, separators=(",", ":"), ensure_ascii=False)
+            c.send_line(line)
+            lines.append("> " + line)
+            raw = c.read_line(60).decode("utf-8")
+            lines.append("< " + (show(raw) if show else raw))
+            return json.loads(raw)
+
+        def listed(raw):
+            names = [t["name"] for t in json.loads(raw)["result"]["tools"]]
+            return '{"jsonrpc":"2.0","id":2,"result":{"tools":[%s]}}   (%d bytes: each tool has a description, an inputSchema, an outputSchema and annotations)' % (",".join('{"name":"%s",...}' % n for n in names), len(raw))
+
+        exchange("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "client", "version": "1"}})
+        note = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+        c.send_line(json.dumps(note, separators=(",", ":")))
+        lines.append("> " + json.dumps(note, separators=(",", ":")))
+        exchange("tools/list", show=listed)
+        exchange("tools/call", {"name": "fit", "arguments": {"file": "houses.csv", "target": "price", "model": "linear", "output": "houses.ml", "track": "runs"}})
+        exchange("tools/call", {"name": "predict", "arguments": {"model-file": "houses.ml", "records": [{"id": 6, "rooms": 2, "area": 52.5}, {"id": 7, "rooms": 3, "area": 80}]}})
+        listing = exchange("tools/call", {"name": "runs_list", "arguments": {"dir": "runs"}})
+        for ln in lines:
+            if '"isError":true' in ln:
+                raise Drift("the MCP session has a refusal: %s" % ln[:200])
+        if listing["result"]["structuredContent"]["data"]["count"] != 1:
+            raise Drift("the MCP session did not record one run")
+    finally:
+        c.kill()
+    return lines
+
+
+def mcp_items(ctx):
+    return [("ml-mcp --root . --allow-write", "\n".join(ctx["mcp"]), 0, None)]
 
 
 # Run tracking and the skew checks (docs/tracking.md) on docs/examples/data/iris_train.csv and iris_test.csv. The ids are the hashes of the inputs, so they are the same on every run; the
@@ -698,6 +754,17 @@ def predict_authority(ctx):
     return ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in manifest["labels"])
 
 
+def mcp_authority(ctx):
+    manifest = json.loads((ROOT / "manifests" / "ml-mcp.authority.json").read_text())
+    out, status = ctx["run"](["ml-mcp", "introspect"])
+    if status != 0 or manifest != json.loads(out)["authority"]:
+        raise Drift("manifests/ml-mcp.authority.json is not what `ml-mcp introspect` says: run scripts/manifest.py")
+    effects = {lab["name"] for lab in manifest["labels"]}
+    if not manifest["bounded"] or manifest["foreign_symbols"] or effects & (FORBIDDEN | {"net_in", "clock", "conn_accept", "conn_read", "conn_write", "poll", "exec", "env"}):
+        raise Drift("the authority of ml-mcp has a network label, the clock, an exec, a foreign symbol or an environment read, or is unbounded")
+    return ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in manifest["labels"])
+
+
 def serve_authority(ctx):
     manifest = json.loads((ROOT / "manifests" / "ml-serve.authority.json").read_text())
     out, status = ctx["run"](["ml-serve", "introspect"])
@@ -725,16 +792,16 @@ def authority_row(ctx):
 def authority_md(ctx):
     m = authority_row(ctx)
     names = ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in m["labels"])
-    return ("```console\n# manifests/ml.authority.json, manifests/ml-predict.authority.json and manifests/ml-serve.authority.json\nml          %s\nml-predict  %s\nml-serve    %s\n"
-            "# bounded: %s; foreign symbols: none; ffi, net_out: absent from all three; net_in, clock: ml-serve only\n```" % (names, predict_authority(ctx), serve_authority(ctx), str(m["bounded"]).lower()))
+    return ("```console\n# manifests/ml.authority.json, manifests/ml-predict.authority.json, manifests/ml-serve.authority.json and manifests/ml-mcp.authority.json\nml          %s\nml-predict  %s\nml-serve    %s\nml-mcp      %s\n"
+            "# bounded: %s; foreign symbols: none; ffi, net_out: absent from all four; net_in, clock: ml-serve only\n```" % (names, predict_authority(ctx), serve_authority(ctx), mcp_authority(ctx), str(m["bounded"]).lower()))
 
 
 def authority(ctx):
     m = authority_row(ctx)
     names = ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in m["labels"])
-    return ('<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json, manifests/ml-predict.authority.json and manifests/ml-serve.authority.json</span>\n'
-            'ml          %s\nml-predict  %s\nml-serve    %s\n<span class="c"># bounded: %s; foreign symbols: none; ffi, net_out: absent from all three; net_in, clock: ml-serve only</span></pre>'
-            % (e(names), e(predict_authority(ctx)), e(serve_authority(ctx)), str(m["bounded"]).lower()))
+    return ('<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json, manifests/ml-predict.authority.json, manifests/ml-serve.authority.json and manifests/ml-mcp.authority.json</span>\n'
+            'ml          %s\nml-predict  %s\nml-serve    %s\nml-mcp      %s\n<span class="c"># bounded: %s; foreign symbols: none; ffi, net_out: absent from all four; net_in, clock: ml-serve only</span></pre>'
+            % (e(names), e(predict_authority(ctx)), e(serve_authority(ctx)), e(mcp_authority(ctx)), str(m["bounded"]).lower()))
 
 
 def limits(ctx):
@@ -1129,6 +1196,8 @@ for _rel in ("docs/index.html", "docs/guide.html", "docs/examples.html", "docs/e
     REGIONS.setdefault(_rel, {})
     REGIONS[_rel]["nav"] = lambda c, r=_rel: nav_html(r)
     REGIONS[_rel]["foot"] = lambda c, r=_rel: foot_html(r)
+REGIONS["README.md"]["mcp-session"] = lambda c: md_block(mcp_items(c))
+REGIONS["docs/guide.html"]["mcp-session"] = lambda c: html_pre(mcp_items(c))
 REGIONS["README.md"]["ex-flow"] = lambda c: md_block(sx.cmd_items(c["examples"], "iris", only=["fit"]))
 REGIONS["docs/examples.md"] = {"ex-results": lambda c: sx.full_md(c["examples"], c["ref"])}
 REGIONS["README.md"]["ex-summary"] = lambda c: sx.summary_md(c["examples"], c["ref"])

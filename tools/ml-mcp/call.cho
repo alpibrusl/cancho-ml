@@ -202,7 +202,7 @@ fn check_arguments[&h, &l, &t](heap: &!h Heap, row: &static [byte], line: &l [by
                 if !json.is_array(tape, v) {
                     status = 2;
                 }
-            } else if operand || (!bytes.equal(kind, "bool") && !bytes.equal(kind, "nat")) {
+            } else if operand || !bytes.equal(kind, "bool") && !bytes.equal(kind, "nat") {
                 if !json.is_string(tape, v) {
                     status = 2;
                 } else {
@@ -218,11 +218,9 @@ fn check_arguments[&h, &l, &t](heap: &!h Heap, row: &static [byte], line: &l [by
                 if json.kind(tape, v) != json.kind_true() && json.kind(tape, v) != json.kind_false() {
                     status = 2;
                 }
-            } else {
                 // nat: a whole number, not negative, written without a point or an exponent
-                if json.kind(tape, v) != json.kind_int() || int_of(line[tape[3 * v + 1]]) == '-' {
-                    status = 2;
-                }
+            } else if json.kind(tape, v) != json.kind_int() || int_of(line[tape[3 * v + 1]]) == '-' {
+                status = 2;
             }
             if status != 0 {
                 pointer = buffer.append(heap, buffer.append(heap, pointer, "/params/arguments/"), name);
@@ -573,7 +571,7 @@ pub fn tool_call[&h, &f, &l, &t, &i, &r](heap: &!h Heap, fs: &f Fs(""), root: &r
         if args >= 0 {
             recs_node = json.get(line, tape, args, "records");
         }
-        if has_file == (recs_node >= 0) {
+        if has_file == recs_node >= 0 {
             return invalid(heap, id, "predict takes file or records, one of the two", "/params/arguments");
         }
     }
