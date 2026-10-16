@@ -191,7 +191,7 @@ Machine: a Mac (arm64, Apple M4 Max, macOS 26.2), compiler `a4572ea`, `build/ml`
 |---|---|---|
 | A1 | 286 cases: the assignment of `--emit-folds` and the canonical text equal the oracle's | `python3 scripts/oracle_split.py --assign` |
 | B1 | 381 cases of invariants on generated and hostile data | `--invariants` |
-| C1 | 189 folds: `ml cv` metrics equal `ml fit` then `ml eval` on the oracle's fold files, string for string; plans with impute, scale, bucket, encode, freq, hash and text columns; linear, logistic, tree, forest, kmeans; the aggregate equals the oracle's | `--e2e` |
+| C1 | 246 folds: `ml cv` metrics equal `ml fit` then `ml eval` on the oracle's fold files, string for string; plans with impute, scale, bucket, encode, freq, hash and text columns; linear, logistic, tree, forest, boost (without early stopping, which is refused under the group and time strategies), kmeans; the aggregate equals the oracle's | `--e2e` |
 | C2 | the mutant `leak-steps-fitted-on-all-rows` fails C1 (killed) | `python3 scripts/mutants_split.py --only leak` |
 | D1 | 18 answers identical at `--threads 1` and `8` | `--threads` |
 | S1 | linear: worst relative gap 6.13e-16 (bound 1e-6); logistic: accuracy gap 0 and log-loss gap 1.44e-08 (bound 1e-4 absolute) | `--sklearn` |
