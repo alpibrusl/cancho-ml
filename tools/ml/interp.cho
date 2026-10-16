@@ -1,0 +1,830 @@
+edition 5;
+
+module ml.interp;
+
+// Interpretability that needs no data (docs/interpret.md sections 3.1, 3.2 and 6): the lineage of the columns a model sees (the raw column each comes from and the scalings the
+// stored steps applied to it), the standardised coefficients of the linear models, the impurity decrease of the trees and the forests, and the `importance` member of `describe`.
+// One function per model kind behind `table`: a new kind (boosting) adds its function and one arm. Everything here is a function of the bytes of a decoded model file; nothing is
+// allocated from a number read from the file that the decoder has not compared with the bytes that exist, and a float that is not finite (a hostile file) is made 0.0 where
+// the text says so.
+
+import std.buffer;
+import std.json;
+import std.math;
+import ml.est;
+import ml.fbits;
+import ml.kinds;
+import ml.verbs;
+import ml.wireio;
+import pipeline.file;
+import pipeline.mixed;
+import pipeline.names;
+import pipeline.provsec;
+import pipeline.schema;
+import transforms.catenc;
+import transforms.steps;
+import toolbox.text;
+import tree.model;
+
+// ---------------------------------------------------------------- numbers
+
+pub fn bits(x: float) -> [] int {
+    if x == 0.0 {
+        return 0;
+    }
+    return bits_of(x);
+}
+
+pub fn fabs(x: float) -> [] float {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+// finite: neither NaN nor an infinity
+pub fn finite(x: float) -> [] bool {
+    return x - x == 0.0;
+}
+
+fn get32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+// ---------------------------------------------------------------- the lineage of the columns the model sees (docs/interpret.md 3.1)
+
+// One entry per column the model sees. ints, four a column: the schema index of the raw column it comes from, its place among the numeric features (-1 for an encoder's column),
+// the flags (1 derived by an encoder or a bucket, 2 scaled by a minmax or standard step, 4 imputed), the `ddof` of the last standard step when that step made the column (else -1).
+// floats, two a column: (off, div) such that the column the model sees is (raw - off) / div.
+pub res struct Lineage {
+    n: int,
+    ints: Box[[int]],
+    floats: Box[[float]],
+    nm: names.Names,
+}
+
+pub fn drop_lineage[&h](heap: &!h Heap, l: Lineage) -> [heap] int {
+    let Lineage { n, ints, floats, nm } = l;
+    unbox_slice(heap, ints);
+    unbox_slice(heap, floats);
+    names.drop(heap, nm);
+    return n;
+}
+
+pub fn lineage_width[&l](l: &l Lineage) -> [] int {
+    return l.n;
+}
+
+pub fn l_src[&l](l: &l Lineage, j: int) -> [] int {
+    return contents(l.ints)[4 * j];
+}
+
+pub fn l_k[&l](l: &l Lineage, j: int) -> [] int {
+    return contents(l.ints)[4 * j + 1];
+}
+
+pub fn l_flags[&l](l: &l Lineage, j: int) -> [] int {
+    return contents(l.ints)[4 * j + 2];
+}
+
+pub fn l_unit[&l](l: &l Lineage, j: int) -> [] int {
+    return contents(l.ints)[4 * j + 3];
+}
+
+pub fn l_off[&l](l: &l Lineage, j: int) -> [] float {
+    return contents(l.floats)[2 * j];
+}
+
+pub fn l_div[&l](l: &l Lineage, j: int) -> [] float {
+    return contents(l.floats)[2 * j + 1];
+}
+
+pub fn l_name[&l](l: &l Lineage, j: int) -> [] &l [byte] {
+    return names.name(l.nm, j);
+}
+
+pub fn l_derived[&l](l: &l Lineage, j: int) -> [] bool {
+    return l_flags(l, j) & 1 != 0;
+}
+
+pub fn l_scaled[&l](l: &l Lineage, j: int) -> [] bool {
+    return l_flags(l, j) & 2 != 0;
+}
+
+// the numeric features of the schema: the start of the lineage
+fn initial[&h, &s](heap: &!h Heap, sc: &s schema.Schema) -> [heap] Lineage {
+    var count = 0;
+    var j = 0;
+    while j < schema.columns(sc) {
+        if schema.has_target(sc) && j == schema.target(sc) {
+            j = j + 1;
+        } else {
+            if schema.type_of(sc, j) != kinds.schema_type_categorical() {
+                count = count + 1;
+            }
+            j = j + 1;
+        }
+    }
+    var ints = box_slice(heap, 4 * count + 1, 0);
+    var floats = box_slice(heap, 2 * count + 1, 0.0);
+    var nm = names.empty(heap);
+    borrow mut ints as &!iw in {
+        borrow mut floats as &!fw in {
+            var at = 0;
+            j = 0;
+            while j < schema.columns(sc) {
+                if (!schema.has_target(sc) || j != schema.target(sc)) && schema.type_of(sc, j) != kinds.schema_type_categorical() {
+                    contents(iw)[4 * at] = j;
+                    contents(iw)[4 * at + 1] = at;
+                    contents(iw)[4 * at + 2] = 0;
+                    contents(iw)[4 * at + 3] = 0 - 1;
+                    contents(fw)[2 * at] = 0.0;
+                    contents(fw)[2 * at + 1] = 1.0;
+                    nm = names.add(heap, nm, schema.name(sc, j));
+                    at = at + 1;
+                }
+                j = j + 1;
+            }
+        }
+    }
+    return Lineage { n: count, ints: ints, floats: floats, nm: nm };
+}
+
+// the schema index of the column called `name`, or -1
+fn schema_index[&s, &n](sc: &s schema.Schema, name: &n [byte]) -> [] int {
+    var j = 0;
+    while j < schema.columns(sc) {
+        let c = schema.name(sc, j);
+        if len(c) == len(name) && bytes_equal(c, name) {
+            return j;
+        }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+
+fn bytes_equal[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if int_of(x[i]) != int_of(y[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// one numeric step (kinds 1 to 6) applied to the lineage
+fn numeric_step[&h, &t](heap: &!h Heap, lin: Lineage, st: &t steps.Step) -> [heap] Lineage {
+    let Lineage { n, ints, floats, nm } = lin;
+    let kind = steps.kind(st);
+    let k = steps.int_at(st, 0);
+    var nw = n;
+    if kind == 4 {
+        var q = 0;
+        while q < k {
+            nw = nw - 1 + steps.int_at(st, 3 + k + q);
+            q = q + 1;
+        }
+    }
+    var ni = box_slice(heap, 4 * nw + 1, 0);
+    var nf = box_slice(heap, 2 * nw + 1, 0.0);
+    var nn = names.empty(heap);
+    borrow ints as &ir in {
+        borrow floats as &fr in {
+            borrow nm as &nr in {
+                borrow mut ni as &!iw in {
+                    borrow mut nf as &!fw in {
+                        var at = 0;
+                        var c = 0;
+                        var j = 0;
+                        while c < n {
+                            var hit = 0 - 1;
+                            if j < k && steps.int_at(st, 2 + j) == c {
+                                hit = j;
+                                j = j + 1;
+                            }
+                            if kind == 4 && hit >= 0 {
+                                let cn = steps.int_at(st, 3 + k + hit);
+                                var t = 0;
+                                while t < cn {
+                                    contents(iw)[4 * at] = contents(ir)[4 * c];
+                                    contents(iw)[4 * at + 1] = contents(ir)[4 * c + 1];
+                                    contents(iw)[4 * at + 2] = contents(ir)[4 * c + 2] | 1;
+                                    contents(iw)[4 * at + 3] = contents(ir)[4 * c + 3];
+                                    contents(fw)[2 * at] = contents(fr)[2 * c];
+                                    contents(fw)[2 * at + 1] = contents(fr)[2 * c + 1];
+                                    var nb = buffer.empty(heap, 16);
+                                    nb = buffer.append(heap, nb, names.name(nr, c));
+                                    nb = buffer.push(heap, nb, byte_of('#'));
+                                    nb = buffer.push_nat(heap, nb, t);
+                                    borrow nb as &br in {
+                                        nn = names.add(heap, nn, buffer.bytes(br));
+                                    }
+                                    buffer.drop(heap, nb);
+                                    at = at + 1;
+                                    t = t + 1;
+                                }
+                            } else {
+                                var flags = contents(ir)[4 * c + 2];
+                                var unit = contents(ir)[4 * c + 3];
+                                var off = contents(fr)[2 * c];
+                                var div = contents(fr)[2 * c + 1];
+                                if hit >= 0 {
+                                    if kind == 1 {
+                                        flags = flags | 4;
+                                    } else if kind == 2 || kind == 3 {
+                                        let a = steps.float_at(st, 2 * hit);
+                                        let d = steps.float_at(st, 2 * hit + 1);
+                                        off = off + a * div;
+                                        div = div * d;
+                                        flags = flags | 2;
+                                        unit = 0 - 1;
+                                        if kind == 3 {
+                                            unit = steps.int_at(st, 2 + k);
+                                        }
+                                    } else {
+                                        flags = flags | 1;
+                                    }
+                                }
+                                contents(iw)[4 * at] = contents(ir)[4 * c];
+                                contents(iw)[4 * at + 1] = contents(ir)[4 * c + 1];
+                                contents(iw)[4 * at + 2] = flags;
+                                contents(iw)[4 * at + 3] = unit;
+                                contents(fw)[2 * at] = off;
+                                contents(fw)[2 * at + 1] = div;
+                                nn = names.add(heap, nn, names.name(nr, c));
+                                at = at + 1;
+                            }
+                            c = c + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ints);
+    unbox_slice(heap, floats);
+    names.drop(heap, nm);
+    return Lineage { n: nw, ints: ni, floats: nf, nm: nn };
+}
+
+// a categorical step: its blocks, appended after the columns it received
+fn categorical_step[&h, &t, &s](heap: &!h Heap, lin: Lineage, st: &t catenc.Fit, sc: &s schema.Schema) -> [heap] Lineage {
+    let Lineage { n, ints, floats, nm } = lin;
+    var total = 0;
+    var c = 0;
+    while c < catenc.ncols(st) {
+        total = total + catenc.out_width(heap, st, c);
+        c = c + 1;
+    }
+    let nw = n + total;
+    var ni = box_slice(heap, 4 * nw + 1, 0);
+    var nf = box_slice(heap, 2 * nw + 1, 0.0);
+    var nn = names.empty(heap);
+    let blocked = catenc.kind(st) == kinds.step_cat_onehot() || catenc.kind(st) == kinds.step_hash();
+    borrow ints as &ir in {
+        borrow floats as &fr in {
+            borrow nm as &nr in {
+                borrow mut ni as &!iw in {
+                    borrow mut nf as &!fw in {
+                        var j = 0;
+                        while j < n {
+                            var q = 0;
+                            while q < 4 {
+                                contents(iw)[4 * j + q] = contents(ir)[4 * j + q];
+                                q = q + 1;
+                            }
+                            contents(fw)[2 * j] = contents(fr)[2 * j];
+                            contents(fw)[2 * j + 1] = contents(fr)[2 * j + 1];
+                            nn = names.add(heap, nn, names.name(nr, j));
+                            j = j + 1;
+                        }
+                        var at = n;
+                        c = 0;
+                        while c < catenc.ncols(st) {
+                            let w = catenc.out_width(heap, st, c);
+                            let src = schema_index(sc, catenc.name(st, c));
+                            var t = 0;
+                            while t < w {
+                                contents(iw)[4 * at] = src;
+                                contents(iw)[4 * at + 1] = 0 - 1;
+                                contents(iw)[4 * at + 2] = 1;
+                                contents(iw)[4 * at + 3] = 0 - 1;
+                                contents(fw)[2 * at] = 0.0;
+                                contents(fw)[2 * at + 1] = 1.0;
+                                var nb = buffer.empty(heap, 16);
+                                nb = buffer.append(heap, nb, catenc.name(st, c));
+                                if blocked {
+                                    nb = buffer.push(heap, nb, byte_of('#'));
+                                    nb = buffer.push_nat(heap, nb, t);
+                                }
+                                borrow nb as &br in {
+                                    nn = names.add(heap, nn, buffer.bytes(br));
+                                }
+                                buffer.drop(heap, nb);
+                                at = at + 1;
+                                t = t + 1;
+                            }
+                            c = c + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ints);
+    unbox_slice(heap, floats);
+    names.drop(heap, nm);
+    return Lineage { n: nw, ints: ni, floats: nf, nm: nn };
+}
+
+// the lineage of the columns a decoded model sees: the numeric features of the schema, then each stored step in order
+pub fn lineage_of[&h, &s](heap: &!h Heap, st: &s wireio.Stored) -> [heap] Lineage {
+    let lr = wireio.stored_file(st);
+    let sc = wireio.stored_schema(st);
+    var lin = initial(heap, sc);
+    let payload = file.steps_bytes(lr);
+    if len(payload) < 4 {
+        return lin;
+    }
+    let count = get32(payload, 0);
+    var pos = 4;
+    var i = 0;
+    while i < count && pos + 8 <= len(payload) {
+        let l = fbits.get64(payload, pos);
+        pos = pos + 8;
+        if l < 4 || l > len(payload) - pos {
+            return lin;
+        }
+        if get32(payload, pos) >= kinds.step_cat_onehot() {
+            let (cf, code) = catenc.decode(heap, payload[pos..pos + l]);
+            if code == 0 {
+                borrow cf as &cr in {
+                    lin = categorical_step(heap, lin, cr, sc);
+                }
+            }
+            catenc.drop(heap, cf);
+        } else {
+            var cur = 0;
+            borrow lin as &lw in {
+                cur = lineage_width(lw);
+            }
+            let (sp, code, w) = steps.decode(heap, payload[pos..pos + l], cur);
+            if code == 0 {
+                borrow sp as &sr in {
+                    lin = numeric_step(heap, lin, sr);
+                }
+            }
+            steps.drop(heap, sp);
+        }
+        pos = pos + l;
+        i = i + 1;
+    }
+    return lin;
+}
+
+// ---------------------------------------------------------------- JSON helpers
+
+fn put_text[&h, &n](heap: &!h Heap, w: json.Writer, key: &static [byte], value: &n [byte]) -> [heap] json.Writer {
+    return verbs.put_name(heap, w, key, value);
+}
+
+fn put_f[&h](heap: &!h Heap, w: json.Writer, key: &static [byte], x: float) -> [heap] json.Writer {
+    let k = json.put_key(heap, w, key);
+    return verbs.put_double(heap, k, bits(x));
+}
+
+// rank of entry j: 1 + the number of entries with a larger value, or an equal value and a smaller index (a stable sort on (-value, index))
+pub fn rank_of[&v](vals: &v [float], n: int, j: int) -> [] int {
+    var r = 1;
+    var i = 0;
+    while i < n {
+        if vals[i] > vals[j] || vals[i] == vals[j] && i < j {
+            r = r + 1;
+        }
+        i = i + 1;
+    }
+    return r;
+}
+
+fn measure_std() -> [] &static [byte] {
+    return "coefficient times the standard deviation of the column the model sees; the importance is the share of the absolute standardised coefficients";
+}
+
+fn measure_mdi() -> [] &static [byte] {
+    return "mean decrease in impurity from the stored node counts (Gini for a classification, variance for a regression), normalised per tree and averaged over the trees";
+}
+
+// ---------------------------------------------------------------- the standardised coefficients (kinds 4 and 5, docs/interpret.md 3.1)
+
+// the deviation of column j of the model, and where it comes from (1 the scale step, 2 the provenance); source 0 when no deviation is stored
+fn column_sd[&l, &f](lin: &l Lineage, j: int, lr: &f file.Loaded) -> [] (float, int) {
+    if l_derived(lin, j) {
+        return (0.0, 0);
+    }
+    var has = false;
+    var std = 0.0;
+    let k = l_k(lin, j);
+    if file.has_provenance(lr) && k >= 0 {
+        let pv = file.provenance_bytes(lr);
+        if k < provsec.features(pv) {
+            has = true;
+            std = fbits.decode(provsec.field(pv, k, 4));
+        }
+    }
+    let unit = l_unit(lin, j);
+    if unit >= 0 {
+        if has && std == 0.0 {
+            return (0.0, 1);
+        }
+        if unit == 0 {
+            return (1.0, 1);
+        }
+        let n = file.rows(lr);
+        return (math.sqrt(float_of(n - 1) / float_of(n)), 1);
+    }
+    if has {
+        let sd = std / l_div(lin, j);
+        if finite(sd) {
+            return (sd, 2);
+        }
+    }
+    return (0.0, 0);
+}
+
+fn source_word(s: int) -> [] &static [byte] {
+    if s == 1 {
+        return "scale";
+    }
+    return "provenance";
+}
+
+// The importance object of a linear or logistic model. (the text, 0, the names without a deviation as a comma separated list) or (the text of an unavailable object, 1, the names)
+fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage) -> [heap] (buffer.Buffer, int, buffer.Buffer) {
+    let lr = wireio.stored_file(st);
+    let sc = wireio.stored_schema(st);
+    let wv = wireio.stored_weights(st);
+    let w = lineage_width(lin);
+    var missing = buffer.empty(heap, 16);
+    var nmiss = 0;
+    var j = 0;
+    while j < w {
+        let (sd, src) = column_sd(lin, j, lr);
+        if src == 0 {
+            if nmiss > 0 {
+                missing = buffer.push(heap, missing, byte_of(','));
+            }
+            missing = buffer.append(heap, missing, l_name(lin, j));
+            nmiss = nmiss + 1;
+        }
+        j = j + 1;
+    }
+    var out = json.writer(heap, 256);
+    out = json.begin_object(heap, out);
+    out = json.put_key(heap, out, "method");
+    out = json.put_string(heap, out, "standardised_coefficient");
+    out = json.put_key(heap, out, "available");
+    if nmiss > 0 {
+        out = json.put_bool(heap, out, false);
+        out = json.put_key(heap, out, "reason");
+        out = json.put_string(heap, out, "ml.importance.no-scale");
+        out = json.put_key(heap, out, "measure");
+        out = json.put_string(heap, out, measure_std());
+        out = json.put_key(heap, out, "missing");
+        out = json.begin_array(heap, out);
+        j = 0;
+        while j < w {
+            let (sd, src) = column_sd(lin, j, lr);
+            if src == 0 {
+                out = text.put(heap, out, l_name(lin, j));
+            }
+            j = j + 1;
+        }
+        out = json.end_array(heap, out);
+        out = json.end_object(heap, out);
+        return (json.finish(out), 1, missing);
+    }
+    var z = box_slice(heap, w + 1, 0.0);
+    var imp = box_slice(heap, w + 1, 0.0);
+    var total = 0.0;
+    borrow mut z as &!zw in {
+        j = 0;
+        while j < w {
+            let (sd, src) = column_sd(lin, j, lr);
+            var v = wv[j] * sd;
+            if !finite(v) {
+                v = 0.0;
+            }
+            contents(zw)[j] = v;
+            total = total + fabs(v);
+            j = j + 1;
+        }
+    }
+    if !finite(total) {
+        total = 0.0;
+    }
+    borrow z as &zr in {
+        borrow mut imp as &!iw in {
+            j = 0;
+            while j < w {
+                if total > 0.0 {
+                    contents(iw)[j] = fabs(contents(zr)[j]) / total;
+                }
+                j = j + 1;
+            }
+        }
+    }
+    out = json.put_bool(heap, out, true);
+    out = json.put_key(heap, out, "measure");
+    out = json.put_string(heap, out, measure_std());
+    out = json.put_key(heap, out, "total");
+    if total > 0.0 {
+        out = json.put_string(heap, out, "1.0");
+    } else {
+        out = json.put_string(heap, out, "0.0");
+    }
+    out = json.put_key(heap, out, "columns");
+    out = json.begin_array(heap, out);
+    borrow z as &zr in {
+        borrow imp as &ir in {
+            j = 0;
+            while j < w {
+                let (sd, src) = column_sd(lin, j, lr);
+                out = json.begin_object(heap, out);
+                out = put_text(heap, out, "column", l_name(lin, j));
+                out = put_text(heap, out, "source", schema.name(sc, l_src(lin, j)));
+                out = put_f(heap, out, "coefficient", wv[j]);
+                out = put_f(heap, out, "std", sd);
+                out = json.put_key(heap, out, "std_source");
+                out = json.put_string(heap, out, source_word(src));
+                out = put_f(heap, out, "standardised", contents(zr)[j]);
+                out = put_f(heap, out, "importance", contents(ir)[j]);
+                out = json.put_key(heap, out, "rank");
+                out = json.put_int(heap, out, rank_of(contents(ir), w, j));
+                out = json.end_object(heap, out);
+                j = j + 1;
+            }
+        }
+    }
+    out = json.end_array(heap, out);
+    out = json.end_object(heap, out);
+    unbox_slice(heap, z);
+    unbox_slice(heap, imp);
+    return (json.finish(out), 0, missing);
+}
+
+// ---------------------------------------------------------------- the impurity decrease (kind 7, docs/interpret.md 3.2)
+
+// the most rows a count may state before the products of the Gini identity could overflow: a file that says more is not a file `fit` wrote
+fn max_count() -> [] int {
+    return 1073741824;
+}
+
+// The decrease of one internal node: classification from the six counts, regression from the two child sums
+fn gini_decrease(na: int, nb: int, la: int, lb: int, ra: int, rb: int) -> [] float {
+    let n = na + nb;
+    let nl = la + lb;
+    let nr = ra + rb;
+    if na < 0 || nb < 0 || la < 0 || lb < 0 || ra < 0 || rb < 0 || na > max_count() || nb > max_count() || la > max_count() || lb > max_count() || ra > max_count() || rb > max_count() {
+        return 0.0;
+    }
+    if n < 1 || nl < 1 || nr < 1 {
+        return 0.0;
+    }
+    let dd = lb * nr - rb * nl;
+    let df = float_of(dd);
+    let v = (2.0 * (df * df)) / (float_of(n) * (float_of(nl) * float_of(nr)));
+    if !finite(v) {
+        return 0.0;
+    }
+    return v;
+}
+
+fn variance_decrease(n: int, nl: int, nr: int, sl: float, sr: float) -> [] float {
+    if n < 1 || nl < 1 || nr < 1 || n > max_count() || nl > max_count() || nr > max_count() {
+        return 0.0;
+    }
+    let ml = sl / float_of(nl);
+    let mr = sr / float_of(nr);
+    let d = ml - mr;
+    let v = ((float_of(nl) * float_of(nr)) / float_of(n)) * (d * d);
+    if !finite(v) {
+        return 0.0;
+    }
+    return v;
+}
+
+fn node_i[&p](m: &p [byte], rec: int, trees: int, total: int, g: int) -> [] int {
+    return fbits.get64(m, model.elem_at(rec, trees, total, g));
+}
+
+fn node_f[&p](m: &p [byte], rec: int, trees: int, total: int, g: int) -> [] float {
+    return fbits.decode(fbits.get64(m, model.elem_at(rec, trees, total, g)));
+}
+
+// The three tables of a forest: the importance of each of the d columns, the number of splits and the rows of the nodes that split on it. Returns (importances, splits, rows, whether
+// some tree split), the three arrays d + 1 long.
+fn tree_scores[&h, &p](heap: &!h Heap, m: &p [byte]) -> [heap] (Box[[float]], Box[[int]], Box[[int]], bool) {
+    let task = fbits.get64(m, 20);
+    let trees = fbits.get64(m, 28);
+    let d = fbits.get64(m, 36);
+    let total = fbits.get64(m, 52);
+    var acc = box_slice(heap, d + 1, 0.0);
+    var splits = box_slice(heap, d + 1, 0);
+    var srows = box_slice(heap, d + 1, 0);
+    var tf = box_slice(heap, d + 1, 0.0);
+    var sums = box_slice(heap, total + 1, 0.0);
+    borrow mut acc as &!aw in {
+        borrow mut splits as &!sw in {
+            borrow mut srows as &!rw in {
+                borrow mut tf as &!tw in {
+                    borrow mut sums as &!uw in {
+                        var t = 0;
+                        while t < trees {
+                            let lo = fbits.get64(m, 100 + 8 * t);
+                            let hi = fbits.get64(m, 100 + 8 * (t + 1));
+                            if task != 0 {
+                                var i = hi - 1;
+                                while i >= lo {
+                                    if node_i(m, 3, trees, total, i) < 0 {
+                                        contents(uw)[i] = float_of(node_i(m, 8, trees, total, i)) * node_f(m, 10, trees, total, i);
+                                    } else {
+                                        contents(uw)[i] = contents(uw)[lo + node_i(m, 6, trees, total, i)] + contents(uw)[lo + node_i(m, 7, trees, total, i)];
+                                    }
+                                    i = i - 1;
+                                }
+                            }
+                            var f = 0;
+                            while f < d {
+                                contents(tw)[f] = 0.0;
+                                f = f + 1;
+                            }
+                            var g = lo;
+                            while g < hi {
+                                let feat = node_i(m, 3, trees, total, g);
+                                if feat >= 0 {
+                                    let l = lo + node_i(m, 6, trees, total, g);
+                                    let r = lo + node_i(m, 7, trees, total, g);
+                                    let na = node_i(m, 8, trees, total, g);
+                                    let nb = node_i(m, 9, trees, total, g);
+                                    var dec = 0.0;
+                                    var rows = na;
+                                    if task == 0 {
+                                        dec = gini_decrease(na, nb, node_i(m, 8, trees, total, l), node_i(m, 9, trees, total, l), node_i(m, 8, trees, total, r), node_i(m, 9, trees, total, r));
+                                        rows = na + nb;
+                                    } else {
+                                        dec = variance_decrease(na, node_i(m, 8, trees, total, l), node_i(m, 8, trees, total, r), contents(uw)[l], contents(uw)[r]);
+                                    }
+                                    let nv = contents(tw)[feat] + dec;
+                                    if finite(nv) {
+                                        contents(tw)[feat] = nv;
+                                    }
+                                    contents(sw)[feat] = contents(sw)[feat] + 1;
+                                    contents(rw)[feat] = contents(rw)[feat] + rows;
+                                }
+                                g = g + 1;
+                            }
+                            var tt = 0.0;
+                            f = 0;
+                            while f < d {
+                                tt = tt + contents(tw)[f];
+                                f = f + 1;
+                            }
+                            if finite(tt) && tt > 0.0 {
+                                f = 0;
+                                while f < d {
+                                    contents(aw)[f] = contents(aw)[f] + contents(tw)[f] / tt;
+                                    f = f + 1;
+                                }
+                            }
+                            t = t + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, tf);
+    unbox_slice(heap, sums);
+    var s = 0.0;
+    borrow acc as &ar in {
+        var f = 0;
+        while f < d {
+            s = s + contents(ar)[f];
+            f = f + 1;
+        }
+    }
+    var positive = false;
+    if finite(s) && s > 0.0 {
+        positive = true;
+    }
+    var imp = box_slice(heap, d + 1, 0.0);
+    if positive {
+        borrow mut imp as &!iw in {
+            borrow acc as &ar in {
+                var f = 0;
+                while f < d {
+                    contents(iw)[f] = contents(ar)[f] / s;
+                    f = f + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, acc);
+    return (imp, splits, srows, positive);
+}
+
+fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage) -> [heap] buffer.Buffer {
+    let lr = wireio.stored_file(st);
+    let sc = wireio.stored_schema(st);
+    let m = file.model_bytes(lr);
+    let trees = fbits.get64(m, 28);
+    let d = fbits.get64(m, 36);
+    let (imp, splits, srows, positive) = tree_scores(heap, m);
+    var out = json.writer(heap, 256);
+    out = json.begin_object(heap, out);
+    out = json.put_key(heap, out, "method");
+    out = json.put_string(heap, out, "impurity_decrease");
+    out = json.put_key(heap, out, "available");
+    out = json.put_bool(heap, out, true);
+    out = json.put_key(heap, out, "measure");
+    out = json.put_string(heap, out, measure_mdi());
+    out = json.put_key(heap, out, "trees");
+    out = json.put_int(heap, out, trees);
+    out = json.put_key(heap, out, "total");
+    if positive {
+        out = json.put_string(heap, out, "1.0");
+    } else {
+        out = json.put_string(heap, out, "0.0");
+    }
+    out = json.put_key(heap, out, "columns");
+    out = json.begin_array(heap, out);
+    borrow imp as &ir in {
+        borrow splits as &sr in {
+            borrow srows as &rr in {
+                var j = 0;
+                while j < d && j < lineage_width(lin) {
+                    out = json.begin_object(heap, out);
+                    out = put_text(heap, out, "column", l_name(lin, j));
+                    out = put_text(heap, out, "source", schema.name(sc, l_src(lin, j)));
+                    out = put_f(heap, out, "importance", contents(ir)[j]);
+                    out = json.put_key(heap, out, "rank");
+                    out = json.put_int(heap, out, rank_of(contents(ir), d, j));
+                    out = json.put_key(heap, out, "splits");
+                    out = json.put_int(heap, out, contents(sr)[j]);
+                    out = json.put_key(heap, out, "split_rows");
+                    out = json.put_int(heap, out, contents(rr)[j]);
+                    out = json.end_object(heap, out);
+                    j = j + 1;
+                }
+            }
+        }
+    }
+    out = json.end_array(heap, out);
+    out = json.end_object(heap, out);
+    unbox_slice(heap, imp);
+    unbox_slice(heap, splits);
+    unbox_slice(heap, srows);
+    return json.finish(out);
+}
+
+// ---------------------------------------------------------------- one function per model kind
+
+// The `importance` object of a decoded model: (its JSON text, a status, the names without a deviation). Status 0 an available table, 1 the standardised coefficients cannot be computed (the
+// text is the object with `available: false`), 2 the model has none (constant and k-means: the text is `null`). Boosting adds its own function and one arm here.
+pub fn table[&h, &s](heap: &!h Heap, st: &s wireio.Stored) -> [heap] (buffer.Buffer, int, buffer.Buffer) {
+    let key = wireio.stored_kind(st);
+    let kind = est.kind_of(key);
+    if kind == 4 || kind == 5 {
+        let lin = lineage_of(heap, st);
+        var body = buffer.empty(heap, 1);
+        var status = 2;
+        var missing = buffer.empty(heap, 1);
+        borrow lin as &lr in {
+            let (b2, s2, m2) = std_member(heap, st, lr);
+            buffer.drop(heap, body);
+            buffer.drop(heap, missing);
+            body = b2;
+            status = s2;
+            missing = m2;
+        }
+        drop_lineage(heap, lin);
+        return (body, status, missing);
+    }
+    if kind == 7 {
+        let lin = lineage_of(heap, st);
+        var body = buffer.empty(heap, 1);
+        borrow lin as &lr in {
+            let b2 = tree_member(heap, st, lr);
+            buffer.drop(heap, body);
+            body = b2;
+        }
+        drop_lineage(heap, lin);
+        return (body, 0, buffer.empty(heap, 1));
+    }
+    return (buffer.append(heap, buffer.empty(heap, 8), "null"), 2, buffer.empty(heap, 1));
+}

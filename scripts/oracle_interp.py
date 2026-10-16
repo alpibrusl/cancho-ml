@@ -811,7 +811,7 @@ def gen_dataset(name, n, seed):
         for i in range(n):
             x = [next(u) for _ in range(6)]
             noise = next(nz)
-            e = next(u) * 0.3
+            e = next(u) * (1.5 if name == "cls" else 0.3)
             if name == "cls":
                 z = 2.0 * x[0] - 1.5 * x[1] + 1.0 * x[2] + 0.7 * x[3] + 0.5 * x[4] + 0.35 * x[5] + e
                 y = "1" if z > 0.0 else "0"

@@ -14,6 +14,7 @@ import ml.catwire;
 import ml.est;
 import ml.fbits;
 import ml.fsio;
+import ml.interp;
 import ml.kinds;
 import ml.mfile;
 import ml.paths;
@@ -176,7 +177,7 @@ fn put_categorical[&h, &s](heap: &!h Heap, w0: json.Writer, payload: &s [byte], 
 }
 
 // the description of a decoded file: (the data object, the plain text). `steps` is the (effective) steps payload and `tbl` the string table, empty when the file has none.
-fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byte], kind: int, task: int, c0: int, c1: int, sc: &c schema.Schema, steps: &s [byte], tbl: &t [byte], has_table: bool, takes_missing: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer) {
+fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static [byte], kind: int, task: int, c0: int, c1: int, sc: &c schema.Schema, steps: &s [byte], tbl: &t [byte], has_table: bool, takes_missing: bool, imp: &m [byte], o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer) {
     let (pat, plen) = section_at(data, 1);
     let (mat, mlen) = section_at(data, 5);
     var plan_bytes = data[0..0];
@@ -462,6 +463,9 @@ fn emit[&h, &d, &s, &t, &c](heap: &!h Heap, data: &d [byte], model: &static [byt
     w = json.put_key(heap, w, "max_bytes");
     w = json.put_int(heap, w, o.max_bytes);
     w = json.end_object(heap, w);
+    // the table of docs/interpret.md that needs no data: null for a model with none
+    w = json.put_key(heap, w, "importance");
+    w = json.put_fragment(heap, w, imp);
     w = json.end_object(heap, w);
     var head = buffer.empty(heap, 128);
     head = buffer.append(heap, head, "model ");
@@ -509,11 +513,16 @@ pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte],
             if ok {
                 borrow stored as &sr in {
                     let lr = wireio.stored_file(sr);
-                    let (p2, t2) = emit(heap, bytes_of, est.name(wireio.stored_kind(sr)), est.kind_of(wireio.stored_kind(sr)), wireio.stored_task(sr), wireio.stored_c0(sr), wireio.stored_c1(sr), wireio.stored_schema(sr), file.steps_bytes(lr), file.table_bytes(lr), file.has_table(lr), est.takes_missing(wireio.stored_kind(sr)), o);
-                    buffer.drop(heap, payload);
-                    buffer.drop(heap, plain);
-                    payload = p2;
-                    plain = t2;
+                    let (ib, ist, imiss) = interp.table(heap, sr);
+                    borrow ib as &ibr in {
+                        let (p2, t2) = emit(heap, bytes_of, est.name(wireio.stored_kind(sr)), est.kind_of(wireio.stored_kind(sr)), wireio.stored_task(sr), wireio.stored_c0(sr), wireio.stored_c1(sr), wireio.stored_schema(sr), file.steps_bytes(lr), file.table_bytes(lr), file.has_table(lr), est.takes_missing(wireio.stored_kind(sr)), buffer.bytes(ibr), o);
+                        buffer.drop(heap, payload);
+                        buffer.drop(heap, plain);
+                        payload = p2;
+                        plain = t2;
+                    }
+                    buffer.drop(heap, ib);
+                    buffer.drop(heap, imiss);
                 }
             }
             wireio.drop_stored(heap, stored);
@@ -538,7 +547,7 @@ pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte],
                         }
                     }
                     borrow sc2 as &sq in {
-                        let (p2, t2) = emit(heap, bytes_of, "constant", mk, mfile.task_of(mk), c0, c1, sq, bytes_of[0..0], bytes_of[0..0], false, false, o);
+                        let (p2, t2) = emit(heap, bytes_of, "constant", mk, mfile.task_of(mk), c0, c1, sq, bytes_of[0..0], bytes_of[0..0], false, false, "null", o);
                         buffer.drop(heap, payload);
                         buffer.drop(heap, plain);
                         payload = p2;

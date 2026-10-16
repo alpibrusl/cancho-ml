@@ -118,6 +118,11 @@ pub fn stored_task[&s](st: &s Stored) -> [] int {
     return st.task;
 }
 
+// the estimator's parameters of a linear or logistic model: the coefficients, then the intercept
+pub fn stored_weights[&s](st: &s Stored) -> [] &s [float] {
+    return contents(st.wv);
+}
+
 pub fn stored_c0[&s](st: &s Stored) -> [] int {
     return st.c0;
 }
