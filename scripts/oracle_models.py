@@ -198,6 +198,18 @@ def logreg(X, y, iters, l2, rows_chunk=16384):
             q = q + w[j] * w[j]
         f = sums[W - 1] / nf + (0.5 * l2) * q
         diag.append(np.concatenate([sums, [f]]))
+        # docs/refusals-fit.md D2: with l2 = 0 a pass whose summed loss is under 0.6931, or whose predictor scale sqrt(w' G w / n) is over 50 (G over 4n is the Hessian of pass 0),
+        # is a separation refusal (ml.fit.separable)
+        if it == 0:
+            G0 = np.zeros((P, P))
+            for a in range(P):
+                for b in range(a + 1):
+                    G0[a, b] = G0[b, a] = 4.0 * (sums[P + a * (a + 1) // 2 + b] / nf)
+        if l2 == 0.0:
+            sc2 = float(w @ G0 @ w)
+            if sums[W - 1] < 0.6931 or np.sqrt(max(sc2, 0.0)) > 50.0:
+                logreg.last = "ml.fit.separable"
+                return None
         g = sums[:P] / nf
         for a in range(d):
             g[a] = g[a] + l2 * w[a]
@@ -209,6 +221,7 @@ def logreg(X, y, iters, l2, rows_chunk=16384):
             H[a, a] = H[a, a] + l2
         L = ol.chol_o(H)
         if L is None:
+            logreg.last = "ml.fit.collinear" if it == 0 else ("ml.fit.separable" if l2 == 0.0 else "ml.linalg.not-positive-definite")
             return None
         u = ol.fwd_o(L, g)
         dl = ol.bwd_o(L, u)
@@ -219,6 +232,9 @@ def logreg(X, y, iters, l2, rows_chunk=16384):
     prob = np.where(z >= 0.0, 1.0 / (1.0 + e), e / (1.0 + e))
     lab = np.where(z > 0.0, 1.0, 0.0)
     return w, np.concatenate(diag), lab, prob
+
+
+logreg.last = None  # the tag of the last refusal, for scripts/oracle_wire.py
 
 
 # ---------------------------------------------------------------- k-means

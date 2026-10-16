@@ -305,7 +305,7 @@ dropped: it said "see `ml.schema.mismatch`", and a second tag for one rule is th
 
 *Added by stage 1 (`lib/core/refuse.cho`, one fixture per tag in `tests/core.cho`):* `ml.tensor.rank`, `ml.tensor.shape`,
 `ml.tensor.bounds` (exit 8); `ml.input.too-many-cells` (exit 8: rows x columns over the cell cap, checked without a multiplication
-that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot that is not > 2^-40 times its own diagonal element (so not > 0.0 either), NaN included; the relative test is `v1-post`, `models-linear.md` 3.1),
+that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot that is not > 2^-40 times its own diagonal element (so not > 0.0 either), NaN included; the relative test is `v1-post`, `models-linear.md` 3.1; since issue 48 the failures that mean collinear columns or separable classes have their own tags, below),
 `ml.linalg.singular` (exit 8: a zero diagonal entry in a triangular solve); `ml.param.threads` (exit 2: a thread count outside
 1..64). The default caps (10,000,000 rows, 4,096 columns, 400,000,000 cells) are provisional and wait for section 9.
 
@@ -319,7 +319,9 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.tensor.rank` | 8 | a kernel was given a tensor of rank 0 or above 4 | use a tensor of rank 1 to 4 |
 | `ml.tensor.shape` | 8 | an extent below 1, or a reshape of a tensor that is not contiguous | extents of at least 1; reshape only a contiguous tensor to the same element count |
 | `ml.tensor.bounds` | 8 | the offset, shape and strides of a descriptor reach outside the data beside it | keep them inside the data |
-| `ml.linalg.not-positive-definite` | 8 | a Cholesky pivot that is not above 2^-40 times its own diagonal element (a non-positive pivot included) (dependent or nearly dependent columns), NaN included | set l2 above 2^-40 times the diagonal (n for standardised features), drop one of the dependent columns, or centre and scale the columns |
+| `ml.linalg.not-positive-definite` | 8 | a Cholesky pivot of a Newton pass after the first is not above 2^-40 times its own diagonal element while `l2` is above 0 (the weights have vanished and the ridge is below 2^-40 of the diagonal), or a pivot is NaN; collinear columns are `ml.fit.collinear` and separable classes with `l2` 0 are `ml.fit.separable` *(since issue 48; before it every failure of the pivot test had this tag)* | set l2 larger, scale the features, or use fewer iterations |
+| `ml.fit.collinear` | 8 | a column of the fitted matrix (after the steps, the intercept last) is explained by the columns before it to within 2^-40 of its own sum of squares: the relative pivot test of the normal equations (linear) or of the first Newton pass (logistic). `detail`: the column, its index, the relative pivot, the tolerance, `l2`, the columns involved and their coefficients (`docs/refusals-fit.md`) | `retry` with `--l2` set to a value sized from the data, or a `choose` of that and `--drop NAME`; `none` with `--plan` |
+| `ml.fit.separable` | 8 | logistic regression with `l2` 0 on classes a hyperplane separates: the summed loss of a Newton pass is under 0.6931 (every training row right), or the predictor scale is over 50 (separation with ties), or the weights vanished (a pivot failed after the first pass). `detail`: the reason, the pass, the loss and its bound, the norm of the coefficients, the scale and its bound, `l2`, the iterations | `retry` with `--l2` set; `none` with `--plan` |
 | `ml.linalg.singular` | 8 | a zero on the diagonal of a triangular solve | none |
 | `ml.param.threads` | 2 | a thread count outside 1 to 64, or thread copies of a tree fit over the memory ceiling | a thread count of 1 to 64 |
 | `ml.fit.non-finite` | 8 | a coefficient, a loss or a gain became non-finite during a fit | scale the features, add l2, or fewer iterations |
@@ -388,6 +390,13 @@ The library also answers, with its own codes in its band, tags that exist above:
 
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
 
+*A fit that has no answer (`docs/refusals-fit.md`, issue 48; `lib/core/refuse.cho` codes 22 and 23, `lib/models/rank.cho`, `tools/ml/fitfail.cho`):* linear and logistic regression refuse a design whose columns are dependent and logistic regression refuses classes a hyperplane separates, by name and with a repair that is an argv. The decision of the first is the relative pivot test of the factorisation that already runs (`s_jj > 2^-40 * a_jj`, `models-linear.md` 3.1), so it costs no pass; what is new is the diagnosis of a failure (the first failing column, the least-squares dependency on the columns before it, both in `detail`). The decision of the second is a comparison of numbers the Newton pass already computed: the summed loss under 0.6931 (every row has a positive margin: a sufficient condition for complete separation, never true of data that overlap), the predictor scale over 50 (separation with ties), or, after the first pass, a pivot failure (the weights vanished). `ml.fit.separable` is not answered when `l2` is above 0. Neither is answered by `tree`, `forest`, `kmeans` or `constant`, which have no normal equations and no Newton pass.
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.fit.collinear` | 8 | a column of the fitted matrix is explained by the columns before it to within 2^-40 of its own sum of squares (after the steps, the intercept last); the column, the dependency and the tolerance are in `detail` (as are `repeat` and `fold` when `ml cv` refuses a training fold) | `retry` with `--l2`, or `choose` of that and `--drop NAME`; `none` with `--plan` |
+| `ml.fit.separable` | 8 | logistic regression with `l2` 0 on separable classes; the pass, the reason, the loss and its bound, the norm of the coefficients are in `detail` (as are `repeat` and `fold` when `ml cv` refuses a training fold) | `retry` with `--l2`; `none` with `--plan` |
+
 *Added by M22, run tracking and train/serve skew (`docs/tracking.md` section 5.5; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/test_track.py`, `tests/conformance/fixtures.py`):*
 
 | tag | exit | when | repair |
@@ -453,6 +462,8 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 19 | `ml.limit.categorical-columns` | 8 | `ml.refuse` |
 | 20 | `ml.input.invalid-utf8` | 8 | `ml.refuse` |
 | 21 | `ml.predict.non-finite` | 8 | `ml.refuse` |
+| 22 | `ml.fit.collinear` | 8 | `ml.refuse` |
+| 23 | `ml.fit.separable` | 8 | `ml.refuse` |
 | 101 | `ml.input.non-finite` | 8 | `tree.deny` |
 | 102 | `ml.label.not-binary` | 8 | `tree.deny` |
 | 103 | `ml.label.single-class` | 8 | `tree.deny` |

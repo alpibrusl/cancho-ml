@@ -77,6 +77,9 @@ python3 scripts/golden_describe.py --check
 python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
+# a fit that has no answer (docs/refusals-fit.md): its tests are in the conformance suite above (tests/conformance/test_refuse_fit.py: the fixtures, every argv of every repair, the exact-fraction oracle,
+# the separability oracle, the fuzz and the thread invariance); the patterns of its mutants apply (scripts/mutants_refusals.py rebuilds `ml` once per pattern and runs on request)
+python3 scripts/mutants_refusals.py --check
 python3 scripts/mutants_serve.py --check
 # a prediction that is not a finite number (docs/nonfinite.md): no call of flt.put_float outside its door, and the patterns of the mutants apply (scripts/mutants_nonfinite.py rebuilds the three binaries once per pattern and runs on request)
 python3 scripts/check_nonfinite.py

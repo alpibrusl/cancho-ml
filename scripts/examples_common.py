@@ -20,9 +20,8 @@ EXAMPLES = [
         key="breast_cancer", task="classification", target="benign",
         title="Breast Cancer Wisconsin (Diagnostic)", short="Breast cancer",
         runs=[
-            # the obvious command: no penalty. The classes are separable, so there is no optimum; what comes out depends on --iterations
-            dict(id="naive", model="logistic", l2="0", iterations=25, scale=STD, shown_only=True, eval_train=True),
-            dict(id="refused", model="logistic", l2="0", iterations=50, scale=STD, shown_only=True, refusal=True),
+            # the obvious command: no penalty. The classes are separable, so there is no optimum: the fit is refused (ml.fit.separable) and the refusal carries the repair
+            dict(id="naive", model="logistic", l2="0", iterations=25, scale=STD, shown_only=True, refusal=True),
             dict(id="fit", model="logistic", l2="0.01", iterations=25, scale=STD, ref=True),
             dict(id="more", model="logistic", l2="0.01", iterations=100, scale=STD, same_as="fit"),
         ],
@@ -49,9 +48,7 @@ EXAMPLES = [
         runs=[
             # the column types are read from each file; color_intensity has two decimals in the train file and six in the test file
             dict(id="typed", model="logistic", l2="0.01", iterations=25, scale=STD, shown_only=True, eval_refusal=True),
-            dict(id="naive", model="logistic", l2="0", iterations=25, scale=STD, float="color_intensity", shown_only=True, eval_train=True),
-            dict(id="naive_more", model="logistic", l2="0", iterations=50, scale=STD, float="color_intensity", same_as="naive"),
-            dict(id="refused", model="logistic", l2="0", iterations=100, scale=STD, float="color_intensity", shown_only=True, refusal=True),
+            dict(id="naive", model="logistic", l2="0", iterations=25, scale=STD, float="color_intensity", shown_only=True, refusal=True),
             dict(id="fit", model="logistic", l2="0.01", iterations=25, scale=STD, float="color_intensity", ref=True),
             dict(id="more", model="logistic", l2="0.01", iterations=100, scale=STD, float="color_intensity", same_as="fit"),
         ],

@@ -344,6 +344,29 @@ $ ml predict --model-file houses-big.ml --drop id huge.csv
 ```
 <!-- /gen:t-honest -->
 
+### A fit that has no answer is refused by name
+
+Two designs have no unique answer: a column that the columns before it explain (the one-hot block of a text column beside the intercept, an equal column, a constant column), and classes that a plane separates (logistic regression with `--l2 0`). `ml` refuses them with `ml.fit.collinear` and `ml.fit.separable`, not with huge coefficients or a late `ml.linalg.not-positive-definite`. The first names the column, the dependency (`(intercept)` = 1 x `species#0` + ...), the relative pivot and the tolerance `2^-40`; the second the pass, the summed loss against its bound `0.6931` (ln 2: every row has a positive margin) and the norm of the coefficients. Both carry the repair as an argv, a ridge sized from the data; with `--plan` the repair is `none`, because `l2` is a key of the plan's model line. A positive `--l2` is never refused as separable. The decisions, the tolerance and the measurements: [docs/refusals-fit.md](docs/refusals-fit.md).
+
+<!-- gen:refuse -->
+```console
+# The text column species is one-hot encoded: its columns add up to the intercept, so the normal equations of the first Newton pass are singular. The refusal names the column and the dependency
+$ ml fit --model logistic --cat species --step 'encode column=species kind=onehot' --drop id,city --target adopted --output pets-col.ml pets.csv
+{"rule": "ml.fit.collinear", "hint": "set l2 above 2^-30 times the largest diagonal element, or drop one of the columns named in detail.", "repair": {"kind": "retry", "argv": ["ml", "fit", "--model", "logistic", "--cat", "species", "--step", "encode column=species kind=onehot", "--drop", "id,city", "--target", "adopted", "--output", "pets-col.ml", "pets.csv", "--l2", "1e-8"]}, "detail": {"model": "logistic", "pass": 0, "pivot": 8, "column": "(intercept)", "relative_pivot": "3.8163916471489756e-17", "tolerance": "9.094947017729282e-13", "l2": "0.0", "largest_diagonal": "7.417763157894737", "involved": 6, "columns": ["species#0", "species#1", "species#2", "species#3", "species#4", "species#5"], "coefficients": ["1.000000", "1.000000", "1.000000", "1.000000", "1.000000", "1.000000"]}}
+# exit status 8; the rule, hint, repair, detail of the JSON line it prints
+# The repair the tool offered is a ridge just above the tolerance. Run it
+$ ml fit --model logistic --cat species --step 'encode column=species kind=onehot' --drop id,city --target adopted --output pets-col.ml pets.csv --l2 1e-8
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":76,"columns":4,"target":"adopted","path":"pets-col.ml","bytes":933,"sha256":"853d842b964e39b4a351d4aefec3e946c003eb6174f8038137f7c73239ffa73d","written":true,"summary":{"plan":"encode column=species kind=onehot max-categories=64 unknown=ignore\nmodel kind=logistic iterations=100 l2=1e-8\n","steps":1,"steps_sha256":"c9cffeb5a63745b49f568539ef8e9939a07ec8308e02e6959643c789ff88e2c0","categorical":[{"step":1,"kind":"onehot","column":"species","categories":6,"output_columns":6}],"string_table":{"entries":1,"strings":6,"pool_bytes":29,"bytes":236,"sha256":"fb5a45737bc8f57d329c8bd330b0f24dd6e7ce2b3c1737eb585dd88a5afa6946"},"features":8,"coefficients":[{"name":"age","value":"-0.5941654182959529"},{"name":"visits","value":"0.4910489127624334"},{"name":"species#0","value":"-2.003961367096021"},{"name":"species#1","value":"-0.026512480558186693"},{"name":"species#2","value":"0.6355451771815215"},{"name":"species#3","value":"0.08426814350645216"},{"name":"species#4","value":"2.036084076946871"},{"name":"species#5","value":"-0.7254235494784796"}],"intercept":"1.3834201860087134","classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
+# The two classes of shop.csv are separated by a plane, so with no penalty the best fit is at infinity. It is refused at the pass where every row is right
+$ ml fit --model logistic --drop id --target bought --output shop-sep.ml shop.csv
+{"rule": "ml.fit.separable", "hint": "set l2 above 0, for example the value in the repair.", "repair": {"kind": "retry", "argv": ["ml", "fit", "--model", "logistic", "--drop", "id", "--target", "bought", "--output", "shop-sep.ml", "shop.csv", "--l2", "1"]}, "detail": {"reason": "loss", "pass": 3, "loss_sum": "0.39914766019334014", "loss_bound": "0.6931", "coefficient_norm": "3.8404580607230154", "predictor_scale": "6.3091994880700435", "scale_bound": "50.0", "l2": "0.0", "iterations": 100}}
+# exit status 8; the rule, hint, repair, detail of the JSON line it prints
+# The repair is a penalty. Run it
+$ ml fit --model logistic --drop id --target bought --output shop-sep.ml shop.csv --l2 1
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"logistic","task":"classification","rows":6,"columns":3,"target":"bought","path":"shop-sep.ml","bytes":535,"sha256":"ba16320f84807cc18b7cc32d3539d629e32aae3f3b413a0c959439835e565e64","written":true,"summary":{"plan":"model kind=logistic iterations=100 l2=1.0\n","steps":0,"features":2,"coefficients":[{"name":"visits","value":"0.05247869247963008"},{"name":"spend","value":"0.36360045523940554"}],"intercept":"-3.314175317672299","classes":[0,1],"positive":1}},"meta":{"version":"0.1.0"}}
+```
+<!-- /gen:refuse -->
+
 ### Hold rows out, with a seed
 
 `--split train=0.8 --seed 3` chooses the rows by the seeded train/test split of the metrics library (the stream registry, kind 4): the test side is the rows the fit does not see, `ceil(n * 0.2)` of them. The fit reports the held-out rows' metrics, scored through the stored steps; `eval --split train=0.8 --seed 3` on the same file scores the same rows. With 5 rows the test side is 1 row, so this is only to show the shape of the answer.
@@ -580,7 +603,7 @@ limits      22, for example
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       99, for example
+rules       101, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes
