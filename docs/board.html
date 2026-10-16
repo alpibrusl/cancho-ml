@@ -409,10 +409,10 @@ var Board = (function () {
     function P(code, message, extra) { var p = { code: code, severity: SEV[code], source: src.name, message: message }; if (extra) { p.id = extra; } st.problems.push(p); }
     if (src.error) { P("unreadable", src.error); return; }
     var text = typeof src.text === "string" ? src.text : "";
-    if (text.replace(/^﻿/, "").trim() === "") { P("empty", "the input is empty: there is nothing to read"); return; }
+    if (text.replace(/^\uFEFF/, "").trim() === "") { P("empty", "the input is empty: there is nothing to read"); return; }
     var sp = splitDocs(text);
     if (!sp.docs.length) {
-      P("not-json", sp.cut ? "the text ends inside a JSON object (it was cut): " + sp.cut.text + "..." : "no JSON object in the text; it starts with: " + text.trim().slice(0, 40));
+      P("not-json", sp.cut ? "the text ends inside a JSON object (it was cut): " + sp.cut.text + "..." : "no JSON object in the text; it starts with: " + text.trim().slice(0, 40).replace(/\s+/g, " "));
       return;
     }
     if (sp.cut) { P("not-json", "the text ends inside a JSON object (it was cut): " + sp.cut.text + "..."); }
@@ -743,6 +743,13 @@ var Board = (function () {
   }
   function clear(e) { while (e.firstChild) { e.removeChild(e.firstChild); } return e; }
   function say(t) { $("status").textContent = t; }
+  /* a table or a list that is drawn again must not take the keyboard focus away: the focused control is found again by its id or its data-k */
+  function keepFocus(fn) {
+    var a = document.activeElement, k = a && a !== document.body && a.getAttribute ? (a.id ? "#" + a.id : a.getAttribute("data-k") ? '[data-k="' + a.getAttribute("data-k") + '"]' : null) : null;
+    fn();
+    var n = k ? document.querySelector(k) : null;
+    if (n && n.focus) { n.focus(); }
+  }
   function fmt(v) { return v === null || v === undefined ? "" : String(Number(Number(v).toPrecision(6))); }
   function dirName() { var r = st.res.rows.filter(function (x) { return x.dir; })[0]; return r ? r.dir : "DIR"; }
   function byId(id) { return st.res.rows.filter(function (r) { return r.id === id; })[0]; }
@@ -782,7 +789,8 @@ var Board = (function () {
   }
 
   /* ---- drawing ---- */
-  function render() {
+  function render() { keepFocus(draw); }
+  function draw() {
     var res = st.res, rows = res.rows;
     drawProblems(res);
     var models = [], datas = {};
@@ -829,8 +837,8 @@ var Board = (function () {
       var th = h("th", { scope: "col" });
       if (c[0] === "input") { th.textContent = c[1]; head.appendChild(th); return; }
       if (st.sort === c[0]) { th.setAttribute("aria-sort", st.dir === "asc" ? "ascending" : "descending"); }
-      var b = h("button", { type: "button", text: c[1] + (st.sort === c[0] ? (st.dir === "asc" ? " ▲" : " ▼") : "") });
-      b.addEventListener("click", function () { if (st.sort === c[0]) { st.dir = st.dir === "asc" ? "desc" : "asc"; } else { st.sort = c[0]; st.dir = "asc"; } drawTable(all); });
+      var b = h("button", { type: "button", "data-k": "col-" + c[0], text: c[1] + (st.sort === c[0] ? (st.dir === "asc" ? " \u25B2" : " \u25BC") : "") });
+      b.addEventListener("click", function () { if (st.sort === c[0]) { st.dir = st.dir === "asc" ? "desc" : "asc"; } else { st.sort = c[0]; st.dir = "asc"; } keepFocus(function () { drawTable(all); drawChart(all); }); });
       th.appendChild(b); head.appendChild(th);
     });
     head.appendChild(h("th", { scope: "col", text: "Verify" }));
@@ -839,12 +847,12 @@ var Board = (function () {
     if (!all.length) { body.appendChild(h("tr", {}, [h("td", { colspan: "13", class: "hint", text: "There are no runs. Load the sample runs, or give the page your own records." })])); return; }
     rows.forEach(function (r) {
       var v = VERDICT[r.verdict] || [r.verdict, "error"], sel = st.sel.indexOf(r.id) >= 0;
-      var cb = h("input", { type: "checkbox", "aria-label": "Select run " + r.id12 + " to compare", disabled: !r.record });
+      var cb = h("input", { type: "checkbox", "data-k": "sel-" + r.id, "aria-label": "Select run " + r.id12 + " to compare", disabled: !r.record });
       cb.checked = sel;
       cb.addEventListener("change", function () {
         var i = st.sel.indexOf(r.id);
         if (i >= 0) { st.sel.splice(i, 1); } else { st.sel.push(r.id); if (st.sel.length > 2) { st.sel.shift(); } }
-        drawTable(all); drawCompare();
+        keepFocus(function () { drawTable(all); drawCompare(); });
       });
       var idb = h("button", { type: "button", class: "idbtn", text: r.id12, title: r.id });
       idb.addEventListener("click", function () { st.detail = r.id; drawDetail(); var d = $("detail"); if (d.scrollIntoView) { d.scrollIntoView(); } });

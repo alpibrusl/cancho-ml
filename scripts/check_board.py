@@ -455,10 +455,20 @@ def g4_problems(fx, errs):
     want = ["duplicate-id", "junk", "refusal"]
     if not set(want) <= set(codes(r)):
         errs.append("G4: a pasted text with a duplicate, noise and a refusal gives %s, want at least %s" % (codes(r), want))
+    # a record, then a record that is cut: the first is read and the cut is reported
+    case("a record and then a cut record", [{"name": "two.json", "text": ta.strip() + "\n" + tc.strip()[:300]}], ["not-json"], 1)
+    # a record with a repeated member
+    rep = ta.replace('"threads":1', '"threads":1,"id":"%s"' % a["id"], 1)
+    r = analyze([{"name": "rep.json", "text": rep}])
+    if "malformed" not in codes(r):
+        errs.append("G4: a record with a repeated id member gives %s, want malformed among them" % codes(r))
     # splitDocs
     sp = one({"op": "split", "text": 'x {"a":"}{"} [1,{"b":2}] y\n{"c":1}'})
     if [d["raw"] for d in sp["docs"]] != ['{"a":"}{"}', '[1,{"b":2}]', '{"c":1}']:
         errs.append("G4: splitDocs gives %s on text with braces inside a string" % [d["raw"] for d in sp["docs"]])
+    sp = one({"op": "split", "text": '{"a":"x\\"}"} {"b":1}'})
+    if [d["raw"] for d in sp["docs"]] != ['{"a":"x\\"}"}', '{"b":1}']:
+        errs.append("G4: splitDocs gives %s on text with an escaped quote inside a string" % [d["raw"] for d in sp["docs"]])
 
 
 def flat(prefix, v, out):
@@ -569,7 +579,7 @@ def py_sort(rows, key, direction):
 
 def g6_table(fx, errs):
     # records of ten runs and a list of all: two rows are list-only (missing metric, model...)
-    names = [r["file"] for r in fx["runs"][:-2]]
+    names = [r["file"] for r in fx["runs"][:-2]][::-1]  # read in descending id order: a tie broken by position is not a tie broken by id
     srcs = [{"name": "list.json", "text": fx["list"]}] + sources_files(fx, names)
     res = analyze(srcs)
     rows = res["rows"]
@@ -749,6 +759,14 @@ def g8_chart(fx, errs):
     dm = node([{"op": "defaultMetric", "rows": rows}])[0]
     if dm != want_default:
         errs.append("G8: the default metric is %s, want %s" % (dm, want_default))
+    # a tie between two primary metrics goes to the one that appears first
+    by_label = {x["label"]: x["id"] for x in fx["runs"]}
+    lin = next(r for r in rows if r["id"] == by_label["linear"])
+    cla = next(r for r in rows if r["id"] == by_label["demo-a"])
+    for pair, want_m in (([lin, cla], "rmse"), ([cla, lin], "accuracy")):
+        dm2 = node([{"op": "defaultMetric", "rows": pair}])[0]
+        if dm2 != want_m:
+            errs.append("G8: with one run of each of two tasks the default metric is %s, want %s (the first)" % (dm2, want_m))
     # negative values: the axis starts at the smallest negative
     fake = [dict(rows[0], uid="u1", id="a" * 64, metricName="r2"), dict(rows[1], uid="u2", id="b" * 64, metricName="r2")]
     for f, v in zip(fake, ("-0.5", "2")):
@@ -984,12 +1002,11 @@ def g10_structure(fx, errs, html, path):
     if "textContent" not in code:
         errs.append("G10: the DOM code never uses textContent")
     # statements the page must make
-    text = " ".join(p.text) + " " + html
-    low = re.sub(r"\s+", " ", text.lower())
+    low = re.sub(r"\s+", " ", " ".join(p.text).lower())  # the text a reader sees, not the comments or the script
     for needle, what in (("nothing is sent", "that nothing is sent anywhere"), ("ml runs verify", "the verify command"), ("only the tool", "that only the tool can verify"),
                          ("cannot verify", "that the page cannot verify"), ("real records", "the sample's caption (real records)"), ("sample", "the sample button"),
                          ("ml runs list", "the input it reads: ml runs list"), ("ml runs show", "the input it reads: ml runs show"), ("drop", "drag and drop"), ("paste", "paste"),
-                         ("crypto.subtle", "the SHA-256 it uses"), ("error", "the word error for a problem"), ("note", "the word note for a problem")):
+                         ("crypto.subtle", "the SHA-256 it uses"), ("list only", "that a run known only from a list is not checked"), ("never says", "that the page never says verified")):
         if needle not in low:
             errs.append("G10: the page does not say %s (looked for %r)" % (what, needle))
     for needle in ('id="problems"', 'role="status"', 'type="file"', 'aria-sort', '<caption', 'id="sample"', '<table'):
