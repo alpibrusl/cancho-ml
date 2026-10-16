@@ -394,8 +394,8 @@ The library also answers, with its own codes in its band, tags that exist above:
 
 | tag | exit | when | repair |
 |---|---|---|---|
-| `ml.fit.collinear` | 8 | a column of the fitted matrix is explained by the columns before it to within 2^-40 of its own sum of squares (after the steps, the intercept last); the column, the dependency and the tolerance are in `detail` | `retry` with `--l2`, or `choose` of that and `--drop NAME`; `none` with `--plan` |
-| `ml.fit.separable` | 8 | logistic regression with `l2` 0 on separable classes; the pass, the reason, the loss and its bound, the norm of the coefficients are in `detail` | `retry` with `--l2`; `none` with `--plan` |
+| `ml.fit.collinear` | 8 | a column of the fitted matrix is explained by the columns before it to within 2^-40 of its own sum of squares (after the steps, the intercept last); the column, the dependency and the tolerance are in `detail` (as are `repeat` and `fold` when `ml cv` refuses a training fold) | `retry` with `--l2`, or `choose` of that and `--drop NAME`; `none` with `--plan` |
+| `ml.fit.separable` | 8 | logistic regression with `l2` 0 on separable classes; the pass, the reason, the loss and its bound, the norm of the coefficients are in `detail` (as are `repeat` and `fold` when `ml cv` refuses a training fold) | `retry` with `--l2`; `none` with `--plan` |
 
 *Added by M22, run tracking and train/serve skew (`docs/tracking.md` section 5.5; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/test_track.py`, `tests/conformance/fixtures.py`):*
 
