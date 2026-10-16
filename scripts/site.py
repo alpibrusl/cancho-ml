@@ -1077,7 +1077,7 @@ def landing_values(ctx):
     import re as _re
     runners = _re.findall(r"- \{os: ([\w.-]+),", (ROOT / ".github" / "workflows" / "ci.yml").read_text())
     return {"runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
-            "mut_survive": survive, "rules": str(len(ctx["introspect"]["rules"])), "red_gap": m.group(3), "red_tol": m.group(4)}
+            "mut_survive": survive, "rules": str(len(ctx["introspect"]["rules"])), "mcp_tools": str(len(json.loads((ROOT / "docs" / "mcp" / "tools.json").read_text())["tools"])), "red_gap": m.group(3), "red_tol": m.group(4)}
 
 
 

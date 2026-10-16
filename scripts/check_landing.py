@@ -177,6 +177,7 @@ def figures(root):
     m = re.search(r"RMSE [\d.]+ against scikit-learn's [\d.]+, ([\d.]+)% apart; the tolerance is (\d+)%", status)
     out["red_gap"], out["red_tol"] = m.groups()
     guide = (root / "docs" / "guide.html").read_text()
+    out["mcp_tools"] = str(len(json.loads((root / "docs" / "mcp" / "tools.json").read_text())["tools"]))
     out["rules"] = re.search(r"<!-- gen:nrules -->\n(\d+)\n<!-- /gen:nrules -->", guide).group(1)
     return out
 
@@ -196,7 +197,7 @@ def check_figures(root, p, errs):
         seen[name] = val
         if val != want[name]:
             errs.append("index.html: %s is %r, the sources say %r" % (name, val, want[name]))
-    for name in ("fp_lines", "tests", "mut_killed", "mut_total", "rules", "red_gap", "red_tol", "platforms", "runners"):
+    for name in ("fp_lines", "tests", "mut_killed", "mut_total", "rules", "red_gap", "red_tol", "platforms", "runners", "mcp_tools"):
         if name not in seen:
             errs.append("index.html: the figure %s is missing" % name)
     status = (root / "docs" / "status.md").read_text()
