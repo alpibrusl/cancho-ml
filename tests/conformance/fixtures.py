@@ -639,6 +639,9 @@ SEP = "x1,x2,y\n-3,1,0\n-2,-1,0\n-1,2,0\n1,-2,1\n2,1,1\n3,-1,1\n"
 NEARSEP = SEP + "3,-1,0\n"
 QUASI = "x,y\n-2,0\n-1,0\n0,0\n0,1\n1,1\n2,1\n"
 NEARCOL = "a,b,y\n1,1.00001,0\n2,2.00002,1\n3,2.99999,0\n4,4.00004,1\n5,5.00003,1\n6,5.99996,0\n7,7.00001,1\n"
+# not separable as a whole (a fit with l2 0 is made), separable once the rows of one of three folds are left out; a duplicate column in the first time block only
+CVSEP = "x,y\n-3,0\n-2,0\n-1,0\n1,1\n2,1\n3,1\n-2.5,0\n2.5,0\n-1.5,0\n1.5,1\n2.8,1\n-0.5,0\n"
+CVCOL = "day,a,b,y\n1,1,1,2\n2,2,2,3\n3,3,3,5\n4,4,5,7\n5,5,3,9\n6,6,8,11\n7,7,1,12\n8,8,9,15\n"
 RBASE = [("write", "dup.csv", DUPC), ("write", "const.csv", CONSTC), ("write", "sp.csv", SPC), ("write", "sep.csv", SEP),
          ("write", "nearsep.csv", NEARSEP), ("write", "nearcol.csv", NEARCOL), ("write", "lcls.csv", LCLS)]
 FIT_SP = ["--cat", "sp", "--step", "encode column=sp kind=onehot", "--drop", "id", "--target", "y", "--output", "m.cml", "sp.csv"]
@@ -688,6 +691,11 @@ def _refuse_cases():
              ok({"model": "logistic"}), setup=RBASE),
         case("ml-fit-near-collinear-columns-are-fitted", ["fit", "--model", "linear", "--target", "y", "--output", "m.cml", "nearcol.csv"],
              ok({"model": "linear"}), setup=RBASE),
+        # `ml cv` fits the training rows of a fold: a fold can be separable or collinear when the whole data is not, and the refusal names it (docs/refusals-fit.md section 6)
+        case("ml-cv-fold-separable-names-the-fold", ["cv", "--model", "logistic", "--target", "y", "--folds", "3", "cvsep.csv"],
+             sepa(repair_runs=True, repair_has=[["--l2", "1e-2"]], detail={"reason": "loss", "repeat": 0, "fold": 1}), setup=RBASE + [("write", "cvsep.csv", CVSEP)]),
+        case("ml-cv-fold-collinear-names-the-fold", ["cv", "--model", "linear", "--target", "y", "--drop", "day", "--folds", "2", "--split-by", "time:day", "cvcol.csv"],
+             col(repair_runs=True, repair_has=[["--l2", "1e-7"]], detail={"model": "linear", "column": "b", "columns": ["a"], "repeat": 0, "fold": 0}), setup=RBASE + [("write", "cvcol.csv", CVCOL)]),
         case("ml-fit-full-one-hot-with-a-ridge-is-fitted", ["fit", "--model", "linear", "--l2", "0.1"] + FIT_SP, ok({"model": "linear"}), setup=RBASE),
     ]
 

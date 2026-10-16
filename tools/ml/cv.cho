@@ -212,7 +212,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
                         borrow cvoc as &cvr in {
                             borrow pls as &pr in {
                                 borrow sel as &sr in {
-                                    let (t3, ok6, e6) = wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, e);
+                                    let (t3, ok6, e6) = wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, rep, f, e);
                                     wire.drop_trained(heap, t2);
                                     t2 = t3;
                                     ok5 = ok6;

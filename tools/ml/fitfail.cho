@@ -94,6 +94,16 @@ fn put_coefficient[&h](heap: &!h Heap, w: json.Writer, c: float) -> [heap] json.
     return verbs.put_double(heap, w, bits_of(c));
 }
 
+// `ml cv` fits one training fold after the other: a refusal of one of them names the repeat and the fold (docs/refusals-fit.md section 6). `fold` below 0: a plain fit, nothing is added
+fn put_fold[&h](heap: &!h Heap, w: json.Writer, rep: int, fold: int) -> [heap] json.Writer {
+    if fold < 0 {
+        return w;
+    }
+    var o = fail.detail_int(heap, w, "repeat", rep);
+    o = fail.detail_int(heap, o, "fold", fold);
+    return o;
+}
+
 // the repair of a plan: nothing a script can apply, the hyperparameters are on the model line of the plan
 fn plan_repair[&h](heap: &!h Heap, w: json.Writer) -> [heap] json.Writer {
     return fail.repair_none(heap, w, "the plan's model line holds l2 (and no flag may also give it): set l2= there, to the value in the hint");
@@ -101,7 +111,7 @@ fn plan_repair[&h](heap: &!h Heap, w: json.Writer) -> [heap] json.Writer {
 
 // ml.fit.collinear. diag is the record of lib/models/rank.cho: [0] pass, [1] j, [2] s_jj / a_jj, [3] the largest diagonal element, [4 + k] c_k. nm the names of the p - 1 columns
 // of the matrix the estimator got; the column p - 1 is the intercept. `logistic` adds the pass to the detail.
-pub fn collinear[&h, &g, &d, &n](heap: &!h Heap, args: &g Args, e: fail.Errors, logistic: bool, diag: &d [float], nm: &n names.Names, l2: float, o: verbs.Opts) -> [heap, args] fail.Errors {
+pub fn collinear[&h, &g, &d, &n](heap: &!h Heap, args: &g Args, e: fail.Errors, logistic: bool, diag: &d [float], nm: &n names.Names, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap, args] fail.Errors {
     let nfeat = names.count(nm);
     let j = truncate(diag[1]);
     let maxdiag = diag[3];
@@ -231,13 +241,14 @@ pub fn collinear[&h, &g, &d, &n](heap: &!h Heap, args: &g Args, e: fail.Errors, 
         k = k + 1;
     }
     w = json.end_array(heap, w);
+    w = put_fold(heap, w, rep, fold);
     buffer.drop(heap, l2txt);
     return fail.add(heap, e, w);
 }
 
 // ml.fit.separable. diag is the record of lib/models/linear/logreg.cho: [0] pass, [1] reason (0 loss, 1 pivot, 2 scale), [2] the summed loss, [3] the norm of w, [4] the largest
 // diagonal element of the Hessian of pass 0, [5] the predictor scale.
-pub fn separable[&h, &g, &d](heap: &!h Heap, args: &g Args, e: fail.Errors, diag: &d [float], iterations: int, l2: float, o: verbs.Opts) -> [heap, args] fail.Errors {
+pub fn separable[&h, &g, &d](heap: &!h Heap, args: &g Args, e: fail.Errors, diag: &d [float], iterations: int, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap, args] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.fit.separable");
     // the repair: l2 whose pivots stay at least about 2^-10 of the Hessian's diagonal at every pass
     var l2txt = decade_text(heap, diag[4] / 1024.0);
@@ -272,6 +283,7 @@ pub fn separable[&h, &g, &d](heap: &!h Heap, args: &g Args, e: fail.Errors, diag
     w = json.put_key(heap, w, "l2");
     w = verbs.put_double(heap, w, bits_of(l2));
     w = fail.detail_int(heap, w, "iterations", iterations);
+    w = put_fold(heap, w, rep, fold);
     buffer.drop(heap, l2txt);
     return fail.add(heap, e, w);
 }
