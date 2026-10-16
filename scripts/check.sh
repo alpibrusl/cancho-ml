@@ -60,6 +60,10 @@ $CANCHO build --bin ml-predict
 # the server (docs/serving-http.md): a third binary from the same sources, and the driver of the number gate
 $CANCHO build --bin ml-serve
 $CANCHO build --bin serve-check
+# the MCP server (docs/mcp.md): a fourth binary from the same sources; its tools are what the flag table gives (drift, schemas, introspect) and the protocol client calls every one
+$CANCHO build --bin ml-mcp
+python3 scripts/check_mcp_tools.py --introspect
+python3 scripts/check_mcp_tools.py --mutants
 $CANCHO test --std tools/ml-serve/num.cho build/deps/*.cho tests/serve_num.cho
 python3 scripts/check_bins.py
 python3 scripts/check_bins.py --mutants
@@ -78,6 +82,9 @@ python3 scripts/manifest.py --check
 (cd tests/conformance && python3 -m unittest discover -p 'test_*.py')
 python3 scripts/mutants_cli.py --check
 python3 scripts/mutants_serve.py --check
+# ml-mcp (docs/mcp.md gate E): the protocol client, then the patterns of the server's mutants apply (scripts/mutants_mcp.py rebuilds the server once per pattern and runs on request)
+python3 scripts/check_mcp.py
+python3 scripts/mutants_mcp.py --check
 # a prediction that is not a finite number (docs/nonfinite.md): no call of flt.put_float outside its door, and the patterns of the mutants apply (scripts/mutants_nonfinite.py rebuilds the three binaries once per pattern and runs on request)
 python3 scripts/check_nonfinite.py
 python3 scripts/mutants_nonfinite.py --check

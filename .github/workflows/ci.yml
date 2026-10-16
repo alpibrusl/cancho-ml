@@ -116,18 +116,27 @@ jobs:
           cancho install
           cancho fmt --check lib tests tools
 
-      - name: Build ml, ml-predict and ml-serve
+      - name: Build ml, ml-predict, ml-serve and ml-mcp
         run: |
           time cancho build --bin ml
           time cancho build --bin ml-predict
           time cancho build --bin ml-serve
+          time cancho build --bin ml-mcp
           time cancho build --bin serve-check
 
-      - name: The three binaries are built from the same sources
+      - name: The four binaries are built from the same sources
         run: |
           python3 scripts/check_bins.py
           python3 scripts/check_bins.py --mutants
           python3 scripts/check_web_pin.py --bins
+
+      # docs/mcp.md gates B and A: the tools of ml-mcp are what the flag table gives (docs/mcp/tools.json and tools/ml-mcp/tools.cho regenerate to the committed bytes, equal to
+      # `ml introspect`, valid JSON Schema), and the protocol client starts ml-mcp, lists the tools and calls every one on the bundled data against the command line (under a minute)
+      - name: The MCP server (its tools equal the table; the protocol client)
+        run: |
+          python3 scripts/check_mcp_tools.py --introspect
+          python3 scripts/check_mcp_tools.py --mutants
+          python3 scripts/check_mcp.py
 
       # Each platform compares its fingerprint to docs/bench/xplat_fp.txt: 88 lines for 22 fits. Equal to the golden on both platforms is equal across them.
       - name: Determinism gate (the fingerprint equals the committed golden)
@@ -176,8 +185,8 @@ jobs:
         run: |
           plat="$(uname -s | tr 'A-Z' 'a-z')-$(uname -m)"
           mkdir -p ../dist
-          (cd build && tar -czf "../../dist/cancho-ml-$plat.tar.gz" ml ml-predict ml-serve)
-          (cd build && shasum -a 256 ml ml-predict ml-serve) > "../dist/cancho-ml-$plat.sha256"
+          (cd build && tar -czf "../../dist/cancho-ml-$plat.tar.gz" ml ml-predict ml-serve ml-mcp)
+          (cd build && shasum -a 256 ml ml-predict ml-serve ml-mcp) > "../dist/cancho-ml-$plat.sha256"
           (cd ../dist && shasum -a 256 "cancho-ml-$plat.tar.gz") >> "../dist/cancho-ml-$plat.sha256"
           cat "../dist/cancho-ml-$plat.sha256"
           cp ../xplat-fp-run.txt "../dist/cancho-ml-$plat.fingerprint.txt"
@@ -308,4 +317,4 @@ jobs:
           files=$(ls dist/cancho-ml-*.tar.gz dist/cancho-ml-*.sha256 dist/cancho-ml-*.fingerprint.txt)
           test "$(ls dist/cancho-ml-*.tar.gz | wc -l)" -eq 3 || { echo "expected the binaries of three platforms" >&2; exit 1; }
           # shellcheck disable=SC2086
-          gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes "Binaries of ml, ml-predict and ml-serve built and gated by this workflow run: $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID. Unsigned; the .sha256 files are for a download check." --verify-tag $files
+          gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes "Binaries of ml, ml-predict, ml-serve and ml-mcp built and gated by this workflow run: $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID. Unsigned; the .sha256 files are for a download check." --verify-tag $files
