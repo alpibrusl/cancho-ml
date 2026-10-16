@@ -77,6 +77,7 @@ MUTANTS = [
      '"# the same file over HTTP: it listens on every address of the host"', {"landing"}),
     ("experiments-card-removed", IDX, "<h3>Experiments you can replay</h3>", "<h3>Experiments</h3>", {"landing"}),
     ("experiments-verify-claim-removed", IDX, "<code>ml runs verify</code> re-fits and reproduces the model&rsquo;s hash.", "<code>ml runs verify</code> checks it.", {"landing"}),
+    ("experiments-compare-claim-removed", IDX, "shows what differs and the metrics side by side;", "compares them;", {"landing"}),
     ("experiments-on-marker-removed", IDX, "(<code>on</code>) and counts the cells outside its range", "and counts the cells outside the range", {"landing"}),
     ("experiments-track-removed", IDX, "(<code>--track</code>)", "", {"landing"}),
     ("platforms-runner-dropped-from-text", IDX, "<code>ubuntu-24.04-arm</code>, ", "", {"landing"}),

@@ -40,7 +40,7 @@ DOCS = ROOT / "docs"
 PAGES = ["index.html", "guide.html", "examples.html", "evidence.html", "benchmarks.html"]
 BUDGET_INDEX = 28 * 1024
 BUDGET_WITH_CSS = 45 * 1024
-BUDGET_SCRIPT = 3 * 1024 + 512
+BUDGET_SCRIPT = 3 * 1024
 
 
 def src(root=ROOT):
@@ -441,7 +441,8 @@ def check_basics(root, path, p, text, errs, landing=True):
 
 
 EXPERIMENT_CLAIMS = [("Experiments you can replay", "the card of the experiments"), ("<code>--track</code>", "the flag that writes a run record"),
-                     ("ml runs compare", "the comparison of runs"), ("ml runs verify", "the replay of a run that reproduces the model's hash"),
+                     ("ml runs compare", "the comparison of runs"), ("ml runs verify", "the replay of a run"), ("re-fits and reproduces the model", "the claim that verify reproduces the model's hash"),
+                     ("shows what differs and the metrics side by side", "the claim of what compare shows"),
                      ("(<code>on</code>)", "the marker that says which file eval scored"), ("outside its range", "the count of cells outside the training range"),
                      ("scripts/demo.sh", "the demo the first two logs are")]
 SERVE_REQUIRED = [("127.0.0.1", "that ml-serve listens on 127.0.0.1"), ("--bind all", "the flag that opens it to every address"),
