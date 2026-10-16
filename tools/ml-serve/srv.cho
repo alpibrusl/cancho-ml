@@ -295,7 +295,7 @@ fn is_json_type[&c](value: &c [byte]) -> [] bool {
 
 // the options the predictor is called with: the rows of a request, as many cells as the model's columns allow, the answer's columns the model has
 fn options(columns: int, rows: int, max_bytes: int, proba: bool, distance: bool, body_cap: int, limit: int, max_oor: int, max_oor_given: bool) -> [] verbs.Opts {
-    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, drops: "", floats: "", target: "", model: "", plan_given: false, step: "", step_given: false, positive: "", positive_given: false, split: "", split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cats: "", cat_given: false, na: "", max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128, max_oor: max_oor, max_oor_given: max_oor_given, drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: 0, split_num: 0, split_den: 0, track_given: false };
+    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, plan_given: false, step_given: false, positive_given: false, split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cat_given: false, max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128, max_oor: max_oor, max_oor_given: max_oor_given, drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: 0, split_num: 0, split_den: 0, track_given: false };
 }
 
 // the options `describe` is called with: the most category strings listed per column, and the largest model file
@@ -304,7 +304,7 @@ pub fn describe_opts(limit: int, max_bytes: int) -> [] verbs.Opts {
 }
 
 // The CSV of the records and the predictor on it. `first` is the tape node of the first record, `n` how many, `batch` whether a pointer names the row.
-fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], first: int, n: int, batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+fn run_rows[&h, &s, &f, &r, &b, &t, &cl](heap: &!h Heap, sv: &s Served, src: &cl [byte], fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], first: int, n: int, batch: bool, out: buffer.Buffer, keep: bool) -> [heap, fs_read(""), dir_read, file_read] buffer.Buffer {
     let cs = api.cols_of(sv.built);
     var csv = buffer.append(heap, buffer.empty(heap, 256), cols.header(cs));
     var answer = out;
@@ -361,9 +361,9 @@ fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g 
         borrow model as &mr in {
             verbs.drop_out(heap, result);
             if sv.planned {
-                result = wireio.predict_loaded(heap, args, fs, root, dr, sv.stored, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+                result = wireio.predict_loaded(heap, src, fs, root, dr, sv.stored, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
             } else {
-                result = wireio.predict(heap, args, fs, root, dr, mr, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+                result = wireio.predict(heap, src, fs, root, dr, mr, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
             }
         }
     }
@@ -411,13 +411,13 @@ fn run_rows[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g 
 }
 
 // the body was judged by the schema: the records, each key once, then the rows
-fn accepted[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+fn accepted[&h, &s, &f, &r, &b, &t, &cl](heap: &!h Heap, sv: &s Served, src: &cl [byte], fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, fs_read(""), dir_read, file_read] buffer.Buffer {
     let cs = api.cols_of(sv.built);
     if !batch {
         if !cols.each_key_once(cs, body, tape, 0) {
             return simple(heap, api.sha_of(sv.built), out, 400, "serve.duplicate-key", "an object holds the same key twice", keep);
         }
-        return run_rows(heap, sv, args, fs, root, body, tape, 0, 1, false, out, keep);
+        return run_rows(heap, sv, src, fs, root, body, tape, 0, 1, false, out, keep);
     }
     let rows = json.get(body, tape, 0, "rows");
     let n = json.count(tape, rows);
@@ -438,11 +438,11 @@ fn accepted[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g 
         }
         k = k + 1;
     }
-    return run_rows(heap, sv, args, fs, root, body, tape, json.at(tape, rows, 0), n, true, out, keep);
+    return run_rows(heap, sv, src, fs, root, body, tape, json.at(tape, rows, 0), n, true, out, keep);
 }
 
 // the body is JSON: the size of a batch, then the schema
-fn judged[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+fn judged[&h, &s, &f, &r, &b, &t, &cl](heap: &!h Heap, sv: &s Served, src: &cl [byte], fs: &f Fs(""), root: &r [byte], body: &b [byte], tape: &t [int], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, fs_read(""), dir_read, file_read] buffer.Buffer {
     let sc = api.schema_of(sv.built);
     if batch && json.is_object(tape, 0) {
         let rows = json.get(body, tape, 0, "rows");
@@ -468,7 +468,7 @@ fn judged[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Ar
                 }
                 buffer.drop(heap, p);
             } else {
-                answer = accepted(heap, sv, args, fs, root, body, tape, batch, answer, keep);
+                answer = accepted(heap, sv, src, fs, root, body, tape, batch, answer, keep);
             }
         }
     }
@@ -477,7 +477,7 @@ fn judged[&h, &s, &g, &f, &r, &b, &t](heap: &!h Heap, sv: &s Served, args: &g Ar
     return answer;
 }
 
-fn predict_route[&h, &s, &g, &f, &r, &q, &t, &b](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], body: &b [byte], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+fn predict_route[&h, &s, &f, &r, &q, &t, &b, &cl](heap: &!h Heap, sv: &s Served, src: &cl [byte], fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], body: &b [byte], batch: bool, out: buffer.Buffer, keep: bool) -> [heap, fs_read(""), dir_read, file_read] buffer.Buffer {
     if len(body) > sv.max_body {
         return simple(heap, api.sha_of(sv.built), out, 413, "serve.body-too-large", "the body is longer than --max-body-bytes", keep);
     }
@@ -498,7 +498,7 @@ fn predict_route[&h, &s, &g, &f, &r, &q, &t, &b](heap: &!h Heap, sv: &s Served, 
             }
             buffer.drop(heap, detail);
         } else {
-            answer = judged(heap, sv, args, fs, root, body, tp, batch, answer, keep);
+            answer = judged(heap, sv, src, fs, root, body, tp, batch, answer, keep);
         }
     }
     unbox_slice(heap, tape);
@@ -510,7 +510,7 @@ fn predict_route[&h, &s, &g, &f, &r, &q, &t, &b](heap: &!h Heap, sv: &s Served, 
 // ---------------------------------------------------------------------
 
 // One parsed request in, one response appended to `out`.
-fn route[&h, &s, &g, &f, &r, &q, &t, &p, &a, &x, &b](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], params: &!p [int], argv: &!a [int], scratch: &!x [byte], body: &b [byte], out: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
+fn route[&h, &s, &f, &r, &q, &t, &p, &a, &x, &b, &cl](heap: &!h Heap, sv: &s Served, src: &cl [byte], fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], params: &!p [int], argv: &!a [int], scratch: &!x [byte], body: &b [byte], out: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] buffer.Buffer {
     let keep = http.keeps_alive(table);
     let (routed, id) = web.dispatch(heap, api.api_of(sv.built), api.schema_of(sv.built), request, table, params, argv, scratch, out, keep);
     if id == web.answered() {
@@ -534,18 +534,18 @@ fn route[&h, &s, &g, &f, &r, &q, &t, &p, &a, &x, &b](heap: &!h Heap, sv: &s Serv
         return server.reply_with(heap, gated, 200, api.doc_of(sv.built), keep, "");
     }
     if id == api.op_predict_one() {
-        return predict_route(heap, sv, args, fs, root, request, table, body, false, gated, keep);
+        return predict_route(heap, sv, src, fs, root, request, table, body, false, gated, keep);
     }
     if id == api.op_predict_batch() {
-        return predict_route(heap, sv, args, fs, root, request, table, body, true, gated, keep);
+        return predict_route(heap, sv, src, fs, root, request, table, body, true, gated, keep);
     }
     return simple(heap, api.sha_of(sv.built), gated, 500, "serve.internal", "a route without a handler", keep);
 }
 
 // One parsed request in, one response appended to `out`, with the digest of the model in the head of every answer this handler or the router makes (the answers the loop writes
 // before a handler is reached, 400, 413 and 431, have none).
-pub fn handle[&h, &s, &g, &f, &r, &q, &t, &p, &a, &x, &b](heap: &!h Heap, sv: &s Served, args: &g Args, fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], params: &!p [int], argv: &!a [int], scratch: &!x [byte], body: &b [byte], out: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] buffer.Buffer {
-    let answer = route(heap, sv, args, fs, root, request, table, params, argv, scratch, body, out);
+pub fn handle[&h, &s, &f, &r, &q, &t, &p, &a, &x, &b, &cl](heap: &!h Heap, sv: &s Served, src: &cl [byte], fs: &f Fs(""), root: &r [byte], request: &q [byte], table: &t [int], params: &!p [int], argv: &!a [int], scratch: &!x [byte], body: &b [byte], out: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] buffer.Buffer {
+    let answer = route(heap, sv, src, fs, root, request, table, params, argv, scratch, body, out);
     var marked = buffer.empty(heap, 1);
     borrow answer as &ar in {
         let head = buffer.bytes(ar);

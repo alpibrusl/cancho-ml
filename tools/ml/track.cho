@@ -13,6 +13,7 @@ import std.buffer;
 import std.bytes;
 import std.dirs;
 import std.json;
+import ml.argv;
 import ml.fsio;
 import ml.mfile;
 import ml.paths;
@@ -492,13 +493,13 @@ pub fn open_error[&h](heap: &!h Heap, rule: &static [byte]) -> [heap] json.Write
 
 // The run record of a fit, checked against the directory `trackp` (docs/tracking.md section 5.1): (the record's text, its id, whether it is to be written, the errors). Nothing is written. The record
 // is refused when it is too long, when the directory holds 1000 records already, or when a record with this id exists and differs from it in more than the thread count and the name of the model file.
-pub fn plan[&h, &sp, &f, &r, &pt, &dp, &op, &fb, &sh, &tn, &pl, &mt, &nv](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], trackp: &pt paths.Rp, data_path: &dp [byte], out_path: &op [byte], model: &fb [byte], sha: &sh [byte], file_bytes: int, file_rows: int, trows: int, ntest: int, features: int, steps: int, tg: &tn [byte], has_target: bool, task: &static [byte], ptext: &pl [byte], split: &sp [byte], metrics: &mt [byte], sum_order: int, na: &nv [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
+pub fn plan[&h, &sp, &f, &r, &pt, &dp, &op, &fb, &sh, &tn, &pl, &mt, &nv, &cm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], trackp: &pt paths.Rp, data_path: &dp [byte], out_path: &op [byte], model: &fb [byte], sha: &sh [byte], file_bytes: int, file_rows: int, trows: int, ntest: int, features: int, steps: int, tg: &tn [byte], has_target: bool, task: &static [byte], ptext: &pl [byte], split: &sp [byte], metrics: &mt [byte], sum_order: int, na: &nv [byte], cmd: &cm [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     let shex = prov.hex(heap, sha);
     var inp = buffer.empty(heap, 1);
     borrow shex as &sh in {
         buffer.drop(heap, inp);
-        inp = inputs(heap, data_path, file_bytes, buffer.bytes(sh), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, split, o.drops, o.floats, o.cats, na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order);
+        inp = inputs(heap, data_path, file_bytes, buffer.bytes(sh), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, split, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order);
     }
     buffer.drop(heap, shex);
     var id = buffer.empty(heap, 1);
@@ -562,7 +563,7 @@ pub fn plan[&h, &sp, &f, &r, &pt, &dp, &op, &fb, &sh, &tn, &pl, &mt, &nv](heap: 
                                     let shex2 = prov.hex(heap, sha);
                                     borrow mhex2 as &mh2 in {
                                         borrow shex2 as &sh2 in {
-                                            let inp2 = inputs(heap, data_path, file_bytes, buffer.bytes(sh2), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, split, o.drops, o.floats, o.cats, na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order);
+                                            let inp2 = inputs(heap, data_path, file_bytes, buffer.bytes(sh2), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, split, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order);
                                             borrow inp2 as &i2 in {
                                                 if true {
                                                     let cand = record(heap, buffer.bytes(idr), buffer.bytes(i2), pthreads, buffer.bytes(ppr), len(model), buffer.bytes(mh2), file_rows, trows, ntest, features, steps, metrics);

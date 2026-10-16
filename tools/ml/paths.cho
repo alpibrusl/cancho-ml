@@ -10,9 +10,11 @@ module ml.paths;
 
 import std.buffer;
 import std.json;
+import std.bytes;
 import toolbox.cli;
 import toolbox.fail;
 import toolbox.path;
+import ml.argv;
 import ml.pathcheck;
 
 // a checked path: the whole path to open, and where the part below --root starts in it. The CSV of `predict` can also be standard input
@@ -136,35 +138,179 @@ pub fn refuse_double_dot[&h, &p](heap: &!h Heap, errs: fail.Errors, shown: &p [b
     return fail.add(heap, errs, w);
 }
 
-// operand `at` (an argument index) under `root`
-pub fn from_operand[&h, &g, &r](heap: &!h Heap, args: &g Args, root: &r [byte], at: int, errs: fail.Errors) -> [heap, args] (Rp, fail.Errors) {
-    let (resolved, e) = path.operand(heap, args, root, at, errs);
-    var out = absent(heap);
-    var e2 = e;
-    borrow resolved as &rr in {
-        if path.ok(rr) {
-            let f = path.full(rr);
-            let s = path.shown(rr);
-            if len(root) == 0 && has_double_dot(f) {
-                e2 = refuse_double_dot(heap, e2, s, at);
+// A path error as toolbox.path writes it (module toolbox.path, `path_error`): the rule, the message and the hint, a repair that repeats the command line with argument `at`
+// replaced when there is a suggestion, the path as it was written and its position. The pinned function reads the process's `Args`; this one reads the packed command line, so that
+// a command line that arrives as data is judged by the same rules (docs/mcp.md section 4.1). tests/conformance/test_paths_equal.py compares it with the pinned one over a corpus.
+fn path_error[&h, &r, &c, &q](heap: &!h Heap, e: fail.Errors, src: &c [byte], rule: &static [byte], message: &static [byte], hint: &static [byte], at: int, given: &q [byte], repair: &r [byte]) -> [heap] fail.Errors {
+    var w = fail.open(heap, rule, message, hint);
+    if len(repair) > 0 {
+        var rw = fail.retry_open(heap, w);
+        var i = 0;
+        while i < argv.argc(src) {
+            if i == at {
+                rw = json.put_string(heap, rw, repair);
             } else {
-                drop(heap, out);
-                var copy = buffer.empty(heap, len(f) + 1);
-                copy = buffer.append(heap, copy, f);
-                out = Rp { full: copy, shown: len(f) - len(s), present: true, mem: buffer.empty(heap, 1), stdin: false };
+                rw = json.put_string(heap, rw, argv.at(src, i));
+            }
+            i = i + 1;
+        }
+        w = fail.retry_close(heap, rw);
+    } else {
+        w = fail.no_repair(heap, w);
+    }
+    w = fail.detail_open(heap, w);
+    w = json.put_key(heap, w, "path");
+    w = json.put_string(heap, w, given);
+    w = json.put_key(heap, w, "position");
+    w = json.put_int(heap, w, at);
+    return fail.add(heap, e, w);
+}
+
+// Check a `--root` value: not empty, no `..`, not too long. Answers the normalised root, empty when there was none or it was refused (toolbox.path.root over text).
+pub fn root[&h, &c, &g](heap: &!h Heap, src: &c [byte], given: &g [byte], at: int, errs: fail.Errors) -> [heap] (buffer.Buffer, fail.Errors) {
+    var e = errs;
+    if at < 0 {
+        return (buffer.empty(heap, 1), e);
+    }
+    if len(given) == 0 {
+        e = path_error(heap, e, src, "path.empty", "--root is empty", "", at, given, "");
+        return (buffer.empty(heap, 1), e);
+    }
+    if len(given) > path.longest() {
+        e = path_error(heap, e, src, "path.too-long", "--root is longer than 4096 bytes", "", at, given, "");
+        return (buffer.empty(heap, 1), e);
+    }
+    if path.has_dotdot(given) {
+        e = path_error(heap, e, src, "path.dotdot", "--root has a `..` component", "name the root without `..`", at, given, "");
+        return (buffer.empty(heap, 1), e);
+    }
+    // no `..` is present, so applying them (path.lexical) changes nothing: this is the normal form of the pinned module
+    let (norm, flagged) = path.lexical(heap, given);
+    var out = norm;
+    var count = 0;
+    borrow out as &o in {
+        count = buffer.size(o);
+    }
+    if count == 0 {
+        out = buffer.push(heap, out, byte_of('.'));
+    }
+    return (out, e);
+}
+
+// operand `at` (an argument index) under `root`: toolbox.path.operand over the packed command line
+pub fn from_operand[&h, &c, &r](heap: &!h Heap, src: &c [byte], root: &r [byte], at: int, errs: fail.Errors) -> [heap] (Rp, fail.Errors) {
+    var e = errs;
+    let given = argv.at(src, at);
+    if len(given) == 0 {
+        e = path_error(heap, e, src, "path.empty", "the path is empty", "", at, given, "");
+        return (absent(heap), e);
+    }
+    if len(given) > path.longest() {
+        e = path_error(heap, e, src, "path.too-long", "the path is longer than 4096 bytes", "", at, given, "");
+        return (absent(heap), e);
+    }
+    let absolute = int_of(given[0]) == '/';
+    if path.has_dotdot(given) {
+        let (resolved, climbed) = path.lexical(heap, given);
+        var suggestion = buffer.empty(heap, 1);
+        borrow resolved as &r2 in {
+            let text = buffer.bytes(r2);
+            var good = !climbed && len(text) > 0;
+            if good && len(root) > 0 && absolute {
+                good = false;
+            }
+            if good {
+                suggestion = buffer.append(heap, suggestion, text);
             }
         }
+        buffer.drop(heap, resolved);
+        borrow suggestion as &s in {
+            e = path_error(heap, e, src, "path.dotdot", "the path has a `..` component", "name the file without `..`; the tool does not resolve it, because a symlink makes `a/link/../b` something other than `a/b`", at, given, buffer.bytes(s));
+        }
+        buffer.drop(heap, suggestion);
+        return (absent(heap), e);
     }
-    path.drop(heap, resolved);
-    return (out, e2);
+    let (norm, flagged) = path.lexical(heap, given);
+    if len(root) == 0 {
+        var count = 0;
+        borrow norm as &n in {
+            count = buffer.size(n);
+        }
+        var out = norm;
+        if count == 0 {
+            out = buffer.push(heap, out, byte_of('.'));
+        }
+        return finish(heap, out, 0, true, at, e);
+    }
+    if absolute {
+        var below = 0 - 1;
+        var suggestion = buffer.empty(heap, 1);
+        borrow norm as &n in {
+            let text = buffer.bytes(n);
+            below = path.under(root, text);
+            if below >= 0 {
+                if below < len(text) {
+                    suggestion = buffer.append(heap, suggestion, text[below..len(text)]);
+                } else {
+                    suggestion = buffer.push(heap, suggestion, byte_of('.'));
+                }
+            }
+        }
+        buffer.drop(heap, norm);
+        if below >= 0 {
+            borrow suggestion as &s in {
+                e = path_error(heap, e, src, "path.absolute", "the path is absolute, and paths are relative to --root", "write it relative to --root", at, given, buffer.bytes(s));
+            }
+        } else {
+            e = path_error(heap, e, src, "path.outside-root", "the path is not under --root", "name a path inside --root", at, given, "");
+        }
+        buffer.drop(heap, suggestion);
+        return (absent(heap), e);
+    }
+    var full = buffer.empty(heap, len(root) + len(given) + 2);
+    full = buffer.append(heap, full, root);
+    if !bytes.equal(root, "/") {
+        full = buffer.push(heap, full, byte_of('/'));
+    }
+    var shown = 0;
+    borrow full as &f in {
+        shown = buffer.size(f);
+    }
+    var count = 0;
+    borrow norm as &n in {
+        count = buffer.size(n);
+        full = buffer.append(heap, full, buffer.bytes(n));
+    }
+    buffer.drop(heap, norm);
+    if count == 0 {
+        full = buffer.push(heap, full, byte_of('.'));
+    }
+    return finish(heap, full, shown, false, at, e);
+}
+
+// the checked path as an Rp; with no root, two dots in a row anywhere are refused (see has_double_dot)
+fn finish[&h](heap: &!h Heap, full: buffer.Buffer, shown: int, root_empty: bool, at: int, errs: fail.Errors) -> [heap] (Rp, fail.Errors) {
+    var e = errs;
+    var bad = false;
+    borrow full as &f in {
+        if root_empty && has_double_dot(buffer.bytes(f)) {
+            e = refuse_double_dot(heap, e, buffer.bytes(f)[shown..len(buffer.bytes(f))], at);
+            bad = true;
+        }
+    }
+    if bad {
+        buffer.drop(heap, full);
+        return (absent(heap), e);
+    }
+    return (Rp { full: full, shown: shown, present: true, mem: buffer.empty(heap, 1), stdin: false }, e);
 }
 
 // the value of flag `name`, if it was given, as a path under `root`
-pub fn from_flag[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], root: &r [byte], name: &static [byte], errs: fail.Errors) -> [heap, args] (Rp, fail.Errors) {
-    if !cli.has(parsed, table, name) {
+pub fn from_flag[&h, &r, &cl](heap: &!h Heap, src: &cl [byte], table: &static [byte], root: &r [byte], name: &static [byte], errs: fail.Errors) -> [heap] (Rp, fail.Errors) {
+    if !argv.has(src, name) {
         return (absent(heap), errs);
     }
-    if !cli.value_is_whole(parsed, table, name) {
+    if !argv.value_is_whole(src, name) {
         var w = fail.open(heap, "args.bad-value", "a path-valued flag takes its value as a separate argument", "write the flag and its value as two arguments");
         w = fail.no_repair(heap, w);
         w = fail.detail_open(heap, w);
@@ -172,5 +318,5 @@ pub fn from_flag[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.P
         w = fail.detail_str(heap, w, "expected", "the value as the next argument, not after an equals sign");
         return (absent(heap), fail.add(heap, errs, w));
     }
-    return from_operand(heap, args, root, cli.value_index(parsed, table, name), errs);
+    return from_operand(heap, src, root, argv.value_index(src, name), errs);
 }

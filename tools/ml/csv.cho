@@ -50,8 +50,6 @@ pub struct Cfg {
     mode: int,
     tscale: int,
     pred: int,
-    drops: &static [byte],
-    floats: &static [byte],
     // the columns of the header, by position, that --drop and --float name: bit j for column j below 62. A runtime list cannot be a field of this structure (it holds `static` text), so a replay of
     // a recorded fit (ml runs verify) turns the names of the record into positions of the header before it reads, and the reader ORs them in
     drop_mask: int,
@@ -87,10 +85,8 @@ pub struct Report {
 // not a refusal of the reader (status 29) but of the caller's schema check, which names it with the other missing and extra columns (docs/stringtable.md section 5).
 // `no_cats()` is the numeric-only reader.
 pub struct CatCfg {
-    cols: &static [byte],
     // the categorical columns by position in the header (bit j for column j below 62), as drop_mask of Cfg
     cat_mask: int,
-    na: &static [byte],
     max_cats: int,
     max_str: int,
     max_pool: int,
@@ -98,8 +94,41 @@ pub struct CatCfg {
     lenient: bool,
 }
 
+// The texts of the command line that a scan reads, in one slice (docs/mcp.md section 4.1): the target, --drop, --float, --cat and --na-values, each NUL-terminated, in this order.
+// A text is not a field of Cfg or CatCfg: those hold no reference, and a command line that arrives as data has no `static` text to give.
+pub fn text_of[&x](tx: &x [byte], k: int) -> [] &x [byte] {
+    var from = 0;
+    var seen = 0;
+    while seen < k && from < len(tx) {
+        if int_of(tx[from]) == 0 {
+            seen = seen + 1;
+        }
+        from = from + 1;
+    }
+    var to = from;
+    while to < len(tx) && int_of(tx[to]) != 0 {
+        to = to + 1;
+    }
+    return tx[from..to];
+}
+
+// the slice of those texts: the target, then the lists of --drop, --float, --cat and --na-values
+pub fn texts[&h, &t, &d, &f, &c, &n](heap: &!h Heap, target: &t [byte], drops: &d [byte], floats: &f [byte], cats: &c [byte], na: &n [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, len(target) + len(drops) + len(floats) + len(cats) + len(na) + 8);
+    b = buffer.append(heap, b, target);
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.append(heap, b, drops);
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.append(heap, b, floats);
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.append(heap, b, cats);
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.append(heap, b, na);
+    return buffer.push(heap, b, byte_of(0));
+}
+
 pub fn no_cats() -> [] CatCfg {
-    return CatCfg { cols: "", cat_mask: 0, na: "", max_cats: dict.default_categories(), max_str: dict.default_string_bytes(), max_pool: dict.default_pool_bytes(), max_catcols: dict.default_columns(), lenient: false };
+    return CatCfg { cat_mask: 0, max_cats: dict.default_categories(), max_str: dict.default_string_bytes(), max_pool: dict.default_pool_bytes(), max_catcols: dict.default_columns(), lenient: false };
 }
 
 // What the categorical part of a scan holds. kind: 0 none (the numeric reader), 1 BUILD (pass 1 of a fit: the strings go into `bld`), 2 LOOKUP (pass 2
@@ -338,7 +367,7 @@ pub fn check_names[&n, &e](names: &n [byte], ends: &e vec.Vec[int], cols: int) -
 
 // --drop and --float: set flags[slot * cols + j] to `value` for the columns named in the comma list. (0, 0), or (code, k) when the k-th
 // name (from 1) is no column
-fn apply_list[&s, &n, &e](flags: &!s [int], names: &n [byte], ends: &e vec.Vec[int], cols: int, list: &static [byte], slot: int, value: int, code: int) -> [] (int, int) {
+fn apply_list[&s, &n, &e, &ls](flags: &!s [int], names: &n [byte], ends: &e vec.Vec[int], cols: int, list: &ls [byte], slot: int, value: int, code: int) -> [] (int, int) {
     if len(list) == 0 {
         return (0, 0);
     }
@@ -511,9 +540,9 @@ fn is_marker[&c, &l](cell: &c [byte], list: &l [byte]) -> [] bool {
 
 // One cell of categorical column `cj` (0-based among the categorical columns) of row `row`, its text unquoted (docs/categorical.md section 5.1).
 // (0, 0), or (status, aux) as in Report. `writes`: this is the pass that fills the ids.
-fn cat_cell[&k, &c](cs: &!k CatState, cc: CatCfg, cell: &c [byte], cj: int, row: int, writes: bool) -> [] (int, int) {
+fn cat_cell[&k, &c, &na](cs: &!k CatState, cc: CatCfg, markers: &na [byte], cell: &c [byte], cj: int, row: int, writes: bool) -> [] (int, int) {
     var id = catmat.missing_id();
-    if len(cell) > 0 && !is_marker(cell, cc.na) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {
+    if len(cell) > 0 && !is_marker(cell, markers) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {
         if len(cell) > cc.max_str {
             return (21, len(cell));
         }
@@ -566,7 +595,7 @@ fn cat_cell[&k, &c](cs: &!k CatState, cc: CatCfg, cell: &c [byte], cj: int, row:
 // place, plane 0 the kind 4. Consumes the state and answers it again with (status, column, aux) as in Report. Fit (kind 1): the columns named in cc.cols, each
 // checked against --drop, the target and --float, their number against the limit, and only then the dictionary is allocated. Predict (kind 2 or 3): the columns of
 // the stored vocabulary, found by name.
-fn cat_header[&h, &s, &n, &e](heap: &!h Heap, flags: &!s [int], names: &n [byte], ends: &e vec.Vec[int], cols: int, tcol: int, cc: CatCfg, cs: CatState) -> [heap] (CatState, int, int, int) {
+fn cat_header[&h, &s, &n, &e, &cl](heap: &!h Heap, flags: &!s [int], cat_list: &cl [byte], names: &n [byte], ends: &e vec.Vec[int], cols: int, tcol: int, cc: CatCfg, cs: CatState) -> [heap] (CatState, int, int, int) {
     var kind = 0;
     borrow cs as &cr in {
         kind = cr.kind;
@@ -576,7 +605,7 @@ fn cat_header[&h, &s, &n, &e](heap: &!h Heap, flags: &!s [int], names: &n [byte]
     }
     if kind == 1 {
         apply_mask(flags, cols, cc.cat_mask, 4, 1);
-        let (st, k) = apply_list(flags, names, ends, cols, cc.cols, 4, 1, 25);
+        let (st, k) = apply_list(flags, names, ends, cols, cat_list, 4, 1, 25);
         if st != 0 {
             return (cs, st, 0, k);
         }
@@ -678,7 +707,7 @@ fn cat_header[&h, &s, &n, &e](heap: &!h Heap, flags: &!s [int], names: &n [byte]
 
 // (status, column, aux) as in Report. `row` is the 0-based row of the file, `quoted` whether the record holds a quote (then `fb` has
 // the offsets of its fields, from reader.fields)
-fn read_row[&l, &s, &a, &v, &d, &b, &f, &k, &z](line: &l [byte], cols: int, tcol: int, cfg: Cfg, row: int, quoted: bool, flags: &!s [int], acc: &!a [int], fv: &!v vec.Vec[int], data: &!d [float], miss: &!b [int], fb: &!f [int], cc: CatCfg, cs: &!k CatState, sc: &!z [byte]) -> [] (int, int, int) {
+fn read_row[&l, &s, &a, &v, &d, &b, &f, &k, &z, &na](line: &l [byte], markers: &na [byte], cols: int, tcol: int, cfg: Cfg, row: int, quoted: bool, flags: &!s [int], acc: &!a [int], fv: &!v vec.Vec[int], data: &!d [float], miss: &!b [int], fb: &!f [int], cc: CatCfg, cs: &!k CatState, sc: &!z [byte]) -> [] (int, int, int) {
     if quoted {
         let (n, inside, bad) = reader.fields(line, 44, fb, cols);
         if inside || bad || n != cols {
@@ -717,12 +746,12 @@ fn read_row[&l, &s, &a, &v, &d, &b, &f, &k, &z](line: &l [byte], cols: int, tcol
                     cst = 21;
                     caux = len(raw);
                 } else {
-                    let (s2, a2) = cat_cell(cs, cc, sc[0..n], place - 1, row, writes);
+                    let (s2, a2) = cat_cell(cs, cc, markers, sc[0..n], place - 1, row, writes);
                     cst = s2;
                     caux = a2;
                 }
             } else {
-                let (s2, a2) = cat_cell(cs, cc, raw, place - 1, row, writes);
+                let (s2, a2) = cat_cell(cs, cc, markers, raw, place - 1, row, writes);
                 cst = s2;
                 caux = a2;
             }
@@ -801,8 +830,8 @@ fn report(status: int, line: int, col: int, aux: int) -> [] Report {
 // Read the whole file once. Memory: one 64 KiB chunk, the record being read (at most cfg.cap bytes), the header, the offsets of one
 // record's fields and four ints a column. Stops at the first problem (a cell that is not a number is not followed by more cells that
 // are not). The sinks come back with what the mode wrote into them.
-pub fn scan[&h, &m, &t](heap: &!h Heap, src: Source, mem: &m [byte], cfg: Cfg, target: &t [byte], sk: Sinks) -> [heap, file_read] (Source, Shape, Report, Sinks) {
-    let (s2, sh, rep, k2, cs) = scan_cat(heap, src, mem, cfg, no_cats(), target, sk, off_state(heap));
+pub fn scan[&h, &m, &t](heap: &!h Heap, src: Source, mem: &m [byte], cfg: Cfg, tx: &t [byte], sk: Sinks) -> [heap, file_read] (Source, Shape, Report, Sinks) {
+    let (s2, sh, rep, k2, cs) = scan_cat(heap, src, mem, cfg, no_cats(), tx, sk, off_state(heap));
     drop_state(heap, cs);
     return (s2, sh, rep, k2);
 }
@@ -874,9 +903,39 @@ fn cat_columns[&k](cs: &k CatState) -> [] int {
     return dict.ncols(cs.voc);
 }
 
+// `scan_cat` with the texts in an owned buffer, which is consumed (the caller built it from the command line)
+pub fn scan_cat_tx[&h, &m](heap: &!h Heap, src0: Source, mem: &m [byte], cfg: Cfg, cc: CatCfg, tx: buffer.Buffer, sk: Sinks, cs0: CatState) -> [heap, file_read] (Source, Shape, Report, Sinks, CatState) {
+    var o_src = Source::Mem(0);
+    var o_sh = empty_shape(heap);
+    var o_rep = Report { status: 0, line: 0, col: 0, aux: 0 };
+    var o_k = plain_sinks(heap, 8, false);
+    var o_cs = off_state(heap);
+    borrow tx as &t in {
+        let (s2, sh2, rep2, k2, c2) = scan_cat(heap, src0, mem, cfg, cc, buffer.bytes(t), sk, cs0);
+        drop_source(o_src);
+        o_src = s2;
+        drop_shape(heap, o_sh);
+        o_sh = sh2;
+        o_rep = rep2;
+        drop_sinks(heap, o_k);
+        o_k = k2;
+        drop_state(heap, o_cs);
+        o_cs = c2;
+    }
+    buffer.drop(heap, tx);
+    return (o_src, o_sh, o_rep, o_k, o_cs);
+}
+
+// `scan` with the texts in an owned buffer, which is consumed
+pub fn scan_tx[&h, &m](heap: &!h Heap, src0: Source, mem: &m [byte], cfg: Cfg, tx: buffer.Buffer, sk: Sinks) -> [heap, file_read] (Source, Shape, Report, Sinks) {
+    let (s2, sh2, rep2, k2, c2) = scan_cat_tx(heap, src0, mem, cfg, no_cats(), tx, sk, off_state(heap));
+    drop_state(heap, c2);
+    return (s2, sh2, rep2, k2);
+}
+
 // `scan` with categorical columns (docs/categorical.md): the state says what is done with them (CatState), `cc` how. With the state off and `no_cats()` this is
 // the numeric scan, the same steps in the same order.
-pub fn scan_cat[&h, &m, &t](heap: &!h Heap, src0: Source, mem: &m [byte], cfg: Cfg, cc: CatCfg, target: &t [byte], sk: Sinks, cs0: CatState) -> [heap, file_read] (Source, Shape, Report, Sinks, CatState) {
+pub fn scan_cat[&h, &m, &t](heap: &!h Heap, src0: Source, mem: &m [byte], cfg: Cfg, cc: CatCfg, tx: &t [byte], sk: Sinks, cs0: CatState) -> [heap, file_read] (Source, Shape, Report, Sinks, CatState) {
     var src = src0;
     var cs = cs0;
     var sc = box_slice(heap, 1, byte_of(0));
@@ -1029,25 +1088,25 @@ pub fn scan_cat[&h, &m, &t](heap: &!h Heap, src0: Source, mem: &m [byte], cfg: C
                                 borrow ends as &er in {
                                     apply_mask(contents(cw), cols, cfg.drop_mask, 3, 1);
                                     apply_mask(contents(cw), cols, cfg.float_mask, 0, 3);
-                                    let (ds, k) = apply_list(contents(cw), buffer.bytes(nr), er, cols, cfg.drops, 3, 1, 12);
+                                    let (ds, k) = apply_list(contents(cw), buffer.bytes(nr), er, cols, text_of(tx, 1), 3, 1, 12);
                                     if ds != 0 {
                                         rep = report(ds, rec_line, 0, k);
                                         going = false;
                                     }
                                     if ds == 0 {
-                                        let (fs, k2) = apply_list(contents(cw), buffer.bytes(nr), er, cols, cfg.floats, 0, 3, 19);
+                                        let (fs, k2) = apply_list(contents(cw), buffer.bytes(nr), er, cols, text_of(tx, 2), 0, 3, 19);
                                         if fs != 0 {
                                             rep = report(fs, rec_line, 0, k2);
                                             going = false;
                                         }
                                     }
-                                    tcol = column_of(buffer.bytes(nr), er, cols, target);
+                                    tcol = column_of(buffer.bytes(nr), er, cols, text_of(tx, 0));
                                     if tcol >= 0 && cfg.mode != 5 && cfg.mode != 9 && contents(cw)[3 * cols + tcol] != 0 && going {
                                         rep = report(14, rec_line, tcol, 0);
                                         going = false;
                                     }
                                     if going {
-                                        let (c2, hs, hcol, haux) = cat_header(heap, contents(cw), buffer.bytes(nr), er, cols, tcol, cc, cs);
+                                        let (c2, hs, hcol, haux) = cat_header(heap, contents(cw), text_of(tx, 3), buffer.bytes(nr), er, cols, tcol, cc, cs);
                                         cs = c2;
                                         if hs != 0 {
                                             rep = report(hs, rec_line, hcol, haux);
@@ -1090,7 +1149,7 @@ pub fn scan_cat[&h, &m, &t](heap: &!h Heap, src0: Source, mem: &m [byte], cfg: C
                                             borrow mut miss as &!mw in {
                                                 borrow mut cs as &!kw in {
                                                     borrow mut sc as &!sw in {
-                                                        let (st, col, aux) = read_row(record, cols, tcol, cfg, rows - 1, quoted, contents(cw), contents(aw), vw, contents(dw), contents(mw), contents(fw), cc, kw, contents(sw));
+                                                        let (st, col, aux) = read_row(record, text_of(tx, 4), cols, tcol, cfg, rows - 1, quoted, contents(cw), contents(aw), vw, contents(dw), contents(mw), contents(fw), cc, kw, contents(sw));
                                                         if st != 0 {
                                                             rep = report(st, rec_line, col, aux);
                                                             going = false;

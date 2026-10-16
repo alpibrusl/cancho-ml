@@ -8,6 +8,7 @@ module ml.splitspec;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.argv;
 import ml.spec;
 import ml.wiredata;
 import metrics.rules;
@@ -16,10 +17,8 @@ import toolbox.fail;
 
 pub struct SplitOpts {
     stratify: bool,
-    // the value of --split-by (`time:COLUMN`) and of --split-group; `*_given` says whether the flag was on the command line
-    by: &static [byte],
+    // `*_given` says whether --split-by (`time:COLUMN`) and --split-group were on the command line; the columns are read from the command line
     by_given: bool,
-    group: &static [byte],
     group_given: bool,
     folds: int,
     repeats: int,
@@ -27,8 +26,8 @@ pub struct SplitOpts {
     emit: bool,
 }
 
-pub fn from_cli[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] SplitOpts {
-    return SplitOpts { stratify: cli.has(parsed, table, "stratify"), by: cli.text(args, parsed, table, "split-by"), by_given: cli.has(parsed, table, "split-by"), group: cli.text(args, parsed, table, "split-group"), group_given: cli.has(parsed, table, "split-group"), folds: cli.nat(args, parsed, table, "folds"), repeats: cli.nat(args, parsed, table, "repeats"), repeats_given: cli.has(parsed, table, "repeats"), emit: cli.has(parsed, table, "emit-folds") };
+pub fn from_cli[&cl](src: &cl [byte], table: &static [byte]) -> [] SplitOpts {
+    return SplitOpts { stratify: argv.has(src, "stratify"), by_given: argv.has(src, "split-by"), group_given: argv.has(src, "split-group"), folds: argv.nat(src, "folds"), repeats: argv.nat(src, "repeats"), repeats_given: argv.has(src, "repeats"), emit: argv.has(src, "emit-folds") };
 }
 
 // 0 the library's plain split, 1 stratified, 2 by group, 3 by time
@@ -65,12 +64,12 @@ pub fn strategy_word(strategy: int, cv: bool) -> [] &static [byte] {
 }
 
 // the column of --split-group, or the part of --split-by after `time:` (empty for the plain and the stratified strategies)
-pub fn column(sp: SplitOpts) -> [] &static [byte] {
+pub fn column[&cl](src: &cl [byte], sp: SplitOpts) -> [] &cl [byte] {
     if sp.group_given {
-        return sp.group;
+        return argv.text(src, "split-group");
     }
-    if sp.by_given && len(sp.by) > 5 {
-        return sp.by[5..len(sp.by)];
+    if sp.by_given && len(argv.text(src, "split-by")) > 5 {
+        return argv.text(src, "split-by")[5..len(argv.text(src, "split-by"))];
     }
     return "";
 }
@@ -281,11 +280,11 @@ pub fn parse[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] (bool, bool, int
 // ---------------------------------------------------------------- the checks that need no file
 
 // the arguments of the invocation with the flag `name` removed (and its value, when it takes one), or its value replaced
-fn retry_edit[&h, &g](heap: &!h Heap, w: json.Writer, args: &g Args, name: &static [byte], takes_value: bool, replace: bool, value: &static [byte]) -> [heap, args] json.Writer {
+fn retry_edit[&h, &cl](heap: &!h Heap, w: json.Writer, src: &cl [byte], name: &static [byte], takes_value: bool, replace: bool, value: &static [byte]) -> [heap] json.Writer {
     var o = fail.retry_open(heap, w);
     var i = 0;
-    while i < arg_count(args) {
-        let a = arg(args, i);
+    while i < argv.argc(src) {
+        let a = argv.at(src, i);
         var eq = false;
         var prefixed = false;
         if len(a) > len(name) && bytes.equal(a[0..len(name)], name) && int_of(a[len(name)]) == '=' {
@@ -331,9 +330,9 @@ pub fn combination[&h, &a, &b](heap: &!h Heap, errs: fail.Errors, flag: &a [byte
 }
 
 // --repeats above 1 with --split-by: an expanding window has nothing random to repeat; the repair gives --repeats 1
-pub fn combination_repeats[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args) -> [heap, args] fail.Errors {
+pub fn combination_repeats[&h, &cl](heap: &!h Heap, errs: fail.Errors, src: &cl [byte]) -> [heap] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.split.combination");
-    w = retry_edit(heap, w, args, "--repeats", true, true, "1");
+    w = retry_edit(heap, w, src, "--repeats", true, true, "1");
     w = fail.detail_open(heap, w);
     w = fail.detail_str(heap, w, "flag", "--repeats");
     w = fail.detail_str(heap, w, "other", "--split-by");
@@ -365,9 +364,9 @@ pub fn emit_max() -> [] int {
 }
 
 // What the command line alone settles. verb 1 fit, 3 eval, 5 cv.
-pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, verb: int, table: &static [byte]) -> [heap, args] fail.Errors {
+pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, verb: int, table: &static [byte]) -> [heap] fail.Errors {
     var e = errs;
-    let sp = from_cli(args, parsed, table);
+    let sp = from_cli(src, table);
     var n = 0;
     if sp.stratify {
         n = n + 1;
@@ -389,14 +388,14 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
         }
         e = combination(heap, e, a, b);
     }
-    if sp.by_given && !by_ok(sp.by) {
-        e = wiredata.bad_value(heap, e, "split-by", sp.by, "time:COLUMN, for example time:order_date");
+    if sp.by_given && !by_ok(argv.text(src, "split-by")) {
+        e = wiredata.bad_value(heap, e, "split-by", argv.text(src, "split-by"), "time:COLUMN, for example time:order_date");
     }
-    if sp.group_given && len(sp.group) == 0 {
-        e = wiredata.bad_value(heap, e, "split-group", sp.group, "the name of a column");
+    if sp.group_given && len(argv.text(src, "split-group")) == 0 {
+        e = wiredata.bad_value(heap, e, "split-group", argv.text(src, "split-group"), "the name of a column");
     }
     if verb == 5 {
-        if cli.has(parsed, table, "split") {
+        if argv.has(src, "split") {
             e = combination(heap, e, "--split", "cv");
         }
         if sp.folds < 2 || sp.folds > folds_max() {
@@ -404,10 +403,10 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
         }
         if sp.repeats < 1 || sp.repeats > repeats_max() {
             e = out_of_range(heap, e, "repeats", sp.repeats, 1, repeats_max());
-        } else if sp.repeats > 1 && sp.by_given && by_ok(sp.by) {
-            e = combination_repeats(heap, e, args);
+        } else if sp.repeats > 1 && sp.by_given && by_ok(argv.text(src, "split-by")) {
+            e = combination_repeats(heap, e, src);
         }
-    } else if !cli.has(parsed, table, "split") && (n > 0 || sp.emit) {
+    } else if !argv.has(src, "split") && (n > 0 || sp.emit) {
         var flag: &static [byte] = "emit-folds";
         if sp.stratify {
             flag = "stratify";
@@ -424,21 +423,21 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
 // ---------------------------------------------------------------- errors of the data
 
 // ml.split.stratify-target
-pub fn stratify_target[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, task: int) -> [heap, args] fail.Errors {
+pub fn stratify_target[&h, &cl](heap: &!h Heap, errs: fail.Errors, src: &cl [byte], task: int) -> [heap] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.split.stratify-target");
-    w = retry_edit(heap, w, args, "--stratify", false, false, "");
+    w = retry_edit(heap, w, src, "--stratify", false, false, "");
     w = fail.detail_open(heap, w);
     w = fail.detail_str(heap, w, "task", wiredata.task_word(task));
     return fail.add(heap, errs, w);
 }
 
 // ml.split.stratum-too-small: a class has `rows` rows and the split needs `need`; with --folds given the repair lowers it when that is still a cross-validation
-pub fn stratum_too_small[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, cv: bool, label: int, rows: int, need: int) -> [heap, args] fail.Errors {
+pub fn stratum_too_small[&h, &cl](heap: &!h Heap, errs: fail.Errors, src: &cl [byte], cv: bool, label: int, rows: int, need: int) -> [heap] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.split.stratum-too-small");
     if cv && rows >= 2 {
         var v = buffer.push_nat(heap, buffer.empty(heap, 8), rows);
         borrow v as &vr in {
-            w = retry_value(heap, w, args, "--folds", buffer.bytes(vr));
+            w = retry_value(heap, w, src, "--folds", buffer.bytes(vr));
         }
         buffer.drop(heap, v);
     } else {
@@ -452,19 +451,19 @@ pub fn stratum_too_small[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Arg
 }
 
 // --flag VALUE, appended when the flag is not on the command line, else replaced
-fn retry_value[&h, &g, &v](heap: &!h Heap, w: json.Writer, args: &g Args, name: &static [byte], value: &v [byte]) -> [heap, args] json.Writer {
+fn retry_value[&h, &v, &cl](heap: &!h Heap, w: json.Writer, src: &cl [byte], name: &static [byte], value: &v [byte]) -> [heap] json.Writer {
     var given = false;
     var i = 0;
-    while i < arg_count(args) {
-        if bytes.equal(arg(args, i), name) {
+    while i < argv.argc(src) {
+        if bytes.equal(argv.at(src, i), name) {
             given = true;
         }
         i = i + 1;
     }
     var o = fail.retry_open(heap, w);
     i = 0;
-    while i < arg_count(args) {
-        let a = arg(args, i);
+    while i < argv.argc(src) {
+        let a = argv.at(src, i);
         if bytes.equal(a, name) {
             o = json.put_string(heap, o, a);
             o = json.put_string(heap, o, value);
@@ -482,12 +481,12 @@ fn retry_value[&h, &g, &v](heap: &!h Heap, w: json.Writer, args: &g Args, name: 
 }
 
 // ml.split.too-few-groups
-pub fn too_few_groups[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, cv: bool, groups: int, need: int) -> [heap, args] fail.Errors {
+pub fn too_few_groups[&h, &cl](heap: &!h Heap, errs: fail.Errors, src: &cl [byte], cv: bool, groups: int, need: int) -> [heap] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.split.too-few-groups");
     if cv && groups >= 2 {
         var v = buffer.push_nat(heap, buffer.empty(heap, 8), groups);
         borrow v as &vr in {
-            w = retry_value(heap, w, args, "--folds", buffer.bytes(vr));
+            w = retry_value(heap, w, src, "--folds", buffer.bytes(vr));
         }
         buffer.drop(heap, v);
     } else {
@@ -527,9 +526,9 @@ pub fn column_target[&h, &c](heap: &!h Heap, errs: fail.Errors, flag: &static [b
     return fail.add(heap, errs, w);
 }
 
-pub fn emit_too_large[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, entries: int) -> [heap, args] fail.Errors {
+pub fn emit_too_large[&h, &cl](heap: &!h Heap, errs: fail.Errors, src: &cl [byte], entries: int) -> [heap] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.split.emit-too-large");
-    w = retry_edit(heap, w, args, "--emit-folds", false, false, "");
+    w = retry_edit(heap, w, src, "--emit-folds", false, false, "");
     w = fail.detail_open(heap, w);
     w = fail.detail_int(heap, w, "entries", entries);
     w = fail.detail_int(heap, w, "max", emit_max());
@@ -537,12 +536,12 @@ pub fn emit_too_large[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, 
 }
 
 // the error of a plan result `(kind, a, b)` of ml.splitplan
-pub fn plan_error[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, cv: bool, kind: int, a: int, b: int, need: int) -> [heap, args] fail.Errors {
+pub fn plan_error[&h, &cl](heap: &!h Heap, errs: fail.Errors, src: &cl [byte], cv: bool, kind: int, a: int, b: int, need: int) -> [heap] fail.Errors {
     if kind == 2 {
-        return stratum_too_small(heap, errs, args, cv, a, b, need);
+        return stratum_too_small(heap, errs, src, cv, a, b, need);
     }
     if kind == 3 {
-        return too_few_groups(heap, errs, args, cv, a, b);
+        return too_few_groups(heap, errs, src, cv, a, b);
     }
     return wiredata.code_error(heap, errs, rules.empty_fold(), 0, 0, 0);
 }

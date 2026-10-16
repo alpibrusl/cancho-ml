@@ -9,6 +9,7 @@ module ml.cv;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.argv;
 import ml.catmat;
 import ml.csvcell;
 import ml.cvagg;
@@ -81,10 +82,10 @@ fn mean_std[&h, &v](heap: &!h Heap, vals: &v [float], m: int) -> [heap] (float, 
     return (mean, sqrt(ss / float_of(m - 1)));
 }
 
-pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read, conc] verbs.Out {
+pub fn run[&h, &f, &r, &pf, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] verbs.Out {
     var e = errs;
     var lg = log;
-    let (pls, ok1, e1) = wire.make_plan(heap, fs, root, planp, tokens, o, e);
+    let (pls, ok1, e1) = wire.make_plan(heap, src, fs, root, planp, tokens, o, e);
     e = e1;
     var go = ok1;
     var kind = 0;
@@ -112,7 +113,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
     var cids = catmat.empty(heap);
     var cvoc = dict.empty_vocab(heap);
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, args, fs, root, file, o, o.target, o.na, mixed_plan, task, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, src, fs, root, file, o, argv.text(src, "target"), argv.text(src, "na-values"), mixed_plan, task, e, lg);
         wire.drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -136,7 +137,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
         var ok3 = false;
         var a3 = box_slice(heap, 2, 0);
         borrow ds as &dq1 in {
-            let (a4, ok4, e4) = splitwire.cv_assign(heap, args, fs, root, file, sp, o, dn, task, contents(dq1.yall), e);
+            let (a4, ok4, e4) = splitwire.cv_assign(heap, src, fs, root, file, sp, o, dn, task, contents(dq1.yall), e);
             unbox_slice(heap, a3);
             a3 = a4;
             ok3 = ok4;
@@ -212,7 +213,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
                         borrow cvoc as &cvr in {
                             borrow pls as &pr in {
                                 borrow sel as &sr in {
-                                    let (t3, ok6, e6) = wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, e);
+                                    let (t3, ok6, e6) = wire.train(heap, src, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, e);
                                     wire.drop_trained(heap, t2);
                                     t2 = t3;
                                     ok5 = ok6;
@@ -232,7 +233,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
                                 borrow pls as &pr2 in {
                                     borrow t2 as &tq in {
                                         borrow sel as &sr2 in {
-                                            let (i3, ok8, e8) = wire.holdout(heap, args, dr2, cir2, cvr2, pr2, tq, contents(sr2), 1, ntest, "held-out", o, e);
+                                            let (i3, ok8, e8) = wire.holdout(heap, src, dr2, cir2, cvr2, pr2, tq, contents(sr2), 1, ntest, "held-out", o, e);
                                             buffer.drop(heap, inner);
                                             inner = i3;
                                             ok7 = ok8;
@@ -288,7 +289,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
     var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
     if go {
         verbs.drop_out(heap, result);
-        var specb = splitspec.text(heap, true, "", folds, reps, strategy, splitspec.column(sp), o.seed);
+        var specb = splitspec.text(heap, true, "", folds, reps, strategy, splitspec.column(src, sp), o.seed);
         var payload = buffer.empty(heap, 1);
         var plain = buffer.empty(heap, 1);
         var cols = 0;
@@ -307,7 +308,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
                         borrow sizes as &zr in {
                             borrow assign as &ar2 in {
                                 borrow pls as &pr3 in {
-                                    let (p2, t2) = answer(heap, kind, task, o, sp, dn, cols, plan.text(pr3.pl), buffer.bytes(sbr), strategy, folds, reps, buffer.bytes(rr), buffer.bytes(fr2), contents(er2), contents(zr), done, contents(ar2));
+                                    let (p2, t2) = answer(heap, kind, task, argv.text(src, "target"), o, sp, dn, cols, plan.text(pr3.pl), buffer.bytes(sbr), strategy, folds, reps, buffer.bytes(rr), buffer.bytes(fr2), contents(er2), contents(zr), done, contents(ar2));
                                     buffer.drop(heap, payload);
                                     buffer.drop(heap, plain);
                                     payload = p2;
@@ -339,7 +340,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
 }
 
 // the document and the plain text of a finished cross-validation
-fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa](heap: &!h Heap, kind: int, task: int, o: verbs.Opts, sp: splitspec.SplitOpts, rows: int, cols: int, plan_text: &pt [byte], spec_text: &sx [byte], strategy: int, folds: int, reps: int, results: &rr [byte], frags: &fr [byte], ends: &ee [int], sizes: &zz [int], count: int, assign: &aa [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
+fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa, &tg](heap: &!h Heap, kind: int, task: int, tg: &tg [byte], o: verbs.Opts, sp: splitspec.SplitOpts, rows: int, cols: int, plan_text: &pt [byte], spec_text: &sx [byte], strategy: int, folds: int, reps: int, results: &rr [byte], frags: &fr [byte], ends: &ee [int], sizes: &zz [int], count: int, assign: &aa [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
     var w = json.writer(heap, 1024);
     var plain = buffer.empty(heap, 256);
     w = json.begin_object(heap, w);
@@ -347,11 +348,11 @@ fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa](heap: &!h Heap, kind: int, task
     w = json.put_string(heap, w, est.name(kind));
     w = json.put_key(heap, w, "task");
     w = json.put_string(heap, w, wiredata.task_word(task));
-    if len(o.target) == 0 {
+    if len(tg) == 0 {
         w = json.put_key(heap, w, "target");
         w = json.put_null(heap, w);
     } else {
-        w = verbs.put_name(heap, w, "target", o.target);
+        w = verbs.put_name(heap, w, "target", tg);
     }
     w = json.put_key(heap, w, "rows");
     w = json.put_int(heap, w, rows);

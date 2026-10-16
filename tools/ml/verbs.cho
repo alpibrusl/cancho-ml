@@ -10,6 +10,7 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import std.vec;
+import ml.argv;
 import ml.csv;
 import ml.csvcell;
 import ml.exact;
@@ -41,17 +42,10 @@ pub struct Opts {
     drop_given: bool,
     // 1 regression, 2 classification
     task: int,
-    drops: &static [byte],
-    floats: &static [byte],
-    target: &static [byte],
     // the flags of the planned models (docs/wiring.md section 2); each `*_given` is whether the flag was on the command line
-    model: &static [byte],
     plan_given: bool,
-    step: &static [byte],
     step_given: bool,
-    positive: &static [byte],
     positive_given: bool,
-    split: &static [byte],
     split_given: bool,
     seed: int,
     threads: int,
@@ -62,9 +56,7 @@ pub struct Opts {
     target_given: bool,
     task_given: bool,
     // the categorical columns of fit (docs/categorical.md section 2)
-    cats: &static [byte],
     cat_given: bool,
-    na: &static [byte],
     max_cats: int,
     max_str: int,
     max_pool: int,
@@ -127,11 +119,11 @@ pub fn problem[&h, &m](heap: &!h Heap, e: fail.Errors, rule: &static [byte], mes
 
 // `--drop NAME` appended to the invocation, when that is a repair that cannot hurt: the name is one plain name and no --drop
 // was given
-pub fn drop_retry[&h, &g, &n](heap: &!h Heap, w: json.Writer, args: &g Args, name: &n [byte]) -> [heap, args] json.Writer {
+pub fn drop_retry[&h, &n, &cl](heap: &!h Heap, w: json.Writer, src: &cl [byte], name: &n [byte]) -> [heap] json.Writer {
     var o = fail.retry_open(heap, w);
     var i = 0;
-    while i < arg_count(args) {
-        o = json.put_string(heap, o, arg(args, i));
+    while i < argv.argc(src) {
+        o = json.put_string(heap, o, argv.at(src, i));
         i = i + 1;
     }
     o = json.put_string(heap, o, "--drop");
@@ -144,7 +136,7 @@ fn can_drop[&n](o: Opts, col: int, tcol: int, name: &n [byte]) -> [] bool {
 }
 
 // the errors for what stopped a scan of a categorical column (statuses 20 to 30 of ml.csv.Report, docs/categorical.md section 5)
-fn explain_cat[&h, &s](heap: &!h Heap, errs: fail.Errors, rep: csv.Report, sh: &s csv.Shape, o: Opts) -> [heap] fail.Errors {
+fn explain_cat[&h, &s, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, rep: csv.Report, sh: &s csv.Shape, o: Opts) -> [heap] fail.Errors {
     let st = rep.status;
     if st == 24 {
         var q = fail.open_in(heap, spec.extra(), "ml.limit.categorical-columns", "more columns are named by --cat than --max-cat-columns", "raise --max-cat-columns up to its ceiling, or name fewer columns");
@@ -160,7 +152,7 @@ fn explain_cat[&h, &s](heap: &!h Heap, errs: fail.Errors, rep: csv.Report, sh: &
         q = fail.detail_open(heap, q);
         q = fail.detail_str(heap, q, "flag", "--cat");
         q = fail.detail_int(heap, q, "position", rep.aux);
-        q = fail.detail_text(heap, q, "name", bytes.field(o.cats, ',', rep.aux));
+        q = fail.detail_text(heap, q, "name", bytes.field(argv.text(src, "cat"), ',', rep.aux));
         return fail.add(heap, errs, q);
     }
     if st == 26 || st == 27 || st == 28 {
@@ -229,7 +221,7 @@ fn explain_cat[&h, &s](heap: &!h Heap, errs: fail.Errors, rep: csv.Report, sh: &
 }
 
 // the errors for what stopped a scan
-pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors, rep: csv.Report, sh: &s csv.Shape, o: Opts, shown: &p [byte]) -> [heap, args] fail.Errors {
+pub fn explain[&h, &s, &p, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, rep: csv.Report, sh: &s csv.Shape, o: Opts, shown: &p [byte]) -> [heap] fail.Errors {
     var e = errs;
     let st = rep.status;
     if st == 99 {
@@ -327,7 +319,7 @@ pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors,
         }
         var q = fail.open_in(heap, spec.extra(), rule, message, hint);
         if st == 8 && can_drop(o, rep.col, csv.tcol(sh), nm) {
-            q = drop_retry(heap, q, args, nm);
+            q = drop_retry(heap, q, src, nm);
         } else {
             q = fail.no_repair(heap, q);
         }
@@ -344,7 +336,7 @@ pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors,
         q = fail.detail_open(heap, q);
         q = fail.detail_str(heap, q, "flag", "--drop");
         q = fail.detail_int(heap, q, "position", rep.aux);
-        q = fail.detail_text(heap, q, "name", bytes.field(o.drops, ',', rep.aux));
+        q = fail.detail_text(heap, q, "name", bytes.field(argv.text(src, "drop"), ',', rep.aux));
         return fail.add(heap, e, q);
     }
     if st == 14 {
@@ -360,11 +352,11 @@ pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors,
         q = fail.detail_open(heap, q);
         q = fail.detail_str(heap, q, "flag", "--float");
         q = fail.detail_int(heap, q, "position", rep.aux);
-        q = fail.detail_text(heap, q, "name", bytes.field(o.floats, ',', rep.aux));
+        q = fail.detail_text(heap, q, "name", bytes.field(argv.text(src, "float"), ',', rep.aux));
         return fail.add(heap, e, q);
     }
     if st >= 20 && st <= 30 {
-        return explain_cat(heap, e, rep, sh, o);
+        return explain_cat(heap, src, e, rep, sh, o);
     }
     if st == 15 {
         return problem(heap, e, "io.read-failed", "the file changed while it was being read", "run the command again on a file that is not being written", "", "");
@@ -378,10 +370,10 @@ pub fn explain[&h, &g, &s, &p](heap: &!h Heap, args: &g Args, errs: fail.Errors,
 // ---------------------------------------------------------------- reading the CSV
 
 // open `file` and scan it (or scan the bytes of standard input, when `file` is that). The errors gain the reason if the open fails (the shape is then empty and the report 99).
-pub fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, csv.Sinks) {
+pub fn scan_file[&h, &f, &r, &pf, &t, &cm](heap: &!h Heap, cmd: &cm [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, target: &t [byte], sk: csv.Sinks, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, fail.Errors, csv.Sinks) {
     var e = errs;
     if paths.is_stdin(file) {
-        let (src, sh, rep, k2) = csv.scan(heap, csv.Source::Mem(0), paths.mem(file), cfg, target, sk);
+        let (src, sh, rep, k2) = csv.scan_tx(heap, csv.Source::Mem(0), paths.mem(file), cfg, csv.texts(heap, target, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), argv.text(cmd, "na-values")), sk);
         csv.drop_source(src);
         return (sh, rep, e, k2);
     }
@@ -391,7 +383,7 @@ pub fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [b
             return (csv.empty_shape(heap), csv.Report { status: 99, line: 0, col: 0, aux: 0 }, e, sk);
         }
         Opened::Ok(opened) => {
-            let (src, sh, rep, k2) = csv.scan(heap, csv.Source::Disk(opened), "", cfg, target, sk);
+            let (src, sh, rep, k2) = csv.scan_tx(heap, csv.Source::Disk(opened), "", cfg, csv.texts(heap, target, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), argv.text(cmd, "na-values")), sk);
             csv.drop_source(src);
             return (sh, rep, e, k2);
         }
@@ -399,11 +391,11 @@ pub fn scan_file[&h, &f, &r, &pf, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [b
 }
 
 pub fn cat_config(o: Opts) -> [] csv.CatCfg {
-    return csv.CatCfg { cols: o.cats, cat_mask: o.cat_mask, na: o.na, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols, lenient: false };
+    return csv.CatCfg { cat_mask: o.cat_mask, max_cats: o.max_cats, max_str: o.max_str, max_pool: o.max_pool, max_catcols: o.max_catcols, lenient: false };
 }
 
 pub fn config(o: Opts, mode: int, tscale: int, pred: int) -> [] csv.Cfg {
-    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drops: o.drops, floats: o.floats, drop_mask: o.drop_mask, float_mask: o.float_mask, missing: false, mrows: 0, mcols: 0, wpc: 0 };
+    return csv.Cfg { cap: o.cap, max_rows: o.max_rows, max_cols: o.max_cols, max_cells: o.max_cells, mode: mode, tscale: tscale, pred: pred, drop_mask: o.drop_mask, float_mask: o.float_mask, missing: false, mrows: 0, mcols: 0, wpc: 0 };
 }
 
 // ---------------------------------------------------------------- text
@@ -774,12 +766,12 @@ pub fn finish_fit[&h, &f, &r, &po, &pt, &rj, &ac, &rn, &rt](heap: &!h Heap, fs: 
 }
 
 // pass 1 for the shape, pass 2 for the target: the model, and whether there is one (else the errors say why)
-pub fn fit_prepare[&h, &g, &f, &r, &pf, &tn](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: Opts, tg: &tn [byte], errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors, buffer.Buffer) {
+pub fn fit_prepare[&h, &f, &r, &pf, &tn, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: Opts, tg: &tn [byte], errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (mfile.Model, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     // the SHA-256 of the training file before it is read (docs/tracking.md section 6); a file that cannot be opened is reported by the scan, which names the reason
     let (dg1, size1, hst, haux) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
-    let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, 0, 0, 0), tg, csv.plain_sinks(heap, 8, false), e);
+    let (sh, rep, e1, sk1) = scan_file(heap, src, fs, root, file, config(o, 0, 0, 0), tg, csv.plain_sinks(heap, 8, false), e);
     e = e1;
     csv.drop_sinks(heap, sk1);
     var sk = csv.plain_sinks(heap, 8, false);
@@ -788,7 +780,7 @@ pub fn fit_prepare[&h, &g, &f, &r, &pf, &tn](heap: &!h Heap, args: &g Args, fs: 
     var mo = mfile.empty_model(heap);
     borrow sh as &sr in {
         if rep.status != 0 {
-            e = explain(heap, args, e, rep, sr, o, paths.shown(file));
+            e = explain(heap, src, e, rep, sr, o, paths.shown(file));
             go = false;
         } else if csv.rows(sr) == 0 {
             e = problem(heap, e, "ml.input.empty", "the file has a header and no data rows", "give a file with at least one data row", "", "");
@@ -816,12 +808,12 @@ pub fn fit_prepare[&h, &g, &f, &r, &pf, &tn](heap: &!h Heap, args: &g Args, fs: 
                 wide = true;
             }
             csv.drop_sinks(heap, sk);
-            let (sh2, rep2, e2, sk2) = scan_file(heap, fs, root, file, config(o, mode, csv.scale(sr, csv.tcol(sr)), 0), tg, csv.plain_sinks(heap, 8, wide), e);
+            let (sh2, rep2, e2, sk2) = scan_file(heap, src, fs, root, file, config(o, mode, csv.scale(sr, csv.tcol(sr)), 0), tg, csv.plain_sinks(heap, 8, wide), e);
             e = e2;
             sk = sk2;
             if rep2.status != 0 {
                 borrow sh2 as &s2 in {
-                    e = explain(heap, args, e, rep2, s2, o, paths.shown(file));
+                    e = explain(heap, src, e, rep2, s2, o, paths.shown(file));
                 }
                 go = false;
             }
@@ -1054,7 +1046,7 @@ fn name_list[&h, &n](heap: &!h Heap, b: buffer.Buffer, name: &n [byte], first: b
 // Compare the input's columns with the model's. Errors gain ml.schema.mismatch when they differ: the missing, the extra and
 // the mistyped columns by name, and a repair. `need_target`: eval reads the target column, predict does not need it.
 // `allow_empty`: a column of the input with no cell at all is the fitted column with every cell missing, not an absent one (the models that take missing cells)
-pub fn schema_check[&h, &g, &m, &s](heap: &!h Heap, args: &g Args, errs: fail.Errors, mo: &m mfile.Model, sh: &s csv.Shape, o: Opts, need_target: bool, allow_empty: bool) -> [heap, args] (fail.Errors, bool) {
+pub fn schema_check[&h, &m, &s, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, mo: &m mfile.Model, sh: &s csv.Shape, o: Opts, need_target: bool, allow_empty: bool) -> [heap] (fail.Errors, bool) {
     let mc = mfile.cols(mo);
     var missing = 0;
     var mistyped = 0;
@@ -1106,8 +1098,8 @@ pub fn schema_check[&h, &g, &m, &s](heap: &!h Heap, args: &g Args, errs: fail.Er
     if listable {
         var rw = fail.retry_open(heap, w);
         var a = 0;
-        while a < arg_count(args) {
-            rw = json.put_string(heap, rw, arg(args, a));
+        while a < argv.argc(src) {
+            rw = json.put_string(heap, rw, argv.at(src, a));
             a = a + 1;
         }
         rw = json.put_string(heap, rw, "--drop");
@@ -1310,7 +1302,7 @@ fn predict_rows[&h, &m](heap: &!h Heap, mo: &m mfile.Model, total: int, o: Opts)
     return (json.finish(w), plain);
 }
 
-pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] Out {
+pub fn predict[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] Out {
     var lg = log;
     let (mo, ok, e0) = load_model(heap, fs, root, model, o, errs);
     var e = e0;
@@ -1318,16 +1310,16 @@ pub fn predict[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f F
     var plain = buffer.empty(heap, 1);
     if ok {
         borrow mo as &mr in {
-            let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, 5, 0, 0), mfile.name(mr, mfile.target(mr)), csv.plain_sinks(heap, 8, false), e);
+            let (sh, rep, e1, sk1) = scan_file(heap, src, fs, root, file, config(o, 5, 0, 0), mfile.name(mr, mfile.target(mr)), csv.plain_sinks(heap, 8, false), e);
             e = e1;
             borrow sh as &sr in {
                 if rep.status != 0 {
-                    e = explain(heap, args, e, rep, sr, o, paths.shown(file));
+                    e = explain(heap, src, e, rep, sr, o, paths.shown(file));
                 } else if csv.rows(sr) == 0 {
                     e = problem(heap, e, "ml.input.empty", "the file has a header and no data rows", "give a file with at least one data row", "", "");
                 } else {
                     lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
-                    let (e2, same) = schema_check(heap, args, e, mr, sr, o, false, false);
+                    let (e2, same) = schema_check(heap, src, e, mr, sr, o, false, false);
                     e = e2;
                     if same {
                         let (p2, t2) = predict_rows(heap, mr, csv.rows(sr), o);
@@ -1429,7 +1421,7 @@ fn eval_answer[&h, &m, &a](heap: &!h Heap, mo: &m mfile.Model, rows: int, onw: &
     return (json.finish(w), plain, undefined);
 }
 
-pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] Out {
+pub fn eval[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] Out {
     var lg = log;
     let (mo, ok, e0) = load_model(heap, fs, root, model, o, errs);
     var e = e0;
@@ -1450,18 +1442,18 @@ pub fn eval[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs("
                 tscale = mfile.stat(mr, 1);
                 pred = mean_of(mr);
             }
-            let (sh, rep, e1, sk1) = scan_file(heap, fs, root, file, config(o, mode, tscale, pred), mfile.name(mr, mfile.target(mr)), csv.plain_sinks(heap, acc_len, false), e);
+            let (sh, rep, e1, sk1) = scan_file(heap, src, fs, root, file, config(o, mode, tscale, pred), mfile.name(mr, mfile.target(mr)), csv.plain_sinks(heap, acc_len, false), e);
             e = e1;
             let (acc1, fv1, data1, miss1) = csv.sink_parts(sk1);
             var accv = acc1;
             borrow sh as &sr in {
                 if rep.status != 0 {
-                    e = explain(heap, args, e, rep, sr, o, paths.shown(file));
+                    e = explain(heap, src, e, rep, sr, o, paths.shown(file));
                 } else if csv.rows(sr) == 0 {
                     e = problem(heap, e, "ml.input.empty", "the file has a header and no data rows", "give a file with at least one data row", "", "");
                 } else {
                     lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
-                    let (e2, same) = schema_check(heap, args, e, mr, sr, o, true, false);
+                    let (e2, same) = schema_check(heap, src, e, mr, sr, o, true, false);
                     e = e2;
                     if same {
                         let (onw, ost, oaux) = prov.on_word(heap, fs, root, file, mfile.prov_bytes(mr));

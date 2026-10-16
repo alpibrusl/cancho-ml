@@ -9,6 +9,7 @@ module ml.catcli;
 
 import std.buffer;
 import std.bytes;
+import ml.argv;
 import ml.catmat;
 import ml.catwire;
 import pipeline.names;
@@ -35,16 +36,16 @@ fn not_encoded[&h, &v](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab) ->
     return out;
 }
 
-pub fn fit[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] verbs.Out {
+pub fn fit[&h, &f, &r, &pf, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
     var e = errs;
     var lg = log;
-    let l = csvload.load_cat(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), verbs.cat_config(o), o.target, false, dict.empty_vocab(heap), false);
+    let l = csvload.load_cat(heap, src, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), verbs.cat_config(o), argv.text(src, "target"), false, dict.empty_vocab(heap), false);
     let (mx, ids, voc, sh, rep, code) = csvload.cat_load_parts(l);
     borrow sh as &sr in {
         if rep.status == 99 {
             e = fail.io_error(heap, e, rep.aux, false, paths.shown(file));
         } else if rep.status != 0 {
-            e = verbs.explain(heap, args, e, rep, sr, o, paths.shown(file));
+            e = verbs.explain(heap, src, e, rep, sr, o, paths.shown(file));
         } else if code != 0 {
             e = wiredata.code_error(heap, e, code, 0, 0, 0);
         } else if csv.tcol(sr) < 0 {
@@ -52,7 +53,7 @@ pub fn fit[&h, &g, &f, &r, &pf](heap: &!h Heap, args: &g Args, fs: &f Fs(""), ro
             w = fail.no_repair(heap, w);
             w = fail.detail_open(heap, w);
             w = fail.detail_str(heap, w, "flag", "--target");
-            w = fail.detail_text(heap, w, "name", o.target);
+            w = fail.detail_text(heap, w, "name", argv.text(src, "target"));
             e = fail.add(heap, e, w);
         } else {
             lg = logrec.read(heap, lg, csv.rows(sr), csv.cols(sr), csv.bytes_read(sr));
