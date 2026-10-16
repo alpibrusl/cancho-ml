@@ -35,7 +35,7 @@ KILLED    cli-fit-stdin-not-wanted           cli    tests: test_cat_columns_with
 KILLED    cli-eval-stdin-not-wanted          cli    tests: test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
 KILLED    cli-ndjson-not-an-alias            cli    tests: test_ndjson_is_jsonl, test_every_jsonl_fixture
 KILLED    cli-cat-not-text                   cli    tests: test_mixed_kinds_name_both_lines, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
-KILLED    cli-predict-reads-the-target       cli    tests: test_predict_needs_no_target_key_and_eval_does
+KILLED    cli-predict-reads-the-target       cli    tests: test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
 KILLED    cli-eval-skips-the-target          cli    tests: test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder, test_cat_columns_with_every_encoder
 KILLED    cli-fields-not-required            cli    tests: test_every_jsonl_fixture
 KILLED    cli-conflicts-not-refused          cli    tests: test_every_jsonl_fixture
@@ -45,7 +45,18 @@ KILLED    cli-input-bound-ignored            cli    tests: test_the_input_bound_
 KILLED    cli-line-cap-ignored               cli    tests: test_every_jsonl_fixture
 KILLED    cli-nodes-ignored                  cli    tests: test_every_jsonl_fixture
 SURVIVED  cli-shown-name-lost                cli    
+KILLED    cv-fields-not-read                 cv     tests: test_a_date_that_is_a_json_string_is_text_and_a_date_that_is_a_json_number_is_a_number, test_a_refusal_of_a_line_names_the_line, test_every_strategy_gives_the_bytes_of_the_csv
+KILLED    cv-fields-not-required             cv     tests: test_cv_needs_fields_and_refuses_them_with_csv
+KILLED    cv-drop-is-not-text                cv     tests: test_a_date_that_is_a_json_string_is_text_and_a_date_that_is_a_json_number_is_a_number, test_every_strategy_gives_the_bytes_of_the_csv, test_every_strategy_gives_the_bytes_of_the_csv
+KILLED    cv-split-column-read-by-name       cv     tests: test_a_date_that_is_a_json_string_is_text_and_a_date_that_is_a_json_number_is_a_number, test_every_strategy_gives_the_bytes_of_the_csv, test_every_strategy_gives_the_bytes_of_the_csv
+KILLED    id-raw-digest-lost                 cv     tests: test_a_json_lines_record_holds_the_format_and_verify_replays_it_at_1_and_8_threads, test_standard_input_is_hashed_and_its_record_is_not_replayable, test_the_replay_of_text_columns_and_of_an_absent_key
+KILLED    id-stdin-not-hashed                cv     tests: test_standard_input_is_hashed_and_its_record_is_not_replayable
+KILLED    record-without-format              cv     tests: test_a_json_lines_record_holds_the_format_and_verify_replays_it_at_1_and_8_threads, test_standard_input_is_hashed_and_its_record_is_not_replayable, test_the_replay_of_text_columns_and_of_an_absent_key
+KILLED    record-csv-gains-format            cv     tests: test_a_csv_run_id_is_what_it_was
+KILLED    replay-reads-csv                   cv     tests: test_a_json_lines_record_holds_the_format_and_verify_replays_it_at_1_and_8_threads, test_the_replay_of_text_columns_and_of_an_absent_key
+KILLED    replay-absent-rule-lost            cv     tests: test_the_replay_of_text_columns_and_of_an_absent_key
+KILLED    replay-drop-is-not-text            cv     tests: test_the_replay_of_text_columns_and_of_an_absent_key
+KILLED    replay-stdin-record-refitted       cv     tests: test_standard_input_is_hashed_and_its_record_is_not_replayable
 PASSED    baseline (the unchanged tree)      -      
-
-47 mutants: 46 killed, 1 survived, 0 invalid
+59 mutants: 58 killed, 1 survived, 0 invalid
 SURVIVOR cli-shown-name-lost: equivalent: the name of the converted input is read by no answer. The refusals of the CSV reader carry a line and a column and no path, and a read of bytes in memory cannot fail with an errno; the refusals of the JSON lines reader take the name from the original Rp
