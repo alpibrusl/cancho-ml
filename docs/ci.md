@@ -91,7 +91,7 @@ Pins, none duplicated:
 
 | job | triggers | permissions | runs |
 |---|---|---|---|
-| `build-test` (matrix: Linux x86-64, macOS arm64) | push to `main`, pull request, manual | `contents: read` | the fast gates |
+| `build-test` (matrix: Linux x86-64 on two images, Linux aarch64, macOS arm64) | push to `main`, pull request, manual | `contents: read` | the fast gates |
 | `full-gate` (Linux x86-64) | manual, nightly schedule | `contents: read` | `scripts/check.sh` |
 | `release` | a tag `v*` | `contents: write`, this job only | `gh release create` and upload |
 
@@ -192,7 +192,7 @@ the SHA-256 files are for a download check, not provenance. The tag is not check
 
 * The first run of the workflow is the pull request's own: it cannot be run anywhere but on GitHub, and what was run before it is every step by hand on a Linux x86-64
   machine and on a Mac (section 8), not the YAML.
-* Linux aarch64 is not in the matrix. A Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) runs the gate by hand, outside this workflow: Rust 1.98.1 installed for one user, the compiler built there at `0207556` and `ml` built from this tree, `scripts/xplat_check.py`: 22 of 22 fits succeed and the 88 lines are equal to the golden's (`ml-predict` equal to `ml`). It is a record of one run and not a gate.
+* Linux aarch64 is in the matrix (`ubuntu-24.04-arm`). A second, independent record of it: a Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) runs the gate by hand, outside this workflow: Rust 1.98.1 installed for one user, the compiler built there at `0207556` and `ml` built from this tree, `scripts/xplat_check.py`: 22 of 22 fits succeed and the 88 lines are equal to the golden's (`ml-predict` equal to `ml`). It is a record of one run and not a gate.
 * The workflow has not run at the pin `0207556`: the last GitHub run (2026-10-15, run 38739883040) built `a4572ea` with the previous golden.
 * Windows, other Linux distributions, musl, other macOS versions than the runner's, and other compiler revisions are untested.
 * The runners' images change without a commit here; a red run after no commit is the first thing to read in the platform lines of the log.

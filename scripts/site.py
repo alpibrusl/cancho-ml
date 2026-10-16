@@ -13,37 +13,37 @@ pair of comment lines in a file,
     ...whatever the script writes...
     <!-- /gen:NAME -->
 
-and nothing outside a pair is touched: **the prose of README.md, docs/index.html,
+and nothing outside a pair is touched: **the prose of README.md, docs/guide.html,
 docs/evidence.html and docs/benchmarks.html is hand-written, and so is every
 number in them that is not program output** (the gate and benchmark figures are
 copied from the document that cites them, next to their conditions). What is
 generated:
 
-    t-NAME        README.md, index.html   the example for one task: the command and
+    t-NAME        README.md, guide.html   the example for one task: the command and
                                           what the built binary prints for it
-    flow          README.md, index.html   one complete flow: fit, predict, eval, a
+    flow          README.md, guide.html   one complete flow: fit, predict, eval, a
                                           refusal with its repair, the repair run
-    pflow         README.md, index.html   the same for a model that goes through the pipeline: a
+    pflow         README.md, guide.html   the same for a model that goes through the pipeline: a
                                           float CSV with an empty cell, a refusal with its repair,
                                           impute + standardise + logistic, predict --proba, eval
-    qs            README.md, index.html   the quick start's commands and output
-    kmflow        README.md, index.html   k-means on docs/examples/data/iris_train.csv and iris_test.csv: no target (a --target is refused), k required, the label dropped,
+    qs            README.md, guide.html   the quick start's commands and output
+    kmflow        README.md, guide.html   k-means on docs/examples/data/iris_train.csv and iris_test.csv: no target (a --target is refused), k required, the label dropped,
                                           the features standardised, three clusters, predict with the squared distance, eval
-    catflow       README.md, index.html   the categorical flow on docs/examples/data/pets.csv: a declared column that no step
+    catflow       README.md, guide.html   the categorical flow on docs/examples/data/pets.csv: a declared column that no step
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
                                           order, and a hashed column that stores no string
-    splitflow     README.md, index.html   the split strategies and cross-validation (docs/splits.md): a stratified holdout on docs/examples/data/breast_cancer_train.csv, a time split and
+    splitflow     README.md, guide.html   the split strategies and cross-validation (docs/splits.md): a stratified holdout on docs/examples/data/breast_cancer_train.csv, a time split and
                                           a group split on docs/examples/data/visits.csv, a refused combination, `ml cv --folds 5` on iris and diabetes with the metrics of
                                           each fold and their mean and standard deviation, a time cv, a group cv with --emit-folds, and a refusal with its repair
-    hero          index.html              the first example
-    agentio       README.md, index.html   excerpts of `ml introspect`
-    skill         index.html              the first lines of `ml skill`
-    authority     README.md, index.html   the row of manifests/ml.authority.json
+    hero          guide.html              the first example
+    agentio       README.md, guide.html   excerpts of `ml introspect`
+    skill         guide.html              the first lines of `ml skill`
+    authority     README.md, guide.html   the row of manifests/ml.authority.json
                                           (checked against `ml introspect`, and
                                           for net, ffi and clock)
     exit-codes    README.md               the exit codes `ml introspect` lists
-    limits, rules, nrules   index.html    the limits and rules `ml introspect` lists
+    limits, rules, nrules   guide.html    the limits and rules `ml introspect` lists
 
 Two whole files are also written (and checked) from the list of pages below, so
 that the pages and the sitemap cannot disagree: docs/sitemap.xml and
@@ -96,6 +96,14 @@ FILES = {
     # new rows for the model fitted on pets.csv: the columns in another order, a city and a species the training rows never held, and an empty city cell
     "newpets.csv": "city,species,age,visits\nOslo,rabbit,2,3\nLyon,axolotl,4,1\n,cat,1,2\n",
 }
+
+def iris_gaps():
+    """docs/examples/data/iris_train.csv with the sepal_width_cm cell of its fourth data row emptied (the landing page's refusal)."""
+    lines = (ROOT / "docs" / "examples" / "data" / "iris_train.csv").read_text().split("\n")
+    cells = lines[4].split(",")
+    cells[1] = ""
+    lines[4] = ",".join(cells)
+    return "\n".join(lines)
 
 # What is shown is what is typed; the argv run is shlex.split of it. The order is the order of running.
 DEMOS = [
@@ -154,6 +162,11 @@ DEMOS = [
     ("sp_cv_time", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-by time:visit_date --folds 4 visits.csv"),
     ("sp_cv_group", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-group customer --folds 4 --seed 5 --emit-folds visits.csv"),
     ("sp_bad", "ml cv --model linear --step 'scale column=* kind=standard' --target progression --stratify diabetes_train.csv"),
+    # the landing page (docs/index.html): a replayed run on the iris files of the worked examples, a refusal with its repair, and the commands of "One command"
+    ("r_fit", "ml fit --model logistic --step 'scale column=* kind=standard' --l2 0.1 --split train=0.8 --seed 3 --target virginica --output iris.ml iris_train.csv"),
+    ("r_predict", "ml predict --model-file iris.ml --proba --limit 3 iris_test.csv"),
+    ("r_eval", "ml eval --model-file iris.ml iris_test.csv"),
+    ("r_bad", "ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
@@ -174,6 +187,7 @@ SUMMARY = {
     "typo": ["rule", "hint", "detail"],
     "big": ["rule", "hint", "detail"],
     "p_bad": ["rule", "hint", "repair"],
+    "r_bad": ["rule", "hint", "repair"],
     "c_bad": ["rule", "hint", "detail"],
     "s_empty": ["rule", "hint"],
     "s_mp_fit": ["rule", "hint", "detail"],
@@ -195,7 +209,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "sp_bad": "sp_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_bad": "r_fixed", "sp_bad": "sp_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -372,6 +386,7 @@ def make_context(binary, tmp):
     # the k-means example: the iris files of the worked examples
     for part in ("train", "test"):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
+    (Path(tmp) / "iris_gaps.csv").write_text(iris_gaps())
     # the split examples: the committed files of docs/examples/data
     for name in ("breast_cancer_train.csv", "diabetes_train.csv", "visits.csv"):
         (Path(tmp) / name).write_bytes((ROOT / "docs" / "examples" / "data" / name).read_bytes())
@@ -404,11 +419,12 @@ def make_context(binary, tmp):
             results[REPAIRED[key]] = (shlex.join(argv), out2, status2)
     run_track_demos(run, tmp, results)
     http_results = run_http_demos(binary, tmp)
+    demo = run_demo(binary, tmp)
     ref = sx.reference()
     examples = sx.run_examples(run, tmp, ref)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
-    return {"results": results, "http": http_results, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
+    return {"results": results, "http": http_results, "demo": demo, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
 
 
 # Run tracking and the skew checks (docs/tracking.md) on docs/examples/data/iris_train.csv and iris_test.csv. The ids are the hashes of the inputs, so they are the same on every run; the
@@ -802,12 +818,251 @@ def exit_codes(ctx):
     return "| exit | `code` | meaning |\n|---:|---|---|\n" + rows.rstrip("\n")
 
 
+# --- the landing page (docs/index.html) -------------------------------------------------------------------------------------------
+
+
+SHA_SHOWN = 12  # digits of a SHA-256 or a run id the replay shows
+
+
+def jline(obj):
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+def short_sha(s):
+    return s[:SHA_SHOWN] + "\u2026"
+
+
+def result_doc(ctx, key, ok):
+    typed, out, status = ctx["results"][key]
+    doc = json.loads(out)
+    if doc["ok"] != ok or (status == 0) != ok:
+        raise Drift("the demo %s %s" % (key, "refuses" if ok else "no longer refuses"))
+    return typed, doc, status
+
+
+# The demo of scripts/demo.sh, run for real: two tracked experiments, their comparison and replay, train against other, a model served on a free port, two curl
+# requests. The replay shows its output with three changes, all said in the page's caption: a 64-digit hash or run id is cut to SHA_SHOWN digits, the port is the
+# one HTTP_PORT_SHOWN and a temporary path is a dot, and the two JSON answers of the server are cut to the members that matter (marked by an ellipsis).
+DEMO_NOTES = {  # the comment above each command of the demo, by its position (the demo's own comment, where it has one, comes after)
+    0: "# fit on 80% of the rows, seed 3, and keep a run record of the fit (--track)",
+    1: "# the same fit with a stronger penalty",
+    2: "# what differs between the two runs, and their metrics side by side (A and C stand for the two run ids)",
+    3: None, 4: None,
+    5: "# eval says whether it scored the file the model was fitted on, and counts cells outside the training range",
+    6: "# serve the model file: it listens on 127.0.0.1 unless --bind all is given",
+    7: "# a prediction, with the hash of the model that made it",
+    8: None,  # the demo says it: a refusal is data too
+}
+DEMO_TABS = [("fit", "Fit and compare", range(0, 6)), ("serve", "Serve and curl", range(6, 9))]
+
+
+def run_demo(binary, tmp):
+    """The text scripts/demo.sh prints, run with the built binaries (BIN is the directory of `ml` and `ml-serve`) in its own temporary directory."""
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "BIN": str(Path(binary).parent), "DATA": str(ROOT / "docs" / "examples" / "data"), "TMPDIR": str(tmp)}
+    p = subprocess.run(["sh", str(ROOT / "scripts" / "demo.sh")], capture_output=True, text=True, env=env, timeout=180, stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        raise Drift("scripts/demo.sh exits %d: %s" % (p.returncode, (p.stdout + p.stderr)[-300:]))
+    return p.stdout
+
+
+def demo_blocks(out):
+    """-> [(command, demo comment or None, [output lines])], with the port, the paths and the hashes normalised, as the replay shows them."""
+    import re
+    parts = out.split("\n$ ")[1:]
+    if len(parts) != 9:
+        raise Drift("scripts/demo.sh prints %d commands, the replay is written for 9" % len(parts))
+    m = re.search(r"--port (\d+)", parts[6])
+    if not m:
+        raise Drift("scripts/demo.sh no longer starts ml-serve with --port")
+    port = m.group(1)
+    blocks = []
+    for part in parts:
+        text = re.sub(r"[^\s'\"]*cancho-ml-demo\.\w+", ".", part)
+        text = re.sub(r"(?<![0-9])%s(?![0-9])" % port, str(HTTP_PORT_SHOWN), text)
+        text = re.sub(r"\b[0-9a-f]{64}\b", lambda mm: short_sha(mm.group(0)), text)
+        lines = text.rstrip("\n").split("\n")
+        cmd, comment = lines[0], None
+        mm = re.match(r"(.*?)\s{2,}# (.*)$", cmd)
+        if mm:
+            cmd, comment = mm.group(1), mm.group(2)
+        cmd = re.sub(r"\s&\s*$", "", cmd).rstrip()
+        blocks.append((cmd, comment, [l for l in lines[1:] if l != ""]))
+    return blocks
+
+
+def demo_answer(line):
+    """The two JSON answers of the server are cut to the members that matter; the refusal is already cut by the demo (cut -c1-260), so its members are read, not parsed."""
+    import re
+    if line.startswith('{"model_sha256"'):
+        d = json.loads(re.sub(r"[0-9a-f]{12}…", lambda mm: mm.group(0), line))
+        return jline({"model_sha256": d["model_sha256"], "model": d["model"], "columns": d["columns"], "rows": d["rows"], "row_count": d["row_count"],
+                      "out_of_range": {"cells": d["out_of_range"]["cells"]}}) + " …", "g"
+    if line.startswith('{"rule"'):
+        g = lambda pat: re.search(pat, line).group(1)
+        return ('{"rule":"%s","model_sha256":"%s","status":%s,"errors":[{"pointer":"%s","code":"%s"}]} …'
+                % (g(r'"rule":"([^"]+)"'), g(r'"model_sha256":"([^"]+)"'), g(r'"status":(\d+)'), g(r'"pointer":"([^"]+)"'), g(r'"code":"([^"]+)"'))), "b"
+    return line, ""
+
+
+def demo_lines(out, tab):
+    """The replay lines (class, text) of one tab of the demo."""
+    blocks = demo_blocks(out)
+    L = []
+    for i in dict((k, r) for k, _, r in DEMO_TABS)[tab]:
+        cmd, comment, lines = blocks[i]
+        if DEMO_NOTES[i]:
+            L.append(("d", DEMO_NOTES[i]))
+        if comment:
+            L.append(("d", "# " + comment))
+        L.append(("a", "$ " + cmd))
+        for l in lines:
+            text, cls = demo_answer(l)
+            if text.startswith("verified: True"):
+                cls = "g"
+            L.append((cls, text))
+    return L
+
+
+def refusal_lines(ctx):
+    """The third tab: a refusal and its repair, on a file with an empty cell (the demos r_bad and r_fixed)."""
+    L = []
+    typed, d, status = result_doc(ctx, "r_bad", False)
+    err = d["error"]
+    L += [("d", "# one cell of the training file is empty and the plan does not say what to do with it"), ("a", "$ " + typed),
+          ("b", jline({"ok": False, "error": {"rule": err["rule"], "hint": err["hint"], "repair": err["repair"]}}) + " …"),
+          ("b", "# exit status %d" % status)]
+    typed, out, status = ctx["results"]["r_fixed"]
+    dd = json.loads(out)["data"]
+    L += [("d", "# the repair is a command: run as offered"), ("a", "$ " + typed),
+          ("g", jline({"ok": True, "data": {"model": dd["model"], "rows": dd["rows"], "bytes": dd["bytes"], "sha256": short_sha(dd["sha256"])}}) + " …")]
+    return L
+
+
+REPLAY_TABS = [("fit", "Fit and compare"), ("serve", "Serve and curl"), ("fix", "A refusal and its repair")]
+
+
+def replay_html(ctx):
+    """Three logs, each in its own <pre> (all shown without JavaScript, one at a time with it), and the tab buttons the script reveals."""
+    out = ['<div class="tabs" role="tablist" aria-label="Replayed runs" hidden>']
+    for k, (key, label) in enumerate(REPLAY_TABS):
+        out.append('<button type="button" role="tab" id="tab-%s" aria-controls="screen-%s" aria-selected="%s" tabindex="%d">%s</button>'
+                   % (key, key, "true" if k == 0 else "false", 0 if k == 0 else -1, e(label)))
+    out.append("</div>")
+    for key, label in REPLAY_TABS:
+        lines = demo_lines(ctx["demo"], key) if key != "fix" else refusal_lines(ctx)
+        out.append('<div class="plabel">%s</div>' % e(label))
+        out.append('<pre id="screen-%s" class="screen" role="tabpanel" aria-labelledby="tab-%s" tabindex="0">' % (key, key)
+                   + "\n".join('<span%s>%s</span>' % (' class="%s"' % c if c else "", e(x)) for c, x in lines) + "</pre>")
+    return "\n".join(out)
+
+
+def land_cmds(ctx):
+    """'One command, one model file, one server': the fit, the comparison, the replay of a run, the server and the request, as the demo ran them."""
+    blocks = demo_blocks(ctx["demo"])
+    out = []
+    for i, note in ((0, "# any of the six models, one verb; --track keeps a run record"), (2, "# two runs: what differs, and the metrics side by side"),
+                    (3, "# replay a run: re-fit from its record and compare the SHA-256 of the model file"),
+                    (6, "# the same file over HTTP: it listens on 127.0.0.1 unless --bind all is given"), (7, "# one request")):
+        out.append('<span class="c">%s</span>' % e(note))
+        out.append('<span class="c">$</span> ' + e(blocks[i][0]))
+    return '<pre class="code" tabindex="0">' + "\n".join(out) + "</pre>"
+
+
+# --- the numbers of the landing page: read from the sources, never typed ------------------------------------------------------------
+
+
+PLATFORMS = ["macOS arm64", "Linux x86-64", "Linux aarch64"]
+
+
+def _int(s):
+    return int(s.replace(",", ""))
+
+
+def landing_values(ctx):
+    """name -> text, for every <b data-n="name"> or <span data-n="name"> of docs/index.html. Sources: docs/status.md (the document every count lives in),
+    docs/bench/xplat_fp.txt (the golden), and `ml introspect` (the rules)."""
+    import re
+    status = (ROOT / "docs" / "status.md").read_text()
+    fp = (ROOT / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines()
+    fits = sum(1 for l in fp if l.split("\t")[1:2] == ["fit-exit"])
+    m = re.search(r"agree on (\d+) fingerprint lines for (\d+) fits", status)
+    if not m or (int(m.group(1)), int(m.group(2))) != (len(fp), fits):
+        raise Drift("docs/status.md and docs/bench/xplat_fp.txt disagree on the fingerprint (%s vs %d lines, %d fits)" % (m and m.groups(), len(fp), fits))
+    row = next((l for l in status.splitlines() if l.startswith("| other platforms")), "")
+    for plat in PLATFORMS:
+        if plat not in row:
+            raise Drift("docs/status.md does not name the platform %s in its row 'other platforms'" % plat)
+    m = re.search(r"([\d,]+) conformance tests pass, none skipped", status)
+    if not m:
+        raise Drift("docs/status.md no longer says '<N> conformance tests pass, none skipped'")
+    tests = m.group(1)
+    m = re.search(r"([\d,]+) patterns across [\w-]+ scripts: ([\d,]+) killed, (\d+) survive, each explained, 0 unexplained", status)
+    if not m:
+        raise Drift("docs/status.md no longer gives the mutant totals in its usual words")
+    total, killed, survive = m.groups()
+    if _int(total) != _int(killed) + int(survive):
+        raise Drift("the mutant totals of docs/status.md do not add up")
+    m = re.search(r"RMSE ([\d.]+) against scikit-learn's ([\d.]+), ([\d.]+)% apart; the tolerance is (\d+)%", status)
+    if not m:
+        raise Drift("docs/status.md no longer gives the red gate in its usual words")
+    import re as _re
+    runners = _re.findall(r"- \{os: ([\w.-]+),", (ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    return {"runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
+            "mut_survive": survive, "rules": str(len(ctx["introspect"]["rules"])), "red_gap": m.group(3), "red_tol": m.group(4)}
+
+
+
+
+
+def fill_values(text, ctx):
+    import re
+    vals = landing_values(ctx)
+
+    def sub(m):
+        if m.group(2) not in vals:
+            raise Drift("docs/index.html has data-n=%r, which nothing computes" % m.group(2))
+        return m.group(1) + vals[m.group(2)] + m.group(3)
+    return re.sub(r'(<(?:b|span) data-n="([a-z_]+)">)[^<]*(</(?:b|span)>)', sub, text)
+
+
+# --- the header and the footer of every page, one source ----------------------------------------------------------------------------
+
+REPO_URL = "https://github.com/alpibrusl/cancho-ml"
+NAV = [("How it works", "index.html#how", "opt", "index.html"), ("Guide", "guide.html", "", "guide.html"), ("Examples", "examples.html", "opt", "examples.html"),
+       ("Evidence", "evidence.html", "", "evidence.html"), ("Benchmarks", "benchmarks.html", "opt", "benchmarks.html"), ("GitHub", REPO_URL, "", None)]
+FOOT = [("Repository", REPO_URL), ("Status", REPO_URL + "/blob/main/docs/status.md"), ("Command line", REPO_URL + "/blob/main/docs/cli.md"),
+        ("Design", REPO_URL + "/blob/main/docs/design.md")]
+FOOT_EXTRA = {"docs/examples.html": [("Examples: the gate", REPO_URL + "/blob/main/docs/examples.md")],
+              "docs/benchmarks.html": [("Linear algebra", REPO_URL + "/blob/main/docs/linalg.md")]}
+
+
+def nav_html(rel):
+    page = rel.split("/")[-1]
+    links = []
+    for label, href, cls, target in NAV:
+        if page == "index.html" and href.startswith("index.html#"):
+            href = href[len("index.html"):]
+        attrs = ' class="%s"' % cls if cls else ""
+        if target == page and not href.startswith("#"):
+            attrs += ' aria-current="page"'
+        links.append('<a href="%s"%s>%s</a>' % (href, attrs, label))
+    return ('<header class="top"><div class="wrap">\n  <a class="brand" href="./">cancho-ml</a>\n  <nav aria-label="Site">\n    '
+            + "".join(links) + "\n  </nav>\n</div></header>")
+
+
+def foot_html(rel):
+    links = "".join('<a href="%s">%s</a>' % (h, l) for l, h in FOOT + FOOT_EXTRA.get(rel, []))
+    return ('<footer><div class="wrap">\n  <span class="brandline">cancho-ml</span><span>EUPL-1.2</span><span>written in <a href="https://github.com/alpibrusl/cancho">cancho</a></span>\n  '
+            + links + "\n</div></footer>")
+
+
+
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
                       catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
-    "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
+    "docs/guide.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
                             catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
@@ -833,6 +1088,11 @@ def example_regions():
 
 
 REGIONS["docs/examples.html"] = example_regions()
+REGIONS["docs/index.html"] = {"replay": replay_html, "cmds": land_cmds}
+for _rel in ("docs/index.html", "docs/guide.html", "docs/examples.html", "docs/evidence.html", "docs/benchmarks.html"):
+    REGIONS.setdefault(_rel, {})
+    REGIONS[_rel]["nav"] = lambda c, r=_rel: nav_html(r)
+    REGIONS[_rel]["foot"] = lambda c, r=_rel: foot_html(r)
 REGIONS["README.md"]["ex-flow"] = lambda c: md_block(sx.cmd_items(c["examples"], "iris", only=["fit"]))
 REGIONS["docs/examples.md"] = {"ex-results": lambda c: sx.full_md(c["examples"], c["ref"])}
 REGIONS["README.md"]["ex-summary"] = lambda c: sx.summary_md(c["examples"], c["ref"])
@@ -840,7 +1100,7 @@ REGIONS["README.md"]["ex-summary"] = lambda c: sx.summary_md(c["examples"], c["r
 
 SITE_BASE = "https://alpibrusl.github.io/cancho-ml/"
 # the pages that are meant to be found
-PAGES = ["", "examples.html", "evidence.html", "benchmarks.html"]
+PAGES = ["", "guide.html", "examples.html", "evidence.html", "benchmarks.html"]
 
 
 def sitemap(_ctx=None):
@@ -899,6 +1159,8 @@ def main():
             new = old
             for name, fn in regions.items():
                 new = splice(new, name, fn(ctx))
+            if rel == "docs/index.html":
+                new = fill_values(new, ctx)
             if new == old:
                 continue
             if args.check:
