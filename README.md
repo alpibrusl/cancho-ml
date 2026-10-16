@@ -127,6 +127,66 @@ $ ml predict --model-file iris-lr.ml --max-out-of-range 0 iris_test.csv
 ```
 <!-- /gen:trackflow -->
 
+## Explain a model
+
+A model that cannot be explained can only be trusted by its score. `ml importance` says which columns a model relies on, and `ml dump` prints the model itself; neither fits or changes anything. The design and its gates are in [docs/interpret.md](docs/interpret.md).
+
+**Linear and logistic models** get the standardised coefficients: the stored coefficient times the standard deviation of the column the model sees (`1.0` for a column the plan standardised, the deviation of the training column that the provenance section stores otherwise). The importance of a column is its share of the sum of the absolute values. A column with no stored deviation (a file fitted before run tracking, or a column an encoder made) is refused with `ml.importance.no-scale`.
+
+**Trees and forests** need nothing the file does not hold: every node stores the rows that reached it (the class counts of a classification), so the impurity decrease of every split, the quantity scikit-learn calls `feature_importances_`, is computed from the model file alone. The model file does not change. How often and how high a feature splits (`splits`, `split_rows`) is printed beside it under its own names, because it is not an importance.
+
+**Permutation importance** (`--data FILE`) measures what the model loses on held-out rows when one raw column is shuffled among them and the stored steps are applied again: the metric (`--metric`, a loss or a score, the sign says which) before and after, the mean and the standard deviation over `--repeats`. The shuffle of a column is drawn from the stream `derive(derive(derive(seed, 11), repeat), column)`, so the thread count, the order of the columns of the file and the order of the loop never change a number; a missing cell travels with its row.
+
+`describe` and the `GET /model` of `ml-serve` carry the table that needs no data (`importance`). `ml dump` prints a tree (or the I-th tree of a forest, `--tree I`) with the split, the side a missing cell takes, the rows and the counts of every node, bounded by `--max-nodes`; it prints the coefficients of a linear model and the centroids of a k-means.
+
+<!-- gen:interpflow -->
+```console
+# A linear model fitted on standardised columns: the coefficient is the effect of one standard deviation, and the importance is its share of the sum
+$ ml --format text importance --model-file iris-lin.ml
+standardised_coefficient total 1.0
+4. sepal_length_cm  importance 0.057044820890684196  coefficient -0.02875632542044302  std 1.0
+3. sepal_width_cm  importance 0.2455067776252507  coefficient 0.12376010091862648  std 1.0
+2. petal_length_cm  importance 0.3045127142597721  coefficient 0.1535050258584721  std 1.0
+1. virginica  importance 0.392935687224293  coefficient 0.1980790949064484  std 1.0
+# A forest on iris with a column of noise among the features: the impurity decrease is read from the counts the model file stores, and the noise column ranks last
+$ ml --format text importance --model-file iris-noise.ml
+impurity_decrease total 1.0 trees 50
+3. sepal_length_cm  importance 0.13647030407926877  splits 67  rows 1919
+5. sepal_width_cm  importance 0.04536709001335149  splits 46  rows 991
+4. noise  importance 0.06182389580212485  splits 68  rows 1195
+2. petal_length_cm  importance 0.3446184021781031  splits 74  rows 2636
+1. petal_width_cm  importance 0.41172030792715186  splits 67  rows 2821
+# Permutation importance on held-out rows: the drop of the score when one column is shuffled among the rows (seeded, 10 repeats), mean and standard deviation per column
+$ ml --format text importance --model-file iris-noise.ml --data iris_noise_test.csv --repeats 10 --seed 1
+impurity_decrease total 1.0 trees 50
+3. sepal_length_cm  importance 0.13647030407926877  splits 67  rows 1919
+5. sepal_width_cm  importance 0.04536709001335149  splits 46  rows 991
+4. noise  importance 0.06182389580212485  splits 68  rows 1195
+2. petal_length_cm  importance 0.3446184021781031  splits 74  rows 2636
+1. petal_width_cm  importance 0.41172030792715186  splits 67  rows 2821
+permutation roc_auc (score), repeats 10, rows 25, baseline 1.0
+3. sepal_length_cm  importance 0.0  std 0.0
+4. sepal_width_cm  importance 0.0  std 0.0
+5. noise  importance 0.0  std 0.0
+1. petal_length_cm  importance 0.22756410256410256  std 0.10128407982389195
+2. petal_width_cm  importance 0.04615384615384614  std 0.030849254911579384
+# A tree as text: the split, the side a missing cell takes, the rows and the class counts of every node
+$ ml --format text dump --model-file iris-tree.ml
+tree 0 of 1: 7 nodes, depth 2
+0 petal_width_cm < 1.8 -> left 1, right 4, missing right [n=75: 37/38]
+|   1 petal_length_cm < 5.0 -> left 2, right 3, missing right [n=41: 36/5]
+|   |   2 leaf 0.02857142857142857 [n=35: 34/1]
+|   |   3 leaf 0.6666666666666666 [n=6: 2/4]
+|   4 petal_length_cm < 4.9 -> left 5, right 6, missing right [n=34: 1/33]
+|   |   5 leaf 0.5 [n=2: 1/1]
+|   |   6 leaf 1.0 [n=32: 0/32]
+# A constant model has nothing to explain
+$ ml importance --model-file houses.ml
+{"rule": "ml.importance.unsupported-model", "hint": "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means"}
+# exit status 8; the rule, hint of the JSON line it prints
+```
+<!-- /gen:interpflow -->
+
 ## Worked examples
 
 Four classic datasets, as bundled with scikit-learn (breast cancer Wisconsin, diabetes progression, iris restricted to two species, wine), solved by the real `ml` binary and compared with scikit-learn on the **same two files** each. [docs/examples.md](docs/examples.md) fixes what is compared and the tolerances, and was written before any example was run; the commands and their output are on [the examples page](https://alpibrusl.github.io/cancho-ml/examples.html), with two failures shown (a penalty-free logistic fit on separable data; a column whose type differs between two files). The `ml` output is regenerated by `scripts/check_docs.sh`; the scikit-learn column is read from `docs/examples/reference.json`, written by `python3 scripts/examples_data.py` (needs scikit-learn), and **is not computed by the check**. Nothing here is a claim about speed.
@@ -568,19 +628,19 @@ The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`);
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler 0207556b)
-flags       53, for example
+flags       57, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
-  --model-file  path             predict, eval, describe: the model file to read
+  --model-file  path             predict, eval, describe, importance, dump: the mode…
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
-limits      22, for example
+limits      24, for example
   --max-rows         default 10,000,000   ceiling 1,000,000,000
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       99, for example
+rules       106, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes

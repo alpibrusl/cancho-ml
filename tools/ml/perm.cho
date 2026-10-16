@@ -648,16 +648,28 @@ fn permutation[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f F
                                     w = json.put_key(heap, w, "rank");
                                     w = json.put_int(heap, w, interp.rank_of(contents(mr), nf, s));
                                     w = json.end_object(heap, w);
-                                    plain = buffer.push_nat(heap, plain, interp.rank_of(contents(mr), nf, s));
-                                    plain = buffer.append(heap, plain, ". ");
-                                    plain = buffer.append(heap, plain, schema.name(sc, contents(slr)[s]));
-                                    plain = buffer.append(heap, plain, "  importance ");
-                                    plain = interp.put_num(heap, plain, contents(mr)[s]);
-                                    plain = buffer.append(heap, plain, "  std ");
-                                    plain = interp.put_num(heap, plain, contents(sdr)[s]);
-                                    plain = buffer.push(heap, plain, byte_of(10));
                                     s = s + 1;
                                 }
+                                // the lines of --format text, best rank first
+                                let rk = interp.ranks_of(heap, contents(mr), nf);
+                                borrow rk as &kr in {
+                                    var q = 1;
+                                    while q <= nf {
+                                        let sq = interp.index_of_rank(contents(kr), nf, q);
+                                        if sq >= 0 {
+                                            plain = buffer.push_nat(heap, plain, q);
+                                            plain = buffer.append(heap, plain, ". ");
+                                            plain = buffer.append(heap, plain, schema.name(sc, contents(slr)[sq]));
+                                            plain = buffer.append(heap, plain, "  importance ");
+                                            plain = interp.put_num(heap, plain, contents(mr)[sq]);
+                                            plain = buffer.append(heap, plain, "  std ");
+                                            plain = interp.put_num(heap, plain, contents(sdr)[sq]);
+                                            plain = buffer.push(heap, plain, byte_of(10));
+                                        }
+                                        q = q + 1;
+                                    }
+                                }
+                                unbox_slice(heap, rk);
                             }
                         }
                     }

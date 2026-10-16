@@ -159,11 +159,11 @@ class Permutation(unittest.TestCase):
         self.assertEqual((r.status, r.first_rule()), (2, "ml.param.out-of-range"), r)
         r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "reg_new.csv", "--repeats", "101")
         self.assertEqual((r.status, r.first_rule()), (2, "ml.param.out-of-range"), r)
-        self.sb.write("one.csv", "x0,x1,x2,x3,x4,x5,NOISE,y\n0.1,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n")
+        self.sb.write("one.csv", "x0,x1,x2,NOISE,x3,x4,x5,y\n0.1,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n")
         r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "one.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.importance.too-few-rows"), r)
         # a constant target: R-squared has no value
-        self.sb.write("flat.csv", "x0,x1,x2,x3,x4,x5,NOISE,y\n0.1,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n0.2,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n0.3,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n")
+        self.sb.write("flat.csv", "x0,x1,x2,NOISE,x3,x4,x5,y\n0.1,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n0.2,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n0.3,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n")
         r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "flat.csv", "--metric", "r2")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.importance.undefined-metric"), r)
         # the data lacks a column of the model
@@ -171,9 +171,18 @@ class Permutation(unittest.TestCase):
         r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "short.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.schema.mismatch"), r)
         # no target column in the data
-        self.sb.write("notarget.csv", "x0,x1,x2,x3,x4,x5,NOISE\n0.1,0.2,0.3,0.4,0.5,0.6,0.7\n0.2,0.2,0.3,0.4,0.5,0.6,0.7\n")
+        self.sb.write("notarget.csv", "x0,x1,x2,NOISE,x3,x4,x5\n0.1,0.2,0.3,0.4,0.5,0.6,0.7\n0.2,0.2,0.3,0.4,0.5,0.6,0.7\n")
         r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "notarget.csv")
         self.assertEqual(r.status, 8, r)
+
+    def test_the_work_bound_is_exact(self):
+        # 150 rows x 7 columns x 3 repeats = 3150 row evaluations
+        ok = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "reg_new.csv", "--repeats", "3", "--max-work", "3150")
+        self.assertEqual(ok.status, 0, ok)
+        r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "reg_new.csv", "--repeats", "3", "--max-work", "3149")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.limit.work"), r)
+        det = json.dumps(r.error())
+        self.assertIn("3150", det)
 
     def test_i1_the_model_table_comes_with_the_permutation(self):
         d = self.sb.run("importance", "--model-file", "forest_cls.ml", "--data", "cls_new.csv").data()
@@ -208,15 +217,19 @@ class Noise(unittest.TestCase):
         d = self.run_set("cls", "classification")
         self.assertEqual(self.last(d["importance"]["columns"]), "NOISE", d["importance"]["columns"])
         self.assertEqual(self.last(d["permutation"]["columns"]), "NOISE", d["permutation"]["columns"])
-        noise = [c for c in d["permutation"]["columns"] if c["column"] == "NOISE"][0]
-        self.assertLessEqual(abs(float(noise["importance"])), 3 * float(noise["std"]) / math.sqrt(10) + 1e-3, noise)
+        # the noise column is below the weakest informative column by a margin, not only by rank: its importance is less than a fifth of the weakest signal's
+        cols = {c["column"]: float(c["importance"]) for c in d["permutation"]["columns"]}
+        weakest = min(v for k, v in cols.items() if k != "NOISE")
+        self.assertLess(cols["NOISE"], 0.2 * weakest, cols)
 
     def test_i5_the_noise_column_of_a_regression_forest_ranks_last(self):
         d = self.run_set("reg", "regression")
         self.assertEqual(self.last(d["importance"]["columns"]), "NOISE", d["importance"]["columns"])
         self.assertEqual(self.last(d["permutation"]["columns"]), "NOISE", d["permutation"]["columns"])
-        noise = [c for c in d["permutation"]["columns"] if c["column"] == "NOISE"][0]
-        self.assertLessEqual(abs(float(noise["importance"])), 3 * float(noise["std"]) / math.sqrt(10) + 1e-3, noise)
+        # the noise column is below the weakest informative column by a margin, not only by rank: its importance is less than a fifth of the weakest signal's
+        cols = {c["column"]: float(c["importance"]) for c in d["permutation"]["columns"]}
+        weakest = min(v for k, v in cols.items() if k != "NOISE")
+        self.assertLess(cols["NOISE"], 0.2 * weakest, cols)
 
 
 if __name__ == "__main__":

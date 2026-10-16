@@ -406,6 +406,18 @@ The library also answers, with its own codes in its band, tags that exist above:
 
 `ml.model.malformed` also answers a damaged section 7 (`detail.section` 7); `io.not-found` a `--track` directory that does not exist; 
 
+*Added by M23, interpretability (`docs/interpret.md` section 5; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/fixtures.py`; `ml.limit.nodes` and `ml.param.out-of-range` above are reached a second time, by `dump --max-nodes` and `dump --tree` / `importance --repeats`):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.importance.unsupported-model` | 8 | `importance` of a constant or a k-means | none |
+| `ml.importance.no-scale` | 8 | a standardised coefficient needs the deviation of a column the file does not store (a file fitted before run tracking, or a column made by an encoder or a bucket); the columns are in `detail` | none: `--data FILE` gives the permutation importance, which needs none |
+| `ml.importance.bad-metric` | 8 | `--metric` is not a metric of the task; the metrics are in `detail` | none |
+| `ml.importance.undefined-metric` | 8 | the metric has no value on the baseline or on a permuted run | none |
+| `ml.importance.too-few-rows` | 8 | `--data` holds fewer than 2 rows | none |
+| `ml.limit.work` | 8 | rows times columns times repeats above `--max-work` | none |
+| `ml.dump.unsupported-model` | 8 | `dump` of a constant | none |
+
 *Added by issue 42, split strategies and cross-validation (`docs/splits.md` section 7; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/fixtures.py`; `ml.split.empty-fold` and `ml.split.stratum-too-small` above are the library's, reached by the same verbs):*
 
 | tag | exit | when | repair |
@@ -655,4 +667,4 @@ read the records and replay a fit in memory. The split of a record is the canoni
 counts of its rows (`na`, `nb`), from which the Gini decrease of a classification split is exact and the variance reduction of a regression split follows from the leaf means; standardised
 coefficients use the stored scalings and the provenance section. Permutation importance reads a held-out file, shuffles one raw column at a time with the stream kind 11
 (`derive(derive(derive(seed, 11), repeat), column)`), re-applies the stored steps and reports the metric difference. The registry takes stream kind 11 and lists 9 and 10 as reserved for the
-boosting stage; the new rule tags are in section 8 once the code lands. The three authority rows are unchanged.
+boosting stage; the new rule tags are in section 8. The three authority rows are unchanged: the derivation of the compiler lists the same labels for `ml`, `ml-predict` and `ml-serve`, and only the list of pure functions grows.

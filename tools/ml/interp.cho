@@ -54,7 +54,7 @@ fn get32[&s](src: &s [byte], at: int) -> [] int {
 // ---------------------------------------------------------------- the lineage of the columns the model sees (docs/interpret.md 3.1)
 
 // One entry per column the model sees. ints, four a column: the schema index of the raw column it comes from, its place among the numeric features (-1 for an encoder's column),
-// the flags (1 derived by an encoder or a bucket, 2 scaled by a minmax or standard step, 4 imputed), the `ddof` of the last standard step when that step made the column (else -1).
+// the flags (1 derived by an encoder or a bucket, 2 scaled by a minmax or standard step), the `ddof` of the last standard step when that step made the column (else -1).
 // floats, two a column: (off, div) such that the column the model sees is (raw - off) / div.
 pub res struct Lineage {
     n: int,
@@ -233,10 +233,8 @@ fn numeric_step[&h, &t](heap: &!h Heap, lin: Lineage, st: &t steps.Step) -> [hea
                                 var unit = contents(ir)[4 * c + 3];
                                 var off = contents(fr)[2 * c];
                                 var div = contents(fr)[2 * c + 1];
-                                if hit >= 0 {
-                                    if kind == 1 {
-                                        flags = flags | 4;
-                                    } else if kind == 2 || kind == 3 {
+                                if hit >= 0 && kind != 1 {
+                                    if kind == 2 || kind == 3 {
                                         let a = steps.float_at(st, 2 * hit);
                                         let d = steps.float_at(st, 2 * hit + 1);
                                         off = off + a * div;
@@ -409,6 +407,30 @@ pub fn rank_of[&v](vals: &v [float], n: int, j: int) -> [] int {
         i = i + 1;
     }
     return r;
+}
+
+// the rank of every entry of vals (the ranks of rank_of), and the index with rank r (-1 when there is none)
+pub fn ranks_of[&h, &v](heap: &!h Heap, vals: &v [float], n: int) -> [heap] Box[[int]] {
+    var out = box_slice(heap, n + 1, 0);
+    borrow mut out as &!ow in {
+        var j = 0;
+        while j < n {
+            contents(ow)[j] = rank_of(vals, n, j);
+            j = j + 1;
+        }
+    }
+    return out;
+}
+
+pub fn index_of_rank[&r](rk: &r [int], n: int, want: int) -> [] int {
+    var j = 0;
+    while j < n {
+        if rk[j] == want {
+            return j;
+        }
+        j = j + 1;
+    }
+    return 0 - 1;
 }
 
 fn measure_std() -> [] &static [byte] {
@@ -584,19 +606,34 @@ fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage)
                 out = json.put_key(heap, out, "rank");
                 out = json.put_int(heap, out, rank_of(contents(ir), w, j));
                 out = json.end_object(heap, out);
-                plain = buffer.push_nat(heap, plain, rank_of(contents(ir), w, j));
-                plain = buffer.append(heap, plain, ". ");
-                plain = buffer.append(heap, plain, l_name(lin, j));
-                plain = buffer.append(heap, plain, "  importance ");
-                plain = put_num(heap, plain, contents(ir)[j]);
-                plain = buffer.append(heap, plain, "  coefficient ");
-                plain = put_num(heap, plain, wv[j]);
-                plain = buffer.append(heap, plain, "  std ");
-                plain = put_num(heap, plain, sd);
-                plain = buffer.push(heap, plain, byte_of(10));
                 j = j + 1;
             }
         }
+    }
+    // the lines of --format text, best rank first
+    borrow imp as &ir in {
+        let rk = ranks_of(heap, contents(ir), w);
+        borrow rk as &rr in {
+            var q = 1;
+            while q <= w {
+                let jq = index_of_rank(contents(rr), w, q);
+                if jq >= 0 {
+                    let (sd, src) = column_sd(lin, jq, lr);
+                    plain = buffer.push_nat(heap, plain, q);
+                    plain = buffer.append(heap, plain, ". ");
+                    plain = buffer.append(heap, plain, l_name(lin, jq));
+                    plain = buffer.append(heap, plain, "  importance ");
+                    plain = put_num(heap, plain, contents(ir)[jq]);
+                    plain = buffer.append(heap, plain, "  coefficient ");
+                    plain = put_num(heap, plain, wv[jq]);
+                    plain = buffer.append(heap, plain, "  std ");
+                    plain = put_num(heap, plain, sd);
+                    plain = buffer.push(heap, plain, byte_of(10));
+                }
+                q = q + 1;
+            }
+        }
+        unbox_slice(heap, rk);
     }
     out = json.end_array(heap, out);
     out = json.end_object(heap, out);
@@ -816,18 +853,30 @@ fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage
                     out = json.put_key(heap, out, "split_rows");
                     out = json.put_int(heap, out, contents(rr)[j]);
                     out = json.end_object(heap, out);
-                    plain = buffer.push_nat(heap, plain, rank_of(contents(ir), d, j));
-                    plain = buffer.append(heap, plain, ". ");
-                    plain = buffer.append(heap, plain, l_name(lin, j));
-                    plain = buffer.append(heap, plain, "  importance ");
-                    plain = put_num(heap, plain, contents(ir)[j]);
-                    plain = buffer.append(heap, plain, "  splits ");
-                    plain = buffer.push_nat(heap, plain, contents(sr)[j]);
-                    plain = buffer.append(heap, plain, "  rows ");
-                    plain = buffer.push_nat(heap, plain, contents(rr)[j]);
-                    plain = buffer.push(heap, plain, byte_of(10));
                     j = j + 1;
                 }
+                // the lines of --format text, best rank first
+                let rk = ranks_of(heap, contents(ir), d);
+                borrow rk as &kr in {
+                    var q = 1;
+                    while q <= d {
+                        let jq = index_of_rank(contents(kr), d, q);
+                        if jq >= 0 && jq < lineage_width(lin) {
+                            plain = buffer.push_nat(heap, plain, q);
+                            plain = buffer.append(heap, plain, ". ");
+                            plain = buffer.append(heap, plain, l_name(lin, jq));
+                            plain = buffer.append(heap, plain, "  importance ");
+                            plain = put_num(heap, plain, contents(ir)[jq]);
+                            plain = buffer.append(heap, plain, "  splits ");
+                            plain = buffer.push_nat(heap, plain, contents(sr)[jq]);
+                            plain = buffer.append(heap, plain, "  rows ");
+                            plain = buffer.push_nat(heap, plain, contents(rr)[jq]);
+                            plain = buffer.push(heap, plain, byte_of(10));
+                        }
+                        q = q + 1;
+                    }
+                }
+                unbox_slice(heap, rk);
             }
         }
     }

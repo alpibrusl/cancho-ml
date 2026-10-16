@@ -36,6 +36,8 @@ generated:
     splitflow     README.md, guide.html   the split strategies and cross-validation (docs/splits.md): a stratified holdout on docs/examples/data/breast_cancer_train.csv, a time split and
                                           a group split on docs/examples/data/visits.csv, a refused combination, `ml cv --folds 5` on iris and diabetes with the metrics of
                                           each fold and their mean and standard deviation, a time cv, a group cv with --emit-folds, and a refusal with its repair
+    interpflow    README.md, guide.html   explaining a model (docs/interpret.md): the standardised coefficients of a linear model, the impurity importance of a forest with a column of noise, the
+                                          permutation importance on held-out rows, the dump of a two-level tree and a refusal
     hero          guide.html              the first example
     agentio       README.md, guide.html   excerpts of `ml introspect`
     skill         guide.html              the first lines of `ml skill`
@@ -163,6 +165,15 @@ DEMOS = [
     ("sp_cv_time", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-by time:visit_date --folds 4 visits.csv"),
     ("sp_cv_group", "ml cv --model tree --task classification --max-depth 3 --target returning --drop customer,visit_date --split-group customer --folds 4 --seed 5 --emit-folds visits.csv"),
     ("sp_bad", "ml cv --model linear --step 'scale column=* kind=standard' --target progression --stratify diabetes_train.csv"),
+    # explaining a model (docs/interpret.md): a linear model, a forest on iris with a column of noise, its permutation importance, a small tree dumped as text
+    ("i_lin_fit", "ml fit --model linear --step 'scale column=* kind=standard' --target petal_width_cm --output iris-lin.ml iris_train.csv"),
+    ("i_lin", "ml --format text importance --model-file iris-lin.ml"),
+    ("i_rf_fit", "ml fit --model forest --task classification --trees 50 --max-depth 5 --seed 2 --target virginica --output iris-noise.ml iris_noise_train.csv"),
+    ("i_rf", "ml --format text importance --model-file iris-noise.ml"),
+    ("i_perm", "ml --format text importance --model-file iris-noise.ml --data iris_noise_test.csv --repeats 10 --seed 1"),
+    ("i_tree_fit", "ml fit --model tree --task classification --max-depth 2 --target virginica --output iris-tree.ml iris_train.csv"),
+    ("i_dump", "ml --format text dump --model-file iris-tree.ml"),
+    ("i_bad", "ml importance --model-file houses.ml"),
     # the landing page (docs/index.html): a replayed run on the iris files of the worked examples, a refusal with its repair, and the commands of "One command"
     ("r_fit", "ml fit --model logistic --step 'scale column=* kind=standard' --l2 0.1 --split train=0.8 --seed 3 --target virginica --output iris.ml iris_train.csv"),
     ("r_predict", "ml predict --model-file iris.ml --proba --limit 3 iris_test.csv"),
@@ -197,6 +208,7 @@ SUMMARY = {
     "k_nok": ["rule", "hint", "detail"],
     "sp_combo": ["rule", "hint", "repair", "detail"],
     "sp_bad": ["rule", "hint", "repair"],
+    "i_bad": ["rule", "hint"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -388,6 +400,16 @@ def make_context(binary, tmp):
     for part in ("train", "test"):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
     (Path(tmp) / "iris_gaps.csv").write_text(iris_gaps())
+    # the explanation example: the iris files with a column of noise (seeded) among the features
+    import random
+    rng = random.Random(5)
+    for part in ("train", "test"):
+        src = (ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_text().splitlines()
+        out = []
+        for k, line in enumerate(src):
+            cells = line.split(",")
+            out.append(",".join(cells[:2] + ["noise" if k == 0 else "%.3f" % rng.random()] + cells[2:]))
+        (Path(tmp) / ("iris_noise_%s.csv" % part)).write_text("\n".join(out) + "\n")
     # the split examples: the committed files of docs/examples/data
     for name in ("breast_cancer_train.csv", "diabetes_train.csv", "visits.csv"):
         (Path(tmp) / name).write_bytes((ROOT / "docs" / "examples" / "data" / name).read_bytes())
@@ -489,6 +511,29 @@ def track_items(ctx):
             item(ctx, "t_predict"),
             ("# A bound on the rows outside the range refuses, naming the first column and row", None, 0, None),
             item(ctx, "t_bound")]
+
+
+def interp_items(ctx):
+    """Explain a model: the standardised coefficients, the impurity importance and the permutation importance of a forest with a column of noise, a dumped tree, a refusal."""
+    # the comments below say that the noise column keeps a share of the impurity importance and loses nothing under permutation: they are checked against the output they sit above
+    rf = ctx["results"]["i_rf"][1].splitlines()
+    perm = ctx["results"]["i_perm"][1].splitlines()
+    share = [float(l.split("importance ")[1].split()[0]) for l in rf if " noise " in l][0]
+    if not share > 0.0:
+        raise Drift("the noise column has no share of the impurity importance: the comment of interpflow is false")
+    lost = [float(l.split("importance ")[1].split()[0]) for l in perm if " noise " in l and "std" in l][0]
+    if lost != 0.0:
+        raise Drift("the noise column loses something under permutation: the comment of interpflow is false")
+    return [("# A linear model fitted on standardised columns: the coefficient is the effect of one standard deviation, and the importance is its share of the sum", None, 0, None),
+            item(ctx, "i_lin"),
+            ("# A forest on iris with a column of noise among the features: the impurity decrease is read from the counts the model file stores, which count the rows the trees were grown on, so the noise column keeps a share", None, 0, None),
+            item(ctx, "i_rf"),
+            ("# Permutation importance on held-out rows: the drop of the score when one column is shuffled among the rows (seeded, 10 repeats), mean and standard deviation per column. The noise column loses nothing", None, 0, None),
+            item(ctx, "i_perm"),
+            ("# A tree as text: the split, the side a missing cell takes, the rows and the class counts of every node", None, 0, None),
+            item(ctx, "i_dump"),
+            ("# A constant model has nothing to explain", None, 0, None),
+            item(ctx, "i_bad")]
 
 
 def item(ctx, key):
@@ -1063,11 +1108,11 @@ def foot_html(rel):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)), interpflow=lambda c: md_block(interp_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/guide.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)), interpflow=lambda c: html_pre(interp_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

@@ -203,11 +203,11 @@ def numeric_features(M):
 
 def lineage(M):
     """one dict per column the model sees: name (bytes), source (bytes), src (schema index), k (index among the numeric features, or None), derived, scaled, off, div, unit (ddof of a
-    last standard scaler, else None), imputed"""
+    last standard scaler, else None). An impute step changes none of them: the stored deviation is that of the present cells."""
     cols = M["cols"]
     cur = []
     for k, j in enumerate(numeric_features(M)):
-        cur.append({"name": cols[j][0], "source": cols[j][0], "src": j, "k": k, "derived": False, "scaled": False, "off": 0.0, "div": 1.0, "unit": None, "imputed": False})
+        cur.append({"name": cols[j][0], "source": cols[j][0], "src": j, "k": k, "derived": False, "scaled": False, "off": 0.0, "div": 1.0, "unit": None})
     for st in M["steps"]:
         kind = st["kind"]
         if kind <= 6:
@@ -215,8 +215,7 @@ def lineage(M):
             k = ints[0]
             sel = ints[2:2 + k]
             if kind == 1:
-                for c in sel:
-                    cur[c]["imputed"] = True
+                pass
             elif kind in (2, 3):
                 for j, c in enumerate(sel):
                     a, d = fl[2 * j], fl[2 * j + 1]
@@ -255,7 +254,7 @@ def lineage(M):
                 blocked = p["kind"] in (7, 10)
                 for t in range(w):
                     cur.append({"name": name + (b"#" + str(t).encode() if blocked else b""), "source": name, "src": j, "k": None, "derived": True, "scaled": False,
-                                "off": 0.0, "div": 1.0, "unit": None, "imputed": False})
+                                "off": 0.0, "div": 1.0, "unit": None})
     return cur
 
 
@@ -817,8 +816,24 @@ def gen_dataset(name, n, seed):
                 y = "1" if z > 0.0 else "0"
             else:
                 y = repr(3.0 * x[0] + 2.0 * x[1] * x[1] + (1.0 if x[2] > 0.0 else -1.0) + 0.7 * x[3] + 0.5 * x[4] + 0.35 * x[5] + e)
-            rows.append([repr(v) for v in x] + [repr(noise), y])
-        return ["x%d" % i for i in range(6)] + ["NOISE", "y"], rows
+            cells = [repr(v) for v in x]
+            rows.append(cells[:3] + [repr(noise)] + cells[3:] + [y])
+        return ["x0", "x1", "x2", "NOISE", "x3", "x4", "x5", "y"], rows
+    if name == "disc":
+        # an integer column g with four values, two numeric columns: a one-hot encoding of g is a plan with a numeric encoder
+        eff = [0.0, 2.0, -1.0, 1.0]
+        for i in range(n):
+            g = int((next(u) + 1.0) * 2.0) % 4
+            x = [next(u), next(u)]
+            e = next(u) * 0.2
+            rows.append([str(g), repr(x[0]), repr(x[1]), repr(eff[g] + 1.2 * x[0] + e)])
+        return ["g", "x0", "x1", "y"], rows
+    if name == "rare":
+        # a classification with a handful of positives: some bootstrap samples hold none, and the tree grown on one is a single leaf
+        for i in range(n):
+            x = [next(u) for _ in range(3)]
+            rows.append([repr(v) for v in x] + ["1" if i in (7, 211) else "0"])
+        return ["x0", "x1", "x2", "y"], rows
     if name == "mixed":
         cats = ["red", "green", "blue", "gold", "teal"]
         eff = {"red": 2.0, "green": -1.0, "blue": 0.5, "gold": -2.0, "teal": 1.0}

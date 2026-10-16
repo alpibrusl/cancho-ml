@@ -29,7 +29,7 @@ from harness import ROOT, Sandbox
 sys.path.insert(0, str(ROOT / "scripts"))
 import oracle_interp as O  # noqa: E402
 
-FEATURES = ["x0", "x1", "x2", "x3", "x4", "x5", "NOISE"]
+FEATURES = ["x0", "x1", "x2", "NOISE", "x3", "x4", "x5"]
 
 
 def data_of(name, n, seed):

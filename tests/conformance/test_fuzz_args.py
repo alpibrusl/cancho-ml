@@ -13,7 +13,7 @@ from fixtures import CASES, REG, CLS, LCLS, LIN, LINMIS
 from harness import TRAPS, Sandbox, introspect, run, spec, validate
 
 T = spec.tables()
-VERBS = ["fit", "predict", "eval", "introspect", "skill", "frobnicate", "", "FIT", "fit predict"]
+VERBS = ["fit", "predict", "eval", "introspect", "skill", "frobnicate", "", "FIT", "fit predict", "importance", "dump", "describe", "cv", "runs"]
 FLAGS = ["--" + f["name"] for f in T["flags"]] + ["--", "-", "-x", "---", "--=", "--root=", "--bogus", "-h", "--help", "--version"]
 VALUES = ["1", "0", "-1", "1000", "99999999999999999999", "18446744073709551616", "", "..", "../x", "a/../b", "./x", "a//b", "a/",
           "/etc/passwd", "/dev/null", "/nonexistent", "a" * 5000, "reg.csv", "cls.csv", "m.cml", "c.cml", "bad.cml", "sub", "sub/reg.csv",
@@ -22,7 +22,7 @@ VALUES = ["1", "0", "-1", "1000", "99999999999999999999", "18446744073709551616"
           "lcls.csv", "lin.cml", "log.cml", "impute column=* strategy=mean", "scale column=a kind=standard;impute column=b strategy=median",
           "scale column=zzz kind=minmax", "model kind=linear", ";", ";;;", "encode column=a kind=onehot max-categories=0", "bucket column=a kind=quantile bins=300",
           "impute column=a strategy=constant", "scale column= kind=minmax", "a=b=c", "# c", "\n",
-          "json", "text", "tab", "log.ndjson", "Y", "a b", "--x", "-1e5", "0x10", "1_0", "\ud800".encode("utf-8", "surrogatepass").decode("latin-1")]
+          "rmse", "roc_auc", "log_loss", "r2", "f1", "100", "101", "tc.cml", "json", "text", "tab", "log.ndjson", "Y", "a b", "--x", "-1e5", "0x10", "1_0", "\ud800".encode("utf-8", "surrogatepass").decode("latin-1")]
 
 
 def sandbox():
@@ -154,6 +154,24 @@ class Fuzz(unittest.TestCase):
                 for v in values:
                     self.check([*base, flag, v])
                     self.check([*base, flag + "=" + v])
+
+    def test_every_flag_of_importance_and_dump_every_mistake(self):
+        # docs/interpret.md: the models of the sandbox, with and without a data file, and every flag with a hostile value
+        bases = (["importance", "--model-file", "lin.cml"], ["importance", "--model-file", "log.cml", "--data", "lcls.csv"], ["importance", "--model-file", "tree.cml", "--data", "lin.csv"],
+                 ["importance", "--model-file", "forest.cml", "--data", "lcls.csv", "--repeats", "2"], ["importance", "--model-file", "km.cml"], ["importance", "--model-file", "m.cml"],
+                 ["dump", "--model-file", "tree.cml"], ["dump", "--model-file", "forest.cml", "--tree", "1"], ["dump", "--model-file", "lin.cml"], ["dump", "--model-file", "km.cml"],
+                 ["dump", "--model-file", "m.cml"])
+        values = ("", "0", "1", "2", "-1", "4", "5", "100", "101", "1023", "1024", "4194304", "4194305", "99999999999999999999", "rmse", "roc_auc", "f1", "nope", "lin.csv", "..", "\xe9")
+        for base in bases:
+            for flag in ("--data", "--metric", "--repeats", "--seed", "--tree", "--max-nodes", "--max-work", "--threads", "--drop", "--format", "--model-file", "--max-bytes"):
+                self.check([*base, flag])
+                self.check([*base, flag, flag])
+                for v in values:
+                    self.check([*base, flag, v])
+                    self.check([*base, flag + "=" + v])
+            for drop in range(len(base)):
+                self.check(base[:drop] + base[drop + 1:])
+            self.check([*base, "extra.csv"])
 
     def test_every_flag_of_kmeans_every_mistake(self):
         # the 4 bases: a fit by flags, a fit by a plan, predict and eval; the flags of k-means and the flags that mean nothing to it

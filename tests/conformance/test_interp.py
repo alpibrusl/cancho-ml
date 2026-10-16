@@ -41,6 +41,10 @@ class Fixture(unittest.TestCase):
         sb.write("cls.csv", dataset("cls", 300))
         sb.write("reg.csv", dataset("reg", 300))
         sb.write("mixed.csv", dataset("mixed", 300))
+        lines = dataset("reg", 300).splitlines()
+        sb.write("regk.csv", "\n".join([lines[0].replace(",y", ",k,y")] + [ln.rsplit(",", 1)[0] + ",3.0," + ln.rsplit(",", 1)[1] for ln in lines[1:]]) + "\n")
+        sb.write("disc.csv", dataset("disc", 300))
+        sb.write("rare.csv", dataset("rare", 400))
         sb.write("const.csv", "a,b,y\n1,2,5\n2,1,5\n3,4,5\n4,5,5\n5,6,5\n6,3,5\n")
         steps = "impute column=* strategy=mean; scale column=* kind=standard"
         fits = {
@@ -50,6 +54,7 @@ class Fixture(unittest.TestCase):
             "lin_minmax.ml": ["--model", "linear", "--target", "y", "--step", "scale column=* kind=minmax", "reg.csv"],
             "lin_twice.ml": ["--model", "linear", "--target", "y", "--step", "scale column=x0,x1 kind=standard; scale column=* kind=minmax", "reg.csv"],
             "lin_twice2.ml": ["--model", "linear", "--target", "y", "--step", "scale column=x0,x1 kind=minmax; scale column=x0,x2 kind=standard ddof=1", "reg.csv"],
+            "lin_constcol.ml": ["--model", "linear", "--l2", "0.1", "--target", "y", "--step", "scale column=* kind=standard", "regk.csv"],
             "lin_bucket.ml": ["--model", "linear", "--target", "y", "--step", "bucket column=x0 kind=width bins=4", "reg.csv"],
             "log_std.ml": ["--model", "logistic", "--target", "y", "--step", "scale column=* kind=standard", "cls.csv"],
             "log_plain.ml": ["--model", "logistic", "--target", "y", "--l2", "0.5", "cls.csv"],
@@ -61,6 +66,9 @@ class Fixture(unittest.TestCase):
             "forest_mixed.ml": ["--model", "forest", "--task", "regression", "--target", "y", "--trees", "5", "--max-depth", "4", "--seed", "6", "--drop", "color", "mixed.csv"],
             "forest_cat.ml": ["--model", "forest", "--task", "regression", "--target", "y", "--trees", "5", "--max-depth", "4", "--seed", "6", "--cat", "color",
                               "--step", "encode column=color kind=onehot", "mixed.csv"],
+            "tree_onehot.ml": ["--model", "tree", "--task", "regression", "--target", "y", "--max-depth", "4", "--step", "encode column=g kind=onehot", "disc.csv"],
+            "lin_onehot.ml": ["--model", "linear", "--l2", "0.1", "--target", "y", "--step", "encode column=g kind=onehot", "disc.csv"],
+            "forest_rare.ml": ["--model", "forest", "--task", "classification", "--target", "y", "--trees", "60", "--max-depth", "3", "--seed", "9", "rare.csv"],
             "tree_leaf.ml": ["--model", "tree", "--task", "regression", "--target", "y", "const.csv"],
         }
         for name, argv in fits.items():
@@ -95,7 +103,7 @@ class Fixture(unittest.TestCase):
 
 class StandardisedCoefficients(Fixture):
     def test_i1_the_table_equals_the_oracle_byte_for_byte(self):
-        for name in ("lin_std.ml", "lin_ddof1.ml", "lin_minmax.ml", "lin_twice.ml", "lin_twice2.ml", "lin_plain.ml", "log_std.ml", "log_plain.ml"):
+        for name in ("lin_std.ml", "lin_ddof1.ml", "lin_minmax.ml", "lin_twice.ml", "lin_twice2.ml", "lin_plain.ml", "lin_constcol.ml", "log_std.ml", "log_plain.ml"):
             with self.subTest(model=name):
                 want = O.importance_member(self.model(name))
                 got = self.importance(name)
@@ -110,6 +118,11 @@ class StandardisedCoefficients(Fixture):
         self.assertEqual(set(got["lin_plain.ml"]), {"provenance"})
         # x0 and x1 end as minmax of a standard scale: the provenance, the others minmax only; none is a unit-variance column
         self.assertEqual(set(got["lin_twice.ml"]), {"provenance"})
+
+    def test_i1_a_constant_column_has_a_zero_deviation(self):
+        cols = self.importance("lin_constcol.ml")["importance"]["columns"]
+        k = [c for c in cols if c["column"] == "k"][0]
+        self.assertEqual((k["std"], k["standardised"], k["importance"], k["std_source"]), ("0.0", "0.0", "0.0", "scale"))
 
     def test_i1_ranks_are_distinct_and_ordered_by_importance(self):
         for name in ("lin_std.ml", "log_std.ml"):
@@ -174,6 +187,21 @@ class StandardisedCoefficients(Fixture):
         det = r.error().get("detail", {})
         self.assertIn("x0", json.dumps(det))
 
+    def test_i1_the_permutation_needs_no_stored_deviation(self):
+        # the refusal of a table without a deviation is lifted by --data: the permutation importance is computed, the table says why it is unavailable
+        r = self.sb.run("importance", "--model-file", "lin_bucket.ml", "--data", "reg.csv", "--repeats", "2")
+        self.assertEqual(r.status, 0, r)
+        d = r.data()
+        self.assertFalse(d["importance"]["available"])
+        self.assertEqual(d["importance"]["reason"], "ml.importance.no-scale")
+        self.assertTrue(same(d["importance"], O.importance_member(self.model("lin_bucket.ml"))))
+        self.assertEqual(len(d["permutation"]["columns"]), 7)
+
+    def test_i1_an_onehot_column_of_a_numeric_encoder_is_derived(self):
+        r = self.sb.run("importance", "--model-file", "lin_onehot.ml")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.importance.no-scale"), r)
+        self.assertIn("g#0", json.dumps(r.error().get("detail", {})))
+
     def describe_file(self, name):
         r = self.sb.run("describe", "--model-file", name)
         self.assertEqual(r.status, 0, r)
@@ -182,7 +210,7 @@ class StandardisedCoefficients(Fixture):
 
 class ImpurityDecrease(Fixture):
     def test_i2_the_table_equals_the_oracle_byte_for_byte(self):
-        for name in ("tree_cls.ml", "tree_reg.ml", "forest_cls.ml", "forest_reg.ml", "forest_nb.ml", "forest_mixed.ml", "forest_cat.ml", "tree_leaf.ml"):
+        for name in ("tree_cls.ml", "tree_reg.ml", "forest_cls.ml", "forest_reg.ml", "forest_nb.ml", "forest_mixed.ml", "forest_cat.ml", "tree_leaf.ml", "tree_onehot.ml", "forest_rare.ml"):
             with self.subTest(model=name):
                 want = O.importance_member(self.model(name))
                 got = self.importance(name)
@@ -212,6 +240,20 @@ class ImpurityDecrease(Fixture):
         self.assertEqual({c["importance"] for c in leaf["columns"]}, {"0.0"})
         self.assertEqual({c["splits"] for c in leaf["columns"]}, {0})
         self.assertEqual(sorted(c["rank"] for c in leaf["columns"]), list(range(1, len(leaf["columns"]) + 1)))
+
+    def test_i2_a_forest_with_a_tree_that_never_splits(self):
+        # some bootstrap samples of a set with two positives hold none: the tree grown on one is a single leaf and adds nothing to the average
+        M = self.model("forest_rare.ml")
+        T = M["tree"]
+        leaves = [t for t in range(T["trees"]) if T["off"][t + 1] - T["off"][t] == 1]
+        splitting = [t for t in range(T["trees"]) if T["off"][t + 1] - T["off"][t] > 1]
+        self.assertTrue(leaves and splitting, (len(leaves), len(splitting)))
+        got = self.importance("forest_rare.ml")["importance"]
+        self.assertEqual(got["total"], "1.0")
+        t = 0.0
+        for c in got["columns"]:
+            t += float(c["importance"])
+        self.assertLess(abs(t - 1.0), 1e-12)
 
     def test_i2_the_split_counts_are_not_named_importance(self):
         cols = self.importance("forest_reg.ml")["importance"]["columns"]
@@ -294,6 +336,12 @@ class Dump(Fixture):
         b = self.sb.run("dump", "--model-file", "forest_cls.ml", "--tree", "0").data()
         self.assertEqual(a, b)
         self.assertEqual(a["tree"], 0)
+
+    def test_i10_the_ceiling_of_max_nodes(self):
+        ok = self.sb.run("dump", "--model-file", "forest_reg.ml", "--max-nodes", "4194304")
+        self.assertEqual(ok.status, 0, ok)
+        r = self.sb.run("dump", "--model-file", "forest_reg.ml", "--max-nodes", "4194305")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.limit.nodes"), r)
 
     def test_i10_a_tree_out_of_range(self):
         r = self.sb.run("dump", "--model-file", "forest_cls.ml", "--tree", "6")

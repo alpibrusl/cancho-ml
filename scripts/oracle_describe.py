@@ -19,6 +19,7 @@ import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import oracle_st as S  # noqa: E402
+import oracle_interp as OI  # noqa: E402
 
 FileBad = S.FileBad
 TYPES = {0: "int", 1: "dec", 2: "float", 3: "categorical"}
@@ -174,10 +175,12 @@ def describe(data, limit=1000, max_bytes=16777216):
         "categorical": categorical, "na_values": na_values, "reader": reader,
         "classes": classes, "positive": positive, "output": output,
         "limits": {"values_per_column": limit, "max_bytes": max_bytes},
+        # the table of docs/interpret.md that needs no data, computed by scripts/oracle_interp.py from the bytes of the file
+        "importance": OI.importance_member(OI.read_model(data)),
     }
 
 
-FIELD_ORDER = ["model", "task", "kind", "plan", "rows", "provenance", "file", "target", "columns", "request", "categorical", "na_values", "reader", "classes", "positive", "output", "limits"]
+FIELD_ORDER = ["model", "task", "kind", "plan", "rows", "provenance", "file", "target", "columns", "request", "categorical", "na_values", "reader", "classes", "positive", "output", "limits", "importance"]
 
 if __name__ == "__main__":
     import json
