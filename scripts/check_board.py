@@ -945,7 +945,7 @@ def g10_structure(fx, errs, html, path):
             if k == "tabindex" and v not in ("0", "-1"):
                 errs.append("G10: tabindex %s on <%s> (only 0 and -1)" % (v, tag))
     for pat in FORBIDDEN_APIS:
-        m = re.search(pat, code.replace("http://www.w3.org/2000/svg", ""))  # the SVG namespace is a name, not an address that is fetched
+        m = re.search(pat, code)
         if m:
             errs.append("G10: the script holds %r (%s)" % (m.group(0), pat))
     css_all = "\n".join(p.styles)
@@ -963,6 +963,11 @@ def g10_structure(fx, errs, html, path):
             continue
         if not (wrapped or a.get("id") in p.labels_for or a.get("aria-label") or a.get("aria-labelledby")):
             errs.append("G10: a <%s> with no label (id=%s)" % (tag, a.get("id")))
+    # the whole script compiles (the logic is run by the other gates; the DOM code is compiled here and run in the browser)
+    try:
+        one({"op": "syntax"})
+    except RuntimeError as exc:
+        errs.append("G10: the script does not compile: %s" % str(exc)[:300])
     # the logic part touches no document
     a = code.find("/* LOGIC begin")
     b = code.find("/* LOGIC end */")

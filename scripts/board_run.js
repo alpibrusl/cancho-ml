@@ -58,6 +58,12 @@ var ARGV = typeof process !== "undefined" && process.argv ? process.argv.slice(2
 
   async function run(job, Board) {
     switch (job.op) {
+      case "syntax": {
+        // the whole script of the page (the DOM code too) must compile; it is compiled, not run
+        var a = html.indexOf("<script>\n"), b = html.indexOf("</script>", a);
+        new Function(html.slice(a + 9, b));
+        return true;
+      }
       case "engine": return { engine: isNode ? "node " + process.version : "jsc", subtle: !!realSubtle };
       case "sha": return await digestFor(Board, job.mode)(unb64(job.b64));
       case "routing": {

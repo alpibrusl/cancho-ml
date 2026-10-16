@@ -54,10 +54,9 @@
 .bd ul.problems li { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: .5rem .8rem; overflow-wrap: anywhere; }
 .bd ul.problems li.error { border-left-color: var(--bad); }
 .bd .src { color: var(--muted); font-size: .85rem; }
-.bd table.fit { min-width: 56rem; }
-.bd table.fit th, .bd table.fit td { padding: .5rem .6rem; vertical-align: middle; }
-.bd table.fit thead th { white-space: nowrap; }
-.bd table.fit th button { border: 0; background: none; padding: .2rem .3rem; min-height: 2.75rem; font-weight: 600; font-size: .85rem; color: var(--muted); }
+.bd table.fit { min-width: 48rem; font-size: .9rem; }
+.bd table.fit th, .bd table.fit td { padding: .4rem .45rem; vertical-align: middle; }
+.bd table.fit th button { border: 0; background: none; padding: .2rem .2rem; min-height: 2.75rem; font-weight: 600; font-size: .85rem; color: var(--muted); text-align: left; }
 .bd table.fit th[aria-sort] button { color: var(--fg); }
 .bd table.fit td.num { font-variant-numeric: tabular-nums; }
 .bd table.fit td.mono, .bd table.fit td button.idbtn { font: .85rem var(--mono); }
@@ -73,8 +72,9 @@
 .bd dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: .2rem 1rem; margin: .4rem 0; }
 .bd dl.kv dt { color: var(--muted); } .bd dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .bd table.cmp { width: 100%; border-collapse: collapse; font-size: .92rem; }
-.bd table.cmp th, .bd table.cmp td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.bd table.cmp th, .bd table.cmp td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: break-word; }
 .bd table.cmp th { color: var(--muted); font-weight: 600; }
+.bd table.cmp tbody th { white-space: nowrap; width: 1%; padding-right: 1.2rem; }
 .bd table.cmp td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bd .chartbox svg { display: block; width: 100%; height: auto; max-width: 40rem; }
 .bd .chartbox .barheld { fill: var(--accent); }
@@ -107,10 +107,10 @@
 
 <main id="main">
 
-<div class="wrap pagehead">
+<div class="wrap"><div class="pagehead">
   <h1>Experiments board</h1>
   <p class="sub">Load the run records of <code>ml runs</code> and read them as a table, a comparison and a chart. The page recomputes every run id from the record&rsquo;s bytes and lists everything that does not add up. Nothing is sent anywhere: the files are read and hashed in this page and never leave your machine.</p>
-</div>
+</div></div>
 
 <div class="wrap">
 
@@ -195,6 +195,7 @@
 <!-- /gen:foot -->
 
 <div id="drop" aria-hidden="true">Drop the files to read them</div>
+<svg id="nsprobe" width="0" height="0" aria-hidden="true" focusable="false"></svg>
 
 <!-- gen:sample -->
 <script type="text/plain" id="sample">
@@ -629,6 +630,7 @@ var Board = (function () {
     }).map(function (x) { return x.r; });
   }
   function flatInputs(o, prefix, out) {
+    prefix = prefix || "";
     out = out || dict();
     Object.keys(o).forEach(function (k) {
       if (isObj(o[k])) { flatInputs(o[k], prefix + k + ".", out); } else { out[prefix + k] = o[k]; }
@@ -718,8 +720,8 @@ var Board = (function () {
   var $ = function (id) { return document.getElementById(id); };
   var digest = Board.makeDigest(window);
   var MAX_BYTES = 16 * 1024 * 1024;
-  var COLS = [["id", "Run"], ["model", "Model"], ["task", "Task"], ["train_rows", "Train rows"], ["split", "Split"], ["metrics_on", "Metrics on"], ["metric", "Metric"],
-              ["data", "Data SHA-256"], ["evals", "Evals"], ["verdict", "Record"]];
+  var COLS = [["id", "Run"], ["verdict", "Record"], ["model", "Model"], ["task", "Task"], ["train_rows", "Train rows"], ["split", "Split"], ["metrics_on", "Metrics on"], ["metric", "Metric"],
+              ["data", "Data SHA-256"], ["evals", "Evals"]];
   var VERDICT = { ok: ["ok", "ok"], "list-only": ["list only", "note"], reformatted: ["reformatted", "note"], malformed: ["malformed", "error"], "id-check-mismatch": ["id and check differ", "error"],
                   "id-mismatch": ["id differs", "error"], "check-mismatch": ["check differs", "error"], "name-mismatch": ["file name differs", "error"], "list-disagrees": ["list differs", "error"] };
   var st = { sources: [], res: { rows: [], problems: [], inputs: 0 }, sort: "id", dir: "asc", f: { model: "", data: "", key: "", value: "" }, sel: [], detail: null, metric: null };
@@ -734,7 +736,7 @@ var Board = (function () {
     return e;
   }
   function sv(tag, props, kids) {
-    var e = document.createElementNS("http://www.w3.org/2000/svg", tag), k;
+    var e = document.createElementNS($("nsprobe").namespaceURI, tag), k;
     for (k in props || {}) { if (k === "text") { e.textContent = props[k]; } else { e.setAttribute(k, props[k]); } }
     (kids || []).forEach(function (c) { e.appendChild(c); });
     return e;
@@ -789,7 +791,7 @@ var Board = (function () {
     if (st.f.model && models.indexOf(st.f.model) < 0) { st.f.model = ""; }
     if (st.f.data && !datas[st.f.data]) { st.f.data = ""; }
     options($("f-model"), [["", "All models"]].concat(models.map(function (m) { return [m, m]; })), st.f.model);
-    options($("f-data"), [["", "All data"]].concat(Object.keys(datas).sort().map(function (d) { return [d, d.slice(0, 12) + " (" + datas[d] + " run" + (datas[d] === 1 ? "" : "s") + ")"; })), st.f.data);
+    options($("f-data"), [["", "All data"]].concat(Object.keys(datas).sort().map(function (d) { return [d, d.slice(0, 12) + " (" + datas[d] + " run" + (datas[d] === 1 ? "" : "s") + ")"]; })), st.f.data);
     var vary = Board.varyingKeys(rows);
     if (st.f.key && vary.indexOf(st.f.key) < 0) { st.f.key = ""; st.f.value = ""; }
     options($("f-key"), [["", "None"]].concat(vary.map(function (k) { return [k, k]; })), st.f.key);
@@ -822,7 +824,7 @@ var Board = (function () {
     var head = clear($("runs-head")), body = clear($("runs-body"));
     head.appendChild(h("th", { scope: "col" }, [h("span", { class: "sr", text: "Select to compare" })]));
     var cols = COLS.slice();
-    if (st.f.key) { cols.splice(7, 0, ["input", st.f.key]); }
+    if (st.f.key) { cols.splice(8, 0, ["input", st.f.key]); }
     cols.forEach(function (c) {
       var th = h("th", { scope: "col" });
       if (c[0] === "input") { th.textContent = c[1]; head.appendChild(th); return; }
@@ -834,7 +836,7 @@ var Board = (function () {
     head.appendChild(h("th", { scope: "col", text: "Verify" }));
     var rows = Board.sortRows(Board.filterRows(all, st.f), st.sort, st.dir);
     $("shown").textContent = all.length ? "Showing " + rows.length + " of " + all.length + " run" + (all.length === 1 ? "" : "s") + "." : "";
-    if (!all.length) { body.appendChild(h("tr", {}, [h("td", { colspan: "13", class: "hint", text: "No runs yet. Load the sample runs, or give the page your own records." })])); return; }
+    if (!all.length) { body.appendChild(h("tr", {}, [h("td", { colspan: "13", class: "hint", text: "There are no runs. Load the sample runs, or give the page your own records." })])); return; }
     rows.forEach(function (r) {
       var v = VERDICT[r.verdict] || [r.verdict, "error"], sel = st.sel.indexOf(r.id) >= 0;
       var cb = h("input", { type: "checkbox", "aria-label": "Select run " + r.id12 + " to compare", disabled: !r.record });
@@ -849,10 +851,10 @@ var Board = (function () {
       var cp = h("button", { type: "button", text: "Copy", "aria-label": "Copy the command ml runs verify for run " + r.id12 });
       cp.addEventListener("click", function () { copy(Board.verifyCommand(dirName(), r.id), "the command"); });
       var mt = r.metricText === null ? h("td", { class: "num", text: "" }) : h("td", { class: "num", title: r.metricName + " " + r.metricText }, [r.metricName + " ", h("strong", { text: fmt(r.metricValue) })]);
-      var cells = [h("td", {}, [cb]), h("td", {}, [idb]), h("td", { text: r.model || "" }), h("td", { text: r.task || "" }), h("td", { class: "num", text: r.trainRows === null ? "" : String(r.trainRows) }),
+      var cells = [h("td", {}, [cb]), h("td", {}, [idb]), h("td", {}, [h("span", { class: "chip " + v[1], text: v[0] })]), h("td", { text: r.model || "" }), h("td", { text: r.task || "" }), h("td", { class: "num", text: r.trainRows === null ? "" : String(r.trainRows) }),
                    h("td", { text: r.split === null ? "" : r.split }), h("td", { text: r.metricsOn || (r.kind === "record" ? "none" : "") }), mt];
       if (st.f.key) { cells.push(h("td", { text: Board.inputText(r, st.f.key) || "" })); }
-      cells.push(h("td", { class: "mono", title: r.dataSha || "", text: Board.short12(r.dataSha) }), h("td", { class: "num", text: String(r.evals) }), h("td", {}, [h("span", { class: "chip " + v[1], text: v[0] })]), h("td", {}, [cp]));
+      cells.push(h("td", { class: "mono", title: r.dataSha || "", text: Board.short12(r.dataSha) }), h("td", { class: "num", text: String(r.evals) }), h("td", {}, [cp]));
       body.appendChild(h("tr", { class: (v[1] === "error" ? "bad " : "") + (sel ? "sel" : "") }, cells));
     });
   }
