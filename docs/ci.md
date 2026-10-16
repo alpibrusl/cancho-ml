@@ -41,18 +41,20 @@ binary that cannot start). The workflow runs it on every platform.
 
 ### 2.1 What it shows and what it does not
 
-It shows that, for these 22 fits on these inputs, the compiler `a4572ea` and the sources at the commit under test produce the same model bytes and the same
+It shows that, for these 22 fits on these inputs, the compiler `0207556` and the sources at the commit under test produce the same model bytes and the same
 printed answers on macOS arm64 and on Linux x86-64. It does not show the same for any other input, platform, compiler revision or operating-system image;
 the arithmetic's reasons (IEEE binary64, no fused multiply-add in the generated code, no platform `libm` in a result) are in `docs/design.md`, and a platform that
 disagrees is found by this gate or not at all. A hash of a printed answer includes the printed text, so a change of the output format changes the golden too.
 
 ## 3. The golden and how it changes
 
-`docs/bench/xplat_fp.txt` was written by `python3 scripts/xplat_check.py --update` on the Mac (macOS arm64, compiler `a4572ea3b506`, sources at `cb08d5b`), and the
-same file was reproduced byte for byte on Linux x86-64 (section 8). It was re-recorded once, for the provenance section of the model file (section 7 of the format, `docs/tracking.md`
-section 8), at `43efd8f`: 64 of the 88 lines changed (the 22 `model-file` lines, 20 `predict` lines and 22 `eval` lines) and 24 did not (the 22 `fit-exit` lines and the `predict` lines of the two constant models); the list of
-cases is the same. `scripts/golden_track.py --xplat OLD_BUILD_DIR` shows that each model file is the old file with the section added and each answer the old one without the new members. The re-recorded
-golden was reproduced by the Mac, by the Linux x86-64 workstation (`ml-predict` equal to `ml`, the 15 faults of `--mutants` refused) and by the Raspberry Pi 5, and has not run on the GitHub runners. `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
+`docs/bench/xplat_fp.txt` is written by `python3 scripts/xplat_check.py --update` on the Mac (macOS arm64) and reproduced byte for byte on Linux x86-64 and Linux aarch64. It has been re-recorded twice, each time
+in one commit that says why. The first, for the provenance section of the model file (section 7 of the format, `docs/tracking.md` section 8), changed 64 of the 88 lines (the 22 `model-file` lines, 20 `predict` lines
+and 22 `eval` lines) and left 24 (the 22 `fit-exit` lines and the `predict` lines of the two constant models); `scripts/golden_track.py --xplat OLD_BUILD_DIR` shows that each model file is the old file with the
+section added and each answer the old one without the new members. The second, for the compiler pin (`a4572ea` to `0207556`, commit `d91be6b`), changed the 22 `model-file` lines and nothing else: the model file holds the pin text
+(`docs/cli.md` section 4), so its digest moves with the pin, and the 66 other lines (the exit statuses, the `predict` and `eval` answers) and the list of cases are the golden's. The proof that the compiler change itself moves no
+model byte is the run with the compiler at `0207556` and the pin text `a4572ea` in `generated/ml/built.cho`: it prints the 88 lines of the golden before the second re-record (`docs/serving-http.md` section 10.1). The golden at the compiler `0207556` was reproduced
+by the Mac, by the Linux x86-64 workstation and by the Raspberry Pi 5 (`ml-predict` equal to `ml`), and has not run on the GitHub runners. `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
 golden is only written from a clean run; it prints the lines that changed.
 
 The golden changes only when model bytes or printed answers change **on purpose**: in a commit that says why, as `tests/conformance/golden_numeric.json` does. A
@@ -99,19 +101,20 @@ no `pull_request_target`.
 The fast gates (`build-test`, in this order; each can fail, and the first failure ends the job):
 
 1. platform and tool versions printed; the compiler revision derived from `cancho.toml`;
-2. the compiler: cache restore, and on a miss clone at the revision and `cargo build --release -p cancho`;
+2. the compiler: cache restore, and on a miss clone at the revision and `cargo build --release -p cancho`. The key holds the revision, so a pin that has not run yet has no cache entry: its first run builds the compiler uncached on each of the four runners, and the later runs restore it;
 3. `scripts/check_table_pin.sh`, `scripts/check_web_pin.py` (the pins agree with the documents);
 4. `cancho install`, `cancho fmt --check lib tests tools`;
 5. `cancho build --bin ml`, `--bin ml-predict`, `--bin ml-serve`, then `scripts/check_bins.py` and `scripts/check_web_pin.py --bins` (the three are built from the same sources);
 6. **the determinism gate**: `scripts/xplat_check.py --require-predict` and `--mutants`;
-7. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The five
+7. **the demo script**: `scripts/check_demo.py` runs `scripts/demo.sh` with the built binaries (two tracked experiments, `ml runs compare` and `verify`, `eval` on the training file and on another, `ml-serve` on its default bind and two `curl` requests) and asserts its key facts, and `--mutants` shows that ten edits of the script are refused; `curl` and `python3` are on all four runner images, and the step takes seconds;
+8. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The five
    modules whose import needs numpy (`test_enc`, `test_planned_baseline`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`) are listed as not run; the full gate runs
    them. Two sweeps are shortened by their own switches [choice]: `ST_STRIDE=5` (every fifth byte of a damaged model file is flipped, where the default flips every byte) and `FUZZ_N=500`
    (500 argument vectors of the fuzz, where the default draws 2,500); the full gate runs the defaults. The `ml-serve` conformance tests are among those that run: they start the server on an ephemeral port and compare one POST per model kind with the command line's cell text
    (`docs/serving-http.md` section 9), and `serve-check`, the driver of their number gate, is built for them;
-8. the documentation checks that need only the built binary: `scripts/check_docs.sh` (program output in README and pages, `check_links.py`, `check_prose.py`, `check_doc_refs.py`, their mutants);
-9. `scripts/check_workflow.py` (section 6);
-10. the binaries, the fingerprint and the logs are uploaded as artifacts.
+9. the documentation checks that need only the built binary: `scripts/check_docs.sh` (program output in README and pages, `check_links.py`, `check_prose.py`, `check_doc_refs.py`, their mutants);
+10. `scripts/check_workflow.py` (section 6);
+11. the binaries, the fingerprint and the logs are uploaded as artifacts.
 
 `check_links.py` fetches no address (it counts external links), so it does not depend on the network. `cancho install` and the clones do, and a GitHub outage or a rate
 limit fails the job at that step, with the step's name.
@@ -158,7 +161,7 @@ Every step of `build-test` was run by hand, in a fresh clone of the branch, in t
 | conformance tests, `--no-oracles`, `ST_STRIDE=5 FUZZ_N=500`, four modules at a time | 991 s | 476 s |
 | conformance tests with the defaults | 1,640 s | 522 s |
 | `check_docs.sh` | 3 s | 2 s |
-| `check_workflow.py` and its 22 mutants | under 1 s | under 1 s |
+| `check_workflow.py` and its 26 mutants | under 1 s | under 1 s |
 | the compiler, `cargo build --release -p cancho`, 16 threads | 60 s (294 s of CPU) | not rebuilt |
 | `scripts/check.sh` (the full gate), `ci/requirements-full.txt`, data regenerated by `scripts/spikes/gen.py` | 2,249 s, exit 0 | 2,458 s, exit 0 |
 
@@ -188,7 +191,8 @@ the SHA-256 files are for a download check, not provenance. The tag is not check
 
 * The first run of the workflow is the pull request's own: it cannot be run anywhere but on GitHub, and what was run before it is every step by hand on a Linux x86-64
   machine and on a Mac (section 8), not the YAML.
-* Linux aarch64 is not in the matrix. A run on a Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) was done by hand on 2026-10-15, outside this workflow: Rust 1.98.1 installed for one user, the compiler built at `a4572ea` and `ml` at `cb08d5b` on the Pi, `scripts/xplat_fp.py` run there: 22 of 22 fits succeeded and the 88 lines are equal to the golden's. The re-recorded golden (section 3) was reproduced there again, with `ml` built from the tree of `43efd8f` and `scripts/xplat_check.py --require-predict`. It is a record of one run and not a gate.
+* Linux aarch64 is not in the matrix. A Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) runs the gate by hand, outside this workflow: Rust 1.98.1 installed for one user, the compiler built there at `0207556` and `ml` built from this tree, `scripts/xplat_check.py`: 22 of 22 fits succeed and the 88 lines are equal to the golden's (`ml-predict` equal to `ml`). It is a record of one run and not a gate.
+* The workflow has not run at the pin `0207556`: the last GitHub run (2026-10-15, run 38739883040) built `a4572ea` with the previous golden.
 * Windows, other Linux distributions, musl, other macOS versions than the runner's, and other compiler revisions are untested.
 * The runners' images change without a commit here; a red run after no commit is the first thing to read in the platform lines of the log.
 * A compiler cache hit skips the compiler build: the cache key is the revision, the operating system and the architecture, so a compiler built by another Rust than the one
