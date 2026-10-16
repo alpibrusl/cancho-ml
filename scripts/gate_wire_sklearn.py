@@ -111,6 +111,10 @@ def main():
         sys.argv = [sys.argv[0]] + models
         import gate_wire_sklearn_trees
         return gate_wire_sklearn_trees.main()
+    if models == ["boost"]:
+        # boosted trees: docs/models-boost.md section 8.1, scripts/gate_wire_sklearn_boost.py
+        import gate_wire_sklearn_boost
+        return gate_wire_sklearn_boost.main()
     if models == ["kmeans"]:
         # k-means: docs/wiring-kmeans.md section 10, scripts/gate_wire_sklearn_kmeans.py (the initial centres are given to scikit-learn)
         import gate_wire_sklearn_kmeans

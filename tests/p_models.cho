@@ -625,16 +625,16 @@ fn test_linreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
                             // two equal columns with l2 = 0: the Gram matrix is singular in exact arithmetic and the rounded pivot is noise (about 1e-16 of the
                             // diagonal, of either sign, under the lane order: docs/lanes.md section 3). The relative pivot test (s > 2^-40 * a_jj, docs/models-linear.md
                             // 3.1) refuses it, at one thread and at four, whatever the order.
-                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.0), refuse.not_positive_definite());
-                            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(dr), contents(yr), 0.0), refuse.not_positive_definite());
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.0), refuse.fit_collinear());
+                            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(dr), contents(yr), 0.0), refuse.fit_collinear());
                             // a nearly dependent but legitimate design (column 0 = column 1 + 1e-5 * its own values: relative pivot about 1e-10) is fitted
                             bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(nr), contents(yr), 0.0), 0);
                             bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(nr), contents(yr), 0.0), 0);
                             // the same design with column 0 = column 1 + 1e-7 * ...: relative pivot about 1e-14, below the tolerance: refused
-                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(mr), contents(yr), 0.0), refuse.not_positive_definite());
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(mr), contents(yr), 0.0), refuse.fit_collinear());
                             // an all-zero column is singular whatever the order: its pivot is exactly +0.0
-                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(zr), contents(yr), 0.0), refuse.not_positive_definite());
-                            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(zr), contents(yr), 0.0), refuse.not_positive_definite());
+                            bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(zr), contents(yr), 0.0), refuse.fit_collinear());
+                            bad = bad + expect(lin_fit(heap, 4, 60, 4, contents(zr), contents(yr), 0.0), refuse.fit_collinear());
                             bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(dr), contents(yr), 0.01), 0);
                             // a badly scaled but independent design is fitted (a pivot relative to the first column's diagonal would refuse it)
                             bad = bad + expect(lin_fit(heap, 1, 60, 4, contents(br), contents(yr), 0.0), 0);
@@ -821,6 +821,167 @@ fn test_logreg_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
     unbox_slice(heap, zeros);
     unbox_slice(heap, half);
     unbox_slice(heap, big);
+    return bad;
+}
+
+// the two named refusals of a fit (docs/refusals-fit.md): the record the library leaves in diag for the column that is a combination of earlier ones, and for
+// separable classes
+fn near(a: float, b: float, t: float) -> [] bool {
+    var d = a - b;
+    if d < 0.0 {
+        d = 0.0 - d;
+    }
+    return d < t;
+}
+
+fn test_named_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 40;
+    let a = fill(heap, n, 71);
+    let b = fill(heap, n, 72);
+    let ys = fill(heap, n, 73);
+    let xs = box_slice(heap, n * 3, 0.0);
+    let out = box_slice(heap, 8, 0.0);
+    let diag = box_slice(heap, 20, 0.0);
+    borrow a as &ar in {
+        borrow b as &br in {
+            borrow mut xs as &!xw in {
+                var i = 0;
+                while i < n {
+                    contents(xw)[i * 3] = contents(ar)[i];
+                    contents(xw)[i * 3 + 1] = contents(br)[i];
+                    contents(xw)[i * 3 + 2] = 2.0 * contents(ar)[i] - 3.0 * contents(br)[i];
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    // linear: column 2 = 2 * column 0 - 3 * column 1: the pivot is column 2, the dependency is (2, -3), the relative pivot is rounding noise
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow mut out as &!ow in {
+                borrow mut diag as &!dw in {
+                    bad = bad + expect(linreg.fit(heap, 1, raw(n, 3), contents(xr), contents(yr), 0.0, contents(ow), contents(dw)), refuse.fit_collinear());
+                    if contents(dw)[1] != 2.0 || contents(dw)[0] != 0.0 || !near(contents(dw)[4], 2.0, 1.0e-8) || !near(contents(dw)[5], 0.0 - 3.0, 1.0e-8) {
+                        bad = bad + 1000;
+                    }
+                    if !(contents(dw)[2] < 1.0e-13) || !(contents(dw)[3] > 0.0) {
+                        bad = bad + 2000;
+                    }
+                    // the same design with a ridge that is enough is fitted
+                    bad = bad + expect(linreg.fit(heap, 1, raw(n, 3), contents(xr), contents(yr), 0.1, contents(ow), contents(dw)), 0);
+                }
+            }
+        }
+    }
+    // linear: a constant column beside the intercept: the pivot is the intercept (index 2), explained by the constant column (1 / 4)
+    let k = box_slice(heap, n * 2, 0.0);
+    borrow a as &ar2 in {
+        borrow mut k as &!kw in {
+            var i = 0;
+            while i < n {
+                contents(kw)[i * 2] = contents(ar2)[i];
+                contents(kw)[i * 2 + 1] = 4.0;
+                i = i + 1;
+            }
+        }
+    }
+    let diag2 = box_slice(heap, 12, 0.0);
+    borrow k as &kr in {
+        borrow ys as &yr in {
+            borrow mut out as &!ow in {
+                borrow mut diag2 as &!dw in {
+                    bad = bad + expect(linreg.fit(heap, 1, raw(n, 2), contents(kr), contents(yr), 0.0, contents(ow), contents(dw)), refuse.fit_collinear());
+                    if contents(dw)[1] != 2.0 || !near(contents(dw)[4 + 1], 0.25, 1.0e-12) || !near(contents(dw)[4], 0.0, 1.0e-12) {
+                        bad = bad + 3000;
+                    }
+                }
+            }
+        }
+    }
+    // logistic: two equal columns: refused at the first pass, pivot 1
+    let m = 30;
+    let c0 = fill(heap, m, 74);
+    let lb = labels(heap, m, 1, 74);
+    let dup = box_slice(heap, m * 2, 0.0);
+    borrow c0 as &cr in {
+        borrow mut dup as &!dw in {
+            var i = 0;
+            while i < m {
+                contents(dw)[i * 2] = contents(cr)[i];
+                contents(dw)[i * 2 + 1] = contents(cr)[i];
+                i = i + 1;
+            }
+        }
+    }
+    let ldiag = box_slice(heap, 900, 0.0);
+    borrow dup as &dr in {
+        borrow lb as &lr in {
+            borrow mut out as &!ow in {
+                borrow mut ldiag as &!gw in {
+                    bad = bad + expect(logreg.fit(heap, 1, raw(m, 2), contents(dr), contents(lr), 50, 0.0, contents(ow), contents(gw)), refuse.fit_collinear());
+                    if contents(gw)[0] != 0.0 || contents(gw)[1] != 1.0 || !near(contents(gw)[4], 1.0, 1.0e-8) {
+                        bad = bad + 4000;
+                    }
+                    bad = bad + expect(logreg.fit(heap, 1, raw(m, 2), contents(dr), contents(lr), 50, 0.1, contents(ow), contents(gw)), 0);
+                }
+            }
+        }
+    }
+    // logistic: separable classes (the sign of the first feature), a second feature of noise
+    let q = 12;
+    let sx = box_slice(heap, q * 2, 0.0);
+    let sy = box_slice(heap, q, 0.0);
+    let nz = fill(heap, q, 75);
+    borrow nz as &nr in {
+        borrow mut sx as &!xw in {
+            borrow mut sy as &!yw in {
+                var i = 0;
+                while i < q {
+                    var v = float_of(i + 1);
+                    if i >= q / 2 {
+                        v = float_of(i - q / 2 + 1);
+                        contents(yw)[i] = 1.0;
+                    } else {
+                        v = 0.0 - float_of(i + 1);
+                    }
+                    contents(xw)[i * 2] = v;
+                    contents(xw)[i * 2 + 1] = contents(nr)[i];
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    borrow sx as &xr in {
+        borrow sy as &yr in {
+            borrow mut out as &!ow in {
+                borrow mut ldiag as &!gw in {
+                    bad = bad + expect(logreg.fit(heap, 1, raw(q, 2), contents(xr), contents(yr), 50, 0.0, contents(ow), contents(gw)), refuse.fit_separable());
+                    if contents(gw)[1] != 0.0 || !(contents(gw)[0] >= 1.0) || !(contents(gw)[2] < logreg.separable_bound()) || !(contents(gw)[3] > 0.0) || !(contents(gw)[4] > 0.0) {
+                        bad = bad + 5000;
+                    }
+                    // one pass sees a loss of n ln 2: never refused; a positive l2 is never refused
+                    bad = bad + expect(logreg.fit(heap, 1, raw(q, 2), contents(xr), contents(yr), 1, 0.0, contents(ow), contents(gw)), 0);
+                    bad = bad + expect(logreg.fit(heap, 1, raw(q, 2), contents(xr), contents(yr), 50, 0.01, contents(ow), contents(gw)), 0);
+                }
+            }
+        }
+    }
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, xs);
+    unbox_slice(heap, out);
+    unbox_slice(heap, diag);
+    unbox_slice(heap, diag2);
+    unbox_slice(heap, k);
+    unbox_slice(heap, c0);
+    unbox_slice(heap, lb);
+    unbox_slice(heap, dup);
+    unbox_slice(heap, ldiag);
+    unbox_slice(heap, sx);
+    unbox_slice(heap, sy);
+    unbox_slice(heap, nz);
     return bad;
 }
 
@@ -1716,6 +1877,7 @@ fn main(world: World) -> [conc] int {
             failed = failed + report(ip, "linreg_refusals", test_linreg_refusals(hp));
             failed = failed + report(ip, "linreg_strided_view", test_linreg_strided_view(hp));
             failed = failed + report(ip, "logreg_refusals", test_logreg_refusals(hp));
+            failed = failed + report(ip, "named_refusals", test_named_refusals(hp));
             failed = failed + report(ip, "logreg_bias_is_not_penalised", test_logreg_bias_is_not_penalised(hp));
             failed = failed + report(ip, "logreg_objective_decreases", test_logreg_objective_decreases(hp));
             failed = failed + report(ip, "logreg_predict_at_zero", test_logreg_predict_at_zero(hp));

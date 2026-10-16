@@ -8,7 +8,7 @@ wired = true
 adapter = "models.adapter_linear"
 payload_version = 1
 doc = "docs/models-linear.md"
-files = ["lib/models/linear/adapter.cho", "lib/models/linear/linreg.cho"]
+files = ["lib/models/linear/adapter.cho", "lib/models/linear/linreg.cho", "lib/models/rank.cho"]
 plan_order = 1
 
 [limits]
@@ -17,7 +17,7 @@ max_features = 256
 [tags]
 emits = [
   "ml.tensor.rank", "ml.tensor.shape", "ml.tensor.bounds", "ml.input.non-finite", "ml.input.too-many-columns", "ml.param.out-of-range",
-  "ml.linalg.not-positive-definite", "ml.linalg.singular", "ml.param.threads", "ml.fit.non-finite",
+  "ml.linalg.not-positive-definite", "ml.linalg.singular", "ml.param.threads", "ml.fit.non-finite", "ml.fit.collinear",
 ]
 
 [authority]

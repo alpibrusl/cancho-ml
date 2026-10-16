@@ -51,9 +51,9 @@ import toolbox.text;
 
 // ---------------------------------------------------------------- the model file's kind
 
-// whether the plan text names a tree or a forest on its model line
+// whether the plan text names a tree, a forest or a boosted model on its model line (a kind 7 payload under a boost plan is then this module's refusal, malformed)
 fn names_tree[&p](plan: &p [byte]) -> [] bool {
-    return bytes.find(plan, "model kind=tree") >= 0 || bytes.find(plan, "model kind=forest") >= 0;
+    return bytes.find(plan, "model kind=tree") >= 0 || bytes.find(plan, "model kind=forest") >= 0 || bytes.find(plan, "model kind=boost") >= 0;
 }
 
 // The kind of the model in a CML1 file, from the structure alone (nothing is checked but what is needed to find it); 0 when the structure does not

@@ -1,0 +1,229 @@
+edition 5;
+
+module boost.grow;
+
+import tree.deny;
+import boost.bparams;
+
+// Growing one tree of a boosting round (docs/models-boost.md sections 2.4 and 2.5). The histogram of a (node, feature) is the count, the sum of the gradients and the
+// sum of the hessians of each bin, every sum a sequential float sum in the node's row order from +0.0 (no histogram subtraction, section 3.1); the candidates are
+// scanned in the order feature ascending, bin ascending, variant 0 (missing rows right) then variant 1 (left); the best is replaced only if strictly better.
+//
+// Node arrays of the tree, in preorder (the root is node 0, the left child of node i is the next node created):
+//     oi[k * cap + i] with k = 0 feat, 1 bin, 2 dleft, 3 left, 4 right;   ov[i] = threshold, or eta * the Newton step of a leaf
+// A leaf has feat = bin = left = right = -1 and dleft = 0.
+//
+// The scratch: `wk` (ints, `work_ints` of them): HC (nbins + 1 counts) | BEST (8) | STACK (64 entries of 5: lo, hi, depth, parent node, side);
+// `wf` (floats, `work_floats`): HG (nbins + 1) | HH (nbins + 1) | BESTSCORE (1).
+// BEST: [0] found, [1] feature, [2] bin, [3] default-left.
+
+pub fn work_ints(nbins: int) -> [] int {
+    return nbins + 1 + 8 + 320;
+}
+
+pub fn work_floats(nbins: int) -> [] int {
+    return 2 * (nbins + 1) + 1;
+}
+
+// the count, gradient and hessian sums of the bins of one feature: counts at wk[0 ..], gradients at wf[0 ..], hessians at wf[w ..] (w = nbins + 1)
+fn hist1[&a, &g, &h, &i, &w, &f](col: &a [byte], gv: &g [float], hv: &h [float], idx: &i [int], lo: int, hi: int, wk: &!w [int], wf: &!f [float], w1: int) -> [] int {
+    var k = lo;
+    while k < hi {
+        let r = idx[k];
+        let b = int_of(col[r]);
+        wk[b] = wk[b] + 1;
+        wf[b] = wf[b] + gv[r];
+        wf[w1 + b] = wf[w1 + b] + hv[r];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// a candidate: left side nl rows with gradient sum gl and hessian sum hl, of a node of m rows with totals gt, ht. Valid iff both sides have min_leaf rows and a hessian
+// of at least HMIN; replaces the best only if strictly better: score = gl * gl / (hl + l2) + gr * gr / (hr + l2)
+fn cand[&w, &f](wk: &!w [int], wf: &!f [float], ob: int, osc: int, nl: int, gl: float, hl: float, dl: int, b: int, fi: int, m: int, gt: float, ht: float, ml: int, l2: float) -> [] int {
+    let nr = m - nl;
+    if nl >= ml && nr >= ml {
+        let gr = gt - gl;
+        let hr = ht - hl;
+        if hl >= bparams.hmin() && hr >= bparams.hmin() {
+            let sc = gl * gl / (hl + l2) + gr * gr / (hr + l2);
+            if wk[ob] == 0 || sc > wf[osc] {
+                wk[ob] = 1;
+                wk[ob + 1] = fi;
+                wk[ob + 2] = b;
+                wk[ob + 3] = dl;
+                wf[osc] = sc;
+            }
+        }
+    }
+    return 0;
+}
+
+// the bins of feature `fi` (histogram at wk[0 ..], wf[0 ..], wf[w1 ..]): candidates for b = 0 .. nbins - 2, variant 0 then variant 1
+fn scan[&w, &f](wk: &!w [int], wf: &!f [float], ob: int, osc: int, nbins: int, fi: int, m: int, gt: float, ht: float, ml: int, l2: float) -> [] int {
+    let w1 = nbins + 1;
+    let mc = wk[nbins];
+    let mg = wf[nbins];
+    let mh = wf[w1 + nbins];
+    var nl = 0;
+    var gl = 0.0;
+    var hl = 0.0;
+    var b = 0;
+    while b < nbins - 1 {
+        nl = nl + wk[b];
+        gl = gl + wf[b];
+        hl = hl + wf[w1 + b];
+        cand(wk, wf, ob, osc, nl, gl, hl, 0, b, fi, m, gt, ht, ml, l2);
+        if mc > 0 {
+            cand(wk, wf, ob, osc, nl + mc, gl + mg, hl + mh, 1, b, fi, m, gt, ht, ml, l2);
+        }
+        b = b + 1;
+    }
+    return 0;
+}
+
+// the stored value of a leaf with totals gt, ht: eta * ((0.0 - gt) / (ht + l2)), or 0.0 when ht + l2 is below the floor (section 2.5)
+pub fn leaf_value(eta: float, l2: float, gt: float, ht: float) -> [] float {
+    var lv = 0.0;
+    if ht + l2 >= bparams.hmin() {
+        lv = (0.0 - gt) / (ht + l2);
+    }
+    return eta * lv;
+}
+
+// Grow the tree of round `round` over the sample idx[0 .. m0) (row numbers, ascending). Answers the number of nodes (>= 1), or 0 - the refusal code (ml.limit.nodes when the
+// tree needs more than `cap` nodes). Needs the parameters to have passed `bparams.check`, and the arrays to have the sizes documented above (idx, tmp: n at least;
+// bins: d * n; gv, hv: n; ed: d * (nbins - 1); oi: 5 * cap; ov: cap; wk, wf: work_ints, work_floats).
+pub fn grow[&b, &g, &h, &e, &i, &t, &w, &wfl, &a, &c](p: bparams.Params, m0: int, n: int, d: int, cap: int, bins: &b [byte], gv: &g [float], hv: &h [float], ed: &e [float], idx: &!i [int], tmp: &!t [int], wk: &!w [int], wf: &!wfl [float], oi: &!a [int], ov: &!c [float]) -> [] int {
+    let nbins = p.bins;
+    let w1 = nbins + 1;
+    let ne = nbins - 1;
+    let o_best = w1;
+    let o_stack = o_best + 8;
+    let osc = 2 * w1;
+    var sp = 1;
+    wk[o_stack] = 0;
+    wk[o_stack + 1] = m0;
+    wk[o_stack + 2] = 0;
+    wk[o_stack + 3] = 0 - 1;
+    wk[o_stack + 4] = 0;
+    var cnt = 0;
+    var k = 0;
+    while sp > 0 {
+        sp = sp - 1;
+        let so = o_stack + sp * 5;
+        let lo = wk[so];
+        let hi = wk[so + 1];
+        let dep = wk[so + 2];
+        let parent = wk[so + 3];
+        let side = wk[so + 4];
+        let m = hi - lo;
+        let ni = cnt;
+        cnt = cnt + 1;
+        if cnt > cap {
+            return 0 - deny.limit_nodes();
+        }
+        if parent >= 0 {
+            if side == 0 {
+                oi[3 * cap + parent] = ni;
+            } else {
+                oi[4 * cap + parent] = ni;
+            }
+        }
+        // the node totals in row order
+        var gt = 0.0;
+        var ht = 0.0;
+        k = lo;
+        while k < hi {
+            let r = idx[k];
+            gt = gt + gv[r];
+            ht = ht + hv[r];
+            k = k + 1;
+        }
+        var found = false;
+        if dep < p.max_depth && m >= 2 * p.min_leaf {
+            var j = 0;
+            while j < 8 {
+                wk[o_best + j] = 0;
+                j = j + 1;
+            }
+            var f = 0;
+            while f < d {
+                j = 0;
+                while j < w1 {
+                    wk[j] = 0;
+                    wf[j] = 0.0;
+                    wf[w1 + j] = 0.0;
+                    j = j + 1;
+                }
+                hist1(bins[f * n..f * n + n], gv, hv, idx, lo, hi, wk, wf, w1);
+                scan(wk, wf, o_best, osc, nbins, f, m, gt, ht, p.min_leaf, p.l2);
+                f = f + 1;
+            }
+            if wk[o_best] == 1 {
+                let ps = gt * gt / (ht + p.l2);
+                found = wf[osc] - ps > 0.0;
+            }
+        }
+        if found == false {
+            oi[ni] = 0 - 1;
+            oi[cap + ni] = 0 - 1;
+            oi[2 * cap + ni] = 0;
+            oi[3 * cap + ni] = 0 - 1;
+            oi[4 * cap + ni] = 0 - 1;
+            ov[ni] = leaf_value(p.lr, p.l2, gt, ht);
+        } else {
+            let bf = wk[o_best + 1];
+            let bb = wk[o_best + 2];
+            let bdl = wk[o_best + 3];
+            oi[ni] = bf;
+            oi[cap + ni] = bb;
+            oi[2 * cap + ni] = bdl;
+            oi[3 * cap + ni] = 0 - 1;
+            oi[4 * cap + ni] = 0 - 1;
+            ov[ni] = ed[bf * ne + bb];
+            // stable partition of idx[lo..hi): the left rows in place, the right rows through tmp
+            let col = bins[bf * n..bf * n + n];
+            var a = lo;
+            var z = 0;
+            k = lo;
+            while k < hi {
+                let r = idx[k];
+                let v = int_of(col[r]);
+                var lf = 0;
+                if v <= bb {
+                    lf = 1;
+                }
+                if v == nbins {
+                    lf = bdl;
+                }
+                idx[a] = r;
+                tmp[z] = r;
+                a = a + lf;
+                z = z + 1 - lf;
+                k = k + 1;
+            }
+            k = 0;
+            while k < z {
+                idx[a + k] = tmp[k];
+                k = k + 1;
+            }
+            // push the right child, then the left (so that the left is visited first: preorder)
+            let o1 = o_stack + sp * 5;
+            wk[o1] = a;
+            wk[o1 + 1] = hi;
+            wk[o1 + 2] = dep + 1;
+            wk[o1 + 3] = ni;
+            wk[o1 + 4] = 1;
+            let o2 = o1 + 5;
+            wk[o2] = lo;
+            wk[o2 + 1] = a;
+            wk[o2 + 2] = dep + 1;
+            wk[o2 + 3] = ni;
+            wk[o2 + 4] = 0;
+            sp = sp + 2;
+        }
+    }
+    return cnt;
+}

@@ -269,7 +269,7 @@ header count and the checksum repaired) with the previous bytes.
 |---|---|---|
 | T1 | **section oracle**: `scripts/oracle_track.py` computes section 7 for fitted models from the CSV alone (exact fractions) and compares **bytes** with the section in the file `ml fit` wrote, for every model kind, categorical and `--split` fits included | any rounding rule, order of records, layout or count differing by a bit |
 | T2 | **record oracle**: the same script builds the run record and the id from the command line's inputs and compares bytes with `DIR/<id>.json` | a key, an order, a canonical form or the id definition differing |
-| T3 | **replay equality**: `runs verify` reproduces the model SHA-256 for every kind (constant regression and classification, linear, logistic, tree, forest, kmeans), with categorical plans and `--split`, at `--threads` 1 and 8 | any input the record omits that changes the bytes |
+| T3 | **replay equality**: `runs verify` reproduces the model SHA-256 for every kind (constant regression and classification, linear, logistic, tree, forest, boost, kmeans), with categorical plans and `--split` (a boosted fit with a row sample or early stopping included: the rounds are sequential, so the thread count changes no byte), at `--threads` 1 and 8 | any input the record omits that changes the bytes |
 | T4 | **thread invariance**: the whole model file, section 7 included, and the record (modulo `threads`) are the same bytes at `--threads` 1, 2, 8 | a statistic that depends on a thread or an order |
 | T5 | **`on`**: `"on":"train"` on the training file and on a copy of it under another name; `"other"` on a file that differs by one byte; `"unknown"` on a pre-provenance file | an equality that looks at the name, or always says train |
 | T6 | **out-of-range**: counts equal an independent computation, on generated data with ties at the boundary (a cell equal to `min` or `max` is not out), missing cells, a target column in the file and `--split` | off by one on a bound, a missing cell counted, the target counted |
@@ -305,7 +305,7 @@ unexplained differences.
 
 | gate | result |
 |---|---|
-| T1, T2 | `scripts/oracle_track.py --suite`: 17 cases (every model kind; categorical and `--split` fits; a stratified, a group and a time holdout, the rows and the split text from `scripts/oracle_split.py`; a float forced on an integer column); section 7 and the record equal the oracle's bytes, 0 mismatches |
+| T1, T2 | `scripts/oracle_track.py --suite`: 21 cases (every model kind, four of them boosted: a regression, a stratified classification with a row sample, early stopping with a split, a categorical plan; categorical and `--split` fits; a stratified, a group and a time holdout, the rows and the split text from `scripts/oracle_split.py`; a float forced on an integer column); section 7 and the record equal the oracle's bytes, 0 mismatches |
 | T3 | the same 17 cases are refitted by `runs verify` at `--threads` 1 and 8: the model SHA-256 is reproduced in all 34 |
 | T4 to T11 | `tests/conformance/test_track.py` (48 tests, 8 classes without `Serve`; `Serve` needs `ml-serve`; the class `Splits` is the six tests of the split text) and `test_serve_bytes`, inside the 512 tests of `scripts/check.sh` on the Linux workstation (all pass, none skipped) |
 | T12 | `scripts/mutants_track.py`: 75 mutants, 70 killed, 5 survive and each has its reason in the script; the unmutated control passes. The two mutants of the server's `out_of_range` are in `scripts/mutants_http.py` and are killed |

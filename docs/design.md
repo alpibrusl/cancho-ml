@@ -123,25 +123,25 @@ rank 1, `u64` shape, `i64` elements); `meta` = `u64` rows, `u64` columns, `u64` 
 compiler pin. The layout is parsed by an independent reader in `tests/conformance/test_model_file.py`, and a corrupted-file fuzz
 (every truncation, every byte flipped three ways, seeded damage with and without a repaired checksum) never traps.
 
-**The sum order in `meta` (rule written at `v1-post`, before the code; the proposal of section 17).** The arithmetic of a model of kind 4 to 7
-(linear, logistic, k-means, tree or forest) depends on the summation order of `docs/linalg.md` section 2, so the file says which order made it. The
+**The sum order in `meta` (rule written at `v1-post`, before the code; the proposal of section 17).** The arithmetic of a model of kind 4 to 8
+(linear, logistic, k-means, tree, forest or boost) depends on the summation order of `docs/linalg.md` section 2, so the file says which order made it. The
 rule is a function of the model kind, which a reader knows before it reads `meta` (the `model` section comes first):
 
 * **kinds 1 to 3** (constants: exact integer and `facc` arithmetic, no float order): the `meta` payload is exactly what it was, `u64 rows | u64 columns | u64 seed
   | u32 hyperparameters | u32 length | compiler pin`. **Their bytes do not change**, and a kind 1 to 3 file whose `meta` is longer than `32 + length` is
   `ml.model.malformed`, as before.
-* **kinds 4 and above** (every kind whose row of the table below says so; today 4 to 7): the payload is that, then **`u32 sum_order`**, the last four bytes of `meta`:
+* **kinds 4 and above** (every kind whose row of the table below says so; today 4 to 8): the payload is that, then **`u32 sum_order`**, the last four bytes of `meta`:
   `meta` is exactly `36 + length` bytes, else `ml.model.malformed` (a `meta` of any other length is not looked at for the order: the ordinary field checks refuse it). `sum_order` = **2** for the order of `docs/linalg.md` section 2
   (`K = 256`, `L = 4`, `(l0 + l1) + (l2 + l3)`, the fixed tree, panels of 32). **1** is the order before `v1-lanes` (one chain per block): retired,
-  never written by a model file, refused if found. **3 is the order of kind 7** (a tree or a forest: every float sum is a sequential left fold in a fixed row or tree order and no lane sum is made, `docs/models-tree.md` 3.2; `docs/wiring-trees.md` section 4): a reader requires exactly the value of the kind, 2 for kinds 4 to 6 and 3 for kind 7. **Kind 6 (k-means) records 2**: its decisive sums, the sums of the Lloyd update and the metrics of `eval`, are the lane order; the one sum that is not is the k-means++ total of the initialisation, a left fold in row order on one thread that picks the initial rows (`docs/wiring-kmeans.md` section 6). 0 and 4 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
+  never written by a model file, refused if found. **3 is the order of kinds 7 and 8** (a tree or a forest, and a boosted model: every float sum is a sequential left fold in a fixed row, bin or round order and no lane sum is made, `docs/models-tree.md` 3.2, `docs/models-boost.md` 3.1; `docs/wiring-trees.md` section 4): a reader requires exactly the value of the kind, 2 for kinds 4 to 6 and 3 for kinds 7 and 8. **Kind 6 (k-means) records 2**: its decisive sums, the sums of the Lloyd update and the metrics of `eval`, are the lane order; the one sum that is not is the k-means++ total of the initialisation, a left fold in row order on one thread that picks the initial rows (`docs/wiring-kmeans.md` section 6). 0 and 4 and above are unassigned. No flag and no version bump: the file `version` covers the layout, and the layout
   of a kind is fixed by the kind.
-* **A reader refuses a file whose `sum_order` it does not implement with `ml.model.version`** (detail `sum_order` found, `known` the order of the kind: 2, or 3 for kind 7): it cannot reproduce the
+* **A reader refuses a file whose `sum_order` it does not implement with `ml.model.version`** (detail `sum_order` found, `known` the order of the kind: 2, or 3 for kinds 7 and 8): it cannot reproduce the
   parameters' arithmetic, and the same refusal tag as an unknown format version says "refit with this version". The order of the checks is bad-magic, version,
   truncated, checksum, **sum order (version)**, then malformed: the field is inside a checksummed section, so it is read after the checksum, and before the other fields,
   so a file of another order is never reported as malformed because its parameters look odd. A reader that does not build a kind (today `ml`, which builds 1 to 3) still reads
-  the sum order of a kind 4 to 7 file first: a wrong order is `ml.model.version`, a right one is `ml.model.malformed` (section 4: "not built").
+  the sum order of a kind 4 to 8 file first: a wrong order is `ml.model.version`, a right one is `ml.model.malformed` (section 4: "not built").
 * Writers: `lib/pipeline/file.cho` writes the field for the kinds it is given (4 and above); `tools/ml/mfile.cho` writes kinds 1 to 3 only and so never writes it. Tests:
-  `tests/conformance/test_model_file.py` (an independent reader and writer of the field; a file of kind 4 to 7 with order 0, 1, 3 and `0xFFFFFFFF` is `ml.model.version`, a
+  `tests/conformance/test_model_file.py` (an independent reader and writer of the field; a file of kind 4 to 8 with order 0, 1, 3 and `0xFFFFFFFF` is `ml.model.version`, a
   kind 1 to 3 file with the extra four bytes is malformed), `tests/t_pipeline.cho`, `t_pipeline_fuzz.cho`, `oracle_pipe.py --file`.
 
 **Registry of the numbers in the file (added at integration; one table, a number is never reused).** `lib/core/kinds.cho` holds the
@@ -157,6 +157,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 5 | logistic regression | the same two records, then `labels` i64 rank 1 `2`: the negative and the positive label (payload version 2, W1) | `lib/models/record.cho` | no (`pipeline.file`, since W1) |
 | 6 | k-means | `centroids` f64 rank 2 `k x d`; the schema section of the file has no target (its target index is the number of columns) | `lib/models/record.cho`, `lib/models/kmeans/adapter.cho` | no (`pipeline.file`, `docs/wiring-kmeans.md` section 6) |
 | 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
+| 8 | gradient-boosted trees | nine records, i64 and f64, rank 1 (`docs/models-boost.md` section 5); the task is a field of the first; for a classification a tenth, `labels`, as kind 5 | `lib/models/boost/model.cho` | no |
 
 **Step kinds** (the `u32` that opens one step in the `steps` section; `lib/core/kinds.cho` `step_*`, `docs/transforms.md` section 4; the `steps` payload is `u32 n` then `n` times `u64 length | step`, and `n = 0` is the four bytes `mfile.cho` writes):
 
@@ -176,7 +177,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 **Section tags** (`lib/core/kinds.cho` `section_*`): 1 plan, 2 schema, 3 steps, 4 model, 5 meta, **6 strings (the string table, present only when a step of kind 7 to 10 needs it)** and **7 provenance (the SHA-256 and size of the training file, its rows and the range of each numeric feature: `docs/tracking.md` section 2; present in every file `fit` of this version writes, absent from the files of older versions, which are read and say `provenance: absent`)**. The header's `sections` is 5, 6 or 7 and does not say which of the two optional sections a count of 6 holds: a reader walks the tags (each optional tag is greater than the one before it, 6 then 7). A file with neither has the five-section bytes it always had; the constant models (kinds 1 to 3) carry section 7 with no feature record. The byte layout of the table, its bounds (pool at most 8 MiB, strings at most 2^17, the section at most 12 MiB), its SHA-256, the 8-byte stub that stands for a categorical step in the `steps` section (kind, layout 2), the schema type 3 (a categorical input column) and the refusals `ml.model.string-table` (code 328) and `ml.limit.string-table` (code 329) are in `docs/stringtable.md`. The next step kind is 11. Kinds 7 to 10 are the categorical steps of issue 21: their payload is `docs/categorical-encoders.md` section 5.2, `transforms.steps` does not read them, and in a model file each is an 8-byte stub whose payload is an entry of the string table (`docs/stringtable.md`).
 
 Kinds 4 and 5 are built by `ml` since W1 (`tools/ml/wire.cho`, through `lib/pipeline/file.cho` and the adapters of `lib/models`; the logistic payload gained a labels record, `docs/wiring.md` section 4); kinds 6 and 7 are written by libraries only, and `mfile.cho` (the reader of the constant kinds)
-refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 7 are unassigned; the next model takes 8. Tensor
+refuses them as `ml.model.malformed` (`tests/conformance/test_model_file.py` has a case for each). Kind 0 and kinds above 8 are unassigned; the next model takes 9. Kind 8 is built by `ml` since the boosting stage (`docs/models-boost.md`). Tensor
 dtypes: 1 = i64, 2 = f64 (one table for every record, the same in `mfile.cho`, `record.cho` and `tree/model.cho`). Section tags of the
 file: 1 plan, 2 schema, 3 steps, 4 model, 5 meta, in that order. The column types in `schema` (0 int, 1 dec, 2 float, 3 categorical) are not dtypes.
 The stream kinds of the random generator have their own registry in `docs/rng.md`; the numeric refusal codes of the libraries are in
@@ -308,7 +309,7 @@ dropped: it said "see `ml.schema.mismatch`", and a second tag for one rule is th
 
 *Added by stage 1 (`lib/core/refuse.cho`, one fixture per tag in `tests/core.cho`):* `ml.tensor.rank`, `ml.tensor.shape`,
 `ml.tensor.bounds` (exit 8); `ml.input.too-many-cells` (exit 8: rows x columns over the cell cap, checked without a multiplication
-that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot that is not > 2^-40 times its own diagonal element (so not > 0.0 either), NaN included; the relative test is `v1-post`, `models-linear.md` 3.1),
+that can overflow); `ml.linalg.not-positive-definite` (exit 8: a Cholesky pivot that is not > 2^-40 times its own diagonal element (so not > 0.0 either), NaN included; the relative test is `v1-post`, `models-linear.md` 3.1; since issue 48 the failures that mean collinear columns or separable classes have their own tags, below),
 `ml.linalg.singular` (exit 8: a zero diagonal entry in a triangular solve); `ml.param.threads` (exit 2: a thread count outside
 1..64). The default caps (10,000,000 rows, 4,096 columns, 400,000,000 cells) are provisional and wait for section 9.
 
@@ -322,7 +323,9 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.tensor.rank` | 8 | a kernel was given a tensor of rank 0 or above 4 | use a tensor of rank 1 to 4 |
 | `ml.tensor.shape` | 8 | an extent below 1, or a reshape of a tensor that is not contiguous | extents of at least 1; reshape only a contiguous tensor to the same element count |
 | `ml.tensor.bounds` | 8 | the offset, shape and strides of a descriptor reach outside the data beside it | keep them inside the data |
-| `ml.linalg.not-positive-definite` | 8 | a Cholesky pivot that is not above 2^-40 times its own diagonal element (a non-positive pivot included) (dependent or nearly dependent columns), NaN included | set l2 above 2^-40 times the diagonal (n for standardised features), drop one of the dependent columns, or centre and scale the columns |
+| `ml.linalg.not-positive-definite` | 8 | a Cholesky pivot of a Newton pass after the first is not above 2^-40 times its own diagonal element while `l2` is above 0 (the weights have vanished and the ridge is below 2^-40 of the diagonal), or a pivot is NaN; collinear columns are `ml.fit.collinear` and separable classes with `l2` 0 are `ml.fit.separable` *(since issue 48; before it every failure of the pivot test had this tag)* | set l2 larger, scale the features, or use fewer iterations |
+| `ml.fit.collinear` | 8 | a column of the fitted matrix (after the steps, the intercept last) is explained by the columns before it to within 2^-40 of its own sum of squares: the relative pivot test of the normal equations (linear) or of the first Newton pass (logistic). `detail`: the column, its index, the relative pivot, the tolerance, `l2`, the columns involved and their coefficients (`docs/refusals-fit.md`) | `retry` with `--l2` set to a value sized from the data, or a `choose` of that and `--drop NAME`; `none` with `--plan` |
+| `ml.fit.separable` | 8 | logistic regression with `l2` 0 on classes a hyperplane separates: the summed loss of a Newton pass is under 0.6931 (every training row right), or the predictor scale is over 50 (separation with ties), or the weights vanished (a pivot failed after the first pass). `detail`: the reason, the pass, the loss and its bound, the norm of the coefficients, the scale and its bound, `l2`, the iterations | `retry` with `--l2` set; `none` with `--plan` |
 | `ml.linalg.singular` | 8 | a zero on the diagonal of a triangular solve | none |
 | `ml.param.threads` | 2 | a thread count outside 1 to 64, or thread copies of a tree fit over the memory ceiling | a thread count of 1 to 64 |
 | `ml.fit.non-finite` | 8 | a coefficient, a loss or a gain became non-finite during a fit | scale the features, add l2, or fewer iterations |
@@ -391,6 +394,13 @@ The library also answers, with its own codes in its band, tags that exist above:
 
 `ml.limit.categories` (above, from the transforms) is also answered by the reader for a categorical column that passes `--max-categories` (default 64, ceiling 1,024): one rule, two places.
 
+*A fit that has no answer (`docs/refusals-fit.md`, issue 48; `lib/core/refuse.cho` codes 22 and 23, `lib/models/rank.cho`, `tools/ml/fitfail.cho`):* linear and logistic regression refuse a design whose columns are dependent and logistic regression refuses classes a hyperplane separates, by name and with a repair that is an argv. The decision of the first is the relative pivot test of the factorisation that already runs (`s_jj > 2^-40 * a_jj`, `models-linear.md` 3.1), so it costs no pass; what is new is the diagnosis of a failure (the first failing column, the least-squares dependency on the columns before it, both in `detail`). The decision of the second is a comparison of numbers the Newton pass already computed: the summed loss under 0.6931 (every row has a positive margin: a sufficient condition for complete separation, never true of data that overlap), the predictor scale over 50 (separation with ties), or, after the first pass, a pivot failure (the weights vanished). `ml.fit.separable` is not answered when `l2` is above 0. Neither is answered by `tree`, `forest`, `kmeans` or `constant`, which have no normal equations and no Newton pass.
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `ml.fit.collinear` | 8 | a column of the fitted matrix is explained by the columns before it to within 2^-40 of its own sum of squares (after the steps, the intercept last); the column, the dependency and the tolerance are in `detail` (as are `repeat` and `fold` when `ml cv` refuses a training fold) | `retry` with `--l2`, or `choose` of that and `--drop NAME`; `none` with `--plan` |
+| `ml.fit.separable` | 8 | logistic regression with `l2` 0 on separable classes; the pass, the reason, the loss and its bound, the norm of the coefficients are in `detail` (as are `repeat` and `fold` when `ml cv` refuses a training fold) | `retry` with `--l2`; `none` with `--plan` |
+
 *Added by M22, run tracking and train/serve skew (`docs/tracking.md` section 5.5; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/test_track.py`, `tests/conformance/fixtures.py`):*
 
 | tag | exit | when | repair |
@@ -456,6 +466,8 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 19 | `ml.limit.categorical-columns` | 8 | `ml.refuse` |
 | 20 | `ml.input.invalid-utf8` | 8 | `ml.refuse` |
 | 21 | `ml.predict.non-finite` | 8 | `ml.refuse` |
+| 22 | `ml.fit.collinear` | 8 | `ml.refuse` |
+| 23 | `ml.fit.separable` | 8 | `ml.refuse` |
 | 101 | `ml.input.non-finite` | 8 | `tree.deny` |
 | 102 | `ml.label.not-binary` | 8 | `tree.deny` |
 | 103 | `ml.label.single-class` | 8 | `tree.deny` |

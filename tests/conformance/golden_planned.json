@@ -177,7 +177,7 @@
  "logistic-14": {
   "file": null,
   "status": 8,
-  "stdout": "23fe8942ccbcf83c702398b516256a716250f7f5ad99b1ab02bc49c3571ce4bc"
+  "stdout": "7bcc58909245c6c46b6f4def2e298dda8fb2145c8993c52d491a64f8f3110a65"
  },
  "logistic-15": {
   "file": "368d56590b83bde7ea397afb764ebf9c6e38340f8ad1be93803d1759a65fe544",
@@ -275,9 +275,9 @@
   "stdout": "0e8338e1d131cea2f72b8794b81631ca6b96ff4bcae7d7d5aeefe34c3b35a17e"
  },
  "logistic-5": {
-  "file": "efce69f76ae6814da3c93d0ca56d3393f084fe1fb0b4f335b913c8c10a4cc764",
-  "status": 0,
-  "stdout": "7420ca4d69abf27eef1db0e365830f24174b8bcc21cea03a38d8192a91882ee1"
+  "file": null,
+  "status": 8,
+  "stdout": "a8b782215d8e04a802593881477701759227022d94ac2118ddebd7b6ddfd8eb5"
  },
  "logistic-6": {
   "file": "11ae5012489652e4b056e461508e0a360756324066534d2502ae4594e983b59c",

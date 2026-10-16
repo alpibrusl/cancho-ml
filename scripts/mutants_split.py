@@ -97,7 +97,7 @@ MUTANTS = [
         "                        run.drop_fitted(heap, leaked);\n                        leaked = fl;\n                        matrix.drop(heap, xl);\n                    }\n"
         "                    matrix.drop(heap, xall);\n                    run.drop_fitted(heap, f2);\n                    matrix.drop(heap, xt2);\n"
         "                    run.drop_fitted(heap, fitted);\n                    matrix.drop(heap, xt);\n                    fitted = leaked;\n                    xt = xtl;\n                    if flt.code != 0 {\n                        e = wiredata.code_error(heap, e, flt.code, flt.a, flt.b, flt.c);", tests=S),
-    mut("leak-training-on-all-rows", "every fold is trained on all rows, the held-out ones included", CV, "wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, e);", "wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0 - 1, o, retry_ok, e);"),
+    mut("leak-training-on-all-rows", "every fold is trained on all rows, the held-out ones included", CV, "wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, rep, f, e);", "wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0 - 1, o, retry_ok, rep, f, e);"),
     mut("leak-time-future-in-training", "a time fold trains on the blocks after the one it tests", CV, "} else if strategy == 3 && a > f {", "} else if strategy == 3 && a > f + 1 {"),
 ]
 

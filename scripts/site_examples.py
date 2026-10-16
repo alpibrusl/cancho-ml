@@ -174,10 +174,7 @@ def verdicts(cmp, key, rid):
 # --- the commands -------------------------------------------------------------------------------------------------
 
 COMMENT = {
-    ("breast_cancer", "naive"): "# The obvious command: no penalty (--l2 0), standardised features, 25 Newton iterations. It succeeds",
-    ("breast_cancer", "naive", "eval_train"): "# Score it on the rows it was fitted on: every one is right, and the log-loss is about 0",
-    ("breast_cancer", "naive", "eval"): "# and on the rows it did not see: the log-loss is large",
-    ("breast_cancer", "refused"): "# The same command with 50 iterations is refused. The refusal names the repair in words (a penalty), not as an argv",
+    ("breast_cancer", "naive"): "# The obvious command: no penalty (--l2 0), standardised features, 25 Newton iterations. The classes are separable, so it is refused, with the repair as an argv",
     ("breast_cancer", "fit"): "# The fix: a small ridge penalty, --l2 0.01. The optimum is now finite",
     ("breast_cancer", "fit", "eval"): "# Score the 143 held-out rows",
     ("breast_cancer", "fit", "predict"): "# Probabilities for the first five test rows",
@@ -195,11 +192,7 @@ COMMENT = {
     ("iris", "more"): "# Four times the iterations",
     ("wine", "typed"): "# First attempt: a small ridge penalty. The fit works",
     ("wine", "typed", "eval"): "# but scoring the test file is refused: color_intensity has 2 decimals in the train file and 6 in the test file, so the two files give it different types",
-    ("wine", "naive"): "# The fix is in the fit: --float reads the column as a float. Now the obvious command, no penalty. It succeeds, again",
-    ("wine", "naive", "eval_train"): "# On the training rows",
-    ("wine", "naive", "eval"): "# and on the test rows",
-    ("wine", "naive_more"): "# Twice the iterations: the coefficients move, because there is no optimum to settle on",
-    ("wine", "refused"): "# And with 100 iterations the same command is refused",
+    ("wine", "naive"): "# The fix is in the fit: --float reads the column as a float. Now the obvious command, no penalty. The classes are separable, so it is refused, with the repair as an argv",
     ("wine", "fit"): "# The same small ridge penalty as the first attempt, with --float",
     ("wine", "fit", "eval"): "# Score the 45 held-out rows",
     ("wine", "fit", "predict"): "# Probabilities for the first five test rows",

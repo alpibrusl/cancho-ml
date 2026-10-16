@@ -60,13 +60,13 @@ class Oracle(unittest.TestCase):
                 got = r.data()
                 want = O.describe(data, limit=limit)
                 self.assertEqual(got, want, (mid, limit))
-                self.assertEqual(list(got), O.FIELD_ORDER, mid)
+                self.assertEqual(list(got), O.field_order(kind), mid)
                 self.assertEqual(got["kind"], kind, mid)
 
     def test_the_corpus_covers_the_kinds_the_encoders_and_the_columns(self):
         docs = {mid: describe(mf).data() for mid, (mf, kind, fam) in MODELS.items()}
-        self.assertEqual({d["kind"] for d in docs.values()}, {1, 2, 3, 4, 5, 6, 7})
-        self.assertEqual({d["model"] for d in docs.values()}, {"constant", "linear", "logistic", "kmeans", "tree", "forest"})
+        self.assertEqual({d["kind"] for d in docs.values()}, {1, 2, 3, 4, 5, 6, 7, 8})
+        self.assertEqual({d["model"] for d in docs.values()}, {"constant", "linear", "logistic", "kmeans", "tree", "forest", "boost"})
         self.assertEqual({d["task"] for d in docs.values()}, {"regression", "classification", "clustering"})
         self.assertEqual({c["encoder"] for d in docs.values() for c in d["categorical"]}, {"onehot", "label", "freq", "hash"})
         self.assertEqual({c["type"] for d in docs.values() for c in d["columns"]}, {"int", "dec", "float", "categorical"})
@@ -134,7 +134,7 @@ class Contract(unittest.TestCase):
         desc = [v for v in variants if "categorical" in v["properties"] and "request" in v["properties"]]
         self.assertEqual(len(desc), 1)
         props = list(desc[0]["properties"])
-        self.assertEqual(props, O.FIELD_ORDER)
+        self.assertEqual(props, O.field_order(8))
         text = (ROOT / "docs" / "serving.md").read_text()
         table = text.split("## 5. The contract", 1)[1].split("\n## ", 1)[0]
         rows = re.findall(r"^\| `(\w+)` \|", table, re.M)

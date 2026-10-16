@@ -19,9 +19,9 @@ It is not a benchmark: no time is asserted by a gate, and nothing here measures 
 
 ## 2. The determinism gate
 
-`scripts/xplat_check.py` fits 22 models (every kind: constant, linear, logistic, tree, forest, k-means; one-hot, label, frequency and hash steps; 1 and 8 threads) on
+`scripts/xplat_check.py` fits 28 models (every kind: constant, linear, logistic, tree, forest, k-means, boost; one-hot, label, frequency and hash steps; 1 and 8 threads) on
 the files of `docs/examples/data`, then predicts and scores each with the file it wrote. It prints one line per artefact: the SHA-256 of the whole model
-file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 88 lines in all (22 times `fit-exit`, `model-file`, `predict`, `eval`), and two more fits read the same tables as JSON lines (`logistic-iris-jsonl`, `forest-pets-jsonl-cat`; `docs/jsonl.md`): 8 more lines, 96 for 24 fits. Their model files and answers hash to the lines of the CSV fits of the same tables.
+file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 112 lines in all (28 times `fit-exit`, `model-file`, `predict`, `eval`). The first 88 lines are those of the 22 fits that existed before the boosted model; the 24 lines of its 6 fits (regression, classification with a row sample and early stopping, a categorical plan; 1 and 8 threads) are appended after them, and no earlier line changed. Two more fits read the same tables as JSON lines (`logistic-iris-jsonl`, `forest-pets-jsonl-cat`; `docs/jsonl.md`) and are appended after the boosted ones: 8 more lines, 120 for 30 fits. Their model files and answers hash to the lines of the CSV fits of the same tables.
 
 The **golden** is `docs/bench/xplat_fp.txt`. Each platform of the matrix compares its own fingerprint to the golden and fails on any difference. That is the
 whole cross-platform comparison [choice]: two platforms that each equal the same committed file are equal to each other, and the job needs no artefact passed
@@ -41,7 +41,7 @@ binary that cannot start). The workflow runs it on every platform.
 
 ### 2.1 What it shows and what it does not
 
-It shows that, for these 22 fits on these inputs, the compiler `0207556` and the sources at the commit under test produce the same model bytes and the same
+It shows that, for these 28 fits on these inputs, the compiler `0207556` and the sources at the commit under test produce the same model bytes and the same
 printed answers on macOS arm64 and on Linux x86-64. It does not show the same for any other input, platform, compiler revision or operating-system image;
 the arithmetic's reasons (IEEE binary64, no fused multiply-add in the generated code, no platform `libm` in a result) are in `docs/design.md`, and a platform that
 disagrees is found by this gate or not at all. A hash of a printed answer includes the printed text, so a change of the output format changes the golden too.
@@ -108,14 +108,14 @@ The fast gates (`build-test`, in this order; each can fail, and the first failur
 6. **the determinism gate**: `scripts/xplat_check.py --require-predict` and `--mutants`;
 7. **the demo script**: `scripts/check_demo.py` runs `scripts/demo.sh` with the built binaries (two tracked experiments, `ml runs compare` and `verify`, `eval` on the training file and on another, `ml-serve` on its default bind and two `curl` requests) and asserts its key facts, and `--mutants` shows that ten edits of the script are refused; `curl` and `python3` are on all four runner images, and the step takes seconds;
 8. **the experiments board**: `scripts/check_board.py` runs the page's logic under `node` (preinstalled on the runner images; the script falls back to another engine only where `node` cannot start) against records the built `ml` makes: its compare equals `ml runs compare` on every ordered pair and its recomputed ids equal the tool's (`crypto.subtle` against `hashlib` included), in about 5 s.
-8. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The five
-   modules whose import needs numpy (`test_enc`, `test_planned_baseline`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`) are listed as not run; the full gate runs
+9. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The seven
+   modules whose import needs numpy (`test_enc`, `test_planned_baseline`, `test_refuse_oracle`, `test_splits_sklearn`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`) are listed as not run; the full gate runs
    them. Two sweeps are shortened by their own switches [choice]: `ST_STRIDE=5` (every fifth byte of a damaged model file is flipped, where the default flips every byte) and `FUZZ_N=500`
    (500 argument vectors of the fuzz, where the default draws 2,500); the full gate runs the defaults. The `ml-serve` conformance tests are among those that run: they start the server on an ephemeral port and compare one POST per model kind with the command line's cell text
    (`docs/serving-http.md` section 9), and `serve-check`, the driver of their number gate, is built for them;
-9. the documentation checks that need only the built binary: `scripts/check_docs.sh` (program output in README and pages, `check_links.py`, `check_prose.py`, `check_doc_refs.py`, their mutants);
-10. `scripts/check_workflow.py` (section 6);
-11. the binaries, the fingerprint and the logs are uploaded as artifacts.
+10. the documentation checks that need only the built binary: `scripts/check_docs.sh` (program output in README and pages, `check_links.py`, `check_prose.py`, `check_doc_refs.py`, their mutants);
+11. `scripts/check_workflow.py` (section 6);
+12. the binaries, the fingerprint and the logs are uploaded as artifacts.
 
 `check_links.py` fetches no address (it counts external links), so it does not depend on the network. `cancho install` and the clones do, and a GitHub outage or a rate
 limit fails the job at that step, with the step's name.
@@ -174,6 +174,8 @@ four cores is about 75 s if the build scales, and a runner's CPUs are slower tha
 
 The determinism gate on Linux x86-64 printed `ok, 88 lines for 22 fits equal docs/bench/xplat_fp.txt` (and `ok, 96 lines for 24 fits` once the two JSON lines fits were appended: the Mac and the Ubuntu host `gram` agree) for the golden that the Mac wrote, and its 15 mutants were each refused, at commit `cb08d5b`'s sources
 (the tree of this branch has the same `lib/` and `tools/`).
+
+The 24 lines of the boosted model were appended to the golden from a Mac run and printed `ok, 112 lines for 28 fits equal docs/bench/xplat_fp.txt` on the same Linux x86-64 workstation (Ubuntu 26.04.1, Intel Core i7-1260P) from a clean clone of the commit, with `ml-predict` equal to `ml`; the gate has 17 mutants now (two of them on a boost fit), each refused on the Mac. The Raspberry Pi 5 was not run for these lines.
 
 Findings of the Linux run (each fixed or marked in this branch):
 

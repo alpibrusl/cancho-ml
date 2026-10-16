@@ -19,9 +19,10 @@ import ml.csvload;
 import ml.dict;
 import ml.est;
 import ml.fbits;
+import ml.fitfail;
 import ml.fsio;
-import ml.logrec;
 import ml.kinds;
+import ml.logrec;
 import ml.matrix;
 import ml.mfile;
 import ml.paths;
@@ -573,7 +574,7 @@ pub fn feature_count[&d](ds: &d Data) -> [] int {
 }
 
 // Fit the steps on the training rows (those of `sel` equal to `want`, all when want < 0), then the estimator on what the steps leave
-pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
+pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, rep: int, fold: int, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
     var e = errs;
     var go = true;
     let nfeat = feature_count(ds);
@@ -784,9 +785,22 @@ pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: 
                     }
                 }
             }
+            if code == refuse.fit_collinear() {
+                borrow diag as &dgr in {
+                    borrow fitted as &fq2 in {
+                        e = fitfail.collinear(heap, args, e, kind == 5, contents(dgr), fq2.nm, contents(pls.fp)[0], o, rep, fold);
+                    }
+                }
+            } else if code == refuse.fit_separable() {
+                borrow diag as &dgr in {
+                    e = fitfail.separable(heap, args, e, contents(dgr), contents(pls.ip)[0], contents(pls.fp)[0], o, rep, fold);
+                }
+            }
             unbox_slice(heap, diag);
             unbox_slice(heap, yfit);
-            if code != 0 {
+            if code == refuse.fit_collinear() || code == refuse.fit_separable() {
+                go = false;
+            } else if code != 0 {
                 e = wiredata.code_error(heap, e, code, 0, 0, 0);
                 go = false;
             }
@@ -964,6 +978,36 @@ fn put_forest[&h, &b](heap: &!h Heap, w0: json.Writer, blob: &b [byte]) -> [heap
     return w;
 }
 
+// what the header of the payload of a boosted model says (docs/models-boost.md section 5): the rounds kept and requested, the nodes, the learning rate and the base score;
+// `best_round` is the round early stopping kept, present when early stopping ran
+fn put_boost[&h, &b](heap: &!h Heap, w0: json.Writer, blob: &b [byte]) -> [heap] json.Writer {
+    var w = w0;
+    w = json.put_key(heap, w, "boost");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "rounds");
+    w = json.put_int(heap, w, fbits.get64(blob, 28));
+    w = json.put_key(heap, w, "rounds_requested");
+    w = json.put_int(heap, w, fbits.get64(blob, 84));
+    w = json.put_key(heap, w, "nodes");
+    w = json.put_int(heap, w, fbits.get64(blob, 52));
+    w = json.put_key(heap, w, "bins");
+    w = json.put_int(heap, w, fbits.get64(blob, 44));
+    w = json.put_key(heap, w, "max_depth");
+    w = json.put_int(heap, w, fbits.get64(blob, 60));
+    w = json.put_key(heap, w, "min_leaf");
+    w = json.put_int(heap, w, fbits.get64(blob, 68));
+    w = json.put_key(heap, w, "learning_rate");
+    w = verbs.put_double(heap, w, fbits.get64(blob, 124));
+    w = json.put_key(heap, w, "base_score");
+    w = verbs.put_double(heap, w, fbits.get64(blob, 116));
+    if fbits.get64(blob, 76) > 0 {
+        w = json.put_key(heap, w, "best_round");
+        w = json.put_int(heap, w, fbits.get64(blob, 28));
+    }
+    w = json.end_object(heap, w);
+    return w;
+}
+
 // what the fit of a clustering says about itself: the hyperparameters (k, the iterations, the initialisation) and the metrics of the training rows
 fn put_clusters[&h, &pp, &ip](heap: &!h Heap, w0: json.Writer, tr: &pp Trained, ip: &ip [int]) -> [heap] json.Writer {
     var w = w0;
@@ -998,6 +1042,8 @@ fn fit_summary[&h, &pp, &dd, &sp, &tb, &ii, &xs, &xa](heap: &!h Heap, tr: &pp Tr
     w = json.put_int(heap, w, tr.d);
     if task == 4 {
         w = put_clusters(heap, w, tr, ip);
+    } else if est.is_blob(kind) && record.get32(contents(tr.blob), 0) == kinds.model_boost() {
+        w = put_boost(heap, w, contents(tr.blob));
     } else if est.is_blob(kind) {
         w = put_forest(heap, w, contents(tr.blob));
     } else {
@@ -1334,6 +1380,24 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
             go = false;
         }
     }
+    // early stopping keeps rows out of the fit: it is refused unless a held-out part is declared (docs/models-boost.md section 2.7)
+    if go && !o.split_given {
+        borrow pls as &npq in {
+            if est.needs_split(kind, contents(npq.ip)) {
+                e = wiredata.conflict(heap, e, "early-stopping", "early stopping keeps held-out rows: declare them with --split train=F");
+                go = false;
+            }
+        }
+    }
+    // ... and its validation rows are a random tenth of the training rows: under a group or a time split that tenth would not respect the strategy, so the pair is refused
+    if go && o.split_given && splitspec.strategy(sp) >= 2 {
+        borrow pls as &npq2 in {
+            if est.needs_split(kind, contents(npq2.ip)) {
+                e = splitspec.early_stopping_combination(heap, e, args, splitspec.strategy(sp));
+                go = false;
+            }
+        }
+    }
     var mixed_plan = false;
     borrow pls as &mpq in {
         mixed_plan = plan.needs_mixed(mpq.pl);
@@ -1424,7 +1488,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
                 borrow cvoc as &cvr in {
                     borrow pls as &pr in {
                         borrow sel as &sr in {
-                            let (t3, ok4, e4) = train(heap, args, dr, cir, cvr, pr, contents(sr), want, o, retry_ok, e);
+                            let (t3, ok4, e4) = train(heap, args, dr, cir, cvr, pr, contents(sr), want, o, retry_ok, 0, 0 - 1, e);
                             drop_trained(heap, t2);
                             t2 = t3;
                             ok3 = ok4;

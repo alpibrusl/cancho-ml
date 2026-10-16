@@ -171,14 +171,18 @@
         "--step",
         "--bins",
         "--bootstrap",
+        "--early-stopping",
         "--init",
         "--iterations",
         "--k",
         "--l2",
+        "--learning-rate",
         "--max-depth",
         "--max-nodes",
         "--min-leaf",
         "--mtry",
+        "--rounds",
+        "--subsample",
         "--trees",
         "--positive",
         "--split",
@@ -279,6 +283,8 @@
         "ml.linalg.not-positive-definite",
         "ml.param.threads",
         "ml.fit.non-finite",
+        "ml.fit.collinear",
+        "ml.fit.separable",
         "ml.predict.non-finite",
         "ml.split.empty-fold",
         "ml.split.stratify-target",
@@ -791,7 +797,8 @@
                 "logistic",
                 "kmeans",
                 "tree",
-                "forest"
+                "forest",
+                "boost"
               ]
             },
             "task": {
@@ -1861,6 +1868,553 @@
                       "type": "integer",
                       "minimum": 0
                     },
+                    "boost": {
+                      "type": "object",
+                      "properties": {
+                        "rounds": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "rounds_requested": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "nodes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "bins": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_depth": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "min_leaf": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "learning_rate": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        "base_score": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        "best_round": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "rounds",
+                        "rounds_requested",
+                        "nodes",
+                        "bins",
+                        "max_depth",
+                        "min_leaf",
+                        "learning_rate",
+                        "base_score"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "steps_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "categorical": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "kind": {
+                            "enum": [
+                              "onehot",
+                              "label",
+                              "freq",
+                              "hash"
+                            ]
+                          },
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "categories": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "output_columns": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "kind",
+                          "column",
+                          "categories",
+                          "output_columns"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "string_table": {
+                      "type": "object",
+                      "properties": {
+                        "entries": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "strings": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "pool_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "entries",
+                        "strings",
+                        "pool_bytes",
+                        "bytes",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "split": {
+                      "type": "object",
+                      "properties": {
+                        "train": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "test": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "seed": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "spec": {
+                          "type": "string"
+                        },
+                        "assignment": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              0,
+                              1
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "train",
+                        "test",
+                        "seed",
+                        "spec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "holdout": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "on": {
+                          "const": "held-out"
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "rmse": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "mae": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "r2": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "rmse",
+                            "mae",
+                            "r2"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "on",
+                        "metrics"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "plan",
+                    "steps",
+                    "features",
+                    "boost"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string"
+                    },
+                    "steps": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "features": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "boost": {
+                      "type": "object",
+                      "properties": {
+                        "rounds": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "rounds_requested": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "nodes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "bins": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_depth": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "min_leaf": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "learning_rate": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        "base_score": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        "best_round": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "rounds",
+                        "rounds_requested",
+                        "nodes",
+                        "bins",
+                        "max_depth",
+                        "min_leaf",
+                        "learning_rate",
+                        "base_score"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "steps_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "categorical": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "kind": {
+                            "enum": [
+                              "onehot",
+                              "label",
+                              "freq",
+                              "hash"
+                            ]
+                          },
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "categories": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "output_columns": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "kind",
+                          "column",
+                          "categories",
+                          "output_columns"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "string_table": {
+                      "type": "object",
+                      "properties": {
+                        "entries": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "strings": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "pool_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "entries",
+                        "strings",
+                        "pool_bytes",
+                        "bytes",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "classes": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "positive": {
+                      "type": "integer"
+                    },
+                    "split": {
+                      "type": "object",
+                      "properties": {
+                        "train": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "test": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "seed": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "spec": {
+                          "type": "string"
+                        },
+                        "assignment": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              0,
+                              1
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "train",
+                        "test",
+                        "seed",
+                        "spec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "holdout": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "on": {
+                          "const": "held-out"
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "accuracy": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "precision": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "recall": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "f1": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "roc_auc": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "log_loss": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "accuracy",
+                            "precision",
+                            "recall",
+                            "f1",
+                            "roc_auc",
+                            "log_loss"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "on",
+                        "metrics"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "plan",
+                    "steps",
+                    "features",
+                    "boost",
+                    "classes",
+                    "positive"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string"
+                    },
+                    "steps": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "features": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
                     "clusters": {
                       "type": "object",
                       "properties": {
@@ -2173,7 +2727,8 @@
                 "logistic",
                 "kmeans",
                 "tree",
-                "forest"
+                "forest",
+                "boost"
               ]
             },
             "task": {
@@ -2310,7 +2865,8 @@
                 "logistic",
                 "kmeans",
                 "tree",
-                "forest"
+                "forest",
+                "boost"
               ]
             },
             "task": {
@@ -2478,7 +3034,8 @@
                 "logistic",
                 "kmeans",
                 "tree",
-                "forest"
+                "forest",
+                "boost"
               ]
             },
             "task": {
@@ -2686,7 +3243,8 @@
                 "logistic",
                 "kmeans",
                 "tree",
-                "forest"
+                "forest",
+                "boost"
               ]
             },
             "task": {
@@ -2858,7 +3416,8 @@
                 "logistic",
                 "kmeans",
                 "tree",
-                "forest"
+                "forest",
+                "boost"
               ]
             },
             "task": {
@@ -3226,7 +3785,8 @@
                 "logistic",
                 "kmeans",
                 "tree",
-                "forest"
+                "forest",
+                "boost"
               ]
             },
             "task": {
@@ -3239,7 +3799,7 @@
             "kind": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 7
+              "maximum": 8
             },
             "plan": {
               "$ref": "#/$defs/text_or_bytes"
@@ -3371,6 +3931,29 @@
                 "sections",
                 "compiler",
                 "sum_order"
+              ],
+              "additionalProperties": false
+            },
+            "ensemble": {
+              "type": "object",
+              "properties": {
+                "trees": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "nodes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rounds_requested": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "trees",
+                "nodes",
+                "rounds_requested"
               ],
               "additionalProperties": false
             },
@@ -3713,7 +4296,6 @@
             "kind",
             "plan",
             "rows",
-            "provenance",
             "file",
             "target",
             "columns",

@@ -1,0 +1,110 @@
+module models.rank;
+
+import linalg.chol;
+import ml.refuse;
+
+// The diagnosis of a failed pivot test (docs/refusals-fit.md D1). The decision "this matrix is numerically singular" is made by linalg.chol, whose
+// relative pivot test is s_jj > 2^-40 * a_jj (docs/models-linear.md 3.1). When it says no for the matrix of a normal-equations fit (linear
+// regression) or of the first Newton pass (logistic regression), `record` runs once more over the same matrix, in the plain order, and writes down
+// what a person needs: the first failing pivot j, its relative value s_jj / a_jj, the largest diagonal element, and the dependency, the
+// least-squares coefficients c of column j on the columns before it (c = G11^-1 g_j, with G11 the leading j x j block, which passed the test).
+// It reads the lower triangle of a (p x p, row-major) and allocates only its own scratch. It is data about a failure: a fit that succeeds never calls it.
+//
+// The record, in the diag buffer of the fit (floats): [0] pass, [1] j, [2] s_jj / a_jj, [3] the largest a_ii, [4 + k] c_k for k < j.
+// It needs p + 3 floats, which diag has for p >= 2 (a 1 x 1 matrix [n] cannot fail the test).
+
+pub fn record_len(p: int) -> [] int {
+    return p + 3;
+}
+
+// the largest diagonal element of a (lower triangle), NaN-safe: a NaN is skipped
+pub fn max_diag[&a](p: int, a: &a [float]) -> [] float {
+    var m = 0.0;
+    var i = 0;
+    while i < p {
+        let v = a[i * p + i];
+        if v > m {
+            m = v;
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+// The index of the first pivot that fails the test of linalg.chol in the plain left-looking order (-1 when none fails, which can happen only when the
+// blocked factorisation and this order disagree on a pivot within rounding of the tolerance), written with the record into diag.
+// Answers the index j, or -1 (nothing written).
+pub fn record[&h, &a, &g](heap: &!h Heap, p: int, a: &a [float], pass: int, diag: &!g [float]) -> [heap] int {
+    if p < 2 || len(diag) < record_len(p) || len(a) < p * p {
+        return 0 - 1;
+    }
+    let lm = box_slice(heap, p * p, 0.0);
+    var bad = 0 - 1;
+    var ratio = 0.0;
+    borrow mut lm as &!lw in {
+        let l = contents(lw);
+        var j = 0;
+        while j < p && bad < 0 {
+            var i = j;
+            while i < p && bad < 0 {
+                var s = a[i * p + j];
+                var k = 0;
+                while k < j {
+                    s = s - l[i * p + k] * l[j * p + k];
+                    k = k + 1;
+                }
+                if i == j {
+                    let ajj = a[j * p + j];
+                    if !(s > chol.pivot_tol() * ajj) {
+                        bad = j;
+                        if ajj > 0.0 {
+                            ratio = s / ajj;
+                        } else if ajj == 0.0 {
+                            ratio = 0.0;
+                        } else {
+                            ratio = ajj;
+                        }
+                    } else {
+                        l[j * p + j] = sqrt(s);
+                    }
+                } else {
+                    l[i * p + j] = s / l[j * p + j];
+                }
+                i = i + 1;
+            }
+            j = j + 1;
+        }
+        if bad >= 0 {
+            // c = (L L^T)^-1 g with g = a[fail][0 .. fail): forward then backward over the leading block
+            let m = bad;
+            var q = 0;
+            while q < m {
+                var s = a[m * p + q];
+                var k = 0;
+                while k < q {
+                    s = s - l[q * p + k] * diag[4 + k];
+                    k = k + 1;
+                }
+                diag[4 + q] = s / l[q * p + q];
+                q = q + 1;
+            }
+            q = m - 1;
+            while q >= 0 {
+                var s = diag[4 + q];
+                var k = m - 1;
+                while k > q {
+                    s = s - l[k * p + q] * diag[4 + k];
+                    k = k - 1;
+                }
+                diag[4 + q] = s / l[q * p + q];
+                q = q - 1;
+            }
+            diag[0] = float_of(pass);
+            diag[1] = float_of(bad);
+            diag[2] = ratio;
+            diag[3] = max_diag(p, a);
+        }
+    }
+    unbox_slice(heap, lm);
+    return bad;
+}

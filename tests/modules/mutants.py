@@ -30,7 +30,7 @@ adapter = "models.adapter_%(name)s"
 payload_version = 1
 doc = "docs/models-linear.md"
 files = ["lib/models/%(name)s/adapter.cho"]
-plan_order = 6
+plan_order = 7
 
 [tags]
 emits = [%(emits)s]
@@ -87,7 +87,7 @@ def add_model(tree, name, kind, kind_fn, new_kind=True, fit_body=None, extra="",
 
 
 def capability(tree):
-    add_model(tree, "capmut", 8, "model_capmut",
+    add_model(tree, "capmut", 9, "model_capmut",
               extra="\n// a model that wants the time: not in its manifest\npub fn stamp[&c](clock: &c Clock) -> [clock] int {\n    return clock_ms(clock);\n}\n")
     main = tree / "tools/ml/main.cho"
     s = main.read_text()
@@ -101,7 +101,7 @@ def kind_reuse(tree):
 
 
 def unregistered_tag(tree):
-    add_model(tree, "badtag", 8, "model_badtag", emits=["ml.tensor.rank", "ml.mutant.not-registered"],
+    add_model(tree, "badtag", 9, "model_badtag", emits=["ml.tensor.rank", "ml.mutant.not-registered"],
               extra='\npub fn why() -> [] &static [byte] {\n    return "ml.mutant.not-registered";\n}\n')
 
 
@@ -109,19 +109,19 @@ def sum_outside_order(tree):
     body = ("    let c = linreg.fit(heap, threads, xt, xd, yd, fp[0], out, diag);\n"
             "    var s = 0.0;\n    var i = 0;\n    while i < len(yd) {\n        s = s + yd[i];\n        i = i + 1;\n    }\n"
             "    out[0] = out[0] + s - s;\n    return c;")
-    add_model(tree, "ownsum", 8, "model_ownsum", fit_body=body)
+    add_model(tree, "ownsum", 9, "model_ownsum", fit_body=body)
 
 
 def threads_one_count(tree):
     body = ("    let c = linreg.fit(heap, threads, xt, xd, yd, fp[0], out, diag);\n"
             "    if threads > 1 {\n        out[0] = out[0] + 1.0;\n    }\n    return c;")
-    add_model(tree, "t1only", 8, "model_t1only", fit_body=body)
+    add_model(tree, "t1only", 9, "model_t1only", fit_body=body)
 
 
 def threads_eleven(tree):
     body = ("    let c = linreg.fit(heap, threads, xt, xd, yd, fp[0], out, diag);\n"
             "    if threads == 11 {\n        out[0] = out[0] + 1.0;\n    }\n    return c;")
-    add_model(tree, "t11", 8, "model_t11", fit_body=body)
+    add_model(tree, "t11", 9, "model_t11", fit_body=body)
 
 
 # id, the model it adds, the function that adds it, the check that must fail, whether the check needs the binary

@@ -91,7 +91,7 @@ Terms: `G[j][k] = sum_i x_ij x_ik` (`j <= k < d`, `linalg.syrk`), `G[j][d] = sum
 mirror of the upper. These raw sums are the **decisive sums** of this estimator (`diag` of the fit holds `G` then `b`).
 Ridge: `G[j][j] = G[j][j] + l2` for `j < d` only (**the intercept is not penalised**), once, after the sums. The objective is
 `||y - Xw - b||^2 + l2 ||w||^2` (scikit-learn's `Ridge(alpha = l2)`, not divided by `n`). Solve `G = L L^T`
-(`linalg.chol`, panels of 32, lane rule; pivot `s > 2^-40 * a_jj` with `a_jj` the diagonal of the matrix being factored, else `ml.linalg.not-positive-definite`; the rule and its evidence are below), `L u = b` forward, `L^T w = u`
+(`linalg.chol`, panels of 32, lane rule; pivot `s > 2^-40 * a_jj` with `a_jj` the diagonal of the matrix being factored, else a refusal, `ml.fit.collinear` for linear regression and the first Newton pass (the column and the dependency named: `docs/refusals-fit.md`; `ml.linalg.not-positive-definite` before issue 48); the rule and its evidence are below), `L u = b` forward, `L^T w = u`
 backward with `k` **descending** (`docs/linalg.md` 2.1). The model is `coef = w[0..d)`, `intercept = w[d]`. A non-finite result is
 `ml.fit.non-finite`.
 
@@ -135,7 +135,7 @@ an all-zero column is refused; a column `x1 + 1e-5 * x0` (relative pivot about `
 the same data (`dup=1` refused, `dup=4` fitted, `dup=5` refused, `dup=6` the scaled column fitted; 7 configurations added) and compares the verdict and the bits. `tests/t_chol.cho` `test_chol_relative_pivot` has the boundary (a pivot of exactly `2^-40 * a_jj` is refused), the scale invariance, the wrong-diagonal pairs and a negative diagonal element, on both paths. Mutants: `tol` 2^20 times smaller (the noise is accepted), 2^20 times larger
 (legitimate data is refused), the test absolute instead of relative, the test against the wrong diagonal, the test inverted, the test removed, `>=` for `>`: `scripts/mutants_linalg.py` group chol (9, both Cholesky paths) and `scripts/mutants_models.py` (6); all killed.
 The logistic regression uses the same factorisation: a Newton step whose Hessian has a relative pivot below `2^-40` (a nearly separable fit with saturated weights) is now
-`ml.linalg.not-positive-definite`; it was `ml.fit.non-finite` or a poor fit before. The effect on the gates' logistic data: none (the oracle suite still agrees bit for bit).
+`ml.linalg.not-positive-definite`; it was `ml.fit.non-finite` or a poor fit before. The effect on the gates' logistic data: none (the oracle suite still agrees bit for bit). Since issue 48 that case is `ml.fit.separable` (`reason` `pivot`) when `l2` is 0, and the tag `ml.linalg.not-positive-definite` stays for a ridge below the tolerance (`docs/refusals-fit.md`).
 
 ### 3.2 Logistic regression (binary), Newton, fixed iterations
 
@@ -154,7 +154,7 @@ The logistic regression uses the same factorisation: a Newton step whose Hessian
   log-loss, so scikit-learn's `C` is `1 / (l2 n)`.
 * `H = L L^T` (`chol`), `L u = g`, `L^T dl = u` (descending), `w_a = w_a - dl_a`. No damping, no jitter, no line search, no
   convergence test: **the number of iterations is a flag** (`1 .. 1000`). A non-finite `w` is `ml.fit.non-finite`; a pivot that fails the
-  relative test of section 3.1 (`s > 2^-40 * H_aa`) is `ml.linalg.not-positive-definite`.
+  relative test of section 3.1 (`s > 2^-40 * H_aa`) is `ml.fit.collinear` at the first pass (the Hessian of pass 0 is the Gram matrix over 4n), `ml.fit.separable` at a later pass with `l2` 0, and `ml.linalg.not-positive-definite` at a later pass with `l2` above 0. With `l2` 0 a pass whose summed loss (`ell`, slot `W-1`) is under 0.6931 (ln 2, rounded down) or whose predictor scale `sqrt(w' G w / n)` is over 50 is `ml.fit.separable` before its Hessian is built: `docs/refusals-fit.md` D2.
 * `K = 8` is the value used by the gates **[choice]**: spike S found `K = 6` converged to `1e-13` on this data; 8 leaves margin for
   other data. The library takes `K` from the caller and has no default.
 * The labels must be `0.0` or `1.0` exactly (`ml.label.not-binary`) and both present (`ml.label.single-class`).
@@ -375,7 +375,7 @@ the speed-up is far from linear and why linear regression (one pass) hardly gain
 1. **`exp` and `log1p` are the compiler's (`std/math.cho`)**: a change to them changes model bytes (`design.md` section 3); the oracle ports them, so it fails on such a change, which is the point.
    The cheaper `mexp.log1p` has `std`'s bits on `[0, 1]` today; if `std` changes it, `tests/p_models.cho` says so.
 2. **The convergence count**: K is the caller's. K = 8 agrees with K = 12 to 2e-16 on the M0 data (K = 5 is 1.8e-7 from K = 12 and K = 6 is 2.6e-14, measured on 100,000 rows), and with scikit-learn run to `tol=1e-12` to 6e-9 without l2 and 1.2e-7 with it; on badly scaled or nearly separable data Newton without damping can fail (a pivot that is not
-   positive, or a non-finite step: `ml.linalg.not-positive-definite` / `ml.fit.non-finite`). The pipeline's scaling stage is what makes it safe; whether the CLI should refuse unscaled input is not decided here.
+   positive, or a non-finite step: `ml.linalg.not-positive-definite` / `ml.fit.non-finite`; separable classes with `l2` 0 and collinear columns are named, `ml.fit.separable` / `ml.fit.collinear`: `docs/refusals-fit.md`). The pipeline's scaling stage is what makes it safe; whether the CLI should refuse unscaled input is not decided here.
 3. **Empty clusters keep their centroid** (section 3.3). scikit-learn relocates the farthest point; the cost of this choice is a possible dead centroid. The alternative needs one more pass and a tie rule among farthest points.
 4. **Logistic regression is not as fast as scikit-learn's default call** (6.5). Closing it needs a faster Hessian tile (the tile loop is about 35% of the pass and is bound by the vector pipes without `fma`) or fewer passes (K = 6 is already 2.6e-14 from the K = 12 point on this data and K = 5 is 1.8e-7; the library takes K and does not decide it).
 5. **Not done**: a second machine (the bytes across Mac and Linux are untested, as in `docs/linalg.md` 5.1); `cancho build --bin models-check` in package mode (needs `cancho install`; `cancho.toml` has the entry, unbuilt); multiclass; QR or SVD; `tools/ml/mfile.cho` does not build or read the parameters of the model kinds 4 to 6 (linear, logistic, k-means; kind 3 is the constant regression of a float target, which it knows; kind 7, trees, is `models-tree.md`) or `dtype 2`. Since `v1-post` it does read the `u32 sum_order` at the end of `meta` of a file of kind 4 to 7 and refuses a value other than 2 with `ml.model.version` (`design.md` 4.1); it then refuses the kind as `ml.model.malformed`, not built.

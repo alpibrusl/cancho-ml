@@ -112,7 +112,7 @@ class StdinEqualsFile(unittest.TestCase):
 
     def test_the_text_format_the_probability_the_page_and_the_dropped_columns(self):
         data = (SB.dir / "num_plain.csv").read_bytes()
-        for mid in ("linear", "logistic", "tree_cls", "forest_reg", "const_cls", "const_reg_dec", "kmeans", "cat_kmeans_onehot"):
+        for mid in ("linear", "logistic", "tree_cls", "forest_reg", "boost_reg", "boost_cls", "const_cls", "const_reg_dec", "kmeans", "cat_kmeans_onehot"):
             mf = MODELS[mid][0]
             for extra in (["--format", "text"], ["--limit", "3", "--from", "2"], ["--limit", "2", "--format", "text"], ["--from", "50"], ["--proba"],
                           ["--proba", "--limit", "4", "--from", "1"], ["--distance"], ["--distance", "--format", "text", "--limit", "3"]):
@@ -284,7 +284,7 @@ class MlPredict(unittest.TestCase):
 
     def test_the_flags_of_predict(self):
         data = (SB.dir / "num_plain.csv").read_bytes()
-        for mid in ("linear", "logistic", "tree_cls", "const_cls", "forest_reg", "kmeans", "kmeans_random"):
+        for mid in ("linear", "logistic", "tree_cls", "const_cls", "forest_reg", "boost_cls", "kmeans", "kmeans_random"):
             mf = MODELS[mid][0]
             for extra in (["--format", "text"], ["--limit", "3", "--from", "2"], ["--proba"], ["--distance"], ["--max-rows", "4"], ["--max-line-bytes", "5"], ["--max-bytes", "10"]):
                 a = ml("predict", "-", "--model-file", mf, *extra, stdin=data)
