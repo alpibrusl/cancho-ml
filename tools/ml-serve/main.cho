@@ -1,8 +1,10 @@
-edition 5;
+edition 9;
 
 // `ml-serve` -- serve one trained model file over HTTP with cancho-web (docs/serving-http.md). It is built from the sources of `ml` and `ml-predict` with this entry
 // point: it reads the model file once, builds the request schema and the OpenAPI document from what `describe` says, listens, and answers one request at a time. The
 // authority the compiler derives from `main` has the sockets, the clock and the reads of the model and token files, and no write of any kind, no `exec` and no foreign code.
+// It listens on 127.0.0.1 unless `--bind all` is given (`tcp_listen_on` with one of two literal hosts, docs/serving-http.md section 5.4); `main` keeps an unnarrowed `Net("")`, so the row says
+// `net_in("")` and the proof of the default is the socket test (tests/conformance/test_serve_bind.py), not the row.
 
 import std.buffer;
 import std.bytes;
@@ -72,6 +74,19 @@ fn check_range[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
     return e;
 }
 
+// whether `--bind all` was given (the default, and `--bind loopback`, is 127.0.0.1)
+fn binds_everywhere[&g, &p](args: &g Args, parsed: &p cli.Parsed) -> [args] bool {
+    return bytes.equal(cli.text(args, parsed, sspec.flag_table(), "bind"), "all");
+}
+
+// the listening socket: one of two calls with a literal host, because the compiler reads the host from the source (docs/native-sockets.md section 12 of the compiler repository)
+fn open_listener[&n](net: &n Net(""), everywhere: bool, port: int) -> [net_in("")] Listening {
+    if everywhere {
+        return tcp_listen_on(net, "0.0.0.0", port, 1024, 0);
+    }
+    return tcp_listen_on(net, "127.0.0.1", port, 1024, 0);
+}
+
 // the command line, before any file is read
 fn check_cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors) -> [heap, args] fail.Errors {
     let table = sspec.flag_table();
@@ -82,10 +97,13 @@ fn check_cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
     if !cli.has(parsed, table, "model-file") {
         e = app.flag_problem(heap, e, "args.required-flag", "ml-serve needs --model-file, the model to serve", "ml-serve --model-file MODEL --token-file FILE", "flag", "--model-file");
     }
+    let everywhere = binds_everywhere(args, parsed);
     if cli.has(parsed, table, "token-file") && cli.has(parsed, table, "no-token") {
         e = app.flag_problem(heap, e, "args.conflict", "--token-file and --no-token say opposite things", "give one of them", "flag", "--no-token");
-    } else if !cli.has(parsed, table, "token-file") && !cli.has(parsed, table, "no-token") {
-        e = refusal(heap, e, "serve.no-token", "ml-serve needs --token-file FILE, or --no-token to serve with no token", "the pinned compiler listens on every address of the host: without a token every host that can reach the port can call the model", "flag", "--token-file");
+    } else if everywhere && cli.has(parsed, table, "no-token") {
+        e = app.flag_problem(heap, e, "args.conflict", "--bind all and --no-token say opposite things: a server on every address needs a token", "drop --no-token and give --token-file FILE, or drop --bind all to listen on 127.0.0.1 only", "flag", "--no-token");
+    } else if everywhere && !cli.has(parsed, table, "token-file") {
+        e = refusal(heap, e, "serve.no-token", "--bind all needs --token-file FILE: on every address any host that can reach the port can call the model", "give --token-file FILE, or drop --bind all to listen on 127.0.0.1 only", "flag", "--token-file");
     }
     return check_range(heap, args, parsed, e, table);
 }
@@ -321,7 +339,7 @@ fn finish[&h, &i, &e](heap: &!h Heap, io: &!i Io, errs: &e fail.Errors) -> [heap
 }
 
 // the loop of docs/serving-http.md section 5.1: `wait`, then `next` until it answers -1, one answer for each request
-fn run[&h, &sv, &g, &f, &r, &k, &l, &i](heap: &!h Heap, served: &sv srv.Served, args: &g Args, fs: &f Fs(""), root: &r [byte], clock: &k Clock, listener: &!l Listener, con: &!i Io, port: int, idle: int, size: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock, err_write, args, fs_read(""), dir_read, file_read] int {
+fn run[&h, &sv, &g, &f, &r, &k, &l, &i](heap: &!h Heap, served: &sv srv.Served, args: &g Args, fs: &f Fs(""), root: &r [byte], clock: &k Clock, listener: &!l Listener, con: &!i Io, host: &static [byte], port: int, idle: int, size: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock, err_write, args, fs_read(""), dir_read, file_read] int {
     match poller_new() {
         Polling::Ok(p) => {
             var loop_server = server.open(heap, p, listener, size, 0, idle);
@@ -335,6 +353,8 @@ fn run[&h, &sv, &g, &f, &r, &k, &l, &i](heap: &!h Heap, served: &sv srv.Served, 
             let scratch = box_slice(heap, 256, byte_of(0));
             var out = buffer.empty(heap, 4096);
             var line = buffer.append(heap, buffer.empty(heap, 64), "listening on ");
+            line = buffer.append(heap, line, host);
+            line = buffer.push(heap, line, byte_of(58));
             line = buffer.push_nat(heap, line, port);
             line = buffer.push(heap, line, byte_of(10));
             borrow line as &lb in {
@@ -426,14 +446,19 @@ fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p c
         let port = cli.nat(args, parsed, table, "port");
         let idle = cli.nat(args, parsed, table, "idle-seconds");
         let size = cli.nat(args, parsed, table, "max-body-bytes") + 16384;
-        match tcp_listen(net, port, 1024, 0) {
+        let everywhere = binds_everywhere(args, parsed);
+        var host = "127.0.0.1";
+        if everywhere {
+            host = "0.0.0.0";
+        }
+        match open_listener(net, everywhere, port) {
             Listening::Ok(l) => {
                 var listener = l;
                 borrow mut listener as &!lh in {
                     listener_nonblocking(lh);
                     borrow served as &sv in {
                         borrow root as &rr in {
-                            status = run(heap, sv, args, fs, buffer.bytes(rr), clock, lh, io, port, idle, size);
+                            status = run(heap, sv, args, fs, buffer.bytes(rr), clock, lh, io, host, port, idle, size);
                         }
                     }
                 }
@@ -459,8 +484,11 @@ fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p c
 }
 
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
     release(ffi);
+    release(signals);
+    release(exec);
+    release(tty);
     var status = 0;
     borrow mut heap as &!h in {
         borrow args as &g in {

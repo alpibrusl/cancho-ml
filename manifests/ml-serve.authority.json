@@ -83,6 +83,11 @@
       "bounded": true
     }
   ],
+  "never_touches": [
+    "signals",
+    "other programs",
+    "foreign code"
+  ],
   "foreign_symbols": [],
   "pure": [
     "abs",
@@ -240,6 +245,7 @@
     "entry_payload",
     "entry_step",
     "enum_index",
+    "eq_ci",
     "eq_lower",
     "equal",
     "err_choice",
@@ -362,6 +368,7 @@
     "guarantee_keys",
     "guarantees_has",
     "has",
+    "has",
     "has_component",
     "has_dotdot",
     "has_double_dot",
@@ -378,7 +385,9 @@
     "head_end",
     "header",
     "header",
+    "header_count",
     "header_len",
+    "header_name",
     "header_value",
     "help_of",
     "hex4",
@@ -733,6 +742,7 @@
     "reach_hi",
     "reach_lo",
     "read",
+    "readable",
     "reason",
     "reason_word",
     "rec",
@@ -757,6 +767,7 @@
     "rows",
     "rows",
     "rows",
+    "rule",
     "rule_of",
     "rules",
     "same_ignoring_case",
@@ -933,6 +944,7 @@
     "values_ok",
     "version",
     "version",
+    "version",
     "width",
     "width",
     "width",
@@ -947,7 +959,7 @@
     "words_of",
     "wpc"
   ],
-  "folded_operators": 306,
+  "folded_operators": 310,
   "folded_calls": 0,
-  "functions": 1393
+  "functions": 1424
 }

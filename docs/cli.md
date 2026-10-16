@@ -236,7 +236,7 @@ logged; gate L1 plants canaries in all three and in every kind of run. Bounded: 
 command line, and standard input for `predict -` and `predict` with no operand (`io_read`, `docs/serving.md` section 2.4); it creates, appends to, renames and removes only beneath a directory it opened itself, and holds no `fs_write`, so no
 path write; it spawns threads for `fit --threads N` (`conc`); it has no clock, no environment, no network, no foreign code. `ml-predict`, built from the same sources, has the row
 without `conc`, `dir_write` and `file_write` (`manifests/ml-predict.authority.json`, `docs/serving.md` section 3.3). `ml-serve` has the sockets of a server and the clock and writes nothing
-(`manifests/ml-serve.authority.json`, `docs/serving-http.md` section 6).
+(`manifests/ml-serve.authority.json`, `docs/serving-http.md` section 6). It listens on `127.0.0.1` unless `--bind all` is given (which requires `--token-file`); its row says `net_in("")` either way, so the loopback default is proved by a socket test, not by the row (`docs/serving-http.md` section 5.4).
 `design.md` section 7 expected `conc`. **The label arrived at stage W1, deliberately, in the same diff as the test that no thread count changes a byte**
 (`tests/conformance/test_determinism.py`, gate D1), as this section asked: `ml` now links `lib/linalg/par.cho`, which spawns, and the compiler derives
 `conc` from the code, so the label is in the row at `--threads 1` too. The reason is stated in `tools.toml` (`[ml.reasons]`), in the manifests of the two

@@ -35,6 +35,7 @@ MAIN = "tools/ml-serve/main.cho"
 
 S1 = ["test_serve_bytes"]
 S2 = ["test_serve"]
+B = ["test_serve_bind"]
 O1 = ["scripts/gate_serve_openapi.py"]
 
 
@@ -109,7 +110,16 @@ MUTANTS = [
     M("s-out-of-range-dropped", "S1", "the answer's out_of_range is always null", [e(SRV, "                if oor >= 0 {\n                    w = track.put_node(heap, w, payload, tp, oor);", "                if false {\n                    w = track.put_node(heap, w, payload, tp, oor);")], ["test_serve_bytes", "test_track.Serve"]),
     M("s-out-of-range-bound-ignored", "S1", "--max-out-of-range is not passed to the predictor", [e(SRV, "sv.max_oor, sv.max_oor_given);", "0, false);")], ["test_track.Serve"]),
     # ------------------------------------------------------------------ S2: the process
-    M("m-no-token-flag-needed", "S2", "ml-serve starts with neither --token-file nor --no-token", [e(MAIN, '} else if !cli.has(parsed, table, "token-file") && !cli.has(parsed, table, "no-token") {', "} else if false {")], ["test_serve.Start.test_no_token_flag_is_refused"]),
+    M("m-all-needs-no-token", "S10", "--bind all starts with neither --token-file nor --no-token", [e(MAIN, "} else if everywhere && !cli.has(parsed, table, \"token-file\") {", "} else if false {")], B),
+    M("m-all-accepts-no-token", "S10", "--bind all --no-token is served: an open server on every address", [e(MAIN, "} else if everywhere && cli.has(parsed, table, \"no-token\") {", "} else if false {")], B),
+    M("m-the-token-rule-is-everywhere", "S10", "the default (loopback) server still wants a token, as it did before the loopback default", [e(MAIN, "binds_everywhere(args, parsed);\n    if cli.has(parsed, table, \"token-file\") && cli.has(parsed, table, \"no-token\") {", "true;\n    if cli.has(parsed, table, \"token-file\") && cli.has(parsed, table, \"no-token\") {")], B),
+    M("b-the-default-is-all", "S10", "the default of --bind is all (flag table)", [e("tools/ml-serve/sspec.cho", "bind||choice:loopback/all|none|loopback|", "bind||choice:loopback/all|none|all|")], B),
+    M("b-all-is-the-default-in-the-code", "S10", "binds_everywhere is true whatever the flag says", [e(MAIN, 'return bytes.equal(cli.text(args, parsed, sspec.flag_table(), "bind"), "all");', 'return bytes.equal(cli.text(args, parsed, sspec.flag_table(), "bind"), "all") || true;')], B),
+    M("b-all-binds-loopback", "S10", "--bind all listens on 127.0.0.1", [e(MAIN, 'return tcp_listen_on(net, "0.0.0.0", port, 1024, 0);', 'return tcp_listen_on(net, "127.0.0.1", port, 1024, 0);')], B),
+    M("b-loopback-binds-all", "S10", "the default listens on 0.0.0.0", [e(MAIN, 'return tcp_listen_on(net, "127.0.0.1", port, 1024, 0);', 'return tcp_listen_on(net, "0.0.0.0", port, 1024, 0);')], B),
+    M("b-the-host-literal-is-another-loopback-address", "S10", "the default listens on 127.0.0.2, not 127.0.0.1", [e(MAIN, 'return tcp_listen_on(net, "127.0.0.1", port, 1024, 0);', 'return tcp_listen_on(net, "127.0.0.2", port, 1024, 0);')], B),
+    M("b-the-start-up-line-lies", "S10", "the start-up line names 127.0.0.1 for --bind all", [e(MAIN, 'host = "0.0.0.0";', 'host = "127.0.0.1";')], B),
+    M("b-the-old-call", "S10", "the old tcp_listen (every address) stands in for loopback", [e(MAIN, 'return tcp_listen_on(net, "127.0.0.1", port, 1024, 0);', 'return tcp_listen(net, port, 1024, 0);')], B),
     M("m-the-token-keeps-its-newline", "S2", "the line feed of the token file is part of the token", [e(MAIN, "if len(text) > 0 && int_of(text[len(text) - 1]) == 10 {", "if false {")], ["test_serve.Token"]),
     M("m-the-idle-time-is-a-thousand-times-longer", "S4", "the idle timeout is in milliseconds", [e(MAIN, "var loop_server = server.open(heap, p, listener, size, 0, idle);", "var loop_server = server.open(heap, p, listener, size, 0, idle * 1000);")], ["test_serve_fuzz.Fuzz.test_a_connection_that_sends_nothing_is_closed"]),
     M("m-no-room-for-a-head", "S2", "the buffer of a connection holds the body and no head", [e(MAIN, 'let size = cli.nat(args, parsed, table, "max-body-bytes") + 16384;', 'let size = cli.nat(args, parsed, table, "max-body-bytes");')], ["test_serve.Refusals.test_a_body_over_the_limit"]),
@@ -129,7 +139,7 @@ MUTANTS = [
         e(MAIN, "-> [heap, args, fs_read(\"\"), dir_read, file_read, io_write, err_write, net_in(\"\"), conn_accept, conn_read, conn_write, poll, clock] int {", "-> [heap, args, fs_read(\"\"), dir_read, dir_write, file_read, file_write, io_write, err_write, net_in(\"\"), conn_accept, conn_read, conn_write, poll, clock] int {")],
       kind="authority"),
     M("x-the-network-is-dialled", "A1", "the server connects out", [
-        e(MAIN, "        match tcp_listen(net, port, 1024, 0) {", "        match tcp_connect(net, \"127.0.0.1\", 9) {\n            Dialed::Ok(dc) => {\n                conn_close(dc);\n            }\n            Dialed::Failed(dcode) => {\n            }\n        }\n        match tcp_listen(net, port, 1024, 0) {"),
+        e(MAIN, "        match open_listener(net, everywhere, port) {", "        match tcp_connect(net, \"127.0.0.1\", 9) {\n            Dialed::Ok(dc) => {\n                conn_close(dc);\n            }\n            Dialed::Failed(dcode) => {\n            }\n        }\n        match open_listener(net, everywhere, port) {"),
         e(MAIN, "-> [heap, args, fs_read(\"\"), dir_read, file_read, io_write, err_write, net_in(\"\"), conn_accept, conn_read, conn_write, poll, clock] int {", "-> [heap, args, fs_read(\"\"), dir_read, file_read, io_write, err_write, net_in(\"\"), net_out(\"\"), conn_accept, conn_read, conn_write, poll, clock] int {")],
       kind="authority"),
     M("x-the-ceiling-lacks-a-reason", "A1", "tools.toml gives no reason for the clock", [e("tools.toml", 'clock = "http.server closes', 'clockX = "http.server closes')], kind="authority"),
@@ -137,11 +147,11 @@ MUTANTS = [
     M("x-the-manifest-is-stale", "A1", "the committed row has lost poll", [e("manifests/ml-serve.authority.json", '    {\n      "name": "poll",\n      "argument": null,\n      "bounded": true\n    }', '    {\n      "name": "pollx",\n      "argument": null,\n      "bounded": true\n    }')], kind="check"),
     # ------------------------------------------------------------------ W1: the pins
     M("w-one-rev-moved", "W1", "the schema rev differs from the documented one", [e("cancho.toml", 'rev = "59a70285ff23af63a226bc56ff978feccb4cf8ca"', 'rev = "59a70285ff23af63a226bc56ff978feccb4cf8cb"')], kind="pin"),
-    M("w-a-block-is-missing", "W1", "the http-server dependency is removed", [e("cancho.toml", '[dependencies.server]\ngit = "https://github.com/alpibrusl/cancho"\nrev = "a4572ea3b506e4bcec1c4be43deda1043c11ba9f"\npath = "packages/http-server/.cancho-vcs"\n', "")], kind="pin"),
+    M("w-a-block-is-missing", "W1", "the http-server dependency is removed", [e("cancho.toml", '[dependencies.server]\ngit = "https://github.com/alpibrusl/cancho"\nrev = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"\npath = "packages/http-server/.cancho-vcs"\n', "")], kind="pin"),
     M("w-another-store", "W1", "a store of cancho-web that ml-serve does not import is listed", [e("cancho.toml", "[dependencies.schema]", '[dependencies.users]\ngit = "https://github.com/alpibrusl/cancho-web"\nrev = "5f404a777018cf42b5c713daa4972c938c9229f4"\npath = ".cancho-vcs"\n\n[dependencies.schema]')], kind="pin"),
     M("w-another-origin", "W1", "web comes from another repository", [e("cancho.toml", 'git = "https://github.com/alpibrusl/cancho-web"', 'git = "https://github.com/someone/cancho-web"')], kind="pin"),
     M("w-the-document-names-another-rev", "W1", "docs/serving-http.md names another web rev", [e("docs/serving-http.md", "cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f4`", "cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f0`")], kind="pin"),
-    M("w-server-rev-is-not-the-compiler", "W1", "http-server is pinned to another commit than the compiler", [e("cancho.toml", 'rev = "a4572ea3b506e4bcec1c4be43deda1043c11ba9f"\npath = "packages/http-server/.cancho-vcs"', 'rev = "a4572ea3b506e4bcec1c4be43deda1043c11ba90"\npath = "packages/http-server/.cancho-vcs"')], kind="pin"),
+    M("w-server-rev-is-not-the-compiler", "W1", "http-server is pinned to another commit than the compiler", [e("cancho.toml", 'rev = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"\npath = "packages/http-server/.cancho-vcs"', 'rev = "0207556b4029a3ee73196cdfdb48e8efa7e9c518"\npath = "packages/http-server/.cancho-vcs"')], kind="pin"),
     M("w-web-is-imported-elsewhere", "W1", "tools/ml imports web", [e("tools/ml/paths.cho", "import std.buffer;", "import std.buffer;\nimport web;")], kind="pin"),
     M("w-a-copy-of-schema", "W1", "a file under lib declares module schema", [], kind="pin", create=[("lib/core/schema_copy.cho", "module schema;\n")]),
     M("w-a-copy-of-the-server", "W1", "a file under tools declares module http.server", [], kind="pin", create=[("tools/ml-serve/server_copy.cho", "module http.server;\n")]),

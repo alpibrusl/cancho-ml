@@ -5,7 +5,7 @@ product (the trees may then differ). Min of N interleaved runs of each, phase ti
 usage: ablate_f.py SET N"""
 import os, re, subprocess, sys
 H = os.path.dirname(os.path.abspath(__file__)); R = os.path.dirname(os.path.dirname(H))
-CH = "/Users/alfonso/Workspace/alpibrusl/lexsys/cancho-compiler-a4572ea/target/release/cancho"
+CH = "/Users/alfonso/Workspace/alpibrusl/lexsys/cancho-compiler-0207556/target/release/cancho"
 DATA = "/Users/alfonso/Workspace/alpibrusl/lexsys/ml-data"
 src = open(H + "/spike_f.cho").read()
 

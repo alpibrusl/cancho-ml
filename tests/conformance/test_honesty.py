@@ -60,10 +60,10 @@ class Honesty(unittest.TestCase):
         # docs/cli.md section 2.4: this exact file, this exact command, written by the commit before the float reader
         self.sb.write("sales.csv", "id,x,y\n1,2.5,10\n2,3.5,20\n3,1.0,30\n4,0.25,41\n")
         r = self.sb.run("fit", "--target", "y", "--output", "sales.cml", "sales.csv")
-        # the file now ends with the provenance section; without it the bytes are those of the commit before the float reader
+        # the file now ends with the provenance section; without it the bytes are those of the commit before the float reader, except the compiler pin text the file holds (the digest moves with the pin)
         old = without_provenance(self.sb.read("sales.cml"))
         self.assertEqual(len(old), 316)
-        self.assertEqual(hashlib.sha256(old).hexdigest(), "9b6a34144d1351f141f1ed2f1238f053afef57d815f29d047892239b63afbd05")
+        self.assertEqual(hashlib.sha256(old).hexdigest(), "984932d114dfaf9d025e295a757717b0e818e01ba17caa0ba45be46b4f1616b2")
         self.assertEqual(r.data()["bytes"], 316 + 76)
 
     def test_the_unsupported_type_rule_is_gone(self):

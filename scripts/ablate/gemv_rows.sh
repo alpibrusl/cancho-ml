@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../.."
 for n in 2 3 5 6; do NROWS=$n scripts/ablate/variant.sh rows$n scripts/ablate/edit_gemv_rows.py >/dev/null; done
 # the 8-row kernel as first written (commit 432591a)
 D=build/ablate/rows8; mkdir -p $D; cp -r lib tools $D/; git show 432591a:lib/linalg/gemv.cho > $D/lib/linalg/gemv.cho
-../cancho-compiler-a4572ea/target/release/cancho build --std $D/lib/core/*.cho $D/lib/linalg/*.cho $D/tools/linalg-check/main.cho -o $D/linalg-check
+../cancho-compiler-0207556/target/release/cancho build --std $D/lib/core/*.cho $D/lib/linalg/*.cho $D/tools/linalg-check/main.cho -o $D/linalg-check
 for d in 20 64 128 256; do
   reps=100; [ $d -ge 128 ] && reps=40
   line="d=$d:"

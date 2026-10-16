@@ -16,11 +16,11 @@ here, **[open]** not decided.
 * **cancho-web publishes `web` as a store [read, measured].** `alpibrusl/cancho-web` at `5f404a7` has `.cancho-vcs` (the store of `src/web.cho`, published by `scripts/publish.sh`, whose `--check` CI runs);
   `web` imports `schema`, so its `requires/` records `cancho-schema` at `59a70285ff23af63a226bc56ff978feccb4cf8ca` (the `SCHEMA_REV` of its `ci.yml`).
 * **cancho-schema publishes `schema` as a store [read, measured].** `alpibrusl/cancho-schema` has `.cancho-vcs` at `59a7028` (the commit its store was last republished at; later commits do not change it).
-* **`http.server` is a store of the compiler's repository [read, measured].** `alpibrusl/cancho` at `a4572ea3b506e4bcec1c4be43deda1043c11ba9f`, the compiler these sources are written for, has
-  `packages/http-server/.cancho-vcs`.
+* **`http.server` is a store of the compiler's repository [read, measured].** `alpibrusl/cancho` at `0207556b4029a3ee73196cdfdb48e8efa7e9c519`, the compiler these sources are written for, has
+  `packages/http-server/.cancho-vcs`. Its content differs from the store at `a4572ea` (the module gained streaming request bodies, `Expect: 100-continue` and a byte-fed mode, `docs/http-server.md` sections 11 and 12 of the compiler repository); the functions `ml-serve` calls (`open`, `close`, `wait`, `next`, `head`, `parsed`, `body`, `respond`, `reply_with`, `reply_as`) keep their signatures.
 * **A project pins the three the way it pins `cancho-table` and `cancho-tools` [measured].** A scratch project outside this repository with the three `[dependencies.*]` blocks below ran `cancho install`
-  (`installed schema (59a70285ff23): 1 file(s)`, `installed server (a4572ea3b506): 1 file(s)`, `installed web (5f404a777018): 2 file(s)`), imported `http.server`, `schema` and `web` and
-  built with compiler `a4572ea`. **No upstream change is needed and nothing is copied**; there is no LOCAL-DEV arrangement.
+  (`installed schema (59a70285ff23): 1 file(s)`, `installed server (0207556b4029): 1 file(s)`, `installed web (5f404a777018): 2 file(s)`), imported `http.server`, `schema` and `web` and
+  built with compiler `0207556` (`cancho build --bin ml`, `--bin ml-predict` and `--bin ml-serve` all build; `web` and `schema` need no change). **No upstream change is needed and nothing is copied**; there is no LOCAL-DEV arrangement.
 
 ### 1.2 The pin
 
@@ -37,7 +37,7 @@ path = ".cancho-vcs"
 
 [dependencies.server]
 git = "https://github.com/alpibrusl/cancho"
-rev = "a4572ea3b506e4bcec1c4be43deda1043c11ba9f"
+rev = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"
 path = "packages/http-server/.cancho-vcs"
 ```
 
@@ -50,7 +50,7 @@ cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f4`
 
 cancho-schema rev: `59a70285ff23af63a226bc56ff978feccb4cf8ca` (the `SCHEMA_REV` `5f404a7`'s `ci.yml` names: `SCHEMA_REV` `59a70285ff23af63a226bc56ff978feccb4cf8ca`)
 
-cancho http-server rev: `a4572ea3b506e4bcec1c4be43deda1043c11ba9f`
+cancho http-server rev: `0207556b4029a3ee73196cdfdb48e8efa7e9c519`
 
 Only `ml-serve` imports these modules; `cancho build --bin ml` and `--bin ml-predict` are not changed by them (gate W2 compares the bytes of the two binaries built before and after the three blocks
 are added; the other changes of this stage that reach their sources are listed in section 10).
@@ -65,8 +65,8 @@ are added; the other changes of this stage that reach their sources are listed i
   of `server.open` (seconds; it reads the clock, so the row has `clock`). At most 1,024 connections, and 256 MiB of buffers in all: a larger `size` means fewer connections.
 * **The output queue of a connection is 65,536 bytes [read].** An answer is handed to the kernel at once; what the kernel does not take is queued, and **a connection whose queue would hold more than 64 KiB is
   closed**. So every answer of `ml-serve` is bounded to 60,000 bytes by construction (section 5.2) and the documents that could be larger are refused or reduced at start (sections 3.5 and 5.2).
-* **`tcp_listen` binds every address of the host [read].** `cancho` `crates/cancho-codegen/src/body/net.rs` (`bind`): the socket address is `INADDR_ANY`, the bound of the capability is the port alone, and there is no host argument.
-  **The pinned compiler cannot bind `127.0.0.1`.** Section 5.4 is the consequence.
+* **`tcp_listen` binds every address of the host, `tcp_listen_on` binds one [read].** `tcp_listen(net, port, backlog, flags)` is `INADDR_ANY`. `tcp_listen_on(net, host, port, backlog, flags)` (edition 9, `docs/native-sockets.md` section 12 of the
+  compiler repository, `alpibrusl/cancho` #503) takes the host as a string literal in dotted-quad text, so the host is a choice between literals in the source and never a value read at run time. Section 5.4 is the consequence.
 * **Numbers [read].** `std.json` parses strictly (RFC 8259: no `NaN`, no `Infinity`, no BOM, no trailing comma; a control character in a string, invalid UTF-8 and nesting past its depth limit are errors; the
   error carries the byte position) into a tape whose number nodes point at the number's text; cancho-schema's `integer` accepts a whole number written as a float (`150.0`, `1.5e2`) and its `number` accepts any JSON number.
   A duplicate key in an object is not an error of either (`json.get` finds one of them). Section 3 does not rely on either for the bytes of a cell.
@@ -74,7 +74,7 @@ are added; the other changes of this stage that reach their sources are listed i
 ## 2. The surface
 
 ```
-ml-serve --model-file MODEL [--root DIR] [--port N] [--token-file FILE | --no-token] [--max-body-bytes N] [--max-batch-rows N] [--idle-seconds N] [--max-bytes N]
+ml-serve --model-file MODEL [--root DIR] [--port N] [--bind loopback|all] [--token-file FILE] [--max-body-bytes N] [--max-batch-rows N] [--idle-seconds N] [--max-bytes N]
 ml-serve introspect | skill
 ```
 
@@ -87,8 +87,9 @@ family is (`toolbox.path`: below `--root`, no `..`, no symbolic link followed).
 | `--model-file` | the model file (required) | | |
 | `--root` | resolve `--model-file` and `--token-file` beneath this directory | none | |
 | `--port` | the TCP port (1 to 65535) | 8080 | 65535 |
-| `--token-file` | a file holding the bearer token (section 5.4) | none | |
-| `--no-token` | serve with no token, on every address of the host (section 5.4) | off | |
+| `--bind` | `loopback` listens on 127.0.0.1, `all` on 0.0.0.0 (section 5.4) | `loopback` | |
+| `--token-file` | a file holding the bearer token (section 5.4); required with `--bind all` | none | |
+| `--no-token` | accepted with the loopback bind, where it changes nothing; refused with `--bind all` (section 5.4) | off | |
 | `--max-body-bytes` | the largest request body | 1,048,576 | 4,194,304 |
 | `--max-batch-rows` | the most records in one batch | 100 | 1,000 |
 | `--idle-seconds` | a connection that makes no progress for this long is closed (the only deadline of a request) | 10 | 3,600 |
@@ -250,24 +251,44 @@ predictor itself (a column the CSV lacks) cannot happen: the server writes every
 
 ### 5.4 Where it listens, and the token
 
-**[read, 1.3]** `ml-serve` listens on every address of the host: the pinned `tcp_listen` has no way to ask for `127.0.0.1` and the capability's bound is the port alone. So there is no loopback default, and the
-rule "a bind that is not loopback requires a token" applies to **every** start: **`ml-serve` refuses to start (`serve.no-token`, exit 2) unless `--token-file FILE` or `--no-token` is given.**
-`--no-token` is an explicit acknowledgement that every host that can reach the port can call the model; it is for a machine whose firewall is the access control. A move of the compiler pin to a
-`tcp_listen` with a host argument is the change that lets a loopback default come back (section 11).
+**[read, 1.3]** `ml-serve` listens on **127.0.0.1** by default, so only the host it runs on can reach the port. `--bind loopback|all` chooses (default `loopback`): `loopback` calls
+`tcp_listen_on(net, "127.0.0.1", port, 1024, 0)` and `all` calls `tcp_listen_on(net, "0.0.0.0", port, 1024, 0)`, the two literal calls of `open_listener` in `tools/ml-serve/main.cho` (the only file at `edition 9`).
+The host cannot come from the command line: the compiler requires a literal, so `--bind` is a choice between two calls, and no flag takes an address.
+
+| `--bind` | token flags | result |
+|---|---|---|
+| `loopback` (the default) | none | starts, listens on 127.0.0.1, no token needed |
+| `loopback` | `--token-file FILE` | starts; every operation but `GET /health` needs the token |
+| `loopback` | `--no-token` | starts; the flag is accepted and changes nothing |
+| `all` | `--token-file FILE` | starts, listens on 0.0.0.0, the token is enforced |
+| `all` | none | refused: `serve.no-token`, exit 2 |
+| `all` | `--no-token` | refused: `args.conflict`, exit 2 |
+| a value other than `loopback` and `all` | | refused: `args.bad-value`, exit 2 |
+
+A server on every address is open to every host that can reach the port, so it requires a token (`serve.no-token`, with the repair in its hint: give `--token-file FILE`, or drop `--bind all`). `--token-file` together with `--no-token`
+is `args.conflict`. The start-up line on standard error names the address: `listening on 127.0.0.1:PORT` or `listening on 0.0.0.0:PORT`.
+
+**What the authority row proves, and what it does not [read, choice].** `main` keeps an unnarrowed `Net("")`, because one binary chooses between two literal calls, so the row stays `net_in("")` and `scripts/manifest.py`'s check passes.
+`net_in("")` does not say which address the server listens on: the row alone cannot prove loopback. The proof of the default is the socket test of gate S10 (`tests/conformance/test_serve_bind.py`): the default server accepts on 127.0.0.1
+and is refused (`ConnectionRefusedError`) on the machine's non-loopback address.
+
+**A stronger alternative, described and not built [choice for the maintainer].** A second binary whose `main` narrows its network capability to `Net("127.0.0.1:")` (any port on 127.0.0.1, compiler `docs/native-sockets.md` section 12.3). The compiler would then refuse at compile
+time every `tcp_listen` and every `tcp_listen_on` with another host, and `cancho authority` would print the loopback bound in the row (`net_in("127.0.0.1:")`), so the claim "this binary cannot listen on a network address" would be a fact of the row and not of a test.
+The price is two binaries (one without the `all` call, one with it), two rows in `manifests/` and one more entry in `scripts/check_bins.py`'s lists. Until the maintainer chooses it, the default is proved by the socket test only.
 
 With `--token-file`: the file is read once at start, below `--root` (a file of more than 1 MiB is `limit.input-too-large`); one trailing LF (and CR) is removed, and the rest is at most 4,096 bytes; an empty token, a token with a byte outside `!` to `~` (a space inside, a control byte,
 non-ASCII) is refused at start (`serve.token`). The token is held as data in `web.tokens` (`web.token`), compared by `web.guard` in constant time (cancho-web's `same_secret`), required by **every operation except `GET /health`**
 (`web.require`/`web.no_auth`; `web.next_undecided` must find none at start, else the server refuses to run, as cancho-web's `guarded` example does). The token is never logged and is not in `/model` or `/openapi.json`
-(the document names the scheme). Transport is plain HTTP: a bearer token on the wire is as private as the network is; TLS is for a proxy in front.
+(the document names the scheme). Transport is plain HTTP: a bearer token on the wire is as private as the network is, which is why `--bind all` is the form to put behind a proxy that terminates TLS, and loopback is the form for a proxy on the same host.
 
 ### 5.5 What is logged
 
-One line per request on standard error: `METHOD path status milliseconds` (`web.log_line`, which leaves the query string out), and the line `listening on PORT` at start. Never a body, a cell, a column
+One line per request on standard error: `METHOD path status milliseconds` (`web.log_line`, which leaves the query string out), and the line `listening on ADDRESS:PORT` at start (`127.0.0.1` or `0.0.0.0`). Never a body, a cell, a column
 value, a token or a header. **[choice]** The clock is read for the idle timeout of the loop and for the milliseconds of that line.
 
 ### 5.6 Refusals at start
 
-`ml-serve` reads the model once and does everything that can be refused before it listens: the command line (`args.*`), the path (`path.*`), the model file (`io.*`, `limit.input-too-large`, `ml.model.*`,
+`ml-serve` reads the model once and does everything that can be refused before it listens: the command line (`args.*`, including a `--bind` value other than `loopback` and `all`, and the token rule of 5.4: `serve.no-token`), the path (`path.*`), the model file (`io.*`, `limit.input-too-large`, `ml.model.*`,
 `ml.model.string-table`: a damaged file is refused with its tag and exit code, exactly the refusal of `ml describe`), the token (`serve.token`), a column name that is not UTF-8 (`serve.column-name`), the size of the
 documents (3.5), the port (`serve.listen`, exit 5, when the port is in use or needs a privilege). Exit codes follow `docs/cli.md`: usage 2, a missing input 3, a limit or a refused file 8, `serve.listen` 5.
 
@@ -281,12 +302,12 @@ Its row is derived by `cancho authority` and committed in `manifests/ml-serve.au
 
 | label | why |
 |---|---|
-| `net_in`, `conn_accept`, `conn_read`, `conn_write`, `poll` | listen on a port and serve the connections of the loop |
+| `net_in`, `conn_accept`, `conn_read`, `conn_write`, `poll` | listen on a port and serve the connections of the loop; the row is `net_in("")`, unnarrowed (5.4 says what that does not prove) |
 | `clock` | the idle timeout of `http.server` and the milliseconds of the log line (cancho-web's `users` example has the same two uses) |
 | `args` | the command line |
 | `fs_read("")`, `dir_read`, `file_read` | the model file and the token file, read below `--root` once at start; the predictor's signature keeps them for every call, and a call over bytes in memory opens nothing |
 | `io_write` | `introspect` and `skill` |
-| `err_write` | the usage line, `listening on PORT`, the access log |
+| `err_write` | the usage line, `listening on ADDRESS:PORT`, the access log |
 | `heap` | the working data |
 
 Not in the row: `file_write`, `dir_write`, `fs_write` (no write of any file), `exec` (no subprocess), `ffi` (no foreign code), `net_out`, `conc`, `env`, `io_read`. `tools.toml` has the ceiling `[ml-serve]` with the reason of every
@@ -336,6 +357,7 @@ The model file is read once at start (`fsio.read_whole`, below `--root`, bounded
 | A2 | `ml-serve` is built from the same sources: P4 extended | `scripts/check_bins.py` | a copied or missing file |
 | T1 | the flag table of `ml-serve` lists the flags the parser takes, `introspect` and `skill` answer, and each range is refused outside | `tests/conformance/test_serve.py` (`Start`) | a flag ignored (`--max-batch-rows`, `--max-body-bytes`) |
 | L1 | a load test: requests per second and latency percentiles at stated concurrency, the machine and N; no claim beyond the measurement | `scripts/bench_serve.py` | |
+| S10 | where it listens, on real sockets: the default and `--bind loopback` accept on 127.0.0.1 and are refused (`ConnectionRefusedError`) on the machine's non-loopback address, without a token; `--bind all` without `--token-file` and `--bind all --no-token` are refused at start; `--bind all --token-file` answers on both addresses and enforces the token on both; a token on loopback is enforced; a `--bind` value outside the two is `args.bad-value` | `tests/conformance/test_serve_bind.py` | the default flipped to `all`; `all` bound to loopback; the token rule dropped for `all`; the host literal changed; `--no-token` accepted with `all`; the old `tcp_listen` for loopback |
 | S9 | every refusal rule of the predictor has a status (5.3), and the lists in the source, the document and `ml introspect` agree | `tests/conformance/test_serve.py` (`Statuses`) | a rule moved between lists; a status changed |
 | G | every other fixture and golden file is unchanged | the existing suite | |
 
@@ -343,28 +365,39 @@ The mutants of the new code are `scripts/mutants_http.py` (counts in section 10)
 
 ## 10. Results
 
-Machine: Mac, arm64, Apple M4 Max, 16 cores, macOS 26.2, compiler `a4572ea`, Python 3.14.5; the machine was shared (load average 7 to 11 while the suites ran). `scripts/check.sh` exits 0 (the conformance suite: 408 tests in 850 seconds, none skipped).
+Machines: the Mac (arm64, Apple M4 Max, 16 cores, macOS 26.2, Python 3.14.5), `gram` (Linux x86-64, `taskset -c 0-6` for `scripts/check.sh`) and the Pi (Linux aarch64, the fingerprint only). Compiler `0207556b4029` on all three (`alpibrusl/cancho` main, the newest commit whose `ci` workflow succeeded and that contains #503, `tcp_listen_on`).
+
+`scripts/check.sh` on gram, one pass, exit 0 (`~/Workspace/xplat-ml/loop-check.log`, 57 min 9 s elapsed, the full `ci/requirements-full.txt` environment): 520 conformance tests pass and none is skipped. On the Mac the modules that import without numpy (`scripts/run_conformance.py --no-oracles`, an environment with `ci/requirements-fast.txt` only) pass: 31 modules, 484 tests, 0 failed, and the six modules that need numpy are reported as not run. The load test is not repeated (below).
 
 | gate | result | script |
 |---|---|---|
-| W1 | three dependencies pinned (`web` 5f404a7, `schema` 59a7028, `server` a4572ea), none copied; `CHECK_REMOTE=1` finds the three stores on GitHub and that the `web` store requires the pinned `schema` rev; 9 mutants refused | `scripts/check_web_pin.py` |
+| W1 | three dependencies pinned (`web` 5f404a7, `schema` 59a7028, `server` 0207556), none copied; the `server` store is the compiler repository at the compiler pin | `scripts/check_web_pin.py` |
 | W2 | `ml` and `ml-predict` built from a copy without the three blocks and without the `ml-serve` bin are the bytes of the ones built with them; a flipped byte is refused | `scripts/check_web_pin.py --bins` |
 | S1 | 19 models x their inputs: 118 model/input pairs, 4,962 rows and 7,668 values compared as text, one request each and the whole input as a batch; 29 rows refused for a category the model lists in full, and the command line agrees on each (it accepts, or refuses with `ml.input.unknown-category` under `unknown=refuse`); 20 rows not sendable (an empty cell for a model that takes none) | `tests/conformance/test_serve_bytes.py` |
-| S2 | 43 end-to-end tests over real sockets plus the status table (S9) and the authority tests: every endpoint, every refusal, keep-alive, 7 pipelined requests, a request in one-byte writes, a chunked body, the token, the refusals at start, the log, a connection through the machine's non-loopback address (the bind is every address) | `tests/conformance/test_serve.py` |
+| S2 | 46 tests: the end-to-end tests over real sockets (every endpoint, every refusal, keep-alive, pipelined requests, a request in one-byte writes, a chunked body, the token, the refusals at start, the log) and the status table (S9); the authority tests are 18 in their own module | `tests/conformance/test_serve.py` |
+| S10 | 10 tests over real sockets, none skipped, on the Mac (non-loopback address 192.168.1.165) and on gram (192.168.1.82): the default and `--bind loopback` accept on 127.0.0.1 and are refused (`ConnectionRefusedError`) on the non-loopback address; the token is enforced on loopback when given; `--bind all` without a token is `serve.no-token`, with `--no-token` `args.conflict`, a bad value `args.bad-value`; `--bind all --token-file` answers on both addresses and enforces the token on both; `--bind` is in `introspect` with the default `loopback` | `tests/conformance/test_serve_bind.py` |
 | S3 | 18,111 generated and adversarial numbers through `serve-check`: int, 976 rendered and 17,135 refused as `Decimal` says; dec at 6 scales; float 18,031 rendered (same double and as many digits as `repr`) and 80 refused; then 4,500 requests: 1,654 answered as the command line answers on Python's rendering, 2,842 refused with 422, 4 refused because the model's answer is infinite (`ml.predict.non-finite`) | `tests/conformance/test_serve_json.py` |
-| S4 | 3,001 cases (random bytes, flips, truncations, edits, hostile paths, headers, versions, chunked and JSON bodies) on 48 threads: no trap, no hang, every case answered or closed; resident set 2,368 KiB before and 4,496 KiB after; 252 of 400 simultaneous connections served at the default body limit; a check run by hand and not kept (100,000 requests of each of five kinds) left the resident set flat after the first 25,000 (linear 2,960 KiB, forest with null 5,232 KiB, a refusal 2,512 KiB) | `tests/conformance/test_serve_fuzz.py` |
-| O1 | seven documents checked in (`docs/serving/*.openapi.json`), each served by a process, equal to its file and valid for `openapi-spec-validator` | `scripts/gate_serve_openapi.py` |
-| O2 | Schemathesis 4.31.1, seed 20261015, 1,000 examples for each operation, six fixtures: 2,121 to 2,155 cases for each, 0 failures. Installed in `build/venv` of this clone. `positive_data_acceptance` is not run for the models with a `dec` column or a category with no `enum`, for the reason in 3.4 and 11 (an earlier run without the exclusion found exactly those two disagreements) | `scripts/gate_serve_schemathesis.py` |
-| A1 | the derived row is `args, clock, conn_accept, conn_read, conn_write, dir_read, err_write, file_read, fs_read(""), heap, io_write, net_in(""), poll`, bounded, no foreign symbol, within the exact ceiling; a row with `file_write`, `dir_write`, `conc`, `net_out`, `ffi`, `exec`, `env`, `io_read` or `fs_write` added fails, and so does `net_in` or `clock` for `ml` and `ml-predict` | `tests/conformance/test_authority.py`, `scripts/manifest.py --check` |
+| S4 | 3,001 cases (random bytes, flips, truncations, edits, hostile paths, headers, versions, chunked and JSON bodies) on 48 threads: no trap, no hang, every case answered or closed; 252 of 400 simultaneous connections served at the default body limit; the resident set does not grow (the figures are in the log of the run) | `tests/conformance/test_serve_fuzz.py` |
+| O1 | seven documents checked in (`docs/serving/*.openapi.json`), each served by a process, equal to its file and valid for `openapi-spec-validator` (7 of 7, `ok` for each). The seven files name the SHA-256 of a model file, which moves with the pin (10.1) | `scripts/gate_serve_openapi.py` |
+| O2 | Schemathesis 4.31.1, seed 20261015, six fixtures, run on gram (not skipped): the default of the script (100 examples for each operation) gives 321 to 355 cases for each fixture, 0 failures; 1,000 examples for each operation gives 2,121 to 2,155 cases for each, 0 failures. `positive_data_acceptance` is not run for the models with a `dec` column or a category with no `enum`, for the reason in 3.4 and 11 | `scripts/gate_serve_schemathesis.py` |
+| A1 | the derived row is `args, clock, conn_accept, conn_read, conn_write, dir_read, err_write, file_read, fs_read(""), heap, io_write, net_in(""), poll` (the same for either `--bind`: 5.4), bounded, no foreign symbol, within the exact ceiling; a row with `file_write`, `dir_write`, `conc`, `net_out`, `ffi`, `exec`, `env`, `io_read` or `fs_write` added fails, and so does `net_in` or `clock` for `ml` and `ml-predict` | `tests/conformance/test_authority.py`, `scripts/manifest.py --check` |
 | A2 | the list of `ml-serve` is the list of `ml-predict` with its own directories; 11 mutants of the lists refused | `scripts/check_bins.py` |
-| G | every fixture and golden file of the other binaries unchanged | the existing suite |
+| G | the fixtures and the records of the other binaries: the conformance suite and the four records (`golden_describe.json`, `golden_constant.json`, `golden_planned.json`, `golden_numeric.json`) pass with the digests of this pin (10.1) | the existing suite |
 
-**Mutants** (`scripts/mutants_http.py`, on a frozen copy of the tree): 74 patterns, 71 killed, 3 survive and are explained: `s-answer-limit` (the check of 60,000 bytes is a backstop that no request reaches),
-`s-unknown-count-dropped` (a category the model has not seen is refused by its `enum` before the predictor counts it) and `c-an-empty-string-is-text` (two quotes and nothing are one empty cell to the reader).
-A first run left six alive; four were killed by tests added for them (the pointer of an error the server makes, a CR LF in a category, `model_sha256` in a refusal, and the two others explained above).
-The baseline passes on the unchanged copy.
+### 10.1 The compiler pin moves no model byte
 
-**Load test** (`scripts/bench_serve.py --n 2000 --repeat 3`, best of 3 by throughput; closed loop, one keep-alive connection per Python client thread; Apple M4 Max, load average 7.2 before and 11.3 after; the Python client takes
+The model file holds the compiler pin it was built with (informational, `docs/cli.md` section 4), so the digest of a model file moves with the text of the pin and with nothing else the compiler change does. The cross-platform fingerprint (`scripts/xplat_check.py`, 88 lines: the model file, `predict` and `eval` of every model kind at 1 and 8 threads on the bundled data) shows it:
+
+* with the compiler at `0207556` and the pin text `a4572ea` in `generated/ml/built.cho` the 88 lines are the 88 lines of the golden written by the compiler at `a4572ea` (measured on the Mac on the merged tree);
+* with the pin text of this tree the 66 lines of `predict` and `eval` and of the exit statuses are the same and the 22 lines of `model-file` differ, because the pin text is inside the file; the Mac, gram and the Pi (`ml` built there with the compiler at `0207556`) print the same 88 lines, which are the committed `docs/bench/xplat_fp.txt`;
+* the records `golden_describe.json`, `golden_constant.json`, `golden_planned.json` and `golden_numeric.json` (97, 274, 60 and 19 cases), the seven `docs/serving/*.openapi.json` and the digest pinned in `test_honesty.py` carry model-file digests and are re-recorded with the pin text, in one commit; with the compiler at `0207556` and the pin text `a4572ea`, the generators print the old `golden_constant.json` (97 of 97 cases equal) and, for the numeric and planned records, every status and every written file of the old records (274 and 60 cases); the 8 numeric and 21 planned answers that differ are the ones that gained `split.spec`, whose answers `test_cat_baseline.py` and `test_planned_baseline.py` pinned beside the records and the records now hold.
+
+**Stores.** The 23 stores are published with the new compiler and are the committed bytes (`docs/stores.md` section 7.1).
+
+**Mutants** (`scripts/mutants_http.py`, on a frozen copy of the tree, on gram with the compiler at `0207556`, 26 min): 86 patterns, 82 killed and 4 survive, each explained in the script: `s-answer-limit` (the check of 60,000 bytes is a backstop that no request reaches), `s-unknown-count-dropped` (a category the model has not seen is refused by its `enum` before the predictor counts it), `s-non-finite-guard-dropped` (the predictor refuses a row that is not finite before a cell is written) and `c-an-empty-string-is-text` (two quotes and nothing are one empty cell to the reader). The unmutated copy passes. `scripts/mutants_serve.py` (the serving suite, 66 min): 59 killed of 59, the unmutated copy passes.
+The ten patterns of the bind and the token rule (S10) are all killed by `test_serve_bind.py`: `m-all-needs-no-token`, `m-all-accepts-no-token`, `m-the-token-rule-is-everywhere`, `b-the-default-is-all`, `b-all-is-the-default-in-the-code`, `b-all-binds-loopback`, `b-loopback-binds-all`, `b-the-host-literal-is-another-loopback-address`, `b-the-start-up-line-lies` and `b-the-old-call` (the old `tcp_listen` for the loopback case). `b-all-binds-loopback` and `b-loopback-binds-all` need a non-loopback address on the machine to tell the two binds apart; gram has one.
+
+**Load test**, not repeated: the figures below were measured with the compiler at `a4572ea` and a server that listened on every address, and no claim about speed is made for the pin or for the loopback bind (`scripts/bench_serve.py --n 2000 --repeat 3`, best of 3 by throughput; closed loop, one keep-alive connection per Python client thread; Apple M4 Max, load average 7.2 before and 11.3 after; the Python client takes
 part of the time, the server is one thread, and the figures say nothing beyond this client on this machine):
 
 | scenario | clients | requests | req/s | p50 ms | p90 ms | p99 ms | max ms |
@@ -386,7 +419,7 @@ With four clients the p50 of the forest is four times the time of a request: the
 
 ## 11. Not done, limits
 
-* **Reload** (restart only). **A loopback-only bind** (the pinned compiler has none: `tcp_listen` is `INADDR_ANY`, 5.4). **A per-request deadline** (the loop has none). **TLS.** **A listing of every refusal in problem+json:** the 400, 413 and
+* **Reload** (restart only). **A binary that cannot listen on a network address at all** (a `main` with `Net("127.0.0.1:")`, 5.4: described, not built). **An address chosen on the command line** (the compiler takes a literal host only). **A per-request deadline** (the loop has none). **TLS.** **A listing of every refusal in problem+json:** the 400, 413 and
   431 of the loop and the 405, 401 and 403 of cancho-web are theirs (5.3).
 * **Per-column nullability** for a model with an imputing plan: `describe` says `needs_impute` and not which columns, so no column takes `null` (3.1).
 * **What the document cannot state.** cancho-schema at the pin has no bound or multiple for a `number` and no pattern but one for U+0000, so the document says `number` for a `dec` column whose cells take at most its

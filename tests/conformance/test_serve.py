@@ -381,13 +381,13 @@ class Transport(Common):
         self.post("/predict", dict(RECORD, **{marker: 1}))
         self.srv.request("GET", "/health?token=" + marker)
         log = self.srv.stderr()
-        self.assertIn("listening on %d" % self.srv.port, log)
+        self.assertIn("listening on 127.0.0.1:%d" % self.srv.port, log)
         self.assertIn("POST /predict 422", log)
         self.assertNotIn(marker, log)
         self.assertNotIn("0.5", log)
         self.assertNotIn(self.desc["file"]["sha256"], log)
         for line in log.splitlines():
-            self.assertRegex(line, r"^(listening on \d+|[A-Z]+ /\S* \d{3} \d+ms)$")
+            self.assertRegex(line, r"^(listening on 127\.0\.0\.1:\d+|[A-Z]+ /\S* \d{3} \d+ms)$")
 
 
 class Kinds(unittest.TestCase):
@@ -652,11 +652,12 @@ class Start(unittest.TestCase):
         out = p.stdout.decode()
         return p.returncode, (json.loads(out.splitlines()[0]) if out.strip() else None), p.stderr.decode()
 
-    def test_no_token_flag_is_refused(self):
-        code, d, _ = self.start("--root", str(SB.dir), "--model-file", "linear.cml")
-        self.assertEqual((code, d["error"]["rule"]), (2, "serve.no-token"))
+    def test_token_file_and_no_token_conflict(self):
         code, d, _ = self.start("--root", str(SB.dir), "--model-file", "linear.cml", "--no-token", "--token-file", "linear.cml")
         self.assertEqual((code, d["error"]["rule"]), (2, "args.conflict"))
+        # a server on every address needs a token (the sockets are tested in test_serve_bind.py)
+        code, d, _ = self.start("--root", str(SB.dir), "--model-file", "linear.cml", "--bind", "all")
+        self.assertEqual((code, d["error"]["rule"]), (2, "serve.no-token"))
 
     def test_the_token_file(self):
         for text, rule in ((b"", "serve.token"), (b"\n", "serve.token"), (b"has space\n", "serve.token"), (b"a" * 5000, "serve.token"), (b"caf\xc3\xa9\n", "serve.token"), (b"tab\there\n", "serve.token")):
@@ -705,7 +706,7 @@ class Start(unittest.TestCase):
         p = subprocess.run([SERVE_BIN, "introspect"], capture_output=True)
         d = json.loads(p.stdout)
         self.assertEqual(d["tool"], "ml-serve")
-        self.assertEqual([f["name"] for f in d["flags"]], ["--root", "--model-file", "--port", "--token-file", "--no-token", "--max-body-bytes", "--max-batch-rows", "--idle-seconds", "--max-bytes", "--max-out-of-range"])
+        self.assertEqual([f["name"] for f in d["flags"]], ["--root", "--model-file", "--port", "--bind", "--token-file", "--no-token", "--max-body-bytes", "--max-batch-rows", "--idle-seconds", "--max-bytes", "--max-out-of-range"])
         self.assertIn("serve.no-token", [r["rule"] for r in d["rules"]])
         p = subprocess.run([SERVE_BIN, "skill"], capture_output=True)
         self.assertEqual(p.returncode, 0)
@@ -722,25 +723,6 @@ class Start(unittest.TestCase):
             self.assertEqual(r.status, 200, r)
         finally:
             s.stop()
-
-    def test_listens_on_every_address(self):
-        """docs/serving-http.md 5.4: the pinned compiler binds every address, so the token rule applies to every start (this connects through the machine's own non-loopback address)."""
-        host = socket.gethostbyname(socket.gethostname())
-        if host.startswith("127."):
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("10.255.255.255", 1))
-                host = s.getsockname()[0]
-                s.close()
-            except OSError:
-                self.skipTest("no non-loopback address")
-        if host.startswith("127."):
-            self.skipTest("no non-loopback address")
-        with Server(SB.dir, "linear.cml") as srv:
-            c = socket.create_connection((host, srv.port), timeout=5)
-            c.sendall(Conn.build("GET", "/health"))
-            self.assertIn(b"200", c.recv(100))
-            c.close()
 
 
 if __name__ == "__main__":

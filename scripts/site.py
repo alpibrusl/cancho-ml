@@ -234,11 +234,17 @@ HTTP_DEMOS = [
 ]
 
 
-def http_request(port, method, path, body):
+HTTP_TOKEN = "demo-token"
+HTTP_ALL_PORT_SHOWN = 8081
+
+
+def http_request(port, method, path, body, token=None):
     """The response as curl -i prints it (status line, headers, a blank line, the body), with the line ends of a terminal: the head, and the body of the length it says."""
     s = socket.create_connection(("127.0.0.1", port), timeout=10)
     try:
         head = "%s %s HTTP/1.1\r\nHost: localhost:%d\r\nAccept: */*\r\n" % (method, path, port)
+        if token is not None:
+            head += "Authorization: Bearer %s\r\n" % token
         if body is not None:
             head += "Content-Type: application/json\r\nContent-Length: %d\r\n" % len(body.encode())
         s.sendall((head + "\r\n").encode() + (body or "").encode())
@@ -275,7 +281,7 @@ def run_http_demos(binary, tmp):
     port = s0.getsockname()[1]
     s0.close()
     log = open(Path(tmp) / "serve.log", "w+")
-    proc = subprocess.Popen([str(serve), "--model-file", "pets.ml", "--no-token", "--port", str(port)], cwd=tmp, stdout=subprocess.PIPE, stderr=log, stdin=subprocess.DEVNULL,
+    proc = subprocess.Popen([str(serve), "--model-file", "pets.ml", "--port", str(port)], cwd=tmp, stdout=subprocess.PIPE, stderr=log, stdin=subprocess.DEVNULL,
                             env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
     out = {}
     try:
@@ -289,7 +295,7 @@ def run_http_demos(binary, tmp):
             raise Drift("ml-serve did not listen")
         log.seek(0)
         started = log.read().strip().replace(str(port), str(HTTP_PORT_SHOWN))
-        out["h_start"] = ("ml-serve --model-file pets.ml --no-token --port %d &" % HTTP_PORT_SHOWN, started, 0)
+        out["h_start"] = ("ml-serve --model-file pets.ml --port %d &" % HTTP_PORT_SHOWN, started, 0)
         for key, typed, method, path, body, shape in HTTP_DEMOS:
             head, text = http_request(port, method, path, body)
             status = int(head.split()[1])
@@ -306,6 +312,48 @@ def run_http_demos(binary, tmp):
             if status not in (200, 422):
                 raise Drift("the HTTP demo %s answered %d" % (key, status))
             out[key] = (typed, shown, status)
+        out.update(run_all_demo(serve, tmp))
+    finally:
+        proc.terminate()
+        proc.wait(5)
+        if proc.stdout:
+            proc.stdout.close()
+        log.close()
+    return out
+
+
+def run_all_demo(serve, tmp):
+    """The form for a network: `--bind all --token-file`, started on a free port (the text shows 8081); a request without the token is a 401, with it the answer."""
+    (Path(tmp) / "token.txt").write_text(HTTP_TOKEN + "\n")
+    s0 = socket.socket()
+    s0.bind(("127.0.0.1", 0))
+    port = s0.getsockname()[1]
+    s0.close()
+    log = open(Path(tmp) / "serve-all.log", "w+")
+    proc = subprocess.Popen([str(serve), "--model-file", "pets.ml", "--bind", "all", "--token-file", "token.txt", "--port", str(port)], cwd=tmp, stdout=subprocess.PIPE, stderr=log,
+                            stdin=subprocess.DEVNULL, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
+    out = {}
+    try:
+        for _ in range(100):
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            raise Drift("ml-serve --bind all did not listen")
+        log.seek(0)
+        out["h_all_start"] = ("ml-serve --model-file pets.ml --bind all --token-file token.txt --port %d &" % HTTP_ALL_PORT_SHOWN, log.read().strip().replace(str(port), str(HTTP_ALL_PORT_SHOWN)), 0)
+        head, text = http_request(port, "GET", "/model", None)
+        if int(head.split()[1]) != 401:
+            raise Drift("the demo without the token answered %s, not 401" % head.split()[1])
+        out["h_all_denied"] = ("curl -s -i localhost:%d/model" % HTTP_ALL_PORT_SHOWN, head + "\n\n" + text, 0)
+        head, text = http_request(port, "GET", "/model", None, token=HTTP_TOKEN)
+        if int(head.split()[1]) != 200:
+            raise Drift("the demo with the token answered %s, not 200" % head.split()[1])
+        d = json.loads(text)
+        out["h_all_ok"] = ("curl -s -H 'Authorization: Bearer %s' localhost:%d/model" % (HTTP_TOKEN, HTTP_ALL_PORT_SHOWN),
+                           json.dumps({k: d[k] for k in ("model", "task", "classes")}, ensure_ascii=False, separators=(",", ":")), 0)
     finally:
         proc.terminate()
         proc.wait(5)
@@ -562,7 +610,7 @@ def hflow_items(ctx):
         typed, out, status = h[key]
         return (typed, "\n".join(cut(l, width) for l in out.splitlines()), 0, None)
 
-    return [("# ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080)", None, 0, None),
+    return [("# ml-serve reads the model file once and answers over HTTP, one request at a time (the demo runs on a free port; the text shows 8080). With no flag about the address it listens on 127.0.0.1 and needs no token", None, 0, None),
             one("h_start"),
             ("# liveness, and the SHA-256 of the model file being served", None, 0, None),
             one("h_health"),
@@ -574,7 +622,11 @@ def hflow_items(ctx):
             one("h_bad", 260),
             ("# what the model requires of a caller (excerpt), and the OpenAPI 3.1 document made from the same columns (excerpt)", None, 0, None),
             one("h_model"),
-            one("h_openapi")]
+            one("h_openapi"),
+            ("# the form for a network: every address of the host, and a token (a request without it is a 401; the token is the only line of the file)", None, 0, None),
+            one("h_all_start"),
+            one("h_all_denied"),
+            one("h_all_ok")]
 
 
 def render(items, html_mode):

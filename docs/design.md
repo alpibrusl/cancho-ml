@@ -2,7 +2,7 @@
 
 **Status: draft for the maintainer's review. Not code.** Every claim is tagged:
 
-* **[read]** read from a document of the pinned compiler (`cancho` `a4572ea`) or of cancho-table; not re-measured here.
+* **[read]** read from a document of the compiler (`cancho` `a4572ea` when the design was written; the pin is `0207556`) or of cancho-table; not re-measured here.
 * **[choice]** a decision, with the alternative named; the maintainer can overturn it.
 * **[open]** not decided; the section says what decides it.
 * **[M0]** will be settled by a number from `docs/spikes.md`; nothing is claimed until it is in that file.
@@ -66,7 +66,7 @@ asked for upstream only with a measured reproducer (section 11).
 **The type is a tensor descriptor, with matrices as the rank-2 case.** `offset`, `rank`, `shape[0..rank)`, `strides[0..rank)`,
 all plain `int`s; the elements live in a separate `[float]` that every kernel takes beside the descriptor. It is a descriptor and
 not a view that holds the data because cancho structs cannot hold reference fields, as reported by lexsys-gpu **[read,
-cancho#251; not re-checked at `a4572ea`]**. Consequences:
+cancho#251; not re-checked at `0207556`]**. Consequences:
 
 * `transpose`, `reshape` (when contiguous), slicing, `row`/`column` and broadcasting (stride 0) are descriptor edits: no copy,
   no kernel. A matrix is `rank = 2`, row-major strides `(cols, 1)`.
@@ -243,7 +243,7 @@ CI (`tools.toml`, `manifests/`). The expected rows **[choice]**:
 |---|---|---|
 | `ml` (fit, predict, eval, introspect, skill) | read files named on the command line (`file_read`, `fs_read("")`, `dir_read`); write the model and the log it is told to, beneath a directory it opened (`dir_write`, `file_write`: no `fs_write`, no path write); heap; `conc` (`spawn`): in the row since W1, because `fit --threads N` calls `lib/linalg/par.cho`; its reason is in `tools.toml` `[ml.reasons]` and `docs/wiring.md` section 6 | network, exec, ffi, clock, environment beyond arguments, standard input |
 | `ml-predict` (M10) | read a model file, read an input; heap | everything else, including writes other than standard output and `conc` if single-threaded |
-| `ml-serve` (M12, `docs/serving-http.md`) | read a model file and a token file once; listen, accept, read and write connections, wait on them, read the clock; heap | every write, `conc`, `exec`, `ffi`, `net_out`, standard input |
+| `ml-serve` (M12, `docs/serving-http.md`) | read a model file and a token file once; listen, accept, read and write connections, wait on them, read the clock; heap. The row is `net_in("")` for either `--bind`: one binary chooses between two literal `tcp_listen_on` calls, so the row does not say which address it listens on, and the loopback default is proved by a socket test (`docs/serving-http.md` section 5.4) | every write, `conc`, `exec`, `ffi`, `net_out`, standard input |
 
 A change to a binary's authority fails CI until the manifest changes in the same diff (M9's gate, built: `scripts/manifest.py
 --check`, `tools.toml`, `manifests/ml.authority.json`; the derived row of the CLI slice was the first, without `conc`; W1 added `conc` deliberately, `docs/cli.md`
@@ -370,6 +370,15 @@ The library also answers, with its own codes in its band, tags that exist above:
 | `ml.input.categorical-not-encoded` | 8 | a column named by `--cat` is read by no step of the plan (since stage 2; at stage 1 no step could); names, category counts and the SHA-256 of the canonical vocabulary dump in `detail` | none: an `encode`, `freq` or `hash` step, or `--drop` |
 | `ml.model.string-table` | 8 | the string table of a model file is damaged, passes a bound of `docs/stringtable.md` section 4, or disagrees with the steps, the plan or the schema of its own file (`reason`, `step` and `section` in `detail`) | none: refit |
 | `ml.limit.string-table` | 8 | a fit would write a string table over 131,072 strings, 8 MiB of string bytes or 12 MiB (`what`, `size`, `max` in `detail`) | none: fewer or shorter categories, or a `hash` step |
+
+*Where `ml-serve` listens, and the token (`docs/serving-http.md` sections 5.4 and 5.6; `tools/ml-serve/sspec.cho`, `tools/ml-serve/main.cho`; refused before the port is bound):*
+
+| tag | exit | when | repair |
+|---|---|---|---|
+| `serve.no-token` | 2 | `--bind all` without `--token-file`: on every address of the host any host that can reach the port can call the model | `--token-file FILE`, or drop `--bind all` to listen on 127.0.0.1 only |
+| `args.conflict` | 2 | `--bind all` with `--no-token`, or `--token-file` with `--no-token` | drop `--no-token` |
+| `args.bad-value` | 2 | `--bind` is neither `loopback` nor `all` | `--bind loopback` or `--bind all` |
+| `serve.token` | 8 | the token file is empty, over 4,096 bytes, or holds a byte outside `!` to `~` | write the token alone in the file |
 
 *A prediction that is not a finite number (`docs/nonfinite.md`; `tools/ml/spec.tmpl`, `lib/core/refuse.cho` code 21, one fixture in `tests/conformance/fixtures.py`):*
 
