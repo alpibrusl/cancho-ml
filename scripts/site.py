@@ -586,7 +586,7 @@ def catflow_items(ctx):
 
 def jflow_items(ctx):
     """JSON lines: fit with the columns declared, predict with other keys and another order, standard input, a key missing (and the repair, run), a string where a number is read."""
-    return [("# houses.jsonl: one object a line. --fields declares the columns, in the order of the table. The model file is the same bytes as the one fitted from the CSV", None, 0, None),
+    return [("# houses.jsonl: one object a line. --fields declares the columns, in the order of the table. The model file is the one fitted from the CSV except the identity of the training file in its provenance section (its SHA-256 and size)", None, 0, None),
             item(ctx, "j_fit"),
             ("# predict reads the columns of the model file by key: any order, and keys it does not read (a nested object, a note) are ignored", None, 0, None),
             item(ctx, "j_predict"),
