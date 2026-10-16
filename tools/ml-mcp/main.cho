@@ -1,0 +1,359 @@
+edition 5;
+
+// `ml-mcp` -- cancho-ml over the Model Context Protocol (docs/mcp.md). This is its entry point: it parses its own flags, then reads one JSON-RPC message per line from standard input,
+// answers each on standard output and runs the tool a `tools/call` names with the code of `ml` in this process. The protocol revision is 2025-06-18.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import mcp.call;
+import mcp.mspec;
+import mcp.rpc;
+import mcp.tools;
+import ml.app;
+import ml.argv;
+import ml.paths;
+import ml.spec;
+import toolbox.built;
+import toolbox.cli;
+import toolbox.describe;
+import toolbox.fail;
+import toolbox.out;
+
+fn built() -> [] describe.Built {
+    return describe.Built { authority: built.authority(), schema: built.schema(), compiler: built.compiler() };
+}
+
+fn instructions() -> [] &static [byte] {
+    return "cancho-ml: fit, apply and score models on CSV files. Call describe on a model file to learn the columns it requires, predict with a file or with inline records, and read the rule, the exit code and the repair of a refusal in structuredContent. Paths are relative to the server's root. The server writes nothing unless it was started with --allow-write.";
+}
+
+// One line of standard input, up to `cap` bytes: (the line without its line feed and carriage return, status). Status 0 a line, 1 a line longer than `cap` (discarded as it arrived: only
+// the first `cap` bytes were kept and the rest was read and dropped), 2 the end of the input with nothing read, 3 the end of the input in the middle of a line (the line is what was read).
+fn read_line[&h, &i](heap: &!h Heap, io: &!i Io, cap: int) -> [heap, io_read] (buffer.Buffer, int) {
+    var data = buffer.empty(heap, 4096);
+    var n = 0;
+    var over = false;
+    var status = 0;
+    var going = true;
+    // a carriage return is held back until the next byte shows whether it ends the line
+    var held_cr = false;
+    while going {
+        let c = getchar(io);
+        if c < 0 {
+            going = false;
+            if over {
+                status = 1;
+            } else if n == 0 && !held_cr {
+                status = 2;
+            } else {
+                status = 3;
+            }
+        } else if c == 10 {
+            going = false;
+            if over {
+                status = 1;
+            }
+        } else {
+            if held_cr {
+                held_cr = false;
+                if n >= cap {
+                    over = true;
+                } else {
+                    data = buffer.push(heap, data, byte_of(13));
+                    n = n + 1;
+                }
+            }
+            if c == 13 {
+                held_cr = true;
+            } else if n >= cap {
+                over = true;
+            } else {
+                data = buffer.push(heap, data, byte_of(c));
+                n = n + 1;
+            }
+        }
+    }
+    return (data, status);
+}
+
+// the result of initialize
+fn initialize_result[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 512);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "protocolVersion");
+    w = json.put_string(heap, w, tools.revision());
+    w = json.put_key(heap, w, "capabilities");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "tools");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "listChanged");
+    w = json.put_bool(heap, w, false);
+    w = json.end_object(heap, w);
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "serverInfo");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "name");
+    w = json.put_string(heap, w, "ml-mcp");
+    w = json.put_key(heap, w, "title");
+    w = json.put_string(heap, w, "cancho-ml");
+    w = json.put_key(heap, w, "version");
+    w = json.put_string(heap, w, app.version());
+    w = json.end_object(heap, w);
+    w = json.put_key(heap, w, "instructions");
+    w = json.put_string(heap, w, instructions());
+    w = json.end_object(heap, w);
+    return json.finish(w);
+}
+
+// The answer to a message that parsed as an object: the response line (empty for a notification) and whether the server is now initialised
+fn dispatch[&h, &f, &l, &t, &r](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], allow_write: bool, line: &l [byte], tape: &t [int], init: bool) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] (buffer.Buffer, bool) {
+    let jv = json.get(line, tape, 0, "jsonrpc");
+    let idn = json.get(line, tape, 0, "id");
+    let mn = json.get(line, tape, 0, "method");
+    let id = rpc.id_token(heap, line, tape, idn);
+    var null_id = true;
+    borrow id as &ir in {
+        null_id = bytes.equal(buffer.bytes(ir), "null");
+    }
+    var response = buffer.empty(heap, 1);
+    var now = init;
+    if jv < 0 || !json.is_string(tape, jv) || !json.string_equals(line, tape, jv, "2.0") {
+        borrow id as &ir in {
+            buffer.drop(heap, response);
+            response = rpc.error_response(heap, buffer.bytes(ir), rpc.invalid_request(), "jsonrpc must be the string 2.0", "/jsonrpc");
+        }
+    } else if mn < 0 {
+        // a response from the client, or something else: a response is ignored, anything else is not a message
+        if json.get(line, tape, 0, "result") < 0 && json.get(line, tape, 0, "error") < 0 {
+            buffer.drop(heap, response);
+            response = rpc.error_response(heap, "null", rpc.invalid_request(), "a message has a method", "/method");
+        }
+    } else if !json.is_string(tape, mn) {
+        buffer.drop(heap, response);
+        response = rpc.error_response(heap, "null", rpc.invalid_request(), "method is not a string", "/method");
+    } else if idn < 0 {
+        // a notification: nothing is answered, whatever it is
+        if json.string_equals(line, tape, mn, "notifications/initialized") {
+            now = true;
+        }
+    } else if null_id {
+        buffer.drop(heap, response);
+        response = rpc.error_response(heap, "null", rpc.invalid_request(), "id is a string or an integer", "/id");
+    } else {
+        borrow id as &ir in {
+            let idb = buffer.bytes(ir);
+            let params = json.get(line, tape, 0, "params");
+            if json.string_equals(line, tape, mn, "initialize") {
+                let pv = json.get(line, tape, params, "protocolVersion");
+                if params < 0 || !json.is_object(tape, params) || pv < 0 || !json.is_string(tape, pv) {
+                    buffer.drop(heap, response);
+                    response = rpc.error_response(heap, idb, rpc.invalid_params(), "initialize needs protocolVersion, capabilities and clientInfo", "/params");
+                } else {
+                    let rbody = initialize_result(heap);
+                    borrow rbody as &rr in {
+                        buffer.drop(heap, response);
+                        response = rpc.result_response(heap, idb, buffer.bytes(rr));
+                    }
+                    buffer.drop(heap, rbody);
+                    now = true;
+                }
+            } else if json.string_equals(line, tape, mn, "ping") {
+                buffer.drop(heap, response);
+                response = rpc.result_response(heap, idb, "{}");
+            } else if !init {
+                buffer.drop(heap, response);
+                response = rpc.error_response(heap, idb, rpc.not_initialized(), "send initialize first", "");
+            } else if json.string_equals(line, tape, mn, "tools/list") {
+                var cursor_ok = true;
+                if params >= 0 {
+                    let c = json.get(line, tape, params, "cursor");
+                    if !json.is_object(tape, params) || (c >= 0 && !(json.is_string(tape, c) && json.string_length(line, tape, c) == 0)) {
+                        cursor_ok = false;
+                    }
+                }
+                if !cursor_ok {
+                    buffer.drop(heap, response);
+                    response = rpc.error_response(heap, idb, rpc.invalid_params(), "there is one page: cursor is absent or empty", "/params/cursor");
+                } else if allow_write {
+                    buffer.drop(heap, response);
+                    response = rpc.result_response(heap, idb, tools.list_write());
+                } else {
+                    buffer.drop(heap, response);
+                    response = rpc.result_response(heap, idb, tools.list_readonly());
+                }
+            } else if json.string_equals(line, tape, mn, "tools/call") {
+                if params < 0 || !json.is_object(tape, params) {
+                    buffer.drop(heap, response);
+                    response = rpc.error_response(heap, idb, rpc.invalid_params(), "tools/call needs params with a name and arguments", "/params");
+                } else {
+                    buffer.drop(heap, response);
+                    response = call.tool_call(heap, fs, root, allow_write, line, tape, params, idb);
+                }
+            } else {
+                buffer.drop(heap, response);
+                response = rpc.error_response(heap, idb, rpc.method_not_found(), "the server has tools/list, tools/call, ping and initialize", "/method");
+            }
+        }
+    }
+    buffer.drop(heap, id);
+    return (response, now);
+}
+
+// One message: the response line (empty when none is owed) and whether the server is initialised afterwards
+fn handle[&h, &f, &l, &r](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], allow_write: bool, line: &l [byte], init: bool) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] (buffer.Buffer, bool) {
+    var tape = box_slice(heap, json.tape_len(line) + 3, 0);
+    var nodes = 0;
+    borrow mut tape as &!tw in {
+        nodes = json.parse(line, contents(tw));
+    }
+    var response = buffer.empty(heap, 1);
+    var now = init;
+    borrow tape as &tp in {
+        if nodes < 0 {
+            buffer.drop(heap, response);
+            response = rpc.error_response(heap, "null", rpc.parse_error(), json.error_message(json.error_code(nodes)), "");
+        } else if json.is_array(contents(tp), 0) {
+            buffer.drop(heap, response);
+            response = rpc.error_response(heap, "null", rpc.invalid_request(), "a batch is not supported by revision 2025-06-18: send one message per line", "");
+        } else if !json.is_object(contents(tp), 0) {
+            buffer.drop(heap, response);
+            response = rpc.error_response(heap, "null", rpc.invalid_request(), "a message is a JSON object", "");
+        } else {
+            let (r2, n2) = dispatch(heap, fs, root, allow_write, line, contents(tp), init);
+            buffer.drop(heap, response);
+            response = r2;
+            now = n2;
+        }
+    }
+    unbox_slice(heap, tape);
+    return (response, now);
+}
+
+// The loop: read a line, answer it, until the input ends
+fn serve[&h, &f, &i, &r](heap: &!h Heap, fs: &f Fs(""), io: &!i Io, root: &r [byte], allow_write: bool, cap: int) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc, io_read, io_write] int {
+    var init = false;
+    var going = true;
+    while going {
+        let (line, status) = read_line(heap, io, cap);
+        var response = buffer.empty(heap, 1);
+        if status == 2 {
+            going = false;
+        } else if status == 1 {
+            buffer.drop(heap, response);
+            response = rpc.error_response(heap, "null", rpc.invalid_request(), "the message is longer than --max-message-bytes", "");
+        } else {
+            borrow line as &lr in {
+                if len(buffer.bytes(lr)) > 0 {
+                    let (r2, init2) = handle(heap, fs, root, allow_write, buffer.bytes(lr), init);
+                    buffer.drop(heap, response);
+                    response = r2;
+                    init = init2;
+                }
+            }
+            if status == 3 {
+                going = false;
+            }
+        }
+        buffer.drop(heap, line);
+        borrow response as &rr in {
+            if len(buffer.bytes(rr)) > 0 {
+                out.line(io, buffer.bytes(rr));
+                out.flushed(io);
+            }
+        }
+        buffer.drop(heap, response);
+    }
+    return 0;
+}
+
+// the checks of the flags of the server itself; the errors are printed as sentences on standard error
+fn check_flags[&h, &c](heap: &!h Heap, src: &c [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = errs;
+    if argv.operand_count(src) > 0 {
+        e = app.flag_problem(heap, e, "args.too-many-operands", "ml-mcp takes no operand: the messages come on standard input", "ml-mcp [--root DIR] [--allow-write]", "operand", "FILE");
+    }
+    if argv.has(src, "allow-write") && !argv.has(src, "root") {
+        e = app.flag_problem(heap, e, "args.required-flag", "--allow-write needs --root, the directory a call may write beneath", "ml-mcp --root DIR --allow-write", "flag", "--root");
+    }
+    let cap = argv.nat(src, "max-message-bytes");
+    if cap < 1 || cap > 16777216 {
+        var w = fail.open_in(heap, spec.extra(), "ml.param.out-of-range", "a numeric flag is outside its range", "the range is in the detail and in introspect limits");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_str(heap, w, "flag", "max-message-bytes");
+        w = fail.detail_int(heap, w, "value", cap);
+        w = fail.detail_int(heap, w, "min", 1);
+        w = fail.detail_int(heap, w, "max", 16777216);
+        e = fail.add(heap, e, w);
+    }
+    return e;
+}
+
+fn start[&h, &f, &i, &c](heap: &!h Heap, fs: &f Fs(""), io: &!i Io, src: &c [byte], errs: fail.Errors) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc, io_read, io_write, err_write] int {
+    let table = mspec.flag_table();
+    let e0 = check_flags(heap, src, errs);
+    let (root, e1) = paths.root(heap, src, argv.text(src, "root"), argv.value_index(src, "root"), e0);
+    var e = e1;
+    borrow root as &rb in {
+        if paths.has_double_dot(buffer.bytes(rb)) {
+            e = paths.refuse_double_dot(heap, e, buffer.bytes(rb), argv.value_index(src, "root"));
+        }
+    }
+    buffer.drop(heap, root);
+    var clean = false;
+    borrow e as &er in {
+        clean = fail.count(er) == 0;
+    }
+    var status = 0;
+    if !clean {
+        borrow e as &er in {
+            status = out.respond(heap, io, "ml-mcp", "ml.v1", app.version(), "", "", er, true, "", 0);
+        }
+    } else {
+        status = serve(heap, fs, io, argv.text(src, "root"), argv.has(src, "allow-write"), argv.nat(src, "max-message-bytes"));
+    }
+    fail.drop(heap, e);
+    return status;
+}
+
+fn run[&h, &f, &i, &g](heap: &!h Heap, fs: &f Fs(""), io: &!i Io, args: &g Args) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc, io_read, io_write, err_write] int {
+    let which = cli.subcommand(args);
+    if which != 0 {
+        return describe.answer(heap, io, which, mspec.tool(), built());
+    }
+    let (parsed, e) = cli.parse(heap, args, mspec.flag_table(), fail.empty_in(heap, spec.extra()));
+    var status = 0;
+    borrow parsed as &p in {
+        let packed = argv.from_cli(heap, args, p, mspec.flag_table());
+        borrow packed as &pk in {
+            status = start(heap, fs, io, buffer.bytes(pk), e);
+        }
+        buffer.drop(heap, packed);
+    }
+    cli.drop(heap, parsed);
+    return status;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    // No foreign code, no network, no clock.
+    release(ffi);
+    release(net);
+    release(clock);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow args as &g in {
+            borrow fs as &f in {
+                borrow mut io as &!i in {
+                    status = run(h, f, i, g);
+                }
+            }
+        }
+    }
+    release(heap);
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}

@@ -372,6 +372,13 @@ pub res struct Paths {
     trackp: paths.Rp,
 }
 
+// the paths with the data file replaced (the old one is dropped): the CSV of an MCP call that carries its rows
+pub fn with_file[&h](heap: &!h Heap, ps: Paths, fresh: paths.Rp) -> [heap] Paths {
+    let Paths { file, model, out, logp, planp, trackp } = ps;
+    paths.drop(heap, file);
+    return Paths { file: fresh, model: model, out: out, logp: logp, planp: planp, trackp: trackp };
+}
+
 pub fn drop_paths[&h](heap: &!h Heap, ps: Paths) -> [heap] int {
     let Paths { file, model, out, logp, planp, trackp } = ps;
     paths.drop(heap, file);
