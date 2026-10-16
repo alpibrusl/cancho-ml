@@ -70,9 +70,9 @@ var ARGV = typeof process !== "undefined" && process.argv ? process.argv.slice(2
         // a stand-in for crypto.subtle: the digest it returns is 32 bytes 0..31, or it rejects; makeDigest must use it, and fall back to its own routine when it rejects
         var ok = { subtle: { digest: function () { var u = new Uint8Array(32); for (var i = 0; i < 32; i++) { u[i] = i; } return Promise.resolve(u.buffer); } } };
         var bad = { subtle: { digest: function () { return Promise.reject(new Error("insecure context")); } } };
-        var f1 = Board.makeDigest({ crypto: ok }), f2 = Board.makeDigest({ crypto: bad }), f3 = Board.makeDigest({ crypto: {} }), f4 = Board.makeDigest(undefined);
+        var f1 = Board.makeDigest({ crypto: ok }), f2 = Board.makeDigest({ crypto: bad }), f3 = Board.makeDigest({ crypto: {} }), f4 = Board.makeDigest(undefined), f5 = Board.makeDigest({ crypto: { subtle: {} } });
         var bytes = unb64(job.b64);
-        return { kinds: [f1.kind, f2.kind, f3.kind, f4.kind], viaSubtle: await f1(bytes), afterReject: await f2(bytes), none: await f3(bytes), undef: await f4(bytes) };
+        return { kinds: [f1.kind, f2.kind, f3.kind, f4.kind, f5.kind], viaSubtle: await f1(bytes), afterReject: await f2(bytes), none: await f3(bytes), undef: await f4(bytes) };
       }
       case "split": return Board.splitDocs(job.text);
       case "analyze": return await Board.analyze(job.sources, digestFor(Board, job.mode || "pure"));

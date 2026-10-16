@@ -204,8 +204,8 @@ def g1_sha256(fx, errs):
     # the routing: a crypto.subtle is used when the environment has one, the built-in routine when it has none or when the digest call is refused
     r = one({"op": "routing", "b64": b64(b"abc")})
     want_abc = hashlib.sha256(b"abc").hexdigest()
-    if r["kinds"] != ["subtle", "subtle", "pure", "pure"]:
-        errs.append("G1: makeDigest picks %s for (a subtle, a subtle that refuses, a crypto without subtle, nothing), want subtle, subtle, pure, pure" % r["kinds"])
+    if r["kinds"] != ["subtle", "subtle", "pure", "pure", "pure"]:
+        errs.append("G1: makeDigest picks %s for (a subtle, a subtle that refuses, a crypto without subtle, nothing, a subtle without digest), want subtle, subtle, pure, pure, pure" % r["kinds"])
     if r["viaSubtle"] != "".join("%02x" % i for i in range(32)):
         errs.append("G1: makeDigest did not return the digest of crypto.subtle (%s)" % r["viaSubtle"])
     for k in ("afterReject", "none", "undef"):
@@ -369,6 +369,17 @@ def g3_tamper(fx, errs):
     r2 = analyze([{"name": "damaged-copy.json", "text": flip(text, '"seed":3,"positive"', '"seed":4,"positive"')}], "pure")
     if codes(r2) != codes(r):
         errs.append("G3: the pure digest and crypto.subtle disagree on a damaged record")
+    # a self-consistent record whose `inputs` are written with \u escapes: the id is a hash of the bytes the writer wrote, not of a re-serialisation, so it is not forged
+    u = next(x for x in fx["runs"] if x["label"] == "utf8")
+    utext = fx["files"][u["file"]].strip()
+    uraw = re.search(r'"inputs":(\{.*?\}),"threads"', utext).group(1)
+    uesc = "".join(c if ord(c) < 128 else "\\u%04x" % ord(c) for c in uraw)
+    unew = utext.replace(uraw, uesc).replace(u["id"], hashlib.sha256(uesc.encode()).hexdigest())
+    ucut = unew[:unew.rindex(',"check":"')]
+    unew = ucut + ',"check":"' + hashlib.sha256(ucut.encode()).hexdigest() + '"}'
+    ur = analyze([{"name": "escaped.json", "text": unew}])
+    if codes(ur) != [] or len(ur["rows"]) != 1 or ur["rows"][0]["verdict"] != "ok" or uesc == uraw:
+        errs.append("G3: a record whose inputs are written with \\u escapes (id and check computed over those bytes) gives %s" % codes(ur))
     # the computed id is reported
     mism = [p for p in r["problems"] if p["code"] == "id-mismatch"]
     if mism:
@@ -677,6 +688,15 @@ def g7_primary(fx, errs):
     for want in (("classification", "accuracy"), ("regression", "rmse"), ("clustering", "inertia"), ("regression", None)):
         if want not in seen:
             errs.append("G7: the runs of this gate hold no %s" % (want,))
+    # the model is the word of the last `model kind=` line of the plan; no such line: no model
+    a = fx["runs"][0]
+    ta = fx["files"][a["file"]]
+    two = ta.replace("scale column=* kind=standard ddof=0\\n", "model kind=constant task=classification\\n")
+    none = ta.replace("model kind=logistic", "modl kind=logistic")
+    for what, t, want in (("two model lines", two, "logistic"), ("no model line", none, None)):
+        rr = analyze([{"name": "x.json", "text": t}])
+        if len(rr["rows"]) != 1 or rr["rows"][0]["model"] != want:
+            errs.append("G7: a plan with %s gives the model %r, want %r" % (what, rr["rows"] and rr["rows"][0]["model"], want))
     # edge cases of the rule
     cases = [({"task": "classification", "metrics": {"accuracy": "0.5", "f1": "0.1"}}, {"name": "accuracy", "text": "0.5", "value": 0.5}),
              ({"task": "regression", "metrics": {"mae": "1", "rmse": "2.5"}}, {"name": "rmse", "text": "2.5", "value": 2.5}),
@@ -774,6 +794,13 @@ def g8_chart(fx, errs):
     g = node([{"op": "chart", "rows": fake, "metric": "r2"}])[0]
     if (g["lo"], g["hi"]) != (-0.5, 2.0):
         errs.append("G8: a chart with a negative value has the range %s..%s, want -0.5..2" % (g["lo"], g["hi"]))
+    for f, v in zip(fake, ("-0.5", "-1")):
+        f["record"] = {"metrics": {"rows": 1, "on": "held-out", "metrics": {"r2": v}}}
+    gneg = node([{"op": "chart", "rows": fake, "metric": "r2"}])[0]
+    if (gneg["lo"], gneg["hi"]) != (-1.0, 0.0):
+        errs.append("G8: a chart whose values are all negative has the range %s..%s, want -1..0" % (gneg["lo"], gneg["hi"]))
+    for f, v in zip(fake, ("-0.5", "2")):
+        f["record"] = {"metrics": {"rows": 1, "on": "held-out", "metrics": {"r2": v}}}
     lay = node([{"op": "layout", "data": g, "width": 250}])[0]
     if abs(lay[0]["x"] - 0.0) > 1e-6 or abs(lay[0]["w"] - 50.0) > 1e-6 or abs(lay[1]["x"] - 50.0) > 1e-6 or abs(lay[1]["w"] - 200.0) > 1e-6:
         errs.append("G8: the bars of a chart with a negative value are placed at %s" % lay)
@@ -972,7 +999,7 @@ def g10_structure(fx, errs, html, path):
     # no colour literal: every colour is a token of site.css, whose pairs scripts/check_contrast.py measures
     if re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", css_all):
         errs.append("G10: the inline stylesheet holds a colour literal (use the tokens of site.css)")
-    if "prefers-color-scheme" not in (path.parent / "assets" / "site.css").read_text():
+    if not re.search(r"prefers-color-scheme:\s*dark\)", (path.parent / "assets" / "site.css").read_text()):
         errs.append("G10: site.css has no dark scheme")
     if not re.search(r"@media\s*\(max-width:\s*(40|36|30|23\.?\d*)rem\)|@media\s*\(max-width:\s*\d+px\)", css_all):
         errs.append("G10: the inline stylesheet has no narrow-screen rule")
@@ -1003,7 +1030,7 @@ def g10_structure(fx, errs, html, path):
         errs.append("G10: the DOM code never uses textContent")
     # statements the page must make
     low = re.sub(r"\s+", " ", " ".join(p.text).lower())  # the text a reader sees, not the comments or the script
-    for needle, what in (("nothing is sent", "that nothing is sent anywhere"), ("ml runs verify", "the verify command"), ("only the tool", "that only the tool can verify"),
+    for needle, what in (("nothing is sent", "that nothing is sent anywhere"), ("ml runs verify", "the verify command"), ("only the tool can do that", "that only the tool can verify"),
                          ("cannot verify", "that the page cannot verify"), ("real records", "the sample's caption (real records)"), ("sample", "the sample button"),
                          ("ml runs list", "the input it reads: ml runs list"), ("ml runs show", "the input it reads: ml runs show"), ("drop", "drag and drop"), ("paste", "paste"),
                          ("crypto.subtle", "the SHA-256 it uses"), ("list only", "that a run known only from a list is not checked"), ("never says", "that the page never says verified")):
@@ -1016,8 +1043,8 @@ def g10_structure(fx, errs, html, path):
         errs.append("G10: the table headers carry no aria-sort")
     if "multiple" not in html:
         errs.append("G10: the file input does not take several files")
-    for ev in ("dragover", "drop", "paste", "change"):
-        if '"%s"' % ev not in code:
+    for ev in ("dragenter", "dragleave", "dragover", "drop", "paste", "change", "click"):
+        if not re.search(r'addEventListener\("%s"' % ev, code):
             errs.append("G10: no handler for %s" % ev)
 
 
@@ -1067,11 +1094,17 @@ def main(argv):
         print("check_board: %s %s" % (name, "ok" if len(errs) == before else "FAILED"))
     if not only or "G9" in only:
         before = len(errs)
-        g9_sample(fx, errs, html)
+        try:
+            g9_sample(fx, errs, html)
+        except RuntimeError as exc:
+            errs.append("G9: %s" % exc)
         print("check_board: G9 %s" % ("ok" if len(errs) == before else "FAILED"))
     if not only or "G10" in only:
         before = len(errs)
-        g10_structure(fx, errs, html, PAGE)
+        try:
+            g10_structure(fx, errs, html, PAGE)
+        except RuntimeError as exc:
+            errs.append("G10: %s" % exc)
         print("check_board: G10 %s" % ("ok" if len(errs) == before else "FAILED"))
     for e in errs:
         print("check_board:", e)

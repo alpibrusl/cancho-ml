@@ -75,7 +75,7 @@
 .bd table.cmp th, .bd table.cmp td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: break-word; }
 .bd table.cmp th { color: var(--muted); font-weight: 600; }
 .bd table.cmp tbody th { white-space: nowrap; width: 1%; padding-right: 1.2rem; }
-.bd table.cmp td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bd table.cmp td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bd .chartbox svg { display: block; width: 100%; height: auto; max-width: 40rem; }
 .bd .chartbox .barheld { fill: var(--accent); }
 .bd .chartbox .bartrain { fill: url(#hatch); stroke: var(--accent); stroke-width: 1.5; }
@@ -689,7 +689,7 @@ var Board = (function () {
     rows.forEach(function (r) {
       var m = r.record && isObj(r.record.metrics) ? r.record.metrics : null, v = m && isObj(m.metrics) && has(m.metrics, metric) ? scalar(m.metrics[metric]) : null;
       if (v === null) { left.push(r.id); return; }
-      bars.push({ uid: r.uid, id: r.id, id12: r.id12, model: r.model, on: m.on, text: typeof m.metrics[metric] === "string" ? m.metrics[metric] : String(m.metrics[metric]), value: v });
+      bars.push({ uid: r.uid, id: r.id, id12: r.id12, model: r.model, verdict: r.verdict, on: m.on, text: typeof m.metrics[metric] === "string" ? m.metrics[metric] : String(m.metrics[metric]), value: v });
     });
     var vals = bars.map(function (b) { return b.value; });
     return { metric: metric, bars: bars, left: left, lo: Math.min.apply(null, [0].concat(vals)), hi: Math.max.apply(null, [0].concat(vals)) };
@@ -847,7 +847,7 @@ var Board = (function () {
     if (!all.length) { body.appendChild(h("tr", {}, [h("td", { colspan: "13", class: "hint", text: "There are no runs. Load the sample runs, or give the page your own records." })])); return; }
     rows.forEach(function (r) {
       var v = VERDICT[r.verdict] || [r.verdict, "error"], sel = st.sel.indexOf(r.id) >= 0;
-      var cb = h("input", { type: "checkbox", "data-k": "sel-" + r.id, "aria-label": "Select run " + r.id12 + " to compare", disabled: !r.record });
+      var cb = h("input", { type: "checkbox", "data-k": "sel-" + r.uid, "aria-label": "Select run " + r.id12 + " to compare", disabled: !r.record });
       cb.checked = sel;
       cb.addEventListener("change", function () {
         var i = st.sel.indexOf(r.id);
@@ -901,6 +901,7 @@ var Board = (function () {
       } else { body.appendChild(h("p", { class: "hint", text: "This run has no metrics (a constant model)." })); }
     }
   }
+  function bad(verdict) { return (VERDICT[verdict] || ["", "error"])[1] === "error"; }
   function show(v) { return v === null || v === undefined ? "none" : typeof v === "string" ? v.replace(/\n+$/, "").replace(/\n/g, " ; ") : JSON.stringify(v); }
   function drawCompare() {
     var body = clear($("cmp-body")), two = st.sel.map(byId).filter(function (r) { return r && r.record; });
@@ -909,6 +910,7 @@ var Board = (function () {
     var c;
     try { c = Board.compareRows(two[0], two[1]); } catch (x) { body.appendChild(h("p", { class: "hint", text: "These records cannot be compared: " + x.message })); return; }
     body.appendChild(h("p", {}, ["A is ", h("code", { text: two[0].id12 }), ", B is ", h("code", { text: two[1].id12 }), ". The model files are ", h("strong", { text: c.model_equal ? "the same" : "not the same" }), "."]));
+    two.forEach(function (r) { if (bad(r.verdict)) { body.appendChild(h("p", { class: "notice", text: "Run " + r.id12 + " fails its integrity check (" + (VERDICT[r.verdict] || [r.verdict])[0] + "): read its numbers with care." })); } });
     body.appendChild(cmdBox("ml runs compare command", Board.compareCommand(dirName(), c.a, c.b)));
     body.appendChild(h("h3", { text: "Inputs that differ (" + c.inputs.length + ")" }));
     if (c.inputs.length) {
@@ -947,13 +949,13 @@ var Board = (function () {
     svg.appendChild(sv("defs", {}, [pat]));
     d.bars.forEach(function (b, i) {
       var y = 8 + i * rowH, l = lay[i];
-      svg.appendChild(sv("text", { x: String(LW - 8), y: String(y + 17), "text-anchor": "end", class: "s", text: b.id12 + " " + (b.model || "") + (b.on === "train" ? " (train)" : "") }));
+      svg.appendChild(sv("text", { x: String(LW - 8), y: String(y + 17), "text-anchor": "end", class: "s", text: b.id12 + " " + (b.model || "") + (b.on === "train" ? " (train)" : "") + (bad(b.verdict) ? " !" : "") }));
       svg.appendChild(sv("rect", { x: String(LW + l.x), y: String(y + 2), width: String(Math.max(l.w, 1)), height: "20", class: b.on === "train" ? "bartrain" : "barheld" }));
       svg.appendChild(sv("text", { x: String(LW + l.x + (b.value >= 0 ? l.w + 6 : -6)), y: String(y + 17), "text-anchor": b.value >= 0 ? "start" : "end", class: "t", text: fmt(b.value) }));
     });
     if (d.bars.length) { var z = LW + lay[0].zero; svg.appendChild(sv("line", { x1: String(z), y1: "4", x2: String(z), y2: String(H - 8), class: "zero" })); }
     if (d.bars.length) { box.appendChild(svg); }
-    box.appendChild(h("p", { class: "hint", text: "Bars start at zero. A hatched bar was scored on training rows, a solid bar on held-out rows." + (d.left.length ? " Left out, with no " + d.metric + ": " + d.left.map(function (x) { return x.slice(0, 12); }).join(", ") + "." : "") }));
+    box.appendChild(h("p", { class: "hint", text: "Bars start at zero. A hatched bar was scored on training rows, a solid bar on held-out rows." + (d.bars.some(function (b) { return bad(b.verdict); }) ? " A run marked ! fails its integrity check." : "") + (d.left.length ? " Left out, with no " + d.metric + ": " + d.left.map(function (x) { return x.slice(0, 12); }).join(", ") + "." : "") }));
     var det = h("details", {}, [h("summary", { text: "Values as a table" })]);
     var tb = h("tbody"), t = h("table", { class: "cmp" }, [h("thead", {}, [h("tr", {}, ["Run", "Model", "Metrics on", d.metric].map(function (x) { return h("th", { scope: "col", text: x }); }))]), tb]);
     d.bars.forEach(function (b) { tb.appendChild(h("tr", {}, [h("th", { scope: "row", text: b.id12 }), h("td", { text: b.model || "" }), h("td", { text: b.on }), h("td", { class: "num", text: b.text })])); });

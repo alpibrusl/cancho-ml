@@ -145,18 +145,15 @@ MUTANTS = [
     ("dark-scheme-removed-from-css", CSS, "prefers-color-scheme: dark", "prefers-color-scheme: darks", {"G10"}),
 ]
 
-# survivors, each with its reason: a fault that no input of the gates can show, or no input that can exist
+# survivors, each with its reason: a fault that no input can show
 EXPLAINED = {
-    "sha-length-high-word": "unreachable: the high word of the bit length is not zero only for input of 512 MiB or more, and a record is at most 262,144 bytes (the page reads at most 16 MiB of a file)",
+    "sha-length-high-word": "unreachable: the high word of the bit length is not zero only for an input of 512 MiB or more, and a record is at most 262,144 bytes (the page reads at most 16 MiB of a file)",
     "compare-input-b-only-keys-dropped": "unreachable: every record of schema ml.run.v1 has the same members of `inputs`, so the second object never has a member the first lacks",
-    "model-from-first-line": "a plan holds one `model` line, so the first and the last are the same line",
 }
-# extra mutants that are only here to hold their explanation (they must apply, and survive)
 MUTANTS += [
     ("sha-length-high-word", PAGE, "dv.setUint32(total - 8, Math.floor(n / 536870912));", "dv.setUint32(total - 8, 0);", {"G1"}),
     ("compare-input-b-only-keys-dropped", PAGE, "Object.keys(y).forEach(function (k) { if (!has(x, k)) { keys.push(k); } });", "void 0;", {"G5"}),
 ]
-EXPLAINED.pop("model-from-first-line")  # it is killed (the mutant returns "x" when the first line is not a model line); see above
 
 
 def problems(root):

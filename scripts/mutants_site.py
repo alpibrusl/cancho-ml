@@ -86,6 +86,20 @@ MUTANTS = [
      "          - {os: macos-26, label: darwin-arm64}\n          - {os: windows-2025, label: windows-x86_64}\n", {"landing", "site"}),
     ("platforms-pin-moves", "cancho.toml", 'cancho = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"', 'cancho = "1234567b4029a3ee73196cdfdb48e8efa7e9c519"', {"landing"}),
     ("lang-removed", IDX, '<html lang="en">', "<html>", {"landing", "seo"}),
+    # the experiments board (docs/board.html): its card on the landing page, its link in the header of every page, its place in the sitemap and in the SEO checks
+    ("board-card-removed", IDX, '<h3><a href="board.html">Experiments board</a></h3>', "<h3>Experiments board</h3>", {"landing"}),
+    ("board-card-link-missing-file", IDX, '<h3><a href="board.html">Experiments board</a></h3>', '<h3><a href="boards.html">Experiments board</a></h3>', {"links", "landing"}),
+    ("board-card-privacy-claim-removed", IDX, "Nothing is sent anywhere.", "Nothing leaves.", {"landing"}),
+    ("board-card-what-it-shows-removed", IDX, "a table, a comparison, a chart and a list of what does not add up", "a table", {"landing"}),
+    ("board-nav-link-dropped-on-a-page", "docs/evidence.html", '<a href="board.html" class="opt">Board</a>', "", {"landing", "site"}),
+    ("board-nav-not-current", "docs/board.html", 'aria-current="page">Board</a>', ">Board</a>", {"landing", "site"}),
+    ("board-nav-link-missing-file", "scripts/site.py", '("Board", "board.html", "opt", "board.html")', '("Board", "boards.html", "opt", "board.html")', {"links", "landing"}),
+    ("board-sitemap-entry-missing", "docs/sitemap.xml", "  <url><loc>https://alpibrusl.github.io/cancho-ml/board.html</loc></url>\n", "", {"site"}),
+    ("board-title-too-long", "docs/board.html", "<title>cancho-ml experiments board: read run records locally</title>", "<title>cancho-ml experiments board: read run records locally, compare them</title>", {"landing", "seo"}),
+    ("board-canonical-wrong", "docs/board.html", '<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/board.html">', '<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/boards.html">', {"seo"}),
+    ("board-skip-link-removed", "docs/board.html", '<a class="skip" href="#main">Skip to content</a>\n', "", {"landing"}),
+    ("board-external-script", "docs/board.html", "</head>", '<script src="https://example.com/x.js"></script>\n</head>', {"landing", "seo"}),
+    ("board-sample-not-generated", "docs/board.html", "<!-- gen:sample -->\n", "<!-- gen:sample -->\n<!-- edited -->\n", {"site"}),
 ]
 
 
