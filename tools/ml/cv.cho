@@ -104,6 +104,15 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
             go = false;
         }
     }
+    // early stopping validates on a random tenth of the rows of a fold's training side: refused under the group and the time strategies, whose training side it would not respect
+    if go && splitspec.strategy(sp) >= 2 {
+        borrow pls as &npq in {
+            if est.needs_split(kind, contents(npq.ip)) {
+                e = splitspec.early_stopping_combination(heap, e, args, splitspec.strategy(sp));
+                go = false;
+            }
+        }
+    }
     var mixed_plan = false;
     borrow pls as &mpq in {
         mixed_plan = plan.needs_mixed(mpq.pl);

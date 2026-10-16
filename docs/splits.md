@@ -37,7 +37,8 @@ the seed of the split as it is now, and of the model.
 algorithm (balance of classes and no shared group are two constraints that no deal satisfies in general, and an approximation would need a
 rule of its own, with its own gate), and a group time series split is another (groups that straddle the cut). They are **refused**, not approximated:
 `ml.split.combination`. `cv` with `--split` is the same tag. `--repeats` above 1 with `--split-by` is the same tag (an expanding window has
-nothing random to repeat).
+nothing random to repeat). So is `--early-stopping` (a boosted model) with `--split-group` or `--split-by`, in `fit --split` and in `cv`: early stopping validates on a
+random tenth of the training rows, which a group split or a time split cannot allow (`docs/models-boost.md` section 2.8); the repair drops `--early-stopping`.
 
 ## 2. The canonical split text **[choice]**
 
@@ -145,7 +146,7 @@ Tags are registered in `tools/ml/spec.tmpl`, `docs/design.md` sections 8 and 8.1
 | `ml.split.too-few-groups` | 8 | fewer groups than `--folds`, or fewer than 2 | `retry` with `--folds` = the number of groups, when it is at least 2 |
 | `ml.split.time-format` | 8 | a time cell that is not a number or an accepted date (`line`, `column`, `reason`) | none |
 | `ml.split.missing-cell` | 8 | an empty cell in the time or group column (`row`, `column`) | none |
-| `ml.split.combination` | 2 | two strategies, `cv` with `--split`, `--repeats` above 1 with `--split-by` | `choose` between the two ways of dropping a flag |
+| `ml.split.combination` | 2 | two strategies, `cv` with `--split`, `--repeats` above 1 with `--split-by`, `--early-stopping` with `--split-group` or `--split-by` | `choose` between the two ways of dropping a flag; `retry` with `--repeats 1`, or without `--early-stopping`, when that is the conflict |
 | `ml.split.out-of-range` | 2 | `--folds` outside 2 to 20, `--repeats` outside 1 to 10 | none (the range is in `detail`) |
 | `ml.split.column-target` | 2 | the group or time column is the target | none |
 | `ml.split.emit-too-large` | 8 | `--emit-folds` over 1,048,576 entries | `retry` without `--emit-folds` |

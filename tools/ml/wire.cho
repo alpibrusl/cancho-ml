@@ -1375,6 +1375,15 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
             }
         }
     }
+    // ... and its validation rows are a random tenth of the training rows: under a group or a time split that tenth would not respect the strategy, so the pair is refused
+    if go && o.split_given && splitspec.strategy(sp) >= 2 {
+        borrow pls as &npq2 in {
+            if est.needs_split(kind, contents(npq2.ip)) {
+                e = splitspec.early_stopping_combination(heap, e, args, splitspec.strategy(sp));
+                go = false;
+            }
+        }
+    }
     var mixed_plan = false;
     borrow pls as &mpq in {
         mixed_plan = plan.needs_mixed(mpq.pl);

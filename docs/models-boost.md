@@ -115,6 +115,25 @@ its own validation rows out of the *train* side, so the reported held-out metric
 Deterministic: the validation rows are a function of `(seed, n)`, the loss of the fit rows' trees, the rule of fixed comparisons. The payload records the number
 of rounds requested and the number kept (section 5).
 
+### 2.8 Early stopping under the split strategies [choice]
+
+The validation rows of 2.7 are a random tenth of the **training** rows, whatever the strategy that held the test rows out (`docs/splits.md`). What that means for each
+strategy, and what is decided:
+
+* **`--split train=F`, plain or `--stratify`:** allowed. The test rows are never in the training rows, so the validation rows never come from them; the validation tenth
+  is a plain random draw, not stratified (a stratified holdout keeps the class proportions of the test side, which no part of the stopping rule reads).
+* **`ml cv` with random or stratified folds:** allowed, with no `--split` (cv takes none). Each fold fits on its training side and takes the tenth out of that side, so the
+  held-out fold is never read by the stopping rule.
+* **`--split-group` and `--split-by time:COL`, in `fit --split` and in `ml cv`:** **refused**, `ml.split.combination` (exit 2) with `detail` `flag` `--early-stopping` and
+  `other` `--split-group` or `--split-by`. A random tenth of the training rows of a group split would put rows of one group on both sides of the validation, and the
+  stopping rule would be tuned on rows that share a group with the rows it was fitted on; for a time split the validation rows would not be the newest training rows, so the
+  rule would be tuned on the past it was fitted on. Both are what the strategy exists to prevent. The alternative, a validation tenth that is whole groups or the newest rows,
+  needs the group or time column in the fit of the library (which sees the matrix and the target only) and a second rule with its own gate; it is not built. The repair is a
+  `retry` that drops `--early-stopping N`: every training row is then fitted for all the rounds, and no row is read twice.
+
+`scripts/oracle_wire_boost.py` and `tests/conformance/test_wire_boost.py` check the leakage: for a stratified holdout and a plain one the validation rows (replayed from
+the stream of kind 10) are all in the training side.
+
 ## 3. Numeric decisions
 
 ### 3.1 The order of every sum, and `sum_order` **[choice]**
