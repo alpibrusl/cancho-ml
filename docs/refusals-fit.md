@@ -207,9 +207,16 @@ baseline is the full conformance suite of `scripts/check.sh`, which passes (sect
 
 ### 6.8 The full run
 
-`sh scripts/check.sh` on the final tree, Mac arm64 under a load average near 100: 449 conformance tests OK (298 fixtures), every other step passes (53 minutes; no timing is claimed). `scripts/check_docs.sh`,
-`check_prose.py`, `check_links.py`, `check_doc_refs.py`, `check_bins.py`, `check_workflow.py` pass. One native run on Linux x86-64 (gram, `taskset -c 0-6`): `xplat_check.py` 88 lines equal to the golden,
-`gate_models.sh` all bits equal, `oracle_refuse.py all --n 400` every verdict agrees (the same verdicts as on the Mac), `test_refuse_fit` 8 tests OK.
+`sh scripts/check.sh` on the merged tree (splits, tracking, stores, the non-finite rule, the compiler `0207556`), on gram (Linux x86-64, `taskset -c 0-6`, the mutant suites of section 6.9 on the other cores): exit 0 in 96 minutes in one pass, 533 conformance
+tests OK (365 fixtures; `test_refuse_fit` 12 tests and `test_refuse_oracle` 1), the stores republished (`ml.refuse` gains the two codes; `publish_stores.py --check`, `consume_stores.py` and `mutants_stores.py --fast` pass),
+`xplat_check.py --require-predict` and `--mutants` pass on the Mac (88 lines for 22 fits equal `docs/bench/xplat_fp.txt`), `check_docs.sh`, `check_workflow.py` and `check_demo.py` pass. The fast job of the CI workflow
+(`python3 scripts/run_conformance.py --no-oracles` in a virtual environment with `ci/requirements-fast.txt`): 39 modules, 32 passed (496 tests), 0 failed, 7 not run because they import numpy.
+
+### 6.9 Mutants of the integration, on gram with the compiler `0207556`
+
+`mutants_refusals.py` 34 of 34 killed; `mutants_cli.py` 52 of 52; `mutants_wire.py` 39 of 40 (the survivor is explained in the script); `mutants_wire_kmeans.py` 60 of 68; `mutants_split.py` 47 of 47; `mutants_track.py` 70 of 75:
+the counts of `main`, and the unmutated copy passes the suite in each run. `oracle_refuse.py rank --n 3000` (2,355 refused, 645 fitted, 0 disagreements) and `sep --n 600` (0 disagreements) and `all` give the same verdicts as on the Mac;
+`admit.py linear` and `logistic` without `--fast` admit with 12 of 12 checks.
 
 ### 6.6 The real session
 
