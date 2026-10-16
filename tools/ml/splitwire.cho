@@ -43,7 +43,7 @@ fn flag_of(strategy: int) -> [] &static [byte] {
 }
 
 // the group ranks or the time order of the column, read from the file again. (keys, ok, errors)
-fn load_keys[&h, &f, &r, &pf, &y](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, sp: splitspec.SplitOpts, o: verbs.Opts, n: int, task: int, yall: &y [float], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Keys, bool, fail.Errors) {
+fn load_keys[&h, &f, &r, &pf, &y, &sk](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, sp: splitspec.SplitOpts, col: &sk [byte], o: verbs.Opts, n: int, task: int, yall: &y [float], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Keys, bool, fail.Errors) {
     var e = errs;
     var go = true;
     let strategy = splitspec.strategy(sp);
@@ -61,7 +61,6 @@ fn load_keys[&h, &f, &r, &pf, &y](heap: &!h Heap, fs: &f Fs(""), root: &r [byte]
     var order = box_slice(heap, 2, 0);
     var groups = 0;
     if strategy == 2 || strategy == 3 {
-        let col = splitspec.column(sp);
         if bytes.equal(col, o.target) {
             e = splitspec.column_target(heap, e, flag_of(strategy), col);
             go = false;
@@ -175,11 +174,13 @@ pub fn json_vector[&h, &v](heap: &!h Heap, vals: &v [int], lo: int, hi: int) -> 
 }
 
 // The holdout of `--split train=F` by the strategy of `sp`: (sel, test rows, ok, errors); sel[i] is 1 for a held-out row, 0 for a train row.
-pub fn holdout_sel[&h, &g, &f, &r, &pf, &y](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, sp: splitspec.SplitOpts, o: verbs.Opts, n: int, task: int, yall: &y [float], errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (Box[[int]], int, bool, fail.Errors) {
+// `col` is the column of --split-group or --split-by: splitspec.column(sp) on a command line, the column of a run record in a replay (a runtime text cannot be a field of SplitOpts)
+pub fn holdout_sel[&h, &g, &f, &r, &pf, &y, &sk](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, sp: splitspec.SplitOpts, col: &sk [byte], o: verbs.Opts, n: int, task: int, yall: &y [float], errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (Box[[int]], int, bool, fail.Errors) {
     var e = errs;
     var sel = box_slice(heap, n + 1, 0);
     let strategy = splitspec.strategy(sp);
-    let (sok, num, den) = wiredata.parse_split(o.split);
+    let num = o.split_num;
+    let den = o.split_den;
     let nt = splits.n_test_for(n, num, den);
     if strategy == 1 && task != 2 {
         return (sel, 0, false, splitspec.stratify_target(heap, e, args, task));
@@ -190,7 +191,7 @@ pub fn holdout_sel[&h, &g, &f, &r, &pf, &y](heap: &!h Heap, args: &g Args, fs: &
     if nt < 1 || n < 2 || nt > n - 1 {
         return (sel, 0, false, splitspec.plan_error(heap, e, args, false, 1, 0, 0, 2));
     }
-    let (keys, go, e2) = load_keys(heap, fs, root, file, sp, o, n, task, yall, e);
+    let (keys, go, e2) = load_keys(heap, fs, root, file, sp, col, o, n, task, yall, e);
     e = e2;
     var ok = go;
     if go {
@@ -238,7 +239,7 @@ pub fn cv_assign[&h, &g, &f, &r, &pf, &y](heap: &!h Heap, args: &g Args, fs: &f 
     if n < 2 || sp.folds > n {
         return (assign, false, splitspec.plan_error(heap, e, args, true, 1, 0, 0, sp.folds));
     }
-    let (keys, go, e2) = load_keys(heap, fs, root, file, sp, o, n, task, yall, e);
+    let (keys, go, e2) = load_keys(heap, fs, root, file, sp, splitspec.column(sp), o, n, task, yall, e);
     e = e2;
     var ok = go;
     if go {

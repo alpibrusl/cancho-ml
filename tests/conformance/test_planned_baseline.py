@@ -18,30 +18,31 @@ import golden_planned  # noqa: E402
 
 GOLDEN = json.loads((pathlib.Path(__file__).parent / "golden_planned.json").read_text())
 
-# The answer of a fit with --split gained `split.spec`, the canonical text of the split (docs/splits.md section 2): the SHA-256 of that answer changes, with the new hash pinned
-# here; the status and the model file of every case stay the record's. The record keeps the old hashes.
+# The answer of a fit with --split gained `split.spec`, the canonical text of the split (docs/splits.md section 2), after the re-record of M22 (docs/tracking.md section 8) wrote the record: the SHA-256 of that
+# answer is pinned here, from the answer of the binary that has both the provenance section and the spec; the status and the model file of every case stay the record's. The record keeps the hashes
+# of the answers without the spec.
 CHANGED = {
-    "linear-11": "0a240f8abb9e62fbc437b16d9d04529290ef91a908f751e5dc9398d35bbe8382",
-    "linear-12": "2b5124f6df393972f61fb08ed3961e59589a2dbdbbb332735a466b129e72b2af",
-    "linear-13": "db322bd299b1f77c9397e1ac3956ae346ba559e44f8abfc0e4bd323c780af809",
-    "linear-14": "36a1c2261091c26fe33333817f4e7577ab2e63ccb054b14ba63a4292f880d79e",
-    "linear-19": "ac1ea0f469603e6df24e5fd02585b5ab8c2b7f62740302916c154aac4f9ed9c1",
-    "linear-20": "3b26625ddb46e08e8b4d32d9cc45a2810e28836eee0984669425690cfc414f32",
-    "linear-22": "b67c09479dcde077e3497113f7eba571cb60c67da946516b6f32c4c8f2964ab3",
-    "linear-25": "db6f7435a1b1c27620d88d2b2be84deaa037122ace92b08ec5c5c1753e696880",
-    "linear-26": "03f94487114c1cb060a90e499fa29f8d6ab61cd103887871ade2145c63332a97",
-    "linear-3": "20dc819420b6dbbdad6c4e09f0072a729ba853120f47ce7547cdd05e8ec27529",
-    "linear-30": "fa5b415925b0ec38cc839cca057ee5230a2b473c7fe0248fc9badea34f16ff35",
-    "linear-5": "08ad9de7dfdececcdd1a2ba81f051cb3e772115b74bd787e3c3fd664dc65dedb",
-    "linear-6": "67d154508cd675cbcbcc8953db9973ce043e5335181b884932bc22d01bef8ea0",
-    "logistic-10": "ff7714f0b7371f628c411f63b0860ec598c3e60f7bf33e5a8041f807164de5ed",
-    "logistic-12": "16bb32a82fe1301d9f3e8be8dd94ebff5dda94b203ed75fb974294d51946cbf7",
-    "logistic-17": "a45bfb65a8a645e14a7f5ff73710eefb5076718d53bc19d42ff8ac4771fb9743",
-    "logistic-19": "bc247e8f7d3098f90e0fe71591ed6543924b54e7881a73b6041b27b2fbea2878",
-    "logistic-24": "b70266c3b59af04b672cf8fd0b7495f2b0c2238b0a7e8c9b162e8f982d244506",
-    "logistic-26": "9ba5b33ee5ab982824fbf64b692c642a47cda58c836eabef4585190a7f4b1a0a",
-    "logistic-5": "d7f8608de101e0e7469b73220c432bc975d76f78db0bd88e0ed4f282dc705c47",
-    "logistic-8": "78f0be67e0cb142b52d20cb9957c4c60072e6559331d7f030b26aed44996ec34",
+    "linear-11": "0af79b62ff29368b00aff15ba748b7a89c740062d8f355b13763c709b17f9209",
+    "linear-12": "9eb4a219bd81fe5c13513605bb9b439fb2400cebc4d8d1d5bb91c68819b7d1a3",
+    "linear-13": "a1afa791ac713dc450b94cfff59649dded7af4f06cc9dbe2bfb9b4f9caf8b63b",
+    "linear-14": "6f17a6adf7cc9ae6d5b909a73c9b1e4b5df4154f4899a1d84dcdd8d3a277a0e5",
+    "linear-19": "2914d2565f14a847b542f9dace782157076cef4bb30937d3c050cf612f91af96",
+    "linear-20": "bb2528f559f2ffdca3c5827f6029183fb94444f092f7f54a8ca9a0fcfcdd071c",
+    "linear-22": "5ea31c472e892c2654649431cfe3bcf259d4c13aa33250be1197d878408f69dd",
+    "linear-25": "fdec857f10c1efc99d43040c13c2011084aaaa1b57cb522b739e9f6623955b45",
+    "linear-26": "c0dc9b108de8d176dde83179d15ab7e44ac0de284f71ecf6e9a0b9fdc20b215e",
+    "linear-3": "3ac222742f050369ac89c4ce8aebdad73440d73e99122c33d61eb5c31476d184",
+    "linear-30": "2b3fcef14c7b58c1cb32a36ef1c7819b371ba002bc120ae63abe47c4e5492f5f",
+    "linear-5": "bfc8ed72230c282351d5210a8c6b6ab1a118364d263827db8f631bc2028e26f6",
+    "linear-6": "2784be93167ba8b00cd9f80e776f0e908f19f76f75b7a6b346c165a8294215e0",
+    "logistic-10": "0a9e7f31ca151ee7a6d6d9cdc66d0682824e52617486b264808c404e3c2867d8",
+    "logistic-12": "45ab7c44c7efcf851180c49cb1afba8e792645225c2d10e39d39902922d4695c",
+    "logistic-17": "809506914233d519ea1109171568c1b956cf15c7f8d042357fc8fb2dcee8fef7",
+    "logistic-19": "66c61a8941a80904845579a2faf0640e5d79b2ba7996fe0daf17d96d4a347ead",
+    "logistic-24": "16dbdd683d06acbdadf9690e6bee0a349edd9beabdc1cf6490580a0237743e8d",
+    "logistic-26": "66c0db6213b53e58e771d52b3972933803180b8f23e5dbf045e60f40e69458d4",
+    "logistic-5": "fc7b4c77cd13c4c96d001d737ac1c72e61334da023be5c5e1ad77c303f810691",
+    "logistic-8": "037e9e8f207e12eb4217144c89d9cd1c33185314c95a6e82e34bc6c200014b3c",
 }
 
 

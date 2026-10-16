@@ -33,6 +33,8 @@ LISTS_THE_MODELS = {"args-bad-value-model"}
 
 def uses_new(c):
     argv = [a for a in c["argv"] if isinstance(a, str)]
+    if "runs" in argv or "--track" in argv or "--max-out-of-range" in argv:
+        return True
     if any(a in NEW_FLAGS for a in argv) or "--threads" in argv or "cv" in argv:
         return True
     if "fit" in argv and "--max-bytes" in argv:

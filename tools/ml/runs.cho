@@ -1,0 +1,898 @@
+edition 6;
+
+module ml.runs;
+
+// `ml runs list|show|compare|verify` (docs/tracking.md section 5.4): the run records `ml fit --track` writes, read back. A record is checked before anything of it is used: it ends with the SHA-256 of what
+// comes before, its id is the hash of its inputs, and its members have the types the writer gives them. `verify` refits the model of a record in memory, with the same code as `fit`, and compares the
+// SHA-256 of the file it makes with the record's.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.cfit;
+import ml.csv;
+import ml.fsio;
+import ml.mfile;
+import ml.paths;
+import ml.prov;
+import ml.spec;
+import ml.splitspec;
+import ml.track;
+import ml.verbs;
+import ml.wire;
+import ml.wiredata;
+import toolbox.built;
+import toolbox.fail;
+import toolbox.text;
+
+// ---------------------------------------------------------------- reading a record
+
+// ml.runs.damaged: the file of the directory is not a run record of this version
+fn damaged[&h, &n](heap: &!h Heap, errs: fail.Errors, name: &n [byte]) -> [heap] fail.Errors {
+    var w = track.open_error(heap, "ml.runs.damaged");
+    w = fail.detail_text(heap, w, "file", name);
+    return fail.add(heap, errs, w);
+}
+
+fn member_string[&s, &t](src: &s [byte], tp: &t [int], obj: int, key: &static [byte]) -> [] bool {
+    let n = json.get(src, tp, obj, key);
+    return n >= 0 && json.is_string(tp, n);
+}
+
+fn member_int[&s, &t](src: &s [byte], tp: &t [int], obj: int, key: &static [byte]) -> [] bool {
+    let n = json.get(src, tp, obj, key);
+    return n >= 0 && json.is_int(tp, n) && json.fits_int(src, tp, n);
+}
+
+fn member_object[&s, &t](src: &s [byte], tp: &t [int], obj: int, key: &static [byte]) -> [] bool {
+    let n = json.get(src, tp, obj, key);
+    return n >= 0 && json.is_object(tp, n);
+}
+
+// a member that is null or of the kind the check says (`kind` 1 string, 2 int, 3 object)
+fn member_or_null[&s, &t](src: &s [byte], tp: &t [int], obj: int, key: &static [byte], kind: int) -> [] bool {
+    let n = json.get(src, tp, obj, key);
+    if n < 0 {
+        return false;
+    }
+    if json.is_null(tp, n) {
+        return true;
+    }
+    if kind == 1 {
+        return json.is_string(tp, n);
+    }
+    if kind == 2 {
+        return json.is_int(tp, n) && json.fits_int(src, tp, n);
+    }
+    return json.is_object(tp, n);
+}
+
+fn ints_of[&s, &t](src: &s [byte], tp: &t [int], obj: int, a: &static [byte], b: &static [byte], c: &static [byte], d: &static [byte], e: &static [byte]) -> [] bool {
+    var ok = member_int(src, tp, obj, a) && member_int(src, tp, obj, b);
+    if len(c) > 0 {
+        ok = ok && member_int(src, tp, obj, c);
+    }
+    if len(d) > 0 {
+        ok = ok && member_int(src, tp, obj, d);
+    }
+    if len(e) > 0 {
+        ok = ok && member_int(src, tp, obj, e);
+    }
+    return ok;
+}
+
+// whether the document in `tp` has the members of a run record, each of its kind (the record is canonical: this is the second look, after the check and the id)
+fn valid_run[&s, &t, &i](src: &s [byte], tp: &t [int], id: &i [byte]) -> [] bool {
+    if !json.is_object(tp, 0) || !member_string(src, tp, 0, "schema") || !member_string(src, tp, 0, "id") || !member_object(src, tp, 0, "inputs") || !member_int(src, tp, 0, "threads") || !member_object(src, tp, 0, "model") || !member_object(src, tp, 0, "counts") || !member_or_null(src, tp, 0, "metrics", 3) || !member_string(src, tp, 0, "check") {
+        return false;
+    }
+    if !json.string_equals(src, tp, json.get(src, tp, 0, "schema"), "ml.run.v1") || !json.string_equals(src, tp, json.get(src, tp, 0, "id"), id) {
+        return false;
+    }
+    let inp = json.get(src, tp, 0, "inputs");
+    let data = json.get(src, tp, inp, "data");
+    if data < 0 || !json.is_object(tp, data) || !member_string(src, tp, data, "path") || !member_string(src, tp, data, "sha256") || !ints_of(src, tp, data, "bytes", "rows", "", "", "") {
+        return false;
+    }
+    if !member_or_null(src, tp, inp, "target", 1) || !member_string(src, tp, inp, "task") || !member_string(src, tp, inp, "plan") || !member_int(src, tp, inp, "seed") || !member_or_null(src, tp, inp, "positive", 2) || !member_string(src, tp, inp, "split") || !member_string(src, tp, inp, "drop") || !member_string(src, tp, inp, "float") || !member_string(src, tp, inp, "cat") || !member_string(src, tp, inp, "na_values") || !member_or_null(src, tp, inp, "reader", 3) || !member_string(src, tp, inp, "compiler") || !member_or_null(src, tp, inp, "sum_order", 2) {
+        return false;
+    }
+    let rd = json.get(src, tp, inp, "reader");
+    if json.is_object(tp, rd) && !ints_of(src, tp, rd, "max_categories", "max_string_bytes", "max_pool_bytes", "max_cat_columns", "") {
+        return false;
+    }
+    let md = json.get(src, tp, 0, "model");
+    if !member_string(src, tp, md, "path") || !member_string(src, tp, md, "sha256") || !member_int(src, tp, md, "bytes") {
+        return false;
+    }
+    let ct = json.get(src, tp, 0, "counts");
+    if !ints_of(src, tp, ct, "file_rows", "train_rows", "test_rows", "features", "steps") {
+        return false;
+    }
+    let mt = json.get(src, tp, 0, "metrics");
+    if json.is_object(tp, mt) && (!member_int(src, tp, mt, "rows") || !member_string(src, tp, mt, "on") || !member_object(src, tp, mt, "metrics")) {
+        return false;
+    }
+    return true;
+}
+
+// the record `id` of the directory, read and checked: (its bytes, whether it is good, the errors). A record that is not there is ml.runs.not-found, one that is not good ml.runs.damaged.
+fn load[&h, &f, &r, &pd, &i](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, id: &i [byte], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, bool, fail.Errors) {
+    var e = errs;
+    let nm = track.run_name(heap, id);
+    var ok = false;
+    var src = buffer.empty(heap, 1);
+    borrow nm as &nr in {
+        let (data, st, aux) = track.read_in(heap, fs, root, dirp, buffer.bytes(nr), track.max_record_bytes() + 1);
+        buffer.drop(heap, src);
+        src = data;
+        if st == 1 && aux == 2 {
+            var w = track.open_error(heap, "ml.runs.not-found");
+            w = fail.detail_str(heap, w, "id", id);
+            e = fail.add(heap, e, w);
+        } else if st == 1 || st == 2 {
+            e = fail.io_error(heap, e, aux, false, paths.shown(dirp));
+        } else if st == 3 {
+            e = damaged(heap, e, buffer.bytes(nr));
+        } else {
+            borrow src as &sr in {
+                let text = buffer.bytes(sr);
+                if track.check_matches(heap, text) && track.id_matches(heap, text) {
+                    let tape = box_slice(heap, json.tape_len(text), 0);
+                    var tw = tape;
+                    borrow mut tw as &!tp in {
+                        if json.parse(text, contents(tp)) > 0 && valid_run(text, contents(tp), id) {
+                            ok = true;
+                        }
+                    }
+                    unbox_slice(heap, tw);
+                }
+                if !ok {
+                    e = damaged(heap, e, buffer.bytes(nr));
+                }
+            }
+        }
+    }
+    buffer.drop(heap, nm);
+    return (src, ok, e);
+}
+
+// the name of the model on the `model kind=NAME` line of a plan
+fn model_name[&p](plan: &p [byte]) -> [] &p [byte] {
+    let at = bytes.find(plan, "model kind=");
+    if at < 0 {
+        return plan[0..0];
+    }
+    var from = at + 11;
+    var to = from;
+    while to < len(plan) && int_of(plan[to]) != ' ' && int_of(plan[to]) != 10 {
+        to = to + 1;
+    }
+    return plan[from..to];
+}
+
+// ---------------------------------------------------------------- list
+
+fn put_run_entry[&h, &s, &t](heap: &!h Heap, w0: json.Writer, src: &s [byte], tp: &t [int], evals: int) -> [heap] json.Writer {
+    var w = w0;
+    let inp = json.get(src, tp, 0, "inputs");
+    let data = json.get(src, tp, inp, "data");
+    let md = json.get(src, tp, 0, "model");
+    let ct = json.get(src, tp, 0, "counts");
+    let mt = json.get(src, tp, 0, "metrics");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "id");
+    w = put_node_member(heap, w, src, tp, 0, "id");
+    let plan = track.str_of(heap, src, tp, json.get(src, tp, inp, "plan"));
+    w = json.put_key(heap, w, "model");
+    borrow plan as &pr in {
+        w = json.put_string(heap, w, model_name(buffer.bytes(pr)));
+    }
+    buffer.drop(heap, plan);
+    w = json.put_key(heap, w, "task");
+    w = put_node_member(heap, w, src, tp, inp, "task");
+    w = json.put_key(heap, w, "data_sha256");
+    w = put_node_member(heap, w, src, tp, data, "sha256");
+    w = json.put_key(heap, w, "model_sha256");
+    w = put_node_member(heap, w, src, tp, md, "sha256");
+    w = json.put_key(heap, w, "train_rows");
+    w = put_node_member(heap, w, src, tp, ct, "train_rows");
+    w = json.put_key(heap, w, "metrics_on");
+    if json.is_object(tp, mt) {
+        w = put_node_member(heap, w, src, tp, mt, "on");
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.put_key(heap, w, "evals");
+    w = json.put_int(heap, w, evals);
+    return json.end_object(heap, w);
+}
+
+// the member `key` of the object at `obj`, written again
+fn put_node_member[&h, &s, &t](heap: &!h Heap, w: json.Writer, src: &s [byte], tp: &t [int], obj: int, key: &static [byte]) -> [heap] json.Writer {
+    return track.put_node(heap, w, src, tp, json.get(src, tp, obj, key));
+}
+
+// how many eval records of the directory belong to the run `id`
+fn count_evals[&l, &i](list: &l [byte], total: int, id: &i [byte]) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < total {
+        let nm = track.name_at(list, k);
+        if track.is_eval_name(nm) && bytes.equal(nm[0..64], id) {
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    return n;
+}
+
+fn list[&h, &f, &r, &pd](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = errs;
+    let (names, count, st, aux) = track.json_names(heap, fs, root, dirp, 100000);
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if st == 1 || st == 2 {
+        e = fail.io_error(heap, e, aux, false, paths.shown(dirp));
+    } else if st == 3 {
+        var w = track.open_error(heap, "ml.runs.too-many");
+        w = fail.detail_int(heap, w, "max", track.max_records());
+        e = fail.add(heap, e, w);
+    } else {
+        var w = json.writer(heap, 1024);
+        w = json.begin_object(heap, w);
+        w = verbs.put_name(heap, w, "dir", paths.shown(dirp));
+        var runs = json.writer(heap, 1024);
+        runs = json.begin_array(heap, runs);
+        var listed = 0;
+        var good = true;
+        var seen = 0;
+        borrow names as &nr in {
+            var k = 0;
+            while k < count && good {
+                let nm = track.name_at(buffer.bytes(nr), k);
+                if track.is_run_name(nm) {
+                    seen = seen + 1;
+                    if listed < o.limit {
+                        let (src, ok, e2) = load(heap, fs, root, dirp, nm[0..64], e);
+                        e = e2;
+                        if ok {
+                            borrow src as &sr in {
+                                let text = buffer.bytes(sr);
+                                let tape = box_slice(heap, json.tape_len(text), 0);
+                                var tw = tape;
+                                borrow mut tw as &!tp in {
+                                    if json.parse(text, contents(tp)) > 0 {
+                                        runs = put_run_entry(heap, runs, text, contents(tp), count_evals(buffer.bytes(nr), count, nm[0..64]));
+                                        listed = listed + 1;
+                                        plain = buffer.append(heap, plain, nm[0..64]);
+                                        plain = buffer.push(heap, plain, byte_of(10));
+                                    }
+                                }
+                                unbox_slice(heap, tw);
+                            }
+                        } else {
+                            good = false;
+                        }
+                        buffer.drop(heap, src);
+                    }
+                }
+                k = k + 1;
+            }
+        }
+        runs = json.end_array(heap, runs);
+        if good {
+            w = json.put_key(heap, w, "count");
+            w = json.put_int(heap, w, seen);
+            w = json.put_key(heap, w, "truncated");
+            w = json.put_bool(heap, w, listed < seen);
+            w = json.put_key(heap, w, "runs");
+            let rj = json.finish(runs);
+            borrow rj as &rjr in {
+                w = json.put_fragment(heap, w, buffer.bytes(rjr));
+            }
+            buffer.drop(heap, rj);
+            w = json.end_object(heap, w);
+            buffer.drop(heap, payload);
+            payload = json.finish(w);
+        } else {
+            json.drop(heap, w);
+            json.drop(heap, runs);
+        }
+    }
+    buffer.drop(heap, names);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+}
+
+// ---------------------------------------------------------------- show
+
+fn show[&h, &f, &r, &pd, &i](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, id: &i [byte], errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    let (src, ok, e) = load(heap, fs, root, dirp, id, errs);
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if ok {
+        borrow src as &sr in {
+            let text = buffer.bytes(sr);
+            var w = json.writer(heap, len(text) + 32);
+            w = json.begin_object(heap, w);
+            w = json.put_key(heap, w, "record");
+            w = json.put_fragment(heap, w, text[0..len(text) - 1]);
+            w = json.end_object(heap, w);
+            buffer.drop(heap, payload);
+            payload = json.finish(w);
+            plain = buffer.append(heap, plain, text);
+        }
+    }
+    buffer.drop(heap, src);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+}
+
+// ---------------------------------------------------------------- compare
+
+// The members of the objects at `a` and `b` that differ, as {"key":..,"a":..,"b":..} (a dotted key for the nested ones), written into `w` (an open array). `prefix` is the key so far, with its dot.
+fn diff_objects[&h, &sa, &ta, &sb, &tb, &px](heap: &!h Heap, w0: json.Writer, prefix: &px [byte], sa: &sa [byte], ta: &ta [int], a: int, sb: &sb [byte], tb: &tb [int], b: int) -> [heap] json.Writer {
+    var w = w0;
+    var j = a + 1;
+    var left = json.count(ta, a);
+    while left > 0 {
+        let key = track.str_of(heap, sa, ta, j);
+        borrow key as &kr in {
+            let bn = json.get(sb, tb, b, buffer.bytes(kr));
+            let an = j + 1;
+            if bn >= 0 && json.is_object(ta, an) && json.is_object(tb, bn) {
+                var np = buffer.append(heap, buffer.empty(heap, len(prefix) + 32), prefix);
+                np = buffer.append(heap, np, buffer.bytes(kr));
+                np = buffer.push(heap, np, byte_of('.'));
+                borrow np as &npr in {
+                    w = diff_objects(heap, w, buffer.bytes(npr), sa, ta, an, sb, tb, bn);
+                }
+                buffer.drop(heap, np);
+            } else {
+                let ta_text = track.node_text(heap, sa, ta, an);
+                var same = false;
+                var tbt = buffer.empty(heap, 1);
+                if bn >= 0 {
+                    buffer.drop(heap, tbt);
+                    tbt = track.node_text(heap, sb, tb, bn);
+                    borrow ta_text as &x in {
+                        borrow tbt as &y in {
+                            same = bytes.equal(buffer.bytes(x), buffer.bytes(y));
+                        }
+                    }
+                }
+                if !same {
+                    var full = buffer.append(heap, buffer.empty(heap, len(prefix) + 32), prefix);
+                    full = buffer.append(heap, full, buffer.bytes(kr));
+                    w = json.begin_object(heap, w);
+                    w = json.put_key(heap, w, "key");
+                    borrow full as &fr in {
+                        w = json.put_string(heap, w, buffer.bytes(fr));
+                    }
+                    w = json.put_key(heap, w, "a");
+                    borrow ta_text as &x2 in {
+                        w = json.put_fragment(heap, w, buffer.bytes(x2));
+                    }
+                    w = json.put_key(heap, w, "b");
+                    if bn >= 0 {
+                        borrow tbt as &y2 in {
+                            w = json.put_fragment(heap, w, buffer.bytes(y2));
+                        }
+                    } else {
+                        w = json.put_null(heap, w);
+                    }
+                    w = json.end_object(heap, w);
+                    buffer.drop(heap, full);
+                }
+                buffer.drop(heap, ta_text);
+                buffer.drop(heap, tbt);
+            }
+        }
+        buffer.drop(heap, key);
+        j = json.skip(ta, j + 1);
+        left = left - 1;
+    }
+    return w;
+}
+
+// the metrics of the record at the tape: the node of its `metrics.metrics` object, or -1
+fn metrics_node[&s, &t](src: &s [byte], tp: &t [int]) -> [] int {
+    let mt = json.get(src, tp, 0, "metrics");
+    if mt < 0 || !json.is_object(tp, mt) {
+        return 0 - 1;
+    }
+    return json.get(src, tp, mt, "metrics");
+}
+
+// {"name":..,"a":..,"b":..,"equal":..} for each metric of either record, the names of the first and then those only the second has
+fn compare_metrics[&h, &sa, &ta, &sb, &tb](heap: &!h Heap, w0: json.Writer, sa: &sa [byte], ta: &ta [int], a: int, sb: &sb [byte], tb: &tb [int], b: int) -> [heap] json.Writer {
+    var w = w0;
+    var pass = 0;
+    while pass < 2 {
+        var n1 = a;
+        if pass == 1 {
+            n1 = b;
+        }
+        if n1 >= 0 {
+            var j = n1 + 1;
+            var left = 0;
+            if pass == 0 {
+                left = json.count(ta, n1);
+            } else {
+                left = json.count(tb, n1);
+            }
+            while left > 0 {
+                var key = buffer.empty(heap, 1);
+                if pass == 0 {
+                    buffer.drop(heap, key);
+                    key = track.str_of(heap, sa, ta, j);
+                } else {
+                    buffer.drop(heap, key);
+                    key = track.str_of(heap, sb, tb, j);
+                }
+                borrow key as &kr in {
+                    // the second pass lists only the names the first record lacks
+                    var skip = false;
+                    if pass == 1 && a >= 0 && json.get(sa, ta, a, buffer.bytes(kr)) >= 0 {
+                        skip = true;
+                    }
+                    if !skip {
+                        var an = 0 - 1;
+                        if a >= 0 {
+                            an = json.get(sa, ta, a, buffer.bytes(kr));
+                        }
+                        var bn = 0 - 1;
+                        if b >= 0 {
+                            bn = json.get(sb, tb, b, buffer.bytes(kr));
+                        }
+                        var ax = buffer.append(heap, buffer.empty(heap, 8), "null");
+                        var bx = buffer.append(heap, buffer.empty(heap, 8), "null");
+                        if an >= 0 {
+                            buffer.drop(heap, ax);
+                            ax = track.node_text(heap, sa, ta, an);
+                        }
+                        if bn >= 0 {
+                            buffer.drop(heap, bx);
+                            bx = track.node_text(heap, sb, tb, bn);
+                        }
+                        w = json.begin_object(heap, w);
+                        w = json.put_key(heap, w, "name");
+                        w = json.put_string(heap, w, buffer.bytes(kr));
+                        w = json.put_key(heap, w, "a");
+                        borrow ax as &axr in {
+                            w = json.put_fragment(heap, w, buffer.bytes(axr));
+                        }
+                        w = json.put_key(heap, w, "b");
+                        borrow bx as &bxr in {
+                            w = json.put_fragment(heap, w, buffer.bytes(bxr));
+                        }
+                        w = json.put_key(heap, w, "equal");
+                        var same = false;
+                        borrow ax as &axr2 in {
+                            borrow bx as &bxr2 in {
+                                same = bytes.equal(buffer.bytes(axr2), buffer.bytes(bxr2));
+                            }
+                        }
+                        w = json.put_bool(heap, w, same);
+                        w = json.end_object(heap, w);
+                        buffer.drop(heap, ax);
+                        buffer.drop(heap, bx);
+                    }
+                }
+                buffer.drop(heap, key);
+                if pass == 0 {
+                    j = json.skip(ta, j + 1);
+                } else {
+                    j = json.skip(tb, j + 1);
+                }
+                left = left - 1;
+            }
+        }
+        pass = pass + 1;
+    }
+    return w;
+}
+
+fn compare[&h, &f, &r, &pd, &i, &k](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, ida: &i [byte], idb: &k [byte], errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    let (sa, oka, e1) = load(heap, fs, root, dirp, ida, errs);
+    let (sb, okb, e2) = load(heap, fs, root, dirp, idb, e1);
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if oka && okb {
+        borrow sa as &sar in {
+            borrow sb as &sbr in {
+                let ta_ = box_slice(heap, json.tape_len(buffer.bytes(sar)), 0);
+                let tb_ = box_slice(heap, json.tape_len(buffer.bytes(sbr)), 0);
+                var twa = ta_;
+                var twb = tb_;
+                borrow mut twa as &!tpa in {
+                    borrow mut twb as &!tpb in {
+                        let texta = buffer.bytes(sar);
+                        let textb = buffer.bytes(sbr);
+                        if json.parse(texta, contents(tpa)) > 0 && json.parse(textb, contents(tpb)) > 0 {
+                            var w = json.writer(heap, 1024);
+                            w = json.begin_object(heap, w);
+                            w = json.put_key(heap, w, "a");
+                            w = json.put_string(heap, w, ida);
+                            w = json.put_key(heap, w, "b");
+                            w = json.put_string(heap, w, idb);
+                            let ma = json.get(texta, contents(tpa), json.get(texta, contents(tpa), 0, "model"), "sha256");
+                            let mb = json.get(textb, contents(tpb), json.get(textb, contents(tpb), 0, "model"), "sha256");
+                            w = json.put_key(heap, w, "model_equal");
+                            w = json.put_bool(heap, w, bytes.equal(json.string_view(texta, contents(tpa), ma), json.string_view(textb, contents(tpb), mb)));
+                            w = json.put_key(heap, w, "inputs");
+                            w = json.begin_array(heap, w);
+                            w = diff_objects(heap, w, "", texta, contents(tpa), json.get(texta, contents(tpa), 0, "inputs"), textb, contents(tpb), json.get(textb, contents(tpb), 0, "inputs"));
+                            w = json.end_array(heap, w);
+                            w = json.put_key(heap, w, "metrics");
+                            w = json.begin_array(heap, w);
+                            w = compare_metrics(heap, w, texta, contents(tpa), metrics_node(texta, contents(tpa)), textb, contents(tpb), metrics_node(textb, contents(tpb)));
+                            w = json.end_array(heap, w);
+                            w = json.end_object(heap, w);
+                            buffer.drop(heap, payload);
+                            payload = json.finish(w);
+                        }
+                    }
+                }
+                unbox_slice(heap, twa);
+                unbox_slice(heap, twb);
+            }
+        }
+    }
+    buffer.drop(heap, sa);
+    buffer.drop(heap, sb);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e2, log, false);
+}
+
+// ---------------------------------------------------------------- verify
+
+// a copy of the string member `key` of the object at `obj` (empty when it is null or absent)
+fn field_str[&h, &s, &t](heap: &!h Heap, src: &s [byte], tp: &t [int], obj: int, key: &static [byte]) -> [heap] buffer.Buffer {
+    let n = json.get(src, tp, obj, key);
+    if n < 0 || !json.is_string(tp, n) {
+        return buffer.empty(heap, 1);
+    }
+    return track.str_of(heap, src, tp, n);
+}
+
+fn field_int[&s, &t](src: &s [byte], tp: &t [int], obj: int, key: &static [byte], other: int) -> [] int {
+    let n = json.get(src, tp, obj, key);
+    if n < 0 || !json.is_int(tp, n) {
+        return other;
+    }
+    return json.to_int(src, tp, n);
+}
+
+// the whole path of the training file named in the record: under the root when there is one
+fn full_path[&h, &r, &s, &t](heap: &!h Heap, root: &r [byte], src: &s [byte], tp: &t [int], data: int) -> [heap] buffer.Buffer {
+    let rel = field_str(heap, src, tp, data, "path");
+    var full = buffer.empty(heap, len(root) + 2);
+    if len(root) > 0 {
+        full = buffer.append(heap, full, root);
+        full = buffer.push(heap, full, byte_of('/'));
+    }
+    borrow rel as &rr in {
+        full = buffer.append(heap, full, buffer.bytes(rr));
+    }
+    buffer.drop(heap, rel);
+    return full;
+}
+
+// the options a replay is made with: the ceilings of the caps (they refuse, never change a byte) and the numbers of the record. The runtime texts of the record (target, lists, markers) do not fit
+// in the structure: the lists become the masks, the target and the markers are passed beside it.
+fn replay_opts(max_rows: int, task: int, seed: int, threads: int, has_target: bool, positive_given: bool, positive: int, split_num: int, split_den: int, cat_given: bool, max_cats: int, max_str: int, max_pool: int, max_catcols: int, dmask: int, fmask: int, cmask: int) -> [] verbs.Opts {
+    return verbs.Opts { cap: 16777216, max_rows: max_rows, max_cols: 8192, max_cells: 1099511627776, max_bytes: 268435456, limit: 1000, from: 0, overwrite: false, dry: false, drop_given: dmask != 0, task: task, drops: "", floats: "", target: "", model: "", plan_given: true, step: "", step_given: false, positive: "", positive_given: positive_given, split: "", split_given: split_den > 0, seed: seed, threads: threads, threads_given: true, proba: false, distance: false, target_given: has_target, task_given: false, cats: "", cat_given: cat_given, na: "", max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, max_oor: 0, max_oor_given: false, drop_mask: dmask, float_mask: fmask, cat_mask: cmask, positive_v: positive, split_num: split_num, split_den: split_den, track_given: false };
+}
+
+// The bit mask of the columns of the header named in the comma list: (mask, 0), or (0, the first name past the 62nd column or absent, as a 1-based count)
+fn list_mask[&n, &l](shape: &n csv.Shape, list: &l [byte]) -> [] (int, int) {
+    if len(list) == 0 {
+        return (0, 0);
+    }
+    var mask = 0;
+    let count = bytes.count_byte(list, ',') + 1;
+    var k = 1;
+    while k <= count {
+        let want = bytes.field(list, ',', k);
+        let j = csv.find(shape, want);
+        if j < 0 || j >= 62 {
+            return (0, k);
+        }
+        mask = mask | 1 << j;
+        k = k + 1;
+    }
+    return (mask, 0);
+}
+
+fn not_replayable[&h, &n](heap: &!h Heap, errs: fail.Errors, list: &static [byte], name: &n [byte]) -> [heap] fail.Errors {
+    var w = track.open_error(heap, "ml.runs.not-replayable");
+    w = fail.detail_str(heap, w, "flag", list);
+    w = fail.detail_text(heap, w, "column", name);
+    return fail.add(heap, errs, w);
+}
+
+fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, id: &i [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read, conc] verbs.Out {
+    let (src, ok, e0) = load(heap, fs, root, dirp, id, errs);
+    var e = e0;
+    if !ok {
+        buffer.drop(heap, src);
+        return verbs.nothing(heap, e, log);
+    }
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    var lg = log;
+    borrow src as &sr in {
+        let text = buffer.bytes(sr);
+        let tape = box_slice(heap, json.tape_len(text), 0);
+        var tw = tape;
+        borrow mut tw as &!tp in {
+            if json.parse(text, contents(tp)) > 0 {
+                let inp = json.get(text, contents(tp), 0, "inputs");
+                let data = json.get(text, contents(tp), inp, "data");
+                let md = json.get(text, contents(tp), 0, "model");
+                let rd = json.get(text, contents(tp), inp, "reader");
+                let dpath = field_str(heap, text, contents(tp), data, "path");
+                let dsha = field_str(heap, text, contents(tp), data, "sha256");
+                let target = field_str(heap, text, contents(tp), inp, "target");
+                let plan = field_str(heap, text, contents(tp), inp, "plan");
+                let drops = field_str(heap, text, contents(tp), inp, "drop");
+                let floats = field_str(heap, text, contents(tp), inp, "float");
+                let cats = field_str(heap, text, contents(tp), inp, "cat");
+                let na = field_str(heap, text, contents(tp), inp, "na_values");
+                let task = field_str(heap, text, contents(tp), inp, "task");
+                let msha = field_str(heap, text, contents(tp), md, "sha256");
+                let compiler = field_str(heap, text, contents(tp), inp, "compiler");
+                let seed = field_int(text, contents(tp), inp, "seed", 0);
+                let pn = json.get(text, contents(tp), inp, "positive");
+                let has_pos = pn >= 0 && json.is_int(contents(tp), pn);
+                let pos = field_int(text, contents(tp), inp, "positive", 0);
+                // the split of the record: its canonical text (docs/tracking.md section 5.2), read back into the numbers and the strategy the fit used
+                let spt = field_str(heap, text, contents(tp), inp, "split");
+                var snum = 0;
+                var sden = 0;
+                var sstrat = 0;
+                var scol = buffer.empty(heap, 1);
+                var split_ok = false;
+                borrow spt as &sptr in {
+                    let (sok, snone, sn, sd, sst, sc, ssd) = splitspec.parse(heap, buffer.bytes(sptr));
+                    split_ok = sok && (snone || ssd == seed);
+                    snum = sn;
+                    sden = sd;
+                    sstrat = sst;
+                    buffer.drop(heap, scol);
+                    scol = sc;
+                }
+                buffer.drop(heap, spt);
+                var cat_given = false;
+                var mc = 64;
+                var ms = 255;
+                var mp = 1048576;
+                var mk = 128;
+                if rd >= 0 && json.is_object(contents(tp), rd) {
+                    cat_given = true;
+                    mc = field_int(text, contents(tp), rd, "max_categories", 64);
+                    ms = field_int(text, contents(tp), rd, "max_string_bytes", 255);
+                    mp = field_int(text, contents(tp), rd, "max_pool_bytes", 1048576);
+                    mk = field_int(text, contents(tp), rd, "max_cat_columns", 128);
+                }
+                let threads = o.threads;
+                let full = full_path(heap, root, text, contents(tp), data);
+                borrow full as &fur in {
+                    borrow dpath as &dpr in {
+                        borrow dsha as &dsr in {
+                            borrow target as &tgr in {
+                                borrow plan as &plr in {
+                                    borrow drops as &drr in {
+                                        borrow floats as &flr in {
+                                            borrow cats as &ctr in {
+                                                borrow na as &nar in {
+                                                    borrow task as &tkr in {
+                                                        borrow msha as &msr in {
+                                                            borrow compiler as &cpr in {
+                                                                // 1 the training file named by the record must be the one it hashed
+                                                                var go = true;
+                                                                if !split_ok {
+                                                                    e = damaged(heap, e, id);
+                                                                    go = false;
+                                                                }
+                                                                if len(root) == 0 && paths.has_double_dot(buffer.bytes(fur)) {
+                                                                    e = damaged(heap, e, buffer.bytes(dpr));
+                                                                    go = false;
+                                                                }
+                                                                if go {
+                                                                    let (dg, dsize, hst, hax) = fsio.sha_file(heap, fs, root, buffer.bytes(dpr), buffer.bytes(fur));
+                                                                    if hst != 0 {
+                                                                        e = fail.io_error(heap, e, hax, false, buffer.bytes(dpr));
+                                                                        go = false;
+                                                                    } else {
+                                                                        var found = buffer.empty(heap, 1);
+                                                                        borrow dg as &dgr in {
+                                                                            buffer.drop(heap, found);
+                                                                            found = prov.hex(heap, buffer.bytes(dgr));
+                                                                        }
+                                                                        borrow found as &fdr in {
+                                                                            if !bytes.equal(buffer.bytes(fdr), buffer.bytes(dsr)) {
+                                                                                var w = track.open_error(heap, "ml.runs.data-changed");
+                                                                                w = fail.detail_str(heap, w, "recorded", buffer.bytes(dsr));
+                                                                                w = fail.detail_str(heap, w, "found", buffer.bytes(fdr));
+                                                                                e = fail.add(heap, e, w);
+                                                                                go = false;
+                                                                            }
+                                                                        }
+                                                                        buffer.drop(heap, found);
+                                                                    }
+                                                                    buffer.drop(heap, dg);
+                                                                }
+                                                                var dmask = 0;
+                                                                var fmask = 0;
+                                                                var cmask = 0;
+                                                                let rp = paths.of_path(heap, buffer.bytes(dpr), buffer.bytes(fur));
+                                                                if go {
+                                                                    // 2 the places of the flagged columns in the header: the reader is configured with positions
+                                                                    let hdr = replay_opts(0, 1, 0, 1, false, false, 0, 0, 0, false, mc, ms, mp, mk, 0, 0, 0);
+                                                                    let hcfg = verbs.config(hdr, 0, 0, 0);
+                                                                    borrow rp as &rpr in {
+                                                                        let (sh, rep, e1, sk1) = verbs.scan_file(heap, fs, root, rpr, hcfg, buffer.bytes(tgr), csv.plain_sinks(heap, 8, false), e);
+                                                                        e = e1;
+                                                                        csv.drop_sinks(heap, sk1);
+                                                                        if rep.status == 99 {
+                                                                            e = fail.io_error(heap, e, rep.aux, false, buffer.bytes(dpr));
+                                                                            go = false;
+                                                                        } else {
+                                                                            var m1 = 0;
+                                                                            var b1 = 0;
+                                                                            var m2 = 0;
+                                                                            var b2 = 0;
+                                                                            var m3 = 0;
+                                                                            var b3 = 0;
+                                                                            borrow sh as &shr in {
+                                                                                let (x1, y1) = list_mask(shr, buffer.bytes(drr));
+                                                                                let (x2, y2) = list_mask(shr, buffer.bytes(flr));
+                                                                                let (x3, y3) = list_mask(shr, buffer.bytes(ctr));
+                                                                                m1 = x1;
+                                                                                b1 = y1;
+                                                                                m2 = x2;
+                                                                                b2 = y2;
+                                                                                m3 = x3;
+                                                                                b3 = y3;
+                                                                            }
+                                                                            dmask = m1;
+                                                                            fmask = m2;
+                                                                            cmask = m3;
+                                                                            if b1 > 0 {
+                                                                                e = not_replayable(heap, e, "drop", bytes.field(buffer.bytes(drr), ',', b1));
+                                                                                go = false;
+                                                                            } else if b2 > 0 {
+                                                                                e = not_replayable(heap, e, "float", bytes.field(buffer.bytes(flr), ',', b2));
+                                                                                go = false;
+                                                                            } else if b3 > 0 {
+                                                                                e = not_replayable(heap, e, "cat", bytes.field(buffer.bytes(ctr), ',', b3));
+                                                                                go = false;
+                                                                            }
+                                                                        }
+                                                                        csv.drop_shape(heap, sh);
+                                                                    }
+                                                                }
+                                                                if go {
+                                                                    // 3 the refit, in memory
+                                                                    let constant = bytes.find(buffer.bytes(plr), "kind=constant") >= 0;
+                                                                    var otask = 1;
+                                                                    if bytes.equal(buffer.bytes(tkr), "classification") {
+                                                                        otask = 2;
+                                                                    }
+                                                                    let ro = replay_opts(1000000000, otask, seed, threads, len(buffer.bytes(tgr)) > 0, has_pos, pos, snum, sden, cat_given, mc, ms, mp, mk, dmask, fmask, cmask);
+                                                                    var fbytes = buffer.empty(heap, 1);
+                                                                    var made_ok = false;
+                                                                    borrow rp as &rpr in {
+                                                                        if constant {
+                                                                            let (mo, fb, ok2, e2, lg2) = cfit.make(heap, args, fs, root, rpr, ro, buffer.bytes(tgr), e, lg);
+                                                                            mfile.drop_model(heap, mo);
+                                                                            buffer.drop(heap, fbytes);
+                                                                            fbytes = fb;
+                                                                            made_ok = ok2;
+                                                                            e = e2;
+                                                                            lg = lg2;
+                                                                        } else {
+                                                                            let ptxt = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(plr)) + 1), buffer.bytes(plr));
+                                                                            // the strategy and the column of the split come from the record's text (a runtime column cannot be a field of the options)
+                                                                            let spo = splitspec.SplitOpts { stratify: sstrat == 1, by: "", by_given: sstrat == 3, group: "", group_given: sstrat == 2, folds: 0, repeats: 0, repeats_given: false, emit: false };
+                                                                            borrow scol as &scr in {
+                                                                                let m = wire.make(heap, args, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), ro, spo, buffer.bytes(scr), false, e, lg);
+                                                                                let (mfb, merr, mlg, mok) = wire.made_file(heap, m);
+                                                                                buffer.drop(heap, fbytes);
+                                                                                fbytes = mfb;
+                                                                                made_ok = mok;
+                                                                                e = merr;
+                                                                                lg = mlg;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    if made_ok {
+                                                                        var fhex = buffer.empty(heap, 1);
+                                                                        borrow fbytes as &fbr in {
+                                                                            buffer.drop(heap, fhex);
+                                                                            fhex = mfile.sha256_hex(heap, buffer.bytes(fbr));
+                                                                        }
+                                                                        borrow fhex as &fhr in {
+                                                                            if bytes.equal(buffer.bytes(fhr), buffer.bytes(msr)) {
+                                                                                var w = json.writer(heap, 256);
+                                                                                w = json.begin_object(heap, w);
+                                                                                w = json.put_key(heap, w, "id");
+                                                                                w = json.put_string(heap, w, id);
+                                                                                w = json.put_key(heap, w, "verified");
+                                                                                w = json.put_bool(heap, w, true);
+                                                                                w = json.put_key(heap, w, "model_sha256");
+                                                                                w = json.put_string(heap, w, buffer.bytes(fhr));
+                                                                                w = json.put_key(heap, w, "data_sha256");
+                                                                                w = json.put_string(heap, w, buffer.bytes(dsr));
+                                                                                w = json.put_key(heap, w, "threads");
+                                                                                w = json.put_int(heap, w, threads);
+                                                                                w = verbs.put_name(heap, w, "compiler", built.compiler());
+                                                                                w = json.end_object(heap, w);
+                                                                                buffer.drop(heap, payload);
+                                                                                payload = json.finish(w);
+                                                                                plain = buffer.append(heap, plain, "verified ");
+                                                                                plain = buffer.append(heap, plain, id);
+                                                                                plain = buffer.push(heap, plain, byte_of(10));
+                                                                            } else {
+                                                                                var w = track.open_error(heap, "ml.runs.model-differs");
+                                                                                w = fail.detail_str(heap, w, "recorded", buffer.bytes(msr));
+                                                                                w = fail.detail_str(heap, w, "refit", buffer.bytes(fhr));
+                                                                                w = fail.detail_text(heap, w, "recorded_compiler", buffer.bytes(cpr));
+                                                                                w = fail.detail_text(heap, w, "compiler", built.compiler());
+                                                                                e = fail.add(heap, e, w);
+                                                                            }
+                                                                        }
+                                                                        buffer.drop(heap, fhex);
+                                                                    }
+                                                                    buffer.drop(heap, fbytes);
+                                                                }
+                                                                paths.drop(heap, rp);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                buffer.drop(heap, scol);
+                buffer.drop(heap, full);
+                buffer.drop(heap, dpath);
+                buffer.drop(heap, dsha);
+                buffer.drop(heap, target);
+                buffer.drop(heap, plan);
+                buffer.drop(heap, drops);
+                buffer.drop(heap, floats);
+                buffer.drop(heap, cats);
+                buffer.drop(heap, na);
+                buffer.drop(heap, task);
+                buffer.drop(heap, msha);
+                buffer.drop(heap, compiler);
+            } else {
+                e = damaged(heap, e, id);
+            }
+        }
+        unbox_slice(heap, tw);
+    }
+    buffer.drop(heap, src);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
+}
+
+// ---------------------------------------------------------------- run
+
+pub fn run[&h, &g, &f, &r, &pd](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, sub: &static [byte], id1: &static [byte], id2: &static [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read, conc] verbs.Out {
+    if bytes.equal(sub, "list") {
+        return list(heap, fs, root, dirp, o, errs, log);
+    }
+    if bytes.equal(sub, "show") {
+        return show(heap, fs, root, dirp, id1, errs, log);
+    }
+    if bytes.equal(sub, "compare") {
+        return compare(heap, fs, root, dirp, id1, id2, errs, log);
+    }
+    return verify(heap, args, fs, root, dirp, id1, o, errs, log);
+}

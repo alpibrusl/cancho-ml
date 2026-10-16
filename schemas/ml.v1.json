@@ -23,33 +23,67 @@
     "planned_actions": {
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "op": {
-            "enum": [
-              "create",
-              "replace"
-            ]
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "enum": [
+                  "create",
+                  "replace"
+                ]
+              },
+              "path": {
+                "$ref": "#/$defs/text_or_bytes"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "op",
+              "path",
+              "bytes",
+              "sha256"
+            ],
+            "additionalProperties": false
           },
-          "path": {
-            "$ref": "#/$defs/text_or_bytes"
-          },
-          "bytes": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "create"
+              },
+              "dir": {
+                "$ref": "#/$defs/text_or_bytes"
+              },
+              "file": {
+                "$ref": "#/$defs/text_or_bytes"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "op",
+              "dir",
+              "file",
+              "bytes",
+              "sha256"
+            ],
+            "additionalProperties": false
           }
-        },
-        "required": [
-          "op",
-          "path",
-          "bytes",
-          "sha256"
-        ],
-        "additionalProperties": false
+        ]
       }
     },
     "error": {
@@ -179,6 +213,8 @@
         "--max-cells",
         "--max-line-bytes",
         "--max-bytes",
+        "--track",
+        "--max-out-of-range",
         "--log",
         "--log-max-bytes",
         "--format"
@@ -274,7 +310,18 @@
         "ml.input.missing-value",
         "ml.plan.model-not-built",
         "ml.limit.depth",
-        "ml.limit.nodes"
+        "ml.limit.nodes",
+        "ml.predict.out-of-range",
+        "ml.predict.no-provenance",
+        "ml.runs.conflict",
+        "ml.runs.too-many",
+        "ml.runs.record-too-large",
+        "ml.runs.not-found",
+        "ml.runs.unknown-model",
+        "ml.runs.damaged",
+        "ml.runs.data-changed",
+        "ml.runs.model-differs",
+        "ml.runs.not-replayable"
       ]
     },
     "repair": {
@@ -496,6 +543,36 @@
                   "additionalProperties": false
                 }
               ]
+            },
+            "run": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "dir": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "file": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "written": {
+                  "type": "boolean"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "id",
+                "dir",
+                "file",
+                "written",
+                "sha256"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -596,6 +673,13 @@
               "type": "integer",
               "minimum": 0
             },
+            "on": {
+              "enum": [
+                "train",
+                "other",
+                "unknown"
+              ]
+            },
             "metrics": {
               "type": "object",
               "properties": {
@@ -624,6 +708,7 @@
             "model",
             "task",
             "rows",
+            "on",
             "metrics"
           ],
           "additionalProperties": false
@@ -640,6 +725,13 @@
             "rows": {
               "type": "integer",
               "minimum": 0
+            },
+            "on": {
+              "enum": [
+                "train",
+                "other",
+                "unknown"
+              ]
             },
             "metrics": {
               "type": "object",
@@ -673,6 +765,7 @@
             "model",
             "task",
             "rows",
+            "on",
             "metrics"
           ],
           "additionalProperties": false
@@ -887,6 +980,9 @@
                           "type": "integer",
                           "minimum": 0
                         },
+                        "on": {
+                          "const": "held-out"
+                        },
                         "metrics": {
                           "type": "object",
                           "properties": {
@@ -934,6 +1030,7 @@
                       },
                       "required": [
                         "rows",
+                        "on",
                         "metrics"
                       ],
                       "additionalProperties": false
@@ -1116,6 +1213,9 @@
                           "type": "integer",
                           "minimum": 0
                         },
+                        "on": {
+                          "const": "held-out"
+                        },
                         "metrics": {
                           "type": "object",
                           "properties": {
@@ -1199,6 +1299,7 @@
                       },
                       "required": [
                         "rows",
+                        "on",
                         "metrics"
                       ],
                       "additionalProperties": false
@@ -1386,6 +1487,9 @@
                           "type": "integer",
                           "minimum": 0
                         },
+                        "on": {
+                          "const": "held-out"
+                        },
                         "metrics": {
                           "type": "object",
                           "properties": {
@@ -1433,6 +1537,7 @@
                       },
                       "required": [
                         "rows",
+                        "on",
                         "metrics"
                       ],
                       "additionalProperties": false
@@ -1628,6 +1733,9 @@
                           "type": "integer",
                           "minimum": 0
                         },
+                        "on": {
+                          "const": "held-out"
+                        },
                         "metrics": {
                           "type": "object",
                           "properties": {
@@ -1711,6 +1819,7 @@
                       },
                       "required": [
                         "rows",
+                        "on",
                         "metrics"
                       ],
                       "additionalProperties": false
@@ -1933,6 +2042,9 @@
                           "type": "integer",
                           "minimum": 0
                         },
+                        "on": {
+                          "const": "held-out"
+                        },
                         "metrics": {
                           "type": "object",
                           "properties": {
@@ -1979,6 +2091,7 @@
                       },
                       "required": [
                         "rows",
+                        "on",
                         "metrics"
                       ],
                       "additionalProperties": false
@@ -1993,6 +2106,36 @@
                   "additionalProperties": false
                 }
               ]
+            },
+            "run": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "dir": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "file": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "written": {
+                  "type": "boolean"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "id",
+                "dir",
+                "file",
+                "written",
+                "sha256"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -2077,6 +2220,58 @@
             "unknown_categories": {
               "type": "integer",
               "minimum": 0
+            },
+            "out_of_range": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cells": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "cells",
+                    "rows",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "ignored_columns": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/text_or_bytes"
+              }
             }
           },
           "required": [
@@ -2088,7 +2283,9 @@
             "total_rows",
             "truncated",
             "next",
-            "unknown_categories"
+            "unknown_categories",
+            "out_of_range",
+            "ignored_columns"
           ],
           "additionalProperties": false
         },
@@ -2110,6 +2307,13 @@
             "rows": {
               "type": "integer",
               "minimum": 0
+            },
+            "on": {
+              "enum": [
+                "train",
+                "other",
+                "unknown"
+              ]
             },
             "metrics": {
               "type": "object",
@@ -2159,6 +2363,52 @@
               "type": "integer",
               "minimum": 0
             },
+            "out_of_range": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cells": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "cells",
+                    "rows",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
             "split": {
               "type": "object",
               "properties": {
@@ -2200,8 +2450,10 @@
             "model",
             "task",
             "rows",
+            "on",
             "metrics",
-            "unknown_categories"
+            "unknown_categories",
+            "out_of_range"
           ],
           "additionalProperties": false
         },
@@ -2223,6 +2475,13 @@
             "rows": {
               "type": "integer",
               "minimum": 0
+            },
+            "on": {
+              "enum": [
+                "train",
+                "other",
+                "unknown"
+              ]
             },
             "positive": {
               "type": "integer"
@@ -2311,6 +2570,52 @@
               "type": "integer",
               "minimum": 0
             },
+            "out_of_range": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cells": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "cells",
+                    "rows",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
             "split": {
               "type": "object",
               "properties": {
@@ -2352,9 +2657,11 @@
             "model",
             "task",
             "rows",
+            "on",
             "positive",
             "metrics",
-            "unknown_categories"
+            "unknown_categories",
+            "out_of_range"
           ],
           "additionalProperties": false
         },
@@ -2376,6 +2683,13 @@
             "rows": {
               "type": "integer",
               "minimum": 0
+            },
+            "on": {
+              "enum": [
+                "train",
+                "other",
+                "unknown"
+              ]
             },
             "clusters": {
               "type": "integer",
@@ -2428,6 +2742,52 @@
               "type": "integer",
               "minimum": 0
             },
+            "out_of_range": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cells": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "cells",
+                    "rows",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
             "split": {
               "type": "object",
               "properties": {
@@ -2469,9 +2829,11 @@
             "model",
             "task",
             "rows",
+            "on",
             "clusters",
             "metrics",
-            "unknown_categories"
+            "unknown_categories",
+            "out_of_range"
           ],
           "additionalProperties": false
         },
@@ -2874,6 +3236,82 @@
               "type": "integer",
               "minimum": 0
             },
+            "provenance": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "file_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "file_bytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "file_rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "features": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "min": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "max": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "mean": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "std": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "count",
+                          "min",
+                          "max",
+                          "mean",
+                          "std"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "file_sha256",
+                    "file_bytes",
+                    "file_rows",
+                    "rows",
+                    "features"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
             "file": {
               "type": "object",
               "properties": {
@@ -2894,7 +3332,8 @@
                 "sections": {
                   "enum": [
                     5,
-                    6
+                    6,
+                    7
                   ]
                 },
                 "compiler": {
@@ -3262,6 +3701,7 @@
             "kind",
             "plan",
             "rows",
+            "provenance",
             "file",
             "target",
             "columns",
@@ -3273,6 +3713,204 @@
             "positive",
             "output",
             "limits"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "dir": {
+              "$ref": "#/$defs/text_or_bytes"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "runs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "task": {
+                    "enum": [
+                      "regression",
+                      "classification",
+                      "clustering"
+                    ]
+                  },
+                  "data_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "model_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "train_rows": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "metrics_on": {
+                    "oneOf": [
+                      {
+                        "enum": [
+                          "train",
+                          "held-out"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "evals": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "id",
+                  "model",
+                  "task",
+                  "data_sha256",
+                  "model_sha256",
+                  "train_rows",
+                  "metrics_on",
+                  "evals"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "dir",
+            "count",
+            "truncated",
+            "runs"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "record": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "record"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "b": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "model_equal": {
+              "type": "boolean"
+            },
+            "inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "a": {},
+                  "b": {}
+                },
+                "required": [
+                  "key",
+                  "a",
+                  "b"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "metrics": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "a": {},
+                  "b": {},
+                  "equal": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "a",
+                  "b",
+                  "equal"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "a",
+            "b",
+            "model_equal",
+            "inputs",
+            "metrics"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "verified": {
+              "const": true
+            },
+            "model_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "data_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "threads": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "compiler": {
+              "$ref": "#/$defs/text_or_bytes"
+            }
+          },
+          "required": [
+            "id",
+            "verified",
+            "model_sha256",
+            "data_sha256",
+            "threads",
+            "compiler"
           ],
           "additionalProperties": false
         }

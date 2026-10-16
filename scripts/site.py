@@ -354,12 +354,75 @@ def make_context(binary, tmp):
             if status2 != 0:
                 raise Drift("the repair of the demo `%s` does not run" % key)
             results[REPAIRED[key]] = (shlex.join(argv), out2, status2)
+    run_track_demos(run, tmp, results)
     http_results = run_http_demos(binary, tmp)
     ref = sx.reference()
     examples = sx.run_examples(run, tmp, ref)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
     return {"results": results, "http": http_results, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
+
+
+# Run tracking and the skew checks (docs/tracking.md) on docs/examples/data/iris_train.csv and iris_test.csv. The ids are the hashes of the inputs, so they are the same on every run; the
+# commands that name them are typed from the answers of the fits.
+TRACK_FITS = [
+    ("t_fit", "ml fit --model logistic --target virginica --iterations 25 --l2 0 --track runs --output iris-lr.ml iris_train.csv"),
+    ("t_fit2", "ml fit --model forest --task classification --trees 20 --seed 2 --target virginica --track runs --output iris-rf.ml iris_train.csv"),
+]
+SUMMARY_DATA.update({
+    "t_fit": ["path", "bytes", "sha256", "run"], "t_fit2": ["path", "bytes", "sha256", "run"], "t_list": ["count", "runs"], "t_compare": ["model_equal", "inputs"],
+    "t_eval_train": ["rows", "on", "metrics", "out_of_range"], "t_eval_test": ["rows", "on", "metrics", "out_of_range"],
+    "t_predict": ["row_count", "unknown_categories", "out_of_range", "ignored_columns"], "t_verify": ["verified", "model_sha256", "threads"],
+    "t_verify8": ["verified", "model_sha256", "threads"],
+})
+SUMMARY.update({"t_bound": ["rule", "hint", "detail"], "t_conflict": ["rule", "detail"]})
+
+
+def run_track_demos(run, tmp, results):
+    (Path(tmp) / "runs").mkdir()
+    ids = []
+    for key, typed in TRACK_FITS:
+        out, status = run(shlex.split(typed))
+        if status != 0:
+            raise Drift("the demo %s fails" % key)
+        results[key] = (typed, out, status)
+        ids.append(json.loads(out)["data"]["run"]["id"])
+    a, b = ids
+    for key, typed in [
+        ("t_list", "ml runs list runs"),
+        ("t_show", "ml runs show runs %s" % a),
+        ("t_compare", "ml runs compare runs %s %s" % (a, b)),
+        ("t_verify", "ml runs verify runs %s" % a),
+        ("t_verify8", "ml runs verify --threads 8 runs %s" % b),
+        ("t_eval_train", "ml eval --model-file iris-lr.ml --track runs iris_train.csv"),
+        ("t_eval_test", "ml eval --model-file iris-lr.ml --track runs iris_test.csv"),
+        ("t_predict", "ml predict --model-file iris-lr.ml --limit 2 iris_test.csv"),
+        ("t_bound", "ml predict --model-file iris-lr.ml --max-out-of-range 0 iris_test.csv"),
+    ]:
+        out, status = run(shlex.split(typed))
+        results[key] = (typed, out, status)
+
+
+def track_items(ctx):
+    """Track runs and check for skew: fit with --track, list, show, compare, verify; eval says what it scored; predict counts the cells outside the training range and can refuse."""
+    show = ctx["results"]["t_show"]
+    return [("# Every fit can write a run record: canonical JSON, named by the hash of the inputs that determine the model (not the thread count), no timestamp, no payload", None, 0, None),
+            item(ctx, "t_fit"),
+            item(ctx, "t_fit2"),
+            ("# The directory lists the runs; a run is shown whole, and two are compared by the inputs that differ and the metrics side by side", None, 0, None),
+            item(ctx, "t_list"),
+            (show[0], cut(show[1].strip(), 420), show[2], None),
+            item(ctx, "t_compare"),
+            ("# A run is replayable: verify refits in memory and compares the SHA-256 of the model file, at any thread count", None, 0, None),
+            item(ctx, "t_verify"),
+            item(ctx, "t_verify8"),
+            ("# eval says whether it scored the file the model was fitted on, and counts the cells outside the range of the training rows", None, 0, None),
+            item(ctx, "t_eval_train"),
+            item(ctx, "t_eval_test"),
+            ("# predict counts them too, and names the target column it ignored", None, 0, None),
+            item(ctx, "t_predict"),
+            ("# A bound on the rows outside the range refuses, naming the first column and row", None, 0, None),
+            item(ctx, "t_bound")]
 
 
 def item(ctx, key):
@@ -690,11 +753,11 @@ def exit_codes(ctx):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

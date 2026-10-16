@@ -11,7 +11,7 @@ close_stdin, close_stdout, noroot, darwin_only (a platform-specific answer: harn
 import hashlib
 import os
 
-from harness import fix_checksum, sections, set_bytes
+from harness import fix_checksum, sections, set_bytes, without_provenance
 
 REG = "id,x,y\n1,2.5,10\n2,3.5,20\n3,1.0,30\n4,0.25,41\n"
 CLS = "a,b,lab\n1,2,0\n2,3,1\n3,4,1\n4,5,1\n5,6,0\n"
@@ -105,7 +105,7 @@ CASES = [
          setup=[("write", "w.csv", "f,lab\n1,999999999999\n1,-999999999999\n1,999999999999\n"),
                 ("fit", "--task", "classification", "--target", "lab", "--output", "w.cml", "w.csv")]),
     case("eval-text", ["eval", "--model-file", "m.cml", "--format", "text", "--drop", "id", "reg.csv"],
-         ok(None, stdout_starts="sse 530.750000000000\nrmse 11.519006\n"),
+         ok(None, stdout_starts="on train\nsse 530.750000000000\nrmse 11.519006\n"),
          setup=BASE + [("fit", "--drop", "id", "--target", "y", "--output", "m.cml", "reg.csv")]),
     case("fit-float-regression", FIT_FLT,
          ok({"model": "constant", "task": "regression", "rows": 3, "columns": 3, "target": "y", "path": "f.cml", "written": True,
@@ -119,7 +119,7 @@ CASES = [
          ok({"rows": 3, "metrics": {"rmse": "47139.78034007536", "sse": "6666476671.531667", "prediction": "33334.28333333333"}}),
          setup=WITH_FLT),
     case("eval-float-text", ["eval", "--model-file", "f.cml", "--format", "text", "flt.csv"],
-         ok(None, stdout_starts="sse 6666476671.531667\nrmse 47139.78034007536\n"), setup=WITH_FLT),
+         ok(None, stdout_starts="on train\nsse 6666476671.531667\nrmse 47139.78034007536\n"), setup=WITH_FLT),
     case("eval-float-model-on-int-data", ["eval", "--model-file", "f.cml", "i.csv"],
          ok({"metrics": {"rmse": "47139.78034007536"}}), setup=WITH_FLT + [("write", "i.csv", "id,x,y\n1,2.5,100000\n2,3.5,0.1\n3,0.25,2.75\n")]),
     case("fit-quoted-and-crlf", ["fit", "--drop", "t", "--target", "y", "--output", "q.cml", "q.csv"],
@@ -272,7 +272,7 @@ CASES = [
          setup=WITH_LIN),
     case("eval-linear-split", ["eval", "--model-file", "lin.cml", "--split", "train=0.75", "--seed", "7", "--threads", "2", "lin.csv"],
          ok({"rows": 2, "split": {"train": 6, "test": 2, "seed": 7}}), setup=WITH_LIN),
-    case("eval-linear-text", ["eval", "--model-file", "lin.cml", "--format", "text", "lin.csv"], ok(None, stdout_starts="rmse "), setup=WITH_LIN),
+    case("eval-linear-text", ["eval", "--model-file", "lin.cml", "--format", "text", "lin.csv"], ok(None, stdout_starts="on train\nrmse "), setup=WITH_LIN),
     case("eval-logistic", ["eval", "--model-file", "log.cml", "lcls.csv"], ok({"model": "logistic", "rows": 12, "positive": 1}), setup=WITH_LOG),
     case("eval-logistic-other-positive-label", ["eval", "--model-file", "log.cml", "--positive", "0", "lcls.csv"], ok({"positive": 0}), setup=WITH_LOG),
     # ------------------------------------------------------------------ their refusals
@@ -593,7 +593,7 @@ def _kmeans_cases():
         case("predict-kmeans-without-the-label-column", ["predict", "--model-file", "k.cml", "--drop", "lab", "lcls.csv"], ok({"row_count": 12}),
              setup=LBASE + [("fit", "--model", "kmeans", "--k", "3", "--drop", "lab", "--output", "k.cml", "lcls.csv")]),
         case("eval-kmeans", ["eval", "--model-file", "k.cml", "lin.csv"], ok({"model": "kmeans", "task": "clustering", "rows": 8, "clusters": 2}), setup=WITH_KM),
-        case("eval-kmeans-text", ["--format", "text", "eval", "--model-file", "k.cml", "lin.csv"], ok(None, stdout_starts="inertia "), setup=WITH_KM),
+        case("eval-kmeans-text", ["--format", "text", "eval", "--model-file", "k.cml", "lin.csv"], ok(None, stdout_starts="on train\ninertia "), setup=WITH_KM),
         case("eval-kmeans-split", ["eval", "--model-file", "k.cml", "--split", "train=0.75", "--seed", "1", "--threads", "3", "lin.csv"], ok({"rows": 2, "split": {"train": 6, "test": 2, "seed": 1}}),
              setup=WITH_KM),
         # ---- refusals
@@ -628,6 +628,92 @@ def _kmeans_cases():
 
 
 CASES += _kmeans_cases()
+
+
+# ------------------------------------------------------------------ run tracking and the skew checks (docs/tracking.md)
+def _reseal_model_sha(sb):
+    """the run record with another model hash, sealed again: what a record made by another compiler holds"""
+    p = next(q for q in sorted((sb.dir / "runs").iterdir()) if len(q.name) == 69)
+    body = p.read_text().split(',"check"')[0]
+    import json as _json
+
+    old = _json.loads(p.read_text())["model"]["sha256"]
+    body = body.replace(old, "0" * 64)
+    p.write_text(body + ',"check":"%s"}\n' % hashlib.sha256(body.encode()).hexdigest())
+
+
+def _edit_record(sb):
+    p = next(q for q in sorted((sb.dir / "runs").iterdir()) if len(q.name) == 69)
+    p.write_text(p.read_text().replace('"steps":0', '"steps":9'))
+
+
+def _thousand_records(sb):
+    for i in range(1000):
+        (sb.dir / "runs" / ("x%04d.json" % i)).write_text("{}")
+
+
+def _wide(sb):
+    cols = ["c%02d" % i for i in range(70)]
+    sb.write("wide.csv", ",".join(cols) + "\n" + ",".join(str((i * 7) % 5) for i in range(70)) + "\n" + ",".join(str((i * 3 + 1) % 7) for i in range(70)) + "\n" + ",".join(str((i * 5 + 2) % 11) for i in range(70)) + "\n")
+
+
+# A record over 262,144 bytes (docs/tracking.md section 5.1) from arguments that fit one process on Linux, where a single argument is at most 131,072 bytes: a target name of 100,000 bytes, a list
+# of dropped columns and a list of forced float columns of about 122,000 bytes each (the record holds the three)
+LONG_TARGET = "t" * 100000
+LONG_DROP = [("d%04d_" % i) + "x" * 80 for i in range(1400)]
+LONG_FLOAT = [("f%04d_" % i) + "x" * 80 for i in range(1400)]
+
+
+def long_record_columns():
+    return [LONG_TARGET] + LONG_DROP + LONG_FLOAT
+
+
+def long_record_args():
+    return ["--model", "constant", "--target", LONG_TARGET, "--drop", ",".join(LONG_DROP), "--float", ",".join(LONG_FLOAT)]
+
+
+def _long_names(sb):
+    cols = long_record_columns()
+    n = len(cols)
+    sb.write("wide2.csv", ",".join(cols) + "\n" + ",".join(str(i % 7) for i in range(n)) + "\n" + ",".join(str((i * 3) % 11) for i in range(n)) + "\n")
+
+
+FIT_TR = ["fit", "--model", "linear", "--target", "y", "--output", "lin.cml", "--track", "runs", "lin.csv"]
+WITH_RUN = LBASE + [("mkdir", "runs"), tuple(FIT_TR)]
+
+
+def _tracking_cases():
+    return [
+        case("ml-predict-out-of-range", ["predict", "--model-file", "lin.cml", "--max-out-of-range", "0", "far.csv"], bad("ml.predict.out-of-range"), setup=WITH_LIN + [("write", "far.csv", "a,b\n99,2\n")]),
+        case("ml-predict-out-of-range-at-eval", ["eval", "--model-file", "lin.cml", "--max-out-of-range", "0", "far.csv"], bad("ml.predict.out-of-range"), setup=WITH_LIN + [("write", "far.csv", "a,b,y\n99,2,5\n")]),
+        case("ml-predict-out-of-range-reports-the-counts", ["predict", "--model-file", "lin.cml", "far.csv"],
+             ok({"out_of_range": {"cells": 1, "rows": 1, "columns": [{"name": "a", "count": 1}]}, "ignored_columns": []}), setup=WITH_LIN + [("write", "far.csv", "a,b\n99,2\n")]),
+        case("ml-predict-no-provenance", ["predict", "--model-file", "old.cml", "--max-out-of-range", "0", "lin.csv"], bad("ml.predict.no-provenance"),
+             setup=WITH_LIN + [("mutate", "lin.cml", "old.cml", without_provenance)]),
+        case("eval-says-what-it-scored", ["eval", "--model-file", "lin.cml", "lin.csv"], ok({"on": "train"}), setup=WITH_LIN),
+        case("eval-of-another-file-says-other", ["eval", "--model-file", "lin.cml", "lin2.csv"], ok({"on": "other"}), setup=WITH_LIN + [("write", "lin2.csv", LIN.replace("8,2,17.1", "8,2,17.2"))]),
+        case("ml-runs-fit-track-writes-a-record", FIT_TR, ok({"run": {"written": True}}), setup=LBASE + [("mkdir", "runs")]),
+        case("ml-runs-track-directory-missing", FIT_TR, bad("io.not-found"), setup=LBASE),
+        case("ml-runs-conflict", FIT_TR + ["--overwrite"], bad("ml.runs.conflict"), setup=WITH_RUN + [("raw", _edit_record)]),
+        case("ml-runs-too-many", FIT_TR, bad("ml.runs.too-many"), setup=LBASE + [("mkdir", "runs"), ("raw", _thousand_records)]),
+        case("ml-runs-record-too-large", ["fit"] + long_record_args() + ["--output", "w.cml", "--track", "runs", "wide2.csv"],
+             bad("ml.runs.record-too-large"), setup=[("mkdir", "runs"), ("raw", _long_names)]),
+        case("ml-runs-show-not-found", ["runs", "show", "runs", "0" * 64], bad("ml.runs.not-found"), setup=LBASE + [("mkdir", "runs")]),
+        case("ml-runs-unknown-model", ["eval", "--model-file", "lin.cml", "--track", "runs", "lin.csv"], bad("ml.runs.unknown-model"), setup=WITH_LIN + [("mkdir", "runs")]),
+        case("ml-runs-damaged", ["runs", "show", "runs", "ab" * 32], bad("ml.runs.damaged"), setup=LBASE + [("mkdir", "runs"), ("write", "runs/" + "ab" * 32 + ".json", "{}")]),
+        case("ml-runs-data-changed", ["runs", "verify", "runs", "@ID"], bad("ml.runs.data-changed"), setup=WITH_RUN + [("write", "lin.csv", LIN.replace("8,2,17.1", "8,2,17.3"))]),
+        case("ml-runs-model-differs", ["runs", "verify", "runs", "@ID"], bad("ml.runs.model-differs"), setup=WITH_RUN + [("raw", _reseal_model_sha)]),
+        case("ml-runs-not-replayable", ["runs", "verify", "runs", "@ID"], bad("ml.runs.not-replayable"),
+             setup=[("mkdir", "runs"), ("raw", _wide), ("fit", "--model", "tree", "--task", "regression", "--target", "c00", "--drop", "c69", "--output", "w.cml", "--track", "runs", "wide.csv")]),
+        case("ml-cv-track-refused", ["cv", "--model", "linear", "--target", "y", "--track", "runs", "lin.csv"], bad("args.conflict"), setup=LBASE + [("mkdir", "runs")]),
+        case("ml-runs-fit-track-split-group", ["fit", "--model", "linear", "--target", "y", "--drop", "g", "--split", "train=0.75", "--split-group", "g", "--output", "lin.cml", "--track", "runs", "grp.csv"],
+             ok({"run": {"written": True}, "summary": {"split": {"spec": "holdout train=0.75 group=g seed=0"}}}), setup=[("mkdir", "runs"), ("write", "grp.csv", "g,a,y\n" + "".join("%s,%d,%d\n" % ("abcd"[i % 4], i, 2 * i + 1) for i in range(20)))]),
+        case("ml-runs-list", ["runs", "list", "runs"], ok({"count": 1}), setup=WITH_RUN),
+        case("ml-runs-verify", ["runs", "verify", "runs", "@ID"], ok({"verified": True}), setup=WITH_RUN),
+    ]
+
+
+CASES += _tracking_cases()
 
 def log_cases():
     return [c for c in CASES if c.get("log")]

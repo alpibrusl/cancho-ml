@@ -484,8 +484,8 @@ fn main(world: World) -> [] int {
         }
         code = 2;
     } else {
-        let cfg = csv.Cfg { cap: 1048576, max_rows: limits.default_rows(), max_cols: limits.default_cols(), max_cells: limits.default_cells(), mode: 0, tscale: 0, pred: 0, drops: drops, floats: floats, missing: true, mrows: 0, mcols: 0, wpc: 0 };
-        let cc = csv.CatCfg { cols: cats, na: nas, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
+        let cfg = csv.Cfg { cap: 1048576, max_rows: limits.default_rows(), max_cols: limits.default_cols(), max_cells: limits.default_cells(), mode: 0, tscale: 0, pred: 0, drops: drops, floats: floats, drop_mask: 0, float_mask: 0, missing: true, mrows: 0, mcols: 0, wpc: 0 };
+        let cc = csv.CatCfg { cols: cats, cat_mask: 0, na: nas, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, lenient: false };
         borrow mut heap as &!hp in {
             borrow mut io as &!ip in {
                 borrow fs as &fr in {

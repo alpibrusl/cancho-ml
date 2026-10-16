@@ -340,7 +340,7 @@ class MlPredictSurface(unittest.TestCase):
 
     def test_the_flags_it_has(self):
         tool = {f["name"] for f in json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)["flags"]}
-        self.assertEqual(tool, {"--" + n for n in ("root", "proba", "distance", "drop", "model-file", "limit", "from", "max-rows", "max-columns", "max-cells", "max-line-bytes", "max-bytes", "format")})
+        self.assertEqual(tool, {"--" + n for n in ("root", "proba", "distance", "drop", "model-file", "limit", "from", "max-rows", "max-columns", "max-cells", "max-line-bytes", "max-bytes", "max-out-of-range", "format")})
 
     def test_introspect_and_skill_name_the_binary(self):
         i = json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)

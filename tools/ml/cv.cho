@@ -112,7 +112,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
     var cids = catmat.empty(heap);
     var cvoc = dict.empty_vocab(heap);
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, args, fs, root, file, o, mixed_plan, task, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, args, fs, root, file, o, o.target, o.na, mixed_plan, task, e, lg);
         wire.drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -232,7 +232,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pp, &t](heap: &!h Heap, args: &g Args, fs: &f F
                                 borrow pls as &pr2 in {
                                     borrow t2 as &tq in {
                                         borrow sel as &sr2 in {
-                                            let (i3, ok8, e8) = wire.holdout(heap, args, dr2, cir2, cvr2, pr2, tq, contents(sr2), ntest, o, e);
+                                            let (i3, ok8, e8) = wire.holdout(heap, args, dr2, cir2, cvr2, pr2, tq, contents(sr2), 1, ntest, "held-out", o, e);
                                             buffer.drop(heap, inner);
                                             inner = i3;
                                             ok7 = ok8;

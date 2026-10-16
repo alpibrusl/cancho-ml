@@ -143,6 +143,12 @@ fn put_train[&h](heap: &!h Heap, b0: buffer.Buffer, num: int, den: int) -> [heap
 
 // The canonical text of a split. `cv`: folds and repeats; otherwise `train` is the text of --split (`train=F`, already valid). `strategy` as `strategy`, `col` its column.
 pub fn text[&h, &t, &c](heap: &!h Heap, cv: bool, train: &t [byte], folds: int, repeats: int, strategy: int, col: &c [byte], seed: int) -> [heap] buffer.Buffer {
+    let (ok, num, den) = wiredata.parse_split(train);
+    return text_nd(heap, cv, num, den, folds, repeats, strategy, col, seed);
+}
+
+// the same with the held-out fraction as numbers (`num` over `den`, as wiredata.parse_split gives them): a run record holds the fraction, not the text of the flag
+pub fn text_nd[&h, &c](heap: &!h Heap, cv: bool, num: int, den: int, folds: int, repeats: int, strategy: int, col: &c [byte], seed: int) -> [heap] buffer.Buffer {
     var b = buffer.empty(heap, 64);
     if cv {
         b = buffer.append(heap, b, "cv folds=");
@@ -150,7 +156,6 @@ pub fn text[&h, &t, &c](heap: &!h Heap, cv: bool, train: &t [byte], folds: int, 
         b = buffer.append(heap, b, " repeats=");
         b = buffer.push_nat(heap, b, repeats);
     } else {
-        let (ok, num, den) = wiredata.parse_split(train);
         b = buffer.append(heap, b, "holdout train=");
         b = put_train(heap, b, num, den);
     }
@@ -166,6 +171,111 @@ pub fn text[&h, &t, &c](heap: &!h Heap, cv: bool, train: &t [byte], folds: int, 
     b = buffer.append(heap, b, " seed=");
     b = buffer.push_nat(heap, b, seed);
     return b;
+}
+
+// the digit value of an upper-case hex digit, -1 for another byte
+fn unhex(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if c >= 'A' && c <= 'F' {
+        return c - 'A' + 10;
+    }
+    return 0 - 1;
+}
+
+// the column name `put_name` wrote, decoded; the second member is false when the text is not an encoding
+fn decode_name[&h, &n](heap: &!h Heap, enc: &n [byte]) -> [heap] (buffer.Buffer, bool) {
+    var b = buffer.empty(heap, len(enc) + 1);
+    var i = 0;
+    var ok = true;
+    while i < len(enc) {
+        let c = int_of(enc[i]);
+        if c == '%' {
+            if i + 2 >= len(enc) {
+                ok = false;
+                i = len(enc);
+            } else {
+                let hi = unhex(int_of(enc[i + 1]));
+                let lo = unhex(int_of(enc[i + 2]));
+                if hi < 0 || lo < 0 {
+                    ok = false;
+                    i = len(enc);
+                } else {
+                    b = buffer.push(heap, b, byte_of(hi * 16 + lo));
+                    i = i + 3;
+                }
+            }
+        } else {
+            b = buffer.push(heap, b, enc[i]);
+            i = i + 1;
+        }
+    }
+    return (b, ok);
+}
+
+// The parts of the canonical text of a split that a replay of a run record needs (docs/tracking.md section 5.2): (ok, none, held-out numerator, denominator, strategy, column, seed).
+// `ok` only when `text_nd` writes the same text back from the parts, so a text that is not canonical (`train=0.80`, a column spelled with a lower-case escape, a second space) is not ok.
+pub fn parse[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] (bool, bool, int, int, int, buffer.Buffer, int) {
+    if bytes.equal(text, "none") {
+        return (true, true, 0, 0, 0, buffer.empty(heap, 1), 0);
+    }
+    let count = bytes.count_byte(text, ' ') + 1;
+    if count < 3 || count > 4 || !bytes.equal(bytes.field(text, ' ', 1), "holdout") {
+        return (false, false, 0, 0, 0, buffer.empty(heap, 1), 0);
+    }
+    let (tok, num, den) = wiredata.parse_split(bytes.field(text, ' ', 2));
+    var strategy = 0;
+    var col = buffer.empty(heap, 1);
+    var ok = tok;
+    if count == 4 {
+        let f = bytes.field(text, ' ', 3);
+        if bytes.equal(f, "stratify") {
+            strategy = 1;
+        } else if len(f) > 6 && bytes.equal(f[0..6], "group=") {
+            strategy = 2;
+            let (c2, dok) = decode_name(heap, f[6..len(f)]);
+            buffer.drop(heap, col);
+            col = c2;
+            ok = ok && dok;
+        } else if len(f) > 5 && bytes.equal(f[0..5], "time=") {
+            strategy = 3;
+            let (c2, dok) = decode_name(heap, f[5..len(f)]);
+            buffer.drop(heap, col);
+            col = c2;
+            ok = ok && dok;
+        } else {
+            ok = false;
+        }
+    }
+    let sf = bytes.field(text, ' ', count);
+    var seed = 0;
+    if len(sf) < 6 || len(sf) > 24 || !bytes.equal(sf[0..5], "seed=") {
+        ok = false;
+    } else {
+        var i = 5;
+        while i < len(sf) {
+            let c = int_of(sf[i]);
+            if c < '0' || c > '9' {
+                ok = false;
+            } else {
+                seed = seed * 10 + c - '0';
+            }
+            i = i + 1;
+        }
+    }
+    if ok {
+        var again = buffer.empty(heap, 1);
+        borrow col as &cr in {
+            buffer.drop(heap, again);
+            again = text_nd(heap, false, num, den, 0, 0, strategy, buffer.bytes(cr), seed);
+        }
+        borrow again as &ar in {
+            ok = bytes.equal(buffer.bytes(ar), text);
+        }
+        buffer.drop(heap, again);
+    }
+    return (ok, false, num, den, strategy, col, seed);
 }
 
 // ---------------------------------------------------------------- the checks that need no file

@@ -11,14 +11,17 @@ import std.bytes;
 import std.json;
 import ml.app;
 import ml.catcli;
+import ml.cfit;
 import ml.cv;
 import ml.est;
 import ml.fsio;
 import ml.logrec;
 import ml.mdesc;
 import ml.paths;
+import ml.runs;
 import ml.spec;
 import ml.splitspec;
+import ml.track;
 import ml.verbs;
 import ml.wire;
 import ml.wireio;
@@ -90,12 +93,12 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
             var answer = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
             borrow tokens as &tk in {
                 verbs.drop_out(heap, answer);
-                answer = wire.fit(heap, args, fs, root, ps.file, ps.out, ps.planp, buffer.bytes(tk), o, sp, e3, lg);
+                answer = wire.fit(heap, args, fs, root, ps.file, ps.out, ps.planp, ps.trackp, buffer.bytes(tk), o, sp, e3, lg);
             }
             buffer.drop(heap, tokens);
             return (answer, log_ok);
         }
-        return (verbs.fit(heap, args, fs, root, ps.file, ps.out, o, e3, lg), log_ok);
+        return (cfit.fit(heap, args, fs, root, ps.file, ps.out, ps.trackp, o, e3, lg), log_ok);
     }
     if verb == 2 {
         return (wireio.predict(heap, args, fs, root, ps.file, ps.model, o, e3, lg), log_ok);
@@ -103,7 +106,18 @@ fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cl
     if verb == 4 {
         return (mdesc.describe(heap, fs, root, ps.model, o, e3, lg), log_ok);
     }
-    return (wireio.eval(heap, args, fs, root, ps.file, ps.model, o, sp, e3, lg), log_ok);
+    if verb == 6 {
+        var id1: &static [byte] = "";
+        var id2: &static [byte] = "";
+        if cli.operand_count(parsed) > 3 {
+            id1 = cli.operand(args, parsed, 3);
+        }
+        if cli.operand_count(parsed) > 4 {
+            id2 = cli.operand(args, parsed, 4);
+        }
+        return (runs.run(heap, args, fs, root, ps.file, cli.operand(args, parsed, 1), id1, id2, o, e3, lg), log_ok);
+    }
+    return (wireio.eval(heap, args, fs, root, ps.file, ps.model, ps.trackp, o, sp, e3, lg), log_ok);
 }
 
 // the end record, the log written, the answer

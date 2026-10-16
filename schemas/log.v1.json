@@ -217,7 +217,18 @@
         "ml.input.missing-value",
         "ml.plan.model-not-built",
         "ml.limit.depth",
-        "ml.limit.nodes"
+        "ml.limit.nodes",
+        "ml.predict.out-of-range",
+        "ml.predict.no-provenance",
+        "ml.runs.conflict",
+        "ml.runs.too-many",
+        "ml.runs.record-too-large",
+        "ml.runs.not-found",
+        "ml.runs.unknown-model",
+        "ml.runs.damaged",
+        "ml.runs.data-changed",
+        "ml.runs.model-differs",
+        "ml.runs.not-replayable"
       ]
     }
   }

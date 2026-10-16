@@ -49,7 +49,10 @@ disagrees is found by this gate or not at all. A hash of a printed answer includ
 ## 3. The golden and how it changes
 
 `docs/bench/xplat_fp.txt` was written by `python3 scripts/xplat_check.py --update` on the Mac (macOS arm64, compiler `a4572ea3b506`, sources at `cb08d5b`), and the
-same file was reproduced byte for byte on Linux x86-64 (section 8). `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
+same file was reproduced byte for byte on Linux x86-64 (section 8). It was re-recorded once, for the provenance section of the model file (section 7 of the format, `docs/tracking.md`
+section 8), at `43efd8f`: 64 of the 88 lines changed (the 22 `model-file` lines, 20 `predict` lines and 22 `eval` lines) and 24 did not (the 22 `fit-exit` lines and the `predict` lines of the two constant models); the list of
+cases is the same. `scripts/golden_track.py --xplat OLD_BUILD_DIR` shows that each model file is the old file with the section added and each answer the old one without the new members. The re-recorded
+golden was reproduced by the Mac, by the Linux x86-64 workstation (`ml-predict` equal to `ml`, the 15 faults of `--mutants` refused) and by the Raspberry Pi 5, and has not run on the GitHub runners. `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
 golden is only written from a clean run; it prints the lines that changed.
 
 The golden changes only when model bytes or printed answers change **on purpose**: in a commit that says why, as `tests/conformance/golden_numeric.json` does. A
@@ -185,7 +188,7 @@ the SHA-256 files are for a download check, not provenance. The tag is not check
 
 * The first run of the workflow is the pull request's own: it cannot be run anywhere but on GitHub, and what was run before it is every step by hand on a Linux x86-64
   machine and on a Mac (section 8), not the YAML.
-* Linux aarch64 is not in the matrix. A run on a Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) was done by hand on 2026-10-15, outside this workflow: Rust 1.98.1 installed for one user, the compiler built at `a4572ea` and `ml` at `cb08d5b` on the Pi, `scripts/xplat_fp.py` run there: 22 of 22 fits succeeded and the 88 lines are equal to the golden's. It is a record of one run and not a gate.
+* Linux aarch64 is not in the matrix. A run on a Raspberry Pi 5 (Linux 6.18.39, aarch64, 4 cores) was done by hand on 2026-10-15, outside this workflow: Rust 1.98.1 installed for one user, the compiler built at `a4572ea` and `ml` at `cb08d5b` on the Pi, `scripts/xplat_fp.py` run there: 22 of 22 fits succeeded and the 88 lines are equal to the golden's. The re-recorded golden (section 3) was reproduced there again, with `ml` built from the tree of `43efd8f` and `scripts/xplat_check.py --require-predict`. It is a record of one run and not a gate.
 * Windows, other Linux distributions, musl, other macOS versions than the runner's, and other compiler revisions are untested.
 * The runners' images change without a commit here; a red run after no commit is the first thing to read in the platform lines of the log.
 * A compiler cache hit skips the compiler build: the cache key is the revision, the operating system and the architecture, so a compiler built by another Rust than the one
