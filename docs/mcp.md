@@ -176,7 +176,7 @@ scripts ran. A time is therefore an upper bound for a quiet machine. The Linux r
 
 The change to the library (section 4.1) has its own evidence: the determinism gate `scripts/xplat_check.py --require-predict` prints 88 lines for 22 fits equal to the committed golden (darwin, arm64; `ml-predict` equal to `ml`), so every model file and
 every answer of the 22 fits is the byte sequence the golden holds; the 343 fixtures and the golden answers of the conformance suite pass on the three binaries; `ml`, `ml-predict` and `ml-serve` have the authority rows they had.
-`scripts/run_conformance.py --no-oracles` (ST_STRIDE=5, FUZZ_N=500, as the fast job) in a virtual environment without numpy: 40 modules, 34 passed (532 tests), 0 failed, 6 not run (`test_enc`, `test_planned_baseline`, `test_splits_sklearn`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`: they import numpy), 2,219 s.
+`scripts/run_conformance.py --no-oracles` (ST_STRIDE=5, FUZZ_N=500, as the fast job) in a virtual environment without numpy: 40 modules, 34 passed (532 tests), 0 failed, 6 not run (`test_enc`, `test_planned_baseline`, `test_splits_sklearn`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`: they import numpy), 2,219 s; the six run with the system Python (numpy 2.4.6, scikit-learn 1.8.0): 6 passed (36 tests), 20 s. In all 568 tests of 40 modules pass on the Mac.
 
 Sizes: `tools/list` is 126,876 bytes with `--allow-write` and 91,883 bytes without (compact JSON; the output schemas are 64 percent of the first and 67 percent of the second); `build/ml-mcp` is 1,682,504 bytes and `build/ml` 1,396,288.
 
@@ -195,6 +195,6 @@ Sizes: `tools/list` is 126,876 bytes with `--allow-write` and 91,883 bytes witho
 * **Exit code 1** (the operating system failed) is not reached by a test through a call: its two fixtures close standard output or read a device, which a call cannot state.
 * **`toolbox.path` is not called by `ml`.** Its `root` and `operand` read `Args` by index, so `tools/ml/paths.cho` has their rules over text (about 100 lines, the pinned `lexical`, `under`, `has_dotdot` and `longest` doing the work).
   The conformance fixtures of the path rules and the fuzz of the arguments pass on the result; the pinned functions and the port were not run side by side on one corpus.
-* **What was not run here (Linux and the long suites):** the full `scripts/check.sh`; the conformance modules that need numpy, scipy or scikit-learn; `ST_STRIDE=1` of `test_describe`; the mutant scripts of the older gates
+* **What was not run here (Linux and the long suites):** the full `scripts/check.sh`; `ST_STRIDE=1` of `test_describe` and the default fuzz length; the mutant scripts of the older gates
   (their patterns apply: each `--check` passes, but their last runs, which `docs/status.md` counts, were not repeated after the change of section 4.1); the `full-gate` of the workflow and the determinism fingerprint on Linux x86-64 and aarch64;
   `scripts/check_web_pin.py --bins`. `docs/status.md` lists them for the Linux run.
