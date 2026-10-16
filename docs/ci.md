@@ -107,8 +107,8 @@ The fast gates (`build-test`, in this order; each can fail, and the first failur
 5. `cancho build --bin ml`, `--bin ml-predict`, `--bin ml-serve`, then `scripts/check_bins.py` and `scripts/check_web_pin.py --bins` (the three are built from the same sources);
 6. **the determinism gate**: `scripts/xplat_check.py --require-predict` and `--mutants`;
 7. **the demo script**: `scripts/check_demo.py` runs `scripts/demo.sh` with the built binaries (two tracked experiments, `ml runs compare` and `verify`, `eval` on the training file and on another, `ml-serve` on its default bind and two `curl` requests) and asserts its key facts, and `--mutants` shows that ten edits of the script are refused; `curl` and `python3` are on all four runner images, and the step takes seconds;
-8. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The five
-   modules whose import needs numpy (`test_enc`, `test_planned_baseline`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`) are listed as not run; the full gate runs
+8. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The seven
+   modules whose import needs numpy (`test_enc`, `test_planned_baseline`, `test_refuse_oracle`, `test_splits_sklearn`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`) are listed as not run; the full gate runs
    them. Two sweeps are shortened by their own switches [choice]: `ST_STRIDE=5` (every fifth byte of a damaged model file is flipped, where the default flips every byte) and `FUZZ_N=500`
    (500 argument vectors of the fuzz, where the default draws 2,500); the full gate runs the defaults. The `ml-serve` conformance tests are among those that run: they start the server on an ephemeral port and compare one POST per model kind with the command line's cell text
    (`docs/serving-http.md` section 9), and `serve-check`, the driver of their number gate, is built for them;

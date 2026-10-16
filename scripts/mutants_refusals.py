@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Mutants for the refusals of docs/refusals-fit.md (issue 48): ml.fit.collinear and ml.fit.separable. Each is a copy of the tree with one change, `ml` rebuilt from the copy
-(the copy carries every other built executable, as scripts/mutants_cli.py's does) and tests/conformance/test_refuse_fit.py run against it: the fixtures, every argv of
+(the copy carries every other built executable, as scripts/mutants_cli.py's does) and tests/conformance/test_refuse_fit.py and test_refuse_oracle.py run against it: the fixtures, every argv of
 every repair, the exact-fraction oracle of the rank decision, the exact separability oracle with an independent Newton iteration, the fuzz and the thread invariance.
 KILLED means a test failed; SURVIVED must carry a reason.
 
@@ -22,7 +22,7 @@ LOG = "lib/models/linear/logreg.cho"
 LIN = "lib/models/linear/linreg.cho"
 FF = "tools/ml/fitfail.cho"
 CHOL = "lib/linalg/chol.cho"
-T = ["test_refuse_fit"]
+T = ["test_refuse_fit", "test_refuse_oracle"]
 
 
 def M(id, what, edits, **opt):

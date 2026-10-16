@@ -189,10 +189,6 @@ class RefuseFit(unittest.TestCase):
         r = oracle("rank", "--n", "200")
         self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-500:])
 
-    def test_oracle_of_separation(self):
-        r = oracle("sep", "--n", "90")
-        self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-500:])
-
     def test_fuzz_no_trap_and_thread_invariance(self):
         r = oracle("fuzz", "--n", "24")
         self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-500:])
