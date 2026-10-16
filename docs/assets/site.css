@@ -176,6 +176,10 @@ h2 + .sub, h3 + .sub { margin-top: .3rem; }
 .card h3 { margin: 0 0 .4rem; font-size: 1.05rem; }
 .card p { margin: 0; color: var(--muted); font-size: .95rem; }
 .card .ic { width: 2rem; height: 2rem; margin-bottom: .5rem; color: var(--accent); display: block; }
+#why .cards { display: flex; flex-wrap: wrap; justify-content: center; }
+#why .card { flex: 1 1 11rem; max-width: 14.5rem; }
+.card p code { white-space: nowrap; }
+#commands pre.code { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 52rem; }
 .card h3 a { color: var(--accent); }
 .flow { max-width: 52rem; margin: 0 auto; }
 .flow svg { width: 100%; height: auto; display: block; }

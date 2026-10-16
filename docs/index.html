@@ -247,7 +247,8 @@ cancho install &amp;&amp; cancho build --bin ml                                 
   }
   function play(i) {
     var lines = logs[i], pre = pres[i], n = 0, j = 0, html = "";
-    clearTimeout(timer); pre.innerHTML = ""; pre.setAttribute("aria-busy", "true");
+    clearTimeout(timer); pre.style.minHeight = ""; full(i); pre.style.minHeight = pre.offsetHeight + "px";
+    pre.innerHTML = ""; pre.setAttribute("aria-busy", "true");
     (function tick() {
       if (n >= lines.length) { pre.removeAttribute("aria-busy"); return; }
       var l = lines[n], step = l[0] === "a" ? 3 : 16;
