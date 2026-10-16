@@ -161,7 +161,7 @@
 
 <section class="alt" id="commands"><div class="wrap">
   <h2>One command, one model file, one server</h2>
-  <p class="lead">Six models behind one verb: constant, linear, logistic, k-means, tree and forest. The file the fit writes is all a later command needs, and a server needs nothing else.</p>
+  <p class="lead">One verb, <span data-n="models">seven</span> models: constant, linear, logistic, k-means, tree, forest and boost. The file the fit writes is all a later command needs, and a server needs nothing else.</p>
 <!-- gen:cmds -->
 <pre class="code" tabindex="0"><span class="c"># any of the six models, one verb; --track keeps a run record</span>
 <span class="c">$</span> ml fit --model logistic --target virginica --step "scale column=* kind=standard" --l2 0.1 --split train=0.8 --seed 3 --track runs --output iris.ml iris_train.csv
@@ -209,7 +209,7 @@ cancho install &amp;&amp; cancho build --bin ml                                 
 <section id="deeper"><div class="wrap">
   <h2>Go deeper</h2>
   <div class="cards">
-    <div class="card"><h3><a href="guide.html">Guide</a></h3><p>Every flow with its real output: six models, text columns, serving and the agent view.</p></div>
+    <div class="card"><h3><a href="guide.html">Guide</a></h3><p>Every flow with its real output: <span data-n="models">seven</span> models, text columns, serving and the agent view.</p></div>
     <div class="card"><h3><a href="examples.html">Examples</a></h3><p>Four classic datasets solved by <code>ml</code> and compared with scikit-learn on the same files.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/tracking.md">Experiments</a></h3><p>Run records, <code>ml runs</code>, the <code>on</code> marker and the range check: the document and its results.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/splits.md">Splits</a></h3><p>Stratified, time and group holdouts and <code>ml cv</code>: the flags, the refusals and the gates.</p></div>

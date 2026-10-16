@@ -986,7 +986,7 @@ def land_cmds(ctx):
     """'One command, one model file, one server': the fit, the comparison, the replay of a run, the server and the request, as the demo ran them."""
     blocks = demo_blocks(ctx["demo"])
     out = []
-    for i, note in ((0, "# any of the six models, one verb; --track keeps a run record"), (2, "# two runs: what differs, and the metrics side by side"),
+    for i, note in ((0, "# any of the %s models, one verb; --track keeps a run record" % model_word()), (2, "# two runs: what differs, and the metrics side by side"),
                     (3, "# replay a run: re-fit from its record and compare the SHA-256 of the model file"),
                     (6, "# the same file over HTTP: it listens on 127.0.0.1 unless --bind all is given"), (7, "# one request")):
         out.append('<span class="c">%s</span>' % e(note))
@@ -1002,6 +1002,16 @@ PLATFORMS = ["macOS arm64", "Linux x86-64", "Linux aarch64"]
 
 def _int(s):
     return int(s.replace(",", ""))
+
+
+NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+
+
+def model_word():
+    """the number of models `ml fit --model` builds, in words: the manifests of lib/models that are wired (docs/modules.md)"""
+    import re
+    n = sum(1 for p in sorted((ROOT / "lib" / "models").glob("*/model.toml")) if re.search(r"^wired *= *true", p.read_text(), re.M))
+    return NUMBER_WORDS[n]
 
 
 def landing_values(ctx):
@@ -1033,7 +1043,7 @@ def landing_values(ctx):
         raise Drift("docs/status.md no longer gives the red gate in its usual words")
     import re as _re
     runners = _re.findall(r"- \{os: ([\w.-]+),", (ROOT / ".github" / "workflows" / "ci.yml").read_text())
-    return {"runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
+    return {"models": model_word(), "runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
             "mut_survive": survive, "rules": str(len(ctx["introspect"]["rules"])), "red_gap": m.group(3), "red_tol": m.group(4)}
 
 
