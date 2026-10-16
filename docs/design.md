@@ -648,3 +648,11 @@ standard deviation of the training cells as the reader read them. `eval` says wh
 (`out_of_range`, bounded by `--max-out-of-range`); `fit --track DIR` writes a canonical run record whose id is the hash of the inputs that determine the model bytes; `ml runs list|show|compare|verify`
 read the records and replay a fit in memory. The split of a record is the canonical split text of section 22 (`none`, `holdout train=0.8 stratify seed=1`, ...), and a replay holds the same rows out for every strategy. `ml cv` takes no `--track`
 (`docs/tracking.md` section 5.7). The registries are unchanged except the section tag (7) and the rule tags of section 8; no model kind, step kind or stream kind is added, and no capability.
+
+## 24. M23: interpretability, feature importance and a dump of a tree (`docs/interpret.md`)
+
+`ml importance` and `ml dump` are verbs of `ml`; `describe` and `GET /model` gain the member `importance` (the table that needs no data). The model files do not change: a tree node already stores the row
+counts of its rows (`na`, `nb`), from which the Gini decrease of a classification split is exact and the variance reduction of a regression split follows from the leaf means; standardised
+coefficients use the stored scalings and the provenance section. Permutation importance reads a held-out file, shuffles one raw column at a time with the stream kind 11
+(`derive(derive(derive(seed, 11), repeat), column)`), re-applies the stored steps and reports the metric difference. The registry takes stream kind 11 and lists 9 and 10 as reserved for the
+boosting stage; the new rule tags are in section 8 once the code lands. The three authority rows are unchanged.
