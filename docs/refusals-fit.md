@@ -105,6 +105,22 @@ Multiclass (#37) will reuse `lib/models/rank.cho` per class block, and the loss 
     pass-0 Hessian (every later Hessian has diagonal at most that plus `X`, and pivot at least `X`, so the relative pivot is at least about `2^-10`). Both are one significant digit, written as a decimal the flag parser reads.
     The repaired fit is therefore well posed at every pass; gate A runs every repair.
 
+### D6. With splits, cross-validation, run tracking and serving **[choice, tested in `test_refuse_fit.py`]**
+
+* **`ml cv`.** Every training fold is fitted by the function `fit` uses, so a fold can be refused: the training rows of one fold can be separable or have a dependent column when the whole data has neither.
+  The refusal is `ml.fit.collinear` or `ml.fit.separable` as for `fit`, and its `detail` also holds `repeat` and `fold` (0-based, as the entries of `results` of a cross-validation have them),
+  the way `ml.label.single-class` names them. The repair is the argv of the `cv` invocation with `--l2 X` set (or the `--drop` option), and it runs: the first fold to be refused decides, and
+  `X` is computed from that fold's matrix, so a second fold with a larger diagonal could be refused again; the repaired command is then refused with its own `X`. A `fit` and a `fit --split` carry no `repeat` or `fold`
+  (a holdout is one fit of the training rows). Two fixtures: `ml-cv-fold-separable-names-the-fold` (fold 1 of 3 on twelve rows; the whole file is fitted with `l2` 0) and `ml-cv-fold-collinear-names-the-fold`
+  (a duplicate column in the first block of a time split; the whole file is fitted).
+* **`fit --track`.** A refused fit writes no run record and no model file: the check runs before the record is planned, so the `--track` directory is byte for byte what it was (a test lists it before and after),
+  and the record of an earlier fit still verifies (`ml runs verify`). The repair keeps `--track` and writes the record of the repaired fit.
+* **`ml-predict` and `ml-serve`.** Fit-time only. The three binaries are built from the same sources (`scripts/check_bins.py` checks the lists), so the check is in their code, but their verbs read a stored model and never
+  call a fit. Their manifests (`manifests/ml-predict.authority.json`, `manifests/ml-serve.authority.json`) and their authority rows are those of `main`: no capability is new.
+
+* **The `--l2` repair under `--split`, `--stratify` and `--cat`.** The check sees the training rows of the split and the encoded matrix, and the repair keeps every other flag, so the repaired command fits under
+  a holdout, a stratified holdout, a time holdout and a one-hot encoding (five cases of `test_the_l2_repair_gives_a_fit_under_split_stratify_and_cat`).
+
 ## 3. Gates (before the code; each can fail)
 
 | id | gate | judged by | what makes it fail |
