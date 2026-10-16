@@ -375,38 +375,6 @@ class BoostWire(unittest.TestCase):
             r = self.ml("cv", "--model", "boost", "--task", "classification", "--target", "returning", "--drop", "customer,visit_date", "--rounds", "30", "--early-stopping", "3", "--folds", "3", *flags, "visits.csv")
             self.assertEqual(r.status, 0, r)
 
-    def test_the_validation_rows_of_a_stratified_split_never_come_from_the_test_rows(self):
-        # the oracle fits ONLY the rows the split kept (the assignment `--emit-folds` prints): its validation tenth is drawn from them alone, and the file of ml holds the same
-        # model section byte for byte, so no validation row was taken from the test rows; a plain holdout is the same, with the masks of the oracle
-        import sys
-        from harness import ROOT
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import numpy as np
-        import oracle_boost as ob
-        import oracle_wire as ow
-        import oracle_wire_tree as owt
-        rng = random.Random(8)
-        n = 300
-        rows = [(round(rng.uniform(0, 5), 3), round(rng.uniform(0, 5), 3)) for _ in range(n)]
-        ys = [1 if a + rng.gauss(0, 1.2) > 2.5 else 0 for a, b in rows]
-        self.sb.write("st.csv", "a,b,lab\n" + "".join("%s,%s,%d\n" % (a, b, y) for (a, b), y in zip(rows, ys)))
-        args = ["--rounds", "100", "--early-stopping", "4", "--seed", "7", "--min-leaf", "4", "--task", "classification"]
-        for label, extra, mask_of in (
-                ("stratified", ["--split", "train=0.8", "--stratify", "--emit-folds"], None),
-                ("plain", ["--split", "train=0.8"], lambda: ow.split_masks(n, "train=0.8", 7))):
-            r = self.fit("lab", "st.csv", "st.cml", *args, *extra)
-            if mask_of is None:
-                mask = r.data()["summary"]["split"]["assignment"]
-            else:
-                mask = mask_of()
-            tr = [i for i in range(n) if mask[i] == 0]
-            self.assertGreater(len(tr), 200, label)
-            X = np.array([rows[i] for i in tr], dtype=np.float64)
-            res = ob.fit(X, np.zeros(X.shape, dtype=bool), np.array([float(ys[i]) for i in tr]), 0, 100, 0.1, 4, 4, 64, 1.0, 1.0, 4, 4194304, 7)
-            self.assertLess(res["kept"], 100, label)                       # early stopping ended the fit: the validation rows decided
-            expect = ob.payload(res, 2) + owt.labels_record(0, 1)
-            self.assertEqual(model_section(self.sb.read("st.cml")), expect, label)
-
     # ------------------------------------------------------------------ limits and ranges
     def test_ranges_of_the_numbers(self):
         for argv, rule, status in ((["--learning-rate", "0"], "ml.param.out-of-range", 2), (["--learning-rate", "1.0001"], "ml.param.out-of-range", 2),

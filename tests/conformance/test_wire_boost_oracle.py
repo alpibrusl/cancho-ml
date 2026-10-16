@@ -6,11 +6,15 @@ metric equal the oracle's doubles. The 100,000-row cases are scripts/oracle_wire
 
 import hashlib
 import pathlib
+import random
 import sys
 import tempfile
 import unittest
 
-from harness import ROOT
+import numpy as np
+
+from harness import ROOT, Sandbox
+from test_wire_boost import model_section
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import oracle_wire_boost as owb  # noqa: E402
@@ -120,6 +124,49 @@ class BoostOracle(unittest.TestCase):
             case.hp["learning-rate"] = "0.2"
             other, _ = owb.fit_oracle(case)
             self.assertNotEqual(other, expect)
+
+
+class BoostSplitLeakage(unittest.TestCase):
+    """docs/models-boost.md section 2.8: the validation rows of early stopping come from the training rows of the split, never from its test rows"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sb = Sandbox()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.sb.cleanup()
+
+    def fit(self, target, csv, out, *extra):
+        r = self.sb.run("fit", "--model", "boost", "--target", target, "--output", out, "--overwrite", *extra, csv)
+        self.assertEqual(r.status, 0, r)
+        return r
+
+    def test_the_validation_rows_of_a_stratified_split_never_come_from_the_test_rows(self):
+        # the oracle fits ONLY the rows the split kept (the assignment `--emit-folds` prints): its validation tenth is drawn from them alone, and the file of ml holds the same
+        # model section byte for byte, so no validation row was taken from the test rows; a plain holdout is the same, with the masks of the oracle
+        ob, ow, owt = owb.ob, owb.ow, owb.owt
+        rng = random.Random(8)
+        n = 300
+        rows = [(round(rng.uniform(0, 5), 3), round(rng.uniform(0, 5), 3)) for _ in range(n)]
+        ys = [1 if a + rng.gauss(0, 1.2) > 2.5 else 0 for a, b in rows]
+        self.sb.write("st.csv", "a,b,lab\n" + "".join("%s,%s,%d\n" % (a, b, y) for (a, b), y in zip(rows, ys)))
+        args = ["--rounds", "100", "--early-stopping", "4", "--seed", "7", "--min-leaf", "4", "--task", "classification"]
+        for label, extra, mask_of in (
+                ("stratified", ["--split", "train=0.8", "--stratify", "--emit-folds"], None),
+                ("plain", ["--split", "train=0.8"], lambda: ow.split_masks(n, "train=0.8", 7))):
+            r = self.fit("lab", "st.csv", "st.cml", *args, *extra)
+            if mask_of is None:
+                mask = r.data()["summary"]["split"]["assignment"]
+            else:
+                mask = mask_of()
+            tr = [i for i in range(n) if mask[i] == 0]
+            self.assertGreater(len(tr), 200, label)
+            X = np.array([rows[i] for i in tr], dtype=np.float64)
+            res = ob.fit(X, np.zeros(X.shape, dtype=bool), np.array([float(ys[i]) for i in tr]), 0, 100, 0.1, 4, 4, 64, 1.0, 1.0, 4, 4194304, 7)
+            self.assertLess(res["kept"], 100, label)                       # early stopping ended the fit: the validation rows decided
+            expect = ob.payload(res, 2) + owt.labels_record(0, 1)
+            self.assertEqual(model_section(self.sb.read("st.cml")), expect, label)
 
 
 if __name__ == "__main__":
