@@ -3,7 +3,8 @@
 
 Each mutant is a copy of the tree (scripts/mutants_cli.py's copy, which carries every built executable) with one edit to tools/ml/jsonl.cho, tools/ml/jsonlcli.cho or
 tools/ml/app.cho. The gate named in the mutant runs against a binary rebuilt from the copy: "oracle" rebuilds jsonl-check and runs tests/conformance/test_jsonl_oracle.py (the
-cell text against Python's json); "cli" rebuilds ml and runs test_jsonl_equiv.py and test_jsonl_rules.py (the model bytes against the CSV's, the refusals). KILLED: a test
+cell text against Python's json); "cli" rebuilds ml and runs test_jsonl_equiv.py and test_jsonl_rules.py (the model bytes against the CSV's, the refusals); "cv" rebuilds ml and runs test_jsonl_cv.py (cv, the identity of the
+input, the run record and its replay). KILLED: a test
 failed; SURVIVED: every test passed, and the mutant then carries a reason.
 
     python3 scripts/mutants_jsonl.py              # all mutants, then the baseline (the unchanged copy must pass)
@@ -72,10 +73,10 @@ MUTANTS = [
     M("cli-fit-stdin-not-wanted", "cli", "fit - does not read standard input", [("tools/ml/app.cho", "    if verb == 1 || verb == 3 {\n        return cli.operand_count", "    if verb == 3 {\n        return cli.operand_count", 1)]),
     M("cli-eval-stdin-not-wanted", "cli", "eval - does not read standard input", [("tools/ml/app.cho", "    if verb == 1 || verb == 3 {\n        return cli.operand_count", "    if verb == 1 {\n        return cli.operand_count", 1)]),
     M("cli-ndjson-not-an-alias", "cli", "ndjson is not jsonl", [(C, "    return bytes.equal(f, \"jsonl\") || bytes.equal(f, \"ndjson\");", "    return bytes.equal(f, \"jsonl\");", 1)]),
-    M("cli-cat-not-text", "cli", "--cat names no text column of the JSON lines", [(C, "count, cli.text(args, parsed, table, \"cat\"));", "count, \"\");", 1)]),
+    M("cli-cat-not-text", "cli", "--cat names no text column of the JSON lines", [(C, "texts = buffer.append(heap, texts, cli.text(args, parsed, table, \"cat\"));", "texts = buffer.append(heap, texts, \"\");", 1)]),
     M("cli-predict-reads-the-target", "cli", "predict requires the target key as eval does", [(C, "model_fields(heap, fs, root, ob.model, max_bytes, verb == 3)", "model_fields(heap, fs, root, ob.model, max_bytes, true)", 1)]),
     M("cli-eval-skips-the-target", "cli", "eval does not read the target key", [(C, "model_fields(heap, fs, root, ob.model, max_bytes, verb == 3)", "model_fields(heap, fs, root, ob.model, max_bytes, false)", 1)]),
-    M("cli-fields-not-required", "cli", "fit of JSON lines without --fields is not refused", [(C, "        if !cli.has(parsed, table, \"fields\") {\n            return app.flag_problem", "        if false {\n            return app.flag_problem", 1)]),
+    M("cli-fields-not-required", "cli", "fit of JSON lines without --fields is not refused", [(C, "        if !cli.has(parsed, table, \"fields\") {\n            if verb == 5 {", "        if false {\n            if verb == 5 {", 1)]),
     M("cli-conflicts-not-refused", "cli", "--fields with CSV is not refused", [(C, "        if cli.has(parsed, table, \"fields\") {\n            e = app.flag_problem(heap, e, \"args.conflict\"", "        if false {\n            e = app.flag_problem(heap, e, \"args.conflict\"", 1)]),
     M("cli-retry-never-offered", "cli", "the missing-field refusal offers no repair", [(C, "    if f.code == 4 && retry_ok {", "    if false && f.code == 4 && retry_ok {", 1)]),
     M("cli-absent-ignored", "cli", "--absent empty is not passed to the reader", [(C, "    let absent_empty = bytes.equal(cli.text(args, parsed, table, \"absent\"), \"empty\");", "    let absent_empty = false;", 1)]),
@@ -84,6 +85,19 @@ MUTANTS = [
     M("cli-nodes-ignored", "cli", "--max-json-nodes is not passed to the reader", [(C, "absent_empty, max_nodes, line_cap, max_bytes);", "absent_empty, 4096, line_cap, max_bytes);", 1)]),
     M("cli-shown-name-lost", "cli", "the converted input is shown under another name", [(C, "nf = paths.of_mem(heap, buffer.bytes(cr), buffer.bytes(sr2));", "nf = paths.of_mem(heap, buffer.bytes(cr), \"x\");", 1)],
       why="equivalent: the name of the converted input is read by no answer. The refusals of the CSV reader carry a line and a column and no path, and a read of bytes in memory cannot fail with an errno; the refusals of the JSON lines reader take the name from the original Rp"),
+    # ------------------------------------------------------------------ ml cv, the identity of the input, the run record and its replay (tests/conformance/test_jsonl_cv.py)
+    M("cv-fields-not-read", "cv", "cv does not declare the columns from --fields", [(C, "    if verb == 1 || verb == 5 {\n        let list", "    if verb == 1 {\n        let list", 1)]),
+    M("cv-fields-not-required", "cv", "cv of JSON lines without --fields is not refused", [(C, "    if verb == 1 || verb == 5 {\n        if !cli.has(parsed, table, \"fields\") {", "    if verb == 1 {\n        if !cli.has(parsed, table, \"fields\") {", 1)]),
+    M("cv-drop-is-not-text", "cv", "a column named by --drop is read as a number", [(C, "texts = buffer.append(heap, texts, cli.text(args, parsed, table, \"drop\"));", "texts = buffer.append(heap, texts, \"\");", 1)]),
+    M("cv-split-column-read-by-name", "cv", "--split-by and --split-group read the column from the file by its name", [("tools/ml/splitwire.cho", "fsio.read_input(heap, fs, root, file, o.max_bytes)", "fsio.read_whole(heap, fs, root, paths.shown(file), paths.full(file), o.max_bytes)", 1)]),
+    M("id-raw-digest-lost", "cv", "the digest of the bytes the user gave is not kept: the CSV made of them is hashed", [(C, "nf = paths.with_raw(heap, nf, buffer.bytes(gr), buffer.size(dr2));", "nf = nf;", 1)]),
+    M("id-stdin-not-hashed", "cv", "standard input is looked up as a file named - to be hashed", [("tools/ml/fsio.cho", "    if paths.is_stdin(file) {\n        return (sha_bytes", "    if false && paths.is_stdin(file) {\n        return (sha_bytes", 1)]),
+    M("record-without-format", "cv", "a run record of JSON lines holds no format", [("tools/ml/track.cho", "    if len(jsonl_fields) > 0 {", "    if false && len(jsonl_fields) > 0 {", 1)]),
+    M("record-csv-gains-format", "cv", "a run record of a CSV holds the format members", [("tools/ml/track.cho", "    if len(jsonl_fields) > 0 {", "    if len(jsonl_fields) >= 0 {", 1)]),
+    M("replay-reads-csv", "cv", "runs verify reads the recorded JSON lines file as a CSV", [("tools/ml/runs.cho", "if go && is_jsonl {", "if go && false {", 1)]),
+    M("replay-absent-rule-lost", "cv", "runs verify forgets the --absent rule of the record", [("tools/ml/runs.cho", "abs_empty = bytes.equal(buffer.bytes(dar0), \"empty\");", "abs_empty = false;", 1)]),
+    M("replay-drop-is-not-text", "cv", "runs verify reads the dropped columns of the record as numbers", [("tools/ml/runs.cho", "texts = buffer.append(heap, texts, buffer.bytes(drr));", "texts = buffer.append(heap, texts, \"\");", 1)]),
+    M("replay-stdin-record-refitted", "cv", "runs verify tries to open the file named - of a record of standard input", [("tools/ml/runs.cho", "if go && bytes.equal(buffer.bytes(dpr), \"-\") {", "if go && false && bytes.equal(buffer.bytes(dpr), \"-\") {", 1)]),
 ]
 
 
@@ -95,7 +109,7 @@ def build_check(tree):
 
 def run_tests(tree, gate):
     env = dict(os.environ, ML_BIN=str(tree / "build" / "ml"), JSONL_CHECK_BIN=str(tree / "build" / "jsonl-check"), PYTHONDONTWRITEBYTECODE="1", CANCHO=mc.compiler())
-    targets = ["test_jsonl_oracle"] if gate == "oracle" else ["test_jsonl_equiv", "test_jsonl_rules"]
+    targets = {"oracle": ["test_jsonl_oracle"], "cli": ["test_jsonl_equiv", "test_jsonl_rules"], "cv": ["test_jsonl_cv"]}[gate]
     p = subprocess.run([sys.executable, "-m", "unittest", *targets], capture_output=True, text=True, cwd=tree / "tests" / "conformance", env=env)
     return p.returncode, p.stdout + p.stderr
 
@@ -129,7 +143,7 @@ def baseline():
         binary, log2 = mc.build(tree)
         if not ok or binary is None:
             return "INVALID", "build failed: " + (log + log2)[:400]
-        for gate in ("oracle", "cli"):
+        for gate in ("oracle", "cli", "cv"):
             code, out = run_tests(tree, gate)
             if code != 0:
                 return "FAILED", out[-600:]

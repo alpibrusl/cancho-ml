@@ -1016,6 +1016,9 @@ def landing_values(ctx):
     import re
     status = (ROOT / "docs" / "status.md").read_text()
     fp = (ROOT / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines()
+    # the figures of the landing page are the lines that three platforms print: the cases of JSON lines (names with `-jsonl`) are in the golden from the Mac only until the Linux runs
+    # print them too (docs/status.md says which); they are counted here when the golden is the same on every platform of the matrix
+    fp = [l for l in fp if "-jsonl" not in l.split("\t")[0]]
     fits = sum(1 for l in fp if l.split("\t")[1:2] == ["fit-exit"])
     m = re.search(r"agree on (\d+) fingerprint lines for (\d+) fits", status)
     if not m or (int(m.group(1)), int(m.group(2))) != (len(fp), fits):

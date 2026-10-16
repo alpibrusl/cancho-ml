@@ -1,4 +1,4 @@
-# JSON lines as an input of `fit`, `predict` and `eval` (issue #54)
+# JSON lines as an input of `fit`, `predict`, `eval` and `cv` (issue #54)
 
 **Status: sections 1 to 6 are the design and the gates, written before any code of this stage (`tools/ml/jsonl.cho`). Section 7 holds what the scripts printed; a
 number or a verdict is in it only if a script of this repository printed it, with its conditions.** Tags as in `design.md`: **[choice]** a decision the
@@ -54,17 +54,17 @@ reads text. A user who wants `user.age` writes `table --input-format jsonl --fie
 
 | flag | verbs | default | |
 |---|---|---|---|
-| `--input-format csv\|jsonl\|ndjson` | `fit`, `predict`, `eval` | `csv` | never guessed from a name or from the bytes; `ndjson` is `jsonl` |
-| `--fields NAMES` | `fit` | none | the columns, flat names separated by commas; **required** with `jsonl` at `fit` (`args.required-flag`); `args.conflict` with `csv` and for `predict` and `eval` |
-| `--absent refuse\|empty` | `fit`, `predict`, `eval` | `refuse` | what a declared key that the line does not hold is; `args.conflict` with `csv` |
-| `--max-json-nodes N` | `fit`, `predict`, `eval` | 4096 | the most JSON nodes a line may hold, 1 to 1,048,576 (`ml.param.out-of-range` outside); `args.conflict` with `csv` |
+| `--input-format csv\|jsonl\|ndjson` | `fit`, `predict`, `eval`, `cv` | `csv` | never guessed from a name or from the bytes; `ndjson` is `jsonl` |
+| `--fields NAMES` | `fit`, `cv` | none | the columns, flat names separated by commas; **required** with `jsonl` at `fit` and `cv` (`args.required-flag`); `args.conflict` with `csv` and for `predict` and `eval` |
+| `--absent refuse\|empty` | `fit`, `predict`, `eval`, `cv` | `refuse` | what a declared key that the line does not hold is; `args.conflict` with `csv` |
+| `--max-json-nodes N` | `fit`, `predict`, `eval`, `cv` | 4096 | the most JSON nodes a line may hold, 1 to 1,048,576 (`ml.param.out-of-range` outside); `args.conflict` with `csv` |
 
 The existing limits keep their meaning for JSON lines: `--max-line-bytes` (a longer line is `limit.line-too-long`, checked before the line is parsed),
 `--max-rows`, `--max-columns`, `--max-cells`, and `--max-bytes`, which for JSON lines also bounds the **input** (a file of JSON lines is read whole, up to
 `--max-bytes`, default 16 MiB, ceiling 256 MiB; a CSV file is not, it is streamed) and the CSV that the reader makes of it (section 5).
 
-**The fields.** `fit` and `cv` (when the splits stage merges; `fit --split` is the case here) declare the columns with `--fields`: the header of the table
-is those names in that order. `predict` and `eval` take their fields **from the model file**: the stored schema names the columns a caller must give
+**The fields.** `fit` and `cv` declare the columns with `--fields`: the header of the table
+is those names in that order. A column is read as text when `--cat` names it **or `--drop` names it**: a dropped column is not a feature, and the CSV path does not read its cells as numbers, so a group or a time column that is a string (`--split-group customer`, `--split-by time:visit_date`) is declared in `--fields`, named by `--drop`, and reaches the splits as the same bytes the CSV holds. A column that is neither is a number, and a string in it is `ml.jsonl.type-mismatch`. `predict` and `eval` take their fields **from the model file**: the stored schema names the columns a caller must give
 (`ml describe`, `request.header`), so no flag is needed and none is accepted. `predict` reads the feature columns (the target is skipped, as in CSV);
 `eval` reads the feature columns and the target (a clustering has no target). The names and the order of the stored schema are used, so a line is read
 **by key**, in any order, and **keys the model does not name are ignored**. This differs from CSV on purpose: a CSV header with a column the model does not
@@ -76,14 +76,14 @@ duplicates), as table does for keys the plan does not look up.
 (`limit.input-too-large` past it), CSV or JSON lines alike. The operand is required for `fit` and `eval` (no operand is `args.missing-operand`, as before):
 `predict` is the only verb where no operand means standard input. Memory: the bytes once, and for JSON lines the CSV made from them as well while the
 conversion runs (the JSON bytes are released before the verb runs), so the peak is below three times `--max-bytes` (the JSON lines, the CSV, and the copy of the CSV that the verb reads). `fit - --split ...` needs no
-second read (the scan already runs twice over the bytes in memory). `fit --cv` does not exist on `main`; when it merges it reads the same bytes in
-memory, which is why `fit -` was built with a bounded buffer and not as a stream. `--track` (not on `main`): the training file is `-`; **[choice] the
-tracking stage records the name `-` and the SHA-256 of the bytes read from standard input** (for JSON lines, of the JSON lines bytes, before the
-conversion), since the bytes are in memory when the hash is taken; it does not refuse. This section is the decision; the tracking stage builds it.
+second read (the scan already runs twice over the bytes in memory), and the second read that `--split-by` and `--split-group` make of the column reads the bytes held in memory (the CSV made of the lines), not the file by its name. `ml cv` reads a file (`cv -` is the file named `-`, as before). `--track`: the training file is `-`, and **[choice, built] the run record
+holds the name `-` and the SHA-256 and size of the bytes read from standard input** (for JSON lines, of the JSON lines bytes, before the conversion): the provenance section of the model file holds the same identity, so `eval -` says `"on":"train"` when it scores the bytes the model was fitted on. A record of standard input is valid and cannot be refitted: `ml runs verify` refuses it with `ml.runs.not-replayable` (`detail.flag` `stdin`), since there is no file to read again.
 
 **The model file records nothing about the input format.** A model fitted from JSON lines and one fitted from the equivalent CSV are the same bytes
 (gate G1); `predict` and `eval` take either format whatever the fit read. `ml-predict` takes `--input-format`, `--absent` and `--max-json-nodes` for
 `predict` (section 6, G6): the reader is the same source and adds no capability (standard input and files are what it already reads).
+
+**A JSON string that is a date is text.** JSON has no date type, and the mapping of section 3 does not make one: a string is the text of its cell, a number is the token text of its cell. `--split-by time:COLUMN` parses the cells of the column as the CSV path does (`docs/splits.md` section 4), so `"2024-03-20"` is an ISO date and `20240320` is a number that orders as a date, and the two cut the rows alike; a column that holds a string in one line and a number in another is `ml.jsonl.mixed-kinds`, and a string that is not an ISO date is `ml.split.time-format`. Dotted paths in `--fields` and a datetime type of the table reader are not read here.
 
 ## 3. What a cell is: the value-to-cell table
 
@@ -92,8 +92,8 @@ byte and no lone surrogate escape; nesting at most 128 deep), and it must be an 
 A record is a line; a blank line (only space, tab, CR) is skipped; a byte order mark at the start of the input and a CR before the LF are dropped; the
 last line may have no LF.
 
-"Numeric" below is a column that the reader reads as a number: at `fit`, a column that is not named by `--cat` (and is not the target); at `predict` and
-`eval`, a column the stored schema types `int`, `dec` or `float`. "Text" is a column named by `--cat` (at `fit`) or typed categorical by the stored
+"Numeric" below is a column that the reader reads as a number: at `fit` and `cv`, a column that is not named by `--cat` or `--drop` (and is not the target); at `predict` and
+`eval`, a column the stored schema types `int`, `dec` or `float`. "Text" is a column named by `--cat` or `--drop` (at `fit` and `cv`) or typed categorical by the stored
 schema.
 
 | the value at the key | the cell | refusal |
@@ -145,6 +145,8 @@ which is the input line plus one (the header) while no string in the file holds 
 The names of a stored schema (`predict`, `eval`) are read from the model file by the same decoder the verbs use (`pipeline.schema`, `ml.mfile` for a
 model with no steps), before the data is read. A model file that cannot be read leaves the file alone: the verb then refuses on the model, as before.
 
+**Run records** (`docs/tracking.md`). The identity of an input is that of the bytes the user gave: `paths.Rp` carries the SHA-256 and the size of the JSON lines (`paths.with_raw`), so the provenance section of a model file and the `inputs.data` of a run record name the file or the standard input and not the CSV made of it (`fsio.sha_rp`). The `inputs.data` object of a run record made from JSON lines holds three more members, `"format":"jsonl"`, `"fields"` (the `--fields` list) and `"absent"` (`"refuse"` or `"empty"`); a record made from a CSV has none of them, so **no CSV run id changes** (the iris fit of `README.md` has the id it has always had: gate G8). The cat and drop lists are in the record already. `ml runs verify` of a JSON lines record reads the recorded file as the fit read it (the fields, the absent rule, the cat and drop columns as text, the ceilings of the caps) and compares the SHA-256 of the refitted model file, at any `--threads`.
+
 Lookup of the keys of a line is one pass over the pairs of the top-level object with a small hash table of the declared names (open addressing on a
 31-bit hash, comparing the decoded key to the name), so a line with 50,000 keys and 4,096 declared fields costs the keys and not their product.
 
@@ -162,13 +164,14 @@ Lookup of the keys of a line is one pass over the pairs of the top-level object 
 
 | id | gate | judged by | a mutant it must kill |
 |---|---|---|---|
-| G1 | **Equivalence.** For iris, diabetes, wine and breast cancer (bundled) and for generated tables, `ml fit` on the JSON lines and on the equivalent CSV give the **same model file bytes**, and `predict` and `eval` give the same standard output bytes, for every model kind (constant, linear, logistic, tree, forest, kmeans), with plans using scale, impute, bucket, encode, freq, hash and `--cat` text columns, missing cells written as `null` and as absent keys (`--absent empty`), `fit --split`, `predict` and `eval` from a JSON lines file with the keys in another order and with extra keys, standard input for `fit -`, `eval -` and `predict -`. `ml cv` is judged when the splits stage is on `main` | `tests/conformance/test_jsonl_equiv.py` | the converter writing one cell too few; a different column order; `null` read as the text `null` |
+| G1 | **Equivalence.** For iris, diabetes, wine and breast cancer (bundled) and for generated tables, `ml fit` on the JSON lines and on the equivalent CSV give the **same model file bytes**, and `predict` and `eval` give the same standard output bytes, for every model kind (constant, linear, logistic, tree, forest, kmeans), with plans using scale, impute, bucket, encode, freq, hash and `--cat` text columns, missing cells written as `null` and as absent keys (`--absent empty`), `fit --split`, `predict` and `eval` from a JSON lines file with the keys in another order and with extra keys, standard input for `fit -`, `eval -` and `predict -`. `ml cv` is judged in G8 | `tests/conformance/test_jsonl_equiv.py` | the converter writing one cell too few; a different column order; `null` read as the text `null` |
 | G2 | **Cell text against Python's `json`.** `jsonl-check` (`tools/jsonl-check`) prints the CSV the converter makes; the test builds the expected bytes from `json.loads(parse_float=str, parse_int=str)` and its own CSV writer, and compares byte for byte for numbers (`1`, `1.0`, `-0`, `1e3`, `1E-7`, 17 digits, subnormal, huge, `1e400` read as text and refused downstream), strings (escapes, surrogate pairs, NUL, quotes, commas, CR, LF), big integers, booleans and nulls, and the refusals of nested values | `tests/conformance/test_jsonl_oracle.py` | the exact-text rule replaced by a double round trip; a decoder that skips surrogate pairs |
 | G3 | **Refusals.** One fixture per new rule tag with its repair run, and the `args.*` conflicts | `tests/conformance/test_jsonl_rules.py`, `fixtures.py`, `test_tables.py`, `test_rules.py` | a rule whose message or repair is changed |
 | G4 | **Fuzz and hostile lines.** Huge numbers, nesting to the node limit and one past it, invalid UTF-8, a BOM, CRLF, a missing final newline, a 10 MB line, 100,000 empty lines, lines that are not objects, random bytes and mutated valid files: an answer of the contract (exit status of a rule or 0), never a trap, no hang (a timeout is a failure); thread invariance of `fit --threads` | `tests/conformance/test_jsonl_fuzz.py` | the line bound not applied; the node limit off by one |
 | G5 | **Mutants** of the mapping, absent and null, numbers, the string and number protection, the limits, the field order, standard input | `scripts/mutants_jsonl.py` (`--check`: each edit applies; the run rebuilds a copy of the tree) | all killed, or each survivor explained in section 7 |
 | G6 | **Authority.** `ml-predict` and `ml-serve` gain no capability; the manifests are what `scripts/check_bins.py` derives; `ml` needs no new label for standard input at `fit` (`io_read` is already there) | `scripts/check_bins.py`, `manifests/` | the existing mutants of `check_bins.py --mutants` |
 | G7 | **The fast CI job** runs `scripts/run_conformance.py --no-oracles` in a Python without numpy: the new tests import only the standard library and `jsonschema`, so none is "not run" | the runner in a venv with `ci/requirements-fast.txt` only | a test that imports numpy at top level (it would be listed NOT RUN) |
+| G8 | **cv, the run record, the replay.** `ml cv` on JSON lines and on the equivalent CSV print the same bytes for the plain k-fold, `--stratify`, `--repeats`, `--split-group`, `--split-by time:COL` (the column a JSON string date and the same dates as JSON numbers) and `--emit-folds`; `cv` needs `--fields`; a mixed column and a string that is not a date are refused; a fit of JSON lines writes a record with the format, `runs verify` replays it at 1 and 8 threads and refuses it when the file changed; `fit -` and `eval -` hash the bytes they read; a record of standard input is `ml.runs.not-replayable`; a CSV run id is what it was | `tests/conformance/test_jsonl_cv.py` | a cv that reads the model file's columns; a record without the format; a hash of the converted CSV |
 | H | **Cross-platform fingerprint.** `scripts/xplat_check.py` is equal to `docs/bench/xplat_fp.txt` on the Mac and on gram; two cases (a JSON lines fit and its predict) are appended to the fingerprint without changing its existing lines | `scripts/xplat_check.py` on both machines | a converter that depends on the platform |
 
 ## 7. What was built and measured
