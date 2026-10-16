@@ -255,6 +255,14 @@ class ImpurityDecrease(Fixture):
             t += float(c["importance"])
         self.assertLess(abs(t - 1.0), 1e-12)
 
+    def test_i3_the_text_form_states_the_total(self):
+        leaf = self.sb.run("--format", "text", "importance", "--model-file", "tree_leaf.ml").stdout.decode()
+        self.assertTrue(leaf.startswith("impurity_decrease total 0.0 trees 1\n"), leaf)
+        cls = self.sb.run("--format", "text", "importance", "--model-file", "forest_cls.ml").stdout.decode()
+        self.assertTrue(cls.startswith("impurity_decrease total 1.0 trees 6\n"), cls)
+        lines = cls.splitlines()[1:]
+        self.assertEqual([ln.split(".")[0] for ln in lines], [str(i) for i in range(1, len(lines) + 1)])
+
     def test_i2_the_split_counts_are_not_named_importance(self):
         cols = self.importance("forest_reg.ml")["importance"]["columns"]
         self.assertTrue(all("splits" in c and "split_rows" in c for c in cols))

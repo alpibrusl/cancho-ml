@@ -166,6 +166,16 @@ class Permutation(unittest.TestCase):
         self.sb.write("flat.csv", "x0,x1,x2,NOISE,x3,x4,x5,y\n0.1,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n0.2,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n0.3,0.2,0.3,0.4,0.5,0.6,0.7,1.0\n")
         r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "flat.csv", "--metric", "r2")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.importance.undefined-metric"), r)
+        # a classification file with one class: the AUC has no value; a label the model never saw is the refusal of eval
+        rows = csv_of("cls", 30, 3).splitlines()
+        self.sb.write("oneclass.csv", "\n".join([rows[0]] + [ln.rsplit(",", 1)[0] + ",0" for ln in rows[1:]]) + "\n")
+        r = self.sb.run("importance", "--model-file", "forest_cls.ml", "--data", "oneclass.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.importance.undefined-metric"), r)
+        self.sb.write("foreign.csv", "\n".join([rows[0]] + [ln.rsplit(",", 1)[0] + (",2" if i == 3 else ",0" if i % 2 else ",1") for i, ln in enumerate(rows[1:])]) + "\n")
+        for metric in ("roc_auc", "accuracy"):
+            # accuracy needs no binary labels in the library, so the refusal is the verb's own check
+            r = self.sb.run("importance", "--model-file", "forest_cls.ml", "--data", "foreign.csv", "--metric", metric)
+            self.assertEqual((r.status, r.first_rule()), (8, "ml.label.not-binary"), (metric, r))
         # the data lacks a column of the model
         self.sb.write("short.csv", "x0,x1,y\n0.1,0.2,1.0\n0.3,0.4,2.0\n")
         r = self.sb.run("importance", "--model-file", "forest_reg.ml", "--data", "short.csv")

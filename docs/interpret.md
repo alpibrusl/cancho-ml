@@ -135,8 +135,8 @@ Inputs: the model file, a CSV with the model's columns **and the target**, a met
 Metrics: regression `rmse` (default), `mae`, `r2`; classification `roc_auc` (default), `accuracy`, `precision`, `recall`, `f1`, `log_loss`; the library's own definitions (`lib/metrics`), with the model's positive label.
 A metric with no value on the baseline or on a permuted run (a precision with no predicted positive, an R-squared of a constant target) is `ml.importance.undefined-metric`.
 
-A permutation importance is **per raw input column** (D4): a one-hot encoded column is permuted as the raw column it came from, and the table says so (`source` is the column itself; the answer's
-`columns` member of the data-free table names the model columns). A column the model reads through several encoders gets one row.
+A permutation importance is **per raw input column** (D4): a one-hot encoded column is permuted as the raw column it came from, and the table has one row for it, however many columns the encoders made of it.
+The data-free table lists the model's columns and names the raw column of each in `source`.
 
 **What it measures**, stated so that nobody reads more: the drop of the metric when this column's values are exchanged between rows of the file, with every other column untouched. It is a property of
 (model, file): on a file where two columns are copies of each other, shuffling one leaves the other to carry the signal and both look unimportant. On the file the model was trained on it measures
@@ -145,7 +145,7 @@ what the model memorised.
 ## 4. The verbs
 
 ```
-ml importance --model-file M [--data FILE [--metric NAME] [--repeats R] [--seed S] [--drop COLS]] [--format text]
+ml importance --model-file M [--data FILE [--metric NAME] [--repeats R] [--seed S] [--drop COLS] [--max-work N]] [--format text]
 ml dump       --model-file M [--tree I] [--max-nodes N] [--format text]
 ```
 

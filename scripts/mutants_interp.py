@@ -69,7 +69,7 @@ MUTANTS = [
     M("i2-a-leaf-tree-adds-nan", "I2", "a tree that never splits is divided by its zero total", [(I, "if finite(tt) && tt > 0.0 {", "if tt >= 0.0 {")], MDI),
     M("i2-total-of-an-unsplit-forest", "I2", "the total says 1.0 when no tree splits", [(I, "    if positive {\n        plain = buffer.append(heap, plain, \"1.0\");\n    } else {\n        plain = buffer.append(heap, plain, \"0.0\");\n    }\n    plain = buffer.append(heap, plain, \" trees \");",
                                                                             "    if true {\n        plain = buffer.append(heap, plain, \"1.0\");\n    } else {\n        plain = buffer.append(heap, plain, \"0.0\");\n    }\n    plain = buffer.append(heap, plain, \" trees \");")],
-      MDI + ["test_interp.Unsupported"], why="the total of the text form only: the JSON total is a separate branch, and the tests compare the JSON"),
+      MDI),
     # ------------------------------------------------------------------ I9: describe
     M("i9-member-renamed", "I9", "describe names the member importancex", [("tools/ml/mdesc.cho", 'w = json.put_key(heap, w, "importance");', 'w = json.put_key(heap, w, "importancex");')], DESC),
     M("i9-member-null-for-trees", "I9", "describe's table is the null of a model with none", [("tools/ml/mdesc.cho", "buffer.bytes(ibr), o);\n                        buffer.drop(heap, payload);", "\"null\", o);\n                        buffer.drop(heap, payload);")], DESC),
