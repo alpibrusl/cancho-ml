@@ -52,7 +52,8 @@ MUTANTS = [
     M("i1-derived-column-gets-a-deviation", "I1", "an encoder's column is given the provenance deviation of its raw column", [(I, "if l_derived(lin, j) {\n        return (0.0, 0);\n    }", "if false {\n        return (0.0, 0);\n    }")],
       STD),
     # ------------------------------------------------------------------ I2: the impurity decrease
-    M("i2-gini-without-the-factor-two", "I2", "the Gini identity loses its factor 2", [(I, "let v = (2.0 * (df * df)) /", "let v = (df * df) /")], MDI),
+    M("i2-gini-without-the-factor-two", "I2", "the Gini identity loses its factor 2", [(I, "let v = (2.0 * (df * df)) /", "let v = (df * df) /")], MDI,
+      why="equivalent: the printed importance divides every decrease of a tree by the total of the tree, which divides the constant factor out (the factor 2 is the Gini definition, n G - nL GL - nR GR, and shows only in a raw decrease, which is not printed)"),
     M("i2-gini-class-zero-counts", "I2", "the identity reads the wrong counts (lb * nl - rb * nr)", [(I, "let dd = lb * nr - rb * nl;", "let dd = lb * nl - rb * nr;")], MDI),
     M("i2-gini-symmetric-counts", "I2", "the identity reads the class-0 counts of the children (equivalent: D changes sign and is squared)", [(I, "let dd = lb * nr - rb * nl;", "let dd = (nl - lb) * nr - (nr - rb) * nl;")], MDI,
       why="equivalent: with the class-0 counts D becomes -D and only D squared is used"),

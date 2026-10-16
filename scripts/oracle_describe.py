@@ -176,7 +176,7 @@ def describe(data, limit=1000, max_bytes=16777216):
         "classes": classes, "positive": positive, "output": output,
         "limits": {"values_per_column": limit, "max_bytes": max_bytes},
         # the table of docs/interpret.md that needs no data, computed by scripts/oracle_interp.py from the bytes of the file
-        "importance": OI.importance_member(OI.read_model(data)),
+        "importance": OI.importance_member(OI.read_model(data), limit),
     }
 
 

@@ -721,7 +721,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""
                     if kind != 4 && kind != 5 && kind != 7 {
                         e = refuse(heap, e, "ml.importance.unsupported-model", "the model is a constant or a k-means, which have no importance per feature", "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means");
                     } else {
-                        let (ib, ist, imiss, ipl) = interp.table(heap, sr);
+                        let (ib, ist, imiss, ipl) = interp.table(heap, sr, 4294967296);
                         var go = true;
                         if ist == 1 && !rq.data_given {
                             borrow imiss as &mr in {

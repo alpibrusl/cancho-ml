@@ -280,6 +280,21 @@ class DescribeMember(Fixture):
                 want = O.importance_member(M) if M["model"] in ("linear", "logistic", "tree", "forest") else None
                 self.assertTrue(same(d["importance"], want), (name, d["importance"], want))
 
+    def test_i9_the_limit_cuts_the_table_to_the_best_ranks(self):
+        # like the categories, the rows of the table listed by describe are cut by --limit (ml-serve relies on it to fit one reply); the verb lists every row
+        for name in ("forest_reg.ml", "lin_std.ml", "forest_cat.ml"):
+            with self.subTest(model=name):
+                got = self.sb.run("describe", "--model-file", name, "--limit", "3").data()["importance"]
+                self.assertTrue(same(got, O.importance_member(self.model(name), 3)), (name, got))
+                self.assertEqual((got["listed"], got["truncated"], [c["rank"] for c in got["columns"]]), (3, True, [1, 2, 3]))
+                whole = self.importance(name)["importance"]
+                self.assertEqual((whole["listed"], whole["truncated"]), (len(whole["columns"]), False))
+                self.assertEqual(got["columns"], sorted((c for c in whole["columns"] if c["rank"] <= 3), key=lambda c: c["rank"]))
+        # a table that cannot be computed lists the names it names up to --limit
+        got = self.sb.run("describe", "--model-file", "lin_onehot.ml", "--limit", "1").data()["importance"]
+        self.assertTrue(same(got, O.importance_member(self.model("lin_onehot.ml"), 1)))
+        self.assertEqual((got["available"], got["listed"], got["truncated"], len(got["missing"])), (False, 1, True, 1))
+
     def test_i9_describe_and_the_verb_print_the_same_object(self):
         for name in ("lin_std.ml", "log_plain.ml", "forest_cls.ml", "tree_reg.ml"):
             self.assertTrue(same(self.describe(name)["importance"], self.importance(name)["importance"]), name)

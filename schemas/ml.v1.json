@@ -3723,6 +3723,13 @@
                       "type": "string",
                       "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
                     },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
                     "columns": {
                       "type": "array",
                       "items": {
@@ -3780,6 +3787,8 @@
                     "available",
                     "measure",
                     "total",
+                    "listed",
+                    "truncated",
                     "columns"
                   ],
                   "additionalProperties": false
@@ -3803,6 +3812,13 @@
                     "total": {
                       "type": "string",
                       "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
                     },
                     "columns": {
                       "type": "array",
@@ -3850,6 +3866,8 @@
                     "measure",
                     "trees",
                     "total",
+                    "listed",
+                    "truncated",
                     "columns"
                   ],
                   "additionalProperties": false
@@ -3869,6 +3887,13 @@
                     "measure": {
                       "type": "string"
                     },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
                     "missing": {
                       "type": "array",
                       "items": {
@@ -3881,6 +3906,8 @@
                     "available",
                     "reason",
                     "measure",
+                    "listed",
+                    "truncated",
                     "missing"
                   ],
                   "additionalProperties": false
@@ -3955,6 +3982,13 @@
                       "type": "string",
                       "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
                     },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
                     "columns": {
                       "type": "array",
                       "items": {
@@ -4012,6 +4046,8 @@
                     "available",
                     "measure",
                     "total",
+                    "listed",
+                    "truncated",
                     "columns"
                   ],
                   "additionalProperties": false
@@ -4035,6 +4071,13 @@
                     "total": {
                       "type": "string",
                       "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
                     },
                     "columns": {
                       "type": "array",
@@ -4082,6 +4125,8 @@
                     "measure",
                     "trees",
                     "total",
+                    "listed",
+                    "truncated",
                     "columns"
                   ],
                   "additionalProperties": false
@@ -4101,6 +4146,13 @@
                     "measure": {
                       "type": "string"
                     },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
                     "missing": {
                       "type": "array",
                       "items": {
@@ -4113,6 +4165,8 @@
                     "available",
                     "reason",
                     "measure",
+                    "listed",
+                    "truncated",
                     "missing"
                   ],
                   "additionalProperties": false

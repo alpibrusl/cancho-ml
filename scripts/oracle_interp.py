@@ -300,11 +300,23 @@ def column_sd(M, col):
     return None
 
 
-def std_member(M):
+def listing(imps, limit):
+    """the indices of the rows a table lists and whether it is cut: all of them in column order, or (when --limit cuts it) the `limit` best ranks, best first"""
+    w = len(imps)
+    listed = min(w, limit)
+    if listed == w:
+        return list(range(w)), False
+    rk = ranks(imps)
+    return sorted(range(w), key=lambda j: rk[j])[:listed], True
+
+
+def std_member(M, limit=1000):
     cols = lineage(M)
     missing = [c["name"] for c in cols if column_sd(M, c) is None]
     if missing:
-        return {"method": METHOD_STD, "available": False, "reason": "ml.importance.no-scale", "measure": MEASURE_STD, "missing": [tb(n) for n in missing]}
+        shown = min(len(missing), limit)
+        return {"method": METHOD_STD, "available": False, "reason": "ml.importance.no-scale", "measure": MEASURE_STD, "listed": shown, "truncated": shown < len(missing),
+                "missing": [tb(n) for n in missing[:shown]]}
     rows = []
     st = []
     for j, c in enumerate(cols):
@@ -317,10 +329,12 @@ def std_member(M):
         t = t + abs(z)
     imps = [abs(z) / t if t > 0.0 else 0.0 for b, sd, src, z in st]
     rk = ranks(imps)
-    for j, c in enumerate(cols):
+    order, cut = listing(imps, limit)
+    for j in order:
+        c = cols[j]
         b, sd, src, z = st[j]
         rows.append({"column": tb(c["name"]), "source": tb(c["source"]), "coefficient": fnum(b), "std": fnum(sd), "std_source": src, "standardised": fnum(z), "importance": fnum(imps[j]), "rank": rk[j]})
-    return {"method": METHOD_STD, "available": True, "measure": MEASURE_STD, "total": "1.0" if t > 0.0 else "0.0", "columns": rows}
+    return {"method": METHOD_STD, "available": True, "measure": MEASURE_STD, "total": "1.0" if t > 0.0 else "0.0", "listed": len(rows), "truncated": cut, "columns": rows}
 
 
 # ---------------------------------------------------------------- the impurity decrease (docs/interpret.md 3.2)
@@ -390,23 +404,26 @@ def tree_scores(M):
     return imps, splits, srows, (math.isfinite(s) and s > 0.0)
 
 
-def tree_member(M):
+def tree_member(M, limit=1000):
     cols = lineage(M)
     T = M["tree"]
     imps, splits, srows, positive = tree_scores(M)
     rk = ranks(imps)
+    width = min(len(imps), len(cols))
+    order, cut = listing(imps[:width], limit) if width == len(imps) else (list(range(width)), False)
     rows = []
-    for j, c in enumerate(cols):
+    for j in order:
+        c = cols[j]
         rows.append({"column": tb(c["name"]), "source": tb(c["source"]), "importance": fnum(imps[j]), "rank": rk[j], "splits": splits[j], "split_rows": srows[j]})
-    return {"method": METHOD_MDI, "available": True, "measure": MEASURE_MDI, "trees": T["trees"], "total": "1.0" if positive else "0.0", "columns": rows}
+    return {"method": METHOD_MDI, "available": True, "measure": MEASURE_MDI, "trees": T["trees"], "total": "1.0" if positive else "0.0", "listed": len(rows), "truncated": cut, "columns": rows}
 
 
-def importance_member(M):
-    """the `importance` member of describe, or None for the kinds that have none"""
+def importance_member(M, limit=1000):
+    """the `importance` member of describe (the rows listed are cut at `limit`, as the categories are), or None for the kinds that have none"""
     if M["model"] in ("linear", "logistic"):
-        return std_member(M)
+        return std_member(M, limit)
     if M["model"] in ("tree", "forest"):
-        return tree_member(M)
+        return tree_member(M, limit)
     return None
 
 

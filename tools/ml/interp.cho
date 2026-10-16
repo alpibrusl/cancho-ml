@@ -485,6 +485,38 @@ fn source_word(s: int) -> [] &static [byte] {
     return "provenance";
 }
 
+// one row of the table of standardised coefficients, column j
+fn put_std_row[&h, &l, &f, &s, &w2, &zz, &ii](heap: &!h Heap, o: json.Writer, lin: &l Lineage, lr: &f file.Loaded, sc: &s schema.Schema, wv: &w2 [float], z: &zz [float], imp: &ii [float], w: int, j: int) -> [heap] json.Writer {
+    let (sd, src) = column_sd(lin, j, lr);
+    var out = json.begin_object(heap, o);
+    out = put_text(heap, out, "column", l_name(lin, j));
+    out = put_text(heap, out, "source", schema.name(sc, l_src(lin, j)));
+    out = put_f(heap, out, "coefficient", wv[j]);
+    out = put_f(heap, out, "std", sd);
+    out = json.put_key(heap, out, "std_source");
+    out = json.put_string(heap, out, source_word(src));
+    out = put_f(heap, out, "standardised", z[j]);
+    out = put_f(heap, out, "importance", imp[j]);
+    out = json.put_key(heap, out, "rank");
+    out = json.put_int(heap, out, rank_of(imp, w, j));
+    return json.end_object(heap, out);
+}
+
+// one row of the table of the impurity decrease, column j
+fn put_mdi_row[&h, &l, &s, &ii, &sp, &rw](heap: &!h Heap, o: json.Writer, lin: &l Lineage, sc: &s schema.Schema, imp: &ii [float], splits: &sp [int], srows: &rw [int], d: int, j: int) -> [heap] json.Writer {
+    var out = json.begin_object(heap, o);
+    out = put_text(heap, out, "column", l_name(lin, j));
+    out = put_text(heap, out, "source", schema.name(sc, l_src(lin, j)));
+    out = put_f(heap, out, "importance", imp[j]);
+    out = json.put_key(heap, out, "rank");
+    out = json.put_int(heap, out, rank_of(imp, d, j));
+    out = json.put_key(heap, out, "splits");
+    out = json.put_int(heap, out, splits[j]);
+    out = json.put_key(heap, out, "split_rows");
+    out = json.put_int(heap, out, srows[j]);
+    return json.end_object(heap, out);
+}
+
 // A double as text, appended to `into` (the shortest decimal that reads back)
 pub fn put_num[&h](heap: &!h Heap, into: buffer.Buffer, x: float) -> [heap] buffer.Buffer {
     let (b, fin) = verbs.put_float_text(heap, into, bits(x));
@@ -496,7 +528,7 @@ pub fn put_num[&h](heap: &!h Heap, into: buffer.Buffer, x: float) -> [heap] buff
 
 // The importance object of a linear or logistic model. (the text, 0, the names without a deviation as a comma separated list, the lines of --format text) or (the text of an
 // unavailable object, 1, the names, the line)
-fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage) -> [heap] (buffer.Buffer, int, buffer.Buffer, buffer.Buffer) {
+fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage, limit: int) -> [heap] (buffer.Buffer, int, buffer.Buffer, buffer.Buffer) {
     let lr = wireio.stored_file(st);
     let sc = wireio.stored_schema(st);
     let wv = wireio.stored_weights(st);
@@ -526,13 +558,23 @@ fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage)
         out = json.put_string(heap, out, "ml.importance.no-scale");
         out = json.put_key(heap, out, "measure");
         out = json.put_string(heap, out, measure_std());
+        var shown = nmiss;
+        if limit < nmiss {
+            shown = limit;
+        }
+        out = json.put_key(heap, out, "listed");
+        out = json.put_int(heap, out, shown);
+        out = json.put_key(heap, out, "truncated");
+        out = json.put_bool(heap, out, shown < nmiss);
         out = json.put_key(heap, out, "missing");
         out = json.begin_array(heap, out);
         j = 0;
-        while j < w {
+        var put = 0;
+        while j < w && put < shown {
             let (sd, src) = column_sd(lin, j, lr);
             if src == 0 {
                 out = text.put(heap, out, l_name(lin, j));
+                put = put + 1;
             }
             j = j + 1;
         }
@@ -587,26 +629,38 @@ fn std_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage)
         out = json.put_string(heap, out, "0.0");
         plain = buffer.append(heap, plain, "0.0\n");
     }
+    var listed = w;
+    if limit < w {
+        listed = limit;
+    }
+    out = json.put_key(heap, out, "listed");
+    out = json.put_int(heap, out, listed);
+    out = json.put_key(heap, out, "truncated");
+    out = json.put_bool(heap, out, listed < w);
     out = json.put_key(heap, out, "columns");
     out = json.begin_array(heap, out);
     borrow z as &zr in {
         borrow imp as &ir in {
-            j = 0;
-            while j < w {
-                let (sd, src) = column_sd(lin, j, lr);
-                out = json.begin_object(heap, out);
-                out = put_text(heap, out, "column", l_name(lin, j));
-                out = put_text(heap, out, "source", schema.name(sc, l_src(lin, j)));
-                out = put_f(heap, out, "coefficient", wv[j]);
-                out = put_f(heap, out, "std", sd);
-                out = json.put_key(heap, out, "std_source");
-                out = json.put_string(heap, out, source_word(src));
-                out = put_f(heap, out, "standardised", contents(zr)[j]);
-                out = put_f(heap, out, "importance", contents(ir)[j]);
-                out = json.put_key(heap, out, "rank");
-                out = json.put_int(heap, out, rank_of(contents(ir), w, j));
-                out = json.end_object(heap, out);
-                j = j + 1;
+            if listed == w {
+                j = 0;
+                while j < w {
+                    out = put_std_row(heap, out, lin, lr, sc, wv, contents(zr), contents(ir), w, j);
+                    j = j + 1;
+                }
+            } else {
+                // a table cut by --limit lists the columns of the best ranks, best first
+                let rk = ranks_of(heap, contents(ir), w);
+                borrow rk as &rr in {
+                    var q = 1;
+                    while q <= listed {
+                        let jq = index_of_rank(contents(rr), w, q);
+                        if jq >= 0 {
+                            out = put_std_row(heap, out, lin, lr, sc, wv, contents(zr), contents(ir), w, jq);
+                        }
+                        q = q + 1;
+                    }
+                }
+                unbox_slice(heap, rk);
             }
         }
     }
@@ -803,7 +857,7 @@ fn tree_scores[&h, &p](heap: &!h Heap, m: &p [byte]) -> [heap] (Box[[float]], Bo
     return (imp, splits, srows, positive);
 }
 
-fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage) -> [heap] (buffer.Buffer, buffer.Buffer) {
+fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage, limit: int) -> [heap] (buffer.Buffer, buffer.Buffer) {
     let lr = wireio.stored_file(st);
     let sc = wireio.stored_schema(st);
     let m = file.model_bytes(lr);
@@ -835,25 +889,45 @@ fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage
     } else {
         out = json.put_string(heap, out, "0.0");
     }
+    var width = d;
+    if lineage_width(lin) < width {
+        width = lineage_width(lin);
+    }
+    var listed = width;
+    if limit < width {
+        listed = limit;
+    }
+    out = json.put_key(heap, out, "listed");
+    out = json.put_int(heap, out, listed);
+    out = json.put_key(heap, out, "truncated");
+    out = json.put_bool(heap, out, listed < width);
     out = json.put_key(heap, out, "columns");
     out = json.begin_array(heap, out);
     borrow imp as &ir in {
         borrow splits as &sr in {
             borrow srows as &rr in {
-                var j = 0;
-                while j < d && j < lineage_width(lin) {
-                    out = json.begin_object(heap, out);
-                    out = put_text(heap, out, "column", l_name(lin, j));
-                    out = put_text(heap, out, "source", schema.name(sc, l_src(lin, j)));
-                    out = put_f(heap, out, "importance", contents(ir)[j]);
-                    out = json.put_key(heap, out, "rank");
-                    out = json.put_int(heap, out, rank_of(contents(ir), d, j));
-                    out = json.put_key(heap, out, "splits");
-                    out = json.put_int(heap, out, contents(sr)[j]);
-                    out = json.put_key(heap, out, "split_rows");
-                    out = json.put_int(heap, out, contents(rr)[j]);
-                    out = json.end_object(heap, out);
-                    j = j + 1;
+                if listed == width {
+                    var j = 0;
+                    while j < width {
+                        out = put_mdi_row(heap, out, lin, sc, contents(ir), contents(sr), contents(rr), d, j);
+                        j = j + 1;
+                    }
+                } else {
+                    // a table cut by --limit lists the columns of the best ranks, best first
+                    let rk0 = ranks_of(heap, contents(ir), d);
+                    borrow rk0 as &kr0 in {
+                        var q = 1;
+                        var put = 0;
+                        while q <= d && put < listed {
+                            let jq = index_of_rank(contents(kr0), d, q);
+                            if jq >= 0 && jq < width {
+                                out = put_mdi_row(heap, out, lin, sc, contents(ir), contents(sr), contents(rr), d, jq);
+                                put = put + 1;
+                            }
+                            q = q + 1;
+                        }
+                    }
+                    unbox_slice(heap, rk0);
                 }
                 // the lines of --format text, best rank first
                 let rk = ranks_of(heap, contents(ir), d);
@@ -893,7 +967,7 @@ fn tree_member[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l Lineage
 // The `importance` object of a decoded model: (its JSON text, a status, the names without a deviation, the lines of --format text). Status 0 an available table, 1 the standardised
 // coefficients cannot be computed (the text is the object with `available: false`), 2 the model has none (constant and k-means: the text is `null`). Boosting adds its own function
 // and one arm here.
-pub fn table[&h, &s](heap: &!h Heap, st: &s wireio.Stored) -> [heap] (buffer.Buffer, int, buffer.Buffer, buffer.Buffer) {
+pub fn table[&h, &s](heap: &!h Heap, st: &s wireio.Stored, limit: int) -> [heap] (buffer.Buffer, int, buffer.Buffer, buffer.Buffer) {
     let key = wireio.stored_kind(st);
     let kind = est.kind_of(key);
     if kind == 4 || kind == 5 {
@@ -903,14 +977,20 @@ pub fn table[&h, &s](heap: &!h Heap, st: &s wireio.Stored) -> [heap] (buffer.Buf
         var missing = buffer.empty(heap, 1);
         var plain = buffer.empty(heap, 1);
         borrow lin as &lr in {
-            let (b2, s2, m2, p2) = std_member(heap, st, lr);
-            buffer.drop(heap, body);
-            buffer.drop(heap, missing);
-            buffer.drop(heap, plain);
-            body = b2;
-            status = s2;
-            missing = m2;
-            plain = p2;
+            // the lineage has one entry per coefficient of a file that passed the decoder; a file whose steps and estimator disagree has no table
+            if lineage_width(lr) + 1 <= len(wireio.stored_weights(st)) {
+                let (b2, s2, m2, p2) = std_member(heap, st, lr, limit);
+                buffer.drop(heap, body);
+                buffer.drop(heap, missing);
+                buffer.drop(heap, plain);
+                body = b2;
+                status = s2;
+                missing = m2;
+                plain = p2;
+            } else {
+                buffer.drop(heap, body);
+                body = buffer.append(heap, buffer.empty(heap, 8), "null");
+            }
         }
         drop_lineage(heap, lin);
         return (body, status, missing, plain);
@@ -920,7 +1000,7 @@ pub fn table[&h, &s](heap: &!h Heap, st: &s wireio.Stored) -> [heap] (buffer.Buf
         var body = buffer.empty(heap, 1);
         var plain = buffer.empty(heap, 1);
         borrow lin as &lr in {
-            let (b2, p2) = tree_member(heap, st, lr);
+            let (b2, p2) = tree_member(heap, st, lr, limit);
             buffer.drop(heap, body);
             buffer.drop(heap, plain);
             body = b2;

@@ -513,7 +513,7 @@ pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte],
             if ok {
                 borrow stored as &sr in {
                     let lr = wireio.stored_file(sr);
-                    let (ib, ist, imiss, ipl) = interp.table(heap, sr);
+                    let (ib, ist, imiss, ipl) = interp.table(heap, sr, o.limit);
                     borrow ib as &ibr in {
                         let (p2, t2) = emit(heap, bytes_of, est.name(wireio.stored_kind(sr)), est.kind_of(wireio.stored_kind(sr)), wireio.stored_task(sr), wireio.stored_c0(sr), wireio.stored_c1(sr), wireio.stored_schema(sr), file.steps_bytes(lr), file.table_bytes(lr), file.has_table(lr), est.takes_missing(wireio.stored_kind(sr)), buffer.bytes(ibr), o);
                         buffer.drop(heap, payload);

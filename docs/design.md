@@ -406,7 +406,7 @@ The library also answers, with its own codes in its band, tags that exist above:
 
 `ml.model.malformed` also answers a damaged section 7 (`detail.section` 7); `io.not-found` a `--track` directory that does not exist; 
 
-*Added by M23, interpretability (`docs/interpret.md` section 5; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/fixtures.py`; `ml.limit.nodes` and `ml.param.out-of-range` above are reached a second time, by `dump --max-nodes` and `dump --tree` / `importance --repeats`):*
+*Added by M23, interpretability (`docs/interpret.md` section 5; `tools/ml/spec.tmpl`, one fixture per tag in `tests/conformance/fixtures.py`; `ml.limit.nodes` (a `dump` of a tree with more nodes than `--max-nodes`, with its own message in the answer) and `ml.param.out-of-range` (`dump --tree`, `importance --repeats`) above are reached a second time and keep the text of their table entries):*
 
 | tag | exit | when | repair |
 |---|---|---|---|

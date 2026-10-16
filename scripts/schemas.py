@@ -194,11 +194,13 @@ RANK = {"type": "integer", "minimum": 1}
 def importance_object():
     """The `importance` object of describe and of the verb (docs/interpret.md sections 4.2 and 6)"""
     std_col = obj({"column": TB, "source": TB, "coefficient": FLT, "std": FLT, "std_source": {"enum": ["scale", "provenance"]}, "standardised": FLT, "importance": FLT, "rank": RANK})
-    std = obj({"method": {"const": "standardised_coefficient"}, "available": {"const": True}, "measure": {"type": "string"}, "total": FLT, "columns": {"type": "array", "items": std_col}})
+    std = obj({"method": {"const": "standardised_coefficient"}, "available": {"const": True}, "measure": {"type": "string"}, "total": FLT, "listed": NAT, "truncated": {"type": "boolean"},
+                "columns": {"type": "array", "items": std_col}})
     mdi_col = obj({"column": TB, "source": TB, "importance": FLT, "rank": RANK, "splits": NAT, "split_rows": NAT})
-    mdi = obj({"method": {"const": "impurity_decrease"}, "available": {"const": True}, "measure": {"type": "string"}, "trees": NAT, "total": FLT, "columns": {"type": "array", "items": mdi_col}})
+    mdi = obj({"method": {"const": "impurity_decrease"}, "available": {"const": True}, "measure": {"type": "string"}, "trees": NAT, "total": FLT, "listed": NAT, "truncated": {"type": "boolean"},
+               "columns": {"type": "array", "items": mdi_col}})
     none = obj({"method": {"const": "standardised_coefficient"}, "available": {"const": False}, "reason": {"const": "ml.importance.no-scale"}, "measure": {"type": "string"},
-                "missing": {"type": "array", "items": TB}})
+                "listed": NAT, "truncated": {"type": "boolean"}, "missing": {"type": "array", "items": TB}})
     return [std, mdi, none]
 
 

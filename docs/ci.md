@@ -21,7 +21,7 @@ It is not a benchmark: no time is asserted by a gate, and nothing here measures 
 
 `scripts/xplat_check.py` fits 22 models (every kind: constant, linear, logistic, tree, forest, k-means; one-hot, label, frequency and hash steps; 1 and 8 threads) on
 the files of `docs/examples/data`, then predicts and scores each with the file it wrote. It prints one line per artefact: the SHA-256 of the whole model
-file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 88 lines in all (22 times `fit-exit`, `model-file`, `predict`, `eval`).
+file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 90 lines in all (22 times `fit-exit`, `model-file`, `predict`, `eval`, then one line each for an `importance` answer and a `dump` answer). The 88 lines of the fits equal the golden on the three platforms; the two lines of the explanation verbs (`docs/interpret.md`) have been printed on macOS arm64 only, and the Linux runs of them are listed in `docs/status.md`.
 
 The **golden** is `docs/bench/xplat_fp.txt`. Each platform of the matrix compares its own fingerprint to the golden and fails on any difference. That is the
 whole cross-platform comparison [choice]: two platforms that each equal the same committed file are equal to each other, and the job needs no artefact passed

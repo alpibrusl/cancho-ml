@@ -144,32 +144,32 @@ A model that cannot be explained can only be trusted by its score. `ml importanc
 # A linear model fitted on standardised columns: the coefficient is the effect of one standard deviation, and the importance is its share of the sum
 $ ml --format text importance --model-file iris-lin.ml
 standardised_coefficient total 1.0
-4. sepal_length_cm  importance 0.057044820890684196  coefficient -0.02875632542044302  std 1.0
-3. sepal_width_cm  importance 0.2455067776252507  coefficient 0.12376010091862648  std 1.0
-2. petal_length_cm  importance 0.3045127142597721  coefficient 0.1535050258584721  std 1.0
 1. virginica  importance 0.392935687224293  coefficient 0.1980790949064484  std 1.0
-# A forest on iris with a column of noise among the features: the impurity decrease is read from the counts the model file stores, and the noise column ranks last
+2. petal_length_cm  importance 0.3045127142597721  coefficient 0.1535050258584721  std 1.0
+3. sepal_width_cm  importance 0.2455067776252507  coefficient 0.12376010091862648  std 1.0
+4. sepal_length_cm  importance 0.057044820890684196  coefficient -0.02875632542044302  std 1.0
+# A forest on iris with a column of noise among the features: the impurity decrease is read from the counts the model file stores, which count the rows the trees were grown on, so the noise column keeps a share
 $ ml --format text importance --model-file iris-noise.ml
 impurity_decrease total 1.0 trees 50
-3. sepal_length_cm  importance 0.13647030407926877  splits 67  rows 1919
-5. sepal_width_cm  importance 0.04536709001335149  splits 46  rows 991
-4. noise  importance 0.06182389580212485  splits 68  rows 1195
-2. petal_length_cm  importance 0.3446184021781031  splits 74  rows 2636
 1. petal_width_cm  importance 0.41172030792715186  splits 67  rows 2821
-# Permutation importance on held-out rows: the drop of the score when one column is shuffled among the rows (seeded, 10 repeats), mean and standard deviation per column
+2. petal_length_cm  importance 0.3446184021781031  splits 74  rows 2636
+3. sepal_length_cm  importance 0.13647030407926877  splits 67  rows 1919
+4. noise  importance 0.06182389580212485  splits 68  rows 1195
+5. sepal_width_cm  importance 0.04536709001335149  splits 46  rows 991
+# Permutation importance on held-out rows: the drop of the score when one column is shuffled among the rows (seeded, 10 repeats), mean and standard deviation per column. The noise column loses nothing
 $ ml --format text importance --model-file iris-noise.ml --data iris_noise_test.csv --repeats 10 --seed 1
 impurity_decrease total 1.0 trees 50
-3. sepal_length_cm  importance 0.13647030407926877  splits 67  rows 1919
-5. sepal_width_cm  importance 0.04536709001335149  splits 46  rows 991
-4. noise  importance 0.06182389580212485  splits 68  rows 1195
-2. petal_length_cm  importance 0.3446184021781031  splits 74  rows 2636
 1. petal_width_cm  importance 0.41172030792715186  splits 67  rows 2821
+2. petal_length_cm  importance 0.3446184021781031  splits 74  rows 2636
+3. sepal_length_cm  importance 0.13647030407926877  splits 67  rows 1919
+4. noise  importance 0.06182389580212485  splits 68  rows 1195
+5. sepal_width_cm  importance 0.04536709001335149  splits 46  rows 991
 permutation roc_auc (score), repeats 10, rows 25, baseline 1.0
+1. petal_length_cm  importance 0.22756410256410256  std 0.10128407982389195
+2. petal_width_cm  importance 0.04615384615384614  std 0.030849254911579384
 3. sepal_length_cm  importance 0.0  std 0.0
 4. sepal_width_cm  importance 0.0  std 0.0
 5. noise  importance 0.0  std 0.0
-1. petal_length_cm  importance 0.22756410256410256  std 0.10128407982389195
-2. petal_width_cm  importance 0.04615384615384614  std 0.030849254911579384
 # A tree as text: the split, the side a missing cell takes, the rows and the class counts of every node
 $ ml --format text dump --model-file iris-tree.ml
 tree 0 of 1: 7 nodes, depth 2
