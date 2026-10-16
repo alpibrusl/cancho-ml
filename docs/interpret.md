@@ -266,7 +266,37 @@ that decides the target. The noise column is `uniform(-1, 1)` from `derive(seed,
 
 ## 10. Results
 
-*(filled in after the gates have run)*
+Machine and conditions: one Mac (arm64, Darwin 25.2.0, 16 cores), the compiler at `0207556`, Python 3.14.5, numpy 2.4.6, scipy 1.17.1, scikit-learn 1.8.0, the load average between 45 and 90 while the suites ran (the machine is shared). Every figure
+below was printed by the script or the test named. No timing was taken, and nothing was run on Linux (the list is at the end of this section).
+
+| gate | result | source |
+|---|---|---|
+| D1, section 2.2 | the payload of a tree stores the row counts of every node: `(na, nb)` of 37 and 38 at the root of a classification tree fitted on 75 rows, `36 + 1` and `5 + 33` in its children; a regression node stores its row count and a regression leaf its mean. No impurity, no sum of the target, no gain. No file changes | `scripts/oracle_st.py` and the layout of `docs/models-tree.md` 7, section 2.2 |
+| I1, I2 bytes | 9 linear and logistic models and 10 trees and forests: the tables equal the oracle's string for string and integer for integer, key order included; `describe` of all 23 models of the test equals it | `tests/conformance/test_interp.py` (42 tests) |
+| I3 sums | every positive total adds up to 1.0 within 8 ulps of the number of columns; a forest with no split and a model with zero coefficients print `0.0`; a forest in which 12 of 60 trees are a single leaf equals the oracle | the same |
+| I4 scikit-learn on our trees | worst relative difference 7.2e-16 (classification tree, bound 1e-12), 3.3e-16 (regression tree, 1e-9), 1.1e-15 and 2.4e-15 (forests of 20 trees without bootstrap); the control moves the importances by 0.056 to 0.129 | `scripts/report_interp.py`, `test_interp_sklearn.py` |
+| I4 `RandomForest*.feature_importances_` | classification: the same top feature, Spearman 0.964, largest share difference 0.008; regression: the same top feature, Spearman 1.000, largest share difference **0.091 against a bound of 0.1**; the control (shuffled labels): Spearman 0.786 and 0.857, differences 0.227 and 0.399, and a different top feature for the classification | the same |
+| I5 noise | in a forest of 100 trees on 2,000 rows, the noise column ranks 7 of 7 in the impurity importance (share 0.0552 for the classification, 0.0159 for the regression) and in the permutation importance on 1,000 held-out rows (`roc_auc` -0.0005 +- 0.0009 against 0.0048 for the weakest signal; `rmse` 0.0039 +- 0.0015 against 0.0325). The permutation importance of the noise column of the regression is **positive** (0.0039, 2.6 standard deviations): a forest splits on a noise column | the same |
+| I6 bits | 77 permutation runs of 13 fitted models equal the Python re-implementation to the last bit (4 runs of `log_loss` within 1e-12 of the baseline); another seed changes the numbers, the order of the data file's columns does not | `test_interp_oracle.py` (11 tests) |
+| I7 scikit-learn permutation importance | the worst difference is 0.350, 0.667, 0.391 and 0.421 of the bound (forest and linear regression, forest and logistic classification); the control (target shuffled) is 29.5, 17.4, 8.1 and 7.8 times the bound | `scripts/report_interp.py` |
+| I8 threads | the same bytes at `--threads` 1 and 8, with and without `--data` | `test_interp.py` |
+| I9 describe | the answers of 19 models without the member are the bytes before it; the member is last; the seven OpenAPI documents differ by one added property; `GET /model` carries it; `--limit` cuts it | `test_interp_golden.py`, `gate_serve_openapi.py`, `test_interp_serve.py` |
+| I10 dump | 25 trees of 7 models equal the oracle node for node; a hand walk of the dump gives `ml predict`'s answer for 100 rows; the bounds are exact | `test_interp.py` |
+| I11 no trap | 7,063 damaged files through the two verbs (19,595 runs at a stride of 11 bytes), 2,010 hostile node fields, 17,723 damaged files through `describe` (1,020 another valid file, equal to the oracle's table), 5,862 argument vectors: none traps | `test_interp.py`, `test_describe.py`, `test_fuzz_args.py` |
+| I12 tables | 372 fixtures reach 57 flags, 106 rules and 4 log records; 11 stream kinds; `manifest.py --check`: the labels of the three authority rows are those of the tree without the verbs (only the list of pure functions grows by 45 for `ml` and 28 for the others); `check_bins.py` and its 7 mutants; `xplat_check.py --require-predict`: 90 lines, the first 88 byte for byte the golden, and its mutants | `test_tables.py`, `check_registry.py`, `manifest.py`, `xplat_check.py` |
+| I13 mutants | 64 patterns: 61 killed, 3 survive, each equivalent: the factor 2 of the Gini identity (the normalisation of each tree divides it out; the draft of section 8 listed it as a mutant to kill, which was wrong), the class-0 counts in place of the class-1 counts (D changes sign and is squared), and a whole-number check on the thresholds of an int column; the unmutated copy passes. The first run left six survivors; three were gaps of a test (the text form of a total, an AUC with one class, a label the model never saw) and are killed | `scripts/mutants_interp.py`, `docs/bench/mutants_interp.log` |
+| the whole suite | 589 conformance tests pass in 42 modules, none skipped (`scripts/run_conformance.py`; 520 before the 69 tests of this work), and with the virtual environment of `ci/requirements-fast.txt` (no numpy) no module errors: the modules that import numpy are listed as not run | `scripts/run_conformance.py` |
+
+**What the first draft got wrong, corrected in the sections above.** (1) A noise column is not within three standard errors of zero under permutation (a forest splits on noise): the gate asks for the last rank and a margin. (2) With two more noise columns among the
+features, "the noise column ranks last" was a coin flip: the data sets have signals in every other column. (3) With the noise column last in the schema, a table of zeros (ties rank by index) would have passed: the column sits in the middle. (4) `ml-serve` sends
+`GET /model` in at most 60,000 bytes and refuses a model whose answer does not fit: a table with a row for every column would have lowered the width of the models it serves, so `describe --limit` cuts the table like the category strings. (5) The text of the existing
+rule `ml.limit.nodes` is not changed for the dump: three goldens pin it.
+
+**The real session** is the block of the README under "Explain a model" (`scripts/site.py` writes it from the built binary): a linear model on iris with `scale column=* kind=standard`, a forest of 50 trees on iris with a column of seeded noise, its impurity importance (the noise column keeps a share of
+0.062, more than `sepal_width_cm`'s 0.045), its permutation importance on the 25 test rows (the noise column loses 0.0), a tree of two levels dumped as text, and the refusal of a constant model.
+
+**What remains for Linux** (none of it was run; `docs/status.md` lists it too): the whole of `scripts/check.sh`; the conformance suite with `INTERP_STRIDE=1` (every byte of the damage sweeps); `test_interp_oracle.py` and `test_interp_sklearn.py` with numpy, scipy and scikit-learn
+installed; `scripts/mutants_interp.py`; `scripts/xplat_check.py` on Linux x86-64 and Linux aarch64 (the two appended lines); the full gate of the workflow on this branch, which `gh workflow run ci --ref BRANCH` dispatches.
 
 ## 11. Open questions
 
