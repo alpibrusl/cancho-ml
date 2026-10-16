@@ -14,7 +14,7 @@ import unittest
 import numpy as np
 
 from harness import ROOT, Sandbox
-from test_wire_boost import model_section
+from test_wire_boost import model_section, without_provenance
 
 sys.path.insert(0, str(ROOT / "scripts"))
 import oracle_wire_boost as owb  # noqa: E402
@@ -141,6 +141,29 @@ class BoostSplitLeakage(unittest.TestCase):
         r = self.sb.run("fit", "--model", "boost", "--target", target, "--output", out, "--overwrite", *extra, csv)
         self.assertEqual(r.status, 0, r)
         return r
+
+    def test_early_stopping_never_reads_the_held_out_rows(self):
+        # the rows --split train=0.8 holds out are the test rows; changing their target must not change the model file (the validation rows come from the train side)
+        import sys
+        from harness import ROOT
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import oracle_wire as ow
+        rng = random.Random(6)
+        rows = [["%.3f" % rng.uniform(0, 5), "%.3f" % rng.uniform(0, 5)] for _ in range(200)]
+        ys = ["%.3f" % (float(a) + rng.gauss(0, 3)) for a, b in rows]
+        mask = ow.split_masks(200, "train=0.8", 7)
+        self.assertEqual(sum(mask), 40)
+        ys2 = [("%.3f" % rng.uniform(-100, 100)) if mask[i] == 1 else ys[i] for i in range(200)]
+        for name, yv in (("h1.csv", ys), ("h2.csv", ys2)):
+            self.sb.write(name, "a,b,y\n" + "".join("%s,%s,%s\n" % (r_[0], r_[1], y) for r_, y in zip(rows, yv)))
+        for name, out in (("h1.csv", "h1.cml"), ("h2.csv", "h2.cml")):
+            self.fit("y", name, out, "--rounds", "100", "--early-stopping", "4", "--split", "train=0.8", "--seed", "7", "--min-leaf", "4")
+        # the file also holds the provenance (the SHA-256 of the training file, which differs): the model, the steps and the plan are what must not
+        self.assertEqual(without_provenance(self.sb.read("h1.cml")), without_provenance(self.sb.read("h2.cml")))
+        # and the held-out metrics are the ones eval --split gives on the file
+        a = self.sb.run("eval", "--model-file", "h2.cml", "--split", "train=0.8", "--seed", "7", "h2.csv").data()["metrics"]
+        r = self.fit("y", "h2.csv", "h3.cml", "--rounds", "100", "--early-stopping", "4", "--split", "train=0.8", "--seed", "7", "--min-leaf", "4")
+        self.assertEqual(r.data()["summary"]["holdout"]["metrics"], a)
 
     def test_the_validation_rows_of_a_stratified_split_never_come_from_the_test_rows(self):
         # the oracle fits ONLY the rows the split kept (the assignment `--emit-folds` prints): its validation tenth is drawn from them alone, and the file of ml holds the same
