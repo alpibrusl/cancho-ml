@@ -13,6 +13,7 @@ run of scripts/demo.sh, which needs ml-serve and curl), `site` (scripts/site.py 
 """
 import argparse
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -24,17 +25,34 @@ BINARY = ROOT / "build" / "ml"
 
 # (name, file, old, new, the gates that must catch it)
 IDX = "docs/index.html"
+
+
+def _fig(name):
+    """The figure the landing page shows now (a pattern that names a figure is written from it, so a change of the real number does not break the mutant)."""
+    m = re.search(r'<span data-n="%s">([^<]+)</span>' % name, (ROOT / IDX).read_text())
+    return m.group(1)
+
+
+def _more(value):
+    return "{:,}".format(int(value.replace(",", "")) + 1)
+
+
+def _less(value):
+    return "{:,}".format(int(value.replace(",", "")) - 1)
+
+
+TESTS, KILLED, RULES = _fig("tests"), _fig("mut_killed"), _fig("rules")
 MUTANTS = [
-    ("figure-tests-typed", IDX, '<span data-n="tests">520</span>', '<span data-n="tests">521</span>', {"landing", "site"}),
-    ("figure-mutants-typed", IDX, '<span data-n="mut_killed">1,310</span>', '<span data-n="mut_killed">1,311</span>', {"landing", "site"}),
-    ("figure-rules-typed", IDX, '<b><span data-n="rules">99</span></b>', '<b><span data-n="rules">100</span></b>', {"landing", "site"}),
+    ("figure-tests-typed", IDX, '<span data-n="tests">%s</span>' % TESTS, '<span data-n="tests">%s</span>' % _more(TESTS), {"landing", "site"}),
+    ("figure-mutants-typed", IDX, '<span data-n="mut_killed">%s</span>' % KILLED, '<span data-n="mut_killed">%s</span>' % _more(KILLED), {"landing", "site"}),
+    ("figure-rules-typed", IDX, '<b><span data-n="rules">%s</span></b>' % RULES, '<b><span data-n="rules">%s</span></b>' % _more(RULES), {"landing", "site"}),
     ("figure-red-gap-typed", IDX, '<span data-n="red_gap">8.1</span>', '<span data-n="red_gap">3.1</span>', {"landing", "site"}),
     ("figure-name-unknown", IDX, '<span data-n="red_tol">3</span>', '<span data-n="red_tolerance">3</span>', {"landing", "site"}),
-    ("source-tests-edited", "docs/status.md", "520 conformance tests pass, none skipped", "521 conformance tests pass, none skipped", {"landing", "site"}),
+    ("source-tests-edited", "docs/status.md", "%s conformance tests pass, none skipped" % TESTS, "%s conformance tests pass, none skipped" % _more(TESTS), {"landing", "site"}),
     ("source-golden-line-removed", "docs/bench/xplat_fp.txt",
      "linear-diabetes-t1\teval\t0\t6553db4528e032fd15cc7c61fae26f6a332fad84f73d9ebc25ecef417225a08d\n", "", {"landing", "site"}),
-    ("source-rule-count-stale", "docs/status.md", "| refusals | 99 rule tags in `introspect`", "| refusals | 77 rule tags in `introspect`", {"landing"}),
-    ("evidence-tests-differ", "docs/evidence.html", "520 tests pass", "519 tests pass", {"landing"}),
+    ("source-rule-count-stale", "docs/status.md", "| refusals | %s rule tags in `introspect`" % RULES, "| refusals | %s rule tags in `introspect`" % _less(RULES), {"landing"}),
+    ("evidence-tests-differ", "docs/evidence.html", "%s tests pass" % TESTS, "%s tests pass" % _less(TESTS), {"landing"}),
     ("replay-number-edited", IDX, "<span>accuracy   0.9333 -&gt; 0.8666</span>", "<span>accuracy   0.9334 -&gt; 0.8666</span>", {"demo", "site"}),
     ("replay-hash-edited", IDX, "verified: True  model 3d69715e3577", "verified: True  model 3d69715e3578", {"landing", "demo", "site"}),
     ("replay-whole-hash-shown", IDX, '<span>run d659c3217b4c\u2026</span>', '<span>run d659c3217b4c0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899a</span>', {"landing", "demo", "site"}),
@@ -86,6 +104,20 @@ MUTANTS = [
      "          - {os: macos-26, label: darwin-arm64}\n          - {os: windows-2025, label: windows-x86_64}\n", {"landing", "site"}),
     ("platforms-pin-moves", "cancho.toml", 'cancho = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"', 'cancho = "1234567b4029a3ee73196cdfdb48e8efa7e9c519"', {"landing"}),
     ("lang-removed", IDX, '<html lang="en">', "<html>", {"landing", "seo"}),
+    # the experiments board (docs/board.html): its card on the landing page, its link in the header of every page, its place in the sitemap and in the SEO checks
+    ("board-card-removed", IDX, '<h3><a href="board.html">Experiments board</a></h3>', "<h3>Experiments board</h3>", {"landing"}),
+    ("board-card-link-missing-file", IDX, '<h3><a href="board.html">Experiments board</a></h3>', '<h3><a href="boards.html">Experiments board</a></h3>', {"links", "landing"}),
+    ("board-card-privacy-claim-removed", IDX, "Nothing is sent anywhere.", "Nothing leaves.", {"landing"}),
+    ("board-card-what-it-shows-removed", IDX, "a table, a comparison, a chart and a list of what does not add up", "a table", {"landing"}),
+    ("board-nav-link-dropped-on-a-page", "docs/evidence.html", '<a href="board.html" class="opt">Board</a>', "", {"landing", "site"}),
+    ("board-nav-not-current", "docs/board.html", 'aria-current="page">Board</a>', ">Board</a>", {"landing", "site"}),
+    ("board-nav-link-missing-file", "scripts/site.py", '("Board", "board.html", "opt", "board.html")', '("Board", "boards.html", "opt", "board.html")', {"links", "landing"}),
+    ("board-sitemap-entry-missing", "docs/sitemap.xml", "  <url><loc>https://alpibrusl.github.io/cancho-ml/board.html</loc></url>\n", "", {"site"}),
+    ("board-title-too-long", "docs/board.html", "<title>cancho-ml experiments board: read run records locally</title>", "<title>cancho-ml experiments board: read run records locally, compare them</title>", {"landing", "seo"}),
+    ("board-canonical-wrong", "docs/board.html", '<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/board.html">', '<link rel="canonical" href="https://alpibrusl.github.io/cancho-ml/boards.html">', {"seo"}),
+    ("board-skip-link-removed", "docs/board.html", '<a class="skip" href="#main">Skip to content</a>\n', "", {"landing"}),
+    ("board-external-script", "docs/board.html", "</head>", '<script src="https://example.com/x.js"></script>\n</head>', {"landing", "seo"}),
+    ("board-sample-not-generated", "docs/board.html", "<!-- gen:sample -->\n", "<!-- gen:sample -->\n<!-- edited -->\n", {"site"}),
 ]
 
 

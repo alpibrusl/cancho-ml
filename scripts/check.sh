@@ -128,5 +128,9 @@ sh scripts/gate_pipe.sh
 # binaries; its key facts are asserted and the edits of the script that must be refused are shown refused
 python3 scripts/check_demo.py
 python3 scripts/check_demo.py --mutants
+# the experiments board (docs/board.html, docs/board.md): the logic of the page is run headlessly (node, or jsc when node does not start) on the records this `ml` writes
+# (the ids, the integrity flags, compare against `ml runs compare`, the table, the chart, the sample, the structure of the file); its mutants apply (the run itself is on request)
+python3 scripts/check_board.py
+python3 scripts/mutants_board.py --check
 # the documentation checks (docs: program output in README and the page, links, the pages' basics); they need build/ml, built above
 sh scripts/check_docs.sh

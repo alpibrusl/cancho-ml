@@ -65,6 +65,7 @@ import html
 import json
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -434,7 +435,8 @@ def make_context(binary, tmp):
     examples = sx.run_examples(run, tmp, ref)
     r = subprocess.run(["ml", "introspect"], executable=str(binary), cwd=tmp, stdout=subprocess.PIPE, check=True,
                        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"})
-    return {"results": results, "http": http_results, "demo": demo, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref}
+    return {"results": results, "http": http_results, "demo": demo, "introspect": json.loads(r.stdout), "run": run, "examples": examples, "ref": ref,
+            "board_sample": board_sample_lines(binary)}
 
 
 # Run tracking and the skew checks (docs/tracking.md) on docs/examples/data/iris_train.csv and iris_test.csv. The ids are the hashes of the inputs, so they are the same on every run; the
@@ -1065,10 +1067,11 @@ def fill_values(text, ctx):
 
 REPO_URL = "https://github.com/alpibrusl/cancho-ml"
 NAV = [("How it works", "index.html#how", "opt", "index.html"), ("Guide", "guide.html", "", "guide.html"), ("Examples", "examples.html", "opt", "examples.html"),
-       ("Evidence", "evidence.html", "", "evidence.html"), ("Benchmarks", "benchmarks.html", "opt", "benchmarks.html"), ("GitHub", REPO_URL, "", None)]
+       ("Board", "board.html", "opt", "board.html"), ("Evidence", "evidence.html", "", "evidence.html"), ("Benchmarks", "benchmarks.html", "opt", "benchmarks.html"), ("GitHub", REPO_URL, "", None)]
 FOOT = [("Repository", REPO_URL), ("Status", REPO_URL + "/blob/main/docs/status.md"), ("Command line", REPO_URL + "/blob/main/docs/cli.md"),
         ("Design", REPO_URL + "/blob/main/docs/design.md")]
 FOOT_EXTRA = {"docs/examples.html": [("Examples: the gate", REPO_URL + "/blob/main/docs/examples.md")],
+              "docs/board.html": [("Board: the design", REPO_URL + "/blob/main/docs/board.md"), ("Run records", REPO_URL + "/blob/main/docs/tracking.md")],
               "docs/benchmarks.html": [("Linear algebra", REPO_URL + "/blob/main/docs/linalg.md")]}
 
 
@@ -1106,6 +1109,38 @@ REGIONS = {
 }
 
 
+def board_sample_lines(binary):
+    """The records of the experiments board's sample (docs/board.md section 7): the run records of the commands of scripts/check_board.py named in BOARD_SAMPLE, one per line, in the
+    order of run id, then the eval records; the tool's own bytes, from a temporary directory (the same commands make the same bytes: the records hold no time and no host name)."""
+    import check_board as cb
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        (work / "runs").mkdir()
+        shutil.copy(ROOT / "docs" / "examples" / "data" / "iris_train.csv", work / "iris_train.csv")
+        shutil.copy(ROOT / "docs" / "examples" / "data" / "iris_test.csv", work / "iris_test.csv")
+        models = {}
+        for label, argv in cb.FITS:
+            if label in cb.BOARD_SAMPLE:
+                out, status = cb.run_ml(binary, work, "fit " + argv + " --track runs")
+                if status != 0:
+                    raise Drift("the board sample's fit %s failed: %s" % (label, out[:200]))
+                models[label] = shlex.split(argv)[shlex.split(argv).index("--output") + 1]
+        for label, argv in cb.EVALS:
+            if label in cb.BOARD_SAMPLE and argv == cb.BOARD_SAMPLE_EVAL:
+                out, status = cb.run_ml(binary, work, "eval --model-file %s --track runs %s" % (models[label], argv))
+                if status != 0:
+                    raise Drift("the board sample's eval failed: %s" % out[:200])
+        files = sorted(p.name for p in (work / "runs").glob("*.json"))
+        runs = [n for n in files if ".eval-" not in n]
+        evals = [n for n in files if ".eval-" in n]
+        return [(work / "runs" / n).read_text().strip() for n in runs + evals]
+
+
+def board_sample(ctx):
+    """The plain-text block of the board's sample runs: not parsed by the browser, read by the page's script."""
+    return '<script type="text/plain" id="sample">\n' + "\n".join(ctx["board_sample"]) + "\n</script>"
+
+
 def example_regions():
     """The regions of docs/examples.html and of the README that come from the worked examples."""
     regions = {"ex-meta": lambda c: sx.meta_html(c["ref"]),
@@ -1125,7 +1160,8 @@ def example_regions():
 
 REGIONS["docs/examples.html"] = example_regions()
 REGIONS["docs/index.html"] = {"replay": replay_html, "cmds": land_cmds}
-for _rel in ("docs/index.html", "docs/guide.html", "docs/examples.html", "docs/evidence.html", "docs/benchmarks.html"):
+REGIONS["docs/board.html"] = {"sample": lambda c: board_sample(c)}
+for _rel in ("docs/index.html", "docs/guide.html", "docs/examples.html", "docs/evidence.html", "docs/benchmarks.html", "docs/board.html"):
     REGIONS.setdefault(_rel, {})
     REGIONS[_rel]["nav"] = lambda c, r=_rel: nav_html(r)
     REGIONS[_rel]["foot"] = lambda c, r=_rel: foot_html(r)
@@ -1136,7 +1172,7 @@ REGIONS["README.md"]["ex-summary"] = lambda c: sx.summary_md(c["examples"], c["r
 
 SITE_BASE = "https://alpibrusl.github.io/cancho-ml/"
 # the pages that are meant to be found
-PAGES = ["", "guide.html", "examples.html", "evidence.html", "benchmarks.html"]
+PAGES = ["", "guide.html", "examples.html", "board.html", "evidence.html", "benchmarks.html"]
 
 
 def sitemap(_ctx=None):
