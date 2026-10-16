@@ -681,6 +681,12 @@ def _refuse_cases():
              sepa(repair_runs=True, detail={"reason": "scale", "pass": 39, "scale_bound": "50.0"}), setup=RBASE + [("write", "quasi.csv", QUASI)]),
         case("ml-linalg-not-positive-definite-ridge-below-the-tolerance-after-the-first-pass", ["fit", "--model", "logistic", "--l2", "1e-20", "--target", "y", "--output", "m.cml", "sep.csv"],
              bad("ml.linalg.not-positive-definite"), setup=RBASE),
+        case("ml-fit-collinear-boost-is-not-refused", ["fit", "--model", "boost", "--task", "regression", "--min-leaf", "1", "--l2", "0", "--target", "y", "--output", "m.cml", "dup.csv"],
+             ok({"model": "boost"}), setup=RBASE),
+        case("ml-fit-collinear-boost-full-one-hot-is-not-refused", ["fit", "--model", "boost", "--task", "regression", "--min-leaf", "1", "--l2", "0"] + FIT_SP,
+             ok({"model": "boost"}), setup=RBASE),
+        case("ml-fit-separable-boost-is-not-refused", ["fit", "--model", "boost", "--task", "classification", "--min-leaf", "1", "--l2", "0", "--target", "y", "--output", "m.cml", "sep.csv"],
+             ok({"model": "boost"}), setup=RBASE),
         case("ml-fit-separable-a-positive-l2-is-fitted", ["fit", "--model", "logistic", "--l2", "0.01", "--target", "y", "--output", "m.cml", "sep.csv"],
              ok({"model": "logistic"}), setup=RBASE),
         case("ml-fit-separable-two-passes-are-not-enough-to-see-it", ["fit", "--model", "logistic", "--iterations", "2", "--target", "y", "--output", "m.cml", "sep.csv"],
@@ -696,6 +702,10 @@ def _refuse_cases():
              sepa(repair_runs=True, repair_has=[["--l2", "1e-2"]], detail={"reason": "loss", "repeat": 0, "fold": 1}), setup=RBASE + [("write", "cvsep.csv", CVSEP)]),
         case("ml-cv-fold-collinear-names-the-fold", ["cv", "--model", "linear", "--target", "y", "--drop", "day", "--folds", "2", "--split-by", "time:day", "cvcol.csv"],
              col(repair_runs=True, repair_has=[["--l2", "1e-7"]], detail={"model": "linear", "column": "b", "columns": ["a"], "repeat": 0, "fold": 0}), setup=RBASE + [("write", "cvcol.csv", CVCOL)]),
+        case("ml-cv-boost-fold-separable-is-not-refused", ["cv", "--model", "boost", "--task", "classification", "--min-leaf", "1", "--target", "y", "--folds", "3", "cvsep.csv"],
+             ok({"model": "boost"}), setup=RBASE + [("write", "cvsep.csv", CVSEP)]),
+        case("ml-cv-boost-fold-collinear-is-not-refused", ["cv", "--model", "boost", "--task", "regression", "--min-leaf", "1", "--target", "y", "--drop", "day", "--folds", "2", "--split-by", "time:day", "cvcol.csv"],
+             ok({"model": "boost"}), setup=RBASE + [("write", "cvcol.csv", CVCOL)]),
         case("ml-fit-full-one-hot-with-a-ridge-is-fitted", ["fit", "--model", "linear", "--l2", "0.1"] + FIT_SP, ok({"model": "linear"}), setup=RBASE),
     ]
 
@@ -787,6 +797,78 @@ def _tracking_cases():
 
 
 CASES += _tracking_cases()
+
+# ------------------------------------------------------------------ boosted trees (docs/models-boost.md)
+BIGREG = "a,b,y\n" + "".join("%d,%d,%d\n" % (i, i * 7 % 11, i * 3 + i * 7 % 11) for i in range(300))
+BBASE = LBASE + [("write", "big40.csv", BIGREG)]
+FIT_BOOST = ["fit", "--model", "boost", "--target", "y", "--output", "b.cml", "lin.csv"]
+FIT_BOOST_CLS = ["fit", "--model", "boost", "--task", "classification", "--rounds", "7", "--min-leaf", "1", "--seed", "3", "--target", "lab", "--output", "b.cml", "lcls.csv"]
+WITH_BOOST = BBASE + [("fit", "--model", "boost", "--task", "classification", "--rounds", "7", "--min-leaf", "1", "--seed", "3", "--target", "lab", "--output", "b.cml", "lcls.csv")]
+WITH_BOOST_REG = BBASE + [("fit", "--model", "boost", "--rounds", "5", "--min-leaf", "2", "--target", "y", "--output", "br.cml", "lin.csv")]
+
+
+def _boost_cases():
+    return [
+        case("fit-boost-regression", ["fit", "--model", "boost", "--target", "y", "--min-leaf", "2", "--output", "b.cml", "lin.csv"],
+             ok({"model": "boost", "task": "regression", "rows": 8, "columns": 3, "target": "y", "path": "b.cml", "written": True,
+                 "summary": {"plan": "model kind=boost task=regression rounds=100 learning-rate=0.1 max-depth=4 min-leaf=2 bins=64 l2=1.0 subsample=1.0 early-stopping=0 max-nodes=4194304\n",
+                             "steps": 0, "features": 2, "boost": {"rounds": 100, "rounds_requested": 100, "bins": 64, "max_depth": 4, "min_leaf": 2, "learning_rate": "0.1"}}}), setup=LBASE),
+        case("fit-boost-classification-every-flag", ["fit", "--model", "boost", "--task", "classification", "--rounds", "9", "--learning-rate", "0.3", "--max-depth", "3", "--min-leaf", "1",
+                                                     "--bins", "16", "--l2", "0.5", "--subsample", "0.75", "--max-nodes", "100", "--seed", "3", "--threads", "2", "--target", "lab",
+                                                     "--output", "b.cml", "lcls.csv"],
+             ok({"model": "boost", "task": "classification", "summary": {"classes": [0, 1], "positive": 1, "boost": {"rounds": 9, "bins": 16, "max_depth": 3, "learning_rate": "0.3"}}}), setup=LBASE),
+        case("fit-boost-early-stopping-with-a-split", ["fit", "--model", "boost", "--rounds", "200", "--early-stopping", "3", "--min-leaf", "2", "--split", "train=0.8", "--seed", "2", "--target", "y",
+                                                        "--output", "b.cml", "big40.csv"],
+             ok({"model": "boost", "task": "regression", "summary": {"boost": {"rounds_requested": 200}, "split": {"train": 240, "test": 60}}}), setup=BBASE),
+        case("fit-boost-positive-label", FIT_BOOST_CLS[:-1] + ["--positive", "0", "lcls.csv"], ok({"model": "boost", "summary": {"classes": [1, 0], "positive": 0}}), setup=LBASE),
+        case("fit-boost-from-a-plan", ["fit", "--plan", "p.txt", "--target", "lab", "--output", "b.cml", "lcls.csv"],
+             ok({"model": "boost", "task": "classification", "summary": {"steps": 1, "boost": {"rounds": 4, "max_depth": 2}}}),
+             setup=LBASE + [("write", "p.txt", "scale column=* kind=standard\nmodel kind=boost task=classification rounds=4 max-depth=2 min-leaf=1\n")]),
+        case("fit-boost-with-a-missing-cell", ["fit", "--model", "boost", "--rounds", "5", "--min-leaf", "1", "--target", "y", "--output", "b.cml", "linmis.csv"], ok({"model": "boost", "written": True}), setup=LBASE),
+        case("fit-boost-text", ["--format", "text"] + FIT_BOOST_CLS, ok(None, stdout_starts="fit: boost classification, 12 rows, wrote b.cml"), setup=LBASE),
+        case("fit-boost-dry-run", FIT_BOOST_CLS[:-1] + ["--dry-run", "lcls.csv"], ok({"model": "boost", "written": False}, exit=9, dry_run=True, no_file="b.cml"), setup=LBASE),
+        case("predict-boost-proba", ["predict", "--model-file", "b.cml", "--proba", "--limit", "3", "lcls.csv"],
+             ok({"model": "boost", "task": "classification", "columns": ["label", "probability"], "row_count": 3}), setup=WITH_BOOST),
+        case("predict-boost-label", ["predict", "--model-file", "b.cml", "--limit", "3", "lcls.csv"], ok({"columns": ["label"], "row_count": 3}), setup=WITH_BOOST),
+        case("predict-boost-regression", ["predict", "--model-file", "br.cml", "--limit", "3", "lin.csv"], ok({"model": "boost", "columns": ["prediction"], "row_count": 3}), setup=WITH_BOOST_REG),
+        case("predict-boost-with-a-missing-cell", ["predict", "--model-file", "br.cml", "--limit", "20", "linmis.csv"], ok({"row_count": 8}), setup=WITH_BOOST_REG),
+        case("eval-boost-classification", ["eval", "--model-file", "b.cml", "lcls.csv"], ok({"model": "boost", "task": "classification", "rows": 12, "positive": 1}), setup=WITH_BOOST),
+        case("eval-boost-regression", ["eval", "--model-file", "br.cml", "lin.csv"], ok({"model": "boost", "task": "regression", "rows": 8}), setup=WITH_BOOST_REG),
+        case("describe-boost", ["describe", "--model-file", "b.cml"], ok({"model": "boost", "kind": 8, "task": "classification", "ensemble": {"trees": 7}}), setup=WITH_BOOST),
+        case("ml-param-out-of-range-learning-rate-zero", ["fit", "--model", "boost", "--learning-rate", "0", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-learning-rate-above-one", ["fit", "--model", "boost", "--learning-rate", "1.5", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-subsample-zero", ["fit", "--model", "boost", "--subsample", "0", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-subsample-above-one", ["fit", "--model", "boost", "--subsample", "1.01", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-boost-l2-huge", ["fit", "--model", "boost", "--l2", "1e101", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-boost-rounds-above-the-ceiling", ["fit", "--model", "boost", "--rounds", "10001", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-boost-min-leaf-above-n", ["fit", "--model", "boost", "--min-leaf", "9", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.param.out-of-range"), setup=LBASE),
+        case("ml-param-out-of-range-early-stopping-on-few-rows", ["fit", "--model", "boost", "--early-stopping", "2", "--split", "train=0.9", "--target", "y", "--output", "b.cml", "lin.csv"],
+             bad("ml.param.out-of-range"), setup=LBASE),
+        case("args-conflict-early-stopping-without-a-split", ["fit", "--model", "boost", "--early-stopping", "3", "--target", "y", "--output", "b.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-early-stopping-of-a-plan-without-a-split", ["fit", "--plan", "p.txt", "--target", "y", "--output", "b.cml", "lin.csv"], bad("args.conflict"),
+             setup=LBASE + [("write", "p.txt", "model kind=boost task=regression early-stopping=3\n")]),
+        case("args-conflict-rounds-with-a-forest", ["fit", "--model", "forest", "--rounds", "5", "--target", "y", "--output", "f.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-subsample-with-linear", ["fit", "--model", "linear", "--subsample", "0.5", "--target", "y", "--output", "f.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-trees-with-boost", ["fit", "--model", "boost", "--trees", "5", "--target", "y", "--output", "b.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-conflict-proba-of-a-regression-boost", ["predict", "--model-file", "br.cml", "--proba", "lin.csv"], bad("args.conflict"), setup=WITH_BOOST_REG),
+        case("args-conflict-positive-with-a-regression-boost", ["fit", "--model", "boost", "--positive", "1", "--target", "y", "--output", "b.cml", "lin.csv"], bad("args.conflict"), setup=LBASE),
+        case("args-bad-value-learning-rate", ["fit", "--model", "boost", "--learning-rate", "fast", "--target", "y", "--output", "b.cml", "lin.csv"], bad("args.bad-value"), setup=LBASE),
+        case("ml-limit-depth-boost", ["fit", "--model", "boost", "--max-depth", "31", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.limit.depth"), setup=LBASE),
+        case("ml-limit-nodes-of-boost-rounds", ["fit", "--model", "boost", "--rounds", "10000", "--max-depth", "30", "--min-leaf", "1", "--target", "y", "--output", "b.cml", "big40.csv"],
+             bad("ml.limit.nodes"), setup=BBASE),
+        case("ml-limit-nodes-of-a-boost-tree", ["fit", "--model", "boost", "--max-nodes", "1", "--min-leaf", "1", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.limit.nodes"), setup=LBASE),
+        case("ml-label-single-class-boost", ["fit", "--model", "boost", "--task", "classification", "--target", "lab", "--output", "b.cml", "one.csv"], bad("ml.label.single-class"),
+             setup=LBASE + [("write", "one.csv", "a,lab\n1,1\n2,1\n3,1\n")]),
+        case("ml-label-not-integer-for-boost", ["fit", "--model", "boost", "--task", "classification", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.label.not-integer"), setup=LBASE),
+        case("ml-param-threads-boost", ["fit", "--model", "boost", "--threads", "65", "--target", "y", "--output", "b.cml", "lin.csv"], bad("ml.param.threads"), setup=LBASE),
+        case("limit-input-too-large-fit-boost-file-over-max-bytes", ["fit", "--model", "boost", "--max-bytes", "1000", "--min-leaf", "1", "--target", "y", "--output", "b.cml", "lin.csv"], bad("limit.input-too-large"), setup=LBASE),
+        case("ml-model-malformed-boost-payload-of-another-kind", ["predict", "--model-file", "bad.cml", "lcls.csv"], bad("ml.model.malformed"),
+             setup=WITH_BOOST + [("mutate", "b.cml", "bad.cml", lambda d: fix_checksum(set_bytes(d, sections(d)[3][1], (7).to_bytes(4, "little"))))]),
+    ]
+
+
+CASES += _boost_cases()
+
 
 def log_cases():
     return [c for c in CASES if c.get("log")]

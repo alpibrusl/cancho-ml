@@ -33,6 +33,11 @@ CHANGED = {
     "ml-plan-model-not-built": "1d966eb36f993ca466d7c2856019eedc074988a9803d05363d4d53da0ef662ed",
     # the message of the refusal lists the models that can take the flag: kmeans is one of them
     "args-conflict-step-needs-a-model": "c04310948bae0754f026ed3b753c7ad1b0039b2e3b4beb96847dd65ef5d3ea23",
+    # the messages of ml.limit.depth and ml.limit.nodes name the models that can reach them: boost is one of them (docs/models-boost.md section 6); the exit status and the written files are the baseline's
+    "ml-limit-depth": "57fbe4d123801a8801e95bc5ea9011434e4b091c3f7978c91a2785d749d293b5",
+    "ml-limit-nodes-a-tree-that-needs-more": "d25e6fd1726e375c4f1da9a30994f3a710a059bdc704876a235d49ab9d12a1bf",
+    "ml-limit-nodes-over-the-ceiling": "d25e6fd1726e375c4f1da9a30994f3a710a059bdc704876a235d49ab9d12a1bf",
+    "ml-limit-nodes-of-a-forest": "d25e6fd1726e375c4f1da9a30994f3a710a059bdc704876a235d49ab9d12a1bf",
 }
 # the file of that case that changed with it: the plan the fixture writes
 CHANGED_FILES = {"ml-plan-model-not-built": {"p.txt": hashlib.sha256(b"model kind=constant task=regression\n").hexdigest()}}
@@ -63,7 +68,7 @@ class NumericBaseline(unittest.TestCase):
         """the record of the deliberate re-record of M22 (docs/tracking.md section 8) holds the hash of the text these cases print now: the exceptions equal it"""
         for k, new in CHANGED.items():
             self.assertEqual(GOLDEN[k]["stdout"], new)
-        self.assertEqual(sorted(CHANGED), ["args-conflict-step-needs-a-model", "ml-plan-model-not-built", "ml-plan-unknown-step"])
+        self.assertEqual(sorted(CHANGED), ["args-conflict-step-needs-a-model", "ml-limit-depth", "ml-limit-nodes-a-tree-that-needs-more", "ml-limit-nodes-of-a-forest", "ml-limit-nodes-over-the-ceiling", "ml-plan-model-not-built", "ml-plan-unknown-step"])
 
     def test_the_record_holds_the_wired_models(self):
         wired = [k for k in GOLDEN if "linear" in k or "logistic" in k or "pipeline" in k or "plan" in k or "step" in k]

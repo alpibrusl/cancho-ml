@@ -37,6 +37,8 @@ generated:
     splitflow     README.md, guide.html   the split strategies and cross-validation (docs/splits.md): a stratified holdout on docs/examples/data/breast_cancer_train.csv, a time split and
                                           a group split on docs/examples/data/visits.csv, a refused combination, `ml cv --folds 5` on iris and diabetes with the metrics of
                                           each fold and their mean and standard deviation, a time cv, a group cv with --emit-folds, and a refusal with its repair
+    bflow         README.md, guide.html   boosted trees on docs/examples/data/breast_cancer_train.csv and _test.csv: early stopping refused without --split, a fit, predict --proba,
+                                          eval, early stopping with a held-out part, describe
     hero          guide.html              the first example
     agentio       README.md, guide.html   excerpts of `ml introspect`
     skill         guide.html              the first lines of `ml skill`
@@ -172,10 +174,17 @@ DEMOS = [
     ("r_predict", "ml predict --model-file iris.ml --proba --limit 3 iris_test.csv"),
     ("r_eval", "ml eval --model-file iris.ml iris_test.csv"),
     ("r_bad", "ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv"),
+    # boosted trees on breast cancer (docs/models-boost.md): early stopping needs --split, a fit, the probabilities, the metrics, early stopping with a split, describe
+    ("b_nosplit", "ml fit --model boost --target benign --early-stopping 10 --output cancer-boost.ml breast_cancer_train.csv"),
+    ("b_fit", "ml fit --model boost --task classification --target benign --rounds 100 --learning-rate 0.1 --max-depth 3 --subsample 0.8 --seed 1 --output cancer-boost.ml breast_cancer_train.csv"),
+    ("b_predict", "ml predict --model-file cancer-boost.ml --proba --limit 3 breast_cancer_test.csv"),
+    ("b_eval", "ml eval --model-file cancer-boost.ml breast_cancer_test.csv"),
+    ("b_early", "ml fit --model boost --task classification --target benign --rounds 500 --learning-rate 0.2 --early-stopping 10 --split train=0.8 --seed 1 --output cancer-early.ml breast_cancer_train.csv"),
+    ("b_describe", "ml describe --model-file cancer-boost.ml"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
-SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"]}
+SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"], "b_describe": ["model", "task", "kind", "ensemble", "classes", "output"]}
 # demos whose answer is shown as members found by a path into `data`: the last name of a path is the key shown
 PICK_DATA = {
     "sp_strat": [("summary", "split"), ("summary", "holdout")],
@@ -203,6 +212,7 @@ SUMMARY = {
     "k_nok": ["rule", "hint", "detail"],
     "sp_combo": ["rule", "hint", "repair", "detail"],
     "sp_bad": ["rule", "hint", "repair"],
+    "b_nosplit": ["rule", "hint", "detail"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -395,7 +405,7 @@ def make_context(binary, tmp):
         (Path(tmp) / ("iris_%s.csv" % part)).write_bytes((ROOT / "docs" / "examples" / "data" / ("iris_%s.csv" % part)).read_bytes())
     (Path(tmp) / "iris_gaps.csv").write_text(iris_gaps())
     # the split examples: the committed files of docs/examples/data
-    for name in ("breast_cancer_train.csv", "diabetes_train.csv", "visits.csv"):
+    for name in ("breast_cancer_train.csv", "breast_cancer_test.csv", "diabetes_train.csv", "visits.csv"):
         (Path(tmp) / name).write_bytes((ROOT / "docs" / "examples" / "data" / name).read_bytes())
     results = {}
 
@@ -636,6 +646,22 @@ def splitflow_items(ctx):
             item(ctx, "sp_cv_group"),
             ("# A regression has no classes to keep in proportion. The refusal offers the corrected command", None, 0, None),
             item(ctx, "sp_bad")]
+
+
+def bflow_items(ctx):
+    """Boosted trees: early stopping refused without --split, a fit on breast cancer, the probabilities of three test rows, the metrics, early stopping with a held-out part, describe."""
+    return [("# early stopping keeps rows out of the fit, so it is refused unless a held-out part is declared with --split", None, 0, None),
+            item(ctx, "b_nosplit"),
+            ("# 100 rounds of depth-3 trees on 80 percent of the rows each, learning rate 0.1: the summary holds the rounds, the nodes and the base score", None, 0, None),
+            item(ctx, "b_fit"),
+            ("# the label and the probability of the positive label for three test rows", None, 0, None),
+            item(ctx, "b_predict"),
+            ("# accuracy, precision, recall, F1, ROC-AUC and log-loss of the 143 test rows", None, 0, None),
+            item(ctx, "b_eval"),
+            ("# up to 500 rounds, stopped after 10 without a better loss on a tenth of the training rows; the test side of --split is never read by the stopping rule", None, 0, None),
+            item(ctx, "b_early"),
+            ("# describe says the kind (8), the sum order (in file) and the number of trees of the file", None, 0, None),
+            item(ctx, "b_describe")]
 
 
 def hflow_items(ctx):
@@ -980,7 +1006,7 @@ def land_cmds(ctx):
     """'One command, one model file, one server': the fit, the comparison, the replay of a run, the server and the request, as the demo ran them."""
     blocks = demo_blocks(ctx["demo"])
     out = []
-    for i, note in ((0, "# any of the six models, one verb; --track keeps a run record"), (2, "# two runs: what differs, and the metrics side by side"),
+    for i, note in ((0, "# any of the %s models, one verb; --track keeps a run record" % model_word()), (2, "# two runs: what differs, and the metrics side by side"),
                     (3, "# replay a run: re-fit from its record and compare the SHA-256 of the model file"),
                     (6, "# the same file over HTTP: it listens on 127.0.0.1 unless --bind all is given"), (7, "# one request")):
         out.append('<span class="c">%s</span>' % e(note))
@@ -996,6 +1022,16 @@ PLATFORMS = ["macOS arm64", "Linux x86-64", "Linux aarch64"]
 
 def _int(s):
     return int(s.replace(",", ""))
+
+
+NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+
+
+def model_word():
+    """the number of models `ml fit --model` builds, in words: the manifests of lib/models that are wired (docs/modules.md)"""
+    import re
+    n = sum(1 for p in sorted((ROOT / "lib" / "models").glob("*/model.toml")) if re.search(r"^wired *= *true", p.read_text(), re.M))
+    return NUMBER_WORDS[n]
 
 
 def landing_values(ctx):
@@ -1027,7 +1063,7 @@ def landing_values(ctx):
         raise Drift("docs/status.md no longer gives the red gate in its usual words")
     import re as _re
     runners = _re.findall(r"- \{os: ([\w.-]+),", (ROOT / ".github" / "workflows" / "ci.yml").read_text())
-    return {"runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
+    return {"models": model_word(), "runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
             "mut_survive": survive, "rules": str(len(ctx["introspect"]["rules"])), "red_gap": m.group(3), "red_tol": m.group(4)}
 
 
@@ -1081,11 +1117,11 @@ def foot_html(rel):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), refuse=lambda c: md_block(refuse_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), refuse=lambda c: md_block(refuse_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)), bflow=lambda c: md_block(bflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/guide.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), refuse=lambda c: html_pre(refuse_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), refuse=lambda c: html_pre(refuse_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)), bflow=lambda c: html_pre(bflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

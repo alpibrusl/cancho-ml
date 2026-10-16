@@ -17,7 +17,7 @@ from harness import BIN, ROOT, Sandbox, run
 from runner import apply_setup, judge, run_case
 
 IDS = [c for c in CASES if c["id"].startswith(("ml-fit-collinear", "ml-fit-separable", "ml-fit-nearly", "ml-fit-overlapping", "ml-fit-near-collinear", "ml-fit-full-one-hot",
-                                               "ml-linalg-not-positive-definite"))]
+                                               "ml-linalg-not-positive-definite", "ml-cv-boost"))]
 
 
 def oracle(*args):
@@ -125,6 +125,29 @@ class RefuseFit(unittest.TestCase):
                 self.assertEqual(r.status, 0, "%s: %r" % (cid, r))
             finally:
                 sb.cleanup()
+
+    def test_boost_is_not_subject_to_the_two_rules_and_its_twin_on_the_same_data_is(self):
+        """`ml.fit.collinear` and `ml.fit.separable` belong to linear and logistic (docs/refusals-fit.md): a boosted fit and a boosted cross-validation on the same data are not refused"""
+        pairs = (("ml-fit-collinear-boost-is-not-refused", "ml-fit-collinear-duplicate-column", "ml.fit.collinear"),
+                 ("ml-fit-collinear-boost-full-one-hot-is-not-refused", "ml-fit-collinear-full-one-hot-and-the-intercept", "ml.fit.collinear"),
+                 ("ml-fit-separable-boost-is-not-refused", "ml-fit-separable", "ml.fit.separable"),
+                 ("ml-cv-boost-fold-separable-is-not-refused", "ml-cv-fold-separable-names-the-fold", "ml.fit.separable"),
+                 ("ml-cv-boost-fold-collinear-is-not-refused", "ml-cv-fold-collinear-names-the-fold", "ml.fit.collinear"))
+        for boost_id, twin_id, rule in pairs:
+            for cid, want in ((boost_id, None), (twin_id, rule)):
+                c = next(c for c in CASES if c["id"] == cid)
+                sb, r = run_case(c)
+                try:
+                    doc = r.doc()
+                    if want is None:
+                        self.assertEqual(r.status, 0, "%s: %r" % (cid, r))
+                        self.assertTrue(doc["ok"], cid)
+                        self.assertEqual(doc["data"]["model"], "boost", cid)
+                    else:
+                        self.assertEqual(r.status, 8, "%s: %r" % (cid, r))
+                        self.assertEqual(doc["error"]["rule"], want, cid)
+                finally:
+                    sb.cleanup()
 
     def test_a_refused_fit_writes_no_run_record_and_a_record_made_before_still_verifies(self):
         for tag, argv, data in (("ml.fit.separable", ["--model", "logistic", "--target", "y", "sep.csv"], None),

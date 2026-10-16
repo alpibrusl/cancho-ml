@@ -79,7 +79,7 @@ def fit_cli(name, data, cfg, steps_text, model="tree", extra=(), out="m.cml", ta
          "--max-pool-bytes", cfg.max_pool, "--max-cat-columns", cfg.max_catcols, "--model", model, "--step", steps_text, "--output", out, "--overwrite"]
     if task:
         a += ["--task", task]
-    elif model in ("tree", "forest"):
+    elif model in ("tree", "forest", "boost"):
         a += ["--task", "regression"]
     if cfg.na:
         a += ["--na-values", b",".join(cfg.na).decode("latin-1")]
@@ -274,6 +274,7 @@ MODEL_FLAGS = {
     "logistic": ["--model", "logistic", "--l2", "0.1", "--iterations", "60"],
     "tree": ["--model", "tree", "--max-depth", "6"],
     "forest": ["--model", "forest", "--trees", "7", "--max-depth", "5"],
+    "boost": ["--model", "boost", "--rounds", "8", "--min-leaf", "3"],
 }
 
 
@@ -295,7 +296,7 @@ def fit_model(name, data, cfg, model, steps, split=None, seed=0, out="m.cml", ex
     put(name, data)
     a = ["fit", name, "--root", WORK, "--target", "y", "--cat", ",".join(cfg.cats), "--step", steps, "--output", out, "--overwrite", "--seed", seed]
     a += flags if flags is not None else MODEL_FLAGS[model]
-    if model in ("tree", "forest"):
+    if model in ("tree", "forest", "boost"):
         a += ["--task", "classification" if "cls" in extra else "regression"]
         extra = [e for e in extra if e != "cls"]
     if cfg.na:
@@ -312,7 +313,7 @@ def task_of(model):
 
 
 def model_kind_flags(model, cls):
-    if model in ("tree", "forest"):
+    if model in ("tree", "forest", "boost"):
         return ["cls"] if cls else []
     return []
 
@@ -331,10 +332,10 @@ def gate_roundtrip(files, seed):
     cnt = Count("S2 round trip (file against in-process)")
     rnd = random.Random(seed)
     made = 0
-    for model in ("linear", "logistic", "tree", "forest"):
+    for model in ("linear", "logistic", "tree", "forest", "boost"):
         for mix in ("onehot", "mixed", "hash", "label", "reordered"):
             for rep in range(max(1, files // 16)):
-                cls = model in ("logistic",) or (model in ("tree", "forest") and rep % 2 == 1)
+                cls = model in ("logistic",) or (model in ("tree", "forest", "boost") and rep % 2 == 1)
                 task = "classification" if cls else "regression"
                 n = rnd.choice([40, 90, 200])
                 header, rows, cfg = model_table(rnd, n, task, ncat=3)
@@ -423,7 +424,7 @@ def gate_order(files, seed):
     # section is not claimed to be (a bootstrap draws by row index, the sums follow the order of the rows, docs/linalg.md section 2), so it is measured and printed
     steps = "encode column=c0 kind=onehot missing=zero; hash column=c1 buckets=5 missing=zero; scale column=x1,x2 kind=minmax"
     info = {}
-    for model in ("tree", "forest", "linear", "logistic"):
+    for model in ("tree", "forest", "boost", "linear", "logistic"):
         same = diff = 0
         for rep in range(8):
             cls = model == "logistic"
@@ -594,7 +595,7 @@ def gate_align(seed):
     missing, an extra, a dropped categorical column and a retyped column are ml.schema.mismatch (or the numeric reader's refusal) with a repair that works"""
     cnt = Count("S8 alignment by name")
     rnd = random.Random(seed)
-    for model in ("linear", "logistic", "tree", "forest"):
+    for model in ("linear", "logistic", "tree", "forest", "boost"):
         for mix in ("onehot", "mixed"):
             cls = model == "logistic"
             header, rows, cfg = model_table(rnd, 80, "classification" if cls else "regression", ncat=3)
@@ -668,7 +669,7 @@ def gate_align(seed):
             if s7 == 0:
                 cnt.note("%s retyped" % model, "text in a numeric column was accepted")
     # the numeric models: the same rule for a file with no categorical column (the numeric features found by name, in any order)
-    for model in ("linear", "logistic", "tree", "forest"):
+    for model in ("linear", "logistic", "tree", "forest", "boost"):
         cls = model == "logistic"
         rows = []
         for r in range(80):
@@ -679,7 +680,7 @@ def gate_align(seed):
         header = [b"a", b"b", b"c", b"y"]
         put("an.csv", csv_bytes(header, rows))
         flags = {"linear": ["--model", "linear"], "logistic": ["--model", "logistic", "--l2", "0.1"], "tree": ["--model", "tree", "--task", "regression"],
-                 "forest": ["--model", "forest", "--task", "regression", "--trees", "5"]}[model]
+                 "forest": ["--model", "forest", "--task", "regression", "--trees", "5"], "boost": ["--model", "boost", "--task", "regression", "--rounds", "5", "--min-leaf", "3"]}[model]
         st, doc, _ = ml("fit", "an.csv", "--root", WORK, "--target", "y", *flags, "--output", "an.cml", "--overwrite")
         cnt.runs += 1
         if st != 0:

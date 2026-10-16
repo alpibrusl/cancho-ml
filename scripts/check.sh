@@ -103,10 +103,15 @@ python3 scripts/admit.py forest --fast
 # k-means (docs/wiring-kmeans.md): a clustering through the blob interface, with no target; the same admission, its wiring mutants (scripts/mutants_wire_kmeans.py, run on request)
 # and the oracle (scripts/oracle_wire_kmeans.py) that the conformance tests above also run
 python3 scripts/admit.py kmeans --fast
+# boosted trees (docs/models-boost.md): the same admission, the patterns of its two mutant suites (scripts/mutants_boost.py, scripts/mutants_wire_boost.py, run on request) and the oracle
+# (scripts/oracle_wire_boost.py) that the conformance tests above also run; the scikit-learn comparison (scripts/gate_wire_sklearn_boost.py) runs on request
+python3 scripts/admit.py boost --fast
 python3 tests/modules/run.py
 python3 scripts/mutants_wire.py --check
 python3 scripts/mutants_wire_trees.py --check
 python3 scripts/mutants_wire_kmeans.py --check
+python3 scripts/mutants_boost.py --check
+python3 scripts/mutants_wire_boost.py --check
 # the check tools open no path that holds two dots in a row and trap on no missing operand (docs/lanes.md section 1)
 python3 scripts/gate_paths.py
 python3 scripts/mutants_paths.py --check

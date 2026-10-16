@@ -26,7 +26,9 @@ NEW_FLAGS = {"--plan", "--step", "--l2", "--iterations", "--positive", "--split"
              # k-means (docs/wiring-kmeans.md section 2)
              "--k", "--init", "--distance",
              # the split strategies and cross-validation (docs/splits.md)
-             "--stratify", "--split-by", "--split-group", "--folds", "--repeats", "--emit-folds"}
+             "--stratify", "--split-by", "--split-group", "--folds", "--repeats", "--emit-folds",
+             # boosted trees (docs/models-boost.md section 6)
+             "--rounds", "--learning-rate", "--subsample", "--early-stopping"}
 # the refusal of an unknown model name lists the models: it changes with the list, by design
 LISTS_THE_MODELS = {"args-bad-value-model"}
 
@@ -40,10 +42,10 @@ def uses_new(c):
     if "fit" in argv and "--max-bytes" in argv:
         # --max-bytes limits the file a fit writes (docs/wiring-trees.md section 10); for predict and eval it is older
         return True
-    if "linear" in argv or "logistic" in argv or "kmeans" in argv or "tree" in argv or "forest" in argv:
+    if "linear" in argv or "logistic" in argv or "kmeans" in argv or "tree" in argv or "forest" in argv or "boost" in argv:
         return True
     for s in c["setup"]:
-        if s[0] == "fit" and (any(a in NEW_FLAGS or a in ("linear", "logistic", "kmeans", "tree", "forest", "--threads") for a in s[1:])):
+        if s[0] == "fit" and (any(a in NEW_FLAGS or a in ("linear", "logistic", "kmeans", "tree", "forest", "boost", "--threads") for a in s[1:])):
             return True
     return False
 

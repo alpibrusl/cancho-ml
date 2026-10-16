@@ -46,6 +46,7 @@ def sandbox():
     assert sb.run("fit", "--model", "tree", "--target", "y", "--output", "tree.cml", "lin.csv").status == 0
     assert sb.run("fit", "--model", "forest", "--task", "classification", "--trees", "5", "--target", "lab", "--output", "forest.cml", "lcls.csv").status == 0
     assert sb.run("fit", "--model", "kmeans", "--k", "3", "--seed", "2", "--output", "km.cml", "lin.csv").status == 0
+    assert sb.run("fit", "--model", "boost", "--task", "classification", "--rounds", "5", "--min-leaf", "1", "--target", "lab", "--output", "boost.cml", "lcls.csv").status == 0
     sb.write("bad.cml", sb.read("m.cml")[:100])
     return sb
 
@@ -154,6 +155,45 @@ class Fuzz(unittest.TestCase):
                 for v in values:
                     self.check([*base, flag, v])
                     self.check([*base, flag + "=" + v])
+
+    def test_every_flag_of_boost_every_mistake(self):
+        # a fit by flags (both tasks), a fit by a plan, predict and eval: the flags of the boosted model and the flags that mean nothing to it
+        self.sb.write("bp.txt", "model kind=boost task=regression rounds=3 min-leaf=1\n")
+        bases = (["fit", "--model", "boost", "--min-leaf", "1", "--target", "y", "--output", "o.cml", "lin.csv"],
+                 ["fit", "--model", "boost", "--task", "classification", "--min-leaf", "1", "--target", "lab", "--output", "o.cml", "lcls.csv"],
+                 ["fit", "--plan", "bp.txt", "--target", "y", "--output", "o.cml", "lin.csv"],
+                 ["predict", "--model-file", "boost.cml", "--proba", "lcls.csv"], ["eval", "--model-file", "boost.cml", "lcls.csv"])
+        values = ("", "0", "1", "2", "-1", "5", "9", "30", "31", "255", "256", "1000", "1001", "10000", "10001", "4194304", "4194305", "99999999999999999999",
+                  "0.5", "0.0", "1.0", "1.5", "1e3", "1e-7", "1e101", "nan", "inf", "classification", "regression", "boost", "..")
+        for base in bases:
+            for flag in ("--rounds", "--learning-rate", "--max-depth", "--min-leaf", "--bins", "--l2", "--subsample", "--early-stopping", "--max-nodes", "--split", "--task", "--model",
+                         "--seed", "--threads", "--positive", "--trees", "--mtry"):
+                self.check([*base, flag])
+                self.check([*base, flag, flag])
+                for v in values:
+                    self.check([*base, flag, v])
+                    self.check([*base, flag + "=" + v])
+
+    def test_seeded_vectors_with_boost(self):
+        rng = random.Random(int(os.environ.get("FUZZ_SEED", "20261012")) + 3)
+        flags = ["--rounds", "--learning-rate", "--max-depth", "--min-leaf", "--bins", "--l2", "--subsample", "--early-stopping", "--max-nodes", "--threads", "--seed", "--task", "--positive",
+                 "--split", "--proba", "--step", "--plan", "--drop", "--cat", "--max-bytes"]
+        values = ["1", "2", "3", "7", "30", "31", "64", "255", "256", "10000", "10001", "4194305", "0", "-1", "0.5", "1.0", "1.5", "1e-7", "1e101", "nan", "classification", "regression",
+                  "train=0.5", "bp.txt", "impute column=* strategy=mean", "scale column=* kind=standard", "bucket column=a kind=width bins=3", "", "..", "99999999999999999999"]
+        self.sb.write("bp.txt", "model kind=boost task=regression rounds=3 min-leaf=1\n")
+        for _ in range(int(os.environ.get("FUZZ_N", "2500")) // 2):
+            verb = rng.choice(["fit", "fit", "predict", "eval"])
+            if verb == "fit":
+                argv = ["fit", "--model", "boost", "--target", rng.choice(["y", "lab"]), "--output", "o.cml", rng.choice(["lin.csv", "lcls.csv"])]
+            else:
+                argv = [verb, "--model-file", "boost.cml", rng.choice(["lin.csv", "lcls.csv"])]
+            for _ in range(rng.randint(1, 5)):
+                argv.insert(rng.randrange(1, len(argv)), rng.choice(values) if rng.random() < 0.5 else rng.choice(flags))
+                if rng.random() < 0.7:
+                    i = rng.randrange(1, len(argv))
+                    argv.insert(i, rng.choice(flags))
+                    argv.insert(i + 1, rng.choice(values))
+            self.check(argv, rooted=rng.random() < 0.6)
 
     def test_every_flag_of_kmeans_every_mistake(self):
         # the 4 bases: a fit by flags, a fit by a plan, predict and eval; the flags of k-means and the flags that mean nothing to it

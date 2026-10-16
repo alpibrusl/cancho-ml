@@ -19,9 +19,9 @@ It is not a benchmark: no time is asserted by a gate, and nothing here measures 
 
 ## 2. The determinism gate
 
-`scripts/xplat_check.py` fits 22 models (every kind: constant, linear, logistic, tree, forest, k-means; one-hot, label, frequency and hash steps; 1 and 8 threads) on
+`scripts/xplat_check.py` fits 28 models (every kind: constant, linear, logistic, tree, forest, k-means, boost; one-hot, label, frequency and hash steps; 1 and 8 threads) on
 the files of `docs/examples/data`, then predicts and scores each with the file it wrote. It prints one line per artefact: the SHA-256 of the whole model
-file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 88 lines in all (22 times `fit-exit`, `model-file`, `predict`, `eval`).
+file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 112 lines in all (28 times `fit-exit`, `model-file`, `predict`, `eval`). The first 88 lines are those of the 22 fits that existed before the boosted model; the 24 lines of its 6 fits (regression, classification with a row sample and early stopping, a categorical plan; 1 and 8 threads) are appended after them, and no earlier line changed.
 
 The **golden** is `docs/bench/xplat_fp.txt`. Each platform of the matrix compares its own fingerprint to the golden and fails on any difference. That is the
 whole cross-platform comparison [choice]: two platforms that each equal the same committed file are equal to each other, and the job needs no artefact passed
@@ -41,7 +41,7 @@ binary that cannot start). The workflow runs it on every platform.
 
 ### 2.1 What it shows and what it does not
 
-It shows that, for these 22 fits on these inputs, the compiler `0207556` and the sources at the commit under test produce the same model bytes and the same
+It shows that, for these 28 fits on these inputs, the compiler `0207556` and the sources at the commit under test produce the same model bytes and the same
 printed answers on macOS arm64 and on Linux x86-64. It does not show the same for any other input, platform, compiler revision or operating-system image;
 the arithmetic's reasons (IEEE binary64, no fused multiply-add in the generated code, no platform `libm` in a result) are in `docs/design.md`, and a platform that
 disagrees is found by this gate or not at all. A hash of a printed answer includes the printed text, so a change of the output format changes the golden too.
@@ -174,6 +174,8 @@ four cores is about 75 s if the build scales, and a runner's CPUs are slower tha
 
 The determinism gate on Linux x86-64 printed `ok, 88 lines for 22 fits equal docs/bench/xplat_fp.txt` for the golden that the Mac wrote, and its 15 mutants were each refused, at commit `cb08d5b`'s sources
 (the tree of this branch has the same `lib/` and `tools/`).
+
+The 24 lines of the boosted model were appended to the golden from a Mac run and printed `ok, 112 lines for 28 fits equal docs/bench/xplat_fp.txt` on the same Linux x86-64 workstation (Ubuntu 26.04.1, Intel Core i7-1260P) from a clean clone of the commit, with `ml-predict` equal to `ml`; the gate has 17 mutants now (two of them on a boost fit), each refused on the Mac. The Raspberry Pi 5 was not run for these lines.
 
 Findings of the Linux run (each fixed or marked in this branch):
 
