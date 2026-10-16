@@ -260,6 +260,13 @@ class Tools(unittest.TestCase):
         self.assertEqual(r["structuredContent"]["error"]["detail"]["pointer"], "/arguments/records/1/x")
         r = c.call("predict", {"model-file": "m.cml", "records": [{"id": 5, "x": 2.0, "nope": 1}]})["result"]
         self.assertEqual(r["structuredContent"]["error"]["rule"], "mcp.record-column")
+        self.assertEqual(r["structuredContent"]["error"]["detail"], {"pointer": "/arguments/records/0/nope"})
+        # a column twice in a record: the first would be read and the second dropped, so the record is refused whole
+        c.send_line('{"jsonrpc":"2.0","id":901,"method":"tools/call","params":{"name":"predict","arguments":{"model-file":"m.cml","records":[{"id":5,"x":2.0},{"id":6,"x":1.0,"x":9.0}]}}}')
+        r = c.read()["result"]
+        self.assertTrue(r["isError"], r)
+        self.assertEqual(r["structuredContent"]["error"]["rule"], "mcp.record-column")
+        self.assertEqual(r["structuredContent"]["error"]["detail"], {"pointer": "/arguments/records/1"})
         # a file and records, or neither
         e = c.call("predict", {"model-file": "m.cml", "file": "new.csv", "records": [{"id": 5, "x": 2.0}]})
         self.assertEqual(e["error"]["code"], -32602)

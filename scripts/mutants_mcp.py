@@ -53,7 +53,7 @@ MUTANTS = [
     M("f-limit-ceiling-raised", "D", "--max-message-bytes may be 16777217", [(MAIN, "if cap < 1 || cap > 16777216 {", "if cap < 1 || cap > 16777217 {", 1)], H),
     M("f-limit-zero-allowed", "D", "--max-message-bytes may be 0", [(MAIN, "if cap < 1 || cap > 16777216 {", "if cap < 0 || cap > 16777216 {", 1)], H),
     M("f-blank-line-answered", "D", "a line of white space is a malformed message", [(MAIN, "                if !blank(buffer.bytes(lr)) {", "                if true {", 1)], H),
-    M("f-carriage-return-kept-at-the-end", "D", "the carriage return before the line feed is part of the line (a strict parse would refuse it only in a string)", [(MAIN, "            if c == 13 {\n                held_cr = true;", "            if c == 7000 {\n                held_cr = true;", 1)], H),
+    M("f-carriage-return-counted", "D", "the carriage return before the line feed counts against the limit", [(MAIN, "            if c == 13 {\n                held_cr = true;", "            if c == 7000 {\n                held_cr = true;", 1)], H),
     M("f-eof-in-a-line-is-dropped", "D", "the end of the input in the middle of a line leaves the line unanswered", [(MAIN, "            } else {\n                status = 3;\n            }", "            } else {\n                status = 2;\n            }", 1)], H),
     M("f-answer-not-flushed", "D", "the answer is written and not flushed", [(MAIN, "                out.flushed(io);", "                0;", 1)], H),
     # ------------------------------------------------------------------ the id and the envelope
@@ -75,14 +75,14 @@ MUTANTS = [
                                                     "                response = rpc.result_response(heap, idb, \"{}\");", 1)], H),
     M("l-batch-is-served-as-an-object", "D", "a batch is not refused as a batch", [(MAIN, "        } else if json.is_array(contents(tp), 0) {", "        } else if false {", 1)], H),
     M("l-other-version-echoed", "D", "initialize answers the revision the client asked for", [(MAIN, "    w = json.put_string(heap, w, tools.revision());", "    w = json.put_string(heap, w, \"1900-01-01\");", 1)], T + H),
-    M("l-cursor-ignored", "D", "tools/list takes any cursor", [(MAIN, "                    if !json.is_object(tape, params) || (c >= 0 && !(json.is_string(tape, c) && json.string_length(line, tape, c) == 0)) {", "                    if false {", 1)], H),
+    M("l-cursor-ignored", "D", "tools/list takes any cursor", [(MAIN, "                    if !json.is_object(tape, params) || c >= 0 && !(json.is_string(tape, c) && json.string_length(line, tape, c) == 0) {", "                    if false {", 1)], H),
     # ------------------------------------------------------------------ the arguments
     M("a-duplicate-key-accepted", "D", "a key given twice is accepted", [(CALL, "            } else if json.get(line, tape, args, name) != v {\n                status = 3;", "            } else if false {\n                status = 3;", 1)], H),
     M("a-nul-accepted", "D", "a NUL in a string argument is accepted", [(CALL, "                        if has_nul(buffer.bytes(tr)) {", "                        if false {", 1)], H),
     M("a-nat-negative-accepted", "D", "a negative nat is a nat", [(CALL, "|| int_of(line[tape[3 * v + 1]]) == '-' {", "|| false {", 1)], H),
     M("a-float-nat-accepted", "D", "1.5 is a nat", [(CALL, "if json.kind(tape, v) != json.kind_int() || int_of(line[tape[3 * v + 1]]) == '-' {", "if int_of(line[tape[3 * v + 1]]) == '-' {", 1)], H),
     M("a-unknown-tool-is-a-tool-result", "D", "an unknown tool name is not refused", [(CALL, "    if len(row) == 0 {\n        var response = buffer.empty(heap, 1);", "    if len(row) == 1000 {\n        var response = buffer.empty(heap, 1);", 1)], H),
-    M("a-both-file-and-records", "D", "predict takes a file and records together", [(CALL, "        if has_file == (recs_node >= 0) {", "        if false {", 1)], T),
+    M("a-both-file-and-records", "D", "predict takes a file and records together", [(CALL, "        if has_file == recs_node >= 0 {", "        if false {", 1)], T),
     # ------------------------------------------------------------------ read-only
     M("r-read-only-switch-removed", "C", "a write tool is called without --allow-write", [(CALL, "    if !allow_write {\n        if bytes.equal(bytes.field(row, '|', 7), \"1\") {", "    if false {\n        if bytes.equal(bytes.field(row, '|', 7), \"1\") {", 1)], T),
     M("r-write-flags-not-checked", "C", "a write flag of eval is accepted without --allow-write", [(CALL, "                if v >= 0 && json.kind(tape, v) != json.kind_false() {\n                    return read_only(heap, id, \"flag\", bytes.field(ws, ',', k));",
@@ -93,7 +93,8 @@ MUTANTS = [
     # ------------------------------------------------------------------ the root
     M("t-root-not-passed", "C", "the root of the server is not part of the command line of a call", [(CALL, "        if bytes.equal(name, \"root\") {\n            if len(root) > 0 {", "        if bytes.equal(name, \"root\") {\n            if len(root) > 1000000 {", 1)], T),
     M("t-root-checked-twice-skipped", "C", "the double-dot check of the root is skipped in a call", [(CALL, "        if paths.has_double_dot(buffer.bytes(rb)) {\n            e1 = paths.refuse_double_dot(heap, e1, buffer.bytes(rb), argv.value_index(src, \"root\"));\n        }\n    }\n    var response",
-                                                                  "        if false {\n            e1 = paths.refuse_double_dot(heap, e1, buffer.bytes(rb), argv.value_index(src, \"root\"));\n        }\n    }\n    var response", 1)], T),
+                                                                  "        if false {\n            e1 = paths.refuse_double_dot(heap, e1, buffer.bytes(rb), argv.value_index(src, \"root\"));\n        }\n    }\n    var response", 1)], T,
+      why="equivalent: the root of a call is the root the server checked at its start, with the same function, so a root with two dots in a row never reaches a call"),
     # ------------------------------------------------------------------ the records
     M("c-header-dropped", "A", "the CSV of the records has no header", [(RECS, "csv = buffer.append(heap, csv, cols.header(csr));", "csv = csv;", 1)], T),
     M("c-scale-forgotten", "A", "a dec column is written with scale 0", [(RECS, "type_code(desc, tape, c), scale);", "type_code(desc, tape, c), 0);", 1)], T),

@@ -193,6 +193,9 @@ class Hostile(unittest.TestCase):
         self.assertEqual(len(at), 300)
         c.send_line(at)
         self.assertIn("result", c.read())
+        # the carriage return of a CR LF line end is not counted against the limit
+        c.write(at.encode() + b"\r\n")
+        self.assertIn("result", c.read())
         over = at[:-2] + "z" + at[-2:]
         self.assertEqual(len(over), 301)
         self.err(c, over, -32600)
