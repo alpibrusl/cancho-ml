@@ -681,6 +681,12 @@ def _refuse_cases():
              sepa(repair_runs=True, detail={"reason": "scale", "pass": 39, "scale_bound": "50.0"}), setup=RBASE + [("write", "quasi.csv", QUASI)]),
         case("ml-linalg-not-positive-definite-ridge-below-the-tolerance-after-the-first-pass", ["fit", "--model", "logistic", "--l2", "1e-20", "--target", "y", "--output", "m.cml", "sep.csv"],
              bad("ml.linalg.not-positive-definite"), setup=RBASE),
+        case("ml-fit-collinear-boost-is-not-refused", ["fit", "--model", "boost", "--task", "regression", "--min-leaf", "1", "--l2", "0", "--target", "y", "--output", "m.cml", "dup.csv"],
+             ok({"model": "boost"}), setup=RBASE),
+        case("ml-fit-collinear-boost-full-one-hot-is-not-refused", ["fit", "--model", "boost", "--task", "regression", "--min-leaf", "1", "--l2", "0"] + FIT_SP,
+             ok({"model": "boost"}), setup=RBASE),
+        case("ml-fit-separable-boost-is-not-refused", ["fit", "--model", "boost", "--task", "classification", "--min-leaf", "1", "--l2", "0", "--target", "y", "--output", "m.cml", "sep.csv"],
+             ok({"model": "boost"}), setup=RBASE),
         case("ml-fit-separable-a-positive-l2-is-fitted", ["fit", "--model", "logistic", "--l2", "0.01", "--target", "y", "--output", "m.cml", "sep.csv"],
              ok({"model": "logistic"}), setup=RBASE),
         case("ml-fit-separable-two-passes-are-not-enough-to-see-it", ["fit", "--model", "logistic", "--iterations", "2", "--target", "y", "--output", "m.cml", "sep.csv"],
@@ -696,6 +702,10 @@ def _refuse_cases():
              sepa(repair_runs=True, repair_has=[["--l2", "1e-2"]], detail={"reason": "loss", "repeat": 0, "fold": 1}), setup=RBASE + [("write", "cvsep.csv", CVSEP)]),
         case("ml-cv-fold-collinear-names-the-fold", ["cv", "--model", "linear", "--target", "y", "--drop", "day", "--folds", "2", "--split-by", "time:day", "cvcol.csv"],
              col(repair_runs=True, repair_has=[["--l2", "1e-7"]], detail={"model": "linear", "column": "b", "columns": ["a"], "repeat": 0, "fold": 0}), setup=RBASE + [("write", "cvcol.csv", CVCOL)]),
+        case("ml-cv-boost-fold-separable-is-not-refused", ["cv", "--model", "boost", "--task", "classification", "--min-leaf", "1", "--target", "y", "--folds", "3", "cvsep.csv"],
+             ok({"model": "boost"}), setup=RBASE + [("write", "cvsep.csv", CVSEP)]),
+        case("ml-cv-boost-fold-collinear-is-not-refused", ["cv", "--model", "boost", "--task", "regression", "--min-leaf", "1", "--target", "y", "--drop", "day", "--folds", "2", "--split-by", "time:day", "cvcol.csv"],
+             ok({"model": "boost"}), setup=RBASE + [("write", "cvcol.csv", CVCOL)]),
         case("ml-fit-full-one-hot-with-a-ridge-is-fitted", ["fit", "--model", "linear", "--l2", "0.1"] + FIT_SP, ok({"model": "linear"}), setup=RBASE),
     ]
 

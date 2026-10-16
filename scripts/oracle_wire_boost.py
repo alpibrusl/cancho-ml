@@ -101,7 +101,8 @@ def fit_oracle(case):
     if labels:
         model += owt.labels_record(*labels)
     plan = ow.canon(case.plan_text())
-    data = owt.file_bytes(plan, ow.schema_bytes(names, types, t), ow.steps_bytes(stored), model, len(tr), len(names), case.seed)
+    data = owt.file_bytes(plan, ow.schema_bytes(names, types, t), ow.steps_bytes(stored), model, len(tr), len(names), case.seed,
+                         ow.provenance_of(case, [names[j] for j in range(len(names)) if j != t], mask))
     ctx = {"stored": stored, "res": res, "d": d, "labels": labels, "types": types, "mask": mask, "stats": stats, "missing": int(Mn.sum())}
     COVER["cases"] += 1
     COVER["with_missing"] += 1 if ctx["missing"] else 0
