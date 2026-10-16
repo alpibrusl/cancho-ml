@@ -98,6 +98,12 @@ MUTANTS = [
     ("experiments-compare-claim-removed", IDX, "shows what differs and the metrics side by side;", "compares them;", {"landing"}),
     ("experiments-on-marker-removed", IDX, "(<code>on</code>) and counts the cells outside its range", "and counts the cells outside the range", {"landing"}),
     ("experiments-track-removed", IDX, "(<code>--track</code>)", "", {"landing"}),
+    # the line about explaining a model (docs/interpret.md)
+    ("explain-dump-claim-removed", IDX, "and <code>ml dump</code> prints a tree.", "", {"landing"}),
+    ("explain-importance-claim-removed", IDX, "<code>ml importance</code> says", "It says", {"landing"}),
+    ("explain-link-removed", IDX, 'href="guide.html#explain"', 'href="guide.html"', {"landing"}),
+    ("explain-section-of-the-guide-renamed", "docs/guide.html", 'id="explain"', 'id="explained"', {"landing"}),
+    ("explain-readme-section-renamed", "README.md", "## Explain a model", "## Explanations", {"landing"}),
     ("platforms-runner-dropped-from-text", IDX, "<code>ubuntu-24.04-arm</code>, ", "", {"landing"}),
     ("platforms-figure-typed", IDX, '<span data-n="runners">4</span>', '<span data-n="runners">3</span>', {"landing", "site"}),
     ("platforms-matrix-grows", ".github/workflows/ci.yml", "          - {os: macos-26, label: darwin-arm64}\n",

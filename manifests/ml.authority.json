@@ -404,6 +404,7 @@
     "in_model",
     "in_range",
     "index_of",
+    "index_of_rank",
     "index_of_short",
     "init_word",
     "input_cols",
@@ -1010,7 +1011,7 @@
     "writable",
     "y_max"
   ],
-  "folded_operators": 228,
+  "folded_operators": 229,
   "folded_calls": 2,
-  "functions": 1702
+  "functions": 1704
 }

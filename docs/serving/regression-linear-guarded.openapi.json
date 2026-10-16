@@ -82,7 +82,8 @@
                       "required": [
                         "sha256"
                       ]
-                    }
+                    },
+                    "importance": {}
                   },
                   "required": [
                     "model",

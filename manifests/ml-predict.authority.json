@@ -290,6 +290,7 @@
     "in_model",
     "in_range",
     "index_of",
+    "index_of_rank",
     "index_of_short",
     "input_column",
     "input_empty",
@@ -716,7 +717,7 @@
     "word_is",
     "wpc"
   ],
-  "folded_operators": 137,
+  "folded_operators": 138,
   "folded_calls": 0,
-  "functions": 1068
+  "functions": 1070
 }

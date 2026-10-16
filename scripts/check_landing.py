@@ -18,6 +18,7 @@ What fails it:
     `on`, the cells outside the range) are on the page; the text about ml-serve says it listens on 127.0.0.1, that `--bind all` needs `--token-file`, and never
     says it listens on every address by default or mentions `--no-token`; every runner of the matrix of .github/workflows/ci.yml is named on the page, and the
     figure "runners" is their number;
+  * the line about explaining a model (`ml importance`, `ml dump`) is on the page, the guide has the section it links and the README and docs/interpret.md exist;
   * the build commands of "Try it" are the lines of the README's quick start (the same sh block);
   * the honest limits are on the page: the red gate with its two numbers, "No speed is claimed", the platforms that are not covered;
   * the basics: one <h1>, `lang`, a skip link to <main id="main">, a <title> and a description inside the SEO limits, the diagram has a <title> and a <desc> and the
@@ -450,6 +451,9 @@ EXPERIMENT_CLAIMS = [("Experiments you can replay", "the card of the experiments
                      ("shows what differs and the metrics side by side", "the claim of what compare shows"),
                      ("(<code>on</code>)", "the marker that says which file eval scored"), ("outside its range", "the count of cells outside the training range"),
                      ("scripts/demo.sh", "the demo the first two logs are")]
+# the line about explaining a model (docs/interpret.md): the two verbs are named, the guide has the section the line links to, and the README has it too
+EXPLAIN_CLAIMS = [("<code>ml importance</code>", "the verb that says which columns a model relies on"), ("<code>ml dump</code> prints a tree", "the verb that prints a tree"),
+                  ('href="guide.html#explain"', "the link to the section of the guide")]
 SERVE_REQUIRED = [("127.0.0.1", "that ml-serve listens on 127.0.0.1"), ("--bind all", "the flag that opens it to every address"),
                   ("--token-file", "that a token file goes with --bind all")]
 SERVE_FORBIDDEN = [(r"listens on every address", "ml-serve is said to listen on every address"), (r"--no-token", "the flag --no-token is shown"),
@@ -463,6 +467,13 @@ def check_claims(root, text, errs):
     for needle, what in BOARD_CLAIMS:
         if needle not in text:
             errs.append("index.html: %s is missing (looked for %r)" % (what, needle))
+    for needle, what in EXPLAIN_CLAIMS:
+        if needle not in text:
+            errs.append("index.html: %s is missing (looked for %r)" % (what, needle))
+    if 'id="explain"' not in (root / "docs" / "guide.html").read_text():
+        errs.append("docs/guide.html: the section the landing page links as guide.html#explain has no id=\"explain\"")
+    if "## Explain a model" not in (root / "README.md").read_text() or not (root / "docs" / "interpret.md").is_file():
+        errs.append("README.md or docs/interpret.md: the section and the design the line about explaining a model stands on are missing")
     for needle, what in SERVE_REQUIRED:
         if needle not in text:
             errs.append("index.html: the text says nothing of %s (looked for %r)" % (what, needle))

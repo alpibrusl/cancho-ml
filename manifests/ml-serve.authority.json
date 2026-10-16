@@ -411,6 +411,7 @@
     "in_model",
     "in_range",
     "index_of",
+    "index_of_rank",
     "index_of_short",
     "inexact",
     "inexact",
@@ -986,7 +987,7 @@
     "words_of",
     "wpc"
   ],
-  "folded_operators": 316,
+  "folded_operators": 317,
   "folded_calls": 0,
-  "functions": 1464
+  "functions": 1466
 }
