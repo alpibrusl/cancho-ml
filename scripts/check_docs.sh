@@ -7,7 +7,7 @@
 #      lint is shown able to fail (its mutants)
 #   5. every docs/ path that README.md and docs/*.md name is a file of this repository, and none names a local clone (scripts/check_doc_refs.py),
 #      and the check is shown able to fail (its mutants)
-#   6. the landing page: its figures equal the sources, the header is the same on the five pages, the three replays (the demo of scripts/demo.sh as it runs now, a refusal with its own repair), the experiments and the server in words, the runners of the workflow, the build
+#   6. the landing page: its figures equal the sources, the header is the same on the six pages, the three replays (the demo of scripts/demo.sh as it runs now, a refusal with its own repair), the experiments and the server in words, the runners of the workflow, the build
 #      commands are the README's, the limits are stated, the size budget holds (scripts/check_landing.py); the contrast of every colour pair of site.css
 #      (scripts/check_contrast.py) and its mutants; every mutant of scripts/mutants_site.py applies (the run itself, about a minute, is on request)
 # scripts/check.sh runs this script at its end.
