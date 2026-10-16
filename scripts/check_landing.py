@@ -8,7 +8,7 @@ What fails it:
   * the figures: every <b|span data-n="NAME"> of the page equals the value computed here from the sources (docs/status.md, docs/bench/xplat_fp.txt, and the
     rule count of the guide's generated table), independently of scripts/site.py; and the counts the page repeats (tests, mutants) are the ones docs/evidence.html
     states, and the rule count is the one docs/status.md states. A figure typed by hand and wrong, or a source edited and the page not, is a failure;
-  * the navigation: the header of the five pages is the same list of links, every link is a file of docs/ (or an https address) and an in-page link names an id,
+  * the navigation: the header of the six pages is the same list of links, every link is a file of docs/ (or an https address) and an in-page link names an id,
     and the link of the page itself is marked aria-current (the landing page's "How it works" is an in-page link and is not);
   * the replayed runs: three <pre class="screen"> panels (fit and compare, serve and curl, a refusal and its repair) hold their lines as spans; in the last one
     the refusal names a rule and an exit status, the repair is a command, and the command that follows it is the repair's own argv; the first two carry the
@@ -37,10 +37,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
-PAGES = ["index.html", "guide.html", "examples.html", "evidence.html", "benchmarks.html"]
+PAGES = ["index.html", "guide.html", "examples.html", "board.html", "evidence.html", "benchmarks.html"]
 BUDGET_INDEX = 28 * 1024
 BUDGET_WITH_CSS = 45 * 1024
 BUDGET_SCRIPT = 3 * 1024
+# the experiments board holds the logic of a page of its own: its script has its own budget, in scripts/check_board.py (G10)
+SCRIPT_CHECKED_ELSEWHERE = {"board.html"}
 
 
 def src(root=ROOT):
@@ -240,8 +242,8 @@ def check_nav(root, errs):
         got = [x[0].lstrip("#").replace("index.html#", "") for x in s]
         if got != ref:
             errs.append("%s: the header links are %r, the landing page's are %r" % (name, got, ref))
-    if len(ref) < 5 or len(ref) > 6:
-        errs.append("the header has %d links, want 5 or 6" % len(ref))
+    if len(ref) < 5 or len(ref) > 7:
+        errs.append("the header has %d links, want 5 to 7" % len(ref))
 
 
 # --- the replay ----------------------------------------------------------------------------------------------------
@@ -435,11 +437,14 @@ def check_basics(root, path, p, text, errs, landing=True):
         errs.append("%s: a CSS import or url() of another host" % n)
     if landing and (p.svg_title < 1 or p.svg_desc < 1):
         errs.append("%s: an SVG without <title> and <desc>" % n)
-    for s in p.scripts:
+    for s in ([] if n in SCRIPT_CHECKED_ELSEWHERE else p.scripts):
         if len(s.encode()) > BUDGET_SCRIPT:
             errs.append("%s: the inline script is %d bytes, over %d" % (n, len(s.encode()), BUDGET_SCRIPT))
 
 
+# the card of the experiments board (docs/board.html) in the landing page's "Go deeper"
+BOARD_CLAIMS = [('<h3><a href="board.html">Experiments board</a></h3>', "the card of the experiments board, linking board.html"), ("Nothing is sent anywhere", "that the board sends nothing anywhere"),
+                ("a table, a comparison, a chart and a list of what does not add up", "what the board shows")]
 EXPERIMENT_CLAIMS = [("Experiments you can replay", "the card of the experiments"), ("<code>--track</code>", "the flag that writes a run record"),
                      ("ml runs compare", "the comparison of runs"), ("ml runs verify", "the replay of a run"), ("re-fits and reproduces the model", "the claim that verify reproduces the model's hash"),
                      ("shows what differs and the metrics side by side", "the claim of what compare shows"),
@@ -453,6 +458,9 @@ SERVE_FORBIDDEN = [(r"listens on every address", "ml-serve is said to listen on 
 
 def check_claims(root, text, errs):
     for needle, what in EXPERIMENT_CLAIMS:
+        if needle not in text:
+            errs.append("index.html: %s is missing (looked for %r)" % (what, needle))
+    for needle, what in BOARD_CLAIMS:
         if needle not in text:
             errs.append("index.html: %s is missing (looked for %r)" % (what, needle))
     for needle, what in SERVE_REQUIRED:

@@ -45,7 +45,7 @@
 <header class="top"><div class="wrap">
   <a class="brand" href="./">cancho-ml</a>
   <nav aria-label="Site">
-    <a href="#how" class="opt">How it works</a><a href="guide.html">Guide</a><a href="examples.html" class="opt">Examples</a><a href="evidence.html">Evidence</a><a href="benchmarks.html" class="opt">Benchmarks</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
+    <a href="#how" class="opt">How it works</a><a href="guide.html">Guide</a><a href="examples.html" class="opt">Examples</a><a href="board.html" class="opt">Board</a><a href="evidence.html">Evidence</a><a href="benchmarks.html" class="opt">Benchmarks</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
   </nav>
 </div></header>
 <!-- /gen:nav -->
@@ -188,7 +188,7 @@
   <div class="nums">
     <div class="n"><b><span data-n="fp_lines">88</span> lines</b><span>of hashes equal a committed golden on <span data-n="platforms">3</span> platforms</span></div>
     <div class="n"><b><span data-n="tests">520</span></b><span>conformance tests of the command line pass, none skipped</span></div>
-    <div class="n"><b><span data-n="mut_killed">1,310</span> / <span data-n="mut_total">1,365</span></b><span>deliberate faults are caught; each of the other <span data-n="mut_survive">55</span> is explained</span></div>
+    <div class="n"><b><span data-n="mut_killed">1,485</span> / <span data-n="mut_total">1,542</span></b><span>deliberate faults are caught; each of the other <span data-n="mut_survive">57</span> is explained</span></div>
     <div class="n"><b><span data-n="rules">99</span></b><span>named refusals, each with a rule tag and an exit code</span></div>
   </div>
   <p class="fine"><strong>Conditions.</strong> The hashes cover every model file and printed answer of <span data-n="fp_fits">22</span> fits (every model kind, 1 and 8 threads) on the bundled example data; they equal the golden on macOS arm64, Linux x86-64 and Linux aarch64: the workflow runs the gate on <span data-n="runners">4</span> GitHub runners (<code>ubuntu-24.04</code>, <code>ubuntu-26.04</code>, <code>ubuntu-24.04-arm</code>, <code>macos-26</code>), and a Mac, an Ubuntu workstation and a Raspberry Pi 5 ran it by hand. The last run of those runners (88 equal lines on each, 2026-10-15) was at the previous compiler pin; no run exists at <code>0207556</code>. Any other platform, input or compiler revision is untested. The tests passed in one run of <code>scripts/check.sh</code> on a Linux x86-64 machine; the mutant counts come from runs on several commits and two compilers (<a href="evidence.html#mutants">Evidence</a> says which suite ran where). <strong>Limits.</strong> One pre-registered gate is red: the regression forest differs from scikit-learn&rsquo;s by <span data-n="red_gap">8.1</span>% against a tolerance of <span data-n="red_tol">3</span>%. No speed is claimed: the command line is not timed, and the timings of its libraries come from a loaded machine (<a href="benchmarks.html">Benchmarks</a>).</p>
@@ -212,6 +212,7 @@ cancho install &amp;&amp; cancho build --bin ml                                 
     <div class="card"><h3><a href="guide.html">Guide</a></h3><p>Every flow with its real output: six models, text columns, serving and the agent view.</p></div>
     <div class="card"><h3><a href="examples.html">Examples</a></h3><p>Four classic datasets solved by <code>ml</code> and compared with scikit-learn on the same files.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/tracking.md">Experiments</a></h3><p>Run records, <code>ml runs</code>, the <code>on</code> marker and the range check: the document and its results.</p></div>
+    <div class="card"><h3><a href="board.html">Experiments board</a></h3><p>Read the run records of <code>ml runs</code> in your browser: a table, a comparison, a chart and a list of what does not add up. Nothing is sent anywhere.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/splits.md">Splits</a></h3><p>Stratified, time and group holdouts and <code>ml cv</code>: the flags, the refusals and the gates.</p></div>
     <div class="card"><h3><a href="evidence.html">Evidence</a></h3><p>The gates, the oracles and the mutants, and what each proves and does not prove.</p></div>
     <div class="card"><h3><a href="benchmarks.html">Benchmarks</a></h3><p>What was timed, with machine, load and minimum of N. None is a claim.</p></div>
