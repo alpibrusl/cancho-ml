@@ -206,7 +206,7 @@ pub fn on_word[&h, &f, &r, &pf, &p](heap: &!h Heap, fs: &f Fs(""), root: &r [byt
     if len(pv) == 0 {
         return ("unknown", 0, 0);
     }
-    let (dg, size, st, aux) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+    let (dg, size, st, aux) = fsio.sha_rp(heap, fs, root, file);
     if st != 0 {
         buffer.drop(heap, dg);
         return ("unknown", st, aux);

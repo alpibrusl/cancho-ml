@@ -760,6 +760,8 @@
     "r_trailing",
     "r_utf8",
     "ratio",
+    "raw_digest",
+    "raw_size",
     "reach_hi",
     "reach_lo",
     "read",
@@ -987,5 +989,5 @@
   ],
   "folded_operators": 222,
   "folded_calls": 2,
-  "functions": 1652
+  "functions": 1660
 }
