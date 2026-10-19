@@ -153,7 +153,7 @@ def gate(tool, authority, ceilings):
         return ["%s: no ceiling in tools.toml" % tool]
     allowed = set(ceiling.get("allow", []))
     reasons = ceiling.get("reasons", {})
-    if tool in ("ml", "ml-predict", "ml-serve"):
+    if tool in ("ml", "ml-predict", "ml-serve", "ml-mcp"):
         # a label beyond the base row is allowed only with a stated reason (docs/wiring.md section 6)
         for text in sorted(allowed - base_row()):
             if not reasons.get(text.split("(")[0]):

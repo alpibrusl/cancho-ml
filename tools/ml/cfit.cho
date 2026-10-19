@@ -6,6 +6,7 @@ module ml.cfit;
 // tools/ml/mfile.cho, and the record by tools/ml/track.cho. `make` is the same without the writing, for `ml runs verify`.
 
 import std.buffer;
+import ml.argv;
 import ml.csv;
 import ml.fsio;
 import ml.mfile;
@@ -20,8 +21,8 @@ import toolbox.built;
 import toolbox.fail;
 
 // What a constant fit makes before anything is written: the model file's bytes and the numbers a run record holds. `ok` false: the errors say why.
-pub fn make[&h, &g, &f, &r, &pf, &tn](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (mfile.Model, buffer.Buffer, bool, fail.Errors, buffer.Buffer) {
-    let (mo, ok, e, lg) = verbs.fit_prepare(heap, args, fs, root, file, o, tg, errs, log);
+pub fn make[&h, &f, &r, &pf, &tn, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (mfile.Model, buffer.Buffer, bool, fail.Errors, buffer.Buffer) {
+    let (mo, ok, e, lg) = verbs.fit_prepare(heap, src, fs, root, file, o, tg, errs, log);
     var fbytes = buffer.empty(heap, 1);
     if ok {
         borrow mo as &mr in {
@@ -32,8 +33,8 @@ pub fn make[&h, &g, &f, &r, &pf, &tn](heap: &!h Heap, args: &g Args, fs: &f Fs("
     return (mo, fbytes, ok, e, lg);
 }
 
-pub fn fit[&h, &g, &f, &r, &pf, &po, &pt](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
-    let (mo, fbytes, ok, e, lg) = make(heap, args, fs, root, file, o, o.target, errs, log);
+pub fn fit[&h, &f, &r, &pf, &po, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
+    let (mo, fbytes, ok, e, lg) = make(heap, src, fs, root, file, o, argv.text(src, "target"), errs, log);
     if !ok {
         mfile.drop_model(heap, mo);
         buffer.drop(heap, fbytes);
@@ -53,7 +54,7 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pt](heap: &!h Heap, args: &g Args, fs: &f 
             borrow mo as &mr in {
                 borrow fbytes as &fb in {
                     let pv = mfile.prov_bytes(mr);
-                    let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(fb), provsec.file_sha(pv), provsec.file_bytes(pv), mfile.rows(mr), mfile.rows(mr), 0, 0, 0, o.target, true, verbs.task_name(mfile.kind(mr)), mfile.plan_text(mfile.kind(mr)), buffer.bytes(splr), "", 0 - 1, o.na, o, fail.empty_in(heap, spec.extra()));
+                    let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(fb), provsec.file_sha(pv), provsec.file_bytes(pv), mfile.rows(mr), mfile.rows(mr), 0, 0, 0, argv.text(src, "target"), true, verbs.task_name(mfile.kind(mr)), mfile.plan_text(mfile.kind(mr)), buffer.bytes(splr), "", 0 - 1, argv.text(src, "na-values"), src, o, fail.empty_in(heap, spec.extra()));
                     write_rec = wr;
                     fail.drop(heap, track_errs);
                     track_errs = te;
@@ -109,8 +110,8 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pt](heap: &!h Heap, args: &g Args, fs: &f 
 }
 
 // `eval` of a constant model, with the eval record of --track (docs/tracking.md section 5.3) written after the answer is made
-pub fn eval[&h, &g, &f, &r, &pf, &pm, &pt](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
-    let out = verbs.eval(heap, args, fs, root, file, model, o, errs, log);
+pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
+    let out = verbs.eval(heap, src, fs, root, file, model, o, errs, log);
     if !o.track_given {
         return out;
     }

@@ -47,3 +47,14 @@ conn_read = "the loop reads the requests of those connections."
 conn_write = "the loop writes the answers to those connections."
 poll = "the loop waits for the sockets to be ready (a Poller), one thread."
 clock = "http.server closes a connection that makes no progress for --idle-seconds, and the access log line carries the milliseconds of the request (cancho-web's users example has the same two uses)."
+
+# `ml-mcp` (docs/mcp.md section 7): `ml` read as a server of the Model Context Protocol. Its row is the row of `ml` and nothing more: it reads and writes the files a call names beneath a directory
+# it opened (`fit --output`, `--track`; only with --allow-write), spawns the threads of `fit` and `cv` (`conc`, the same code as `ml`), reads the messages from standard input (`io_read`) and writes the
+# answers to standard output. No network, no listener, no clock, no exec, no foreign code.
+[ml-mcp]
+schema = "ml"
+allow = ["args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", "fs_read(\"\")", "heap", "io_read", "io_write"]
+
+[ml-mcp.reasons]
+conc = "a call of fit or cv with threads runs the numeric kernels of lib/linalg/par.cho, which spawn threads; the code is the code of ml, and the model file and the answer are the same bytes at every thread count (tests/conformance/test_determinism.py)."
+io_read = "the protocol is read from standard input, one line at a time (getchar on Io, the label io_read): the messages of the client, bounded by --max-message-bytes (docs/mcp.md section 5)."

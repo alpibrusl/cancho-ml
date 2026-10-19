@@ -581,7 +581,7 @@ fn full_path[&h, &r, &s, &t](heap: &!h Heap, root: &r [byte], src: &s [byte], tp
 // the options a replay is made with: the ceilings of the caps (they refuse, never change a byte) and the numbers of the record. The runtime texts of the record (target, lists, markers) do not fit
 // in the structure: the lists become the masks, the target and the markers are passed beside it.
 fn replay_opts(max_rows: int, task: int, seed: int, threads: int, has_target: bool, positive_given: bool, positive: int, split_num: int, split_den: int, cat_given: bool, max_cats: int, max_str: int, max_pool: int, max_catcols: int, dmask: int, fmask: int, cmask: int) -> [] verbs.Opts {
-    return verbs.Opts { cap: 16777216, max_rows: max_rows, max_cols: 8192, max_cells: 1099511627776, max_bytes: 268435456, limit: 1000, from: 0, overwrite: false, dry: false, drop_given: dmask != 0, task: task, drops: "", floats: "", target: "", model: "", plan_given: true, step: "", step_given: false, positive: "", positive_given: positive_given, split: "", split_given: split_den > 0, seed: seed, threads: threads, threads_given: true, proba: false, distance: false, target_given: has_target, task_given: false, cats: "", cat_given: cat_given, na: "", max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, max_oor: 0, max_oor_given: false, drop_mask: dmask, float_mask: fmask, cat_mask: cmask, positive_v: positive, split_num: split_num, split_den: split_den, track_given: false, jsonl_fields: "", absent_empty: false };
+    return verbs.Opts { cap: 16777216, max_rows: max_rows, max_cols: 8192, max_cells: 1099511627776, max_bytes: 268435456, limit: 1000, from: 0, overwrite: false, dry: false, drop_given: dmask != 0, task: task, plan_given: true, step_given: false, positive_given: positive_given, split_given: split_den > 0, seed: seed, threads: threads, threads_given: true, proba: false, distance: false, target_given: has_target, task_given: false, cat_given: cat_given, max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, max_oor: 0, max_oor_given: false, drop_mask: dmask, float_mask: fmask, cat_mask: cmask, positive_v: positive, split_num: split_num, split_den: split_den, track_given: false, absent_empty: false };
 }
 
 // The bit mask of the columns of the header named in the comma list: (mask, 0), or (0, the first name past the 62nd column or absent, as a 1-based count)
@@ -611,7 +611,7 @@ fn not_replayable[&h, &n](heap: &!h Heap, errs: fail.Errors, list: &static [byte
     return fail.add(heap, errs, w);
 }
 
-fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, id: &i [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read, conc] verbs.Out {
+fn verify[&h, &f, &r, &pd, &i, &cl](heap: &!h Heap, cmd: &cl [byte], fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, id: &i [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] verbs.Out {
     let (src, ok, e0) = load(heap, fs, root, dirp, id, errs);
     var e = e0;
     if !ok {
@@ -753,7 +753,7 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                                                                     texts = buffer.append(heap, texts, buffer.bytes(drr));
                                                                     borrow dfields as &dflr in {
                                                                         borrow texts as &txr in {
-                                                                            let (rp2, rst, e2) = jsonlcli.replay_input(heap, args, fs, root, buffer.bytes(dpr), buffer.bytes(fur), buffer.bytes(dflr), buffer.bytes(txr), abs_empty, e);
+                                                                            let (rp2, rst, e2) = jsonlcli.replay_input(heap, cmd, fs, root, buffer.bytes(dpr), buffer.bytes(fur), buffer.bytes(dflr), buffer.bytes(txr), abs_empty, e);
                                                                             paths.drop(heap, rp);
                                                                             rp = rp2;
                                                                             e = e2;
@@ -772,7 +772,7 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                                                                     let hdr = replay_opts(0, 1, 0, 1, false, false, 0, 0, 0, false, mc, ms, mp, mk, 0, 0, 0);
                                                                     let hcfg = verbs.config(hdr, 0, 0, 0);
                                                                     borrow rp as &rpr in {
-                                                                        let (sh, rep, e1, sk1) = verbs.scan_file(heap, fs, root, rpr, hcfg, buffer.bytes(tgr), csv.plain_sinks(heap, 8, false), e);
+                                                                        let (sh, rep, e1, sk1) = verbs.scan_file(heap, cmd, fs, root, rpr, hcfg, buffer.bytes(tgr), csv.plain_sinks(heap, 8, false), e);
                                                                         e = e1;
                                                                         csv.drop_sinks(heap, sk1);
                                                                         if rep.status == 99 {
@@ -825,7 +825,7 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                                                                     var made_ok = false;
                                                                     borrow rp as &rpr in {
                                                                         if constant {
-                                                                            let (mo, fb, ok2, e2, lg2) = cfit.make(heap, args, fs, root, rpr, ro, buffer.bytes(tgr), e, lg);
+                                                                            let (mo, fb, ok2, e2, lg2) = cfit.make(heap, cmd, fs, root, rpr, ro, buffer.bytes(tgr), e, lg);
                                                                             mfile.drop_model(heap, mo);
                                                                             buffer.drop(heap, fbytes);
                                                                             fbytes = fb;
@@ -835,9 +835,9 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                                                                         } else {
                                                                             let ptxt = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(plr)) + 1), buffer.bytes(plr));
                                                                             // the strategy and the column of the split come from the record's text (a runtime column cannot be a field of the options)
-                                                                            let spo = splitspec.SplitOpts { stratify: sstrat == 1, by: "", by_given: sstrat == 3, group: "", group_given: sstrat == 2, folds: 0, repeats: 0, repeats_given: false, emit: false };
+                                                                            let spo = splitspec.SplitOpts { stratify: sstrat == 1, by_given: sstrat == 3, group_given: sstrat == 2, folds: 0, repeats: 0, repeats_given: false, emit: false };
                                                                             borrow scol as &scr in {
-                                                                                let m = wire.make(heap, args, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), ro, spo, buffer.bytes(scr), false, e, lg);
+                                                                                let m = wire.make(heap, cmd, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), ro, spo, buffer.bytes(scr), false, e, lg);
                                                                                 let (mfb, merr, mlg, mok) = wire.made_file(heap, m);
                                                                                 buffer.drop(heap, fbytes);
                                                                                 fbytes = mfb;
@@ -928,7 +928,7 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
 
 // ---------------------------------------------------------------- run
 
-pub fn run[&h, &g, &f, &r, &pd](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, sub: &static [byte], id1: &static [byte], id2: &static [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read, conc] verbs.Out {
+pub fn run[&h, &f, &r, &pd, &cl, &c0, &c1, &c2](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], dirp: &pd paths.Rp, sub: &c0 [byte], id1: &c1 [byte], id2: &c2 [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] verbs.Out {
     if bytes.equal(sub, "list") {
         return list(heap, fs, root, dirp, o, errs, log);
     }
@@ -938,5 +938,5 @@ pub fn run[&h, &g, &f, &r, &pd](heap: &!h Heap, args: &g Args, fs: &f Fs(""), ro
     if bytes.equal(sub, "compare") {
         return compare(heap, fs, root, dirp, id1, id2, errs, log);
     }
-    return verify(heap, args, fs, root, dirp, id1, o, errs, log);
+    return verify(heap, src, fs, root, dirp, id1, o, errs, log);
 }

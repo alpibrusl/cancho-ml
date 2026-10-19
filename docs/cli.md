@@ -7,7 +7,7 @@ decided.
 
 ## 0. What this slice is
 
-The agent-visible surface of cancho-ml is the command line (and later an MCP server). `ml` is one binary with the verbs
+The agent-visible surface of cancho-ml is the command line and, over the same code, an MCP server (`ml-mcp`, section 9). `ml` is one binary with the verbs
 `fit`, `predict`, `eval`, `describe`, `introspect` and `skill` (`predict` reads standard input; `describe` prints what a model file requires of its caller; a second binary, `ml-predict`, has `predict`, `describe`, `introspect` and `skill` only: `docs/serving.md`; a third, `ml-serve`, serves one model file over HTTP: `docs/serving-http.md`), built the way `cancho-table`'s `table` is: one flag table drives the
 parser, `introspect` and `skill`; every refusal is data with a `<area>.<name>` tag, an exit code and, where safe, a repair;
 the authority is derived by the compiler and gated against a committed manifest. The linear-algebra and tensor packages stay
@@ -325,25 +325,9 @@ issue for cancho-tools, not worked around by copying the module.
 | `toolbox.path.has_dotdot` | refuses a `..` *component* | the builtins that take a whole path (`open_read`, `open_dir`) trap on `..` anywhere in the string (`a..b`, `.../x`): found by gate N1, worked around in `tools/ml/paths.cho`, and a reproducer for cancho-tools is `ml --target y --output o.cml a..b` with the workaround removed (mutant `n1-double-dot-check-removed` is exactly that) |
 | `describe` | no field for a tool-specific `confinement_note` or `concurrency` | one sentence each would let a tool state its own |
 
-## 9. The MCP server: not started; how it will be derived (stub for the M9 issue)
+## 9. The MCP server
 
-cancho-table's `server/mcp.cho` derives its one tool from `table introspect`; the server for `ml` should do the same and hold no
-description of its own. From the flag table:
-
-* **Three tools**, `ml_fit`, `ml_predict`, `ml_eval`, one per verb, each with the properties of `spec.allowed(verb)` and `FILE` as
-  `file`. The input schema comes from each flag's `kind` (`nat` is an integer with the minimum of the check and the `introspect.limits`
-  ceiling, `choice:a/b` an enum, `path` a string, `bool` a boolean, `text` a non-empty string) and its `default`.
-* **Roles decide what is exposed.** `root` is the server's (`ml_* --root DIR`, first and once; a `root` property is refused as in
-  table). `guard` flags (`--overwrite`, `--dry-run`) are the only way to widen or to narrow what a call does, so the server
-  does not offer `overwrite` unless its own command line allowed it. `path-write` flags (`--output`, `--log`) stay confined by the tool
-  itself; the server adds no path check of its own.
-* **The argv is fixed in form.** Every flag value is its own argument. Table's server uses `--name=value`; `ml` refuses that form for
-  path flags (section 2.1), so the generator must emit two arguments for flags of role `path-*`. The alternative, teaching `ml` to take
-  `--output=FILE`, needs a text form of `toolbox.path.operand` that the pinned package does not have.
-* **Result.** `structuredContent` is the one JSON document, `isError` is `ok == false`, and `meta.version` is the tool's. The
-  generator refuses a tool whose derived authority holds `io_read` unless the verb that reads it is `predict` with an operand always given (the server gives the child an empty standard input, and `predict -` would answer the refusal of an empty file). `ml-serve` (`docs/serving.md`) calls the predictor in-process and is the way a service is served.
-* **Gate (when built):** the same shape as table's `test_mcp.py`: the argv a stand-in binary receives, no shell metacharacter, the
-  schema of every tool equal to a projection of the flag table (T1 extended with the MCP schema), and a mutant per rule.
+`ml-mcp` is built ([mcp.md](mcp.md)). It derives its ten tools from the flag table as this section proposed (the verbs and their flags from `allowed(verb)` and the usage lines, `nat` as an integer with the ceiling of `introspect.limits`, `choice` as an enum, `bool` as a boolean, `text` and `path` as strings, the output schema from `schemas/ml.v1.json`), and it differs from the proposal in three places. A call runs the code of `ml` in the server's process on a **packed command line** (`tools/ml/argv.cho`) instead of through a child process, so the argv a path flag needs in two arguments is the argv the server builds; the library reads the command line through that module and not through `Args`; and the result is the document `ml` prints, as `structuredContent`, with `isError` true for a refusal and the exit code in `_meta`. The gates are in [mcp.md](mcp.md) section 8: the schema of every tool equal to a projection of the flag table (`scripts/check_mcp_tools.py`), the answer of every fixture of the command line a call can say equal to the command line's answer byte for byte, and mutants of the server.
 
 ## 10. Open questions
 

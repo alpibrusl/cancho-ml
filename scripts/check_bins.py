@@ -9,7 +9,9 @@ main of `ml`) and tools/ml-predict (its own main) in place of generated/ml's par
 * tools/ml-predict holds anything but a main.cho of at most 150 lines (a second copy of a module would be a second definition);
 * a module is defined in two files of the union of the lists (a copy under another name of the file);
 * `ml-serve` lists anything but what `ml-predict` lists with tools/ml-serve and generated/ml-serve in place of tools/ml-predict and generated/ml-predict, or tools/ml-serve holds a file
-  that is not a .cho source of at most 2,000 lines.
+  that is not a .cho source of at most 2,000 lines;
+* `ml-mcp` (docs/mcp.md section 7) lists anything but what `ml-predict` lists with tools/ml-mcp and generated/ml-mcp in place of tools/ml-predict and generated/ml-predict, and the two
+  files of ml-serve that render a record (cols.cho and num.cho), or tools/ml-mcp holds a file that is not a .cho source of at most 2,000 lines, or lacks main.cho.
 
     python3 scripts/check_bins.py
     python3 scripts/check_bins.py --mutants     # each failure above is injected into a copy of the tree: it must be refused
@@ -79,9 +81,30 @@ def check(root):
                     problems.append("%s is over 2,000 lines" % f.name)
             if not (sdir / "main.cho").exists():
                 problems.append("tools/ml-serve has no main.cho")
+    # ml-mcp: the list of ml-predict with its own directories and the two files of ml-serve that turn a JSON record into a CSV row
+    mm = b["ml-mcp"]["sources"] if "ml-mcp" in b else None
+    if mm is None:
+        problems.append("cancho.toml has no [[bin]] ml-mcp")
+        mm = []
+    else:
+        shared = ["tools/ml-serve/cols.cho", "tools/ml-serve/num.cho"]
+        want = [t for s in mp for t in ([s.replace("tools/ml-predict", "tools/ml-mcp").replace("generated/ml-predict", "generated/ml-mcp")] if s != "tools/ml-predict" else shared + ["tools/ml-mcp"])]
+        if mm != want:
+            problems.append("the source list of ml-mcp is not the list of ml-predict with tools/ml-mcp, generated/ml-mcp and the two files of ml-serve: %s" % (str([s for s in mm if s not in want]) + str([s for s in want if s not in mm])))
+        mdir = root / "tools" / "ml-mcp"
+        if not mdir.is_dir():
+            problems.append("tools/ml-mcp is not a directory")
+        else:
+            for f in sorted(mdir.glob("*")):
+                if f.suffix != ".cho":
+                    problems.append("tools/ml-mcp holds %s: only .cho sources belong there" % f.name)
+                elif len(f.read_text().splitlines()) > 2000:
+                    problems.append("%s is over 2,000 lines" % f.name)
+            if not (mdir / "main.cho").exists():
+                problems.append("tools/ml-mcp has no main.cho")
     # one definition of every module across all the lists
     seen = {}
-    union = list(dict.fromkeys(ml + mp + ms))
+    union = list(dict.fromkeys(ml + mp + ms + mm))
     for entry in union:
         p = root / entry
         if entry.startswith("generated/") or not p.exists():
@@ -99,7 +122,7 @@ def check(root):
 def mutants():
     def copy():
         d = pathlib.Path(tempfile.mkdtemp(prefix="bins-"))
-        for rel in ("cancho.toml", "tools/ml", "tools/ml-predict", "tools/ml-serve", "generated", "lib"):
+        for rel in ("cancho.toml", "tools/ml", "tools/ml-predict", "tools/ml-serve", "tools/ml-mcp", "generated", "lib"):
             src = ROOT / rel
             if src.is_dir():
                 shutil.copytree(src, d / rel)
@@ -125,6 +148,12 @@ def mutants():
         ("a copy of a module under tools/ml-serve", lambda d: shutil.copy(d / "tools/ml/paths.cho", d / "tools/ml-serve/paths.cho")),
         ("the main of ml-predict in the list of ml-serve", lambda d: edit(d, "cancho.toml", '"tools/ml-serve", "generated/ml-serve"]', '"tools/ml-predict", "tools/ml-serve", "generated/ml-serve"]')),
         ("a source that is not cancho in tools/ml-serve", lambda d: (d / "tools/ml-serve/notes.txt").write_text("x")),
+        ("a file of tools/ml left out of the list of ml-mcp", lambda d: edit(d, "cancho.toml", '"tools/ml/wireio.cho", "tools/ml-serve/cols.cho"', '"tools/ml-serve/cols.cho"')),
+        ("a file of ml-serve left out of the list of ml-mcp", lambda d: edit(d, "cancho.toml", '"tools/ml-serve/cols.cho", "tools/ml-serve/num.cho", "tools/ml-mcp"', '"tools/ml-serve/cols.cho", "tools/ml-mcp"')),
+        ("the main of ml-serve in the list of ml-mcp", lambda d: edit(d, "cancho.toml", '"tools/ml-serve/cols.cho", "tools/ml-serve/num.cho", "tools/ml-mcp"', '"tools/ml-serve/cols.cho", "tools/ml-serve/num.cho", "tools/ml-serve", "tools/ml-mcp"')),
+        ("a copy of a module under tools/ml-mcp", lambda d: shutil.copy(d / "tools/ml/paths.cho", d / "tools/ml-mcp/paths.cho")),
+        ("a source that is not cancho in tools/ml-mcp", lambda d: (d / "tools/ml-mcp/notes.txt").write_text("x")),
+        ("tools/ml-mcp without a main", lambda d: (d / "tools/ml-mcp/main.cho").unlink()),
         ("an entry point that grew", lambda d: (d / "tools/ml-predict/main.cho").write_text((d / "tools/ml-predict/main.cho").read_text() + "\n" * 200)),
     ]
     bad = 0

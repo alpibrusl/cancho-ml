@@ -1,0 +1,32 @@
+edition 5;
+
+module mcp.mspec;
+
+// What `ml-mcp` says about itself (docs/mcp.md sections 3 and 5): the flag table that drives the parser, `introspect` and `skill`, the rules of its own beside the shared
+// catalogue, and the limits. Written by hand, like the tables of `ml-serve`. Format as spec.cho: entries separated by `;`, fields by `|`, so no help text holds either.
+
+import toolbox.describe;
+
+// name|short|kind|role|default|help
+pub fn flag_table() -> [] &static [byte] {
+    return "root||path|root||resolve every path of a tool call (the CSV, the model file, the output, the run records) beneath this directory, following no symbolic link, and refuse paths outside it. Required with --allow-write;allow-write||bool|guard||list `fit` and the write flags of the other tools (output, overwrite, dry-run, track), and let them write files beneath --root. Without it the server writes nothing and a call of a write tool is refused with mcp.read-only;max-message-bytes||nat|none|1048576|the longest message read, in bytes, 1 to 16777216. A longer line is discarded as it arrives and answered with the JSON-RPC error -32600";
+}
+
+// tag|exit|repairable|summary: the tags `toolbox.rules` and `ml` do not have. The ml.param.out-of-range of a start flag is ml's own tag (spec.extra()).
+pub fn extra() -> [] &static [byte] {
+    return "mcp.read-only|4|never|a tool that writes a file was called, or a write flag was given, and the server was started without --allow-write. Hint: start ml-mcp with --root DIR --allow-write to let a call write beneath DIR. Repair: none.;mcp.record-column|8|never|a record of predict holds a key that is not a column the model requires, or holds a column twice. The JSON Pointer of the key is in detail. Hint: describe lists the columns the model requires. Repair: none.;serve.number-not-exact|8|never|a number of a record cannot be written exactly as the type of its column: an int is a whole number of at most 12 digits, a dec has the digits of its scale, a float is within the range of a double. The JSON Pointer of the value is in detail. Hint: send the value as the column has it. Repair: none.;serve.string-not-renderable|8|never|a category of a record holds a carriage return directly followed by a line feed, which a CSV reader reads as the line feed alone. The JSON Pointer of the value is in detail. Hint: remove the carriage return. Repair: none.";
+}
+
+// the rules ml-mcp can emit itself (a tool call answers the rules of ml besides: the tools list them)
+pub fn rules() -> [] &static [byte] {
+    return "args.unknown-flag;args.missing-value;args.bad-value;args.unexpected-value;args.duplicate-flag;args.conflict;args.unknown-command;args.too-many-operands;args.required-flag;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;path.bad-name;ml.param.out-of-range;mcp.read-only;mcp.record-column;serve.number-not-exact;serve.string-not-renderable";
+}
+
+// name|default|ceiling
+pub fn limits() -> [] &static [byte] {
+    return "max-message-bytes|1048576|16777216";
+}
+
+pub fn tool() -> [] describe.Tool {
+    return describe.Tool { name: "ml-mcp", version: "0.1.0", summary: "Serve cancho-ml to an agent over the Model Context Protocol on standard input and output (revision 2025-06-18, newline-delimited JSON-RPC). The tools are derived from the flag table of ml: fit, predict, eval, cv, describe, introspect and runs_list, runs_show, runs_compare, runs_verify. A tool call runs the code of ml in the same process and answers the document ml prints as structuredContent; a refusal is a tool result with isError true, the rule, the exit code and the repair as ml prints them. The server is read-only unless it is started with --allow-write and a --root. It has no network, no listener, no subprocess and no clock; it reads one message at a time and bounds the size of a message.", usage: "ml-mcp [--root DIR] [--allow-write] [--max-message-bytes N]\nml-mcp introspect|skill\n\nRegister it with a client as the command ml-mcp with the arguments --root DIR. The messages are one JSON-RPC message per line. Paths in a tool call are relative to --root when given (absolute paths, .. and symbolic links are refused). The server runs until its standard input ends.", output: "document", schema: "ml.v1", flags: flag_table(), operands: "", rules: rules(), extra_rules: extra(), limits: limits(), reversibility: "irreversible-bounded", stdin: "the JSON-RPC messages of the client, one per line", guarantees: "deterministic;idempotent" };
+}

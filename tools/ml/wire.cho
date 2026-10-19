@@ -12,6 +12,7 @@ module ml.wire;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.argv;
 import ml.catmat;
 import ml.catwire;
 import ml.csv;
@@ -59,11 +60,11 @@ pub fn planned[&n](plan_given: bool, model: &n [byte]) -> [] bool {
 }
 
 // the checks of the flags of the planned models that need no file (docs/wiring.md section 2)
-pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, verb: int) -> [heap, args] fail.Errors {
+pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, verb: int) -> [heap] fail.Errors {
     let table = spec.flag_table();
     var e = errs;
-    let plan_given = cli.has(parsed, table, "plan");
-    let model = cli.text(args, parsed, table, "model");
+    let plan_given = argv.has(src, "plan");
+    let model = argv.text(src, "model");
     let kind = est.kind_named(model);
     var i = 0;
     if verb == 1 {
@@ -72,14 +73,14 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             var k = 1;
             while k <= 5 {
                 let f = bytes.field(needing, ',', k);
-                if cli.has(parsed, table, f) {
+                if argv.has(src, f) {
                     e = wiredata.conflict(heap, e, f, "this flag needs a model other than constant: --model linear, logistic, kmeans, tree or forest, or --plan");
                 }
                 k = k + 1;
             }
             i = 0;
             while i < cli.entries(table) {
-                if est.hparam_flag(cli.name_of(table, i)) && cli.has(parsed, table, cli.name_of(table, i)) {
+                if est.hparam_flag(cli.name_of(table, i)) && argv.has(src, cli.name_of(table, i)) {
                     e = wiredata.conflict(heap, e, cli.name_of(table, i), "this flag is a hyperparameter of a model other than constant: give --model");
                 }
                 i = i + 1;
@@ -89,14 +90,14 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             var k = 1;
             while k <= 3 {
                 let f = bytes.field(describing, ',', k);
-                if cli.has(parsed, table, f) {
+                if argv.has(src, f) {
                     e = wiredata.conflict(heap, e, f, "--plan describes the whole fit: its model line is the model, and no other flag may also describe it");
                 }
                 k = k + 1;
             }
             i = 0;
             while i < cli.entries(table) {
-                if est.hparam_flag(cli.name_of(table, i)) && cli.has(parsed, table, cli.name_of(table, i)) {
+                if est.hparam_flag(cli.name_of(table, i)) && argv.has(src, cli.name_of(table, i)) {
                     e = wiredata.conflict(heap, e, cli.name_of(table, i), "--plan describes the whole fit: its model line holds the hyperparameters");
                 }
                 i = i + 1;
@@ -105,29 +106,29 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             i = 0;
             while i < cli.entries(table) {
                 let name = cli.name_of(table, i);
-                if est.hparam_flag(name) && cli.has(parsed, table, name) {
+                if est.hparam_flag(name) && argv.has(src, name) {
                     if !est.takes(kind, name) {
                         e = wiredata.conflict(heap, e, name, "this model has no such hyperparameter");
-                    } else if !est.hparam_ok(name, cli.text(args, parsed, table, name)) {
-                        e = wiredata.bad_value(heap, e, name, cli.text(args, parsed, table, name), "a number in the range introspect gives for the hyperparameter");
+                    } else if !est.hparam_ok(name, argv.text(src, name)) {
+                        e = wiredata.bad_value(heap, e, name, argv.text(src, name), "a number in the range introspect gives for the hyperparameter");
                     }
                 }
                 i = i + 1;
             }
             if est.task(kind) == 4 {
-                if cli.has(parsed, table, "target") {
+                if argv.has(src, "target") {
                     e = wiredata.conflict(heap, e, "target", "kmeans has no target: it clusters the rows by their features, so a label column is dropped with --drop");
                 }
-                if cli.has(parsed, table, "task") {
+                if argv.has(src, "task") {
                     e = wiredata.conflict(heap, e, "task", "kmeans is a clustering: its task is fixed and no flag changes it");
                 }
             }
-            if cli.has(parsed, table, "task") && est.task(kind) != 3 && est.task(kind) != 4 {
+            if argv.has(src, "task") && est.task(kind) != 3 && est.task(kind) != 4 {
                 var want: &static [byte] = "regression";
                 if est.task(kind) == 2 {
                     want = "classification";
                 }
-                if !bytes.equal(cli.text(args, parsed, table, "task"), want) {
+                if !bytes.equal(argv.text(src, "task"), want) {
                     e = wiredata.conflict(heap, e, "task", "this model's task is the other one: linear is a regression and logistic a classification");
                 }
             }
@@ -135,21 +136,21 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
             var ptask = est.task(kind);
             if ptask == 3 {
                 ptask = 1;
-                if bytes.equal(cli.text(args, parsed, table, "task"), "classification") {
+                if bytes.equal(argv.text(src, "task"), "classification") {
                     ptask = 2;
                 }
             }
-            if ptask == 1 && cli.has(parsed, table, "positive") {
+            if ptask == 1 && argv.has(src, "positive") {
                 e = wiredata.conflict(heap, e, "positive", "a regression has no positive label");
             }
-            if ptask == 4 && cli.has(parsed, table, "positive") {
+            if ptask == 4 && argv.has(src, "positive") {
                 e = wiredata.conflict(heap, e, "positive", "a clustering has no positive label");
             }
         }
     }
     if verb == 1 || verb == 3 || verb == 5 {
-        if cli.has(parsed, table, "threads") {
-            let t = cli.nat(args, parsed, table, "threads");
+        if argv.has(src, "threads") {
+            let t = argv.nat(src, "threads");
             if t < 1 || t > 64 {
                 var w = open_threads(heap);
                 w = fail.detail_int(heap, w, "value", t);
@@ -158,16 +159,16 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
                 e = fail.add(heap, e, w);
             }
         }
-        if cli.has(parsed, table, "split") {
-            let (ok, num, den) = wiredata.parse_split(cli.text(args, parsed, table, "split"));
+        if argv.has(src, "split") {
+            let (ok, num, den) = wiredata.parse_split(argv.text(src, "split"));
             if !ok {
-                e = wiredata.bad_value(heap, e, "split", cli.text(args, parsed, table, "split"), "train=F with 0 < F < 1 and at most 6 digits after the point, for example train=0.8");
+                e = wiredata.bad_value(heap, e, "split", argv.text(src, "split"), "train=F with 0 < F < 1 and at most 6 digits after the point, for example train=0.8");
             }
         }
-        if cli.has(parsed, table, "positive") {
-            let (ok, v) = wiredata.parse_label(cli.text(args, parsed, table, "positive"));
+        if argv.has(src, "positive") {
+            let (ok, v) = wiredata.parse_label(argv.text(src, "positive"));
             if !ok {
-                e = wiredata.bad_value(heap, e, "positive", cli.text(args, parsed, table, "positive"), "an integer label");
+                e = wiredata.bad_value(heap, e, "positive", argv.text(src, "positive"), "an integer label");
             }
         }
     }
@@ -181,24 +182,24 @@ fn open_threads[&h](heap: &!h Heap) -> [heap] json.Writer {
 }
 
 // ` name=value` for every hyperparameter flag the command line gave: the end of the model line a fit builds from its flags
-pub fn model_tokens[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, kind: int) -> [heap, args] buffer.Buffer {
+pub fn model_tokens[&h, &cl](heap: &!h Heap, src: &cl [byte], kind: int) -> [heap] buffer.Buffer {
     let table = spec.flag_table();
     var b = buffer.empty(heap, 32);
     var i = 0;
     while i < cli.entries(table) {
         let name = cli.name_of(table, i);
-        if est.hparam_flag(name) && est.takes(kind, name) && cli.has(parsed, table, name) {
+        if est.hparam_flag(name) && est.takes(kind, name) && argv.has(src, name) {
             b = buffer.push(heap, b, byte_of(' '));
             b = buffer.append(heap, b, name);
             b = buffer.push(heap, b, byte_of('='));
-            b = buffer.append(heap, b, cli.text(args, parsed, table, name));
+            b = buffer.append(heap, b, argv.text(src, name));
         }
         i = i + 1;
     }
     // the task of a model that serves both is a key of its model line, from --task
     if est.task(kind) == 3 {
         b = buffer.append(heap, b, " task=");
-        b = buffer.append(heap, b, cli.text(args, parsed, table, "task"));
+        b = buffer.append(heap, b, argv.text(src, "task"));
     }
     return b;
 }
@@ -222,7 +223,7 @@ pub fn drop_planned[&h](heap: &!h Heap, p: Planned) -> [heap] int {
 }
 
 // the text of the plan: the file of --plan, or the steps of --step (semicolons are line ends) and the model line the flags give
-fn plan_source[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], planp: &pp paths.Rp, o: verbs.Opts, model_tokens: &t [byte], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, bool, fail.Errors) {
+fn plan_source[&h, &f, &r, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], planp: &pp paths.Rp, o: verbs.Opts, model_tokens: &t [byte], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, bool, fail.Errors) {
     let e = errs;
     if o.plan_given {
         let (data, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(planp), paths.full(planp), plan.max_bytes() + 1);
@@ -238,27 +239,27 @@ fn plan_source[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byt
     }
     var b = buffer.empty(heap, 128);
     var i = 0;
-    while i < len(o.step) {
-        if int_of(o.step[i]) == ';' {
+    while i < len(argv.text(src, "step")) {
+        if int_of(argv.text(src, "step")[i]) == ';' {
             b = buffer.push(heap, b, byte_of(10));
         } else {
-            b = buffer.push(heap, b, o.step[i]);
+            b = buffer.push(heap, b, argv.text(src, "step")[i]);
         }
         i = i + 1;
     }
-    if len(o.step) > 0 {
+    if len(argv.text(src, "step")) > 0 {
         b = buffer.push(heap, b, byte_of(10));
     }
     b = buffer.append(heap, b, "model kind=");
-    b = buffer.append(heap, b, o.model);
+    b = buffer.append(heap, b, argv.text(src, "model"));
     b = buffer.append(heap, b, model_tokens);
     b = buffer.push(heap, b, byte_of(10));
     return (b, true, e);
 }
 
 // The plan of the command line, parsed (the text from --plan or from --step and the model)
-pub fn make_plan[&h, &f, &r, &pp, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Planned, bool, fail.Errors) {
-    let (ptxt, ok0, e0) = plan_source(heap, fs, root, planp, o, tokens, errs);
+pub fn make_plan[&h, &f, &r, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], planp: &pp paths.Rp, tokens: &t [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Planned, bool, fail.Errors) {
+    let (ptxt, ok0, e0) = plan_source(heap, src, fs, root, planp, o, tokens, errs);
     return build_plan(heap, ptxt, ok0, o, e0);
 }
 
@@ -335,7 +336,7 @@ pub fn empty_data[&h](heap: &!h Heap) -> [heap] Data {
     return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, yall: box_slice(heap, 2, 0.0), cat: false };
 }
 
-pub fn load_data[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], mixed_plan: bool, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
+pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], mixed_plan: bool, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
@@ -346,7 +347,7 @@ pub fn load_data[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, f
     var ids = catmat.empty(heap);
     var voc = dict.empty_vocab(heap);
     if o.cat_given || mixed_plan {
-        let l = csvload.load_cat_with(heap, fs, root, file, verbs.config(o, 0, 0, 0), verbs.cat_config(o), tg, false, dict.empty_vocab(heap), false, na);
+        let l = csvload.load_cat_with(heap, src, fs, root, file, verbs.config(o, 0, 0, 0), verbs.cat_config(o), tg, false, dict.empty_vocab(heap), false, na);
         let (x2, ids2, voc2, sh2, rep2, code2) = csvload.cat_load_parts(l);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
@@ -359,7 +360,7 @@ pub fn load_data[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, f
         rep = rep2;
         code = code2;
     } else {
-        let (x2, sh2, rep2, code2) = csvload.load_t_rp(heap, fs, root, file, verbs.config(o, 0, 0, 0), tg, false);
+        let (x2, sh2, rep2, code2) = csvload.load_t_rp(heap, src, fs, root, file, verbs.config(o, 0, 0, 0), tg, false);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
         x = x2;
@@ -375,7 +376,7 @@ pub fn load_data[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, f
             e = fail.io_error(heap, e, rep.aux, false, paths.shown(file));
             go = false;
         } else if rep.status != 0 {
-            e = verbs.explain(heap, args, e, rep, sr, o, paths.shown(file));
+            e = verbs.explain(heap, src, e, rep, sr, o, paths.shown(file));
             go = false;
         } else if code != 0 {
             e = wiredata.code_error(heap, e, code, 0, 0, 0);
@@ -574,7 +575,7 @@ pub fn feature_count[&d](ds: &d Data) -> [] int {
 }
 
 // Fit the steps on the training rows (those of `sel` equal to `want`, all when want < 0), then the estimator on what the steps leave
-pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, rep: int, fold: int, errs: fail.Errors) -> [heap, args, conc] (Trained, bool, fail.Errors) {
+pub fn train[&h, &dd, &ci, &cv, &pp, &s, &cl](heap: &!h Heap, src: &cl [byte], ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, sel: &s [int], want: int, o: verbs.Opts, retry_ok: bool, rep: int, fold: int, errs: fail.Errors) -> [heap, conc] (Trained, bool, fail.Errors) {
     var e = errs;
     var go = true;
     let nfeat = feature_count(ds);
@@ -623,7 +624,7 @@ pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: 
                             fitted = f2;
                             xt = xt2;
                             if flt.code != 0 {
-                                e = catwire.fault_error(heap, args, e, flt, pls.pl, cvoc, o.step_given && !o.plan_given);
+                                e = catwire.fault_error(heap, src, e, flt, pls.pl, cvoc, o.step_given && !o.plan_given);
                                 go = false;
                             } else {
                                 borrow rem as &remr in {
@@ -661,7 +662,7 @@ pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: 
                 let (mc, mlist) = wiredata.missing_columns(heap, xq, fq.nm);
                 if mc > 0 && !est.takes_missing(pls.kind) {
                     borrow mlist as &lr in {
-                        e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), retry_ok);
+                        e = wiredata.missing_error(heap, src, e, mc, buffer.bytes(lr), retry_ok);
                     }
                     go = false;
                 }
@@ -788,12 +789,12 @@ pub fn train[&h, &g, &dd, &ci, &cv, &pp, &s](heap: &!h Heap, args: &g Args, ds: 
             if code == refuse.fit_collinear() {
                 borrow diag as &dgr in {
                     borrow fitted as &fq2 in {
-                        e = fitfail.collinear(heap, args, e, kind == 5, contents(dgr), fq2.nm, contents(pls.fp)[0], o, rep, fold);
+                        e = fitfail.collinear(heap, src, e, kind == 5, contents(dgr), fq2.nm, contents(pls.fp)[0], o, rep, fold);
                     }
                 }
             } else if code == refuse.fit_separable() {
                 borrow diag as &dgr in {
-                    e = fitfail.separable(heap, args, e, contents(dgr), contents(pls.ip)[0], contents(pls.fp)[0], o, rep, fold);
+                    e = fitfail.separable(heap, src, e, contents(dgr), contents(pls.ip)[0], contents(pls.fp)[0], o, rep, fold);
                 }
             }
             unbox_slice(heap, diag);
@@ -1090,7 +1091,7 @@ fn apply_any[&h, &p, &m, &i, &v](heap: &!h Heap, cat: bool, payload: &p [byte], 
 }
 
 // ,"split":{...},"holdout":{...} for the rows --split held out, scored through the STORED steps and the fitted model
-pub fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], which: int, ntest: int, on: &static [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, args] (buffer.Buffer, bool, fail.Errors) {
+pub fn holdout[&h, &dd, &ci, &cv, &pp, &tt, &s, &cl](heap: &!h Heap, src: &cl [byte], ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], which: int, ntest: int, on: &static [byte], o: verbs.Opts, errs: fail.Errors) -> [heap] (buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     var go = true;
     var w = json.writer(heap, 256);
@@ -1126,7 +1127,7 @@ pub fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Arg
                     let (xs, unk, f4) = apply_any(heap, ds.cat, buffer.bytes(tr.fitted.payload), xr, ntest, itr, cvoc, o);
                     if f4.code != 0 {
                         if ds.cat {
-                            e = catwire.fault_error(heap, args, e, f4, pls.pl, cvoc, false);
+                            e = catwire.fault_error(heap, src, e, f4, pls.pl, cvoc, false);
                         } else {
                             e = wiredata.code_error(heap, e, f4.code, f4.a, f4.b, f4.c);
                         }
@@ -1136,7 +1137,7 @@ pub fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Arg
                             let (mc, mlist) = wiredata.missing_columns(heap, xq, tr.fitted.nm);
                             if mc > 0 && !est.takes_missing(pls.kind) {
                                 borrow mlist as &lr in {
-                                    e = wiredata.missing_error(heap, args, e, mc, buffer.bytes(lr), false);
+                                    e = wiredata.missing_error(heap, src, e, mc, buffer.bytes(lr), false);
                                 }
                                 go = false;
                             }
@@ -1197,7 +1198,7 @@ pub fn holdout[&h, &g, &dd, &ci, &cv, &pp, &tt, &s](heap: &!h Heap, args: &g Arg
 }
 
 // the model file's bytes and the summary of the answer
-fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv, &tn, &nn, &xs, &xa](heap: &!h Heap, args: &g Args, ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, pv: &pv [byte], want_rec: bool, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], spec_text: &xs [byte], assign_json: &xa [byte], errs: fail.Errors) -> [heap, args] (buffer.Buffer, buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
+fn assemble[&h, &dd, &ci, &cv, &pp, &tt, &s, &pv, &tn, &nn, &xs, &xa, &cl](heap: &!h Heap, src: &cl [byte], ds: &dd Data, cids: &ci catmat.Ids, cvoc: &cv dict.Vocab, pls: &pp Planned, tr: &tt Trained, sel: &s [int], ntest: int, pv: &pv [byte], want_rec: bool, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], spec_text: &xs [byte], assign_json: &xa [byte], errs: fail.Errors) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, bool, fail.Errors) {
     var e = errs;
     let kind = pls.kind;
     var mp = box_slice(heap, 8, byte_of(0));
@@ -1264,7 +1265,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv, &tn, &nn, &xs, &xa](heap: 
     unbox_slice(heap, mp);
     var split = buffer.empty(heap, 1);
     if go && o.split_given {
-        let (sp2, ok6, e6) = holdout(heap, args, ds, cids, cvoc, pls, tr, sel, 1, ntest, "held-out", o, e);
+        let (sp2, ok6, e6) = holdout(heap, src, ds, cids, cvoc, pls, tr, sel, 1, ntest, "held-out", o, e);
         buffer.drop(heap, split);
         split = sp2;
         e = e6;
@@ -1279,7 +1280,7 @@ fn assemble[&h, &g, &dd, &ci, &cv, &pp, &tt, &s, &pv, &tn, &nn, &xs, &xa](heap: 
                 rec = buffer.append(heap, buffer.empty(heap, buffer.size(spr) + 1), buffer.bytes(spr));
             }
         } else {
-            let (rc2, ok8, e8) = holdout(heap, args, ds, cids, cvoc, pls, tr, sel, 0 - 1, ds.nrows, "train", o, e);
+            let (rc2, ok8, e8) = holdout(heap, src, ds, cids, cvoc, pls, tr, sel, 0 - 1, ds.nrows, "train", o, e);
             buffer.drop(heap, rec);
             rec = rc2;
             e = e8;
@@ -1356,7 +1357,7 @@ fn failed_made[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer) -> [he
 
 // Fit the model of the plan text `ptxt` (consumed; `ok` false when the text could not be had) on the file `file`, as `fit` does, and make its file. `tg` is the target's name and `na` the
 // missing-value markers: they come from the command line, or from a record (a runtime text cannot be a field of Opts). `want_rec`: also score the rows for the run record.
-pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], o: verbs.Opts, sp: splitspec.SplitOpts, spcol: &sk [byte], want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read, conc] Made {
+pub fn make[&h, &f, &r, &pf, &tn, &nn, &sk, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], o: verbs.Opts, sp: splitspec.SplitOpts, spcol: &sk [byte], want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] Made {
     var e = errs;
     var lg = log;
     let (pls, ok1, e1) = build_plan(heap, ptxt, ok0, o, e);
@@ -1393,7 +1394,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
     if go && o.split_given && splitspec.strategy(sp) >= 2 {
         borrow pls as &npq2 in {
             if est.needs_split(kind, contents(npq2.ip)) {
-                e = splitspec.early_stopping_combination(heap, e, args, splitspec.strategy(sp));
+                e = splitspec.early_stopping_combination(heap, e, src, splitspec.strategy(sp));
                 go = false;
             }
         }
@@ -1417,7 +1418,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
         hashed = st1 == 0;
     }
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, args, fs, root, file, o, tg, na, mixed_plan, task, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, mixed_plan, task, e, lg);
         drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -1442,7 +1443,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
         var nt = 0;
         var sel2 = box_slice(heap, 2, 0);
         borrow ds as &dq1 in {
-            let (s3, nt3, ok3, e3) = splitwire.holdout_sel(heap, args, fs, root, file, sp, spcol, o, dn, task, contents(dq1.yall), e);
+            let (s3, nt3, ok3, e3) = splitwire.holdout_sel(heap, src, fs, root, file, sp, spcol, o, dn, task, contents(dq1.yall), e);
             unbox_slice(heap, sel2);
             sel2 = s3;
             nt = nt3;
@@ -1488,7 +1489,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
                 borrow cvoc as &cvr in {
                     borrow pls as &pr in {
                         borrow sel as &sr in {
-                            let (t3, ok4, e4) = train(heap, args, dr, cir, cvr, pr, contents(sr), want, o, retry_ok, 0, 0 - 1, e);
+                            let (t3, ok4, e4) = train(heap, src, dr, cir, cvr, pr, contents(sr), want, o, retry_ok, 0, 0 - 1, e);
                             drop_trained(heap, t2);
                             t2 = t3;
                             ok3 = ok4;
@@ -1547,7 +1548,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
                                 borrow spec_buf as &spb in {
                                     borrow assign_buf as &asb in {
                                         borrow pv as &pvr in {
-                                            let (fb2, sm2, rc2, ok7, e7) = assemble(heap, args, dr, cir, cvr, pr, tq, contents(sq), ntest, buffer.bytes(pvr), want_rec, o, tg, na, buffer.bytes(spb), buffer.bytes(asb), e);
+                                            let (fb2, sm2, rc2, ok7, e7) = assemble(heap, src, dr, cir, cvr, pr, tq, contents(sq), ntest, buffer.bytes(pvr), want_rec, o, tg, na, buffer.bytes(spb), buffer.bytes(asb), e);
                                             buffer.drop(heap, fbytes);
                                             buffer.drop(heap, summary);
                                             buffer.drop(heap, rec);
@@ -1642,9 +1643,9 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
     return made;
 }
 
-pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t, &pt](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, trackp: &pt paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
-    let (ptxt, ok0, e0) = plan_source(heap, fs, root, planp, o, tokens, errs);
-    let m = make(heap, args, fs, root, file, ptxt, ok0, o.target, o.na, o, sp, splitspec.column(sp), o.track_given, e0, log);
+pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, trackp: &pt paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
+    let (ptxt, ok0, e0) = plan_source(heap, src, fs, root, planp, o, tokens, errs);
+    let m = make(heap, src, fs, root, file, ptxt, ok0, argv.text(src, "target"), argv.text(src, "na-values"), o, sp, splitspec.column(src, sp), o.track_given, e0, log);
     var made_ok = false;
     var kind = 0;
     var task = 0;
@@ -1681,7 +1682,7 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t, &pt](heap: &!h Heap, args: &g Args
             if est.kind_of(mq.kind) >= kinds.first_ordered_model() {
                 sum_order = kinds.sum_order_for(est.kind_of(mq.kind));
             }
-            let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(mq.fbytes), buffer.bytes(mq.sha), mq.file_bytes, mq.file_rows, mq.trows, mq.ntest, mq.features, mq.steps, o.target, mq.task != 4, wiredata.task_word(mq.task), buffer.bytes(mq.ptext), buffer.bytes(mq.splt), buffer.bytes(mq.rec), sum_order, o.na, o, fail.empty_in(heap, spec.extra()));
+            let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(mq.fbytes), buffer.bytes(mq.sha), mq.file_bytes, mq.file_rows, mq.trows, mq.ntest, mq.features, mq.steps, argv.text(src, "target"), mq.task != 4, wiredata.task_word(mq.task), buffer.bytes(mq.ptext), buffer.bytes(mq.splt), buffer.bytes(mq.rec), sum_order, argv.text(src, "na-values"), src, o, fail.empty_in(heap, spec.extra()));
             buffer.drop(heap, recbuf);
             buffer.drop(heap, idbuf);
             recbuf = rb;
@@ -1730,7 +1731,7 @@ pub fn fit[&h, &g, &f, &r, &pf, &po, &pp, &t, &pt](heap: &!h Heap, args: &g Args
                 borrow action as &acr in {
                     borrow rname as &rnr in {
                         borrow recbuf as &rcr in {
-                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), wiredata.task_word(task), trows, cols, o.target, buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
+                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), wiredata.task_word(task), trows, cols, argv.text(src, "target"), buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
                         }
                     }
                 }

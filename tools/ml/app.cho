@@ -10,6 +10,7 @@ module ml.app;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.argv;
 import ml.est;
 import ml.paths;
 import ml.spec;
@@ -93,12 +94,12 @@ pub fn listed[&n](list: &static [byte], name: &n [byte]) -> [] bool {
 }
 
 // the flags given that this verb does not take, and the flags it needs and was not given
-pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, verb: int, table: &static [byte], tool: int) -> [heap, args] fail.Errors {
+pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, verb: int, table: &static [byte], tool: int) -> [heap] fail.Errors {
     var e = errs;
     var i = 0;
     while i < cli.entries(table) {
         let name = cli.name_of(table, i);
-        if cli.has(parsed, table, name) && !listed(spec.allowed(verb), name) {
+        if argv.has(src, name) && !listed(spec.allowed(verb), name) {
             var w = fail.open_in(heap, spec.extra(), "args.conflict", "this flag is not one this verb takes", "see the verbs and their flags in introspect usage");
             w = fail.no_repair(heap, w);
             w = fail.detail_open(heap, w);
@@ -110,23 +111,23 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
     }
     if verb == 1 || verb == 5 {
         // every model but k-means needs a target; with --plan the model is the plan's and the fit checks the target once the plan is read (wire.fit)
-        if !cli.has(parsed, table, "target") && !cli.has(parsed, table, "plan") && est.task(est.kind_named(cli.text(args, parsed, table, "model"))) != 4 {
+        if !argv.has(src, "target") && !argv.has(src, "plan") && est.task(est.kind_named(argv.text(src, "model"))) != 4 {
             e = flag_problem(heap, e, "args.required-flag", "fit needs --target, the column to predict", "ml fit --target NAME --output MODEL FILE", "flag", "--target");
         }
-        if verb == 1 && !cli.has(parsed, table, "output") {
+        if verb == 1 && !argv.has(src, "output") {
             e = flag_problem(heap, e, "args.required-flag", "fit needs --output, where to write the model file", "ml fit --target NAME --output MODEL FILE", "flag", "--output");
         }
-        if verb == 5 && !wire.planned(cli.has(parsed, table, "plan"), cli.text(args, parsed, table, "model")) {
+        if verb == 5 && !wire.planned(argv.has(src, "plan"), argv.text(src, "model")) {
             e = flag_problem(heap, e, "args.conflict", "cv scores a model fitted through the pipeline: the constant model is not cross-validated", "give --model linear, logistic, tree, forest or kmeans, or --plan", "flag", "--model");
         }
-    } else if verb != 5 && verb != 6 && !cli.has(parsed, table, "model-file") {
+    } else if verb != 5 && verb != 6 && !argv.has(src, "model-file") {
         e = flag_problem(heap, e, "args.required-flag", "this verb needs --model-file, the model to read", "ml predict --model-file MODEL FILE", "flag", "--model-file");
     }
     if verb == 1 || verb == 5 {
-        e = cat_flags(heap, args, parsed, e, table);
+        e = cat_flags(heap, src, e, table);
     }
     if tool == 1 && (verb == 1 || verb == 3 || verb == 5) {
-        e = splitspec.check_flags(heap, args, parsed, e, verb, table);
+        e = splitspec.check_flags(heap, src, e, verb, table);
     }
     if tool == 2 {
         // `ml-predict` has no fit flag to check (wire.check_flags judges the flags of fit and eval)
@@ -134,21 +135,21 @@ pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
     }
     // cv is judged by the rules of a fit for everything but its own flags (splitspec.check_flags)
     if verb == 5 {
-        return wire.check_flags(heap, args, parsed, e, 1);
+        return wire.check_flags(heap, src, e, 1);
     }
-    return wire.check_flags(heap, args, parsed, e, verb);
+    return wire.check_flags(heap, src, e, verb);
 }
 
 // the flags of the categorical columns that fit takes (docs/categorical.md section 2): the limits and --na-values mean something only with --cat, --cat names a column,
 // and a marker list holds 1 to 64 markers of 1 to 255 bytes
-pub fn cat_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte]) -> [heap, args] fail.Errors {
+pub fn cat_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, table: &static [byte]) -> [heap] fail.Errors {
     var e = errs;
-    if cli.has(parsed, table, "cat") {
-        if len(cli.text(args, parsed, table, "cat")) == 0 {
+    if argv.has(src, "cat") {
+        if len(argv.text(src, "cat")) == 0 {
             e = flag_problem(heap, e, "args.bad-value", "--cat names no column", "give the header names of the text columns, separated by commas", "flag", "--cat");
         }
-        if cli.has(parsed, table, "na-values") {
-            let list = cli.text(args, parsed, table, "na-values");
+        if argv.has(src, "na-values") {
+            let list = argv.text(src, "na-values");
             let count = bytes.count_byte(list, ',') + 1;
             var k = 1;
             var bad = len(list) == 0 || count > 64;
@@ -165,19 +166,19 @@ pub fn cat_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
         }
         return e;
     }
-    if cli.has(parsed, table, "na-values") {
+    if argv.has(src, "na-values") {
         e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--na-values");
     }
-    if cli.has(parsed, table, "max-categories") {
+    if argv.has(src, "max-categories") {
         e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-categories");
     }
-    if cli.has(parsed, table, "max-string-bytes") {
+    if argv.has(src, "max-string-bytes") {
         e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-string-bytes");
     }
-    if cli.has(parsed, table, "max-pool-bytes") {
+    if argv.has(src, "max-pool-bytes") {
         e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-pool-bytes");
     }
-    if cli.has(parsed, table, "max-cat-columns") {
+    if argv.has(src, "max-cat-columns") {
         e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-cat-columns");
     }
     return e;
@@ -199,11 +200,11 @@ pub fn ceiling_of(name: &static [byte]) -> [] int {
 }
 
 // a nat flag given must be in 1..ceiling (0..ceiling for --from)
-pub fn check_nat[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte], name: &static [byte], least: int) -> [heap, args] fail.Errors {
-    if !cli.has(parsed, table, name) {
+pub fn check_nat[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, table: &static [byte], name: &static [byte], least: int) -> [heap] fail.Errors {
+    if !argv.has(src, name) {
         return errs;
     }
-    let v = cli.nat(args, parsed, table, name);
+    let v = argv.nat(src, name);
     let top = ceiling_of(name);
     if v >= least && v <= top {
         return errs;
@@ -218,7 +219,7 @@ pub fn check_nat[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
     return fail.add(heap, errs, w);
 }
 
-pub fn check_nats[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, flags: &static [byte]) -> [heap, args] fail.Errors {
+pub fn check_nats[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, flags: &static [byte]) -> [heap] fail.Errors {
     var e = errs;
     let table = spec.limits();
     let count = bytes.count_byte(table, ';') + 1;
@@ -232,7 +233,7 @@ pub fn check_nats[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
         if est.hparam_flag(name) {
             least = est.hparam_min(name);
         }
-        e = check_nat(heap, args, parsed, e, flags, name, least);
+        e = check_nat(heap, src, e, flags, name, least);
         k = k + 1;
     }
     return e;
@@ -258,24 +259,24 @@ pub fn first_rule[&h, &e](heap: &!h Heap, errs: &e fail.Errors) -> [heap] buffer
 }
 
 // whether the command reads standard input: `predict` with `-` or with no file operand (docs/serving.md section 2); `fit` and `eval` with `-` (docs/jsonl.md section 2)
-pub fn stdin_wanted[&g, &p](args: &g Args, parsed: &p cli.Parsed, verb: int) -> [args] bool {
+pub fn stdin_wanted[&cl](src: &cl [byte], verb: int) -> [] bool {
     if verb == 1 || verb == 3 {
-        return cli.operand_count(parsed) == 2 && bytes.equal(cli.operand(args, parsed, 1), "-");
+        return argv.operand_count(src) == 2 && bytes.equal(argv.operand(src, 1), "-");
     }
     if verb != 2 {
         return false;
     }
-    return cli.operand_count(parsed) == 1 || cli.operand_count(parsed) == 2 && bytes.equal(cli.operand(args, parsed, 1), "-");
+    return argv.operand_count(src) == 1 || argv.operand_count(src) == 2 && bytes.equal(argv.operand(src, 1), "-");
 }
 
 // the operands of `ml runs`: list DIR, show DIR ID, compare DIR ID ID, verify DIR ID; an id is 64 lowercase hex digits
-pub fn runs_operands[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors) -> [heap, args] fail.Errors {
+pub fn runs_operands[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
     var e = errs;
-    let n = cli.operand_count(parsed);
+    let n = argv.operand_count(src);
     if n < 2 {
         return flag_problem(heap, e, "args.missing-operand", "runs takes list, show, compare or verify", "ml runs list DIR, ml runs show DIR ID, ml runs compare DIR ID ID, ml runs verify DIR ID", "operand", "SUBCOMMAND");
     }
-    let sub = cli.operand(args, parsed, 1);
+    let sub = argv.operand(src, 1);
     var want = 0 - 1;
     if bytes.equal(sub, "list") {
         want = 3;
@@ -299,7 +300,7 @@ pub fn runs_operands[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.P
     }
     var k = 3;
     while k < want {
-        let id = cli.operand(args, parsed, k);
+        let id = argv.operand(src, k);
         var ok = len(id) == 64;
         var i = 0;
         while ok && i < len(id) {
@@ -322,13 +323,13 @@ pub fn runs_operands[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.P
 }
 
 // the verb and the checks of the command line that need no file
-pub fn cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte], tool: int) -> [heap, args] (int, fail.Errors) {
+pub fn cmdline[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, table: &static [byte], tool: int) -> [heap] (int, fail.Errors) {
     var e = errs;
     var verb = 0;
-    if cli.operand_count(parsed) == 0 {
+    if argv.operand_count(src) == 0 {
         e = flag_problem(heap, e, "args.missing-operand", "ml takes a verb, fit, predict, eval or describe, and the CSV file", "ml fit|predict|eval FILE, ml predict -, ml describe --model-file MODEL", "operand", "VERB");
     } else {
-        verb = verb_of(cli.operand(args, parsed, 0), tool);
+        verb = verb_of(argv.operand(src, 0), tool);
         if verb == 0 {
             var message: &static [byte] = "the first operand is not fit, predict, eval or describe";
             var hint: &static [byte] = "the verbs are fit, predict, eval and describe, and ml introspect and ml skill describe them";
@@ -339,28 +340,28 @@ pub fn cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
             var w = fail.open_in(heap, spec.extra(), "args.unknown-command", message, hint);
             w = fail.no_repair(heap, w);
             w = fail.detail_open(heap, w);
-            w = fail.detail_text(heap, w, "command", cli.operand(args, parsed, 0));
+            w = fail.detail_text(heap, w, "command", argv.operand(src, 0));
             e = fail.add(heap, e, w);
         } else if verb == 4 {
-            if cli.operand_count(parsed) > 1 {
+            if argv.operand_count(src) > 1 {
                 e = flag_problem(heap, e, "args.too-many-operands", "describe takes no file: it reads the model file named by --model-file", "ml describe --model-file MODEL", "operand", "FILE");
             }
         } else if verb == 6 {
-            e = runs_operands(heap, args, parsed, e);
+            e = runs_operands(heap, src, e);
         } else if verb == 2 {
-            if cli.operand_count(parsed) > 2 {
+            if argv.operand_count(src) > 2 {
                 e = flag_problem(heap, e, "args.too-many-operands", "predict takes one CSV file, or - for standard input", "read one file per call", "operand", "FILE");
             }
-        } else if cli.operand_count(parsed) == 1 {
+        } else if argv.operand_count(src) == 1 {
             e = flag_problem(heap, e, "args.missing-operand", "ml takes the CSV file after the verb", "ml fit|predict|eval FILE", "operand", "FILE");
-        } else if cli.operand_count(parsed) > 2 {
+        } else if argv.operand_count(src) > 2 {
             e = flag_problem(heap, e, "args.too-many-operands", "ml takes one CSV file", "read one file per call", "operand", "FILE");
         }
     }
     if verb != 0 {
-        e = check_flags(heap, args, parsed, e, verb, table, tool);
+        e = check_flags(heap, src, e, verb, table, tool);
     }
-    e = check_nats(heap, args, parsed, e, table);
+    e = check_nats(heap, src, e, table);
     return (verb, e);
 }
 
@@ -374,6 +375,13 @@ pub res struct Paths {
     trackp: paths.Rp,
 }
 
+// the paths with the data file replaced (the old one is dropped): the CSV of an MCP call that carries its rows
+pub fn with_file[&h](heap: &!h Heap, ps: Paths, fresh: paths.Rp) -> [heap] Paths {
+    let Paths { file, model, out, logp, planp, trackp } = ps;
+    paths.drop(heap, file);
+    return Paths { file: fresh, model: model, out: out, logp: logp, planp: planp, trackp: trackp };
+}
+
 pub fn drop_paths[&h](heap: &!h Heap, ps: Paths) -> [heap] int {
     let Paths { file, model, out, logp, planp, trackp } = ps;
     paths.drop(heap, file);
@@ -385,20 +393,20 @@ pub fn drop_paths[&h](heap: &!h Heap, ps: Paths) -> [heap] int {
 }
 
 // the value of --positive (an integer label), 0 when it is not given or not a label
-fn positive_value[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] int {
-    if !cli.has(parsed, table, "positive") {
+fn positive_value[&cl](src: &cl [byte], table: &static [byte]) -> [] int {
+    if !argv.has(src, "positive") {
         return 0;
     }
-    let (ok, v) = wiredata.parse_label(cli.text(args, parsed, table, "positive"));
+    let (ok, v) = wiredata.parse_label(argv.text(src, "positive"));
     return v;
 }
 
 // the numerator (part 0) or the denominator (part 1) of --split train=F, 0 when it is not given or malformed
-fn split_part[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte], part: int) -> [args] int {
-    if !cli.has(parsed, table, "split") {
+fn split_part[&cl](src: &cl [byte], table: &static [byte], part: int) -> [] int {
+    if !argv.has(src, "split") {
         return 0;
     }
-    let (ok, num, den) = wiredata.parse_split(cli.text(args, parsed, table, "split"));
+    let (ok, num, den) = wiredata.parse_split(argv.text(src, "split"));
     if !ok {
         return 0;
     }
@@ -408,21 +416,12 @@ fn split_part[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte
     return den;
 }
 
-// the --fields list of a fit of JSON lines (empty for CSV): what a run record holds of the input format
-fn jsonl_fields_of[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] &static [byte] {
-    let f = cli.text(args, parsed, table, "input-format");
-    if bytes.equal(f, "jsonl") || bytes.equal(f, "ndjson") {
-        return cli.text(args, parsed, table, "fields");
-    }
-    return "";
-}
-
-pub fn options[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] verbs.Opts {
+pub fn options[&cl](src: &cl [byte], table: &static [byte]) -> [] verbs.Opts {
     var task = 1;
-    if bytes.equal(cli.text(args, parsed, table, "task"), "classification") {
+    if bytes.equal(argv.text(src, "task"), "classification") {
         task = 2;
     }
-    return verbs.Opts { cap: cli.nat(args, parsed, table, "max-line-bytes"), max_rows: cli.nat(args, parsed, table, "max-rows"), max_cols: cli.nat(args, parsed, table, "max-columns"), max_cells: cli.nat(args, parsed, table, "max-cells"), max_bytes: cli.nat(args, parsed, table, "max-bytes"), limit: cli.nat(args, parsed, table, "limit"), from: cli.nat(args, parsed, table, "from"), overwrite: cli.has(parsed, table, "overwrite"), dry: cli.has(parsed, table, "dry-run"), drop_given: cli.has(parsed, table, "drop"), task: task, drops: cli.text(args, parsed, table, "drop"), floats: cli.text(args, parsed, table, "float"), target: cli.text(args, parsed, table, "target"), model: cli.text(args, parsed, table, "model"), plan_given: cli.has(parsed, table, "plan"), step: cli.text(args, parsed, table, "step"), step_given: cli.has(parsed, table, "step"), positive: cli.text(args, parsed, table, "positive"), positive_given: cli.has(parsed, table, "positive"), split: cli.text(args, parsed, table, "split"), split_given: cli.has(parsed, table, "split"), seed: cli.nat(args, parsed, table, "seed"), threads: cli.nat(args, parsed, table, "threads"), threads_given: cli.has(parsed, table, "threads"), proba: cli.has(parsed, table, "proba"), distance: cli.has(parsed, table, "distance"), target_given: cli.has(parsed, table, "target"), task_given: cli.has(parsed, table, "task"), cats: cli.text(args, parsed, table, "cat"), cat_given: cli.has(parsed, table, "cat"), na: cli.text(args, parsed, table, "na-values"), max_cats: cli.nat(args, parsed, table, "max-categories"), max_str: cli.nat(args, parsed, table, "max-string-bytes"), max_pool: cli.nat(args, parsed, table, "max-pool-bytes"), max_catcols: cli.nat(args, parsed, table, "max-cat-columns"), max_oor: cli.nat(args, parsed, table, "max-out-of-range"), max_oor_given: cli.has(parsed, table, "max-out-of-range"), drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: positive_value(args, parsed, table), split_num: split_part(args, parsed, table, 0), split_den: split_part(args, parsed, table, 1), track_given: cli.has(parsed, table, "track"), jsonl_fields: jsonl_fields_of(args, parsed, table), absent_empty: bytes.equal(cli.text(args, parsed, table, "absent"), "empty") };
+    return verbs.Opts { cap: argv.nat(src, "max-line-bytes"), max_rows: argv.nat(src, "max-rows"), max_cols: argv.nat(src, "max-columns"), max_cells: argv.nat(src, "max-cells"), max_bytes: argv.nat(src, "max-bytes"), limit: argv.nat(src, "limit"), from: argv.nat(src, "from"), overwrite: argv.has(src, "overwrite"), dry: argv.has(src, "dry-run"), drop_given: argv.has(src, "drop"), task: task, plan_given: argv.has(src, "plan"), step_given: argv.has(src, "step"), positive_given: argv.has(src, "positive"), split_given: argv.has(src, "split"), seed: argv.nat(src, "seed"), threads: argv.nat(src, "threads"), threads_given: argv.has(src, "threads"), proba: argv.has(src, "proba"), distance: argv.has(src, "distance"), target_given: argv.has(src, "target"), task_given: argv.has(src, "task"), cat_given: argv.has(src, "cat"), max_cats: argv.nat(src, "max-categories"), max_str: argv.nat(src, "max-string-bytes"), max_pool: argv.nat(src, "max-pool-bytes"), max_catcols: argv.nat(src, "max-cat-columns"), max_oor: argv.nat(src, "max-out-of-range"), max_oor_given: argv.has(src, "max-out-of-range"), drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: positive_value(src, table), split_num: split_part(src, table, 0), split_den: split_part(src, table, 1), track_given: argv.has(src, "track"), absent_empty: bytes.equal(argv.text(src, "absent"), "empty") };
 }
 
 // the errors, and whether there are none
@@ -435,7 +434,7 @@ pub fn clean(errs: fail.Errors) -> [] (fail.Errors, bool) {
 }
 
 // resolve the paths the command names, unless the command line is already refused
-pub fn resolve_all[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], verb: int, root: &r [byte], errs: fail.Errors) -> [heap, args] (Paths, fail.Errors) {
+pub fn resolve_all[&h, &r, &cl](heap: &!h Heap, src: &cl [byte], table: &static [byte], verb: int, root: &r [byte], errs: fail.Errors) -> [heap] (Paths, fail.Errors) {
     let (e0, none) = clean(errs);
     if !none {
         return (Paths { file: paths.absent(heap), model: paths.absent(heap), out: paths.absent(heap), logp: paths.absent(heap), planp: paths.absent(heap), trackp: paths.absent(heap) }, e0);
@@ -443,21 +442,21 @@ pub fn resolve_all[&h, &g, &p, &r](heap: &!h Heap, args: &g Args, parsed: &p cli
     // describe has no file operand, and predict reads standard input for `-` or for no operand
     var f2 = paths.absent(heap);
     var e2 = e0;
-    if verb != 4 && !stdin_wanted(args, parsed, verb) {
+    if verb != 4 && !stdin_wanted(src, verb) {
         var at = 1;
         if verb == 6 {
             at = 2;
         }
-        let (fa, ea) = paths.from_operand(heap, args, root, cli.operand_index(parsed, at), e2);
+        let (fa, ea) = paths.from_operand(heap, src, root, argv.operand_index(src, at), e2);
         paths.drop(heap, f2);
         f2 = fa;
         e2 = ea;
     }
-    let (m2, e3) = paths.from_flag(heap, args, parsed, table, root, "model-file", e2);
-    let (o2, e4) = paths.from_flag(heap, args, parsed, table, root, "output", e3);
-    let (l2, e5) = paths.from_flag(heap, args, parsed, table, root, "log", e4);
-    let (p2, e6) = paths.from_flag(heap, args, parsed, table, root, "plan", e5);
-    let (t2, e7) = paths.from_flag(heap, args, parsed, table, root, "track", e6);
+    let (m2, e3) = paths.from_flag(heap, src, table, root, "model-file", e2);
+    let (o2, e4) = paths.from_flag(heap, src, table, root, "output", e3);
+    let (l2, e5) = paths.from_flag(heap, src, table, root, "log", e4);
+    let (p2, e6) = paths.from_flag(heap, src, table, root, "plan", e5);
+    let (t2, e7) = paths.from_flag(heap, src, table, root, "track", e6);
     return (Paths { file: f2, model: m2, out: o2, logp: l2, planp: p2, trackp: t2 }, e7);
 }
 
@@ -474,23 +473,23 @@ pub fn outcome[&h, &e](heap: &!h Heap, errs: &e fail.Errors, dry: bool) -> [heap
 }
 
 // the answer: one JSON document on one line, or the plain text with --format text (the envelope names `ml` and `ml.v1` whichever binary writes it)
-pub fn respond[&h, &g, &p, &i, &e, &d, &x, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], io: &!i Io, errs: &e fail.Errors, payload: &d [byte], extra: &x [byte], plain: &t [byte], dry: bool) -> [heap, args, io_write, err_write] int {
+pub fn respond[&h, &i, &e, &d, &x, &t, &cl](heap: &!h Heap, src: &cl [byte], table: &static [byte], io: &!i Io, errs: &e fail.Errors, payload: &d [byte], extra: &x [byte], plain: &t [byte], dry: bool) -> [heap, io_write, err_write] int {
     var success = 0;
     if dry {
         success = 9;
     }
-    return out.respond(heap, io, "ml", "ml.v1", version(), payload, extra, errs, bytes.equal(cli.text(args, parsed, table, "format"), "text"), plain, success);
+    return out.respond(heap, io, "ml", "ml.v1", version(), payload, extra, errs, bytes.equal(argv.text(src, "format"), "text"), plain, success);
 }
 
 // Standard input for `predict ... -` and `predict ...`: when the command line is clean and the verb reads it, the bytes are read (up to --max-bytes) and take the place of the file operand
-pub fn stdin_into[&h, &g, &p, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], io: &!i Io, verb: int, ps: Paths, errs: fail.Errors) -> [heap, args, io_read] (Paths, fail.Errors) {
+pub fn stdin_into[&h, &i, &cl](heap: &!h Heap, src: &cl [byte], table: &static [byte], io: &!i Io, verb: int, ps: Paths, errs: fail.Errors) -> [heap, io_read] (Paths, fail.Errors) {
     let (e0, none) = clean(errs);
-    if !none || !stdin_wanted(args, parsed, verb) {
+    if !none || !stdin_wanted(src, verb) {
         return (ps, e0);
     }
     let Paths { file, model, out, logp, planp, trackp } = ps;
     paths.drop(heap, file);
-    let cap = cli.nat(args, parsed, table, "max-bytes");
+    let cap = argv.nat(src, "max-bytes");
     let (f2, over) = paths.read_stdin(heap, io, cap);
     var e1 = e0;
     if over {

@@ -10,6 +10,7 @@ module ml.catwire;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.argv;
 import ml.catmat;
 import ml.csv;
 import ml.dict;
@@ -200,14 +201,14 @@ fn nth_name[&l](list: &l [byte], place: int) -> [] &l [byte] {
     return bytes.field(list, ',', place);
 }
 
-fn column_kind_error[&h, &g, &p, &c](heap: &!h Heap, args: &g Args, errs: fail.Errors, f: codes.Fault, pl: &p plan.Plan, retry_ok: bool, colname: &c [byte]) -> [heap, args] fail.Errors {
+fn column_kind_error[&h, &p, &c, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, f: codes.Fault, pl: &p plan.Plan, retry_ok: bool, colname: &c [byte]) -> [heap] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.plan.column-kind");
     let kind = plan.kind_of(pl, f.a - 1);
     let numeric_verb = kind == 1 || kind == 2 || kind == 3 || kind == 6;
     var has_step = false;
     var i = 0;
-    while i < arg_count(args) {
-        if bytes.equal(arg(args, i), "--step") && i + 1 < arg_count(args) {
+    while i < argv.argc(src) {
+        if bytes.equal(argv.at(src, i), "--step") && i + 1 < argv.argc(src) {
             has_step = true;
         }
         i = i + 1;
@@ -219,21 +220,21 @@ fn column_kind_error[&h, &g, &p, &c](heap: &!h Heap, args: &g Args, errs: fail.E
         fix = buffer.append(heap, fix, " kind=label; ");
         var rw = fail.retry_open(heap, w);
         var k = 0;
-        while k < arg_count(args) {
-            if bytes.equal(arg(args, k), "--step") && k + 1 < arg_count(args) {
+        while k < argv.argc(src) {
+            if bytes.equal(argv.at(src, k), "--step") && k + 1 < argv.argc(src) {
                 rw = json.put_string(heap, rw, "--step");
                 var joined = buffer.empty(heap, 64);
                 borrow fix as &fr in {
                     joined = buffer.append(heap, joined, buffer.bytes(fr));
                 }
-                joined = buffer.append(heap, joined, arg(args, k + 1));
+                joined = buffer.append(heap, joined, argv.at(src, k + 1));
                 borrow joined as &jr in {
                     rw = json.put_string(heap, rw, buffer.bytes(jr));
                 }
                 buffer.drop(heap, joined);
                 k = k + 2;
             } else {
-                rw = json.put_string(heap, rw, arg(args, k));
+                rw = json.put_string(heap, rw, argv.at(src, k));
                 k = k + 1;
             }
         }
@@ -255,7 +256,7 @@ fn column_kind_error[&h, &g, &p, &c](heap: &!h Heap, args: &g Args, errs: fail.E
 
 // the error of a Fault of the mixed pipeline: the categorical faults name their column; everything else is wiredata.code_error. retry_ok: the plan came from --step
 // (so the repair of a numeric step on a categorical column can put an encode step before it)
-pub fn fault_error[&h, &g, &p, &v](heap: &!h Heap, args: &g Args, errs: fail.Errors, f: codes.Fault, pl: &p plan.Plan, voc: &v dict.Vocab, retry_ok: bool) -> [heap, args] fail.Errors {
+pub fn fault_error[&h, &p, &v, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, f: codes.Fault, pl: &p plan.Plan, voc: &v dict.Vocab, retry_ok: bool) -> [heap] fail.Errors {
     let code = f.code;
     if code == codes.plan_column_kind() {
         var cnb = buffer.empty(heap, 16);
@@ -266,7 +267,7 @@ pub fn fault_error[&h, &g, &p, &v](heap: &!h Heap, args: &g Args, errs: fail.Err
         }
         var out = errs;
         borrow cnb as &cnr in {
-            out = column_kind_error(heap, args, out, f, pl, retry_ok, buffer.bytes(cnr));
+            out = column_kind_error(heap, src, out, f, pl, retry_ok, buffer.bytes(cnr));
         }
         buffer.drop(heap, cnb);
         return out;

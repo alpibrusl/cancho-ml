@@ -7,5 +7,5 @@ cd "$(dirname "$0")/.."
 CANCHO=${CANCHO:-../cancho-compiler-0207556/target/release/cancho}
 mkdir -p build
 $CANCHO build --std lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/sums.cho lib/transforms/*.cho lib/pipeline/*.cho \
-  tools/ml/csv.cho tools/ml/csvcell.cho tools/ml/csvload.cho tools/ml/paths.cho \
+  tools/ml/argv.cho tools/ml/csv.cho tools/ml/csvcell.cho tools/ml/csvload.cho tools/ml/paths.cho \
   ${ML_DEPS:-build/deps}/*.cho tools/enc-check/main.cho -o ${1:-build/enc-check}

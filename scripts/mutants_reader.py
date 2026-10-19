@@ -104,9 +104,9 @@ MUTANTS = [
     M("rd3-types-do-not-widen", "matrix", "a column's kind is the kind of its last cell, not the widest",
       [("tools/ml/csv.cho", "                if flags[i] < kind {\n                    flags[i] = kind;\n                }", "                if flags[i] != kind {\n                    flags[i] = kind;\n                }")]),
     M("rd3-drop-ignored", "matrix", "--drop marks nothing",
-      [("tools/ml/csv.cho", "cfg.drops, 3, 1, 12", "cfg.drops, 3, 0, 12")]),
+      [("tools/ml/csv.cho", "text_of(tx, 1), 3, 1, 12", "text_of(tx, 1), 3, 0, 12")]),
     M("rd3-float-flag-ignored", "matrix", "--float forces nothing",
-      [("tools/ml/csv.cho", "cfg.floats, 0, 3, 19", "cfg.floats, 0, 0, 19")]),
+      [("tools/ml/csv.cho", "text_of(tx, 2), 0, 3, 19", "text_of(tx, 2), 0, 0, 19")]),
     M("rd3-column-index-counts-dropped", "matrix", "the matrix column of a cell is its file column, dropped ones included",
       [("tools/ml/csv.cho", "        if !dropped && !skipped && place == 0 {\n            mj = mj + 1;\n        }", "        mj = mj + 1;")]),
     # ------------------------------------------------------------------ RD4: the limits

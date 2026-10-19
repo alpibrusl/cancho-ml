@@ -10,6 +10,7 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import ml.app;
+import ml.argv;
 import ml.catcli;
 import ml.cfit;
 import ml.cv;
@@ -23,6 +24,7 @@ import ml.runs;
 import ml.spec;
 import ml.splitspec;
 import ml.track;
+import ml.verbrun;
 import ml.verbs;
 import ml.wire;
 import ml.wireio;
@@ -38,91 +40,8 @@ fn built() -> [] describe.Built {
     return describe.Built { authority: built.authority(), schema: built.schema(), compiler: built.compiler() };
 }
 
-// the log file is not already full (before any work): the errors gain limit.log-full or the reason it could not be read
-fn preflight_log[&h, &f, &r, &lp](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], logp: &lp paths.Rp, cap: int, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] fail.Errors {
-    let (ls, lsize) = fsio.log_length(fs, root, paths.shown(logp), paths.full(logp));
-    if ls != 0 {
-        return fail.io_error(heap, errs, lsize, false, paths.shown(logp));
-    }
-    if lsize >= cap {
-        var w = fail.open_in(heap, spec.extra(), "limit.log-full", "the log file is already as long as --log-max-bytes", "move the log away, or raise --log-max-bytes");
-        w = fail.no_repair(heap, w);
-        w = fail.detail_open(heap, w);
-        w = fail.detail_int(heap, w, "size", lsize);
-        w = fail.detail_int(heap, w, "max", cap);
-        return fail.add(heap, errs, w);
-    }
-    return errs;
-}
-
-// run the verb: its answer, and whether the log can be written
-fn execute[&h, &g, &p, &f, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), root: &r [byte], verb: int, ps: &pp app.Paths, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, conc] (verbs.Out, bool) {
-    let table = spec.flag_table();
-    let lg = logrec.start(heap, buffer.empty(heap, 256), "ml", app.version());
-    var e = errs;
-    var log_ok = false;
-    let (e1, none) = app.clean(e);
-    e = e1;
-    if none && paths.present(ps.logp) {
-        e = preflight_log(heap, fs, root, ps.logp, cli.nat(args, parsed, table, "log-max-bytes"), e);
-        let (e2, still) = app.clean(e);
-        e = e2;
-        log_ok = still;
-    }
-    let (e3, go) = app.clean(e);
-    if !go {
-        return (verbs.nothing(heap, e3, lg), log_ok);
-    }
-    let o = app.options(args, parsed, table);
-    let sp = splitspec.from_cli(args, parsed, table);
-    if verb == 5 {
-        let tokens = wire.model_tokens(heap, args, parsed, est.kind_named(o.model));
-        var answer = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
-        borrow tokens as &tk in {
-            verbs.drop_out(heap, answer);
-            answer = cv.run(heap, args, fs, root, ps.file, ps.planp, buffer.bytes(tk), o, sp, e3, lg);
-        }
-        buffer.drop(heap, tokens);
-        return (answer, log_ok);
-    }
-    if verb == 1 {
-        if o.cat_given && !wire.planned(o.plan_given, o.model) {
-            return (catcli.fit(heap, args, fs, root, ps.file, o, e3, lg), log_ok);
-        }
-        if wire.planned(o.plan_given, o.model) {
-            let tokens = wire.model_tokens(heap, args, parsed, est.kind_named(o.model));
-            var answer = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
-            borrow tokens as &tk in {
-                verbs.drop_out(heap, answer);
-                answer = wire.fit(heap, args, fs, root, ps.file, ps.out, ps.planp, ps.trackp, buffer.bytes(tk), o, sp, e3, lg);
-            }
-            buffer.drop(heap, tokens);
-            return (answer, log_ok);
-        }
-        return (cfit.fit(heap, args, fs, root, ps.file, ps.out, ps.trackp, o, e3, lg), log_ok);
-    }
-    if verb == 2 {
-        return (wireio.predict(heap, args, fs, root, ps.file, ps.model, o, e3, lg), log_ok);
-    }
-    if verb == 4 {
-        return (mdesc.describe(heap, fs, root, ps.model, o, e3, lg), log_ok);
-    }
-    if verb == 6 {
-        var id1: &static [byte] = "";
-        var id2: &static [byte] = "";
-        if cli.operand_count(parsed) > 3 {
-            id1 = cli.operand(args, parsed, 3);
-        }
-        if cli.operand_count(parsed) > 4 {
-            id2 = cli.operand(args, parsed, 4);
-        }
-        return (runs.run(heap, args, fs, root, ps.file, cli.operand(args, parsed, 1), id1, id2, o, e3, lg), log_ok);
-    }
-    return (wireio.eval(heap, args, fs, root, ps.file, ps.model, ps.trackp, o, sp, e3, lg), log_ok);
-}
-
 // the end record, the log written, the answer
-fn finish[&h, &g, &p, &f, &i, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, root: &r [byte], ps: &pp app.Paths, result: verbs.Out, log_ok: bool) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write] int {
+fn finish[&h, &f, &i, &r, &pp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i Io, root: &r [byte], ps: &pp app.Paths, result: verbs.Out, log_ok: bool) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write] int {
     let table = spec.flag_table();
     let (payload, plain, extra, errs0, log0, dry) = verbs.parts(result);
     var e = errs0;
@@ -143,7 +62,7 @@ fn finish[&h, &g, &p, &f, &i, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p
     buffer.drop(heap, rule);
     if log_ok {
         borrow lg as &lr in {
-            let (ws, wa) = fsio.append_log(fs, root, paths.shown(ps.logp), paths.full(ps.logp), buffer.bytes(lr), cli.nat(args, parsed, table, "log-max-bytes"));
+            let (ws, wa) = fsio.append_log(fs, root, paths.shown(ps.logp), paths.full(ps.logp), buffer.bytes(lr), argv.nat(src, "log-max-bytes"));
             if ws == 4 {
                 var w = fail.open_in(heap, spec.extra(), "limit.log-full", "the log file is already as long as --log-max-bytes", "move the log away, or raise --log-max-bytes");
                 w = fail.no_repair(heap, w);
@@ -161,7 +80,7 @@ fn finish[&h, &g, &p, &f, &i, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p
         borrow payload as &d in {
             borrow extra as &x in {
                 borrow plain as &t in {
-                    status = app.respond(heap, args, parsed, table, io, er, buffer.bytes(d), buffer.bytes(x), buffer.bytes(t), dry);
+                    status = app.respond(heap, src, table, io, er, buffer.bytes(d), buffer.bytes(x), buffer.bytes(t), dry);
                 }
             }
         }
@@ -173,25 +92,25 @@ fn finish[&h, &g, &p, &f, &i, &r, &pp](heap: &!h Heap, args: &g Args, parsed: &p
     return status;
 }
 
-fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_read, io_write, err_write, conc] int {
+fn body[&h, &f, &i, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, io_read, io_write, err_write, conc] int {
     let table = spec.flag_table();
-    let (verb, e0a) = app.cmdline(heap, args, parsed, errs, table, 1);
-    let e0 = jsonlcli.check_flags(heap, args, parsed, e0a, table, verb);
-    let (root, e1a) = path.root(heap, args, cli.text(args, parsed, table, "root"), cli.value_index(parsed, table, "root"), e0);
+    let (verb, e0a) = app.cmdline(heap, src, errs, table, 1);
+    let e0 = jsonlcli.check_flags(heap, src, e0a, table, verb);
+    let (root, e1a) = paths.root(heap, src, argv.text(src, "root"), argv.value_index(src, "root"), e0);
     var e1 = e1a;
     borrow root as &rb in {
         if paths.has_double_dot(buffer.bytes(rb)) {
-            e1 = paths.refuse_double_dot(heap, e1, buffer.bytes(rb), cli.value_index(parsed, table, "root"));
+            e1 = paths.refuse_double_dot(heap, e1, buffer.bytes(rb), argv.value_index(src, "root"));
         }
     }
     var status = 0;
     borrow root as &rr in {
-        let (ps0, e2a) = app.resolve_all(heap, args, parsed, table, verb, buffer.bytes(rr), e1);
-        let (ps1, e2b) = app.stdin_into(heap, args, parsed, table, io, verb, ps0, e2a);
-        let (ps, e2) = jsonlcli.input_into(heap, args, parsed, table, fs, buffer.bytes(rr), verb, ps1, e2b);
+        let (ps0, e2a) = app.resolve_all(heap, src, table, verb, buffer.bytes(rr), e1);
+        let (ps1, e2b) = app.stdin_into(heap, src, table, io, verb, ps0, e2a);
+        let (ps, e2) = jsonlcli.input_into(heap, src, table, fs, buffer.bytes(rr), verb, ps1, e2b);
         borrow ps as &pr in {
-            let (result, log_ok) = execute(heap, args, parsed, fs, buffer.bytes(rr), verb, pr, e2);
-            status = finish(heap, args, parsed, fs, io, buffer.bytes(rr), pr, result, log_ok);
+            let (result, log_ok) = verbrun.execute(heap, src, fs, buffer.bytes(rr), verb, pr, e2);
+            status = finish(heap, src, fs, io, buffer.bytes(rr), pr, result, log_ok);
         }
         app.drop_paths(heap, ps);
     }
@@ -199,7 +118,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     return status;
 }
 
-fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_read, io_write, err_write, conc] int {
+fn run[&h, &f, &i, &g](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, dir_write, file_read, file_write, io_read, io_write, err_write, conc] int {
     let which = cli.subcommand(args);
     if which != 0 {
         return describe.answer(heap, io, which, spec.tool(), built());
@@ -207,7 +126,11 @@ fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io)
     let (parsed, e) = cli.parse(heap, args, spec.flag_table(), fail.empty_in(heap, spec.extra()));
     var status = 0;
     borrow parsed as &p in {
-        status = body(heap, args, p, fs, io, e);
+        let packed = argv.from_cli(heap, args, p, spec.flag_table());
+        borrow packed as &pk in {
+            status = body(heap, buffer.bytes(pk), fs, io, e);
+        }
+        buffer.drop(heap, packed);
     }
     cli.drop(heap, parsed);
     return status;

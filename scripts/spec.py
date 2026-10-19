@@ -49,4 +49,10 @@ def tables(path=SPEC):
     for entry in _literal(text, "predict_limits").split(";"):
         name, default, ceiling = entry.split("|")
         plimits[name] = (int(default), int(ceiling))
-    return {"flags": flags, "extra": extra, "rules": rules, "log": log, "limits": limits, "allowed": allowed, "predict_flags": pflags, "predict_limits": plimits}
+    allowed_all = {}
+    for verb, names in zip(("fit", "predict", "describe", "cv", "runs", "eval"), found):
+        allowed_all[verb] = names.split(",")
+    tool_m = re.search(r"pub fn tool\(\)[^{]*\{(.*?)\n\}", text, re.S)
+    usage = re.search(r'usage: "((?:[^"\\]|\\.)*)"', tool_m.group(1)).group(1).replace("\\n", "\n")
+    summary = re.search(r'summary: "((?:[^"\\]|\\.)*)"', tool_m.group(1)).group(1)
+    return {"usage": usage, "summary": summary, "allowed_all": allowed_all, "flags": flags, "extra": extra, "rules": rules, "log": log, "limits": limits, "allowed": allowed, "predict_flags": pflags, "predict_limits": plimits}

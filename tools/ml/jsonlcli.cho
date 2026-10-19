@@ -11,6 +11,7 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import ml.app;
+import ml.argv;
 import ml.fsio;
 import ml.jsonl;
 import ml.kinds;
@@ -23,34 +24,34 @@ import toolbox.cli;
 import toolbox.fail;
 
 // whether the input is JSON lines: the choice flag is jsonl or ndjson
-pub fn wanted[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] bool {
-    let f = cli.text(args, parsed, table, "input-format");
+pub fn wanted[&cl](src: &cl [byte], table: &static [byte]) -> [] bool {
+    let f = argv.text(src, "input-format");
     return bytes.equal(f, "jsonl") || bytes.equal(f, "ndjson");
 }
 
 // the flags of JSON lines that mean nothing with CSV, and the flags JSON lines needs: (the errors)
-pub fn check_flags[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte], verb: int) -> [heap, args] fail.Errors {
+pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, table: &static [byte], verb: int) -> [heap] fail.Errors {
     var e = errs;
-    if !wanted(args, parsed, table) {
-        if cli.has(parsed, table, "fields") {
+    if !wanted(src, table) {
+        if argv.has(src, "fields") {
             e = app.flag_problem(heap, e, "args.conflict", "--fields declares the columns of JSON lines input", "give --input-format jsonl, or remove --fields", "flag", "--fields");
         }
-        if cli.has(parsed, table, "absent") {
+        if argv.has(src, "absent") {
             e = app.flag_problem(heap, e, "args.conflict", "--absent says what a missing key of JSON lines input is", "give --input-format jsonl, or remove --absent", "flag", "--absent");
         }
-        if cli.has(parsed, table, "max-json-nodes") {
+        if argv.has(src, "max-json-nodes") {
             e = app.flag_problem(heap, e, "args.conflict", "--max-json-nodes bounds a line of JSON lines input", "give --input-format jsonl, or remove --max-json-nodes", "flag", "--max-json-nodes");
         }
         return e;
     }
     if verb == 1 || verb == 5 {
-        if !cli.has(parsed, table, "fields") {
+        if !argv.has(src, "fields") {
             if verb == 5 {
                 return app.flag_problem(heap, e, "args.required-flag", "cv of JSON lines needs --fields, the keys that are the columns, in the order of the table", "ml cv --input-format jsonl --fields NAMES --target NAME cv FILE", "flag", "--fields");
             }
             return app.flag_problem(heap, e, "args.required-flag", "fit of JSON lines needs --fields, the keys that are the columns, in the order of the table", "ml fit --input-format jsonl --fields NAMES --target NAME --output MODEL fit FILE", "flag", "--fields");
         }
-        let (st, at) = jsonl.check_fields(heap, cli.text(args, parsed, table, "fields"));
+        let (st, at) = jsonl.check_fields(heap, argv.text(src, "fields"));
         if st != 0 {
             var w = fail.open_in(heap, spec.extra(), "args.bad-value", "--fields is a list of at most 8192 names that are not empty and not repeated", "give the keys of the objects separated by commas; a name holds no comma");
             w = fail.no_repair(heap, w);
@@ -203,11 +204,11 @@ fn code_word(code: int) -> [] &static [byte] {
 }
 
 // the same invocation with `--absent empty` after it, when --absent was not given
-fn absent_retry[&h, &g](heap: &!h Heap, w: json.Writer, args: &g Args) -> [heap, args] json.Writer {
+fn absent_retry[&h, &cl](heap: &!h Heap, w: json.Writer, src: &cl [byte]) -> [heap] json.Writer {
     var o = fail.retry_open(heap, w);
     var i = 0;
-    while i < arg_count(args) {
-        o = json.put_string(heap, o, arg(args, i));
+    while i < argv.argc(src) {
+        o = json.put_string(heap, o, argv.at(src, i));
         i = i + 1;
     }
     o = json.put_string(heap, o, "--absent");
@@ -215,7 +216,7 @@ fn absent_retry[&h, &g](heap: &!h Heap, w: json.Writer, args: &g Args) -> [heap,
     return fail.retry_close(heap, o);
 }
 
-fn refusal[&h, &g, &n, &e, &s](heap: &!h Heap, args: &g Args, errs: fail.Errors, f: jsonl.Fail, names: &n [byte], ends: &e [int], retry_ok: bool, shown: &s [byte]) -> [heap, args] fail.Errors {
+fn refusal[&h, &cl, &n, &e, &s](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, f: jsonl.Fail, names: &n [byte], ends: &e [int], retry_ok: bool, shown: &s [byte]) -> [heap] fail.Errors {
     var colname = names[0..0];
     if f.col >= 0 && f.col < len(ends) {
         var from = 0;
@@ -280,7 +281,7 @@ fn refusal[&h, &g, &n, &e, &s](heap: &!h Heap, args: &g Args, errs: fail.Errors,
     }
     var w = fail.open_in(heap, spec.extra(), rule, message, hint);
     if f.code == 4 && retry_ok {
-        w = absent_retry(heap, w, args);
+        w = absent_retry(heap, w, src);
     } else {
         w = fail.no_repair(heap, w);
     }
@@ -320,16 +321,16 @@ fn refusal[&h, &g, &n, &e, &s](heap: &!h Heap, args: &g Args, errs: fail.Errors,
 
 // Replace the input file of `ps` by the CSV made of its JSON lines (a file of the command line, or the standard input bytes `stdin_into` read). Nothing changes when the
 // input is CSV, when the command line is already refused, or (predict, eval) when the model file cannot be read: the verb says why.
-pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte], fs: &f Fs(""), root: &r [byte], verb: int, ps: app.Paths, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (app.Paths, fail.Errors) {
+pub fn input_into[&h, &cl, &f, &r](heap: &!h Heap, src: &cl [byte], table: &static [byte], fs: &f Fs(""), root: &r [byte], verb: int, ps: app.Paths, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (app.Paths, fail.Errors) {
     let (e0, none) = app.clean(errs);
-    if !none || !wanted(args, parsed, table) || verb == 4 || verb == 6 {
+    if !none || !wanted(src, table) || verb == 4 || verb == 6 {
         return (ps, e0);
     }
-    let max_bytes = cli.nat(args, parsed, table, "max-bytes");
-    let line_cap = cli.nat(args, parsed, table, "max-line-bytes");
-    let max_nodes = cli.nat(args, parsed, table, "max-json-nodes");
-    let absent_empty = bytes.equal(cli.text(args, parsed, table, "absent"), "empty");
-    let retry_ok = !cli.has(parsed, table, "absent");
+    let max_bytes = argv.nat(src, "max-bytes");
+    let line_cap = argv.nat(src, "max-line-bytes");
+    let max_nodes = argv.nat(src, "max-json-nodes");
+    let absent_empty = bytes.equal(argv.text(src, "absent"), "empty");
+    let retry_ok = !argv.has(src, "absent");
     var cur = ps;
     var e = e0;
     var names = buffer.empty(heap, 64);
@@ -338,7 +339,7 @@ pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p 
     var count = 0;
     var read = false;
     if verb == 1 || verb == 5 {
-        let list = cli.text(args, parsed, table, "fields");
+        let list = argv.text(src, "fields");
         let (st, n) = jsonl.check_fields(heap, list);
         if st == 0 {
             buffer.drop(heap, names);
@@ -350,11 +351,11 @@ pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p 
             count = n;
             // text columns: those --cat names, and those --drop names (the CSV path does not read the cells of a dropped column as numbers: a group or a time column that is not a feature)
             var texts = buffer.empty(heap, 16);
-            texts = buffer.append(heap, texts, cli.text(args, parsed, table, "cat"));
-            if cli.has(parsed, table, "cat") && cli.has(parsed, table, "drop") {
+            texts = buffer.append(heap, texts, argv.text(src, "cat"));
+            if argv.has(src, "cat") && argv.has(src, "drop") {
                 texts = buffer.push(heap, texts, byte_of(','));
             }
-            texts = buffer.append(heap, texts, cli.text(args, parsed, table, "drop"));
+            texts = buffer.append(heap, texts, argv.text(src, "drop"));
             borrow names as &nr in {
                 borrow ends as &er in {
                     borrow texts as &tr in {
@@ -405,7 +406,7 @@ pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p 
                     borrow mask as &mr in {
                         if st == 3 {
                             fl = jsonl.too_large(max_bytes, 0);
-                            e = refusal(heap, args, e, fl, buffer.bytes(nr), contents(er), false, buffer.bytes(sr));
+                            e = refusal(heap, src, e, fl, buffer.bytes(nr), contents(er), false, buffer.bytes(sr));
                         } else if st != 0 {
                             fl = jsonl.too_large(max_bytes, 0);
                             e = fail.io_error(heap, e, aux, false, buffer.bytes(sr));
@@ -416,7 +417,7 @@ pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p 
                                 csv = c2;
                                 fl = f2;
                                 if f2.code != 0 {
-                                    e = refusal(heap, args, e, f2, buffer.bytes(nr), contents(er), retry_ok, buffer.bytes(sr));
+                                    e = refusal(heap, src, e, f2, buffer.bytes(nr), contents(er), retry_ok, buffer.bytes(sr));
                                 }
                             }
                         }
@@ -459,7 +460,7 @@ pub fn input_into[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p 
 // The training file of a run record made from JSON lines (docs/tracking.md section 5.4, docs/jsonl.md section 4), as `ml runs verify` reads it: the CSV of the file `shown`/`full` with
 // the fields, the text columns (`texts`: the record's cat and drop lists) and the absent key rule of the record, under the ceilings of the caps (they refuse and never change a byte), as an Rp
 // over the CSV that carries the SHA-256 and the size of the file's own bytes. (rp, status): 0 ok; 1 the fields of the record are not a field list; 2 the file is refused or cannot be read (the errors say why).
-pub fn replay_input[&h, &g, &f, &r, &sh, &fu, &fl, &tx](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], shown: &sh [byte], full: &fu [byte], fields: &fl [byte], texts: &tx [byte], absent_empty: bool, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (paths.Rp, int, fail.Errors) {
+pub fn replay_input[&h, &cl, &f, &r, &sh, &fu, &fl, &tx](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], shown: &sh [byte], full: &fu [byte], fields: &fl [byte], texts: &tx [byte], absent_empty: bool, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (paths.Rp, int, fail.Errors) {
     var e = errs;
     var out = paths.absent(heap);
     var status = 0;
@@ -483,7 +484,7 @@ pub fn replay_input[&h, &g, &f, &r, &sh, &fu, &fl, &tx](heap: &!h Heap, args: &g
     } else if rst == 3 {
         borrow names as &nr in {
             borrow ends as &er in {
-                e = refusal(heap, args, e, jsonl.too_large(cap, 0), buffer.bytes(nr), contents(er), false, shown);
+                e = refusal(heap, src, e, jsonl.too_large(cap, 0), buffer.bytes(nr), contents(er), false, shown);
             }
         }
         status = 2;
@@ -494,7 +495,7 @@ pub fn replay_input[&h, &g, &f, &r, &sh, &fu, &fl, &tx](heap: &!h Heap, args: &g
                     borrow mask as &mr in {
                         let (csv, f2) = jsonl.convert(heap, buffer.bytes(dr), buffer.bytes(nr), contents(er), count, contents(mr), absent_empty, 1048576, 16777216, cap);
                         if f2.code != 0 {
-                            e = refusal(heap, args, e, f2, buffer.bytes(nr), contents(er), false, shown);
+                            e = refusal(heap, src, e, f2, buffer.bytes(nr), contents(er), false, shown);
                             status = 2;
                         } else {
                             paths.drop(heap, out);

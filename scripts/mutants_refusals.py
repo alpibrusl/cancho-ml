@@ -52,8 +52,8 @@ MUTANTS = [
     # ---- the repair
     M("repair-l2-too-small-by-2^30", "the ridge of the repair is chosen from the diagonal times zero (always 1)", [(FF, "decade_text(heap, maxdiag / 1073741824.0)", "decade_text(heap, maxdiag * 0.0)")]),
     M("repair-l2-of-the-separable-fit", "the ridge of the separable repair is always 1", [(FF, "decade_text(heap, diag[4] / 1024.0)", "decade_text(heap, diag[4] * 0.0)")]),
-    M("repair-explicit-l2-appended", "an explicit --l2 0 is not replaced: the repair carries --l2 twice", [(FF, 'if i > 0 && bytes.equal(arg(args, i - 1), "--l2") {', "if false {")]),
-    M("repair-drop-names-column-0", "the --drop repair names the first column", [(FF, "w = put_argv_drop(heap, w, args, names.name(nm, dropk));", "w = put_argv_drop(heap, w, args, names.name(nm, 0));")]),
+    M("repair-explicit-l2-appended", "an explicit --l2 0 is not replaced: the repair carries --l2 twice", [(FF, 'if i > 0 && bytes.equal(argv.at(src, i - 1), "--l2") {', "if false {")]),
+    M("repair-drop-names-column-0", "the --drop repair names the first column", [(FF, "w = put_argv_drop(heap, w, src, names.name(nm, dropk));", "w = put_argv_drop(heap, w, src, names.name(nm, 0));")]),
     M("repair-drop-with-steps", "--drop is offered although a step names the column", [(FF, "!o.plan_given && !o.step_given && !o.cat_given && !o.drop_given", "!o.plan_given && !o.drop_given")]),
     M("repair-plan-gets-an-argv-collinear", "a plan form gets an argv (--l2 cannot be given beside --plan)", [(FF, "        if o.plan_given {\n            w = plan_repair(heap, w);\n        } else if can_drop {", "        if false {\n            w = plan_repair(heap, w);\n        } else if can_drop {")]),
     M("repair-plan-gets-an-argv-separable", "a plan form gets an argv (--l2 cannot be given beside --plan)", [(FF, "        if o.plan_given {\n            w = plan_repair(heap, w);\n        } else {", "        if false {\n            w = plan_repair(heap, w);\n        } else {")]),
