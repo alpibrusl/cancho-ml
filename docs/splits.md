@@ -37,7 +37,8 @@ the seed of the split as it is now, and of the model.
 algorithm (balance of classes and no shared group are two constraints that no deal satisfies in general, and an approximation would need a
 rule of its own, with its own gate), and a group time series split is another (groups that straddle the cut). They are **refused**, not approximated:
 `ml.split.combination`. `cv` with `--split` is the same tag. `--repeats` above 1 with `--split-by` is the same tag (an expanding window has
-nothing random to repeat).
+nothing random to repeat). So is `--early-stopping` (a boosted model) with `--split-group` or `--split-by`, in `fit --split` and in `cv`: early stopping validates on a
+random tenth of the training rows, which a group split or a time split cannot allow (`docs/models-boost.md` section 2.8); the repair drops `--early-stopping`.
 
 ## 2. The canonical split text **[choice]**
 
@@ -98,7 +99,7 @@ else: the assignment is computed before any fit and by no thread.
 `--split-by` and `--split-group` name a column of the header (`ml.input.unknown-column`, exit 3, if it is not there; `ml.split.column-target` if it is the target). The column is read **a second time,
 as text**, by `tools/ml/splitcol.cho`, with the dialect of the reader (`docs/reader.md` section 2: a byte order mark dropped, CR before LF dropped, blank lines are not records, RFC 4180 quotes), so a text
 column that the numeric reader cannot take is usable: the column is also a feature unless `--drop` removes it (the usual case for a date or an id, and the refusal `ml.input.non-numeric` carries the `--drop` repair).
-The file is held in memory once, up to `--max-bytes` (`limit.input-too-large` beyond). An empty cell is `ml.split.missing-cell` (row in `detail`).
+The file is held in memory once, up to `--max-bytes` (`limit.input-too-large` beyond). An empty cell is `ml.split.missing-cell` (row in `detail`). With `--input-format jsonl` the bytes read are the CSV made of the lines (`docs/jsonl.md` section 4), so the column is the one the CSV holds: a string date is text (name the column with `--drop`, or `--cat`), a number is a number, and the cuts and the answers equal the CSV's byte for byte (`tests/conformance/test_jsonl_cv.py`).
 
 **Groups.** The identity of a group is the bytes of its cell after the CSV quotes are removed, compared bytewise, no trimming, no case folding, no number parsing: `7` and `07` are two groups. The column may be text
 or integer for this reason alone. No bound on the group count except the row count.
@@ -145,7 +146,7 @@ Tags are registered in `tools/ml/spec.tmpl`, `docs/design.md` sections 8 and 8.1
 | `ml.split.too-few-groups` | 8 | fewer groups than `--folds`, or fewer than 2 | `retry` with `--folds` = the number of groups, when it is at least 2 |
 | `ml.split.time-format` | 8 | a time cell that is not a number or an accepted date (`line`, `column`, `reason`) | none |
 | `ml.split.missing-cell` | 8 | an empty cell in the time or group column (`row`, `column`) | none |
-| `ml.split.combination` | 2 | two strategies, `cv` with `--split`, `--repeats` above 1 with `--split-by` | `choose` between the two ways of dropping a flag |
+| `ml.split.combination` | 2 | two strategies, `cv` with `--split`, `--repeats` above 1 with `--split-by`, `--early-stopping` with `--split-group` or `--split-by` | `choose` between the two ways of dropping a flag; `retry` with `--repeats 1`, or without `--early-stopping`, when that is the conflict |
 | `ml.split.out-of-range` | 2 | `--folds` outside 2 to 20, `--repeats` outside 1 to 10 | none (the range is in `detail`) |
 | `ml.split.column-target` | 2 | the group or time column is the target | none |
 | `ml.split.emit-too-large` | 8 | `--emit-folds` over 1,048,576 entries | `retry` without `--emit-folds` |
@@ -190,7 +191,7 @@ Machine: a Mac (arm64, Apple M4 Max, macOS 26.2), compiler `a4572ea`, `build/ml`
 |---|---|---|
 | A1 | 286 cases: the assignment of `--emit-folds` and the canonical text equal the oracle's | `python3 scripts/oracle_split.py --assign` |
 | B1 | 381 cases of invariants on generated and hostile data | `--invariants` |
-| C1 | 189 folds: `ml cv` metrics equal `ml fit` then `ml eval` on the oracle's fold files, string for string; plans with impute, scale, bucket, encode, freq, hash and text columns; linear, logistic, tree, forest, kmeans; the aggregate equals the oracle's | `--e2e` |
+| C1 | 246 folds: `ml cv` metrics equal `ml fit` then `ml eval` on the oracle's fold files, string for string; plans with impute, scale, bucket, encode, freq, hash and text columns; linear, logistic, tree, forest, boost (without early stopping, which is refused under the group and time strategies), kmeans; the aggregate equals the oracle's | `--e2e` |
 | C2 | the mutant `leak-steps-fitted-on-all-rows` fails C1 (killed) | `python3 scripts/mutants_split.py --only leak` |
 | D1 | 18 answers identical at `--threads 1` and `8` | `--threads` |
 | S1 | linear: worst relative gap 6.13e-16 (bound 1e-6); logistic: accuracy gap 0 and log-loss gap 1.44e-08 (bound 1e-4 absolute) | `--sklearn` |

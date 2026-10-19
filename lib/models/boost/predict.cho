@@ -1,0 +1,48 @@
+edition 5;
+
+module boost.predict;
+
+import tree.bins;
+
+// Prediction (docs/models-boost.md section 2.6): a row walks each tree from its root (a missing cell follows the node's default side, a present one goes left iff
+// x < threshold) and the score is `acc = base; for t = 0 .. T-1 in order: acc = acc + val_t`, where val_t is the stored (shrunk) value of the leaf reached. The same
+// additions in the same order as the fit's update of its scores, so the score of a training row equals the fit's own.
+
+// rows 0 .. rows - 1 of xs (row-major, d columns; bm with stride ceil(rows / 8), or empty) into out[0 .. rows)
+pub fn kernel[&t, &n, &v, &x, &b, &o](rounds: int, d: int, total: int, base: float, toff: &t [int], ni: &n [int], nv: &v [float], xs: &x [float], bm: &b [byte], rows: int, out: &!o [float]) -> [] int {
+    let ft = ni[0..total];
+    let dl = ni[2 * total..3 * total];
+    let lc = ni[3 * total..4 * total];
+    let rc = ni[4 * total..5 * total];
+    let st = bins.stride(rows);
+    var i = 0;
+    while i < rows {
+        let row = xs[i * d..i * d + d];
+        var acc = base;
+        var t = 0;
+        while t < rounds {
+            let b0 = toff[t];
+            var g = b0;
+            var f = ft[g];
+            while f >= 0 {
+                var left = false;
+                if len(bm) != 0 && bins.is_missing(bm, st, f, i) {
+                    left = dl[g] == 1;
+                } else {
+                    left = row[f] < nv[g];
+                }
+                if left {
+                    g = b0 + lc[g];
+                } else {
+                    g = b0 + rc[g];
+                }
+                f = ft[g];
+            }
+            acc = acc + nv[g];
+            t = t + 1;
+        }
+        out[i] = acc;
+        i = i + 1;
+    }
+    return 0;
+}

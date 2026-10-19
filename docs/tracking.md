@@ -177,7 +177,7 @@ bytes), `--output`, `--overwrite`, `--log`, `--format`. `verify` reads with the 
 
 ```
 {"schema":"ml.run.v1","id":"<64 hex>",
- "inputs":{"data":{"path":"iris_train.csv","bytes":N,"sha256":"..","rows":N},
+ "inputs":{"data":{"path":"iris_train.csv","bytes":N,"sha256":"..","rows":N[,"format":"jsonl","fields":"..","absent":"refuse"|"empty"]},
            "target":"virginica"|null,"task":"classification"|"regression"|"clustering",
            "plan":"<canonical plan text>","seed":0,"positive":null|N,"split":"none"|"holdout train=0.8 [stratify|group=C|time=C] seed=0",
            "drop":"..","float":"..","cat":"..","na_values":"..","reader":{"max_categories":64,"max_string_bytes":255,"max_pool_bytes":1048576,"max_cat_columns":128}|null,
@@ -189,7 +189,7 @@ bytes), `--output`, `--overwrite`, `--log`, `--format`. `verify` reads with the 
  "check":"<64 hex>"}
 ```
 
-(`drop`, `float`, `cat`, `na_values` are the strings as given, empty when absent; `reader` is null when `--cat` was not given. `sum_order` is null for the constant kinds.)
+(`format`, `fields` and `absent` are in `data` only for a fit of JSON lines (`--input-format jsonl|ndjson`, recorded as `jsonl`; `docs/jsonl.md` section 4): a record of a CSV has none of them and its id is the one it has always had. `path` is `-` and `bytes` and `sha256` are those of the bytes read when the training file was standard input. `drop`, `float`, `cat`, `na_values` are the strings as given, empty when absent; `reader` is null when `--cat` was not given. `sum_order` is null for the constant kinds.)
 
 `check` is the SHA-256 of every byte of the record before `,"check":"`; a reader recomputes it and the id, so a record that was edited by one byte is `ml.runs.damaged`. `metrics` is the metric object `eval` prints for the same rows: the **held-out rows** (chosen by the strategy of `split`) when `--split` was given (`"on":"held-out"`), else the **training rows** (`"on":"train"`, scored through the stored steps by the same
 code as `eval`). A constant model has `metrics` null (its summary, the mean or the classes, is in the answer of `fit`; scoring a constant on its training rows is `ml eval`).
@@ -217,7 +217,7 @@ All four go through the flag table, `introspect`, `skill`, the schemas and the m
 
 The columns that a fit read as `--drop`, `--float` or `--cat` are replayed from the lists of the record by position in the header of the training file, which the replay reads first. **Limit [choice]**: the replay of a
 column that carries one of these three flags needs its header position below 62 (a bit mask in the reader's configuration, because the reader's configuration is a plain structure that cannot hold a runtime
-string at the pinned compiler); a record that needs more is refused with `ml.runs.not-replayable` (detail: the column). Fits with such a flag on a column past the 62nd are not replayable by `verify`.
+string at the pinned compiler); a record that needs more is refused with `ml.runs.not-replayable` (detail: the column). A record of a fit of JSON lines is replayed from the recorded file read as the fit read it (the fields, the absent rule, the cat and drop columns as text); a record whose training file was standard input (`path` `-`) is refused with `ml.runs.not-replayable` (detail: `flag` `stdin`, `column` `-`), since there is no file to read again. Fits with such a flag on a column past the 62nd are not replayable by `verify`.
 
 The split of a replay is the split of the record for every strategy: the plain, the stratified, the group and the time holdout choose the same rows, because the replay uses the code of `fit` (`splitwire.holdout_sel`) with the strategy and the column of the text. A
 group or time column is found by its name in the header of the training file, so the limit of the 62nd position above does not apply to it. The model's SHA-256 is reproduced at 1 and at 8 threads for each strategy (`scripts/oracle_track.py --suite`, the cases `stratified`, `group` and `time`).
@@ -269,7 +269,7 @@ header count and the checksum repaired) with the previous bytes.
 |---|---|---|
 | T1 | **section oracle**: `scripts/oracle_track.py` computes section 7 for fitted models from the CSV alone (exact fractions) and compares **bytes** with the section in the file `ml fit` wrote, for every model kind, categorical and `--split` fits included | any rounding rule, order of records, layout or count differing by a bit |
 | T2 | **record oracle**: the same script builds the run record and the id from the command line's inputs and compares bytes with `DIR/<id>.json` | a key, an order, a canonical form or the id definition differing |
-| T3 | **replay equality**: `runs verify` reproduces the model SHA-256 for every kind (constant regression and classification, linear, logistic, tree, forest, kmeans), with categorical plans and `--split`, at `--threads` 1 and 8 | any input the record omits that changes the bytes |
+| T3 | **replay equality**: `runs verify` reproduces the model SHA-256 for every kind (constant regression and classification, linear, logistic, tree, forest, boost, kmeans), with categorical plans and `--split` (a boosted fit with a row sample or early stopping included: the rounds are sequential, so the thread count changes no byte), at `--threads` 1 and 8 | any input the record omits that changes the bytes |
 | T4 | **thread invariance**: the whole model file, section 7 included, and the record (modulo `threads`) are the same bytes at `--threads` 1, 2, 8 | a statistic that depends on a thread or an order |
 | T5 | **`on`**: `"on":"train"` on the training file and on a copy of it under another name; `"other"` on a file that differs by one byte; `"unknown"` on a pre-provenance file | an equality that looks at the name, or always says train |
 | T6 | **out-of-range**: counts equal an independent computation, on generated data with ties at the boundary (a cell equal to `min` or `max` is not out), missing cells, a target column in the file and `--split` | off by one on a bound, a missing cell counted, the target counted |
@@ -305,7 +305,7 @@ unexplained differences.
 
 | gate | result |
 |---|---|
-| T1, T2 | `scripts/oracle_track.py --suite`: 17 cases (every model kind; categorical and `--split` fits; a stratified, a group and a time holdout, the rows and the split text from `scripts/oracle_split.py`; a float forced on an integer column); section 7 and the record equal the oracle's bytes, 0 mismatches |
+| T1, T2 | `scripts/oracle_track.py --suite`: 21 cases (every model kind, four of them boosted: a regression, a stratified classification with a row sample, early stopping with a split, a categorical plan; categorical and `--split` fits; a stratified, a group and a time holdout, the rows and the split text from `scripts/oracle_split.py`; a float forced on an integer column); section 7 and the record equal the oracle's bytes, 0 mismatches |
 | T3 | the same 17 cases are refitted by `runs verify` at `--threads` 1 and 8: the model SHA-256 is reproduced in all 34 |
 | T4 to T11 | `tests/conformance/test_track.py` (48 tests, 8 classes without `Serve`; `Serve` needs `ml-serve`; the class `Splits` is the six tests of the split text) and `test_serve_bytes`, inside the 512 tests of `scripts/check.sh` on the Linux workstation (all pass, none skipped) |
 | T12 | `scripts/mutants_track.py`: 75 mutants, 70 killed, 5 survive and each has its reason in the script; the unmutated control passes. The two mutants of the server's `out_of_range` are in `scripts/mutants_http.py` and are killed |

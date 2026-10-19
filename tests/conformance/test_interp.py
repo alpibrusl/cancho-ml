@@ -329,6 +329,21 @@ class Unsupported(Fixture):
         r = self.sb.run("dump", "--model-file", "const.ml")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.dump.unsupported-model"), r)
 
+    def test_a_boosted_model_is_refused_by_both_verbs_and_never_trapped(self):
+        # docs/interpret.md section 7: kind 8 has trees that neither verb explains yet; `dump` read its payload as coefficients and trapped before this refusal existed
+        r = self.sb.run("fit", "--model", "boost", "--task", "classification", "--target", "y", "--rounds", "5", "--min-leaf", "1", "--output", "boost.ml", "cls.csv")
+        self.assertEqual(r.status, 0, r)
+        for argv in (["importance", "--model-file", "boost.ml"], ["importance", "--model-file", "boost.ml", "--data", "cls.csv"],
+                     ["importance", "--model-file", "boost.ml", "--data", "cls.csv", "--repeats", "2", "--metric", "f1"]):
+            r = self.sb.run(*argv)
+            self.assertEqual((r.status, r.first_rule()), (8, "ml.importance.unsupported-model"), (argv, r))
+            self.assertEqual(validate(r), [])
+        for argv in (["dump", "--model-file", "boost.ml"], ["dump", "--model-file", "boost.ml", "--tree", "1"], ["dump", "--model-file", "boost.ml", "--max-nodes", "5"]):
+            r = self.sb.run(*argv)
+            self.assertEqual((r.status, r.first_rule()), (8, "ml.dump.unsupported-model"), (argv, r))
+            self.assertEqual(validate(r), [])
+        self.assertIsNone(self.describe("boost.ml")["importance"])
+
     def test_flags_without_data_are_a_conflict(self):
         for flags in (["--metric", "rmse"], ["--repeats", "3"]):
             r = self.sb.run("importance", "--model-file", "lin_std.ml", *flags)

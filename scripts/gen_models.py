@@ -255,7 +255,8 @@ def model_flag_entry(models):
     how = {"linear": "linear fits by least squares", "logistic": "logistic by Newton's method",
            "kmeans": "kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed)",
            "tree": "tree is a CART decision tree with histogram splits (--task chooses classification or regression)",
-           "forest": "forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed)"}
+           "forest": "forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed)",
+           "boost": "boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed)"}
     sentences = [how[n] for n in names if n in how]
     help_ = ("the model fit builds: %s. constant (the default) is the training mean for a regression and the majority class with its probability for a "
              "classification. %s. All but constant are fitted through the pipeline of --plan or --step. A name outside "
@@ -450,6 +451,14 @@ def render_est(models):
     o += ["// whether the model takes a cell that is still missing after the steps (a blob model of both tasks: the tree and the forest); the others are refused with ml.input.missing-value",
           "pub fn takes_missing(kind: int) -> [] bool {"]
     o += ["    return %s;" % (" || ".join("kind == %d" % keys[m["name"]] for m in blob if m["task"] == "both") or "false"), "}", ""]
+
+    # a model whose integer hyperparameter `early-stopping` is above 0 keeps rows out of its fit and needs a declared held-out part (--split)
+    o += ["// whether the hyperparameters `ip` of the model ask for early stopping, which is refused unless --split declares held-out rows", "pub fn needs_split[&i](kind: int, ip: &i [int]) -> [] bool {"]
+    for m in ws:
+        for k, h in enumerate(int_like(m)):
+            if h["name"] == "early-stopping":
+                o += ["    if kind == %d {" % keys[m["name"]], "        return ip[%d] > 0;" % k, "    }"]
+    o += ["    return false;", "}", ""]
 
     # the least value of an integer hyperparameter flag (1 unless its manifest says 0: the generic check of the nat flags is 1 to the ceiling)
     mins = {}

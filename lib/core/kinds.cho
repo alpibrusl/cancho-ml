@@ -36,8 +36,13 @@ pub fn model_tree() -> [] int {
     return 7;
 }
 
+// gradient-boosted trees (docs/models-boost.md); the task is a field of the first record
+pub fn model_boost() -> [] int {
+    return 8;
+}
+
 pub fn model_count() -> [] int {
-    return 7;
+    return 8;
 }
 
 // ---- the sum order recorded in `meta` (docs/design.md section 4.1, `v1-post`): a model of a kind from first_ordered_model() on has a `u32 sum_order` as the
@@ -59,6 +64,9 @@ pub fn sum_order_sequential() -> [] int {
 // the sum order a model of `kind` (4 or above) records in its meta
 pub fn sum_order_for(kind: int) -> [] int {
     if kind == model_tree() {
+        return sum_order_sequential();
+    }
+    if kind == model_boost() {
         return sum_order_sequential();
     }
     return sum_order();
@@ -99,7 +107,8 @@ pub fn stream_group() -> [] int {
     return 8;
 }
 
-// 9 and 10 are the boosting stage's (a draft, docs/rng.md): listed here so that the registry stays one contiguous table
+// the row sample of a boosting round: derive(derive(seed, 9), round); the validation split of early stopping: derive(seed, 10) (docs/models-boost.md section 2.2).
+// Boost first wrote 7 and 8; the splits took those numbers on main, so boost has 9 and 10 (docs/rng.md).
 pub fn stream_boost_sample() -> [] int {
     return 9;
 }
@@ -276,6 +285,9 @@ pub fn model_at(i: int) -> [] int {
     if i == 7 {
         return model_tree();
     }
+    if i == 8 {
+        return model_boost();
+    }
     return 0;
 }
 
@@ -309,9 +321,6 @@ pub fn stream_at(i: int) -> [] int {
     }
     if i == 10 {
         return stream_boost_validation();
-    }
-    if i == 11 {
-        return stream_permutation();
     }
     return 0;
 }

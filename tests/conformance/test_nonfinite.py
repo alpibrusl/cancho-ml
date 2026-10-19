@@ -8,10 +8,11 @@ and nothing traps."""
 
 import json
 import math
+import struct
 import subprocess
 import unittest
 
-from harness import BIN, PREDICT_BIN, TRAPS, Sandbox, run, validate
+from harness import BIN, PREDICT_BIN, TRAPS, Sandbox, fix_checksum, run, sections, set_bytes, validate
 from serve_lib import Server
 
 RULE = "ml.predict.non-finite"
@@ -80,6 +81,15 @@ def setUpModule():
     assert ml("fit", "--model", "forest", "--task", "regression", "--trees", "8", "--target", "y", "--float", "x,y", "--output", "forest.ml", "tr.csv").status == 0
     SB.write("trc.csv", csv_of(["x", "lab"], [("%d.5" % i, str(i % 2)) for i in range(10)]))
     assert ml("fit", "--model", "tree", "--task", "classification", "--target", "lab", "--float", "x", "--output", "treec.ml", "trc.csv").status == 0
+    # boosted trees: a regression on the huge targets of the tree, a classification, and a regression whose leaves a hand-made file sets to 1.5e308 (three trees at a learning rate of 1: the sum overflows)
+    assert ml("fit", "--model", "boost", "--task", "regression", "--rounds", "5", "--min-leaf", "1", "--target", "y", "--float", "x,y", "--output", "boost.ml", "tr.csv").status == 0
+    assert ml("fit", "--model", "boost", "--task", "classification", "--rounds", "5", "--min-leaf", "1", "--target", "lab", "--float", "x", "--output", "boostc.ml", "trc.csv").status == 0
+    assert ml("fit", "--model", "boost", "--task", "regression", "--rounds", "3", "--learning-rate", "1", "--min-leaf", "1", "--target", "y", "--float", "x,y", "--output", "boostone.ml", "tr.csv").status == 0
+    data = SB.read("boostone.ml")
+    tag, start, n = sections(data)[3]
+    task, rounds, d, bins, total = struct.unpack_from("<5q", data[start:start + n], 20)
+    voff = 156 + 8 * (rounds + 1) + 5 * (16 + 8 * total) + 16
+    SB.write("boostinf.ml", fix_checksum(set_bytes(data, start + voff, struct.pack("<%dd" % total, *[1.5e308] * total))))
     SB.write("const.csv", "x,y\n1,1.7e308\n2,1.7e308\n3,1.6e308\n")
     assert ml("fit", "--model", "constant", "--task", "regression", "--float", "y", "--target", "y", "--drop", "x", "--output", "const.ml", "const.csv").status == 0
 
@@ -233,6 +243,36 @@ class Clustering(unittest.TestCase):
             SB.write("e.csv", "x\n%s\n" % x)
             r = ml("predict", "--model-file", "km1.ml", "--distance", "e.csv")
             self.assertEqual(r.status == 0, ok, (x, r))
+
+
+class Boost(unittest.TestCase):
+    """N3 for a boosted model: a score is a sum of leaves fitted on finite targets, so no input makes it infinite; a file whose leaves overflow the sum is the one reachable case, and it goes
+    through the same door on the three binaries (a classification squashes an infinite score to 1 or 0, which is finite)"""
+
+    def test_a_boosted_regression_and_classification_answer_a_huge_input_with_a_finite_cell(self):
+        SB.write("bh.csv", "x\n1e308\n-1e308\n3.5\n0\n5e-324\n")
+        for model, flags in (("boost.ml", []), ("boostc.ml", []), ("boostc.ml", ["--proba"])):
+            for run_ in (ml, pr):
+                r = run_("predict", "--model-file", model, *flags, "bh.csv")
+                self.assertEqual(r.status, 0, (model, flags, r))
+                for row in r.data()["rows"]:
+                    for c in row:
+                        if c not in ("0", "1"):
+                            self.assertTrue(math.isfinite(float(c)), (model, c))
+
+    def test_a_score_that_overflows_is_the_refusal_with_the_row_and_the_column(self):
+        SB.write("bp.csv", "x\n2.5\n7.5\n")
+        for run_ in (ml, pr):
+            r = run_("predict", "--model-file", "boostinf.ml", "bp.csv")
+            self.assertEqual((r.status, r.first_rule()), (8, RULE), r)
+            self.assertEqual(detail_of(r), {"row": 1, "column": "prediction"})
+            self.assertNotIn(b"i.nf", r.stdout)
+        r = ml("eval", "--model-file", "boostinf.ml", "tr.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, RULE), r)
+        r = ml("predict", "--model-file", "boostinf.ml", "--limit", "1", "--from", "1", "bp.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, RULE), r)           # the check covers every row scored, not the page
+        status, doc = served("boostinf.ml", ["x"], [["2.5"]], batch=False)
+        self.assertEqual(status, 422, doc)
 
 
 class TreesAndConstants(unittest.TestCase):
@@ -390,7 +430,8 @@ class Agreement(unittest.TestCase):
 VALUES = ["0", "-0.0", "1", "-1", "0.5", "1e-320", "5e-324", "-5e-324", "2.2250738585072014e-308", "1e154", "1.3e154", "1.4e154", "1e155", "1e200", "1.79e307", "1.8e307", "1e308",
           "-1e308", "1.7976931348623157e308", "-1.7976931348623157e308"]
 FUZZ_MODELS = [("lin.ml", ["x"], []), ("lin2.ml", ["a", "b"], []), ("lgbig.ml", ["a", "b"], ["--proba"]), ("lgsmall.ml", ["a", "b"], ["--proba"]), ("km.ml", ["a", "b"], ["--distance"]),
-               ("km.ml", ["a", "b"], []), ("tree.ml", ["x"], []), ("forest.ml", ["x"], []), ("treec.ml", ["x"], []), ("const.ml", ["x"], ["--drop", "x"])]
+               ("km.ml", ["a", "b"], []), ("tree.ml", ["x"], []), ("forest.ml", ["x"], []), ("treec.ml", ["x"], []), ("const.ml", ["x"], ["--drop", "x"]),
+               ("boost.ml", ["x"], []), ("boostc.ml", ["x"], []), ("boostc.ml", ["x"], ["--proba"]), ("boostinf.ml", ["x"], [])]
 
 
 def combos(width):

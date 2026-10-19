@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The cross-platform determinism gate (docs/ci.md section 2): the fingerprint of `ml` against a committed golden.
 
-The fingerprint is one tab-separated line per artefact, for 22 fits of every model kind on the bundled example data (docs/examples/data) and two more answers (the permutation importance of a forest, the dump of a tree):
+The fingerprint is one tab-separated line per artefact, for 28 fits of every model kind on the bundled example data (docs/examples/data), two more fits of JSON lines (docs/jsonl.md) and two more answers (the permutation importance of a forest, the dump of a tree; docs/interpret.md):
 `case  fit-exit  rc`, `case  model-file  sha256`, `case  predict  rc  sha256`, `case  eval  rc  sha256`. A model file is hashed whole; a
-predict or eval answer is hashed as the bytes the program printed. The golden, docs/bench/xplat_fp.txt, is those 88 lines as written on
+predict or eval answer is hashed as the bytes the program printed. The golden, docs/bench/xplat_fp.txt, is those 112 lines (the first 88 written when the five
+older models were the whole list, the 24 of the boosted model appended) as written on
 macOS arm64 and read back on Linux x86-64 (docs/ci.md section 3). Every platform of the CI matrix runs this script on its own build and must
 print the golden's bytes: equal to the golden is equal to each other.
 
@@ -60,7 +61,32 @@ def cases():
         ]
     out.append(("constant-reg", "diabetes_train", "diabetes_test", ["--model", "constant"], []))
     out.append(("constant-cls", "iris_train", "iris_test", ["--model", "constant"], []))
+    # boosted trees (docs/models-boost.md, kind 8): appended after the cases above, whose golden lines are unchanged. The sample, the early stop and the categorical plan are in the fits.
+    for t in ("1", "8"):
+        out += [
+            ("boost-diabetes-t" + t, "diabetes_train", "diabetes_test", ["--model", "boost", "--rounds", "40", "--max-depth", "3", "--min-leaf", "5", "--seed", "7", "--threads", t], []),
+            ("boost-cancer-t" + t, "breast_cancer_train", "breast_cancer_test", ["--model", "boost", "--task", "classification", "--rounds", "80", "--subsample", "0.7", "--early-stopping", "5",
+                                                                                  "--split", "train=0.8", "--seed", "7", "--threads", t], ["--proba"]),
+            ("boost-pets-cat-t" + t, "pets", "pets", ["--model", "boost", "--task", "classification", "--rounds", "30", "--min-leaf", "2", "--seed", "3", "--cat", "species,city", "--step", CAT,
+                                                      "--drop", "id", "--threads", t], ["--proba", "--drop", "id"]),
+        ]
+    # JSON lines (docs/jsonl.md): the files are made from the CSVs below, so the model file must be the bytes of the CSV fit; the cases are appended after the 88 lines of the others
+    out.append(("logistic-iris-jsonl", "iris_train", "iris_test", ["--model", "logistic", "--step", STD, "--l2", "0.1", "--input-format", "jsonl"], ["--proba", "--input-format", "jsonl"]))
+    out.append(("forest-pets-jsonl-cat", "pets", "pets", ["--model", "forest", "--task", "classification", "--trees", "10", "--seed", "3", "--cat", "species,city", "--step", HASH, "--drop", "id", "--input-format", "jsonl"], ["--proba", "--input-format", "jsonl"]))
     return out
+
+
+def jsonl_of(csv_path, cats):
+    """the JSON lines of a CSV with simple cells: a column in `cats` holds strings, any other its cell as the token text of a number"""
+    import csv as csvmod
+    import json as jsonmod
+    with open(csv_path, newline="") as f:
+        rows = list(csvmod.reader(f))
+    head = rows[0]
+    lines = []
+    for r in rows[1:]:
+        lines.append("{" + ",".join(jsonmod.dumps(k) + ":" + (jsonmod.dumps(v) if k in cats else v) for k, v in zip(head, r)) + "}")
+    return ("\n".join(lines) + "\n").encode()
 
 
 def sha(b):
@@ -97,8 +123,17 @@ def fingerprint(ml, data, ml_predict=None):
                 failures.append("%s: data file %s or %s is not in %s" % (name, tf, sf, data))
                 continue
             fa = ["fit"] + fit_args
+            if "--input-format" in fit_args:
+                # JSON lines: the same table as JSON, the fields its header, the model file the bytes of the CSV fit
+                cats = fit_args[fit_args.index("--cat") + 1].split(",") if "--cat" in fit_args else []
+                for src in (train, test):
+                    with open(os.path.join(work, src + ".jsonl"), "wb") as fh:
+                        fh.write(jsonl_of(os.path.join(work, src + ".csv"), cats))
+                with open(os.path.join(work, tf)) as fh:
+                    fa += ["--fields", fh.readline().strip()]
+                tf, sf = train + ".jsonl", test + ".jsonl"
             if fit_args[fit_args.index("--model") + 1] != "kmeans":
-                fa += ["--target", last_column(os.path.join(work, tf))]
+                fa += ["--target", last_column(os.path.join(work, train + ".csv"))]
             rc, so = run(ml, work, fa + ["--overwrite", "--output", out, tf])
             lines.append("%s\tfit-exit\t%d" % (name, rc))
             if rc != 0:
@@ -114,6 +149,8 @@ def fingerprint(ml, data, ml_predict=None):
             ev = ["eval", "--model-file", out]
             if "--drop" in pred_args:
                 ev += ["--drop", pred_args[pred_args.index("--drop") + 1]]
+            if "--input-format" in pred_args:
+                ev += ["--input-format", pred_args[pred_args.index("--input-format") + 1]]
             steps.append(("eval", ev + [sf]))
             for what, args in steps:
                 rc, so = run(ml, work, args)
@@ -304,6 +341,21 @@ def mutants(a, lines, failures):
         os.chmod(w, 0o755)
         l2, f2 = fingerprint(w, data)
         expect_fail("one byte of a stored tree model differs", check(l2, f2, golden), "diff")
+        # the boosted model (docs/models-boost.md): one byte of its stored file, and a fit that differs only with 8 threads
+        w = os.path.join(tmp, "ml-flipboost")
+        with open(w, "w") as fh:
+            fh.write("#!/bin/sh\n# a mutant of ml: the model file of a boost fit loses a byte's value\n"
+                     "%s \"$@\" || exit $?\n" % real + FLIP % "*'fit --model boost'*")
+        os.chmod(w, 0o755)
+        l2, f2 = fingerprint(w, data)
+        expect_fail("one byte of a stored boost model differs", check(l2, f2, golden), "diff")
+        w = os.path.join(tmp, "ml-boostthreads")
+        with open(w, "w") as fh:
+            fh.write("#!/bin/sh\n# a mutant of ml: a fit with --threads 8 of a boosted model writes another byte\n"
+                     "%s \"$@\" || exit $?\n" % real + FLIP % "*'fit --model boost'*'--threads 8'*")
+        os.chmod(w, 0o755)
+        l2, f2 = fingerprint(w, data)
+        expect_fail("a boost fit differs between 1 and 8 threads (the thread check)", f2 and ["run fault: " + x for x in f2] or [], "thread invariance")
         w = wrapper("ml-nopred", "predict prints a changed answer", "*predict*", "echo '{\"ok\":true}'; exit 0", real)
         l2, f2 = fingerprint(w, data)
         expect_fail("a predict answer differs", check(l2, f2, golden), "diff")

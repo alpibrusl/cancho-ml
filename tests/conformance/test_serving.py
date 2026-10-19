@@ -112,7 +112,7 @@ class StdinEqualsFile(unittest.TestCase):
 
     def test_the_text_format_the_probability_the_page_and_the_dropped_columns(self):
         data = (SB.dir / "num_plain.csv").read_bytes()
-        for mid in ("linear", "logistic", "tree_cls", "forest_reg", "const_cls", "const_reg_dec", "kmeans", "cat_kmeans_onehot"):
+        for mid in ("linear", "logistic", "tree_cls", "forest_reg", "boost_reg", "boost_cls", "const_cls", "const_reg_dec", "kmeans", "cat_kmeans_onehot"):
             mf = MODELS[mid][0]
             for extra in (["--format", "text"], ["--limit", "3", "--from", "2"], ["--limit", "2", "--format", "text"], ["--from", "50"], ["--proba"],
                           ["--proba", "--limit", "4", "--from", "1"], ["--distance"], ["--distance", "--format", "text", "--limit", "3"]):
@@ -235,14 +235,23 @@ class Operand(unittest.TestCase):
         self.assertEqual(none.first_rule(), "ml.input.empty")
         os.unlink(SB.dir / "-")
 
-    def test_fit_and_eval_read_a_file_named_dash(self):
-        SB.write("-", (SB.dir / C.NUM).read_bytes())
-        r = ml("fit", "-", "--target", "y", "--drop", "lab", "--output", "dash.cml", "--overwrite")
+    def test_fit_and_eval_read_standard_input_for_dash(self):
+        data = (SB.dir / C.NUM).read_bytes()
+        r = ml("fit", "-", "--target", "y", "--drop", "lab", "--output", "dash.cml", "--overwrite", stdin=data)
         self.assertEqual(r.status, 0, r)
-        e = ml("eval", "-", "--model-file", "dash.cml", "--drop", "lab")
+        e = ml("eval", "-", "--model-file", "dash.cml", "--drop", "lab", stdin=data)
         self.assertEqual(e.status, 0, e)
+        # the same bytes in a file give the same model file and the same answer; a file named - is ./-
+        SB.write("-", data)
+        r2 = ml("fit", "./-", "--target", "y", "--drop", "lab", "--output", "dash2.cml", "--overwrite")
+        self.assertEqual(r2.status, 0, r2)
+        self.assertEqual((SB.dir / "dash.cml").read_bytes(), (SB.dir / "dash2.cml").read_bytes())
+        self.assertEqual(ml("eval", "./-", "--model-file", "dash.cml", "--drop", "lab").stdout, e.stdout)
+        # standard input over --max-bytes is refused, and an empty one is an empty file
+        self.assertEqual(ml("fit", "-", "--target", "y", "--drop", "lab", "--output", "dash3.cml", "--max-bytes", "10", stdin=data).first_rule(), "limit.input-too-large")
+        self.assertEqual(ml("eval", "-", "--model-file", "dash.cml", "--drop", "lab", stdin=b"").first_rule(), "ml.input.empty")
         # with no operand they still need the file
-        self.assertEqual(ml("fit", "--target", "y", "--output", "dash2.cml").first_rule(), "args.missing-operand")
+        self.assertEqual(ml("fit", "--target", "y", "--output", "dash4.cml").first_rule(), "args.missing-operand")
         self.assertEqual(ml("eval", "--model-file", "dash.cml").first_rule(), "args.missing-operand")
         os.unlink(SB.dir / "-")
 
@@ -275,7 +284,7 @@ class MlPredict(unittest.TestCase):
 
     def test_the_flags_of_predict(self):
         data = (SB.dir / "num_plain.csv").read_bytes()
-        for mid in ("linear", "logistic", "tree_cls", "const_cls", "forest_reg", "kmeans", "kmeans_random"):
+        for mid in ("linear", "logistic", "tree_cls", "const_cls", "forest_reg", "boost_cls", "kmeans", "kmeans_random"):
             mf = MODELS[mid][0]
             for extra in (["--format", "text"], ["--limit", "3", "--from", "2"], ["--proba"], ["--distance"], ["--max-rows", "4"], ["--max-line-bytes", "5"], ["--max-bytes", "10"]):
                 a = ml("predict", "-", "--model-file", mf, *extra, stdin=data)
@@ -340,7 +349,7 @@ class MlPredictSurface(unittest.TestCase):
 
     def test_the_flags_it_has(self):
         tool = {f["name"] for f in json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)["flags"]}
-        self.assertEqual(tool, {"--" + n for n in ("root", "proba", "distance", "drop", "model-file", "limit", "from", "max-rows", "max-columns", "max-cells", "max-line-bytes", "max-bytes", "max-out-of-range", "format")})
+        self.assertEqual(tool, {"--" + n for n in ("root", "proba", "distance", "drop", "model-file", "limit", "from", "max-rows", "max-columns", "max-cells", "max-line-bytes", "max-bytes", "input-format", "absent", "max-json-nodes", "max-out-of-range", "format")})
 
     def test_introspect_and_skill_name_the_binary(self):
         i = json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)

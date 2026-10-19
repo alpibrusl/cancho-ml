@@ -135,7 +135,7 @@ fn over_ceiling[&h](heap: &!h Heap, errs: fail.Errors, value: int) -> [heap] fai
 }
 
 fn unsupported[&h](heap: &!h Heap, errs: fail.Errors) -> [heap] fail.Errors {
-    var w = fail.open_in(heap, spec.extra(), "ml.dump.unsupported-model", "the model is a constant, which has nothing to dump", "dump prints a tree, a forest, a linear or logistic model and a k-means");
+    var w = fail.open_in(heap, spec.extra(), "ml.dump.unsupported-model", "the model is a constant or a boosted model, which has nothing to dump here", "dump prints a tree, a forest, a linear or logistic model and a k-means");
     w = fail.no_repair(heap, w);
     w = fail.detail_open(heap, w);
     return fail.add(heap, errs, w);
@@ -427,6 +427,11 @@ fn kmeans_dump[&h, &s, &l, &p](heap: &!h Heap, st: &s wireio.Stored, lin: &l int
 fn dump_stored[&h, &s](heap: &!h Heap, st: &s wireio.Stored, rq: perm.Req, errs: fail.Errors) -> [heap] (buffer.Buffer, buffer.Buffer, fail.Errors) {
     let kind = est.kind_of(wireio.stored_kind(st));
     var e = errs;
+    if kind == 8 {
+        // a boosted model has trees but no dump of them yet (docs/interpret.md section 7): a refusal, never the linear dump of a payload that is not a coefficient vector
+        e = unsupported(heap, e);
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), e);
+    }
     if kind != 7 {
         if rq.tree_given {
             e = wiredata.conflict(heap, e, "tree", "only a tree or a forest has trees to choose from");

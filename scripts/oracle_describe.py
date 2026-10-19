@@ -122,7 +122,7 @@ def describe(data, limit=1000, max_bytes=16777216):
         columns.append({"name": tb(name), "type": TYPES[ty], "scale": scale if ty == 1 else None, "role": "target" if j == target else "feature", "required": j != target})
     if kind <= 3:
         missing = "refused"
-    elif model in ("tree", "forest"):
+    elif model in ("tree", "forest", "boost"):
         missing = "handled"
     else:
         missing = "needs_impute"
@@ -165,7 +165,7 @@ def describe(data, limit=1000, max_bytes=16777216):
         tname, tty, tscale = cols[target]
         target_obj = {"name": tb(tname), "type": TYPES[tty], "scale": tscale if tty == 1 else None}
         optional = [tb(tname)]
-    return {
+    doc = {
         "model": model, "task": task, "kind": kind, "plan": ptext, "rows": rows, "provenance": provenance,
         "file": {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "format": "CML1", "version": struct.unpack_from("<I", data, 4)[0],
                  "sections": struct.unpack_from("<I", data, 8)[0], "compiler": tb(pin), "sum_order": sum_order},
@@ -178,9 +178,28 @@ def describe(data, limit=1000, max_bytes=16777216):
         # the table of docs/interpret.md that needs no data, computed by scripts/oracle_interp.py from the bytes of the file
         "importance": OI.importance_member(OI.read_model(data), limit),
     }
+    if kind == 8:
+        # a boosted model (docs/models-boost.md section 6): the trees and nodes of its payload, after `file`; header i64 at 20: task, rounds, d, bins, total_nodes, ..., rounds_requested at 84
+        rounds, total = struct.unpack_from("<q", mdl, 28)[0], struct.unpack_from("<q", mdl, 52)[0]
+        requested = struct.unpack_from("<q", mdl, 84)[0]
+        out = {}
+        for k, v in doc.items():
+            out[k] = v
+            if k == "file":
+                out["ensemble"] = {"trees": rounds, "nodes": total, "rounds_requested": requested}
+        doc = out
+    return doc
 
 
+# the order of the keys of `describe`; a boosted model has "ensemble" after "file" (field_order)
 FIELD_ORDER = ["model", "task", "kind", "plan", "rows", "provenance", "file", "target", "columns", "request", "categorical", "na_values", "reader", "classes", "positive", "output", "limits", "importance"]
+
+def field_order(kind):
+    if kind == 8:
+        i = FIELD_ORDER.index("file") + 1
+        return FIELD_ORDER[:i] + ["ensemble"] + FIELD_ORDER[i:]
+    return FIELD_ORDER
+
 
 if __name__ == "__main__":
     import json

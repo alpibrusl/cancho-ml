@@ -50,9 +50,11 @@ constant differs, and `scripts/check_registry.py` compares it with this table an
 | 6 | stratified k-fold | `2 * repeat + class` | `lib/metrics/splits.cho` |
 | 7 | stratified holdout (`ml fit --split train=F --stratify`) | the class rank (0 for the smaller label) | `lib/metrics/splits.cho`, used by `tools/ml/splitplan.cho` (`docs/splits.md` section 3) |
 | 8 | shuffle of the groups (`--split-group`) | the repeat (0 for a holdout) | `lib/metrics/splits.cho`, used by `tools/ml/splitplan.cho` |
-| 9 | row sample of a boosting round (reserved) | the round | the boosting stage (draft pull request 62): listed so that the table stays one contiguous list |
-| 10 | validation split of boosting's early stopping (reserved) | none | the same |
+| 9 | row sample of a boosting round | the round (0-based) | `lib/models/boost/fit.cho` (`docs/models-boost.md` 2.2) |
+| 10 | validation split of boosting's early stopping | none: `derive(seed, 10)` is the state | `lib/models/boost/fit.cho` (`docs/models-boost.md` 2.7) |
 | 11 | shuffle of one raw column by `ml importance --data` | the repeat, then the index of the column in the model's schema | `tools/ml/perm.cho` (`docs/interpret.md` section 3.4); the shuffle is `shuffle` of `lib/metrics/splits.cho` |
+
+Streams 9 and 10 are boost's: boost first claimed 7 and 8, the splits took them on main first, and boost was renumbered at its integration (no boost file written before that exists: boost was never on main).
 
 The next stream takes 12. *(Renumbered at integration: the metrics stage had 1, 2, 3 for its three splits, which met the tree's 1 and 2
 and k-means' 3, and this file had said "kinds 1 and 2 are the test-input streams". The splits' assignment vectors changed with the

@@ -59,7 +59,7 @@ def control():
         tree = pathlib.Path(td) / "tree"
         scratch(tree)
         # a second, honest model: a copy of linear under another name and kind
-        mutants.add_model(tree, "twin", 8, "model_twin")
+        mutants.add_model(tree, "twin", 9, "model_twin")
         refresh(tree)
         lines = []
         res = admit.admit(tree, "twin", fast=True, build=True, out=lines.append)

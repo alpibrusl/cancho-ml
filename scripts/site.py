@@ -29,6 +29,7 @@ generated:
     qs            README.md, guide.html   the quick start's commands and output
     kmflow        README.md, guide.html   k-means on docs/examples/data/iris_train.csv and iris_test.csv: no target (a --target is refused), k required, the label dropped,
                                           the features standardised, three clusters, predict with the squared distance, eval
+    refuse        README.md, guide.html   a collinear design and separable classes: the refusal with the column and the dependency, and the repair run as offered
     catflow       README.md, guide.html   the categorical flow on docs/examples/data/pets.csv: a declared column that no step
                                           reads is refused, a fit with categorical steps writes the model file (one-hot, rare bucket,
                                           frequency), predict and eval read it, new rows with unseen categories in another column
@@ -38,6 +39,8 @@ generated:
                                           each fold and their mean and standard deviation, a time cv, a group cv with --emit-folds, and a refusal with its repair
     interpflow    README.md, guide.html   explaining a model (docs/interpret.md): the standardised coefficients of a linear model, the impurity importance of a forest with a column of noise, the
                                           permutation importance on held-out rows, the dump of a two-level tree and a refusal
+    bflow         README.md, guide.html   boosted trees on docs/examples/data/breast_cancer_train.csv and _test.csv: early stopping refused without --split, a fit, predict --proba,
+                                          eval, early stopping with a held-out part, describe
     hero          guide.html              the first example
     agentio       README.md, guide.html   excerpts of `ml introspect`
     skill         guide.html              the first lines of `ml skill`
@@ -98,6 +101,11 @@ FILES = {
     "new2.csv": "id,visits,spend\n13,3,\n14,6,20.0\n15,1,1.5\n",
     # new rows for the model fitted on pets.csv: the columns in another order, a city and a species the training rows never held, and an empty city cell
     "newpets.csv": "city,species,age,visits\nOslo,rabbit,2,3\nLyon,axolotl,4,1\n,cat,1,2\n",
+    # JSON lines (docs/jsonl.md): the houses as objects; new rows with other keys, in another order, with a nested value ml does not read; a file with a key missing; a string where a number is read
+    "houses.jsonl": '{"id":1,"rooms":2,"area":48.5,"price":180000}\n{"id":2,"rooms":3,"area":71.25,"price":240000}\n{"id":3,"rooms":3,"area":64,"price":215000}\n{"id":4,"rooms":4,"area":98.5,"price":335000}\n{"id":5,"rooms":1,"area":31,"price":120000}\n',
+    "new.jsonl": '{"area":52.5,"id":6,"agent":{"name":"A. Costa","phones":[1,2]},"rooms":2}\n{"rooms":3,"note":"south, \\"quiet\\"","id":7,"area":80}\n',
+    "gap.jsonl": '{"id":1,"rooms":2,"area":48.5,"price":180000}\n{"id":2,"area":71.25,"price":240000}\n{"id":3,"rooms":3,"area":64,"price":215000}\n',
+    "strings.jsonl": '{"id":1,"rooms":2,"area":"48.5","price":180000}\n',
 }
 
 def iris_gaps():
@@ -141,6 +149,9 @@ DEMOS = [
     ("c_eval", "ml eval --model-file pets.ml --drop id pets.csv"),
     ("c_hash", "ml fit --model logistic --cat species,city --step 'hash column=species buckets=8 missing=zero;encode column=city kind=label missing=zero;scale column=age,visits kind=standard' --drop id --split train=0.75 --seed 3 --iterations 50 --l2 0.1 --target adopted --output pets-hash.ml pets.csv"),
     ("c_hash_new", "ml predict --model-file pets-hash.ml --proba newpets.csv"),
+    # a fit that has no answer (docs/refusals-fit.md): the full one-hot block beside the intercept, and classes a hyperplane separates; the repair of each is run as offered
+    ("r_col", "ml fit --model logistic --cat species --step 'encode column=species kind=onehot' --drop id,city --target adopted --output pets-col.ml pets.csv"),
+    ("r_sep", "ml fit --model logistic --drop id --target bought --output shop-sep.ml shop.csv"),
     # standard input, describe and ml-predict (docs/serving.md); the last field of a demo is the file given on standard input
     ("s_stdin", "ml predict --model-file houses.ml -", "new.csv"),
     ("s_empty", "ml predict --model-file houses.ml", "empty.csv"),
@@ -179,10 +190,24 @@ DEMOS = [
     ("r_predict", "ml predict --model-file iris.ml --proba --limit 3 iris_test.csv"),
     ("r_eval", "ml eval --model-file iris.ml iris_test.csv"),
     ("r_bad", "ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv"),
+    # JSON lines as an input (docs/jsonl.md)
+    ("j_fit", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-jl.ml houses.jsonl"),
+    ("j_predict", "ml predict --model-file houses-jl.ml --input-format jsonl new.jsonl"),
+    ("j_stdin", "ml predict --model-file houses-jl.ml --input-format jsonl -", "new.jsonl"),
+    ("j_fit_stdin", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --overwrite --output houses-jl.ml -", "houses.jsonl"),
+    ("j_bad", "ml fit --model tree --input-format jsonl --fields id,rooms,area,price --target price --output houses-gap.ml gap.jsonl"),
+    ("j_str", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-str.ml strings.jsonl"),
+    # boosted trees on breast cancer (docs/models-boost.md): early stopping needs --split, a fit, the probabilities, the metrics, early stopping with a split, describe
+    ("b_nosplit", "ml fit --model boost --target benign --early-stopping 10 --output cancer-boost.ml breast_cancer_train.csv"),
+    ("b_fit", "ml fit --model boost --task classification --target benign --rounds 100 --learning-rate 0.1 --max-depth 3 --subsample 0.8 --seed 1 --output cancer-boost.ml breast_cancer_train.csv"),
+    ("b_predict", "ml predict --model-file cancer-boost.ml --proba --limit 3 breast_cancer_test.csv"),
+    ("b_eval", "ml eval --model-file cancer-boost.ml breast_cancer_test.csv"),
+    ("b_early", "ml fit --model boost --task classification --target benign --rounds 500 --learning-rate 0.2 --early-stopping 10 --split train=0.8 --seed 1 --output cancer-early.ml breast_cancer_train.csv"),
+    ("b_describe", "ml describe --model-file cancer-boost.ml"),
 ]
 # demos shown as the members of the JSON line that matter, since the line is long
 # demos whose answer is shown as the members of `data` that matter, since the document is long
-SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"]}
+SUMMARY_DATA = {"s_describe": ["model", "task", "request", "classes", "output"], "b_describe": ["model", "task", "kind", "ensemble", "classes", "output"]}
 # demos whose answer is shown as members found by a path into `data`: the last name of a path is the key shown
 PICK_DATA = {
     "sp_strat": [("summary", "split"), ("summary", "holdout")],
@@ -201,6 +226,8 @@ SUMMARY = {
     "p_bad": ["rule", "hint", "repair"],
     "r_bad": ["rule", "hint", "repair"],
     "c_bad": ["rule", "hint", "detail"],
+    "r_col": ["rule", "hint", "repair", "detail"],
+    "r_sep": ["rule", "hint", "repair", "detail"],
     "s_empty": ["rule", "hint"],
     "s_mp_fit": ["rule", "hint", "detail"],
     "s_mp_flag": ["rule", "hint", "detail"],
@@ -209,6 +236,9 @@ SUMMARY = {
     "sp_combo": ["rule", "hint", "repair", "detail"],
     "sp_bad": ["rule", "hint", "repair"],
     "i_bad": ["rule", "hint"],
+    "j_bad": ["rule", "hint", "repair"],
+    "j_str": ["rule", "hint", "detail"],
+    "b_nosplit": ["rule", "hint", "detail"],
 }
 # task name -> the demos shown for it
 TASKS = {
@@ -222,7 +252,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_bad": "r_fixed", "sp_bad": "sp_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_bad": "r_fixed", "j_bad": "j_fixed", "sp_bad": "sp_fixed", "r_col": "r_col_fixed", "r_sep": "r_sep_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -411,7 +441,7 @@ def make_context(binary, tmp):
             out.append(",".join(cells[:2] + ["noise" if k == 0 else "%.3f" % rng.random()] + cells[2:]))
         (Path(tmp) / ("iris_noise_%s.csv" % part)).write_text("\n".join(out) + "\n")
     # the split examples: the committed files of docs/examples/data
-    for name in ("breast_cancer_train.csv", "diabetes_train.csv", "visits.csv"):
+    for name in ("breast_cancer_train.csv", "breast_cancer_test.csv", "diabetes_train.csv", "visits.csv"):
         (Path(tmp) / name).write_bytes((ROOT / "docs" / "examples" / "data" / name).read_bytes())
     results = {}
 
@@ -615,6 +645,32 @@ def catflow_items(ctx):
             item(ctx, "c_hash_new")]
 
 
+def jflow_items(ctx):
+    """JSON lines: fit with the columns declared, predict with other keys and another order, standard input, a key missing (and the repair, run), a string where a number is read."""
+    return [("# houses.jsonl: one object a line. --fields declares the columns, in the order of the table. The model file is the one fitted from the CSV except the identity of the training file in its provenance section (its SHA-256 and size)", None, 0, None),
+            item(ctx, "j_fit"),
+            ("# predict reads the columns of the model file by key: any order, and keys it does not read (a nested object, a note) are ignored", None, 0, None),
+            item(ctx, "j_predict"),
+            ("# standard input works for predict, and for fit and eval with the operand -", None, 0, None),
+            item(ctx, "j_stdin"),
+            item(ctx, "j_fit_stdin"),
+            ("# a line with no rooms key is refused, with the repair that reads an absent key as a missing cell (a tree takes it)", None, 0, None),
+            item(ctx, "j_bad"),
+            item(ctx, "j_fixed"),
+            ("# a JSON string is text, never a number: \"48.5\" is not read as 48.5", None, 0, None),
+            item(ctx, "j_str")]
+def refuse_items(ctx):
+    """A fit that has no answer is refused by name, with the repair as an argv that is run as offered (docs/refusals-fit.md)."""
+    return [("# The text column species is one-hot encoded: its columns add up to the intercept, so the normal equations of the first Newton pass are singular. The refusal names the column and the dependency", None, 0, None),
+            item(ctx, "r_col"),
+            ("# The repair the tool offered is a ridge just above the tolerance. Run it", None, 0, None),
+            item(ctx, "r_col_fixed"),
+            ("# The two classes of shop.csv are separated by a plane, so with no penalty the best fit is at infinity. It is refused at the pass where every row is right", None, 0, None),
+            item(ctx, "r_sep"),
+            ("# The repair is a penalty. Run it", None, 0, None),
+            item(ctx, "r_sep_fixed")]
+
+
 def sflow_items(ctx):
     """Standard input, describe and ml-predict."""
     return [("# predict reads the CSV from standard input for the operand - (or no operand): the answer is the file's answer", None, 0, None),
@@ -663,6 +719,22 @@ def splitflow_items(ctx):
             item(ctx, "sp_cv_group"),
             ("# A regression has no classes to keep in proportion. The refusal offers the corrected command", None, 0, None),
             item(ctx, "sp_bad")]
+
+
+def bflow_items(ctx):
+    """Boosted trees: early stopping refused without --split, a fit on breast cancer, the probabilities of three test rows, the metrics, early stopping with a held-out part, describe."""
+    return [("# early stopping keeps rows out of the fit, so it is refused unless a held-out part is declared with --split", None, 0, None),
+            item(ctx, "b_nosplit"),
+            ("# 100 rounds of depth-3 trees on 80 percent of the rows each, learning rate 0.1: the summary holds the rounds, the nodes and the base score", None, 0, None),
+            item(ctx, "b_fit"),
+            ("# the label and the probability of the positive label for three test rows", None, 0, None),
+            item(ctx, "b_predict"),
+            ("# accuracy, precision, recall, F1, ROC-AUC and log-loss of the 143 test rows", None, 0, None),
+            item(ctx, "b_eval"),
+            ("# up to 500 rounds, stopped after 10 without a better loss on a tenth of the training rows; the test side of --split is never read by the stopping rule", None, 0, None),
+            item(ctx, "b_early"),
+            ("# describe says the kind (8), the sum order (in file) and the number of trees of the file", None, 0, None),
+            item(ctx, "b_describe")]
 
 
 def hflow_items(ctx):
@@ -1007,7 +1079,7 @@ def land_cmds(ctx):
     """'One command, one model file, one server': the fit, the comparison, the replay of a run, the server and the request, as the demo ran them."""
     blocks = demo_blocks(ctx["demo"])
     out = []
-    for i, note in ((0, "# any of the six models, one verb; --track keeps a run record"), (2, "# two runs: what differs, and the metrics side by side"),
+    for i, note in ((0, "# any of the %s models, one verb; --track keeps a run record" % model_word()), (2, "# two runs: what differs, and the metrics side by side"),
                     (3, "# replay a run: re-fit from its record and compare the SHA-256 of the model file"),
                     (6, "# the same file over HTTP: it listens on 127.0.0.1 unless --bind all is given"), (7, "# one request")):
         out.append('<span class="c">%s</span>' % e(note))
@@ -1025,12 +1097,25 @@ def _int(s):
     return int(s.replace(",", ""))
 
 
+NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+
+
+def model_word():
+    """the number of models `ml fit --model` builds, in words: the manifests of lib/models that are wired (docs/modules.md)"""
+    import re
+    n = sum(1 for p in sorted((ROOT / "lib" / "models").glob("*/model.toml")) if re.search(r"^wired *= *true", p.read_text(), re.M))
+    return NUMBER_WORDS[n]
+
+
 def landing_values(ctx):
     """name -> text, for every <b data-n="name"> or <span data-n="name"> of docs/index.html. Sources: docs/status.md (the document every count lives in),
     docs/bench/xplat_fp.txt (the golden), and `ml introspect` (the rules)."""
     import re
     status = (ROOT / "docs" / "status.md").read_text()
     fp = (ROOT / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines()
+    # the figures of the landing page are the lines that three platforms print: the cases of JSON lines (names with `-jsonl`) and the two answers of the explanation verbs (the cases `importance-` and `dump-`) are in the golden from fewer than three platforms until the other runs
+    # print them too (docs/status.md says which); they are counted here when the golden is the same on every platform of the matrix
+    fp = [l for l in fp if "-jsonl" not in l.split("\t")[0] and not l.startswith(("importance-", "dump-"))]
     fits = sum(1 for l in fp if l.split("\t")[1:2] == ["fit-exit"])
     m = re.search(r"agree on (\d+) fingerprint lines for (\d+) fits", status)
     if not m or (int(m.group(1)), int(m.group(2))) != (len(fp), fits):
@@ -1054,7 +1139,7 @@ def landing_values(ctx):
         raise Drift("docs/status.md no longer gives the red gate in its usual words")
     import re as _re
     runners = _re.findall(r"- \{os: ([\w.-]+),", (ROOT / ".github" / "workflows" / "ci.yml").read_text())
-    return {"runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
+    return {"models": model_word(), "runners": str(len(runners)), "fp_lines": str(len(fp)), "fp_fits": str(fits), "platforms": str(len(PLATFORMS)), "tests": tests, "mut_total": total, "mut_killed": killed,
             "mut_survive": survive, "rules": str(len(ctx["introspect"]["rules"])), "red_gap": m.group(3), "red_tol": m.group(4)}
 
 
@@ -1108,11 +1193,11 @@ def foot_html(rel):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)), interpflow=lambda c: md_block(interp_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), refuse=lambda c: md_block(refuse_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), interpflow=lambda c: md_block(interp_items(c)), jflow=lambda c: md_block(jflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)), bflow=lambda c: md_block(bflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/guide.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)), interpflow=lambda c: html_pre(interp_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), refuse=lambda c: html_pre(refuse_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), interpflow=lambda c: html_pre(interp_items(c)), jflow=lambda c: html_pre(jflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)), bflow=lambda c: html_pre(bflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

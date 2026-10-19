@@ -726,6 +726,68 @@ class Splits(Base):
         self.assertEqual(os.listdir(self.sb.dir / "runs"), [])
 
 
+BOOST = ["--model", "boost", "--task", "regression", "--rounds", "8", "--min-leaf", "1", "--target", "y", "--step", "impute column=c strategy=mean"]
+
+
+class BoostTracking(Base):
+    """A boosted model (kind 8, the sum order 3) is held to everything the other kinds are: the section, `on`, `out_of_range`, the bound, the record and its replay at 1 and 8 threads
+    (the rounds are sequential, the threads only bin the columns: the SHA-256 of the model must not move)."""
+
+    def test_the_file_carries_the_section_the_oracle_writes_at_every_thread_count(self):
+        outs = []
+        for th in (1, 2, 8):
+            self.fit("--threads", str(th), flags=BOOST)
+            outs.append(self.sb.read("m.cml"))
+        self.assertEqual(outs[0], outs[1])
+        self.assertEqual(outs[0], outs[2])
+        data = outs[0]
+        self.assertEqual(sorted(t for t, _, _ in sections(data)), [1, 2, 3, 4, 5, 7])
+        s, n = section_at(data, 7)
+        self.assertEqual(data[s:s + n], O.provenance(TRAIN.encode(), ["a", "b", "c"], None))
+
+    def test_eval_says_on_and_counts_the_cells_out_of_range(self):
+        self.fit(flags=BOOST)
+        self.assertEqual(self.sb.run("eval", "--model-file", "m.cml", "train.csv").data()["on"], "train")
+        rows = "a,b,c,y\n1,3,0.5,3\n8,9,3.5,13\n0,3,,100\n9,10,0.2,3\n-1,0,9,3\n3,4,2,1000\n"
+        self.sb.write("new.csv", rows)
+        e = self.sb.run("eval", "--model-file", "m.cml", "new.csv").data()
+        self.assertEqual(e["on"], "other")
+        header, data = O.read_csv(rows.encode())
+        prov = self.sb.read("m.cml")
+        s, n = section_at(prov, 7)
+        cells, nrows, counts = O.out_of_range(prov[s:s + n], header, data, ["a", "b", "c"])
+        self.assertEqual((cells, nrows), (7, 3))
+        self.assertEqual(e["out_of_range"], {"cells": cells, "rows": nrows, "columns": [{"name": k, "count": counts[k]} for k in ("a", "b", "c") if k in counts]})
+        p = self.sb.run("predict", "--model-file", "m.cml", "new.csv").data()
+        self.assertEqual(p["out_of_range"], e["out_of_range"])
+        self.assertEqual(p["ignored_columns"], ["y"])
+        r = self.sb.run("predict", "--model-file", "m.cml", "--max-out-of-range", "1", "new.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "ml.predict.out-of-range"))
+
+    def test_a_boosted_file_without_the_section_says_so(self):
+        self.fit(flags=BOOST)
+        self.sb.write("old.cml", strip_provenance(self.sb.read("m.cml")))
+        self.assertIsNone(self.sb.run("describe", "--model-file", "old.cml").data()["provenance"])
+        self.assertEqual(self.sb.run("eval", "--model-file", "old.cml", "train.csv").data()["on"], "unknown")
+        r = self.sb.run("predict", "--model-file", "old.cml", "--max-out-of-range", "0", "train.csv")
+        self.assertEqual(r.first_rule(), "ml.predict.no-provenance")
+
+    def test_the_run_of_a_boosted_fit_verifies_at_one_and_eight_threads(self):
+        self.sb.write("big.csv", "a,y\n" + "".join("%d,%d\n" % (i, (i * 7919) % 23) for i in range(60)))
+        cases = (("train.csv", BOOST, []),
+                 ("big.csv", ["--model", "boost", "--task", "regression", "--rounds", "50", "--min-leaf", "2", "--target", "y"], ["--split", "train=0.75", "--seed", "3", "--early-stopping", "2"]),
+                 ("big.csv", ["--model", "boost", "--task", "regression", "--rounds", "10", "--min-leaf", "2", "--target", "y"], ["--subsample", "0.7", "--seed", "5"]))
+        for data, flags, extra in cases:
+            r = self.sb.run("--track", "runs", "fit", *flags, "--output", "t.cml", "--overwrite", *extra, data)
+            self.assertEqual(r.status, 0, r)
+            self.assertEqual(r.data()["sha256"], hashlib.sha256(self.sb.read("t.cml")).hexdigest())
+            rid = r.data()["run"]["id"]
+            for th in (1, 8):
+                v = self.sb.run("--threads", str(th), "runs", "verify", "runs", rid)
+                self.assertEqual(v.status, 0, v)
+                self.assertTrue(v.data()["verified"], v)
+
+
 class Replay(Base):
     """T3: `runs verify` reproduces the model's SHA-256 for every kind, at 1 and at 8 threads (the cases of the oracle: constants, linear, logistic, tree, forest, kmeans, categorical, split)."""
 

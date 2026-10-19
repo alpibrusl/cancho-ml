@@ -12,6 +12,7 @@ import std.json;
 import ml.cfit;
 import ml.csv;
 import ml.fsio;
+import ml.jsonlcli;
 import ml.mfile;
 import ml.paths;
 import ml.prov;
@@ -580,7 +581,7 @@ fn full_path[&h, &r, &s, &t](heap: &!h Heap, root: &r [byte], src: &s [byte], tp
 // the options a replay is made with: the ceilings of the caps (they refuse, never change a byte) and the numbers of the record. The runtime texts of the record (target, lists, markers) do not fit
 // in the structure: the lists become the masks, the target and the markers are passed beside it.
 fn replay_opts(max_rows: int, task: int, seed: int, threads: int, has_target: bool, positive_given: bool, positive: int, split_num: int, split_den: int, cat_given: bool, max_cats: int, max_str: int, max_pool: int, max_catcols: int, dmask: int, fmask: int, cmask: int) -> [] verbs.Opts {
-    return verbs.Opts { cap: 16777216, max_rows: max_rows, max_cols: 8192, max_cells: 1099511627776, max_bytes: 268435456, limit: 1000, from: 0, overwrite: false, dry: false, drop_given: dmask != 0, task: task, drops: "", floats: "", target: "", model: "", plan_given: true, step: "", step_given: false, positive: "", positive_given: positive_given, split: "", split_given: split_den > 0, seed: seed, threads: threads, threads_given: true, proba: false, distance: false, target_given: has_target, task_given: false, cats: "", cat_given: cat_given, na: "", max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, max_oor: 0, max_oor_given: false, drop_mask: dmask, float_mask: fmask, cat_mask: cmask, positive_v: positive, split_num: split_num, split_den: split_den, track_given: false };
+    return verbs.Opts { cap: 16777216, max_rows: max_rows, max_cols: 8192, max_cells: 1099511627776, max_bytes: 268435456, limit: 1000, from: 0, overwrite: false, dry: false, drop_given: dmask != 0, task: task, drops: "", floats: "", target: "", model: "", plan_given: true, step: "", step_given: false, positive: "", positive_given: positive_given, split: "", split_given: split_den > 0, seed: seed, threads: threads, threads_given: true, proba: false, distance: false, target_given: has_target, task_given: false, cats: "", cat_given: cat_given, na: "", max_cats: max_cats, max_str: max_str, max_pool: max_pool, max_catcols: max_catcols, max_oor: 0, max_oor_given: false, drop_mask: dmask, float_mask: fmask, cat_mask: cmask, positive_v: positive, split_num: split_num, split_den: split_den, track_given: false, jsonl_fields: "", absent_empty: false };
 }
 
 // The bit mask of the columns of the header named in the comma list: (mask, 0), or (0, the first name past the 62nd column or absent, as a 1-based count)
@@ -632,6 +633,10 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                 let rd = json.get(text, contents(tp), inp, "reader");
                 let dpath = field_str(heap, text, contents(tp), data, "path");
                 let dsha = field_str(heap, text, contents(tp), data, "sha256");
+                // a record of a fit of JSON lines holds the format, the fields and the rule for a key a line lacks (docs/jsonl.md section 4)
+                let dformat = field_str(heap, text, contents(tp), data, "format");
+                let dfields = field_str(heap, text, contents(tp), data, "fields");
+                let dabsent = field_str(heap, text, contents(tp), data, "absent");
                 let target = field_str(heap, text, contents(tp), inp, "target");
                 let plan = field_str(heap, text, contents(tp), inp, "plan");
                 let drops = field_str(heap, text, contents(tp), inp, "drop");
@@ -674,6 +679,14 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                     mp = field_int(text, contents(tp), rd, "max_pool_bytes", 1048576);
                     mk = field_int(text, contents(tp), rd, "max_cat_columns", 128);
                 }
+                var is_jsonl = false;
+                var abs_empty = false;
+                borrow dformat as &dfr0 in {
+                    is_jsonl = bytes.equal(buffer.bytes(dfr0), "jsonl");
+                }
+                borrow dabsent as &dar0 in {
+                    abs_empty = bytes.equal(buffer.bytes(dar0), "empty");
+                }
                 let threads = o.threads;
                 let full = full_path(heap, root, text, contents(tp), data);
                 borrow full as &fur in {
@@ -696,6 +709,11 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                                                                 }
                                                                 if len(root) == 0 && paths.has_double_dot(buffer.bytes(fur)) {
                                                                     e = damaged(heap, e, buffer.bytes(dpr));
+                                                                    go = false;
+                                                                }
+                                                                if go && bytes.equal(buffer.bytes(dpr), "-") {
+                                                                    // the training data was standard input: there is no file to read again (docs/jsonl.md section 4)
+                                                                    e = not_replayable(heap, e, "stdin", "-");
                                                                     go = false;
                                                                 }
                                                                 if go {
@@ -725,7 +743,30 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                                                                 var dmask = 0;
                                                                 var fmask = 0;
                                                                 var cmask = 0;
-                                                                let rp = paths.of_path(heap, buffer.bytes(dpr), buffer.bytes(fur));
+                                                                var rp = paths.of_path(heap, buffer.bytes(dpr), buffer.bytes(fur));
+                                                                if go && is_jsonl {
+                                                                    // the lines of the recorded file are read as the fit read them: the fields and the rule of the record, the cat and drop columns as text
+                                                                    var texts = buffer.append(heap, buffer.empty(heap, 16), buffer.bytes(ctr));
+                                                                    if len(buffer.bytes(ctr)) > 0 && len(buffer.bytes(drr)) > 0 {
+                                                                        texts = buffer.push(heap, texts, byte_of(','));
+                                                                    }
+                                                                    texts = buffer.append(heap, texts, buffer.bytes(drr));
+                                                                    borrow dfields as &dflr in {
+                                                                        borrow texts as &txr in {
+                                                                            let (rp2, rst, e2) = jsonlcli.replay_input(heap, args, fs, root, buffer.bytes(dpr), buffer.bytes(fur), buffer.bytes(dflr), buffer.bytes(txr), abs_empty, e);
+                                                                            paths.drop(heap, rp);
+                                                                            rp = rp2;
+                                                                            e = e2;
+                                                                            if rst == 1 {
+                                                                                e = damaged(heap, e, id);
+                                                                                go = false;
+                                                                            } else if rst == 2 {
+                                                                                go = false;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    buffer.drop(heap, texts);
+                                                                }
                                                                 if go {
                                                                     // 2 the places of the flagged columns in the header: the reader is configured with positions
                                                                     let hdr = replay_opts(0, 1, 0, 1, false, false, 0, 0, 0, false, mc, ms, mp, mk, 0, 0, 0);
@@ -863,6 +904,9 @@ fn verify[&h, &g, &f, &r, &pd, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""),
                 buffer.drop(heap, full);
                 buffer.drop(heap, dpath);
                 buffer.drop(heap, dsha);
+                buffer.drop(heap, dformat);
+                buffer.drop(heap, dfields);
+                buffer.drop(heap, dabsent);
                 buffer.drop(heap, target);
                 buffer.drop(heap, plan);
                 buffer.drop(heap, drops);

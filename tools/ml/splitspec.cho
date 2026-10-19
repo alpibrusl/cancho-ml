@@ -340,6 +340,22 @@ pub fn combination_repeats[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g A
     return fail.add(heap, errs, w);
 }
 
+// --early-stopping with --split-group or --split-by (docs/models-boost.md section 2.7, docs/splits.md section 1): early stopping validates on a tenth of the TRAINING rows
+// drawn at random, which is not a group split of them (a group would sit on both sides of the validation) and not a time split (the validation rows would not be the newest);
+// the repair drops --early-stopping and its value, so every training row is fitted and none is a validation row
+pub fn early_stopping_combination[&h, &g](heap: &!h Heap, errs: fail.Errors, args: &g Args, strategy: int) -> [heap, args] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.split.combination");
+    w = retry_edit(heap, w, args, "--early-stopping", true, false, "");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", "--early-stopping");
+    if strategy == 2 {
+        w = fail.detail_str(heap, w, "other", "--split-group");
+    } else {
+        w = fail.detail_str(heap, w, "other", "--split-by");
+    }
+    return fail.add(heap, errs, w);
+}
+
 pub fn out_of_range[&h, &n](heap: &!h Heap, errs: fail.Errors, flag: &n [byte], value: int, least: int, most: int) -> [heap] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.split.out-of-range");
     w = fail.no_repair(heap, w);

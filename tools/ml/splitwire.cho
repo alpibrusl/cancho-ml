@@ -67,7 +67,7 @@ fn load_keys[&h, &f, &r, &pf, &y, &sk](heap: &!h Heap, fs: &f Fs(""), root: &r [
         }
         var data = buffer.empty(heap, 1);
         if go {
-            let (d2, st, aux) = fsio.read_whole(heap, fs, root, paths.shown(file), paths.full(file), o.max_bytes);
+            let (d2, st, aux) = fsio.read_input(heap, fs, root, file, o.max_bytes);
             buffer.drop(heap, data);
             data = d2;
             if st == 1 || st == 2 {

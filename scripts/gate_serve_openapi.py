@@ -30,6 +30,8 @@ FIXTURES = {
     "categorical-onehot": ("cat_linear_onehot", [], False),
     "missing-cells-forest": ("cat_forest_hash", [], False),
     "constant-classification": ("const_cls", [], False),
+    "classification-boost": ("boost_cls", [], False),
+    "categorical-boost": ("cat_boost_hash", [], False),
 }
 
 
