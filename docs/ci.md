@@ -142,7 +142,11 @@ Three changes, none of which removes a check [choice]:
 
 **Measured** (this machine, Linux x86-64, 4 workers, `ST_STRIDE=25`, no other load, one run each): `test_describe` alone took 824.1 s unsharded (13 tests, 22,714 damaged files judged) and 213.8 s and 229.1 s in two runs of `run_conformance.py` in 4 shards (19 tests), 3.6 to 3.9 times shorter. The old and the new test judge the same damaged files: at `ST_STRIDE=1000`, 15,514 damaged files and 232 described as another valid file, 0 traps, in both. The whole step on a GitHub runner is not measured with the shards yet.
 
-**Estimate** (not measured): with `test_describe` in 4 shards of about 410 s each, the floor of the step is the larger of 4,513 s over 4 workers (1,128 s) and the longest other module (1,022 s), so about 1,130 s against 1,650 s, 31 percent less, if the shards cost the same and the corpus built by each shard (`setUpModule`) is small; both are checked by a run.
+**Measured, whole step** (this machine, Linux x86-64, 4 workers, `ST_STRIDE=5 FUZZ_N=500 --no-oracles`, nothing else running; numpy is installed, so all 47 modules ran; the old runner first, then the new one, one run each, the same binaries): 2,511 s with the alphabetical runner and 1,595 s with the shards and the order, 916 s (36 percent) shorter; 688 tests against 681. In the old run `test_describe` took 2,509.9 s, the whole step. In the new run the longest shard of `test_describe` took 1,016.2 s, `test_fuzz_args` 1,170.3 s was the longest module, and the step took longer than either, so the four workers, not one module, set the time.
+
+**Measured, on a GitHub runner** (`ubuntu-24.04`, `--no-oracles`, one run each, on different days' machines): the reference run took 1,650 s (637 tests, 8 modules not run); the first run with the shards took 2,440 s (644 tests), the longest shard of `test_describe` 1,485.4 s. In that run the modules that are not sharded took 4,827 s in all against 2,864 s in the reference run (1.69 times), so the two runs are not comparable: the runner was slower or more contended, and one run of each does not say what the shards save there.
+
+The estimate that stood here before these runs, about 1,130 s from shards of 410 s each, did not hold: the longest shard took 1,016.2 s on this machine and 1,485.4 s on the runner, because four busy workers on four cores slow each other where a lone module had the cores to itself.
 
 **Gates** (written before the code; `scripts/check_runner.py`, and in `tests/conformance/test_describe.py`), each shown able to fail by the mutants of the script:
 
