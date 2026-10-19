@@ -107,6 +107,10 @@ as the CLI does**.
 model's order), a number is judged from its text and never from a double (`serve.number-not-exact`), a string with CR LF is `serve.string-not-renderable`, `null` and an absent key are an empty cell. The two rules are added to
 `ml-mcp`'s rule list and are tool errors with the JSON Pointer in `detail`, as in `ml-serve`. The CSV is given to `wireio.predict` as bytes in memory (the plumbing of `predict -`).
 
+A file of **JSON lines** is read as `ml` reads it (`docs/jsonl.md`): `input-format` (`jsonl` or `ndjson`), `fields`, `absent` and `max-json-nodes` are properties of the tools like any flag of the table, the flag checks of `jsonlcli.check_flags` run before the path is resolved,
+and `jsonlcli.input_into` converts the file to the CSV the verbs read, so the answers are those of the command line (the fixtures of the JSON lines run through the tools in gate A). **Standard input is the protocol's channel, so no operand reads it**: `-`
+as the file of `fit`, `eval` or `predict` is read as an empty input and answers `io.read-failed` (exit 1, the call is a tool error), and `predict` without `file` and without `records` is `-32602`.
+
 ## 5. Bounds **[choice]**
 
 | limit | flag | default | ceiling | refused with, before allocation |
@@ -182,6 +186,7 @@ Sizes: `tools/list` is 126,876 bytes with `--allow-write` and 91,883 bytes witho
 
 ## 11. Limits and what is not done
 
+* **An operand `-` is not standard input.** The channel of the protocol is standard input, so the operand that means standard input on the command line reads nothing here: the call is a tool error, `io.read-failed` with `errno` 22, not a rule written for this case (a rule that says so, with the repair `give a file under --root`, is not done). Inline `records` are the way to give `predict` rows without a file.
 * **A running call is not cancelled and has no deadline.** The server reads its input between calls; `notifications/cancelled` for a call in progress is read after the answer (tested). There is no clock in the authority row, so
   no `--timeout-seconds`. A host that needs a deadline kills the process. The work of a call is bounded by the limits of the library.
 * **Revision.** `2025-06-18` only. The stateless revision `2026-07-28` (`server/discover`, `_meta` on every request) is not implemented. A JSON-RPC batch is refused with `-32600`; the pinned revision removed batching
