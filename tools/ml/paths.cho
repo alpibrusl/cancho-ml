@@ -25,15 +25,18 @@ pub res struct Rp {
     present: bool,
     mem: buffer.Buffer,
     stdin: bool,
+    raw: buffer.Buffer,
+    rawsize: int,
 }
 
 pub fn absent[&h](heap: &!h Heap) -> [heap] Rp {
-    return Rp { full: buffer.empty(heap, 1), shown: 0, present: false, mem: buffer.empty(heap, 1), stdin: false };
+    return Rp { full: buffer.empty(heap, 1), shown: 0, present: false, mem: buffer.empty(heap, 1), stdin: false, raw: buffer.empty(heap, 1), rawsize: 0 };
 }
 
 pub fn drop[&h](heap: &!h Heap, r: Rp) -> [heap] int {
-    let Rp { full, shown, present, mem, stdin } = r;
+    let Rp { full, shown, present, mem, stdin, raw, rawsize } = r;
     buffer.drop(heap, mem);
+    buffer.drop(heap, raw);
     return buffer.drop(heap, full);
 }
 
@@ -41,7 +44,7 @@ pub fn drop[&h](heap: &!h Heap, r: Rp) -> [heap] int {
 pub fn of_path[&h, &f, &s](heap: &!h Heap, rel: &s [byte], full: &f [byte]) -> [heap] Rp {
     var copy = buffer.empty(heap, len(full) + 1);
     copy = buffer.append(heap, copy, full);
-    return Rp { full: copy, shown: len(full) - len(rel), present: true, mem: buffer.empty(heap, 1), stdin: false };
+    return Rp { full: copy, shown: len(full) - len(rel), present: true, mem: buffer.empty(heap, 1), stdin: false, raw: buffer.empty(heap, 1), rawsize: 0 };
 }
 
 // (child) The path of the file `name` in the directory `dir`: the directory's whole path, a slash, the name; shown from the same place as the directory is. A directory named `.` under --root is the
@@ -62,7 +65,7 @@ pub fn child[&h, &r, &n](heap: &!h Heap, dir: &r Rp, name: &n [byte]) -> [heap] 
         }
     }
     full = buffer.append(heap, full, name);
-    return Rp { full: full, shown: at, present: true, mem: buffer.empty(heap, 1), stdin: false };
+    return Rp { full: full, shown: at, present: true, mem: buffer.empty(heap, 1), stdin: false, raw: buffer.empty(heap, 1), rawsize: 0 };
 }
 
 pub fn is_stdin[&r](r: &r Rp) -> [] bool {
@@ -95,7 +98,7 @@ pub fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, cap: int) -> [heap, io_rea
     }
     var shown = buffer.empty(heap, 2);
     shown = buffer.push(heap, shown, byte_of('-'));
-    return (Rp { full: shown, shown: 0, present: true, mem: data, stdin: true }, over);
+    return (Rp { full: shown, shown: 0, present: true, mem: data, stdin: true, raw: buffer.empty(heap, 1), rawsize: 0 }, over);
 }
 
 // An Rp over bytes the caller already holds (the server's model file and the CSV text of a request): the representation `predict -` gives standard input, built from a
@@ -105,7 +108,26 @@ pub fn of_mem[&h, &b, &s](heap: &!h Heap, data: &b [byte], shown: &s [byte]) -> 
     copy = buffer.append(heap, copy, data);
     var name = buffer.empty(heap, len(shown) + 1);
     name = buffer.append(heap, name, shown);
-    return Rp { full: name, shown: 0, present: true, mem: copy, stdin: true };
+    return Rp { full: name, shown: 0, present: true, mem: copy, stdin: true, raw: buffer.empty(heap, 1), rawsize: 0 };
+}
+
+// `file` with the SHA-256 (32 raw bytes) and the size of the bytes the user gave: for an input that was converted to the CSV in `mem` (JSON lines), what the identity of the
+// input is, since the run record and the provenance of a model name the file or the standard input and not the CSV made of it (docs/jsonl.md section 4)
+pub fn with_raw[&h, &d](heap: &!h Heap, file: Rp, digest: &d [byte], size: int) -> [heap] Rp {
+    let Rp { full, shown, present, mem, stdin, raw, rawsize } = file;
+    buffer.drop(heap, raw);
+    var copy = buffer.empty(heap, len(digest) + 1);
+    copy = buffer.append(heap, copy, digest);
+    return Rp { full: full, shown: shown, present: present, mem: mem, stdin: stdin, raw: copy, rawsize: size };
+}
+
+// the digest set by with_raw (empty when none) and the size it stands for
+pub fn raw_digest[&r](r: &r Rp) -> [] &r [byte] {
+    return buffer.bytes(r.raw);
+}
+
+pub fn raw_size[&r](r: &r Rp) -> [] int {
+    return r.rawsize;
 }
 
 pub fn present[&r](r: &r Rp) -> [] bool {
@@ -302,7 +324,7 @@ fn finish[&h](heap: &!h Heap, full: buffer.Buffer, shown: int, root_empty: bool,
         buffer.drop(heap, full);
         return (absent(heap), e);
     }
-    return (Rp { full: full, shown: shown, present: true, mem: buffer.empty(heap, 1), stdin: false }, e);
+    return (Rp { full: full, shown: shown, present: true, mem: buffer.empty(heap, 1), stdin: false, raw: buffer.empty(heap, 1), rawsize: 0 }, e);
 }
 
 // the value of flag `name`, if it was given, as a path under `root`

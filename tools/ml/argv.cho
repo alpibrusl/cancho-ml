@@ -97,6 +97,15 @@ pub fn nat[&s, &n](src: &s [byte], name: &n [byte]) -> [] int {
     return cli.parse_nat(text(src, name));
 }
 
+// the --fields list of a fit of JSON lines (empty for CSV): what a run record holds of the input format (docs/jsonl.md section 4)
+pub fn jsonl_fields[&s](src: &s [byte]) -> [] &s [byte] {
+    let f = text(src, "input-format");
+    if bytes.equal(f, "jsonl") || bytes.equal(f, "ndjson") {
+        return text(src, "fields");
+    }
+    return "";
+}
+
 // The argument index a flag's value came from; -1 when the flag was not given or takes no value
 pub fn value_index[&s, &n](src: &s [byte], name: &n [byte]) -> [] int {
     let p = find(src, name);

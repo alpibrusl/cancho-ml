@@ -84,7 +84,7 @@ pub fn first_ordered_kind() -> [] int {
 }
 
 pub fn last_kind() -> [] int {
-    return 7;
+    return 8;
 }
 
 // model kind: 1 constant regression (int or dec target), 2 constant classification, 3 constant regression of a float target

@@ -1,0 +1,117 @@
+# Gradient-boosted trees (docs/models-boost.md), wired into the verbs like the tree and the forest (docs/wiring-trees.md): the blob interface over lib/models/boost, model kind 8.
+name = "boost"
+kind = 8
+kind_fn = "model_boost"
+task = "both"
+tier = "supported"
+wired = true
+shape = "blob"
+adapter = "models.adapter_boost"
+payload_version = 1
+doc = "docs/models-boost.md"
+files = ["lib/models/boost/bparams.cho", "lib/models/boost/grow.cho", "lib/models/boost/fit.cho", "lib/models/boost/model.cho", "lib/models/boost/predict.cho", "lib/models/boost/adapter.cho"]
+plan_order = 6
+
+[limits]
+max_rows = 1048576
+max_rounds = 10000
+max_nodes_per_tree = 4194304
+max_nodes_total = 4194304
+max_depth = 30
+
+[tags]
+emits = [
+  "ml.input.empty", "ml.input.too-many-rows", "ml.input.too-many-columns", "ml.input.too-many-cells", "ml.input.non-finite", "ml.label.not-binary", "ml.label.single-class",
+  "ml.limit.depth", "ml.limit.nodes", "ml.param.out-of-range", "ml.param.threads", "ml.model.truncated", "ml.model.malformed", "ml.schema.mismatch", "ml.fit.non-finite",
+]
+
+[authority]
+adds = []
+reason = ""
+
+[sums]
+decisive = []
+# float sums made in a fixed sequential order, not through linalg.order: the node totals, the histogram bins, the cumulative sums over bins, the base score and the validation
+# loss of the fit, and the sum of the leaf values over the rounds in prediction (docs/models-boost.md section 3.1). A file of kind 8 records sum_order 3 for exactly this reason.
+sequential = ["lib/models/boost/grow.cho", "lib/models/boost/fit.cho", "lib/models/boost/predict.cho"]
+
+[oracle]
+script = "scripts/oracle_wire_boost.py"
+args = "boost"
+tolerance = "bits"
+
+[[hyperparameter]]
+name = "task"
+type = "enum"
+values = ["classification", "regression"]
+required = true
+doc = "classification or regression: set with --task, default regression"
+
+[[hyperparameter]]
+name = "rounds"
+type = "int"
+min = 1
+max = 10000
+default = "100"
+doc = "the number of boosting rounds, one tree each (fewer are kept when early stopping ends the fit)"
+
+[[hyperparameter]]
+name = "learning-rate"
+type = "float"
+nonneg = true
+default = "0.1"
+doc = "the shrinkage applied to each tree, above 0 and at most 1 (else ml.param.out-of-range)"
+
+[[hyperparameter]]
+name = "max-depth"
+type = "int"
+min = 1
+max = 1000
+default = "4"
+doc = "the deepest tree: 1 to 1000 are accepted and a depth above 30 is refused with ml.limit.depth"
+
+[[hyperparameter]]
+name = "min-leaf"
+type = "int"
+min = 1
+max = 1000000
+default = "10"
+doc = "the fewest rows in a leaf"
+
+[[hyperparameter]]
+name = "bins"
+type = "int"
+min = 2
+max = 255
+default = "64"
+doc = "the quantile bins of the split search"
+
+[[hyperparameter]]
+name = "l2"
+type = "float"
+nonneg = true
+default = "1.0"
+doc = "the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more"
+
+[[hyperparameter]]
+name = "subsample"
+type = "float"
+nonneg = true
+default = "1.0"
+doc = "the fraction of the rows each boosting round fits its tree on, above 0 and at most 1 (else ml.param.out-of-range)"
+
+[[hyperparameter]]
+name = "early-stopping"
+type = "int"
+min = 0
+max = 1000
+default = "0"
+doc = "0 is off, N stops after N rounds without a better loss on a tenth of the training rows kept for it (needs --split)"
+
+[[hyperparameter]]
+name = "max-nodes"
+type = "int"
+min = 1
+max = 999999999
+default = "4194304"
+doc = "the most nodes one tree may have: above 4194304, or fewer than the tree needs, is ml.limit.nodes (a tree is never cut)"

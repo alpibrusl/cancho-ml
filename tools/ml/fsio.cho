@@ -25,6 +25,12 @@ pub fn read_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte
     return read_whole(heap, fs, root, paths.shown(model), paths.full(model), cap);
 }
 
+// The bytes of an input that a verb reads a second time (a column of --split-by or --split-group): the file below `root`, or the bytes held in memory for standard input and for JSON lines
+// (the CSV made of them). Same results as read_model.
+pub fn read_input[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pm paths.Rp, cap: int) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, int, int) {
+    return read_model(heap, fs, root, file, cap);
+}
+
 // read the file `rel` (opened as toolbox.place says) whole. (bytes, status, aux): 0 ok; 1 the open failed (aux: errno); 2 the
 // read failed (aux: errno); 3 the file is longer than `cap` bytes (aux: its length)
 pub fn read_whole[&h, &f, &r, &p, &q](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte], cap: int) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, int, int) {
@@ -87,6 +93,37 @@ pub fn read_whole[&h, &f, &r, &p, &q](heap: &!h Heap, fs: &f Fs(""), root: &r [b
         }
     }
     return (out, status, aux);
+}
+
+// The SHA-256 and the size of the input `file` as the user gave it: the digest `with_raw` set (JSON lines, converted), else the bytes held for standard input, else the file by name
+// (sha_file). Same results as sha_file.
+pub fn sha_rp[&h, &f, &r, &p](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &p paths.Rp) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, int, int, int) {
+    let raw = paths.raw_digest(file);
+    if len(raw) == 32 {
+        var copy = buffer.empty(heap, 33);
+        copy = buffer.append(heap, copy, raw);
+        return (copy, paths.raw_size(file), 0, 0);
+    }
+    if paths.is_stdin(file) {
+        return (sha_bytes(heap, paths.mem(file)), len(paths.mem(file)), 0, 0);
+    }
+    return sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+}
+
+// the 32 raw bytes of the SHA-256 of `data`
+pub fn sha_bytes[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] buffer.Buffer {
+    var hasher = sha.sha256(heap);
+    hasher = sha.update(hasher, data);
+    var dg = box_slice(heap, 64, byte_of(0));
+    borrow mut dg as &!dw in {
+        sha.finish(heap, hasher, contents(dw));
+    }
+    var out = buffer.empty(heap, 33);
+    borrow dg as &dr in {
+        out = buffer.append(heap, out, contents(dr)[0..32]);
+    }
+    unbox_slice(heap, dg);
+    return out;
 }
 
 // The SHA-256 and the size of the file `rel` (opened as toolbox.place says), streamed in chunks of 64 KiB: the file is never held. (digest, size, status, aux): the digest is the 32 raw bytes

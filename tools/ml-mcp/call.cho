@@ -15,6 +15,7 @@ import mcp.rpc;
 import mcp.tools;
 import ml.app;
 import ml.argv;
+import ml.jsonlcli;
 import ml.mdesc;
 import ml.paths;
 import ml.spec;
@@ -402,7 +403,8 @@ fn record_refusal[&h, &i, &p](heap: &!h Heap, id: &i [byte], status: int, pointe
 // Run the verb on the packed command line `src` and answer. `recs_node` is the node of the `records` array of a predict call (-1 for none).
 fn run_packed[&h, &f, &l, &t, &i, &c](heap: &!h Heap, fs: &f Fs(""), src: &c [byte], errs: fail.Errors, recs_node: int, line: &l [byte], tape: &t [int], id: &i [byte]) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] buffer.Buffer {
     let table = spec.flag_table();
-    let (verb, e0) = app.cmdline(heap, src, errs, table, 1);
+    let (verb, e0a) = app.cmdline(heap, src, errs, table, 1);
+    let e0 = jsonlcli.check_flags(heap, src, e0a, table, verb);
     let (root, e1a) = paths.root(heap, src, argv.text(src, "root"), argv.value_index(src, "root"), e0);
     var e1 = e1a;
     borrow root as &rb in {
@@ -412,7 +414,9 @@ fn run_packed[&h, &f, &l, &t, &i, &c](heap: &!h Heap, fs: &f Fs(""), src: &c [by
     }
     var response = buffer.empty(heap, 1);
     borrow root as &rr in {
-        let (ps0, e2) = app.resolve_all(heap, src, table, verb, buffer.bytes(rr), e1);
+        let (ps00, e2a) = app.resolve_all(heap, src, table, verb, buffer.bytes(rr), e1);
+        // a file of JSON lines becomes the CSV the verbs read, as in `ml` (docs/jsonl.md); standard input is the channel of the protocol, so no operand reads it
+        let (ps0, e2) = jsonlcli.input_into(heap, src, table, fs, buffer.bytes(rr), verb, ps00, e2a);
         var ps = ps0;
         var e = e2;
         var done = false;

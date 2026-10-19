@@ -46,7 +46,7 @@ MUTANTS = [
     M("t1-flag-missing-from-the-schema", "T1", "the schema's flag enum loses --limit",
       [("schemas/ml.v1.json", '"--limit",', "", 1)], ["test_tables"]),
     M("t1-rule-without-fixture", "T1", "a rule is added to the table (schemas regenerated); no fixture reaches it",
-      [("tools/ml/spec.cho", ";ml.runs.not-replayable\";", ";ml.runs.not-replayable;ml.input.too-wide\";", 1),
+      [("tools/ml/spec.cho", ";ml.jsonl.too-many-nodes\";", ";ml.jsonl.too-many-nodes;ml.input.too-wide\";", 1),
        ("tools/ml/spec.cho", ";limit.log-full|8|never|", ";ml.input.too-wide|8|never|a rule nothing reaches. Hint: none. Repair: none.;limit.log-full|8|never|", 1)],
       ["test_tables"], regen=True),
     M("t1-fixture-reaches-another-rule", "T1", "the two fixtures of ml.model.malformed now claim another rule",
@@ -83,7 +83,7 @@ MUTANTS = [
     M("m1-sum-order-not-compared", "M1", "the sum order of a model of kind 4 to 7 is not compared", [("tools/ml/mfile.cho", "if so != sum_order() {", "if false {", 1)], ["test_model_file"]),
     M("m1-sum-order-implemented-is-3", "M1", "the reader implements sum order 3 instead of 2", [("tools/ml/mfile.cho", "pub fn sum_order() -> [] int {\n    return 2;", "pub fn sum_order() -> [] int {\n    return 3;", 1)], ["test_model_file"]),
     M("m1-sum-order-for-no-kind", "M1", "the sum order is read for no kind (kinds 4 to 6 are read by the pipeline's reader, so only 7 reaches this check)", [("tools/ml/mfile.cho", "pub fn first_ordered_kind() -> [] int {\n    return 4;", "pub fn first_ordered_kind() -> [] int {\n    return 8;", 1)], ["test_model_file"]),
-    M("m1-sum-order-to-kind-6", "M1", "the sum order is read for kinds up to 6, not 7", [("tools/ml/mfile.cho", "pub fn last_kind() -> [] int {\n    return 7;", "pub fn last_kind() -> [] int {\n    return 6;", 1)], ["test_model_file"]),
+    M("m1-sum-order-to-kind-6", "M1", "the sum order is read for kinds up to 6, not 8", [("tools/ml/mfile.cho", "pub fn last_kind() -> [] int {\n    return 8;", "pub fn last_kind() -> [] int {\n    return 6;", 1)], ["test_model_file"]),
     M("m1-sum-order-meta-longer-ok", "M1", "a meta longer than 36 + the pin length is read for the order", [("tools/ml/mfile.cho", "len(me0) == 36 + cl0", "len(me0) >= 36 + cl0", 1)], ["test_model_file"]),
     M("m1-sum-order-offset", "M1", "the order is read four bytes early", [("tools/ml/mfile.cho", "let so = get32(me0, 32 + cl0);", "let so = get32(me0, 28 + cl0);", 1)], ["test_model_file"]),
     M("m1-sum-order-rule", "M1", "the refusal of a sum order is reported as malformed", [("tools/ml/verbs.cho", '    } else if status == 6 {\n        rule = "ml.model.version";', '    } else if status == 6 {\n        rule = "ml.model.malformed";', 1)], ["test_model_file"]),
@@ -124,7 +124,7 @@ MUTANTS = [
       [("manifests/ml.authority.json", '"name": "heap",', '"name": "heapx",', 1)], ["test_authority"], kind="manifest"),
     # ------------------------------------------------------------------ H1: honesty
     M("h1-a-model-in-the-table-that-is-not-built", "H1", "logreg is a choice of --model, with no implementation",
-      [("tools/ml/spec.cho", "model||choice:constant/linear/logistic/kmeans/tree/forest|", "model||choice:constant/linear/logistic/kmeans/tree/forest/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
+      [("tools/ml/spec.cho", "model||choice:constant/linear/logistic/kmeans/tree/forest/boost|", "model||choice:constant/linear/logistic/kmeans/tree/forest/boost/logreg|", 1)], ["test_honesty", "test_tables"], regen=True),
     M("h1-an-exponent-is-read-as-a-prefix", "H1", "1e5 is read as 1", [("tools/ml/csvcell.cho", "return (4, 0, 0, 0);", "return (0, 1, 0, 1);", 1)],
       ["test_honesty"]),
     # ------------------------------------------------------------------ RD7: the constant model on floats (docs/reader.md section 5)
@@ -189,7 +189,7 @@ def apply_edits(tree, m, strict=True):
 
 def build(tree):
     g = lambda pat: sorted(glob.glob(str(tree / pat)))
-    files = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
+    files = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/boost/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
              g("lib/models/logistic/*.cho") + g("lib/models/tree/*.cho") + g("lib/models/treewire/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho") + [str(tree / "generated/ml/built.cho")] +
              g("tools/ml/*.cho"))
     out = tree / "build" / "ml"

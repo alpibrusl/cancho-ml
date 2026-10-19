@@ -39,7 +39,7 @@ fn not_encoded[&h, &v](heap: &!h Heap, errs: fail.Errors, voc: &v dict.Vocab) ->
 pub fn fit[&h, &f, &r, &pf, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
     var e = errs;
     var lg = log;
-    let l = csvload.load_cat(heap, src, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), verbs.cat_config(o), argv.text(src, "target"), false, dict.empty_vocab(heap), false);
+    let l = csvload.load_cat_with(heap, src, fs, root, file, verbs.config(o, 0, 0, 0), verbs.cat_config(o), argv.text(src, "target"), false, dict.empty_vocab(heap), false, "");
     let (mx, ids, voc, sh, rep, code) = csvload.cat_load_parts(l);
     borrow sh as &sr in {
         if rep.status == 99 {

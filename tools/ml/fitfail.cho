@@ -1,0 +1,290 @@
+edition 6;
+
+module ml.fitfail;
+
+// The two refusals of a fit that has no answer (docs/refusals-fit.md): ml.fit.collinear (a column the ones before it explain to within 2^-40 of its own sum of squares) and
+// ml.fit.separable (logistic regression with l2 = 0 on classes a hyperplane separates). The libraries answer a code and leave a record in the diag buffer of the fit
+// (lib/models/rank.cho, lib/models/linear/logreg.cho); this module turns the record into the error: the columns by name, the dependency, the tolerance, and a repair
+// that is an argv. Nothing here reads a file.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.argv;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import linalg.chol;
+import models.logreg;
+import pipeline.names;
+import toolbox.fail;
+import toolbox.text;
+
+// the smallest power of ten that is at least x * 1.001, as the text of a number the flag parser reads: "1", "1e-6", "1e3". Anything that is not a positive finite number gives "1"
+fn decade_text[&h](heap: &!h Heap, x: float) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 8);
+    var k = 0;
+    if x > 0.0 && x - x == 0.0 {
+        var v = 1.0;
+        if x > 1.0 {
+            while v < x * 1.001 && k < 308 {
+                v = v * 10.0;
+                k = k + 1;
+            }
+        } else {
+            while v * 0.1 >= x * 1.001 && k > 0 - 300 {
+                v = v * 0.1;
+                k = k - 1;
+            }
+        }
+    }
+    if k == 0 {
+        return buffer.push(heap, b, byte_of('1'));
+    }
+    b = buffer.append(heap, b, "1e");
+    if k < 0 {
+        b = buffer.push(heap, b, byte_of('-'));
+        return buffer.push_nat(heap, b, 0 - k);
+    }
+    return buffer.push_nat(heap, b, k);
+}
+
+// the arguments of the invocation, with the value of --l2 replaced by `v` (appended as `--l2 v` when the flag was not given), as strings of the array being written
+fn put_argv_l2[&h, &cl, &v](heap: &!h Heap, w: json.Writer, src: &cl [byte], v: &v [byte]) -> [heap] json.Writer {
+    var o = w;
+    var given = false;
+    var i = 0;
+    while i < argv.argc(src) {
+        if i > 0 && bytes.equal(argv.at(src, i - 1), "--l2") {
+            o = json.put_string(heap, o, v);
+            given = true;
+        } else {
+            o = json.put_string(heap, o, argv.at(src, i));
+        }
+        i = i + 1;
+    }
+    if !given {
+        o = json.put_string(heap, o, "--l2");
+        o = json.put_string(heap, o, v);
+    }
+    return o;
+}
+
+fn put_argv_drop[&h, &cl, &n](heap: &!h Heap, w: json.Writer, src: &cl [byte], name: &n [byte]) -> [heap] json.Writer {
+    var o = w;
+    var i = 0;
+    while i < argv.argc(src) {
+        o = json.put_string(heap, o, argv.at(src, i));
+        i = i + 1;
+    }
+    o = json.put_string(heap, o, "--drop");
+    return json.put_string(heap, o, name);
+}
+
+// a number as a JSON string with six decimals when it is moderate, else as the shortest double (a non-finite one is null)
+fn put_coefficient[&h](heap: &!h Heap, w: json.Writer, c: float) -> [heap] json.Writer {
+    if c - c == 0.0 && c < 1000000000000.0 && c > 0.0 - 1000000000000.0 {
+        var v = 0;
+        if c >= 0.0 {
+            v = truncate(c * 1000000.0 + 0.5);
+        } else {
+            v = truncate(c * 1000000.0 - 0.5);
+        }
+        return verbs.put_dec(heap, w, v, 6);
+    }
+    return verbs.put_double(heap, w, bits_of(c));
+}
+
+// `ml cv` fits one training fold after the other: a refusal of one of them names the repeat and the fold (docs/refusals-fit.md section 6). `fold` below 0: a plain fit, nothing is added
+fn put_fold[&h](heap: &!h Heap, w: json.Writer, rep: int, fold: int) -> [heap] json.Writer {
+    if fold < 0 {
+        return w;
+    }
+    var o = fail.detail_int(heap, w, "repeat", rep);
+    o = fail.detail_int(heap, o, "fold", fold);
+    return o;
+}
+
+// the repair of a plan: nothing a script can apply, the hyperparameters are on the model line of the plan
+fn plan_repair[&h](heap: &!h Heap, w: json.Writer) -> [heap] json.Writer {
+    return fail.repair_none(heap, w, "the plan's model line holds l2 (and no flag may also give it): set l2= there, to the value in the hint");
+}
+
+// ml.fit.collinear. diag is the record of lib/models/rank.cho: [0] pass, [1] j, [2] s_jj / a_jj, [3] the largest diagonal element, [4 + k] c_k. nm the names of the p - 1 columns
+// of the matrix the estimator got; the column p - 1 is the intercept. `logistic` adds the pass to the detail.
+pub fn collinear[&h, &cl, &d, &n](heap: &!h Heap, src: &cl [byte], e: fail.Errors, logistic: bool, diag: &d [float], nm: &n names.Names, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap] fail.Errors {
+    let nfeat = names.count(nm);
+    let j = truncate(diag[1]);
+    let maxdiag = diag[3];
+    let tol = chol.pivot_tol();
+    var w = wiredata.open_tag(heap, "ml.fit.collinear");
+    // the columns that matter in the dependency: |c_k| of at least 2^-20 of the largest
+    var cmax = 0.0;
+    var k = 0;
+    while k < j {
+        var a = diag[4 + k];
+        if a < 0.0 {
+            a = 0.0 - a;
+        }
+        if a > cmax {
+            cmax = a;
+        }
+        k = k + 1;
+    }
+    let cut = cmax / 1048576.0;
+    // the repair: --l2 with a ridge whose relative pivot is at least 2^-30; --drop of an input column the dependency involves, when nothing else names it
+    var l2txt = decade_text(heap, maxdiag / 1073741824.0);
+    var dropk = 0 - 1;
+    if j < nfeat {
+        dropk = j;
+    } else {
+        var best = 0.0;
+        k = 0;
+        while k < j && k < nfeat {
+            var a = diag[4 + k];
+            if a < 0.0 {
+                a = 0.0 - a;
+            }
+            if a > best && a >= cut {
+                best = a;
+                dropk = k;
+            }
+            k = k + 1;
+        }
+    }
+    let can_drop = dropk >= 0 && nfeat >= 2 && !o.plan_given && !o.step_given && !o.cat_given && !o.drop_given && bytes.count_byte(names.name(nm, dropk), ',') == 0 && len(names.name(nm, dropk)) > 0 && !bytes.equal(names.name(nm, dropk), argv.text(src, "target"));
+    borrow l2txt as &lr in {
+        if o.plan_given {
+            w = plan_repair(heap, w);
+        } else if can_drop {
+            w = fail.choose_open(heap, w);
+            w = fail.choose_option_open(heap, w);
+            w = put_argv_l2(heap, w, src, buffer.bytes(lr));
+            w = fail.choose_option_close(heap, w);
+            w = fail.choose_option_open(heap, w);
+            w = put_argv_drop(heap, w, src, names.name(nm, dropk));
+            w = fail.choose_option_close(heap, w);
+            w = fail.choose_close(heap, w);
+        } else {
+            w = fail.retry_open(heap, w);
+            w = put_argv_l2(heap, w, src, buffer.bytes(lr));
+            w = fail.retry_close(heap, w);
+        }
+    }
+    w = fail.detail_open(heap, w);
+    if logistic {
+        w = fail.detail_str(heap, w, "model", "logistic");
+        w = fail.detail_int(heap, w, "pass", truncate(diag[0]));
+    } else {
+        w = fail.detail_str(heap, w, "model", "linear");
+    }
+    w = fail.detail_int(heap, w, "pivot", j);
+    if j < nfeat {
+        w = verbs.put_name(heap, w, "column", names.name(nm, j));
+    } else {
+        w = fail.detail_str(heap, w, "column", "(intercept)");
+    }
+    w = json.put_key(heap, w, "relative_pivot");
+    w = verbs.put_double(heap, w, bits_of(diag[2]));
+    w = json.put_key(heap, w, "tolerance");
+    w = verbs.put_double(heap, w, bits_of(tol));
+    w = json.put_key(heap, w, "l2");
+    w = verbs.put_double(heap, w, bits_of(l2));
+    w = json.put_key(heap, w, "largest_diagonal");
+    w = verbs.put_double(heap, w, bits_of(maxdiag));
+    // the dependency: column j is, to within the tolerance, the sum of c_k times column k over the columns named (at most 16; "involved" counts them all)
+    var involved = 0;
+    k = 0;
+    while k < j {
+        var a = diag[4 + k];
+        if a < 0.0 {
+            a = 0.0 - a;
+        }
+        if a >= cut && a > 0.0 {
+            involved = involved + 1;
+        }
+        k = k + 1;
+    }
+    w = fail.detail_int(heap, w, "involved", involved);
+    w = json.put_key(heap, w, "columns");
+    w = json.begin_array(heap, w);
+    var shown = 0;
+    k = 0;
+    while k < j && shown < 16 {
+        var a = diag[4 + k];
+        if a < 0.0 {
+            a = 0.0 - a;
+        }
+        if a >= cut && a > 0.0 {
+            if k < nfeat {
+                w = text.put(heap, w, names.name(nm, k));
+            } else {
+                w = json.put_string(heap, w, "(intercept)");
+            }
+            shown = shown + 1;
+        }
+        k = k + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "coefficients");
+    w = json.begin_array(heap, w);
+    shown = 0;
+    k = 0;
+    while k < j && shown < 16 {
+        var a = diag[4 + k];
+        if a < 0.0 {
+            a = 0.0 - a;
+        }
+        if a >= cut && a > 0.0 {
+            w = put_coefficient(heap, w, diag[4 + k]);
+            shown = shown + 1;
+        }
+        k = k + 1;
+    }
+    w = json.end_array(heap, w);
+    w = put_fold(heap, w, rep, fold);
+    buffer.drop(heap, l2txt);
+    return fail.add(heap, e, w);
+}
+
+// ml.fit.separable. diag is the record of lib/models/linear/logreg.cho: [0] pass, [1] reason (0 loss, 1 pivot, 2 scale), [2] the summed loss, [3] the norm of w, [4] the largest
+// diagonal element of the Hessian of pass 0, [5] the predictor scale.
+pub fn separable[&h, &cl, &d](heap: &!h Heap, src: &cl [byte], e: fail.Errors, diag: &d [float], iterations: int, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.fit.separable");
+    // the repair: l2 whose pivots stay at least about 2^-10 of the Hessian's diagonal at every pass
+    var l2txt = decade_text(heap, diag[4] / 1024.0);
+    borrow l2txt as &lr in {
+        if o.plan_given {
+            w = plan_repair(heap, w);
+        } else {
+            w = fail.retry_open(heap, w);
+            w = put_argv_l2(heap, w, src, buffer.bytes(lr));
+            w = fail.retry_close(heap, w);
+        }
+    }
+    w = fail.detail_open(heap, w);
+    var reason: &static [byte] = "loss";
+    if truncate(diag[1]) == 1 {
+        reason = "pivot";
+    } else if truncate(diag[1]) == 2 {
+        reason = "scale";
+    }
+    w = fail.detail_str(heap, w, "reason", reason);
+    w = fail.detail_int(heap, w, "pass", truncate(diag[0]));
+    w = json.put_key(heap, w, "loss_sum");
+    w = verbs.put_double(heap, w, bits_of(diag[2]));
+    w = json.put_key(heap, w, "loss_bound");
+    w = verbs.put_double(heap, w, bits_of(logreg.separable_bound()));
+    w = json.put_key(heap, w, "coefficient_norm");
+    w = verbs.put_double(heap, w, bits_of(diag[3]));
+    w = json.put_key(heap, w, "predictor_scale");
+    w = verbs.put_double(heap, w, bits_of(diag[5]));
+    w = json.put_key(heap, w, "scale_bound");
+    w = verbs.put_double(heap, w, bits_of(logreg.scale_bound()));
+    w = json.put_key(heap, w, "l2");
+    w = verbs.put_double(heap, w, bits_of(l2));
+    w = fail.detail_int(heap, w, "iterations", iterations);
+    w = put_fold(heap, w, rep, fold);
+    buffer.drop(heap, l2txt);
+    return fail.add(heap, e, w);
+}

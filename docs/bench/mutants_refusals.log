@@ -1,0 +1,39 @@
+KILLED    tolerance-2^20-larger                        R48  tests: test_every_argv_of_every_repair_runs_and_gi
+KILLED    tolerance-2^20-smaller                       R48  tests: test_a_repair_that_widens_nothing, test_eve
+KILLED    diagnosis-test-inverted                      R48  tests: test_every_argv_of_every_repair_runs_and_gi
+KILLED    diagnosis-test-absolute                      R48  tests: test_oracle_of_the_rank_decision
+SURVIVED  diagnosis-tolerance-differs                  R48  
+KILLED    pivot-index-off-by-one                       R48  tests: test_every_fixture, test_oracle_of_the_rank
+SURVIVED  relative-pivot-is-the-sum                    R48  
+KILLED    dependency-forward-sign                      R48  tests: test_every_argv_of_every_repair_runs_and_gi
+KILLED    dependency-backward-index                    R48  tests: test_every_argv_of_every_repair_runs_and_gi
+KILLED    zero-first-column-not-converted              R48  tests: test_oracle_of_the_rank_decision
+KILLED    collinear-not-converted                      R48  tests: test_a_repair_that_widens_nothing, test_eve
+KILLED    logistic-pass0-not-collinear                 R48  tests: test_every_fixture
+KILLED    column-named-is-the-first                    R48  tests: test_every_fixture, test_oracle_of_the_rank
+KILLED    columns-cut-too-high                         R48  tests: test_every_fixture, test_oracle_of_the_rank
+KILLED    columns-cut-too-low                          R48  tests: test_every_fixture
+KILLED    intercept-not-named                          R48  tests: test_every_fixture, test_oracle_of_the_rank
+KILLED    repair-l2-too-small-by-2^30                  R48  tests: test_every_fixture
+KILLED    repair-l2-of-the-separable-fit               R48  tests: test_every_fixture
+KILLED    repair-explicit-l2-appended                  R48  tests: test_every_argv_of_every_repair_runs_and_gi
+KILLED    repair-drop-names-column-0                   R48  tests: test_every_argv_of_every_repair_runs_and_gi
+SURVIVED  repair-drop-with-steps                       R48  
+KILLED    repair-plan-gets-an-argv-collinear           R48  tests: test_every_fixture
+KILLED    repair-plan-gets-an-argv-separable           R48  tests: test_every_fixture
+KILLED    loss-bound-too-high                          R48  tests: test_every_fixture, test_oracle_of_separati
+KILLED    loss-bound-too-low                           R48  tests: test_every_fixture, test_oracle_of_separati
+KILLED    loss-test-removed                            R48  tests: test_a_repair_that_widens_nothing, test_eve
+KILLED    loss-test-with-a-ridge                       R48  tests: test_every_argv_of_every_repair_runs_and_gi
+KILLED    scale-test-removed                           R48  tests: test_a_repair_that_widens_nothing, test_eve
+KILLED    scale-bound-too-low                          R48  tests: test_every_fixture, test_oracle_of_separati
+KILLED    scale-without-the-factor-4                   R48  tests: test_every_fixture, test_oracle_of_separati
+KILLED    late-pivot-form-removed                      R48  tests: test_oracle_of_separation
+KILLED    late-pivot-form-with-a-ridge                 R48  tests: test_every_fixture, test_oracle_of_separati
+KILLED    pass-number-off-by-one                       R48  tests: test_every_fixture, test_oracle_of_separati
+KILLED    norm-is-not-rooted                           R48  tests: test_oracle_of_separation
+
+re-run after the oracle gained its near-pair family, a check of the relative pivot, and a fixture with a step:
+KILLED    diagnosis-tolerance-differs                  R48  tests: test_oracle_of_the_rank_decision
+KILLED    relative-pivot-is-the-sum                    R48  tests: test_oracle_of_the_rank_decision
+KILLED    repair-drop-with-steps                       R48  tests: test_every_argv_of_every_repair_runs_and_gi

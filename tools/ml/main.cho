@@ -16,6 +16,7 @@ import ml.cfit;
 import ml.cv;
 import ml.est;
 import ml.fsio;
+import ml.jsonlcli;
 import ml.logrec;
 import ml.mdesc;
 import ml.paths;
@@ -93,7 +94,8 @@ fn finish[&h, &f, &i, &r, &pp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs("
 
 fn body[&h, &f, &i, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, io_read, io_write, err_write, conc] int {
     let table = spec.flag_table();
-    let (verb, e0) = app.cmdline(heap, src, errs, table, 1);
+    let (verb, e0a) = app.cmdline(heap, src, errs, table, 1);
+    let e0 = jsonlcli.check_flags(heap, src, e0a, table, verb);
     let (root, e1a) = paths.root(heap, src, argv.text(src, "root"), argv.value_index(src, "root"), e0);
     var e1 = e1a;
     borrow root as &rb in {
@@ -104,7 +106,8 @@ fn body[&h, &f, &i, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i
     var status = 0;
     borrow root as &rr in {
         let (ps0, e2a) = app.resolve_all(heap, src, table, verb, buffer.bytes(rr), e1);
-        let (ps, e2) = app.stdin_into(heap, src, table, io, verb, ps0, e2a);
+        let (ps1, e2b) = app.stdin_into(heap, src, table, io, verb, ps0, e2a);
+        let (ps, e2) = jsonlcli.input_into(heap, src, table, fs, buffer.bytes(rr), verb, ps1, e2b);
         borrow ps as &pr in {
             let (result, log_ok) = verbrun.execute(heap, src, fs, buffer.bytes(rr), verb, pr, e2);
             status = finish(heap, src, fs, io, buffer.bytes(rr), pr, result, log_ok);

@@ -41,7 +41,7 @@ verdict of each, with the survivors.
 
 ```
 ml [FLAGS] fit FILE       fit a model on a CSV and write it
-ml [FLAGS] predict FILE   apply a stored model to a CSV (FILE, or - or nothing for standard input)
+ml [FLAGS] predict FILE   apply a stored model to a CSV or JSON lines (FILE, or - or nothing for standard input)
 ml [FLAGS] eval FILE      score a stored model on a CSV
 ml [FLAGS] cv FILE        cross-validate a model: fit and score it on every fold, write nothing (docs/splits.md)
 ml [FLAGS] describe       what a model file requires of its caller (docs/serving.md section 5)
@@ -57,10 +57,12 @@ table to drift (gate T1 checks the one table against its projections).
 | verb | needs | takes also |
 |---|---|---|
 | `fit` | `--target NAME --output MODEL` | `--model constant\|linear\|logistic`, `--task regression\|classification`, `--drop`, `--float`, `--cat`, `--na-values`, `--overwrite`, `--dry-run`, the `--max-*` caps (and, with `--cat`, `--max-categories`, `--max-string-bytes`, `--max-pool-bytes`, `--max-cat-columns`: `docs/categorical.md` section 2), `--log`, `--format`, and for the models that go through the pipeline `--plan`, `--step`, `--l2`, `--iterations`, `--positive`, `--split`, `--seed`, `--threads` (`docs/wiring.md` section 2) and, for `--model tree|forest`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes` (`docs/wiring-trees.md` section 2) |
-| `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba` |
-| `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads` |
-| `cv` | `--target NAME` (none for kmeans) and a model other than constant | the model flags of `fit` (`--model`, `--plan`, `--step`, the hyperparameters, `--task`, `--positive`, `--drop`, `--float`, `--cat`), `--folds`, `--repeats`, `--stratify`, `--split-group`, `--split-by`, `--emit-folds`, `--seed`, `--threads`, the `--max-*` caps, `--log`, `--format`; never `--output`, `--overwrite`, `--dry-run` or `--split` |
+| `predict` | `--model-file MODEL` | `--drop`, `--limit`, `--from`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--proba`, `--input-format`, `--absent`, `--max-json-nodes` |
+| `eval` | `--model-file MODEL` | `--drop`, `--max-*` caps, `--max-bytes`, `--log`, `--format`, `--positive`, `--split`, `--seed`, `--threads`, `--input-format`, `--absent`, `--max-json-nodes` |
+| `cv` | `--target NAME` (none for kmeans) and a model other than constant | `--input-format`, `--fields`, `--absent`, `--max-json-nodes`, the model flags of `fit` (`--model`, `--plan`, `--step`, the hyperparameters, `--task`, `--positive`, `--drop`, `--float`, `--cat`), `--folds`, `--repeats`, `--stratify`, `--split-group`, `--split-by`, `--emit-folds`, `--seed`, `--threads`, the `--max-*` caps, `--log`, `--format`; never `--output`, `--overwrite`, `--dry-run` or `--split` |
 | `describe` | `--model-file MODEL` | `--limit` (category strings listed per column), `--max-bytes`, `--format` (no CSV operand) |
+
+*The models and their flags (the table is `ml introspect | jq .flags`, generated from `lib/models/*/model.toml`).* `--model` takes `constant`, `linear`, `logistic`, `kmeans`, `tree`, `forest` or `boost`. `--model boost` (gradient-boosted trees, `docs/models-boost.md`) takes `--task`, `--rounds` (1 to 10,000, default 100), `--learning-rate` (above 0 and at most 1, default 0.1), `--max-depth`, `--min-leaf`, `--bins`, `--l2`, `--subsample` (above 0 and at most 1, default 1.0), `--early-stopping` (0 is off; a positive number needs `--split`, else `args.conflict`, and `--split-group` or `--split-by` with it is `ml.split.combination`, in `fit` and in `cv`) and `--max-nodes`; `--trees`, `--mtry` and the other models' flags are `args.conflict`. A float outside its range is `ml.param.out-of-range` (exit 2), a depth above 30 `ml.limit.depth`, rounds times the nodes of a tree above 4,194,304 `ml.limit.nodes`, more than 4,096 columns `ml.input.too-many-columns`. The model file is kind 8 with the summation order 3.
 
 **Output.** One JSON object on one line on standard output, schema `ml.v1` (`schemas/ml.v1.json`): `{ok, command, schema, data,
 error, errors, meta}`, errors `{code, rule, message, hint, repair, detail}`, no timestamp, no duration, no float (every decimal is a
@@ -130,6 +132,10 @@ saw (the file changed between the passes) is an error, not a trap. `predict` and
 shape and discards the fold if the schema check fails. The matrix loader (`csv.load`, `tools/reader-check`) is the same scan with a matrix
 as its sink; the CLI's constant model builds none.
 
+### 2.3b JSON lines as the input (`tools/ml/jsonl.cho`, `jsonlcli.cho`; `docs/jsonl.md`)
+
+`--input-format jsonl|ndjson` (default `csv`) makes the input of `fit`, `predict`, `eval` and `cv` JSON lines: one object a line, converted in memory to the CSV bytes the equivalent CSV file holds, which the reader of 2.3 then reads. `fit` and `cv` take the columns from `--fields NAMES` (required, flat keys, the order of the table; a column named by `--cat` or `--drop` is read as text, so a date or a group that is a JSON string can be a `--split-by` or `--split-group` column); `predict` and `eval` take them from the model file, read each line by key in any order and ignore other keys. `--absent refuse|empty` is what a declared key that a line lacks is; `--max-json-nodes N` (default 4,096, ceiling 1,048,576) bounds the nodes of a line. A file of JSON lines is read whole up to `--max-bytes` (default 16 MiB, ceiling 256 MiB), and so is the CSV made of it. `fit -` and `eval -` read standard input up to `--max-bytes`, for CSV and for JSON lines; the model file, `--track` and `eval`'s `on` identify what was read by the SHA-256 of the bytes given (the JSON lines, not the CSV made of them). The value-to-cell table, the eight rules `ml.jsonl.*` and the gates are `docs/jsonl.md` sections 3 and 6. The model file records nothing about the input format. A refusal of the JSON lines reader names the line of the input; a refusal of the CSV reader behind it names the line of the generated CSV (the input line plus one while no string holds a line break).
+
 ### 2.4 A session
 
 (Run on this machine with the binary of this commit; the hash is the file's SHA-256.)
@@ -150,6 +156,10 @@ $ ml --root . fit --target y --output f.cml flt.csv                 # flt.csv: i
 $ ml --root . fit --target y --output g.cml flt2.csv                # flt2.csv: id,x,y / 1,1e5,1e1 / 2,0.1,2.75   (a float target)
 {"ok":true,...,"data":{...,"bytes":300,"summary":{"mean":"6.375"}},...}                       # the exact sum of the doubles over n, rounded once, the shortest decimal back
 ```
+
+### 2.5 Refusals of a fit that has no answer (issue 48)
+
+`ml fit --model linear|logistic` (with or without `--step` and `--plan`) refuses two designs by name, after the steps ran, so the columns named are the columns of the fitted matrix (`age`, `species#0`, `(intercept)`): `ml.fit.collinear` (exit 8; the column, the dependency on the columns before it, the relative pivot and the tolerance `2^-40` in `detail`) and, for logistic regression with `--l2 0`, `ml.fit.separable` (exit 8; the pass, the reason, the summed loss and its bound, the norm of the coefficients in `detail`). The repair is an argv of the same command with `--l2 X` set (the value of an explicit `--l2` is replaced, not repeated), a `choose` between that and `--drop NAME` for a collinear design when the command line names no step, plan or `--drop`; with `--plan` it is `none`, because `l2` is a key of the plan's model line. `ml cv` fits every training fold the same way, so a fold can be refused when the whole data is not, and the `detail` then also holds `repeat` and `fold`; a refused `fit --track` writes no run record. `tree`, `forest`, `kmeans` and `constant` do not answer them. The decisions and measurements: [refusals-fit.md](refusals-fit.md).
 
 ## 3. The constant model and its arithmetic
 
@@ -255,9 +265,9 @@ Everything below was printed by a script of this repository, on one machine (thi
 The first version of this section (the CLI slice) ran under a 1-minute load average of 3.8 to 6.0; **the counts below were refreshed at `v1-post`** under a load average of
 about 8 to 10 (other processes on the machine, and the mutant suites running in parallel). It is not a quiet-machine run and no figure here is a benchmark.
 
-**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`; the reader stage's verdicts are in `docs/reader.md` section 6, the wiring stage's in `docs/wiring.md` section 8): **138 tests, all
-pass, none skipped** (the `--threads` branch of D1 runs since W1). The run inside `scripts/check.sh` took 85.9 s under a load average of about 4 to 6 (the mutant suites ran beside it). 163 fixtures
-(`tests/conformance/fixtures.py`) reach all 29 flags, all 67 rules and all 4 log records of the tables. *(The numbers at `v1-post` were 105 tests, 1 skipped, 99 fixtures, 20 flags and 49 rules; the CLI slice had 88 tests, 90 fixtures, 19 flags and 48 rules; the integration run of `docs/integration.md` had 101.
+**Conformance tests** (`cd tests/conformance && python3 -m unittest discover -p 'test_*.py'`; the reader stage's verdicts are in `docs/reader.md` section 6, the wiring stage's in `docs/wiring.md` section 8): **533 tests, all
+pass, none skipped** (the `--threads` branch of D1 runs since W1). 365 fixtures
+(`tests/conformance/fixtures.py`) reach all 53 flags, all 101 rules and all 4 log records of the tables. *(The numbers at `v1-post` were 105 tests, 1 skipped, 99 fixtures, 20 flags and 49 rules; the CLI slice had 88 tests, 90 fixtures, 19 flags and 48 rules; the integration run of `docs/integration.md` had 101.
 W1 added `test_wire_baseline.py`, `test_wire.py`, `test_wire_file.py`, `test_wire_oracle.py`, two tests of `test_authority.py` and one each of `test_log.py`, `test_fuzz_args.py` and `test_honesty.py`, enabled the determinism test of `--threads`, and 64 fixtures.)* The numeric gates of stage 1
 and the unit tests of `lib/core/exact.cho` (7) pass in `scripts/check.sh`, which exits 0.
 

@@ -258,8 +258,11 @@ pub fn first_rule[&h, &e](heap: &!h Heap, errs: &e fail.Errors) -> [heap] buffer
     return buffer.append(heap, out, first[at + len(key)..end]);
 }
 
-// whether the command reads standard input: `predict` with `-` or with no file operand (docs/serving.md section 2)
+// whether the command reads standard input: `predict` with `-` or with no file operand (docs/serving.md section 2); `fit` and `eval` with `-` (docs/jsonl.md section 2)
 pub fn stdin_wanted[&cl](src: &cl [byte], verb: int) -> [] bool {
+    if verb == 1 || verb == 3 {
+        return argv.operand_count(src) == 2 && bytes.equal(argv.operand(src, 1), "-");
+    }
     if verb != 2 {
         return false;
     }
@@ -418,7 +421,7 @@ pub fn options[&cl](src: &cl [byte], table: &static [byte]) -> [] verbs.Opts {
     if bytes.equal(argv.text(src, "task"), "classification") {
         task = 2;
     }
-    return verbs.Opts { cap: argv.nat(src, "max-line-bytes"), max_rows: argv.nat(src, "max-rows"), max_cols: argv.nat(src, "max-columns"), max_cells: argv.nat(src, "max-cells"), max_bytes: argv.nat(src, "max-bytes"), limit: argv.nat(src, "limit"), from: argv.nat(src, "from"), overwrite: argv.has(src, "overwrite"), dry: argv.has(src, "dry-run"), drop_given: argv.has(src, "drop"), task: task, plan_given: argv.has(src, "plan"), step_given: argv.has(src, "step"), positive_given: argv.has(src, "positive"), split_given: argv.has(src, "split"), seed: argv.nat(src, "seed"), threads: argv.nat(src, "threads"), threads_given: argv.has(src, "threads"), proba: argv.has(src, "proba"), distance: argv.has(src, "distance"), target_given: argv.has(src, "target"), task_given: argv.has(src, "task"), cat_given: argv.has(src, "cat"), max_cats: argv.nat(src, "max-categories"), max_str: argv.nat(src, "max-string-bytes"), max_pool: argv.nat(src, "max-pool-bytes"), max_catcols: argv.nat(src, "max-cat-columns"), max_oor: argv.nat(src, "max-out-of-range"), max_oor_given: argv.has(src, "max-out-of-range"), drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: positive_value(src, table), split_num: split_part(src, table, 0), split_den: split_part(src, table, 1), track_given: argv.has(src, "track") };
+    return verbs.Opts { cap: argv.nat(src, "max-line-bytes"), max_rows: argv.nat(src, "max-rows"), max_cols: argv.nat(src, "max-columns"), max_cells: argv.nat(src, "max-cells"), max_bytes: argv.nat(src, "max-bytes"), limit: argv.nat(src, "limit"), from: argv.nat(src, "from"), overwrite: argv.has(src, "overwrite"), dry: argv.has(src, "dry-run"), drop_given: argv.has(src, "drop"), task: task, plan_given: argv.has(src, "plan"), step_given: argv.has(src, "step"), positive_given: argv.has(src, "positive"), split_given: argv.has(src, "split"), seed: argv.nat(src, "seed"), threads: argv.nat(src, "threads"), threads_given: argv.has(src, "threads"), proba: argv.has(src, "proba"), distance: argv.has(src, "distance"), target_given: argv.has(src, "target"), task_given: argv.has(src, "task"), cat_given: argv.has(src, "cat"), max_cats: argv.nat(src, "max-categories"), max_str: argv.nat(src, "max-string-bytes"), max_pool: argv.nat(src, "max-pool-bytes"), max_catcols: argv.nat(src, "max-cat-columns"), max_oor: argv.nat(src, "max-out-of-range"), max_oor_given: argv.has(src, "max-out-of-range"), drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: positive_value(src, table), split_num: split_part(src, table, 0), split_den: split_part(src, table, 1), track_given: argv.has(src, "track"), absent_empty: bytes.equal(argv.text(src, "absent"), "empty") };
 }
 
 // the errors, and whether there are none

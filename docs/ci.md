@@ -19,9 +19,9 @@ It is not a benchmark: no time is asserted by a gate, and nothing here measures 
 
 ## 2. The determinism gate
 
-`scripts/xplat_check.py` fits 22 models (every kind: constant, linear, logistic, tree, forest, k-means; one-hot, label, frequency and hash steps; 1 and 8 threads) on
+`scripts/xplat_check.py` fits 28 models (every kind: constant, linear, logistic, tree, forest, k-means, boost; one-hot, label, frequency and hash steps; 1 and 8 threads) on
 the files of `docs/examples/data`, then predicts and scores each with the file it wrote. It prints one line per artefact: the SHA-256 of the whole model
-file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 88 lines in all (22 times `fit-exit`, `model-file`, `predict`, `eval`).
+file, and the exit status and SHA-256 of the bytes of each `predict` and `eval` answer, 112 lines in all (28 times `fit-exit`, `model-file`, `predict`, `eval`). The first 88 lines are those of the 22 fits that existed before the boosted model; the 24 lines of its 6 fits (regression, classification with a row sample and early stopping, a categorical plan; 1 and 8 threads) are appended after them, and no earlier line changed. Two more fits read the same tables as JSON lines (`logistic-iris-jsonl`, `forest-pets-jsonl-cat`; `docs/jsonl.md`) and are appended after the boosted ones: 8 more lines, 120 for 30 fits. Their model files and answers hash to the lines of the CSV fits of the same tables.
 
 The **golden** is `docs/bench/xplat_fp.txt`. Each platform of the matrix compares its own fingerprint to the golden and fails on any difference. That is the
 whole cross-platform comparison [choice]: two platforms that each equal the same committed file are equal to each other, and the job needs no artefact passed
@@ -41,7 +41,7 @@ binary that cannot start). The workflow runs it on every platform.
 
 ### 2.1 What it shows and what it does not
 
-It shows that, for these 22 fits on these inputs, the compiler `0207556` and the sources at the commit under test produce the same model bytes and the same
+It shows that, for these 28 fits on these inputs, the compiler `0207556` and the sources at the commit under test produce the same model bytes and the same
 printed answers on macOS arm64 and on Linux x86-64. It does not show the same for any other input, platform, compiler revision or operating-system image;
 the arithmetic's reasons (IEEE binary64, no fused multiply-add in the generated code, no platform `libm` in a result) are in `docs/design.md`, and a platform that
 disagrees is found by this gate or not at all. A hash of a printed answer includes the printed text, so a change of the output format changes the golden too.
@@ -109,14 +109,14 @@ The fast gates (`build-test`, in this order; each can fail, and the first failur
 6. **the determinism gate**: `scripts/xplat_check.py --require-predict` and `--mutants`;
 7. **the demo script**: `scripts/check_demo.py` runs `scripts/demo.sh` with the built binaries (two tracked experiments, `ml runs compare` and `verify`, `eval` on the training file and on another, `ml-serve` on its default bind and two `curl` requests) and asserts its key facts, and `--mutants` shows that ten edits of the script are refused; `curl` and `python3` are on all four runner images, and the step takes seconds;
 8. **the experiments board**: `scripts/check_board.py` runs the page's logic under `node` (preinstalled on the runner images; the script falls back to another engine only where `node` cannot start) against records the built `ml` makes: its compare equals `ml runs compare` on every ordered pair and its recomputed ids equal the tool's (`crypto.subtle` against `hashlib` included), in about 5 s.
-8. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The five
-   modules whose import needs numpy (`test_enc`, `test_planned_baseline`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`) are listed as not run; the full gate runs
+9. the conformance tests (`tests/conformance`) by `scripts/run_conformance.py --no-oracles`, with the packages of `ci/requirements-fast.txt`: one process per test module, four at a time. The seven
+   modules whose import needs numpy (`test_enc`, `test_planned_baseline`, `test_refuse_oracle`, `test_splits_sklearn`, `test_wire_kmeans_oracle`, `test_wire_oracle`, `test_wire_tree_oracle`) are listed as not run; the full gate runs
    them. Two sweeps are shortened by their own switches [choice]: `ST_STRIDE=5` (every fifth byte of a damaged model file is flipped, where the default flips every byte) and `FUZZ_N=500`
    (500 argument vectors of the fuzz, where the default draws 2,500); the full gate runs the defaults. The `ml-serve` conformance tests are among those that run: they start the server on an ephemeral port and compare one POST per model kind with the command line's cell text
    (`docs/serving-http.md` section 9), and `serve-check`, the driver of their number gate, is built for them;
-9. the documentation checks that need only the built binary: `scripts/check_docs.sh` (program output in README and pages, `check_links.py`, `check_prose.py`, `check_doc_refs.py`, their mutants);
-10. `scripts/check_workflow.py` (section 6);
-11. the binaries, the fingerprint and the logs are uploaded as artifacts.
+10. the documentation checks that need only the built binary: `scripts/check_docs.sh` (program output in README and pages, `check_links.py`, `check_prose.py`, `check_doc_refs.py`, their mutants);
+11. `scripts/check_workflow.py` (section 6);
+12. the binaries, the fingerprint and the logs are uploaded as artifacts.
 
 `check_links.py` fetches no address (it counts external links), so it does not depend on the network. `cancho install` and the clones do, and a GitHub outage or a rate
 limit fails the job at that step, with the step's name.
@@ -128,6 +128,31 @@ symbolic link with `"errno":40` in the detail on Linux (ELOOP) where the baselin
 to a path that does not exist (`io.not-found`, exit 3) and on macOS a read that fails (`io.read-failed`, exit 1). The three fixtures carry `darwin_only` (`harness.runs_here`) and
 `test_rules`, `test_cat_baseline` and `test_wire_baseline` skip them elsewhere. No Linux baseline for them is recorded: the Linux answers above were read from one run on one machine
 [measured, once]. A refusal whose detail holds an `errno` is therefore not byte-equal across platforms, and no determinism claim is made for it.
+
+### 5.2 The order and the shards of the conformance runner
+
+**Measured** (GitHub-hosted `ubuntu-24.04`, 4 cores, run 39256778633, `ST_STRIDE=5 FUZZ_N=500`, one run): `scripts/run_conformance.py` ended `47 modules, 39 passed (637 tests), 0 failed, 8 not run, 1650s`. The module times were `test_describe` 1,649.6 s, `test_fuzz_args` 1,021.9 s, `test_wire_boost_file` 502.6 s, `test_wire_trees_file` 388.5 s, `test_model_file` 163.0 s, `test_wire_kmeans_file` 133.9 s and 33 more modules of under 100 s each, 4,513 s in all (4,513 s over 4 workers is 1,128 s). The wall time of the step, 1,650 s, equals the time of its longest module: the other three workers had finished everything else.
+
+In the same run `build-test (ubuntu-26.04)` and `build-test (macos-26)` hit the 45-minute limit of the step (2,700 s); their logs end after the third module, because the runner prints a module only when every module before it in sorted order has printed. They do not show whether `test_describe`, the next in order, was slow or stuck. A runner 1.65 times slower than the `ubuntu-24.04` one is enough to cross the limit if it was slow [estimate, from one passing run].
+
+Three changes, none of which removes a check [choice]:
+
+1. **`test_describe` runs as 4 shards.** `ST_SHARD=I/N` makes the module judge the damaged files of the models whose position in the corpus is `I` modulo `N`; the two damage sweeps draw their offsets from one generator each, in corpus order, for every model whether it is in the shard or not, so the set of damaged files at any `N` is exactly the set at `N = 1` and the shards partition it. A shard other than 0 loads the two damage sweeps and nothing else, so the module counts 13 tests unsharded (12 and the partition test) and 19 in 4 shards (13 and two in each of the other three). `run_conformance.py` runs the shards as separate processes of the same pool and reports the module when its last shard ends: failed if any shard failed (with that shard's output), the tests counted summed, the time the longest shard's.
+2. **The longest first.** The tasks are started in the order of a table of seconds kept in the script (the module times above; a shard counts as the module's time over its shards; a module not in the table counts as 0 and keeps the sorted order among the others). The table is a hint to the order and never to what runs.
+3. **Printed when finished.** A module is printed when it ends, not when those before it have printed; the summary line and the failures are as before.
+
+**Measured** (this machine, Linux x86-64, 4 workers, `ST_STRIDE=25`, no other load, one run each): `test_describe` alone took 824.1 s unsharded (13 tests, 22,714 damaged files judged) and 213.8 s and 229.1 s in two runs of `run_conformance.py` in 4 shards (19 tests), 3.6 to 3.9 times shorter. The old and the new test judge the same damaged files: at `ST_STRIDE=1000`, 15,514 damaged files and 232 described as another valid file, 0 traps, in both. The whole step on a GitHub runner is not measured with the shards yet.
+
+**Estimate** (not measured): with `test_describe` in 4 shards of about 410 s each, the floor of the step is the larger of 4,513 s over 4 workers (1,128 s) and the longest other module (1,022 s), so about 1,130 s against 1,650 s, 31 percent less, if the shards cost the same and the corpus built by each shard (`setUpModule`) is small; both are checked by a run.
+
+**Gates** (written before the code; `scripts/check_runner.py`, and in `tests/conformance/test_describe.py`), each shown able to fail by the mutants of the script:
+
+| id | what must hold | mutants that must be killed |
+|---|---|---|
+| R1 | for `N` in 1 to 8 the shards of the damaged files of `test_describe` are disjoint and their union is the list at `N = 1` (`test_the_shards_partition_the_damage`, with a control: a wrong partition is reported) | a shard filter off by one; the last model dropped from a shard; two shards that overlap |
+| R2 | the order of the tasks: the largest time first, ties and unknown modules in sorted order, every module present once per shard | ascending order; a shard dropped; a module run twice |
+| R3 | a module that ends is printed before a slower module that began earlier | printing in submission order |
+| R4 | a module fails when any shard fails, with that shard's output; its tests counted are the sum of the shards' | a failing shard ignored; only the first shard's tests counted |
 
 ## 6. The checks of the workflow itself
 
@@ -173,8 +198,10 @@ The conformance step is the long one: `test_describe` (every flipped byte of a d
 runner with four cores is slower in wall time than the 7 cores used here for `cancho build`, and the compiler build on it is an estimate, not a measurement: 294 s of CPU over
 four cores is about 75 s if the build scales, and a runner's CPUs are slower than this one's [estimate].
 
-The determinism gate on Linux x86-64 printed `ok, 88 lines for 22 fits equal docs/bench/xplat_fp.txt` for the golden that the Mac wrote, and its 15 mutants were each refused, at commit `cb08d5b`'s sources
+The determinism gate on Linux x86-64 printed `ok, 88 lines for 22 fits equal docs/bench/xplat_fp.txt` (and `ok, 96 lines for 24 fits` once the two JSON lines fits were appended: the Mac and the Ubuntu host `gram` agree) for the golden that the Mac wrote, and its 15 mutants were each refused, at commit `cb08d5b`'s sources
 (the tree of this branch has the same `lib/` and `tools/`).
+
+The 24 lines of the boosted model were appended to the golden from a Mac run and printed `ok, 112 lines for 28 fits equal docs/bench/xplat_fp.txt` on the same Linux x86-64 workstation (Ubuntu 26.04.1, Intel Core i7-1260P) from a clean clone of the commit, with `ml-predict` equal to `ml`; the gate has 17 mutants now (two of them on a boost fit), each refused on the Mac. The Raspberry Pi 5 was not run for these lines.
 
 Findings of the Linux run (each fixed or marked in this branch):
 

@@ -74,6 +74,8 @@ pub struct Opts {
     split_den: int,
     // fit, eval: whether --track was given
     track_given: bool,
+    // fit: whether --absent is empty: what a run record holds of the input format, with the --fields list that is read from the command line (docs/jsonl.md section 4)
+    absent_empty: bool,
 }
 
 // What a verb hands back. `payload` is the `data` object, `plain` the text of --format text, `extra` the keys of a dry run
@@ -770,7 +772,7 @@ pub fn fit_prepare[&h, &f, &r, &pf, &tn, &cl](heap: &!h Heap, src: &cl [byte], f
     var e = errs;
     var lg = log;
     // the SHA-256 of the training file before it is read (docs/tracking.md section 6); a file that cannot be opened is reported by the scan, which names the reason
-    let (dg1, size1, hst, haux) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+    let (dg1, size1, hst, haux) = fsio.sha_rp(heap, fs, root, file);
     let (sh, rep, e1, sk1) = scan_file(heap, src, fs, root, file, config(o, 0, 0, 0), tg, csv.plain_sinks(heap, 8, false), e);
     e = e1;
     csv.drop_sinks(heap, sk1);
@@ -844,7 +846,7 @@ pub fn fit_prepare[&h, &f, &r, &pf, &tn, &cl](heap: &!h Heap, src: &cl [byte], f
         }
         if go {
             // the provenance of a constant model: the identity of the training file, no feature record (docs/tracking.md section 2.2); the file must be the one that was read
-            let (dg2, size2, hst2, haux2) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+            let (dg2, size2, hst2, haux2) = fsio.sha_rp(heap, fs, root, file);
             var same = hst == 0 && hst2 == 0 && size1 == size2;
             if same {
                 borrow dg1 as &d1 in {

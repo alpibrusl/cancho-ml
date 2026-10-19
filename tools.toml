@@ -7,7 +7,7 @@
 # `ml` reads the files named on its command line (file_read, fs_read(""): a path from the command line is checked at run time,
 # so the row cannot name a directory), writes the model and the log it is told to beneath a directory it opened (dir_write and
 # file_write: it can create, append, rename and remove there, and it holds no fs_write, so no path write at all), and keeps
-# its working data on the heap. Standard input is read for `predict` only (io_read, below). `conc` arrived with `--threads` at the wiring stage (docs/wiring.md section 6): the
+# its working data on the heap. Standard input is read for `predict` and, with the operand -, for `fit` and `eval` (io_read, below). `conc` arrived with `--threads` at the wiring stage (docs/wiring.md section 6): the
 # linear and logistic fits call lib/linalg/par.cho, which spawns threads, in the same diff as the test that no thread count changes a byte
 # (tests/conformance/test_determinism.py). A label beyond the base row of lib/models/contract.toml needs a reason in [ml.reasons], and scripts/manifest.py
 # refuses one that has none, so the ceiling cannot be widened by editing this list alone.

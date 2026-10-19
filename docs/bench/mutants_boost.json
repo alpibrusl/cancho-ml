@@ -1,0 +1,109 @@
+{
+ "model": "boost",
+ "machine": "Linux x86-64 (Intel Core i7-1260P, Ubuntu 26.04.1), cancho a4572ea; the suites ran in slices on a copy of the tree, taskset -c 0-6",
+ "suites": [
+  {
+   "script": "scripts/mutants_boost.py",
+   "log": "docs/bench/mutants_boost.log",
+   "patterns": 151,
+   "killed": 129,
+   "survivors": [
+    {
+     "id": "b-leaf-floor-removed",
+     "why": "the floor matters only for a leaf whose hessian plus l2 is below 1e-3: a classification with a saturated probability and l2 = 0. A division of 0 by 0 gives NaN and the fit is refused by the non-finite check, which the oracle reports as not judged; the generated cases never saturate a probability to that degree"
+    },
+    {
+     "id": "b-min-leaf-pretest",
+     "why": "a node with fewer than 2 min-leaf rows has no valid candidate (each side needs min-leaf rows), so the pretest is an optimisation: the leaf is the same"
+    },
+    {
+     "id": "b-sample-full-when-k-max",
+     "why": "a draw below K = 1,000,000 is always true (uniform(1e6) is at most 999,999), so the sample is every fit row either way, in the same order: the shortcut only saves the draws"
+    },
+    {
+     "id": "b-validation-loss-mean-over-m",
+     "why": "a constant factor of every round's loss does not change which round is best, nor the rule 'no improvement': the stopping round is the same (the loss itself is not stored)"
+    },
+    {
+     "id": "b-fit-non-finite-check-removed",
+     "why": "not reachable: a regression target is bounded by 1e100 and n by 2^20, so no score or sum overflows (docs/models-boost.md section 3.3); the check defends a bound that someone might widen"
+    },
+    {
+     "id": "b-single-class-after-the-validation-split",
+     "why": "the fit rows hold one class only when the validation part took the whole of the other class: the check of check_target on all rows has refused every file with one class, and a file with two classes of at least 10 rows each is not reduced to one by a tenth of its rows"
+    },
+    {
+     "id": "b-label-check-removed",
+     "why": "the wiring maps every label to 0.0 or 1.0 before the library sees it (ml.label.* refusals are the wiring's), so the library's own check is a second line of defence"
+    },
+    {
+     "id": "b-copies-ceiling",
+     "why": "the smallest input that exceeds it is about 2.3e8 cells (a CSV of more than 400 MB): the tree's own gate lists it without a fixture (docs/wiring-trees.md section 6)"
+    },
+    {
+     "id": "b-read-rounds-ceiling",
+     "why": "adapter.lib_size applies the same ceiling on the rounds (and on the nodes) to the header before model.read is called, so a file with a wrapped or huge count never reaches the reader's own check; the two are one bound written twice, each the other's second line of defence (b-adapter-size-ceiling removes the adapter's)"
+    },
+    {
+     "id": "b-read-columns-ceiling",
+     "why": "the number of columns of the payload is compared with the width of the schema by the adapter (fd != d, mutated separately as b-adapter-width-not-compared), and the schema is bounded by --max-columns; the reader's own ceiling of 4096 is a second line of defence that a one-field edit of a real file cannot isolate"
+    },
+    {
+     "id": "b-read-nodes-below-rounds",
+     "why": "a payload with fewer nodes than rounds fails the offsets (strictly increasing from 0 to the node count, one per round), so the header comparison is a second line of defence that is never the only check"
+    },
+    {
+     "id": "b-read-nodes-ceiling",
+     "why": "the same as b-read-rounds-ceiling: adapter.lib_size refuses a node count above the ceiling before model.read runs"
+    },
+    {
+     "id": "b-read-truncated-is-malformed",
+     "why": "every caller maps both tags to ml.model.malformed (the wiring's decoder answers one code), so the distinction is not visible from outside; the file-level truncation is the reader of the sections"
+    },
+    {
+     "id": "b-read-longer-payload",
+     "why": "the adapter compares the length with the size it computed before calling the reader (a second line of defence, mutated separately): the reader's own check is never reached by a file"
+    },
+    {
+     "id": "b-read-kind",
+     "why": "the file reader (pipeline.file.decode) has already compared the kind with the plan's family before the adapter runs, and the adapter's own size check reads the header at fixed offsets: a payload of another kind with a valid layout cannot be built by a one-field edit"
+    },
+    {
+     "id": "b-read-float-bits",
+     "why": "a float whose bits are not reproduced by fbits.decode is an infinity or a NaN (decode answers NaN for them) or a subnormal; the range checks that follow refuse every NaN (a comparison is false) and the subnormal l2 or base is accepted either way: the bit check is a second line of defence for the values the comparisons let through"
+    },
+    {
+     "id": "b-read-offset-end",
+     "why": "a last offset other than the node count either ends the last tree early (a right child still pending) or runs the walk past the arrays' own end of that tree, and check_tree refuses both: the comparison with the node count is a second line of defence"
+    },
+    {
+     "id": "b-read-offsets-increase",
+     "why": "an empty tree would make the next tree start where this one does, and the next tree's walk then meets a root after a complete tree with nothing pending, which check_tree refuses: the strict increase is a second line of defence"
+    },
+    {
+     "id": "b-read-pending-children",
+     "why": "the same argument as the tree library's reader (docs/models-tree.md section 7): a pending right child can never be popped by a node of the tree, and a pushed right child at the end belongs to a last node that is internal, which has its left child missing: every one-field edit that leaves a child pending also breaks the offsets or the left-is-next rule first"
+    },
+    {
+     "id": "b-adapter-threads-not-passed",
+     "why": "an equivalent mutant by design: no thread count changes a byte of the model (the property GB2 asserts, and the binning is the only threaded part), so a fit that ignores the flag writes the same file"
+    },
+    {
+     "id": "b-adapter-class-of-one-half",
+     "why": "a probability of exactly 0.5 needs a score whose sigmoid rounds to one half: |score| below 1e-16, a sum of leaf values that cancel to the last bit: the generated rows never reach it (the same tie as the tree's `wt-class-of-a-tie`)"
+    },
+    {
+     "id": "b-adapter-proba-of-a-regression",
+     "why": "a second line of defence: predict --proba on a regression is args.conflict before the adapter is called and eval asks for a probability only of a classification"
+    }
+   ]
+  },
+  {
+   "script": "scripts/mutants_wire_boost.py",
+   "log": "docs/bench/mutants_wire_boost.log",
+   "patterns": 24,
+   "killed": 24,
+   "survivors": []
+  }
+ ]
+}

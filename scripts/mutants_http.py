@@ -161,7 +161,7 @@ MUTANTS = [
 
 def build_serve(tree):
     g = lambda pat: sorted(glob.glob(str(tree / pat)))
-    libs = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
+    libs = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/boost/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
             g("lib/models/logistic/*.cho") + g("lib/models/tree/*.cho") + g("lib/models/treewire/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho"))
     shared = [f for f in g("tools/ml/*.cho") if not f.endswith("/main.cho")]
     files = libs + [str(tree / "generated/ml-serve/built.cho")] + shared + g("tools/ml-serve/*.cho")

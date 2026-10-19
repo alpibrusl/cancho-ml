@@ -165,7 +165,8 @@ def _int(s):
 def figures(root):
     """name -> value, from the sources, computed here."""
     status = (root / "docs" / "status.md").read_text()
-    fp = (root / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines()
+    # the lines that the three platforms print: the cases of JSON lines (`-jsonl` in the name) are in the golden from the Mac alone (as scripts/site.py counts)
+    fp = [l for l in (root / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines() if "-jsonl" not in l.split("\t")[0]]
     out = {"fp_lines": str(len(fp)), "fp_fits": str(sum(1 for l in fp if l.split("\t")[1:2] == ["fit-exit"])), "platforms": "3"}
     row = next(l for l in status.splitlines() if l.startswith("| other platforms"))
     named = [p for p in ("macOS arm64", "Linux x86-64", "Linux aarch64") if p in row]
@@ -177,9 +178,20 @@ def figures(root):
     m = re.search(r"RMSE [\d.]+ against scikit-learn's [\d.]+, ([\d.]+)% apart; the tolerance is (\d+)%", status)
     out["red_gap"], out["red_tol"] = m.groups()
     guide = (root / "docs" / "guide.html").read_text()
+    out["models"] = model_words(root)[0]
     out["mcp_tools"] = str(len(json.loads((root / "docs" / "mcp" / "tools.json").read_text())["tools"]))
     out["rules"] = re.search(r"<!-- gen:nrules -->\n(\d+)\n<!-- /gen:nrules -->", guide).group(1)
     return out
+
+
+WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+DISPLAY = {"kmeans": "k-means"}
+
+
+def model_words(root):
+    """(the number of wired models in words, their names as the page spells them), from the manifests of lib/models"""
+    names = [p.parent.name for p in sorted((root / "lib" / "models").glob("*/model.toml")) if re.search(r"^wired *= *true", p.read_text(), re.M)]
+    return WORDS[len(names)], [DISPLAY.get(n, n) for n in names]
 
 
 def ci_runners(root):
@@ -197,7 +209,7 @@ def check_figures(root, p, errs):
         seen[name] = val
         if val != want[name]:
             errs.append("index.html: %s is %r, the sources say %r" % (name, val, want[name]))
-    for name in ("fp_lines", "tests", "mut_killed", "mut_total", "rules", "red_gap", "red_tol", "platforms", "runners", "mcp_tools"):
+    for name in ("fp_lines", "tests", "mut_killed", "mut_total", "rules", "red_gap", "red_tol", "platforms", "runners", "models", "mcp_tools"):
         if name not in seen:
             errs.append("index.html: the figure %s is missing" % name)
     status = (root / "docs" / "status.md").read_text()
@@ -458,6 +470,18 @@ SERVE_FORBIDDEN = [(r"listens on every address", "ml-serve is said to listen on 
 
 
 def check_claims(root, text, errs):
+    # the models: the page names every model the manifests wire, in a sentence that starts with their number, and says nothing of another count
+    word, names = model_words(root)
+    m = re.search(r"One verb, <span data-n=\"models\">\w+</span> models: ([^.<]*)\.", text)
+    if not m:
+        errs.append("index.html: the sentence 'One verb, <N> models: ...' is missing")
+    else:
+        listed = re.split(r", | and ", m.group(1))
+        if sorted(listed) != sorted(names):
+            errs.append("index.html: the models listed are %s, the manifests of lib/models wire %s" % (listed, names))
+    for stale in set(WORDS) - {word}:
+        if re.search(r"\b(%s) models\b" % stale, text, re.I) and stale not in ("two", "three", "four", "five"):
+            errs.append("index.html: it says '%s models', the manifests wire %s" % (stale, word))
     for needle, what in EXPERIMENT_CLAIMS:
         if needle not in text:
             errs.append("index.html: %s is missing (looked for %r)" % (what, needle))

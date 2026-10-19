@@ -58,6 +58,29 @@ class Rules(unittest.TestCase):
             finally:
                 sb.cleanup()
 
+    def test_repairs_of_fit_refusals_run(self):
+        """issue 48: a `repair_runs` case offers a retry or a choice; every argv it offers is run in the same sandbox and gives a model"""
+        n = 0
+        for c in CASES:
+            if not c["expect"].get("repair_runs"):
+                continue
+            sb, r = run_case(c)
+            try:
+                rep = r.doc()["error"]["repair"]
+                argvs = [rep["argv"]] if rep["kind"] == "retry" else [o["argv"] for o in rep["options"]]
+                self.assertTrue(argvs, c["id"])
+                for argv in argvs:
+                    added = [a for a in argv[1:] if a not in r.argv[1:]]
+                    self.assertFalse({"--root", "--overwrite", "--output", "--log"} & set(added), "%s: the repair adds %s" % (c["id"], added))
+                    for f in sb.dir.glob("*.cml"):
+                        f.unlink()
+                    again = run(*argv[1:], cwd=sb.dir)
+                    self.assertEqual(again.status, 0, "%s: the repair %r does not work: %r" % (c["id"], argv, again))
+                    n += 1
+            finally:
+                sb.cleanup()
+        self.assertGreaterEqual(n, 8)
+
     def test_exit_codes_are_the_d4_classes(self):
         """cancho docs/agent-toolbox.md D4, written out here independently of the tables."""
 

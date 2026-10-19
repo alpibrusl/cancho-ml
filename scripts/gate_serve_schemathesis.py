@@ -31,6 +31,8 @@ FIXTURES = {
     "classification-logistic": ("logistic", None, True),
     "clustering-kmeans": ("kmeans", None, True),
     "regression-linear-guarded": ("linear", "fixture-token", True),
+    "classification-boost": ("boost_cls", None, True),
+    "categorical-boost": ("cat_boost_hash", None, True),
 }
 
 CONFIG = """[checks.negative_data_rejection]

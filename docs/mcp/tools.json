@@ -5,7 +5,7 @@
   {
    "name": "fit",
    "title": "fit",
-   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest] [--plan PLAN | --step STEPS] [--bins N] [--bootstrap N] [--init NAME] [--iterations N] [--k N] [--l2 X] [--max-depth N] [--max-nodes N] [--min-leaf N] [--mtry N] [--trees N] [--positive LABEL] [--split train=F] [--seed N] [--threads N] [--task regression|classification] [--target NAME] --output MODEL [--drop NAMES] [--float NAMES] [--overwrite] [--dry-run] [--max-rows N] [--max-columns N] [--max-cells N] [--max-line-bytes N] [--max-bytes N] [--track DIR] [--log FILE] [--format json|text] fit FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
+   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost] [--plan PLAN | --step STEPS] [--bins N] [--bootstrap N] [--early-stopping N] [--init NAME] [--iterations N] [--k N] [--l2 X] [--learning-rate X] [--max-depth N] [--max-nodes N] [--min-leaf N] [--mtry N] [--rounds N] [--subsample X] [--trees N] [--positive LABEL] [--split train=F] [--seed N] [--threads N] [--task regression|classification] [--target NAME] --output MODEL [--drop NAMES] [--float NAMES] [--overwrite] [--dry-run] [--max-rows N] [--max-columns N] [--max-cells N] [--max-line-bytes N] [--max-bytes N] [--track DIR] [--log FILE] [--format json|text] fit FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -17,10 +17,11 @@
        "logistic",
        "kmeans",
        "tree",
-       "forest"
+       "forest",
+       "boost"
       ],
       "default": "constant",
-      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
+      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
      },
      "task": {
       "type": "string",
@@ -121,6 +122,13 @@
       "default": 1,
       "description": "1 draws the rows of each tree with replacement, 0 uses every row once"
      },
+     "early-stopping": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 0,
+      "description": "0 is off, N stops after N rounds without a better loss on a tenth of the training rows kept for it (needs --split)"
+     },
      "init": {
       "type": "string",
       "enum": [
@@ -145,14 +153,18 @@
      "l2": {
       "type": "string",
       "minLength": 1,
-      "default": "0.0",
-      "description": "the ridge penalty, a finite number, 0 or more. The intercept is not penalised"
+      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0)"
+     },
+     "learning-rate": {
+      "type": "string",
+      "minLength": 1,
+      "default": "0.1",
+      "description": "the shrinkage applied to each tree, above 0 and at most 1 (else ml.param.out-of-range)"
      },
      "max-depth": {
       "type": "integer",
       "minimum": 0,
       "maximum": 1000,
-      "default": 8,
       "description": "the deepest tree: 1 to 1000 are accepted and a depth above 30 is refused with ml.limit.depth"
      },
      "max-nodes": {
@@ -166,7 +178,6 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 1000000,
-      "default": 1,
       "description": "the fewest rows in a leaf"
      },
      "mtry": {
@@ -175,6 +186,19 @@
       "maximum": 4096,
       "default": 0,
       "description": "the features tried at each node, 0 for floor of the square root of d (classification) or d over 3 (regression): above d is ml.param.out-of-range"
+     },
+     "rounds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000,
+      "default": 100,
+      "description": "the number of boosting rounds, one tree each (fewer are kept when early stopping ends the fit)"
+     },
+     "subsample": {
+      "type": "string",
+      "minLength": 1,
+      "default": "1.0",
+      "description": "the fraction of the rows each boosting round fits its tree on, above 0 and at most 1 (else ml.param.out-of-range)"
      },
      "trees": {
       "type": "integer",
@@ -257,6 +281,37 @@
       "maximum": 268435456,
       "default": 16777216,
       "description": "fit: the largest model file written, the limit predict and eval apply when they read it. A larger one is limit.input-too-large and nothing is written. predict, eval, describe: the largest model file read. A larger one is limit.input-too-large. predict from standard input (the operand - or none): the CSV is held in memory, so this is also the most bytes of standard input read. More is limit.input-too-large"
+     },
+     "input-format": {
+      "type": "string",
+      "enum": [
+       "csv",
+       "jsonl",
+       "ndjson"
+      ],
+      "default": "csv",
+      "description": "fit, predict, eval, cv: the format of the input. jsonl (and its spelling ndjson) is JSON lines: one JSON object a line, read into the columns that fit declares with --fields (predict and eval read the columns of the model file, by key, in any order, and ignore other keys). A number is its exact text, a string is text, null is a missing cell, a key a line lacks is --absent, true and false are text in a --cat column and refused in a number column, an object or an array is refused (docs/jsonl.md section 3). The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size). Never guessed from the name or the bytes"
+     },
+     "fields": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit and cv, with --input-format jsonl: the columns, the keys of the top-level object, separated by commas, in the order of the table. Required for jsonl at fit and cv. A name is the key itself (a dot is part of it, no path is followed) and holds no comma"
+     },
+     "absent": {
+      "type": "string",
+      "enum": [
+       "refuse",
+       "empty"
+      ],
+      "default": "refuse",
+      "description": "jsonl input: what a declared key that a line does not hold is. refuse is ml.jsonl.missing-field, empty is a missing cell. A null value is a missing cell either way"
+     },
+     "max-json-nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576,
+      "default": 4096,
+      "description": "jsonl input: the most JSON nodes a line may hold (a value, and a key, is a node), 1 to 1048576. A line with more is ml.jsonl.too-many-nodes before anything is sized by it"
      },
      "track": {
       "type": "string",
@@ -563,7 +618,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -1633,6 +1689,553 @@
               "type": "integer",
               "minimum": 0
              },
+             "boost": {
+              "type": "object",
+              "properties": {
+               "rounds": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "rounds_requested": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "nodes": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "bins": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "max_depth": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "min_leaf": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "learning_rate": {
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+               },
+               "base_score": {
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+               },
+               "best_round": {
+                "type": "integer",
+                "minimum": 0
+               }
+              },
+              "required": [
+               "rounds",
+               "rounds_requested",
+               "nodes",
+               "bins",
+               "max_depth",
+               "min_leaf",
+               "learning_rate",
+               "base_score"
+              ],
+              "additionalProperties": false
+             },
+             "steps_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+             },
+             "categorical": {
+              "type": "array",
+              "items": {
+               "type": "object",
+               "properties": {
+                "step": {
+                 "type": "integer",
+                 "minimum": 0
+                },
+                "kind": {
+                 "enum": [
+                  "onehot",
+                  "label",
+                  "freq",
+                  "hash"
+                 ]
+                },
+                "column": {
+                 "$ref": "#/$defs/text_or_bytes"
+                },
+                "categories": {
+                 "type": "integer",
+                 "minimum": 0
+                },
+                "output_columns": {
+                 "type": "integer",
+                 "minimum": 0
+                }
+               },
+               "required": [
+                "step",
+                "kind",
+                "column",
+                "categories",
+                "output_columns"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "string_table": {
+              "type": "object",
+              "properties": {
+               "entries": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "strings": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "pool_bytes": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "bytes": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+               }
+              },
+              "required": [
+               "entries",
+               "strings",
+               "pool_bytes",
+               "bytes",
+               "sha256"
+              ],
+              "additionalProperties": false
+             },
+             "split": {
+              "type": "object",
+              "properties": {
+               "train": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "test": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "seed": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "spec": {
+                "type": "string"
+               },
+               "assignment": {
+                "type": "array",
+                "items": {
+                 "enum": [
+                  0,
+                  1
+                 ]
+                }
+               }
+              },
+              "required": [
+               "train",
+               "test",
+               "seed",
+               "spec"
+              ],
+              "additionalProperties": false
+             },
+             "holdout": {
+              "type": "object",
+              "properties": {
+               "rows": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "on": {
+                "const": "held-out"
+               },
+               "metrics": {
+                "type": "object",
+                "properties": {
+                 "rmse": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 },
+                 "mae": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 },
+                 "r2": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 }
+                },
+                "required": [
+                 "rmse",
+                 "mae",
+                 "r2"
+                ],
+                "additionalProperties": false
+               }
+              },
+              "required": [
+               "rows",
+               "on",
+               "metrics"
+              ],
+              "additionalProperties": false
+             }
+            },
+            "required": [
+             "plan",
+             "steps",
+             "features",
+             "boost"
+            ],
+            "additionalProperties": false
+           },
+           {
+            "type": "object",
+            "properties": {
+             "plan": {
+              "type": "string"
+             },
+             "steps": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "features": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "boost": {
+              "type": "object",
+              "properties": {
+               "rounds": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "rounds_requested": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "nodes": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "bins": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "max_depth": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "min_leaf": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "learning_rate": {
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+               },
+               "base_score": {
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+               },
+               "best_round": {
+                "type": "integer",
+                "minimum": 0
+               }
+              },
+              "required": [
+               "rounds",
+               "rounds_requested",
+               "nodes",
+               "bins",
+               "max_depth",
+               "min_leaf",
+               "learning_rate",
+               "base_score"
+              ],
+              "additionalProperties": false
+             },
+             "steps_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+             },
+             "categorical": {
+              "type": "array",
+              "items": {
+               "type": "object",
+               "properties": {
+                "step": {
+                 "type": "integer",
+                 "minimum": 0
+                },
+                "kind": {
+                 "enum": [
+                  "onehot",
+                  "label",
+                  "freq",
+                  "hash"
+                 ]
+                },
+                "column": {
+                 "$ref": "#/$defs/text_or_bytes"
+                },
+                "categories": {
+                 "type": "integer",
+                 "minimum": 0
+                },
+                "output_columns": {
+                 "type": "integer",
+                 "minimum": 0
+                }
+               },
+               "required": [
+                "step",
+                "kind",
+                "column",
+                "categories",
+                "output_columns"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "string_table": {
+              "type": "object",
+              "properties": {
+               "entries": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "strings": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "pool_bytes": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "bytes": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+               }
+              },
+              "required": [
+               "entries",
+               "strings",
+               "pool_bytes",
+               "bytes",
+               "sha256"
+              ],
+              "additionalProperties": false
+             },
+             "classes": {
+              "type": "array",
+              "items": {
+               "type": "integer"
+              },
+              "minItems": 2,
+              "maxItems": 2
+             },
+             "positive": {
+              "type": "integer"
+             },
+             "split": {
+              "type": "object",
+              "properties": {
+               "train": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "test": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "seed": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "spec": {
+                "type": "string"
+               },
+               "assignment": {
+                "type": "array",
+                "items": {
+                 "enum": [
+                  0,
+                  1
+                 ]
+                }
+               }
+              },
+              "required": [
+               "train",
+               "test",
+               "seed",
+               "spec"
+              ],
+              "additionalProperties": false
+             },
+             "holdout": {
+              "type": "object",
+              "properties": {
+               "rows": {
+                "type": "integer",
+                "minimum": 0
+               },
+               "on": {
+                "const": "held-out"
+               },
+               "metrics": {
+                "type": "object",
+                "properties": {
+                 "accuracy": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 },
+                 "precision": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 },
+                 "recall": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 },
+                 "f1": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 },
+                 "roc_auc": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 },
+                 "log_loss": {
+                  "oneOf": [
+                   {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   {
+                    "type": "null"
+                   }
+                  ]
+                 }
+                },
+                "required": [
+                 "accuracy",
+                 "precision",
+                 "recall",
+                 "f1",
+                 "roc_auc",
+                 "log_loss"
+                ],
+                "additionalProperties": false
+               }
+              },
+              "required": [
+               "rows",
+               "on",
+               "metrics"
+              ],
+              "additionalProperties": false
+             }
+            },
+            "required": [
+             "plan",
+             "steps",
+             "features",
+             "boost",
+             "classes",
+             "positive"
+            ],
+            "additionalProperties": false
+           },
+           {
+            "type": "object",
+            "properties": {
+             "plan": {
+              "type": "string"
+             },
+             "steps": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "features": {
+              "type": "integer",
+              "minimum": 0
+             },
              "clusters": {
               "type": "object",
               "properties": {
@@ -2121,6 +2724,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -2168,6 +2773,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -2277,6 +2890,32 @@
       "maximum": 268435456,
       "default": 16777216,
       "description": "fit: the largest model file written, the limit predict and eval apply when they read it. A larger one is limit.input-too-large and nothing is written. predict, eval, describe: the largest model file read. A larger one is limit.input-too-large. predict from standard input (the operand - or none): the CSV is held in memory, so this is also the most bytes of standard input read. More is limit.input-too-large"
+     },
+     "input-format": {
+      "type": "string",
+      "enum": [
+       "csv",
+       "jsonl",
+       "ndjson"
+      ],
+      "default": "csv",
+      "description": "fit, predict, eval, cv: the format of the input. jsonl (and its spelling ndjson) is JSON lines: one JSON object a line, read into the columns that fit declares with --fields (predict and eval read the columns of the model file, by key, in any order, and ignore other keys). A number is its exact text, a string is text, null is a missing cell, a key a line lacks is --absent, true and false are text in a --cat column and refused in a number column, an object or an array is refused (docs/jsonl.md section 3). The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size). Never guessed from the name or the bytes"
+     },
+     "absent": {
+      "type": "string",
+      "enum": [
+       "refuse",
+       "empty"
+      ],
+      "default": "refuse",
+      "description": "jsonl input: what a declared key that a line does not hold is. refuse is ml.jsonl.missing-field, empty is a missing cell. A null value is a missing cell either way"
+     },
+     "max-json-nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576,
+      "default": 4096,
+      "description": "jsonl input: the most JSON nodes a line may hold (a value, and a key, is a node), 1 to 1048576. A line with more is ml.jsonl.too-many-nodes before anything is sized by it"
      },
      "max-out-of-range": {
       "type": "integer",
@@ -2540,7 +3179,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -2853,6 +3493,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -2900,6 +3542,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -3027,6 +3677,32 @@
       "maximum": 268435456,
       "default": 16777216,
       "description": "fit: the largest model file written, the limit predict and eval apply when they read it. A larger one is limit.input-too-large and nothing is written. predict, eval, describe: the largest model file read. A larger one is limit.input-too-large. predict from standard input (the operand - or none): the CSV is held in memory, so this is also the most bytes of standard input read. More is limit.input-too-large"
+     },
+     "input-format": {
+      "type": "string",
+      "enum": [
+       "csv",
+       "jsonl",
+       "ndjson"
+      ],
+      "default": "csv",
+      "description": "fit, predict, eval, cv: the format of the input. jsonl (and its spelling ndjson) is JSON lines: one JSON object a line, read into the columns that fit declares with --fields (predict and eval read the columns of the model file, by key, in any order, and ignore other keys). A number is its exact text, a string is text, null is a missing cell, a key a line lacks is --absent, true and false are text in a --cat column and refused in a number column, an object or an array is refused (docs/jsonl.md section 3). The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size). Never guessed from the name or the bytes"
+     },
+     "absent": {
+      "type": "string",
+      "enum": [
+       "refuse",
+       "empty"
+      ],
+      "default": "refuse",
+      "description": "jsonl input: what a declared key that a line does not hold is. refuse is ml.jsonl.missing-field, empty is a missing cell. A null value is a missing cell either way"
+     },
+     "max-json-nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576,
+      "default": 4096,
+      "description": "jsonl input: the most JSON nodes a line may hold (a value, and a key, is a node), 1 to 1048576. A line with more is ml.jsonl.too-many-nodes before anything is sized by it"
      },
      "max-out-of-range": {
       "type": "integer",
@@ -3314,7 +3990,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -3482,7 +4159,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -3690,7 +4368,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -4038,6 +4717,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -4085,6 +4766,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -4124,7 +4813,7 @@
   {
    "name": "cv",
    "title": "cv",
-   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest] [--plan PLAN | --step STEPS] [--target NAME] [--folds K] [--repeats R] [--stratify | --split-group COLUMN | --split-by time:COLUMN] [--emit-folds] [--seed N] [--threads N] [--drop NAMES] [--format json|text] cv FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
+   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost] [--plan PLAN | --step STEPS] [--target NAME] [--folds K] [--repeats R] [--stratify | --split-group COLUMN | --split-by time:COLUMN] [--emit-folds] [--seed N] [--threads N] [--drop NAMES] [--format json|text] cv FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -4136,10 +4825,11 @@
        "logistic",
        "kmeans",
        "tree",
-       "forest"
+       "forest",
+       "boost"
       ],
       "default": "constant",
-      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
+      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
      },
      "task": {
       "type": "string",
@@ -4227,6 +4917,13 @@
       "default": 1,
       "description": "1 draws the rows of each tree with replacement, 0 uses every row once"
      },
+     "early-stopping": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 0,
+      "description": "0 is off, N stops after N rounds without a better loss on a tenth of the training rows kept for it (needs --split)"
+     },
      "init": {
       "type": "string",
       "enum": [
@@ -4251,14 +4948,18 @@
      "l2": {
       "type": "string",
       "minLength": 1,
-      "default": "0.0",
-      "description": "the ridge penalty, a finite number, 0 or more. The intercept is not penalised"
+      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0)"
+     },
+     "learning-rate": {
+      "type": "string",
+      "minLength": 1,
+      "default": "0.1",
+      "description": "the shrinkage applied to each tree, above 0 and at most 1 (else ml.param.out-of-range)"
      },
      "max-depth": {
       "type": "integer",
       "minimum": 0,
       "maximum": 1000,
-      "default": 8,
       "description": "the deepest tree: 1 to 1000 are accepted and a depth above 30 is refused with ml.limit.depth"
      },
      "max-nodes": {
@@ -4272,7 +4973,6 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 1000000,
-      "default": 1,
       "description": "the fewest rows in a leaf"
      },
      "mtry": {
@@ -4281,6 +4981,19 @@
       "maximum": 4096,
       "default": 0,
       "description": "the features tried at each node, 0 for floor of the square root of d (classification) or d over 3 (regression): above d is ml.param.out-of-range"
+     },
+     "rounds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000,
+      "default": 100,
+      "description": "the number of boosting rounds, one tree each (fewer are kept when early stopping ends the fit)"
+     },
+     "subsample": {
+      "type": "string",
+      "minLength": 1,
+      "default": "1.0",
+      "description": "the fraction of the rows each boosting round fits its tree on, above 0 and at most 1 (else ml.param.out-of-range)"
      },
      "trees": {
       "type": "integer",
@@ -4375,6 +5088,37 @@
       "maximum": 268435456,
       "default": 16777216,
       "description": "fit: the largest model file written, the limit predict and eval apply when they read it. A larger one is limit.input-too-large and nothing is written. predict, eval, describe: the largest model file read. A larger one is limit.input-too-large. predict from standard input (the operand - or none): the CSV is held in memory, so this is also the most bytes of standard input read. More is limit.input-too-large"
+     },
+     "input-format": {
+      "type": "string",
+      "enum": [
+       "csv",
+       "jsonl",
+       "ndjson"
+      ],
+      "default": "csv",
+      "description": "fit, predict, eval, cv: the format of the input. jsonl (and its spelling ndjson) is JSON lines: one JSON object a line, read into the columns that fit declares with --fields (predict and eval read the columns of the model file, by key, in any order, and ignore other keys). A number is its exact text, a string is text, null is a missing cell, a key a line lacks is --absent, true and false are text in a --cat column and refused in a number column, an object or an array is refused (docs/jsonl.md section 3). The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size). Never guessed from the name or the bytes"
+     },
+     "fields": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit and cv, with --input-format jsonl: the columns, the keys of the top-level object, separated by commas, in the order of the table. Required for jsonl at fit and cv. A name is the key itself (a dot is part of it, no path is followed) and holds no comma"
+     },
+     "absent": {
+      "type": "string",
+      "enum": [
+       "refuse",
+       "empty"
+      ],
+      "default": "refuse",
+      "description": "jsonl input: what a declared key that a line does not hold is. refuse is ml.jsonl.missing-field, empty is a missing cell. A null value is a missing cell either way"
+     },
+     "max-json-nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576,
+      "default": 4096,
+      "description": "jsonl input: the most JSON nodes a line may hold (a value, and a key, is a node), 1 to 1048576. A line with more is ml.jsonl.too-many-nodes before anything is sized by it"
      },
      "file": {
       "type": "string",
@@ -4538,7 +5282,8 @@
          "logistic",
          "kmeans",
          "tree",
-         "forest"
+         "forest",
+         "boost"
         ]
        },
        "task": {
@@ -5079,6 +5824,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -5126,6 +5873,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -5346,7 +6101,8 @@
          "logistic",
          "kmeans",
          "tree",
-         "forest"
+         "forest",
+         "boost"
         ]
        },
        "task": {
@@ -5359,7 +6115,7 @@
        "kind": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 7
+        "maximum": 8
        },
        "plan": {
         "$ref": "#/$defs/text_or_bytes"
@@ -5491,6 +6247,29 @@
          "sections",
          "compiler",
          "sum_order"
+        ],
+        "additionalProperties": false
+       },
+       "ensemble": {
+        "type": "object",
+        "properties": {
+         "trees": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "nodes": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "rounds_requested": {
+          "type": "integer",
+          "minimum": 0
+         }
+        },
+        "required": [
+         "trees",
+         "nodes",
+         "rounds_requested"
         ],
         "additionalProperties": false
        },
@@ -5833,7 +6612,6 @@
        "kind",
        "plan",
        "rows",
-       "provenance",
        "file",
        "target",
        "columns",
@@ -6031,6 +6809,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -6078,6 +6858,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -6584,6 +7372,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -6631,6 +7421,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -7035,6 +7833,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -7082,6 +7882,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -7546,6 +8354,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -7593,6 +8403,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -8027,6 +8845,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -8074,6 +8894,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -8185,6 +9013,32 @@
       "maximum": 268435456,
       "default": 16777216,
       "description": "fit: the largest model file written, the limit predict and eval apply when they read it. A larger one is limit.input-too-large and nothing is written. predict, eval, describe: the largest model file read. A larger one is limit.input-too-large. predict from standard input (the operand - or none): the CSV is held in memory, so this is also the most bytes of standard input read. More is limit.input-too-large"
+     },
+     "input-format": {
+      "type": "string",
+      "enum": [
+       "csv",
+       "jsonl",
+       "ndjson"
+      ],
+      "default": "csv",
+      "description": "fit, predict, eval, cv: the format of the input. jsonl (and its spelling ndjson) is JSON lines: one JSON object a line, read into the columns that fit declares with --fields (predict and eval read the columns of the model file, by key, in any order, and ignore other keys). A number is its exact text, a string is text, null is a missing cell, a key a line lacks is --absent, true and false are text in a --cat column and refused in a number column, an object or an array is refused (docs/jsonl.md section 3). The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size). Never guessed from the name or the bytes"
+     },
+     "absent": {
+      "type": "string",
+      "enum": [
+       "refuse",
+       "empty"
+      ],
+      "default": "refuse",
+      "description": "jsonl input: what a declared key that a line does not hold is. refuse is ml.jsonl.missing-field, empty is a missing cell. A null value is a missing cell either way"
+     },
+     "max-json-nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576,
+      "default": 4096,
+      "description": "jsonl input: the most JSON nodes a line may hold (a value, and a key, is a node), 1 to 1048576. A line with more is ml.jsonl.too-many-nodes before anything is sized by it"
      },
      "max-out-of-range": {
       "type": "integer",
@@ -8448,7 +9302,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -8761,6 +9616,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -8808,6 +9665,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -8935,6 +9800,32 @@
       "maximum": 268435456,
       "default": 16777216,
       "description": "fit: the largest model file written, the limit predict and eval apply when they read it. A larger one is limit.input-too-large and nothing is written. predict, eval, describe: the largest model file read. A larger one is limit.input-too-large. predict from standard input (the operand - or none): the CSV is held in memory, so this is also the most bytes of standard input read. More is limit.input-too-large"
+     },
+     "input-format": {
+      "type": "string",
+      "enum": [
+       "csv",
+       "jsonl",
+       "ndjson"
+      ],
+      "default": "csv",
+      "description": "fit, predict, eval, cv: the format of the input. jsonl (and its spelling ndjson) is JSON lines: one JSON object a line, read into the columns that fit declares with --fields (predict and eval read the columns of the model file, by key, in any order, and ignore other keys). A number is its exact text, a string is text, null is a missing cell, a key a line lacks is --absent, true and false are text in a --cat column and refused in a number column, an object or an array is refused (docs/jsonl.md section 3). The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size). Never guessed from the name or the bytes"
+     },
+     "absent": {
+      "type": "string",
+      "enum": [
+       "refuse",
+       "empty"
+      ],
+      "default": "refuse",
+      "description": "jsonl input: what a declared key that a line does not hold is. refuse is ml.jsonl.missing-field, empty is a missing cell. A null value is a missing cell either way"
+     },
+     "max-json-nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576,
+      "default": 4096,
+      "description": "jsonl input: the most JSON nodes a line may hold (a value, and a key, is a node), 1 to 1048576. A line with more is ml.jsonl.too-many-nodes before anything is sized by it"
      },
      "max-out-of-range": {
       "type": "integer",
@@ -9217,7 +10108,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -9385,7 +10277,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -9593,7 +10486,8 @@
            "logistic",
            "kmeans",
            "tree",
-           "forest"
+           "forest",
+           "boost"
           ]
          },
          "task": {
@@ -9941,6 +10835,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -9988,6 +10884,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -10027,7 +10931,7 @@
   {
    "name": "cv",
    "title": "cv",
-   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest] [--plan PLAN | --step STEPS] [--target NAME] [--folds K] [--repeats R] [--stratify | --split-group COLUMN | --split-by time:COLUMN] [--emit-folds] [--seed N] [--threads N] [--drop NAMES] [--format json|text] cv FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
+   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost] [--plan PLAN | --step STEPS] [--target NAME] [--folds K] [--repeats R] [--stratify | --split-group COLUMN | --split-by time:COLUMN] [--emit-folds] [--seed N] [--threads N] [--drop NAMES] [--format json|text] cv FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -10039,10 +10943,11 @@
        "logistic",
        "kmeans",
        "tree",
-       "forest"
+       "forest",
+       "boost"
       ],
       "default": "constant",
-      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
+      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
      },
      "task": {
       "type": "string",
@@ -10130,6 +11035,13 @@
       "default": 1,
       "description": "1 draws the rows of each tree with replacement, 0 uses every row once"
      },
+     "early-stopping": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 0,
+      "description": "0 is off, N stops after N rounds without a better loss on a tenth of the training rows kept for it (needs --split)"
+     },
      "init": {
       "type": "string",
       "enum": [
@@ -10154,14 +11066,18 @@
      "l2": {
       "type": "string",
       "minLength": 1,
-      "default": "0.0",
-      "description": "the ridge penalty, a finite number, 0 or more. The intercept is not penalised"
+      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0)"
+     },
+     "learning-rate": {
+      "type": "string",
+      "minLength": 1,
+      "default": "0.1",
+      "description": "the shrinkage applied to each tree, above 0 and at most 1 (else ml.param.out-of-range)"
      },
      "max-depth": {
       "type": "integer",
       "minimum": 0,
       "maximum": 1000,
-      "default": 8,
       "description": "the deepest tree: 1 to 1000 are accepted and a depth above 30 is refused with ml.limit.depth"
      },
      "max-nodes": {
@@ -10175,7 +11091,6 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 1000000,
-      "default": 1,
       "description": "the fewest rows in a leaf"
      },
      "mtry": {
@@ -10184,6 +11099,19 @@
       "maximum": 4096,
       "default": 0,
       "description": "the features tried at each node, 0 for floor of the square root of d (classification) or d over 3 (regression): above d is ml.param.out-of-range"
+     },
+     "rounds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000,
+      "default": 100,
+      "description": "the number of boosting rounds, one tree each (fewer are kept when early stopping ends the fit)"
+     },
+     "subsample": {
+      "type": "string",
+      "minLength": 1,
+      "default": "1.0",
+      "description": "the fraction of the rows each boosting round fits its tree on, above 0 and at most 1 (else ml.param.out-of-range)"
      },
      "trees": {
       "type": "integer",
@@ -10278,6 +11206,37 @@
       "maximum": 268435456,
       "default": 16777216,
       "description": "fit: the largest model file written, the limit predict and eval apply when they read it. A larger one is limit.input-too-large and nothing is written. predict, eval, describe: the largest model file read. A larger one is limit.input-too-large. predict from standard input (the operand - or none): the CSV is held in memory, so this is also the most bytes of standard input read. More is limit.input-too-large"
+     },
+     "input-format": {
+      "type": "string",
+      "enum": [
+       "csv",
+       "jsonl",
+       "ndjson"
+      ],
+      "default": "csv",
+      "description": "fit, predict, eval, cv: the format of the input. jsonl (and its spelling ndjson) is JSON lines: one JSON object a line, read into the columns that fit declares with --fields (predict and eval read the columns of the model file, by key, in any order, and ignore other keys). A number is its exact text, a string is text, null is a missing cell, a key a line lacks is --absent, true and false are text in a --cat column and refused in a number column, an object or an array is refused (docs/jsonl.md section 3). The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size). Never guessed from the name or the bytes"
+     },
+     "fields": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit and cv, with --input-format jsonl: the columns, the keys of the top-level object, separated by commas, in the order of the table. Required for jsonl at fit and cv. A name is the key itself (a dot is part of it, no path is followed) and holds no comma"
+     },
+     "absent": {
+      "type": "string",
+      "enum": [
+       "refuse",
+       "empty"
+      ],
+      "default": "refuse",
+      "description": "jsonl input: what a declared key that a line does not hold is. refuse is ml.jsonl.missing-field, empty is a missing cell. A null value is a missing cell either way"
+     },
+     "max-json-nodes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576,
+      "default": 4096,
+      "description": "jsonl input: the most JSON nodes a line may hold (a value, and a key, is a node), 1 to 1048576. A line with more is ml.jsonl.too-many-nodes before anything is sized by it"
      },
      "file": {
       "type": "string",
@@ -10441,7 +11400,8 @@
          "logistic",
          "kmeans",
          "tree",
-         "forest"
+         "forest",
+         "boost"
         ]
        },
        "task": {
@@ -10982,6 +11942,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -11029,6 +11991,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -11249,7 +12219,8 @@
          "logistic",
          "kmeans",
          "tree",
-         "forest"
+         "forest",
+         "boost"
         ]
        },
        "task": {
@@ -11262,7 +12233,7 @@
        "kind": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 7
+        "maximum": 8
        },
        "plan": {
         "$ref": "#/$defs/text_or_bytes"
@@ -11394,6 +12365,29 @@
          "sections",
          "compiler",
          "sum_order"
+        ],
+        "additionalProperties": false
+       },
+       "ensemble": {
+        "type": "object",
+        "properties": {
+         "trees": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "nodes": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "rounds_requested": {
+          "type": "integer",
+          "minimum": 0
+         }
+        },
+        "required": [
+         "trees",
+         "nodes",
+         "rounds_requested"
         ],
         "additionalProperties": false
        },
@@ -11736,7 +12730,6 @@
        "kind",
        "plan",
        "rows",
-       "provenance",
        "file",
        "target",
        "columns",
@@ -11934,6 +12927,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -11981,6 +12976,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -12487,6 +13490,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -12534,6 +13539,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -12938,6 +13951,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -12985,6 +14000,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -13449,6 +14472,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -13496,6 +14521,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -13930,6 +14963,8 @@
        "ml.linalg.not-positive-definite",
        "ml.param.threads",
        "ml.fit.non-finite",
+       "ml.fit.collinear",
+       "ml.fit.separable",
        "ml.predict.non-finite",
        "ml.split.empty-fold",
        "ml.split.stratify-target",
@@ -13977,6 +15012,14 @@
        "ml.runs.data-changed",
        "ml.runs.model-differs",
        "ml.runs.not-replayable",
+       "ml.jsonl.syntax",
+       "ml.jsonl.not-object",
+       "ml.jsonl.missing-field",
+       "ml.jsonl.not-scalar",
+       "ml.jsonl.duplicate-key",
+       "ml.jsonl.type-mismatch",
+       "ml.jsonl.mixed-kinds",
+       "ml.jsonl.too-many-nodes",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -14024,7 +15067,7 @@
    "props": [
     {
      "name": "model",
-     "kind": "choice:constant/linear/logistic/kmeans/tree/forest",
+     "kind": "choice:constant/linear/logistic/kmeans/tree/forest/boost",
      "role": "none"
     },
     {
@@ -14113,6 +15156,11 @@
      "role": "none"
     },
     {
+     "name": "early-stopping",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
      "name": "init",
      "kind": "choice:random/kmeans++",
      "role": "none"
@@ -14129,6 +15177,11 @@
     },
     {
      "name": "l2",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "learning-rate",
      "kind": "text",
      "role": "none"
     },
@@ -14150,6 +15203,16 @@
     {
      "name": "mtry",
      "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "rounds",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "subsample",
+     "kind": "text",
      "role": "none"
     },
     {
@@ -14219,6 +15282,26 @@
     },
     {
      "name": "max-bytes",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "input-format",
+     "kind": "choice:csv/jsonl/ndjson",
+     "role": "none"
+    },
+    {
+     "name": "fields",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "absent",
+     "kind": "choice:refuse/empty",
+     "role": "none"
+    },
+    {
+     "name": "max-json-nodes",
      "kind": "nat",
      "role": "none"
     },
@@ -14295,6 +15378,21 @@
     },
     {
      "name": "max-bytes",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "input-format",
+     "kind": "choice:csv/jsonl/ndjson",
+     "role": "none"
+    },
+    {
+     "name": "absent",
+     "kind": "choice:refuse/empty",
+     "role": "none"
+    },
+    {
+     "name": "max-json-nodes",
      "kind": "nat",
      "role": "none"
     },
@@ -14390,6 +15488,21 @@
      "role": "none"
     },
     {
+     "name": "input-format",
+     "kind": "choice:csv/jsonl/ndjson",
+     "role": "none"
+    },
+    {
+     "name": "absent",
+     "kind": "choice:refuse/empty",
+     "role": "none"
+    },
+    {
+     "name": "max-json-nodes",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
      "name": "max-out-of-range",
      "kind": "nat",
      "role": "none"
@@ -14414,7 +15527,7 @@
    "props": [
     {
      "name": "model",
-     "kind": "choice:constant/linear/logistic/kmeans/tree/forest",
+     "kind": "choice:constant/linear/logistic/kmeans/tree/forest/boost",
      "role": "none"
     },
     {
@@ -14488,6 +15601,11 @@
      "role": "none"
     },
     {
+     "name": "early-stopping",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
      "name": "init",
      "kind": "choice:random/kmeans++",
      "role": "none"
@@ -14504,6 +15622,11 @@
     },
     {
      "name": "l2",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "learning-rate",
      "kind": "text",
      "role": "none"
     },
@@ -14525,6 +15648,16 @@
     {
      "name": "mtry",
      "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "rounds",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "subsample",
+     "kind": "text",
      "role": "none"
     },
     {
@@ -14604,6 +15737,26 @@
     },
     {
      "name": "max-bytes",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "input-format",
+     "kind": "choice:csv/jsonl/ndjson",
+     "role": "none"
+    },
+    {
+     "name": "fields",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "absent",
+     "kind": "choice:refuse/empty",
+     "role": "none"
+    },
+    {
+     "name": "max-json-nodes",
      "kind": "nat",
      "role": "none"
     }
