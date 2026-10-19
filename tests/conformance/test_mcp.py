@@ -231,6 +231,18 @@ class Tools(unittest.TestCase):
         r = c.call("describe", {"model-file": "m.cml"})["result"]
         self.assertFalse(r["isError"])
 
+    def test_importance_and_dump_are_the_cli_answers(self):
+        self.sb.write("t.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (i, (i * 7) % 5, 3 * i + (i * 7) % 5) for i in range(1, 13)))
+        r = self.sb.run("fit", "--model", "tree", "--target", "y", "--output", "t.cml", "t.csv")
+        self.assertEqual(r.status, 0)
+        c = self.server()
+        for verb in ("importance", "dump"):
+            code, out, _ = cli(["ml", verb, "--root", str(self.sb.dir), "--model-file", "t.cml"], self.sb.dir)
+            self.assertEqual(code, 0, verb)
+            res = c.call(verb, {"model-file": "t.cml"})["result"]
+            self.assertFalse(res["isError"], verb)
+            self.assertEqual(res["structuredContent"], json.loads(out), verb)
+
     def test_write_needs_a_root(self):
         c = mc.Client("--allow-write")
         status, err = c.finish()

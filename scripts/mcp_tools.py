@@ -28,7 +28,7 @@ DIALECT = "https://json-schema.org/draft/2020-12/schema"
 OWNED = {"root", "format", "log", "log-max-bytes"}
 ID_PATTERN = "^[0-9a-f]{64}$"
 # the order tools are listed in
-ORDER = ["fit", "predict", "eval", "cv", "describe", "introspect", "runs_list", "runs_show", "runs_compare", "runs_verify"]
+ORDER = ["fit", "predict", "eval", "cv", "describe", "importance", "dump", "introspect", "runs_list", "runs_show", "runs_compare", "runs_verify"]
 
 
 def usage_lines(usage):
@@ -99,6 +99,8 @@ def data_variants(schema, verb):
         "eval": lambda p: "metrics" in p and "on" in p,
         "cv": lambda p: "folds" in p and "results" in p,
         "describe": lambda p: "provenance" in p and "request" in p,
+        "importance": lambda p: "permutation" in p,
+        "dump": lambda p: "tree" in p or "coefficients" in p or "centroids" in p,
         "runs_list": lambda p: "runs" in p and "count" in p,
         "runs_show": lambda p: "record" in p,
         "runs_compare": lambda p: "model_equal" in p,

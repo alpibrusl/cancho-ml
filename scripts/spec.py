@@ -50,7 +50,7 @@ def tables(path=SPEC):
         name, default, ceiling = entry.split("|")
         plimits[name] = (int(default), int(ceiling))
     allowed_all = {}
-    for verb, names in zip(("fit", "predict", "describe", "cv", "runs", "eval"), found):
+    for verb, names in zip(("fit", "predict", "describe", "cv", "runs", "importance", "dump", "eval"), found):
         allowed_all[verb] = names.split(",")
     tool_m = re.search(r"pub fn tool\(\)[^{]*\{(.*?)\n\}", text, re.S)
     usage = re.search(r'usage: "((?:[^"\\]|\\.)*)"', tool_m.group(1)).group(1).replace("\\n", "\n")
