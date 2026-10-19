@@ -154,6 +154,12 @@ jobs:
           node --version
           python3 scripts/check_board.py
 
+      # The order, the printing and the shards of the runner below (docs/ci.md section 5.2): no test module runs here, so it takes seconds.
+      - name: The conformance runner's own checks
+        run: |
+          python3 scripts/check_runner.py
+          python3 scripts/check_runner.py --mutants
+
       # Every module of tests/conformance that imports without numpy, scipy and scikit-learn, four at a time; the ml-serve tests among them start the
       # server on an ephemeral port and compare one POST per model kind with the command line's cell text. The oracle modules run in the full gate.
       # ST_STRIDE=5 flips every fifth byte of a damaged model file (the default, 1, flips every byte: about 27 minutes for test_describe alone on a Linux machine), and
