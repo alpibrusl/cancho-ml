@@ -29,6 +29,8 @@ SB = None
 MODELS = {}
 STRIDE = int(os.environ.get("ST_STRIDE", "1"))
 COUNTS = {"runs": 0, "accepted": 0}
+# ST_SHARD=I/N (docs/ci.md section 5.2): this process judges the damaged files of the models at position I modulo N of the corpus; the tests that are not damage sweeps run in shard 0
+SHARD_I, SHARD_N = (int(x) for x in os.environ.get("ST_SHARD", "0/1").split("/"))
 
 
 def setUpModule():
@@ -168,6 +170,76 @@ def flips(n, rng, small):
     return sorted(rng.sample(range(n), count))
 
 
+def cut_flip_plan():
+    """for every model of the corpus, in order: (position, id, file, data, cuts, flips). One generator draws the offsets for all the models, whether or not this shard judges them,
+    so the damaged files are the same at every shard count."""
+    rng = random.Random(5)
+    for k, (mid, (mf, kind, fam)) in enumerate(MODELS.items()):
+        data = (SB.dir / mf).read_bytes()
+        small = len(data) < 1200
+        cuts = list(range(len(data))) if small and STRIDE == 1 else sorted(rng.sample(range(len(data)), min(len(data), 200)))
+        yield k, mid, mf, data, cuts, flips(len(data), rng, small)
+
+
+def value_plan():
+    """for every model, in order: (position, id, file, data, places), the places of the extreme numbers, drawn by one generator as above"""
+    rng = random.Random(9)
+    for k, (mid, (mf, kind, fam)) in enumerate(MODELS.items()):
+        data = (SB.dir / mf).read_bytes()
+        secs = S.parse_file(data)
+        places = []
+        pos = 12
+        for s in range(struct.unpack_from("<I", data, 8)[0]):
+            tag, ln = struct.unpack_from("<Iq", data, pos)
+            places.append((pos, 4))
+            places.append((pos + 4, 8))
+            if tag == 2:
+                # the schema: columns, target, then per column the name length, the type and the scale
+                sp = pos + 12
+                places += [(sp, 4), (sp + 4, 4)]
+                p = sp + 8
+                for _ in range(struct.unpack_from("<I", data, sp)[0]):
+                    nl = struct.unpack_from("<I", data, p)[0]
+                    places += [(p, 4), (p + 4 + nl, 4), (p + 8 + nl, 4)]
+                    p += 12 + nl
+            if tag == 6:
+                places += [(pos + 12 + o, w) for o, w in S.table_fields(secs[6])]
+            if tag in (4, 5):
+                places += [(pos + 12 + o, w) for o in range(0, min(ln, 64), 4) for w in (4,)]
+            pos += 12 + ln
+        places = sorted(set(places))
+        if len(places) > 120:
+            places = sorted(rng.sample(places, 120))
+        yield k, mid, mf, data, places
+
+
+def values(width):
+    return (0xFFFFFFFFFFFFFFFF if width == 8 else 0xFFFFFFFF, 0x7FFFFFFFFFFFFFFF if width == 8 else 0x7FFFFFFF, 0)
+
+
+def damage_names(i, n):
+    """the names of the damaged files of shard i of n, as the two sweeps judge them (R1 compares these lists)"""
+    names = []
+    for k, mid, mf, data, cuts, flipped in cut_flip_plan():
+        if k % n == i:
+            names += ["%s cut at %d" % (mid, c) for c in cuts] + ["%s flip %d" % (mid, a) for a in flipped]
+    for k, mid, mf, data, places in value_plan():
+        if k % n == i:
+            names += ["%s %d@%d=%x" % (mid, w, a, v) for a, w in places for v in values(w) if not (v.to_bytes(w, "little") == data[a:a + w])]
+    return names
+
+
+def partition_problems(lists, whole):
+    """what is wrong when `lists` (the names of each shard) are not a partition of `whole`"""
+    flat = [x for l in lists for x in l]
+    problems = []
+    if len(flat) != len(set(flat)):
+        problems.append("a damaged file is in two shards")
+    if sorted(flat) != sorted(whole):
+        problems.append("the shards do not hold the damaged files of the whole run")
+    return problems
+
+
 class Damage(unittest.TestCase):
     """D2."""
 
@@ -190,15 +262,13 @@ class Damage(unittest.TestCase):
         return None
 
     def test_every_truncation_and_every_flipped_byte(self):
-        rng = random.Random(5)
-        for mid, (mf, kind, fam) in MODELS.items():
-            data = (SB.dir / mf).read_bytes()
-            small = len(data) < 1200
-            cuts = list(range(len(data))) if small and STRIDE == 1 else sorted(rng.sample(range(len(data)), min(len(data), 200)))
+        for k, mid, mf, data, cuts, flipped in cut_flip_plan():
+            if k % SHARD_N != SHARD_I:
+                continue
             for cut in cuts:
                 damaged = data[:cut]
                 self.judge(mf, damaged, "%s cut at %d" % (mid, cut), self.file_tag(damaged))
-            for at in flips(len(data), rng, small):
+            for at in flipped:
                 damaged = bytearray(data)
                 damaged[at] ^= 0xFF
                 damaged = bytes(damaged)
@@ -213,35 +283,11 @@ class Damage(unittest.TestCase):
                     self.assertIn(r.first_rule(), ("ml.model.malformed", "ml.model.string-table", "ml.model.version", "ml.model.checksum", "ml.model.bad-magic", "ml.model.truncated"), (mid, at, r))
 
     def test_extreme_numbers_in_every_field_of_the_structure_and_the_table(self):
-        rng = random.Random(9)
-        for mid, (mf, kind, fam) in MODELS.items():
-            data = (SB.dir / mf).read_bytes()
-            secs = S.parse_file(data)
-            places = []
-            pos = 12
-            for s in range(struct.unpack_from("<I", data, 8)[0]):
-                tag, ln = struct.unpack_from("<Iq", data, pos)
-                places.append((pos, 4))
-                places.append((pos + 4, 8))
-                if tag == 2:
-                    # the schema: columns, target, then per column the name length, the type and the scale
-                    sp = pos + 12
-                    places += [(sp, 4), (sp + 4, 4)]
-                    p = sp + 8
-                    for _ in range(struct.unpack_from("<I", data, sp)[0]):
-                        nl = struct.unpack_from("<I", data, p)[0]
-                        places += [(p, 4), (p + 4 + nl, 4), (p + 8 + nl, 4)]
-                        p += 12 + nl
-                if tag == 6:
-                    places += [(pos + 12 + o, w) for o, w in S.table_fields(secs[6])]
-                if tag in (4, 5):
-                    places += [(pos + 12 + o, w) for o in range(0, min(ln, 64), 4) for w in (4,)]
-                pos += 12 + ln
-            places = sorted(set(places))
-            if len(places) > 120:
-                places = sorted(rng.sample(places, 120))
+        for k, mid, mf, data, places in value_plan():
+            if k % SHARD_N != SHARD_I:
+                continue
             for at, width in places:
-                for value in (0xFFFFFFFFFFFFFFFF if width == 8 else 0xFFFFFFFF, 0x7FFFFFFFFFFFFFFF if width == 8 else 0x7FFFFFFF, 0):
+                for value in values(width):
                     damaged = bytearray(data)
                     damaged[at:at + width] = value.to_bytes(width, "little")
                     damaged = bytes(damaged)
@@ -251,6 +297,17 @@ class Damage(unittest.TestCase):
                     r = self.judge(mf, reseal(damaged), "%s %d@%d=%x resealed" % (mid, width, at, value))
                     if r.status != 0:
                         self.assertTrue(r.first_rule().startswith("ml.model.") or r.first_rule() == "limit.input-too-large", (mid, at, r))
+
+    def test_the_shards_partition_the_damage(self):
+        """R1 (docs/ci.md section 5.2): at any shard count the shards hold each damaged file once, and together the files of the whole run"""
+        whole = damage_names(0, 1)
+        self.assertGreater(len(whole), 1000)
+        for n in range(1, 9):
+            lists = [damage_names(i, n) for i in range(n)]
+            self.assertEqual(partition_problems(lists, whole), [], n)
+        # the check can fail: a shard that holds a file twice, and a shard that lost one
+        self.assertNotEqual(partition_problems([whole, whole[:5]], whole), [])
+        self.assertNotEqual(partition_problems([whole[:-1]], whole), [])
 
     def test_a_file_over_max_bytes_is_refused_before_it_is_read_whole(self):
         mf = MODELS["forest_reg"][0]
@@ -266,6 +323,25 @@ class Damage(unittest.TestCase):
         self.assertEqual(SB.run("describe", "--model-file", "empty.cml").first_rule(), "ml.model.truncated")
         os.makedirs(SB.dir / "adir", exist_ok=True)
         self.assertEqual(SB.run("describe", "--model-file", "adir").first_rule(), "io.is-a-directory")
+
+
+SWEEPS = ("test_every_truncation_and_every_flipped_byte", "test_extreme_numbers_in_every_field_of_the_structure_and_the_table")
+
+
+def load_tests(loader, standard_tests, pattern):
+    """a shard other than 0 loads the two damage sweeps and nothing else, so the tests counted over the shards are the tests of the module plus the sweeps once more per extra shard"""
+    if SHARD_I == 0:
+        return standard_tests
+    suite = unittest.TestSuite()
+
+    def walk(s):
+        for t in s:
+            if isinstance(t, unittest.TestSuite):
+                walk(t)
+            elif t.id().rsplit(".", 1)[-1] in SWEEPS:
+                suite.addTest(t)
+    walk(standard_tests)
+    return suite
 
 
 if __name__ == "__main__":
