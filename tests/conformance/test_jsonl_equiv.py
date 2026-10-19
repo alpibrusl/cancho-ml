@@ -191,7 +191,7 @@ class Equivalence(unittest.TestCase):
         self.pair("diabt", read_csv("diabetes_train.csv"), read_csv("diabetes_train.csv"), ["--model", "tree", "--target", "progression", "--max-depth", "5"])
 
     def test_wine_and_breast_cancer(self):
-        self.pair("wine", read_csv("wine_train.csv"), read_csv("wine_train.csv"), ["--model", "logistic", "--target", "class_0", "--iterations", "20", "--step", "scale column=* kind=standard"])
+        self.pair("wine", read_csv("wine_train.csv"), read_csv("wine_train.csv"), ["--model", "logistic", "--target", "class_0", "--iterations", "20", "--l2", "1e-3", "--step", "scale column=* kind=standard"])  # wine is separable: --l2 is the repair of ml.fit.separable
         self.pair("bc", read_csv("breast_cancer_train.csv"), read_csv("breast_cancer_train.csv"), ["--model", "forest", "--task", "classification", "--trees", "5", "--seed", "1", "--target", "benign", "--max-depth", "4"])
 
     # ---- missing cells: null and absent
