@@ -49,7 +49,6 @@ def describe(mf, *extra, binary=None):
     return SB.run("describe", "--model-file", mf, *extra, binary_path=binary)
 
 
-@unittest.skipUnless(SHARD_I == 0, "judged by shard 0")
 class Oracle(unittest.TestCase):
     """D1: field by field, for every model of the corpus and three page sizes."""
 
@@ -128,7 +127,6 @@ class Oracle(unittest.TestCase):
             self.assertEqual(r.data()["columns"][:len(d["output"]["columns"])], d["output"]["columns"], mid)
 
 
-@unittest.skipUnless(SHARD_I == 0, "judged by shard 0")
 class Contract(unittest.TestCase):
     """D4."""
 
@@ -300,7 +298,6 @@ class Damage(unittest.TestCase):
                     if r.status != 0:
                         self.assertTrue(r.first_rule().startswith("ml.model.") or r.first_rule() == "limit.input-too-large", (mid, at, r))
 
-    @unittest.skipUnless(SHARD_I == 0, "judged by shard 0")
     def test_the_shards_partition_the_damage(self):
         """R1 (docs/ci.md section 5.2): at any shard count the shards hold each damaged file once, and together the files of the whole run"""
         whole = damage_names(0, 1)
@@ -312,14 +309,12 @@ class Damage(unittest.TestCase):
         self.assertNotEqual(partition_problems([whole, whole[:5]], whole), [])
         self.assertNotEqual(partition_problems([whole[:-1]], whole), [])
 
-    @unittest.skipUnless(SHARD_I == 0, "judged by shard 0")
     def test_a_file_over_max_bytes_is_refused_before_it_is_read_whole(self):
         mf = MODELS["forest_reg"][0]
         r = SB.run("describe", "--model-file", mf, "--max-bytes", "1000")
         self.assertEqual(r.first_rule(), "limit.input-too-large", r)
         self.assertEqual(r.error()["detail"]["max"], 1000)
 
-    @unittest.skipUnless(SHARD_I == 0, "judged by shard 0")
     def test_a_missing_file_a_directory_and_junk(self):
         self.assertEqual(SB.run("describe", "--model-file", "absent.cml").first_rule(), "io.not-found")
         SB.write("junk.cml", b"not a model")
@@ -328,6 +323,25 @@ class Damage(unittest.TestCase):
         self.assertEqual(SB.run("describe", "--model-file", "empty.cml").first_rule(), "ml.model.truncated")
         os.makedirs(SB.dir / "adir", exist_ok=True)
         self.assertEqual(SB.run("describe", "--model-file", "adir").first_rule(), "io.is-a-directory")
+
+
+SWEEPS = ("test_every_truncation_and_every_flipped_byte", "test_extreme_numbers_in_every_field_of_the_structure_and_the_table")
+
+
+def load_tests(loader, standard_tests, pattern):
+    """a shard other than 0 loads the two damage sweeps and nothing else, so the tests counted over the shards are the tests of the module plus the sweeps once more per extra shard"""
+    if SHARD_I == 0:
+        return standard_tests
+    suite = unittest.TestSuite()
+
+    def walk(s):
+        for t in s:
+            if isinstance(t, unittest.TestSuite):
+                walk(t)
+            elif t.id().rsplit(".", 1)[-1] in SWEEPS:
+                suite.addTest(t)
+    walk(standard_tests)
+    return suite
 
 
 if __name__ == "__main__":
