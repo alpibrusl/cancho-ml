@@ -21,8 +21,8 @@ import time
 
 CONF = pathlib.Path(__file__).resolve().parent.parent / "tests" / "conformance"
 ORACLE_PKGS = ("numpy", "scipy", "sklearn")
-# seconds per module, measured on a GitHub-hosted ubuntu-24.04 (4 cores, run 39256778633, ST_STRIDE=5 FUZZ_N=500): only an order of start, never what runs (docs/ci.md 5.2)
-EXPECTED = {"test_describe": 1650, "test_fuzz_args": 1022, "test_wire_boost_file": 503, "test_wire_trees_file": 389, "test_model_file": 163, "test_wire_kmeans_file": 134,
+# seconds per module, measured on a GitHub-hosted ubuntu-24.04 (4 cores, run 39256778633, ST_STRIDE=5 FUZZ_N=500; test_fuzz_interp: 221 s alone on the build machine of the PR, one run): only an order of start, never what runs (docs/ci.md 5.2)
+EXPECTED = {"test_describe": 1650, "test_fuzz_args": 1022, "test_fuzz_interp": 221, "test_wire_boost_file": 503, "test_wire_trees_file": 389, "test_model_file": 163, "test_wire_kmeans_file": 134,
             "test_serving": 89, "test_wire_file": 88, "test_serve_fuzz": 73, "test_track": 68, "test_nonfinite": 66, "test_splits": 54, "test_serve_json": 39}
 SHARDS = {"test_describe": 4}
 
