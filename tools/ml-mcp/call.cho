@@ -1,0 +1,590 @@
+edition 5;
+
+module mcp.call;
+
+// A `tools/call` (docs/mcp.md section 4): the arguments of the call are turned into the packed command line its equivalent `ml` invocation would parse to (ml.argv), and the
+// code of `ml` runs on it in this process. The answer is the document `ml` prints. Nothing here knows a flag: the tools table (mcp.tools, generated from the flag table) says which
+// properties a tool has and ml.spec says what each flag is.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import mcp.mspec;
+import mcp.recs;
+import mcp.rpc;
+import mcp.tools;
+import ml.app;
+import ml.argv;
+import ml.jsonlcli;
+import ml.mdesc;
+import ml.paths;
+import ml.spec;
+import ml.verbrun;
+import ml.verbs;
+import toolbox.built;
+import toolbox.cli;
+import toolbox.describe;
+import toolbox.fail;
+import toolbox.out;
+import toolbox.path;
+
+fn built() -> [] describe.Built {
+    return describe.Built { authority: built.authority(), schema: built.schema(), compiler: built.compiler() };
+}
+
+// the line of the calls table for tool `name`, or the empty text
+fn row_of[&n](name: &n [byte]) -> [] &static [byte] {
+    let table = tools.calls();
+    let count = bytes.count_byte(table, '\n') + 1;
+    var k = 1;
+    while k <= count {
+        let row = bytes.field(table, '\n', k);
+        if bytes.equal(bytes.field(row, '|', 1), name) {
+            return row;
+        }
+        k = k + 1;
+    }
+    return "";
+}
+
+// the kind of property `name` of a row (the `props` field: name~kind~role entries separated by `;`), or the empty text when the tool has no such property
+fn kind_of_prop[&n](row: &static [byte], name: &n [byte]) -> [] &static [byte] {
+    let props = bytes.field(row, '|', 6);
+    if len(props) == 0 {
+        return "";
+    }
+    let count = bytes.count_byte(props, ';') + 1;
+    var k = 1;
+    while k <= count {
+        let entry = bytes.field(props, ';', k);
+        if bytes.equal(bytes.field(entry, '~', 1), name) {
+            return bytes.field(entry, '~', 2);
+        }
+        k = k + 1;
+    }
+    return "";
+}
+
+fn operands_of(row: &static [byte]) -> [] &static [byte] {
+    return bytes.field(row, '|', 4);
+}
+
+fn writes_of(row: &static [byte]) -> [] &static [byte] {
+    return bytes.field(row, '|', 5);
+}
+
+fn is_operand[&n](row: &static [byte], name: &n [byte]) -> [] bool {
+    let list = operands_of(row);
+    return len(list) > 0 && app.listed(list, name);
+}
+
+// An error response for an invalid call (a JSON-RPC error with the pointer of the fault)
+fn invalid[&h, &i, &m, &p](heap: &!h Heap, id: &i [byte], message: &m [byte], pointer: &p [byte]) -> [heap] buffer.Buffer {
+    return rpc.error_response(heap, id, rpc.invalid_params(), message, pointer);
+}
+
+// The tool result of a document: `doc` is the finished JSON, `text` what content[0] says
+fn answered[&h, &i, &d, &t](heap: &!h Heap, id: &i [byte], doc: &d [byte], text: &t [byte], is_error: bool, exit: int) -> [heap] buffer.Buffer {
+    let rbody = rpc.tool_result(heap, doc, text, is_error, exit);
+    var out = buffer.empty(heap, 1);
+    borrow rbody as &rr in {
+        buffer.drop(heap, out);
+        out = rpc.result_response(heap, id, buffer.bytes(rr));
+    }
+    buffer.drop(heap, rbody);
+    return out;
+}
+
+// The tool result of the answer of a verb: the document `ml` prints, its text form in content[0] on success, the exit code of the equivalent command in _meta
+fn answer[&h, &i](heap: &!h Heap, id: &i [byte], result: verbs.Out) -> [heap] buffer.Buffer {
+    let (payload, plain, extra, errs, log, dry) = verbs.parts(result);
+    buffer.drop(heap, log);
+    var ok = true;
+    var exit = 0;
+    borrow errs as &er in {
+        let (ok2, exit2, rule) = app.outcome(heap, er, dry);
+        ok = ok2;
+        exit = exit2;
+        buffer.drop(heap, rule);
+    }
+    var response = buffer.empty(heap, 1);
+    borrow errs as &er in {
+        borrow payload as &d in {
+            borrow extra as &x in {
+                let doc = out.document(heap, "ml", "ml.v1", app.version(), buffer.bytes(d), buffer.bytes(x), er);
+                borrow plain as &t in {
+                    borrow doc as &dr in {
+                        buffer.drop(heap, response);
+                        if ok && len(buffer.bytes(t)) > 0 {
+                            response = answered(heap, id, buffer.bytes(dr), buffer.bytes(t), false, exit);
+                        } else {
+                            response = answered(heap, id, buffer.bytes(dr), buffer.bytes(dr), !ok, exit);
+                        }
+                    }
+                }
+                buffer.drop(heap, doc);
+            }
+        }
+    }
+    buffer.drop(heap, payload);
+    buffer.drop(heap, plain);
+    buffer.drop(heap, extra);
+    fail.drop(heap, errs);
+    return response;
+}
+
+// A refusal of the server itself (an error of mspec.extra()) as a tool result
+fn refused[&h, &i](heap: &!h Heap, id: &i [byte], errs: fail.Errors) -> [heap] buffer.Buffer {
+    var response = buffer.empty(heap, 1);
+    var exit = 0;
+    borrow errs as &er in {
+        exit = fail.exit_code(er);
+        let doc = out.document(heap, "ml", "ml.v1", app.version(), "", "", er);
+        borrow doc as &dr in {
+            buffer.drop(heap, response);
+            response = answered(heap, id, buffer.bytes(dr), buffer.bytes(dr), true, exit);
+        }
+        buffer.drop(heap, doc);
+    }
+    fail.drop(heap, errs);
+    return response;
+}
+
+fn read_only[&h, &i, &n](heap: &!h Heap, id: &i [byte], what: &static [byte], name: &n [byte]) -> [heap] buffer.Buffer {
+    var w = fail.open_in(heap, mspec.extra(), "mcp.read-only", "this server was started without --allow-write, and the call would write a file", "start ml-mcp with --root DIR --allow-write to let a call write beneath DIR");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, what, name);
+    return refused(heap, id, fail.add(heap, fail.empty_in(heap, mspec.extra()), w));
+}
+
+// What is wrong with the arguments, if anything: 0 nothing, 1 an argument the tool does not have, 2 an argument of the wrong type, 3 a key twice, 4 a string with a NUL.
+// `pointer` gets the JSON Pointer of the fault.
+fn has_nul[&x](text: &x [byte]) -> [] bool {
+    var i = 0;
+    while i < len(text) {
+        if int_of(text[i]) == 0 {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn check_arguments[&h, &l, &t](heap: &!h Heap, row: &static [byte], line: &l [byte], tape: &t [int], args: int) -> [heap] (int, buffer.Buffer) {
+    var pointer = buffer.empty(heap, 32);
+    if args < 0 {
+        return (0, pointer);
+    }
+    var status = 0;
+    var k = args + 1;
+    var seen = 0;
+    while seen < json.count(tape, args) && status == 0 {
+        let key = recs.decoded(heap, line, tape, k);
+        borrow key as &kr in {
+            let name = buffer.bytes(kr);
+            let v = k + 1;
+            var kind: &static [byte] = kind_of_prop(row, name);
+            var operand = false;
+            if len(kind) == 0 {
+                if is_operand(row, name) {
+                    operand = true;
+                }
+            }
+            var records = false;
+            if bytes.equal(bytes.field(row, '|', 2), "predict") && bytes.equal(name, "records") {
+                records = true;
+            }
+            if len(kind) == 0 && !operand && !records {
+                status = 1;
+            } else if json.get(line, tape, args, name) != v {
+                status = 3;
+            } else if records {
+                if !json.is_array(tape, v) {
+                    status = 2;
+                }
+            } else if operand || !bytes.equal(kind, "bool") && !bytes.equal(kind, "nat") {
+                if !json.is_string(tape, v) {
+                    status = 2;
+                } else {
+                    let text = recs.decoded(heap, line, tape, v);
+                    borrow text as &tr in {
+                        if has_nul(buffer.bytes(tr)) {
+                            status = 4;
+                        }
+                    }
+                    buffer.drop(heap, text);
+                }
+            } else if bytes.equal(kind, "bool") {
+                if json.kind(tape, v) != json.kind_true() && json.kind(tape, v) != json.kind_false() {
+                    status = 2;
+                }
+                // nat: a whole number, not negative, written without a point or an exponent
+            } else if json.kind(tape, v) != json.kind_int() || int_of(line[tape[3 * v + 1]]) == '-' {
+                status = 2;
+            }
+            if status != 0 {
+                pointer = buffer.append(heap, buffer.append(heap, pointer, "/params/arguments/"), name);
+            }
+        }
+        buffer.drop(heap, key);
+        k = json.skip(tape, k + 1);
+        seen = seen + 1;
+    }
+    return (status, pointer);
+}
+
+fn expected_of(kind: &static [byte]) -> [] &static [byte] {
+    if bytes.equal(kind, "nat") {
+        return "a non-negative decimal integer of at most 18 digits";
+    }
+    if bytes.starts_with(kind, "choice:") {
+        return kind[7..len(kind)];
+    }
+    return "a non-empty value";
+}
+
+// A value of a flag that its kind refuses, as `toolbox.cli` reports it (args.bad-value)
+fn bad_value[&h, &v](heap: &!h Heap, errs: fail.Errors, flag: &static [byte], value: &v [byte], kind: &static [byte]) -> [heap] fail.Errors {
+    var shown = buffer.append(heap, buffer.empty(heap, 16), "--");
+    shown = buffer.append(heap, shown, flag);
+    var w = fail.open(heap, "args.bad-value", "this flag's value is not of the kind it takes", "");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = json.put_key(heap, w, "flag");
+    borrow shown as &sr in {
+        w = json.put_string(heap, w, buffer.bytes(sr));
+    }
+    buffer.drop(heap, shown);
+    w = json.put_key(heap, w, "value");
+    w = json.put_string(heap, w, value);
+    w = json.put_key(heap, w, "expected");
+    w = json.put_string(heap, w, expected_of(kind));
+    return fail.add(heap, errs, w);
+}
+
+// The packed command line of the call, and the errors the values of its flags have (a value of the wrong kind is not given, as the parser does not record it)
+fn pack_call[&h, &l, &t, &r](heap: &!h Heap, row: &static [byte], line: &l [byte], tape: &t [int], args: int, root: &r [byte]) -> [heap] (buffer.Buffer, fail.Errors) {
+    let table = spec.flag_table();
+    var e = fail.empty_in(heap, spec.extra());
+    var argv_fields = argv.put_field(heap, buffer.empty(heap, 256), "ml");
+    var n = 1;
+    var entries = buffer.empty(heap, 1024);
+    var i = 0;
+    while i < cli.entries(table) {
+        let name = cli.name_of(table, i);
+        let kind = cli.kind_of(table, i);
+        let takes = cli.takes_value(table, i);
+        var given = false;
+        var value = buffer.empty(heap, 16);
+        if bytes.equal(name, "root") {
+            if len(root) > 0 {
+                given = true;
+                value = buffer.append(heap, value, root);
+            }
+        } else if args >= 0 && len(kind_of_prop(row, name)) > 0 {
+            let v = json.get(line, tape, args, name);
+            if v >= 0 {
+                if !takes {
+                    given = json.to_bool(tape, v);
+                } else {
+                    var text = buffer.empty(heap, 1);
+                    if json.is_string(tape, v) {
+                        buffer.drop(heap, text);
+                        text = recs.decoded(heap, line, tape, v);
+                    } else {
+                        text = buffer.append(heap, text, line[tape[3 * v + 1]..tape[3 * v + 2]]);
+                    }
+                    borrow text as &tr in {
+                        if cli.valid(kind, buffer.bytes(tr)) {
+                            given = true;
+                            buffer.drop(heap, value);
+                            value = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(tr)) + 1), buffer.bytes(tr));
+                        } else {
+                            e = bad_value(heap, e, name, buffer.bytes(tr), kind);
+                        }
+                    }
+                    buffer.drop(heap, text);
+                }
+            }
+        }
+        if given {
+            var dashed = buffer.append(heap, buffer.empty(heap, 16), "--");
+            dashed = buffer.append(heap, dashed, name);
+            borrow dashed as &dr in {
+                argv_fields = argv.put_field(heap, argv_fields, buffer.bytes(dr));
+            }
+            buffer.drop(heap, dashed);
+            n = n + 1;
+            if takes {
+                borrow value as &vr in {
+                    argv_fields = argv.put_field(heap, argv_fields, buffer.bytes(vr));
+                    entries = argv.put_entry(heap, entries, name, true, n + 1, true, buffer.bytes(vr));
+                }
+                n = n + 1;
+            } else {
+                entries = argv.put_entry(heap, entries, name, true, 0, false, "");
+            }
+        } else {
+            entries = argv.put_entry(heap, entries, name, false, 0, false, cli.default_of(table, i));
+        }
+        buffer.drop(heap, value);
+        i = i + 1;
+    }
+    // the operands: the verb, the subcommand of runs, then the operand properties in the order the tool lists them
+    var ops = buffer.empty(heap, 16);
+    var m = 0;
+    argv_fields = argv.put_field(heap, argv_fields, bytes.field(row, '|', 2));
+    ops = argv.put_number(heap, ops, n);
+    n = n + 1;
+    m = m + 1;
+    let sub = bytes.field(row, '|', 3);
+    if len(sub) > 0 {
+        argv_fields = argv.put_field(heap, argv_fields, sub);
+        ops = argv.put_number(heap, ops, n);
+        n = n + 1;
+        m = m + 1;
+    }
+    let names = operands_of(row);
+    if len(names) > 0 {
+        let count = bytes.count_byte(names, ',') + 1;
+        var k = 1;
+        while k <= count {
+            let v = json.get(line, tape, args, bytes.field(names, ',', k));
+            if v >= 0 {
+                let text = recs.decoded(heap, line, tape, v);
+                borrow text as &tr in {
+                    argv_fields = argv.put_field(heap, argv_fields, buffer.bytes(tr));
+                }
+                buffer.drop(heap, text);
+                ops = argv.put_number(heap, ops, n);
+                n = n + 1;
+                m = m + 1;
+            }
+            k = k + 1;
+        }
+    }
+    var blob = buffer.empty(heap, 1);
+    borrow argv_fields as &ar in {
+        borrow entries as &er in {
+            borrow ops as &op in {
+                buffer.drop(heap, blob);
+                blob = argv.pack_raw(heap, n, buffer.bytes(ar), cli.entries(table), buffer.bytes(er), m, buffer.bytes(op));
+            }
+        }
+    }
+    buffer.drop(heap, argv_fields);
+    buffer.drop(heap, entries);
+    buffer.drop(heap, ops);
+    return (blob, e);
+}
+
+// A refusal of a record (a rule of mspec.extra()) with the JSON Pointer of the fault
+fn record_refusal[&h, &i, &p](heap: &!h Heap, id: &i [byte], status: int, pointer: &p [byte]) -> [heap] buffer.Buffer {
+    var rule: &static [byte] = "mcp.record-column";
+    var message: &static [byte] = "a record holds a key that is not a column the model requires, or a column twice";
+    var hint: &static [byte] = "describe lists the columns the model requires";
+    if status == 2 || status == 3 {
+        rule = "serve.number-not-exact";
+        message = "the number cannot be written exactly as the type of its column";
+        hint = "send the value as the column has it: an int is a whole number of at most 12 digits, a dec has the digits of its scale";
+    } else if status == 4 {
+        rule = "serve.string-not-renderable";
+        message = "a category holds a carriage return directly followed by a line feed, which a CSV reader reads as the line feed alone";
+        hint = "remove the carriage return";
+    }
+    var w = fail.open_in(heap, mspec.extra(), rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "pointer", pointer);
+    return refused(heap, id, fail.add(heap, fail.empty_in(heap, mspec.extra()), w));
+}
+
+// Run the verb on the packed command line `src` and answer. `recs_node` is the node of the `records` array of a predict call (-1 for none).
+fn run_packed[&h, &f, &l, &t, &i, &c](heap: &!h Heap, fs: &f Fs(""), src: &c [byte], errs: fail.Errors, recs_node: int, line: &l [byte], tape: &t [int], id: &i [byte]) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] buffer.Buffer {
+    let table = spec.flag_table();
+    let (verb, e0a) = app.cmdline(heap, src, errs, table, 1);
+    let e0 = jsonlcli.check_flags(heap, src, e0a, table, verb);
+    let (root, e1a) = paths.root(heap, src, argv.text(src, "root"), argv.value_index(src, "root"), e0);
+    var e1 = e1a;
+    borrow root as &rb in {
+        if paths.has_double_dot(buffer.bytes(rb)) {
+            e1 = paths.refuse_double_dot(heap, e1, buffer.bytes(rb), argv.value_index(src, "root"));
+        }
+    }
+    var response = buffer.empty(heap, 1);
+    borrow root as &rr in {
+        let (ps00, e2a) = app.resolve_all(heap, src, table, verb, buffer.bytes(rr), e1);
+        // a file of JSON lines becomes the CSV the verbs read, as in `ml` (docs/jsonl.md); standard input is the channel of the protocol, so no operand reads it
+        let (ps0, e2) = jsonlcli.input_into(heap, src, table, fs, buffer.bytes(rr), verb, ps00, e2a);
+        var ps = ps0;
+        var e = e2;
+        var done = false;
+        let (e3, clean) = app.clean(e);
+        e = e3;
+        if recs_node >= 0 && verb == 2 && clean {
+            // the columns of the model come from describe; the rows become the CSV the predictor reads
+            let o = app.options(src, table);
+            var desc = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+            borrow ps as &pr in {
+                verbs.drop_out(heap, desc);
+                desc = mdesc.describe(heap, fs, buffer.bytes(rr), pr.model, o, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+            }
+            let (dpayload, dplain, dextra, derrs, dlog, ddry) = verbs.parts(desc);
+            buffer.drop(heap, dplain);
+            buffer.drop(heap, dextra);
+            buffer.drop(heap, dlog);
+            var described = true;
+            borrow derrs as &der in {
+                described = fail.count(der) == 0;
+            }
+            if !described {
+                // the description is the model's refusal: that is the answer
+                buffer.drop(heap, dpayload);
+                fail.drop(heap, e);
+                e = derrs;
+                done = false;
+            } else {
+                fail.drop(heap, derrs);
+                borrow dpayload as &dp in {
+                    let (csv, status, pointer) = recs.csv_of(heap, buffer.bytes(dp), line, tape, recs_node);
+                    if status == 0 {
+                        borrow csv as &cr in {
+                            ps = app.with_file(heap, ps, paths.of_mem(heap, buffer.bytes(cr), "records"));
+                        }
+                    } else if status == 5 {
+                        borrow pointer as &pr in {
+                            buffer.drop(heap, response);
+                            response = invalid(heap, id, "a record or a value of a record has the wrong JSON type", buffer.bytes(pr));
+                        }
+                        done = true;
+                    } else if status == 6 {
+                        buffer.drop(heap, response);
+                        response = rpc.error_response(heap, id, rpc.internal_error(), "the description of the model has no columns this server can read", "");
+                        done = true;
+                    } else {
+                        borrow pointer as &pr in {
+                            buffer.drop(heap, response);
+                            response = record_refusal(heap, id, status, buffer.bytes(pr));
+                        }
+                        done = true;
+                    }
+                    buffer.drop(heap, csv);
+                    buffer.drop(heap, pointer);
+                }
+                buffer.drop(heap, dpayload);
+            }
+        }
+        if done {
+            app.drop_paths(heap, ps);
+            fail.drop(heap, e);
+        } else {
+            borrow ps as &pr in {
+                let (result, log_ok) = verbrun.execute(heap, src, fs, buffer.bytes(rr), verb, pr, e);
+                buffer.drop(heap, response);
+                response = answer(heap, id, result);
+            }
+            app.drop_paths(heap, ps);
+        }
+    }
+    buffer.drop(heap, root);
+    return response;
+}
+
+// The answer to `tools/call`: `params` is the node of the params object of the request
+pub fn tool_call[&h, &f, &l, &t, &i, &r](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], allow_write: bool, line: &l [byte], tape: &t [int], params: int, id: &i [byte]) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] buffer.Buffer {
+    let nn = json.get(line, tape, params, "name");
+    if nn < 0 || !json.is_string(tape, nn) {
+        return invalid(heap, id, "tools/call needs the name of a tool", "/params/name");
+    }
+    let nm = recs.decoded(heap, line, tape, nn);
+    var row: &static [byte] = "";
+    borrow nm as &nr in {
+        row = row_of(buffer.bytes(nr));
+    }
+    if len(row) == 0 {
+        var response = buffer.empty(heap, 1);
+        borrow nm as &nr in {
+            var message = buffer.append(heap, buffer.empty(heap, 32), "unknown tool: ");
+            message = buffer.append(heap, message, buffer.bytes(nr));
+            borrow message as &mr in {
+                buffer.drop(heap, response);
+                response = invalid(heap, id, buffer.bytes(mr), "/params/name");
+            }
+            buffer.drop(heap, message);
+        }
+        buffer.drop(heap, nm);
+        return response;
+    }
+    buffer.drop(heap, nm);
+    var args = json.get(line, tape, params, "arguments");
+    if args >= 0 && !json.is_object(tape, args) {
+        return invalid(heap, id, "arguments is not an object", "/params/arguments");
+    }
+    let (status, pointer) = check_arguments(heap, row, line, tape, args);
+    if status != 0 {
+        var response = buffer.empty(heap, 1);
+        var message: &static [byte] = "the tool has no such argument";
+        if status == 2 {
+            message = "the argument has the wrong JSON type";
+        } else if status == 3 {
+            message = "the argument is given twice";
+        } else if status == 4 {
+            message = "a string argument holds a NUL, which a command line cannot";
+        }
+        borrow pointer as &pr in {
+            buffer.drop(heap, response);
+            response = invalid(heap, id, message, buffer.bytes(pr));
+        }
+        buffer.drop(heap, pointer);
+        return response;
+    }
+    buffer.drop(heap, pointer);
+    // the write tools and the write flags need --allow-write
+    if !allow_write {
+        if bytes.equal(bytes.field(row, '|', 7), "1") {
+            return read_only(heap, id, "tool", bytes.field(row, '|', 1));
+        }
+        let ws = writes_of(row);
+        if len(ws) > 0 && args >= 0 {
+            let count = bytes.count_byte(ws, ',') + 1;
+            var k = 1;
+            while k <= count {
+                let v = json.get(line, tape, args, bytes.field(ws, ',', k));
+                if v >= 0 && json.kind(tape, v) != json.kind_false() {
+                    return read_only(heap, id, "flag", bytes.field(ws, ',', k));
+                }
+                k = k + 1;
+            }
+        }
+    }
+    if bytes.equal(bytes.field(row, '|', 2), "introspect") {
+        let doc = describe.introspect(heap, spec.tool(), built());
+        var response = buffer.empty(heap, 1);
+        borrow doc as &dr in {
+            buffer.drop(heap, response);
+            response = answered(heap, id, buffer.bytes(dr), buffer.bytes(dr), false, 0);
+        }
+        buffer.drop(heap, doc);
+        return response;
+    }
+    // predict: the rows are in the file or in the records, not in both and not in neither
+    var recs_node = 0 - 1;
+    if bytes.equal(bytes.field(row, '|', 2), "predict") {
+        let has_file = args >= 0 && json.get(line, tape, args, "file") >= 0;
+        if args >= 0 {
+            recs_node = json.get(line, tape, args, "records");
+        }
+        if has_file == recs_node >= 0 {
+            return invalid(heap, id, "predict takes file or records, one of the two", "/params/arguments");
+        }
+    }
+    let (blob, e) = pack_call(heap, row, line, tape, args, root);
+    var response = buffer.empty(heap, 1);
+    borrow blob as &bl in {
+        buffer.drop(heap, response);
+        response = run_packed(heap, fs, buffer.bytes(bl), e, recs_node, line, tape, id);
+    }
+    buffer.drop(heap, blob);
+    return response;
+}

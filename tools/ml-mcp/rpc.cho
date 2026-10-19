@@ -1,0 +1,111 @@
+edition 5;
+
+module mcp.rpc;
+
+// The JSON-RPC 2.0 envelopes of the server (docs/mcp.md sections 1 and 4.2): an error response, a result response and a tool result. An id is echoed as the bytes of
+// its token (`id_token`), so a number is not rewritten and a string keeps its escapes.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+
+// the standard codes of JSON-RPC 2.0, and the one the SDKs use for a server that has not been initialised
+pub fn parse_error() -> [] int {
+    return 0 - 32700;
+}
+
+pub fn invalid_request() -> [] int {
+    return 0 - 32600;
+}
+
+pub fn method_not_found() -> [] int {
+    return 0 - 32601;
+}
+
+pub fn invalid_params() -> [] int {
+    return 0 - 32602;
+}
+
+pub fn internal_error() -> [] int {
+    return 0 - 32603;
+}
+
+pub fn not_initialized() -> [] int {
+    return 0 - 32002;
+}
+
+// `{"jsonrpc":"2.0","id":ID,"error":{"code":N,"message":M[,"data":{"pointer":P}]}}`; `id` is the token of the id (or `null`), `pointer` empty for none
+pub fn error_response[&h, &i, &m, &p](heap: &!h Heap, id: &i [byte], code: int, message: &m [byte], pointer: &p [byte]) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 128 + len(message) + len(pointer));
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "jsonrpc");
+    w = json.put_string(heap, w, "2.0");
+    w = json.put_key(heap, w, "id");
+    w = json.put_fragment(heap, w, id);
+    w = json.put_key(heap, w, "error");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "code");
+    w = json.put_int(heap, w, code);
+    w = json.put_key(heap, w, "message");
+    w = json.put_string(heap, w, message);
+    if len(pointer) > 0 {
+        w = json.put_key(heap, w, "data");
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "pointer");
+        w = json.put_string(heap, w, pointer);
+        w = json.end_object(heap, w);
+    }
+    w = json.end_object(heap, w);
+    w = json.end_object(heap, w);
+    return json.finish(w);
+}
+
+// `{"jsonrpc":"2.0","id":ID,"result":RESULT}`; `result` is a finished JSON value
+pub fn result_response[&h, &i, &r](heap: &!h Heap, id: &i [byte], result: &r [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 64 + len(id) + len(result));
+    b = buffer.append(heap, b, "{\"jsonrpc\":\"2.0\",\"id\":");
+    b = buffer.append(heap, b, id);
+    b = buffer.append(heap, b, ",\"result\":");
+    b = buffer.append(heap, b, result);
+    return buffer.push(heap, b, byte_of('}'));
+}
+
+// A tool result: `{"content":[{"type":"text","text":TEXT}],"structuredContent":DOC,"isError":B,"_meta":{"ml/exit":N}}`. `doc` is the finished JSON document, the answer of the tool.
+pub fn tool_result[&h, &d, &t](heap: &!h Heap, doc: &d [byte], text: &t [byte], is_error: bool, exit: int) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 128 + len(doc) + len(text) * 2);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "content");
+    w = json.begin_array(heap, w);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "type");
+    w = json.put_string(heap, w, "text");
+    w = json.put_key(heap, w, "text");
+    w = json.put_string(heap, w, text);
+    w = json.end_object(heap, w);
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "structuredContent");
+    w = json.put_fragment(heap, w, doc);
+    w = json.put_key(heap, w, "isError");
+    w = json.put_bool(heap, w, is_error);
+    w = json.put_key(heap, w, "_meta");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "ml/exit");
+    w = json.put_int(heap, w, exit);
+    w = json.end_object(heap, w);
+    w = json.end_object(heap, w);
+    return json.finish(w);
+}
+
+// The token of the id at node `node` of the tape, or `null` when it is not an id the protocol allows (a string or an integer)
+pub fn id_token[&h, &s, &t](heap: &!h Heap, line: &s [byte], tape: &t [int], node: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 24);
+    if node >= 0 && json.is_string(tape, node) {
+        b = buffer.push(heap, b, byte_of('"'));
+        b = buffer.append(heap, b, line[tape[3 * node + 1]..tape[3 * node + 2]]);
+        return buffer.push(heap, b, byte_of('"'));
+    }
+    if node >= 0 && json.kind(tape, node) == json.kind_int() {
+        return buffer.append(heap, b, line[tape[3 * node + 1]..tape[3 * node + 2]]);
+    }
+    return buffer.append(heap, b, "null");
+}

@@ -12,6 +12,7 @@ import tomllib
 import unittest
 
 from harness import PREDICT_BIN, ROOT, introspect
+from mcp_client import BIN as MCP_BIN
 from serve_lib import SERVE_BIN
 
 EXPECTED = {"args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", 'fs_read("")', "heap", "io_read", "io_write"}
@@ -19,6 +20,8 @@ EXPECTED = {"args", "conc", "dir_read", "dir_write", "err_write", "file_read", "
 EXPECTED_PREDICT = {"args", "dir_read", "err_write", "file_read", 'fs_read("")', "heap", "io_read", "io_write"}
 # `ml-serve` (docs/serving-http.md section 6): a server of cancho-web. No write of any file, no thread, no exec, no foreign code, no net_out, no standard input
 EXPECTED_SERVE = {"args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", 'fs_read("")', "heap", "io_write", 'net_in("")', "poll"}
+# `ml-mcp` (docs/mcp.md section 7): the row of `ml`, nothing more: no network, no listener, no clock, no exec, no foreign code
+EXPECTED_MCP = EXPECTED
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock", "fs_write", "exec", "env"}
 
 
@@ -88,7 +91,7 @@ class Authority(unittest.TestCase):
     def test_the_binary_is_the_tool_in_the_manifest(self):
         # one binary per tool; the ceiling file knows only `ml` as an agent tool
         ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
-        self.assertEqual([k for k in ceilings if isinstance(ceilings[k], dict)], ["ml", "ml-predict", "ml-serve"])
+        self.assertEqual([k for k in ceilings if isinstance(ceilings[k], dict)], ["ml", "ml-predict", "ml-serve", "ml-mcp"])
 
 
 def predict_introspect():
@@ -204,3 +207,45 @@ class AuthorityServe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def mcp_introspect():
+    return json.loads(subprocess.run([MCP_BIN, "introspect"], capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout)
+
+
+class AuthorityMcp(unittest.TestCase):
+    """F (docs/mcp.md section 7): the row of `ml-mcp`, derived by the compiler, committed, embedded, within its ceiling; and what it does not hold."""
+
+    def test_the_binary_prints_the_committed_authority(self):
+        committed = json.loads((ROOT / "manifests" / "ml-mcp.authority.json").read_text())
+        self.assertEqual(mcp_introspect()["authority"], committed)
+
+    def test_the_row_is_the_row_of_ml_and_holds_no_network_clock_exec_or_foreign_code(self):
+        a = mcp_introspect()["authority"]
+        self.assertTrue(a["bounded"])
+        self.assertEqual((a["unbounded_by"], a["foreign_symbols"]), ([], []))
+        labels = {label_text(l) for l in a["labels"]}
+        self.assertEqual(labels, EXPECTED_MCP)
+        self.assertEqual(labels & FORBIDDEN, set())
+        self.assertEqual(labels & {"net_in", "net_out", "conn_accept", "conn_read", "conn_write", "poll", "clock", "exec", "ffi", "env"}, set())
+
+    def test_the_ceiling_is_exact_and_every_label_beyond_the_base_row_has_a_reason(self):
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        self.assertEqual(set(ceilings["ml-mcp"]["allow"]), EXPECTED_MCP)
+        base = set(tomllib.loads((ROOT / "lib" / "models" / "contract.toml").read_text())["authority"]["base"])
+        for label in set(ceilings["ml-mcp"]["allow"]) - base:
+            self.assertTrue(ceilings["ml-mcp"]["reasons"].get(label.split("(")[0]), label)
+
+    def test_the_ceiling_check_fails_for_a_capability_added_to_the_derived_row(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import manifest
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        auth = json.loads((ROOT / "manifests" / "ml-mcp.authority.json").read_text())
+        self.assertEqual(manifest.gate("ml-mcp", auth, ceilings), [])
+        for extra in ("net_in", "net_out", "clock", "ffi", "exec", "env", "poll", "conn_accept"):
+            mutated = json.loads(json.dumps(auth))
+            mutated["labels"].append({"name": extra, "argument": None, "bounded": True})
+            self.assertNotEqual(manifest.gate("ml-mcp", mutated, ceilings), [], extra)
+        mutated = json.loads(json.dumps(auth))
+        mutated["labels"].append({"name": "fs_write", "argument": "", "bounded": True})
+        self.assertNotEqual(manifest.gate("ml-mcp", mutated, ceilings), [])

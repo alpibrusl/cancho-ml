@@ -1,0 +1,255 @@
+edition 5;
+
+module ml.argv;
+
+// A parsed command line as one byte slice (docs/mcp.md section 4.1). Everything below `main` reads the command line through this module and never through `Args`, so that a
+// command line that arrives as data (an MCP tool call) runs the same code as one the process was started with. `from_cli` packs the real `Args` and the `cli.Parsed` of the pinned
+// `toolbox.cli`; `ml-mcp` packs the equivalent command line of a call with `pack_raw`. The readers have the shapes of the `toolbox.cli` readers they replace, without the table:
+// a flag is found by its name, and the packed form holds the value or the default of the table.
+//
+// Layout: NUL-terminated fields, in this order. The number n of arguments, then the n arguments (the first is the program name). Then the number e of flags of the table the line
+// was parsed with, and five fields for each: its name, given (1 or 0), the index of the argument that holds the value plus one (0 for none), whole (1 when the value is the whole
+// argument, 0 when it follows `=`) and the text (the value given, or the default of the table). Then the number m of operands and m argument indexes. An argument never holds a
+// NUL (it came from a C string, or the call builder refuses it), so a field cannot be confused with the next.
+
+import std.buffer;
+import std.bytes;
+import toolbox.cli;
+
+// the offset after `n` fields, counting from offset `pos`
+fn skip[&s](src: &s [byte], pos: int, n: int) -> [] int {
+    var p = pos;
+    var seen = 0;
+    while seen < n && p < len(src) {
+        if int_of(src[p]) == 0 {
+            seen = seen + 1;
+        }
+        p = p + 1;
+    }
+    return p;
+}
+
+// the field that starts at `pos`, without its NUL
+fn field_at[&s](src: &s [byte], pos: int) -> [] &s [byte] {
+    var to = pos;
+    while to < len(src) && int_of(src[to]) != 0 {
+        to = to + 1;
+    }
+    return src[pos..to];
+}
+
+fn number_at[&s](src: &s [byte], pos: int) -> [] int {
+    let f = field_at(src, pos);
+    var n = 0;
+    var i = 0;
+    while i < len(f) {
+        n = n * 10 + (int_of(f[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+// the number of arguments
+pub fn argc[&s](src: &s [byte]) -> [] int {
+    return number_at(src, 0);
+}
+
+// argument `i` (0 is the program name)
+pub fn at[&s](src: &s [byte], i: int) -> [] &s [byte] {
+    return field_at(src, skip(src, 0, 1 + i));
+}
+
+// the offset of the name field of flag `name`, or -1
+fn find[&s, &n](src: &s [byte], name: &n [byte]) -> [] int {
+    let head = skip(src, 0, 1 + argc(src));
+    let e = number_at(src, head);
+    var pos = skip(src, head, 1);
+    var k = 0;
+    while k < e {
+        if bytes.equal(field_at(src, pos), name) {
+            return pos;
+        }
+        pos = skip(src, pos, 5);
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+pub fn has[&s, &n](src: &s [byte], name: &n [byte]) -> [] bool {
+    let p = find(src, name);
+    if p < 0 {
+        return false;
+    }
+    return bytes.equal(field_at(src, skip(src, p, 1)), "1");
+}
+
+// The value given, or the table's default.
+pub fn text[&s, &n](src: &s [byte], name: &n [byte]) -> [] &s [byte] {
+    let p = find(src, name);
+    if p < 0 {
+        return "";
+    }
+    return field_at(src, skip(src, p, 4));
+}
+
+// A `nat` flag's value, or its default; -1 if neither is a number.
+pub fn nat[&s, &n](src: &s [byte], name: &n [byte]) -> [] int {
+    return cli.parse_nat(text(src, name));
+}
+
+// the --fields list of a fit of JSON lines (empty for CSV): what a run record holds of the input format (docs/jsonl.md section 4)
+pub fn jsonl_fields[&s](src: &s [byte]) -> [] &s [byte] {
+    let f = text(src, "input-format");
+    if bytes.equal(f, "jsonl") || bytes.equal(f, "ndjson") {
+        return text(src, "fields");
+    }
+    return "";
+}
+
+// The argument index a flag's value came from; -1 when the flag was not given or takes no value
+pub fn value_index[&s, &n](src: &s [byte], name: &n [byte]) -> [] int {
+    let p = find(src, name);
+    if p < 0 {
+        return 0 - 1;
+    }
+    if !bytes.equal(field_at(src, skip(src, p, 1)), "1") {
+        return 0 - 1;
+    }
+    return number_at(src, skip(src, p, 2)) - 1;
+}
+
+pub fn value_is_whole[&s, &n](src: &s [byte], name: &n [byte]) -> [] bool {
+    let p = find(src, name);
+    if p < 0 {
+        return false;
+    }
+    return bytes.equal(field_at(src, skip(src, p, 3)), "1");
+}
+
+// the offset of the field that holds the number of operands
+fn operand_head[&s](src: &s [byte]) -> [] int {
+    let head = skip(src, 0, 1 + argc(src));
+    return skip(src, head, 1 + 5 * number_at(src, head));
+}
+
+pub fn operand_count[&s](src: &s [byte]) -> [] int {
+    return number_at(src, operand_head(src));
+}
+
+pub fn operand_index[&s](src: &s [byte], k: int) -> [] int {
+    return number_at(src, skip(src, operand_head(src), 1 + k));
+}
+
+pub fn operand[&s](src: &s [byte], k: int) -> [] &s [byte] {
+    return at(src, operand_index(src, k));
+}
+
+// operand `k`, or the empty text when there is none
+pub fn operand_or_empty[&s](src: &s [byte], k: int) -> [] &s [byte] {
+    if k < operand_count(src) {
+        return operand(src, k);
+    }
+    return "";
+}
+
+pub fn put_number[&h](heap: &!h Heap, b: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    let out = buffer.push_nat(heap, b, n);
+    return buffer.push(heap, out, byte_of(0));
+}
+
+pub fn put_field[&h, &t](heap: &!h Heap, b: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    let out = buffer.append(heap, b, text);
+    return buffer.push(heap, out, byte_of(0));
+}
+
+// Append the five fields of one flag to `entries`
+pub fn put_entry[&h, &n, &t](heap: &!h Heap, entries: buffer.Buffer, name: &n [byte], given: bool, value_arg_plus_one: int, whole: bool, value: &t [byte]) -> [heap] buffer.Buffer {
+    var b = put_field(heap, entries, name);
+    if given {
+        b = put_field(heap, b, "1");
+    } else {
+        b = put_field(heap, b, "0");
+    }
+    b = put_number(heap, b, value_arg_plus_one);
+    if whole {
+        b = put_field(heap, b, "1");
+    } else {
+        b = put_field(heap, b, "0");
+    }
+    return put_field(heap, b, value);
+}
+
+// Pack a command line from its three parts: `argv` (n fields), `entries` (e entries made with put_entry) and `ops` (the m operand indexes as decimal fields).
+pub fn pack_raw[&h, &a, &f, &o](heap: &!h Heap, n: int, argv: &a [byte], e: int, entries: &f [byte], m: int, ops: &o [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, len(argv) + len(entries) + len(ops) + 64);
+    b = put_number(heap, b, n);
+    b = buffer.append(heap, b, argv);
+    b = put_number(heap, b, e);
+    b = buffer.append(heap, b, entries);
+    b = put_number(heap, b, m);
+    return buffer.append(heap, b, ops);
+}
+
+// A packed command line that holds the four lists a scan reads and nothing else (the check programs and the tests have no command line of `ml`): --drop, --float, --cat and --na-values, each
+// given when it is not empty
+pub fn of_lists[&h, &d, &f, &c, &n](heap: &!h Heap, drops: &d [byte], floats: &f [byte], cats: &c [byte], na: &n [byte]) -> [heap] buffer.Buffer {
+    var entries = buffer.empty(heap, 128);
+    entries = put_entry(heap, entries, "drop", len(drops) > 0, 0, false, drops);
+    entries = put_entry(heap, entries, "float", len(floats) > 0, 0, false, floats);
+    entries = put_entry(heap, entries, "cat", len(cats) > 0, 0, false, cats);
+    entries = put_entry(heap, entries, "na-values", len(na) > 0, 0, false, na);
+    let argv_fields = put_field(heap, buffer.empty(heap, 8), "ml");
+    var out = buffer.empty(heap, 1);
+    borrow argv_fields as &ar in {
+        borrow entries as &er in {
+            buffer.drop(heap, out);
+            out = pack_raw(heap, 1, buffer.bytes(ar), 4, buffer.bytes(er), 0, "");
+        }
+    }
+    buffer.drop(heap, argv_fields);
+    buffer.drop(heap, entries);
+    return out;
+}
+
+// The packed form of the command line the process was started with and the pinned parser's reading of it.
+pub fn from_cli[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [heap, args] buffer.Buffer {
+    var argv = buffer.empty(heap, 256);
+    var i = 0;
+    while i < arg_count(args) {
+        argv = put_field(heap, argv, arg(args, i));
+        i = i + 1;
+    }
+    var entries = buffer.empty(heap, 1024);
+    var k = 0;
+    while k < cli.entries(table) {
+        let name = cli.name_of(table, k);
+        let given = cli.has(parsed, table, name);
+        var at_ = 0;
+        var whole = false;
+        if given {
+            at_ = cli.value_index(parsed, table, name) + 1;
+            whole = cli.value_is_whole(parsed, table, name);
+        }
+        entries = put_entry(heap, entries, name, given, at_, whole, cli.text(args, parsed, table, name));
+        k = k + 1;
+    }
+    var ops = buffer.empty(heap, 32);
+    var j = 0;
+    while j < cli.operand_count(parsed) {
+        ops = put_number(heap, ops, cli.operand_index(parsed, j));
+        j = j + 1;
+    }
+    var out = buffer.empty(heap, 1);
+    borrow argv as &ar in {
+        borrow entries as &er in {
+            borrow ops as &op in {
+                buffer.drop(heap, out);
+                out = pack_raw(heap, arg_count(args), buffer.bytes(ar), cli.entries(table), buffer.bytes(er), cli.operand_count(parsed), buffer.bytes(op));
+            }
+        }
+    }
+    buffer.drop(heap, argv);
+    buffer.drop(heap, entries);
+    buffer.drop(heap, ops);
+    return out;
+}

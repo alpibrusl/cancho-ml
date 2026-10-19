@@ -9,6 +9,7 @@ module ml.wiredata;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.argv;
 import ml.csv;
 import ml.csvcell;
 import ml.est;
@@ -651,7 +652,7 @@ pub fn file_fault[&h, &p](heap: &!h Heap, errs: fail.Errors, f: codes.Fault, sho
 }
 
 // `ml.input.missing-value`: some feature cells are still empty after the steps. The repair appends an impute step when the plan came from no flag at all
-pub fn missing_error[&h, &g, &l](heap: &!h Heap, args: &g Args, errs: fail.Errors, count: int, list: &l [byte], retry_ok: bool) -> [heap, args] fail.Errors {
+pub fn missing_error[&h, &l, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, count: int, list: &l [byte], retry_ok: bool) -> [heap] fail.Errors {
     var w = open_tag(heap, "ml.input.missing-value");
     let plain_names = len(list) > 0 && bytes.count_byte(list, ' ') == 0 && bytes.count_byte(list, '=') == 0 && bytes.count_byte(list, '#') == 0 && text.is_utf8(list);
     if retry_ok && plain_names {
@@ -661,8 +662,8 @@ pub fn missing_error[&h, &g, &l](heap: &!h Heap, args: &g Args, errs: fail.Error
         step = buffer.append(heap, step, " strategy=mean");
         var rw = fail.retry_open(heap, w);
         var i = 0;
-        while i < arg_count(args) {
-            rw = json.put_string(heap, rw, arg(args, i));
+        while i < argv.argc(src) {
+            rw = json.put_string(heap, rw, argv.at(src, i));
             i = i + 1;
         }
         rw = json.put_string(heap, rw, "--step");

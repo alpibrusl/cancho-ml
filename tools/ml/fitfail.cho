@@ -10,6 +10,7 @@ module ml.fitfail;
 import std.buffer;
 import std.bytes;
 import std.json;
+import ml.argv;
 import ml.spec;
 import ml.verbs;
 import ml.wiredata;
@@ -49,16 +50,16 @@ fn decade_text[&h](heap: &!h Heap, x: float) -> [heap] buffer.Buffer {
 }
 
 // the arguments of the invocation, with the value of --l2 replaced by `v` (appended as `--l2 v` when the flag was not given), as strings of the array being written
-fn put_argv_l2[&h, &g, &v](heap: &!h Heap, w: json.Writer, args: &g Args, v: &v [byte]) -> [heap, args] json.Writer {
+fn put_argv_l2[&h, &cl, &v](heap: &!h Heap, w: json.Writer, src: &cl [byte], v: &v [byte]) -> [heap] json.Writer {
     var o = w;
     var given = false;
     var i = 0;
-    while i < arg_count(args) {
-        if i > 0 && bytes.equal(arg(args, i - 1), "--l2") {
+    while i < argv.argc(src) {
+        if i > 0 && bytes.equal(argv.at(src, i - 1), "--l2") {
             o = json.put_string(heap, o, v);
             given = true;
         } else {
-            o = json.put_string(heap, o, arg(args, i));
+            o = json.put_string(heap, o, argv.at(src, i));
         }
         i = i + 1;
     }
@@ -69,11 +70,11 @@ fn put_argv_l2[&h, &g, &v](heap: &!h Heap, w: json.Writer, args: &g Args, v: &v 
     return o;
 }
 
-fn put_argv_drop[&h, &g, &n](heap: &!h Heap, w: json.Writer, args: &g Args, name: &n [byte]) -> [heap, args] json.Writer {
+fn put_argv_drop[&h, &cl, &n](heap: &!h Heap, w: json.Writer, src: &cl [byte], name: &n [byte]) -> [heap] json.Writer {
     var o = w;
     var i = 0;
-    while i < arg_count(args) {
-        o = json.put_string(heap, o, arg(args, i));
+    while i < argv.argc(src) {
+        o = json.put_string(heap, o, argv.at(src, i));
         i = i + 1;
     }
     o = json.put_string(heap, o, "--drop");
@@ -111,7 +112,7 @@ fn plan_repair[&h](heap: &!h Heap, w: json.Writer) -> [heap] json.Writer {
 
 // ml.fit.collinear. diag is the record of lib/models/rank.cho: [0] pass, [1] j, [2] s_jj / a_jj, [3] the largest diagonal element, [4 + k] c_k. nm the names of the p - 1 columns
 // of the matrix the estimator got; the column p - 1 is the intercept. `logistic` adds the pass to the detail.
-pub fn collinear[&h, &g, &d, &n](heap: &!h Heap, args: &g Args, e: fail.Errors, logistic: bool, diag: &d [float], nm: &n names.Names, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap, args] fail.Errors {
+pub fn collinear[&h, &cl, &d, &n](heap: &!h Heap, src: &cl [byte], e: fail.Errors, logistic: bool, diag: &d [float], nm: &n names.Names, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap] fail.Errors {
     let nfeat = names.count(nm);
     let j = truncate(diag[1]);
     let maxdiag = diag[3];
@@ -151,22 +152,22 @@ pub fn collinear[&h, &g, &d, &n](heap: &!h Heap, args: &g Args, e: fail.Errors, 
             k = k + 1;
         }
     }
-    let can_drop = dropk >= 0 && nfeat >= 2 && !o.plan_given && !o.step_given && !o.cat_given && !o.drop_given && bytes.count_byte(names.name(nm, dropk), ',') == 0 && len(names.name(nm, dropk)) > 0 && !bytes.equal(names.name(nm, dropk), o.target);
+    let can_drop = dropk >= 0 && nfeat >= 2 && !o.plan_given && !o.step_given && !o.cat_given && !o.drop_given && bytes.count_byte(names.name(nm, dropk), ',') == 0 && len(names.name(nm, dropk)) > 0 && !bytes.equal(names.name(nm, dropk), argv.text(src, "target"));
     borrow l2txt as &lr in {
         if o.plan_given {
             w = plan_repair(heap, w);
         } else if can_drop {
             w = fail.choose_open(heap, w);
             w = fail.choose_option_open(heap, w);
-            w = put_argv_l2(heap, w, args, buffer.bytes(lr));
+            w = put_argv_l2(heap, w, src, buffer.bytes(lr));
             w = fail.choose_option_close(heap, w);
             w = fail.choose_option_open(heap, w);
-            w = put_argv_drop(heap, w, args, names.name(nm, dropk));
+            w = put_argv_drop(heap, w, src, names.name(nm, dropk));
             w = fail.choose_option_close(heap, w);
             w = fail.choose_close(heap, w);
         } else {
             w = fail.retry_open(heap, w);
-            w = put_argv_l2(heap, w, args, buffer.bytes(lr));
+            w = put_argv_l2(heap, w, src, buffer.bytes(lr));
             w = fail.retry_close(heap, w);
         }
     }
@@ -248,7 +249,7 @@ pub fn collinear[&h, &g, &d, &n](heap: &!h Heap, args: &g Args, e: fail.Errors, 
 
 // ml.fit.separable. diag is the record of lib/models/linear/logreg.cho: [0] pass, [1] reason (0 loss, 1 pivot, 2 scale), [2] the summed loss, [3] the norm of w, [4] the largest
 // diagonal element of the Hessian of pass 0, [5] the predictor scale.
-pub fn separable[&h, &g, &d](heap: &!h Heap, args: &g Args, e: fail.Errors, diag: &d [float], iterations: int, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap, args] fail.Errors {
+pub fn separable[&h, &cl, &d](heap: &!h Heap, src: &cl [byte], e: fail.Errors, diag: &d [float], iterations: int, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap] fail.Errors {
     var w = wiredata.open_tag(heap, "ml.fit.separable");
     // the repair: l2 whose pivots stay at least about 2^-10 of the Hessian's diagonal at every pass
     var l2txt = decade_text(heap, diag[4] / 1024.0);
@@ -257,7 +258,7 @@ pub fn separable[&h, &g, &d](heap: &!h Heap, args: &g Args, e: fail.Errors, diag
             w = plan_repair(heap, w);
         } else {
             w = fail.retry_open(heap, w);
-            w = put_argv_l2(heap, w, args, buffer.bytes(lr));
+            w = put_argv_l2(heap, w, src, buffer.bytes(lr));
             w = fail.retry_close(heap, w);
         }
     }

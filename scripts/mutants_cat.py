@@ -80,7 +80,7 @@ MUTANTS = [
     M("c1-ids-from-the-row", ["diff", "roundtrip"], "the id of a cell is its row",
       [("tools/ml/csv.cho", "        id = dict.find(cs.voc, cj, cell);", "        id = row;")]),
     M("c1-trim", ["diff"], "a cell is trimmed before it is looked up or interned",
-      [("tools/ml/csv.cho", "let (s2, a2) = cat_cell(cs, cc, raw, place - 1, row, writes);", "let (s2, a2) = cat_cell(cs, cc, bytes.trim(raw), place - 1, row, writes);")]),
+      [("tools/ml/csv.cho", "let (s2, a2) = cat_cell(cs, cc, markers, raw, place - 1, row, writes);", "let (s2, a2) = cat_cell(cs, cc, markers, bytes.trim(raw), place - 1, row, writes);")]),
     M("c1-doubled-quotes-kept", ["diff"], "a doubled quote in a quoted field is not undone",
       [("tools/ml/csv.cho", "            if quoted && fb[3 * i + 2] == 1 && index_of_byte(raw, byte_of(34)) >= 0 {", "            if false {")]),
     M("c1-category-bitmap-missing", ["diff"], "a missing cell gets the id -1 and no bitmap bit",
@@ -90,9 +90,9 @@ MUTANTS = [
       ),
     # ------------------------------------------------------------------ C6: missing
     M("c6-empty-is-a-category", ["diff"], "an empty cell is interned (the dictionary refuses it)",
-      [("tools/ml/csv.cho", "    if len(cell) > 0 && !is_marker(cell, cc.na) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {", "    if !is_marker(cell, cc.na) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {")]),
+      [("tools/ml/csv.cho", "    if len(cell) > 0 && !is_marker(cell, markers) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {", "    if !is_marker(cell, markers) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {")]),
     M("c6-markers-ignored", ["diff"], "the markers of --na-values are not applied",
-      [("tools/ml/csv.cho", "    if len(cell) > 0 && !is_marker(cell, cc.na) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {", "    if len(cell) > 0 && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {")]),
+      [("tools/ml/csv.cho", "    if len(cell) > 0 && !is_marker(cell, markers) && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {", "    if len(cell) > 0 && !is_marker(cell, contents(cs.nab)[0..len(contents(cs.nab)) - 1]) {")]),
     M("c6-marker-by-prefix", ["diff"], "a marker matches the start of a cell",
       [("tools/ml/csv.cho", "if bytes.equal(cell, bytes.field(list, ',', k)) {", "if bytes.starts_with(cell, bytes.field(list, ',', k)) {")]),
     M("c6-marker-ignoring-case", ["diff"], "a marker matches without regard to ASCII case",
@@ -182,15 +182,15 @@ MUTANTS = [
     M("c11-target-may-be-categorical", ["cli", "diff"], "--cat on the target is accepted",
       [("tools/ml/csv.cho", "                if j == tcol {\n                    return (cs, 27, j, 0);\n                }\n                if flags[j] == 3 {", "                if flags[j] == 3 {")]),
     M("c11-limit-flag-without-cat-accepted", ["cli"], "a limit flag without --cat is accepted",
-      [("tools/ml/app.cho", """    if cli.has(parsed, table, "max-categories") {
+      [("tools/ml/app.cho", """    if argv.has(src, "max-categories") {
         e = flag_problem(heap, e, "args.conflict", "this flag needs --cat", "name the categorical columns with --cat", "flag", "--max-categories");
     }""", "")]),
     M("c11-na-values-list-not-checked", ["cli"], "an empty marker in --na-values is accepted",
       [("tools/ml/app.cho", "                if len(m) == 0 || len(m) > 255 {", "                if len(m) > 255 {")]),
     M("c11-cat-fit-writes-a-model", ["cli"], "the refusal is not reached: --cat with a read that succeeds falls through to the numeric fit",
-      [("tools/ml/main.cho", "        if o.cat_given && !wire.planned(o.plan_given, o.model) {\n            return (catcli.fit(heap, args, fs, root, ps.file, o, e3, lg), log_ok);\n        }", "")]),
+      [("tools/ml/verbrun.cho", "        if o.cat_given && !wire.planned(o.plan_given, argv.text(src, \"model\")) {\n            return (catcli.fit(heap, src, fs, root, ps.file, o, e3, lg), log_ok);\n        }", "")]),
     M("c11-unknown-cat-name-ignored", ["cli"], "--cat naming a column that is not in the header is not an error",
-      [("tools/ml/csv.cho", "        let (st, k) = apply_list(flags, names, ends, cols, cc.cols, 4, 1, 25);\n        if st != 0 {", "        let (st, k) = apply_list(flags, names, ends, cols, cc.cols, 4, 1, 25);\n        if st != 0 && false {")]),
+      [("tools/ml/csv.cho", "        let (st, k) = apply_list(flags, names, ends, cols, cat_list, 4, 1, 25);\n        if st != 0 {", "        let (st, k) = apply_list(flags, names, ends, cols, cat_list, 4, 1, 25);\n        if st != 0 && false {")]),
 ]
 
 

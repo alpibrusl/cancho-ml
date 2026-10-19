@@ -14,6 +14,7 @@ import std.math;
 import ml.catmat;
 import ml.dict;
 import ml.est;
+import ml.argv;
 import ml.fsio;
 import ml.interp;
 import ml.kinds;
@@ -34,7 +35,6 @@ import metrics.rules;
 import metrics.splits;
 import pipeline.file;
 import pipeline.schema;
-import toolbox.cli;
 import toolbox.fail;
 import toolbox.text;
 
@@ -45,7 +45,6 @@ pub struct Req {
     max_nodes: int,
     max_nodes_given: bool,
     data_given: bool,
-    metric: &static [byte],
     metric_given: bool,
     repeats: int,
     repeats_given: bool,
@@ -55,8 +54,8 @@ pub struct Req {
     drop_given: bool,
 }
 
-pub fn request[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] Req {
-    return Req { tree: cli.nat(args, parsed, table, "tree"), tree_given: cli.has(parsed, table, "tree"), max_nodes: cli.nat(args, parsed, table, "max-nodes"), max_nodes_given: cli.has(parsed, table, "max-nodes"), data_given: cli.has(parsed, table, "data"), metric: cli.text(args, parsed, table, "metric"), metric_given: cli.has(parsed, table, "metric"), repeats: cli.nat(args, parsed, table, "repeats"), repeats_given: cli.has(parsed, table, "repeats"), seed_given: cli.has(parsed, table, "seed"), max_work: cli.nat(args, parsed, table, "max-work"), max_work_given: cli.has(parsed, table, "max-work"), drop_given: cli.has(parsed, table, "drop") };
+pub fn request[&cl](src: &cl [byte]) -> [] Req {
+    return Req { tree: argv.nat(src, "tree"), tree_given: argv.has(src, "tree"), max_nodes: argv.nat(src, "max-nodes"), max_nodes_given: argv.has(src, "max-nodes"), data_given: argv.has(src, "data"), metric_given: argv.has(src, "metric"), repeats: argv.nat(src, "repeats"), repeats_given: argv.has(src, "repeats"), seed_given: argv.has(src, "seed"), max_work: argv.nat(src, "max-work"), max_work_given: argv.has(src, "max-work"), drop_given: argv.has(src, "drop") };
 }
 
 pub fn default_repeats() -> [] int {
@@ -347,7 +346,7 @@ fn put_header[&h](heap: &!h Heap, w0: json.Writer, name: &static [byte], task: i
 // ---------------------------------------------------------------- the permutation run
 
 // The permutation object for the stored model `st` on the file `datafile`: (the JSON text, the lines of --format text, ok, errors, log). When not ok the first two are empty.
-fn permutation[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, st: &ss wireio.Stored, rq: Req, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] (buffer.Buffer, buffer.Buffer, bool, fail.Errors, buffer.Buffer) {
+fn permutation[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, st: &ss wireio.Stored, rq: Req, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, buffer.Buffer, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
@@ -355,9 +354,9 @@ fn permutation[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f F
     let key = wireio.stored_kind(st);
     var m = 0;
     if rq.metric_given {
-        m = metric_id(rq.metric);
+        m = metric_id(argv.text(src, "metric"));
         if m == 0 || task == 1 && m > 3 || task == 2 && m <= 3 {
-            e = bad_metric(heap, e, rq.metric, task);
+            e = bad_metric(heap, e, argv.text(src, "metric"), task);
             return (buffer.empty(heap, 1), buffer.empty(heap, 1), false, e, lg);
         }
     } else if task == 1 {
@@ -370,7 +369,7 @@ fn permutation[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f F
         reps = rq.repeats;
     }
     var inp = wireio.empty_input(heap);
-    let (i2, ok2, e2, lg2) = wireio.read_input(heap, args, fs, root, datafile, st, o, true, e, lg);
+    let (i2, ok2, e2, lg2) = wireio.read_input(heap, src, fs, root, datafile, st, o, true, e, lg);
     wireio.drop_input(heap, inp);
     inp = i2;
     e = e2;
@@ -526,7 +525,7 @@ fn permutation[&h, &g, &f, &r, &pf, &ss](heap: &!h Heap, args: &g Args, fs: &f F
                                     if go {
                                         borrow xa as &xar in {
                                             borrow idt as &idr in {
-                                                let (xs, unk, ok4, e4) = wireio.apply_taken(heap, args, xar, idr, voc, st, o, e);
+                                                let (xs, unk, ok4, e4) = wireio.apply_taken(heap, src, xar, idr, voc, st, o, e);
                                                 e = e4;
                                                 if !ok4 {
                                                     go = false;
@@ -699,7 +698,7 @@ fn key_of[&s](st: &s wireio.Stored) -> [] int {
 
 // ---------------------------------------------------------------- the verb
 
-pub fn run[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, model: &pm paths.Rp, rq: Req, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, args, fs_read(""), dir_read, file_read] verbs.Out {
+pub fn run[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, model: &pm paths.Rp, rq: Req, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
     var e = errs;
     var lg = log;
     let (data, st, aux) = fsio.read_model(heap, fs, root, model, o.max_bytes);
@@ -732,7 +731,7 @@ pub fn run[&h, &g, &f, &r, &pf, &pm](heap: &!h Heap, args: &g Args, fs: &f Fs(""
                         var pb = buffer.append(heap, buffer.empty(heap, 8), "null");
                         var pp = buffer.empty(heap, 1);
                         if go && rq.data_given {
-                            let (pb2, pp2, ok3, e3, lg3) = permutation(heap, args, fs, root, datafile, sr, rq, o, e, lg);
+                            let (pb2, pp2, ok3, e3, lg3) = permutation(heap, src, fs, root, datafile, sr, rq, o, e, lg);
                             buffer.drop(heap, pb);
                             buffer.drop(heap, pp);
                             pb = pb2;

@@ -1,0 +1,110 @@
+edition 5;
+
+module ml.verbrun;
+
+// Run one verb of `ml` on a parsed command line (docs/mcp.md section 4.1): the part of `ml`'s main that does not touch the process (no standard input or output, no `Args`), shared by `ml` and `ml-mcp`.
+
+import std.buffer;
+import std.bytes;
+import ml.app;
+import ml.argv;
+import ml.catcli;
+import ml.cfit;
+import ml.cv;
+import ml.est;
+import ml.fsio;
+import ml.idump;
+import ml.logrec;
+import ml.mdesc;
+import ml.paths;
+import ml.perm;
+import ml.runs;
+import ml.spec;
+import ml.splitspec;
+import ml.verbs;
+import ml.wire;
+import ml.wireio;
+import toolbox.fail;
+
+// the log file is not already full (before any work): the errors gain limit.log-full or the reason it could not be read
+pub fn preflight_log[&h, &f, &r, &lp](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], logp: &lp paths.Rp, cap: int, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] fail.Errors {
+    let (ls, lsize) = fsio.log_length(fs, root, paths.shown(logp), paths.full(logp));
+    if ls != 0 {
+        return fail.io_error(heap, errs, lsize, false, paths.shown(logp));
+    }
+    if lsize >= cap {
+        var w = fail.open_in(heap, spec.extra(), "limit.log-full", "the log file is already as long as --log-max-bytes", "move the log away, or raise --log-max-bytes");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", lsize);
+        w = fail.detail_int(heap, w, "max", cap);
+        return fail.add(heap, errs, w);
+    }
+    return errs;
+}
+
+// run the verb: its answer, and whether the log can be written
+pub fn execute[&h, &f, &r, &pp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], verb: int, ps: &pp app.Paths, errs: fail.Errors) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] (verbs.Out, bool) {
+    let table = spec.flag_table();
+    let lg = logrec.start(heap, buffer.empty(heap, 256), "ml", app.version());
+    var e = errs;
+    var log_ok = false;
+    let (e1, none) = app.clean(e);
+    e = e1;
+    if none && paths.present(ps.logp) {
+        e = preflight_log(heap, fs, root, ps.logp, argv.nat(src, "log-max-bytes"), e);
+        let (e2, still) = app.clean(e);
+        e = e2;
+        log_ok = still;
+    }
+    let (e3, go) = app.clean(e);
+    if !go {
+        return (verbs.nothing(heap, e3, lg), log_ok);
+    }
+    let o = app.options(src, table);
+    let sp = splitspec.from_cli(src, table);
+    if verb == 5 {
+        let tokens = wire.model_tokens(heap, src, est.kind_named(argv.text(src, "model")));
+        var answer = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+        borrow tokens as &tk in {
+            verbs.drop_out(heap, answer);
+            answer = cv.run(heap, src, fs, root, ps.file, ps.planp, buffer.bytes(tk), o, sp, e3, lg);
+        }
+        buffer.drop(heap, tokens);
+        return (answer, log_ok);
+    }
+    if verb == 1 {
+        if o.cat_given && !wire.planned(o.plan_given, argv.text(src, "model")) {
+            return (catcli.fit(heap, src, fs, root, ps.file, o, e3, lg), log_ok);
+        }
+        if wire.planned(o.plan_given, argv.text(src, "model")) {
+            let tokens = wire.model_tokens(heap, src, est.kind_named(argv.text(src, "model")));
+            var answer = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+            borrow tokens as &tk in {
+                verbs.drop_out(heap, answer);
+                answer = wire.fit(heap, src, fs, root, ps.file, ps.out, ps.planp, ps.trackp, buffer.bytes(tk), o, sp, e3, lg);
+            }
+            buffer.drop(heap, tokens);
+            return (answer, log_ok);
+        }
+        return (cfit.fit(heap, src, fs, root, ps.file, ps.out, ps.trackp, o, e3, lg), log_ok);
+    }
+    if verb == 2 {
+        return (wireio.predict(heap, src, fs, root, ps.file, ps.model, o, e3, lg), log_ok);
+    }
+    if verb == 4 {
+        return (mdesc.describe(heap, fs, root, ps.model, o, e3, lg), log_ok);
+    }
+    if verb == 6 {
+        return (runs.run(heap, src, fs, root, ps.file, argv.operand(src, 1), argv.operand_or_empty(src, 3), argv.operand_or_empty(src, 4), o, e3, lg), log_ok);
+    }
+    if verb == 7 {
+        let rq = perm.request(src);
+        return (perm.run(heap, src, fs, root, ps.datap, ps.model, rq, o, e3, lg), log_ok);
+    }
+    if verb == 8 {
+        let rq = perm.request(src);
+        return (idump.run(heap, fs, root, ps.model, rq, o, e3, lg), log_ok);
+    }
+    return (wireio.eval(heap, src, fs, root, ps.file, ps.model, ps.trackp, o, sp, e3, lg), log_ok);
+}

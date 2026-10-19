@@ -1,0 +1,264 @@
+edition 5;
+
+module mcp.recs;
+
+// The records of a `predict` call as the CSV the predictor reads (docs/mcp.md section 4.3): the header is the columns the model requires, in the order `describe` lists them; a
+// record is a row; a cell is written by the byte rule of docs/serving-http.md section 4 (tools/ml-serve/cols.cho and num.cho, the same files). A number is judged from its text.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import serve.cols;
+
+// the status of the conversion: 0 the CSV is complete; 1 a key that is not a column; 2 a number that cannot be written exactly; 3 a number past the range of a double; 4 a string with a
+// carriage return directly before a line feed; 5 a record or a value of the wrong JSON type (the call is invalid); 6 the description of the model is not one this reads
+pub fn done() -> [] int {
+    return 0;
+}
+
+fn is_text[&d, &t](desc: &d [byte], tape: &t [int], obj: int, key: &static [byte], want: &static [byte]) -> [] bool {
+    let v = json.get(desc, tape, obj, key);
+    return v >= 0 && json.is_string(tape, v) && json.string_equals(desc, tape, v, want);
+}
+
+fn type_code[&d, &t](desc: &d [byte], tape: &t [int], c: int) -> [] int {
+    if is_text(desc, tape, c, "type", "int") {
+        return 0;
+    }
+    if is_text(desc, tape, c, "type", "dec") {
+        return 1;
+    }
+    if is_text(desc, tape, c, "type", "float") {
+        return 2;
+    }
+    return 3;
+}
+
+// the string node `v` of a tape, decoded into a buffer
+pub fn decoded[&h, &d, &t](heap: &!h Heap, src: &d [byte], tape: &t [int], v: int) -> [heap] buffer.Buffer {
+    let n = json.string_length(src, tape, v);
+    var size = n;
+    if size < 1 {
+        size = 1;
+    }
+    let raw = box_slice(heap, size, byte_of(0));
+    var out = buffer.empty(heap, size + 1);
+    borrow mut raw as &!rw in {
+        if n > 0 {
+            json.string_into(src, tape, v, contents(rw)[0..n]);
+        }
+        out = buffer.append(heap, out, contents(rw)[0..n]);
+    }
+    unbox_slice(heap, raw);
+    return out;
+}
+
+// the columns of a description: the request columns (not the target), then the optional ones
+fn columns_of[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int]) -> [heap] (cols.Cols, bool) {
+    var cs = cols.empty(heap);
+    let col_list = json.get(desc, tape, 0, "columns");
+    let request = json.get(desc, tape, 0, "request");
+    let optional = json.get(desc, tape, request, "optional");
+    if col_list < 0 || request < 0 || optional < 0 || !json.is_array(tape, col_list) || !json.is_array(tape, optional) {
+        return (cs, false);
+    }
+    var good = true;
+    var i = 0;
+    while i < json.count(tape, col_list) {
+        let c = json.at(tape, col_list, i);
+        if !is_text(desc, tape, c, "role", "target") {
+            let nm = json.get(desc, tape, c, "name");
+            if nm < 0 || !json.is_string(tape, nm) {
+                good = false;
+            } else {
+                var scale = 0;
+                let sc = json.get(desc, tape, c, "scale");
+                if sc >= 0 && json.is_number(tape, sc) {
+                    scale = json.to_int(desc, tape, sc);
+                }
+                let name = decoded(heap, desc, tape, nm);
+                borrow name as &nr in {
+                    cs = cols.add(heap, cs, buffer.bytes(nr), type_code(desc, tape, c), scale);
+                }
+                buffer.drop(heap, name);
+            }
+        }
+        i = i + 1;
+    }
+    cs = cols.close_header(heap, cs);
+    i = 0;
+    while i < json.count(tape, optional) {
+        let o = json.at(tape, optional, i);
+        if json.is_string(tape, o) {
+            let name = decoded(heap, desc, tape, o);
+            borrow name as &nr in {
+                cs = cols.add_optional(heap, cs, buffer.bytes(nr));
+            }
+            buffer.drop(heap, name);
+        }
+        i = i + 1;
+    }
+    return (cs, good);
+}
+
+// whether the key node `k` of a record is a column or an optional column of `cs`
+fn known_key[&c, &s, &t](cs: &c cols.Cols, line: &s [byte], tape: &t [int], k: int) -> [] bool {
+    var j = 0;
+    while j < cols.count(cs) {
+        if json.string_equals(line, tape, k, cols.name(cs, j)) {
+            return true;
+        }
+        j = j + 1;
+    }
+    j = 0;
+    while j < cols.optional_count(cs) {
+        if json.string_equals(line, tape, k, cols.optional_name(cs, j)) {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+// how many of the columns and optional columns the object at `obj` has (a key twice is one here and two in the count of its pairs)
+fn present_keys[&c, &s, &t](cs: &c cols.Cols, line: &s [byte], tape: &t [int], obj: int) -> [] int {
+    var n = 0;
+    var j = 0;
+    while j < cols.count(cs) {
+        if json.get(line, tape, obj, cols.name(cs, j)) >= 0 {
+            n = n + 1;
+        }
+        j = j + 1;
+    }
+    j = 0;
+    while j < cols.optional_count(cs) {
+        if json.get(line, tape, obj, cols.optional_name(cs, j)) >= 0 {
+            n = n + 1;
+        }
+        j = j + 1;
+    }
+    return n;
+}
+
+// The rows of the array at node `recs` appended to `csv` (which holds the header), for the columns `cs`. Answers the CSV, the status and the place of the fault: the row and the key (a
+// column index, or -1 when the fault is the record itself; -2 when it is a key that is not a column, then `key` holds it).
+fn convert[&h, &c, &l, &t](heap: &!h Heap, cs: &c cols.Cols, line: &l [byte], tape: &t [int], recs: int, csv0: buffer.Buffer) -> [heap] (buffer.Buffer, int, int, int, buffer.Buffer) {
+    var csv = csv0;
+    var status = done();
+    var bad_row = 0 - 1;
+    var bad_col = 0 - 1;
+    var key = buffer.empty(heap, 1);
+    var j = recs + 1;
+    var row = 0;
+    while row < json.count(tape, recs) && status == done() {
+        bad_row = row;
+        if !json.is_object(tape, j) {
+            status = 5;
+        } else {
+            var k = j + 1;
+            var seen = 0;
+            while seen < json.count(tape, j) && status == done() {
+                if !known_key(cs, line, tape, k) {
+                    status = 1;
+                    bad_col = 0 - 2;
+                    buffer.drop(heap, key);
+                    key = decoded(heap, line, tape, k);
+                }
+                k = json.skip(tape, k + 1);
+                seen = seen + 1;
+            }
+            if status == done() && json.count(tape, j) != present_keys(cs, line, tape, j) {
+                status = 1;
+            }
+            if status == done() {
+                let (c2, st, bad) = cols.render(heap, csv, cs, line, tape, j);
+                csv = c2;
+                if st == cols.inexact() {
+                    status = 2;
+                } else if st == cols.out_of_range() {
+                    status = 3;
+                } else if st == cols.not_renderable() {
+                    status = 4;
+                } else if st != cols.rendered() {
+                    status = 5;
+                }
+                bad_col = bad;
+            }
+        }
+        j = json.skip(tape, j);
+        row = row + 1;
+    }
+    return (csv, status, bad_row, bad_col, key);
+}
+
+// The CSV of the array at node `recs` of the call (`line`, `tape`), for the model described by `desc` (the `data` object `describe` answers). Answers the CSV, the status and the JSON
+// Pointer of the first fault (under /arguments/records, as the call has it).
+pub fn csv_of[&h, &d, &l, &t](heap: &!h Heap, desc: &d [byte], line: &l [byte], tape: &t [int], recs: int) -> [heap] (buffer.Buffer, int, buffer.Buffer) {
+    var dt = box_slice(heap, json.tape_len(desc) + 3, 0);
+    var nodes = 0;
+    borrow mut dt as &!dw in {
+        nodes = json.parse(desc, contents(dw));
+    }
+    var csv = buffer.empty(heap, 256);
+    var status = 6;
+    var bad_row = 0 - 1;
+    var bad_col = 0 - 1;
+    var key = buffer.empty(heap, 1);
+    if nodes > 0 {
+        borrow dt as &dr in {
+            let (cs, good) = columns_of(heap, desc, contents(dr));
+            borrow cs as &csr in {
+                if good && cols.count(csr) > 0 {
+                    csv = buffer.append(heap, csv, cols.header(csr));
+                    let (c2, st, br, bc, k2) = convert(heap, csr, line, tape, recs, csv);
+                    csv = c2;
+                    status = st;
+                    bad_row = br;
+                    bad_col = bc;
+                    buffer.drop(heap, key);
+                    key = k2;
+                }
+            }
+            if status != 0 && status != 6 && bad_col >= 0 {
+                // the name of the column, for the pointer: found again from the description
+                buffer.drop(heap, key);
+                borrow cs as &csr in {
+                    key = buffer.append(heap, buffer.empty(heap, 16), cols.name(csr, bad_col));
+                }
+            }
+            cols.drop(heap, cs);
+        }
+    }
+    unbox_slice(heap, dt);
+    var pointer = buffer.empty(heap, 32);
+    if status != 0 && status != 6 {
+        pointer = buffer.append(heap, pointer, "/arguments/records/");
+        pointer = buffer.push_nat(heap, pointer, bad_row);
+        if bad_col >= 0 || bad_col == 0 - 2 {
+            pointer = buffer.push(heap, pointer, byte_of('/'));
+            borrow key as &kr in {
+                pointer = escaped(heap, pointer, buffer.bytes(kr));
+            }
+        }
+    }
+    buffer.drop(heap, key);
+    return (csv, status, pointer);
+}
+
+// a JSON Pointer segment, as RFC 6901 writes it
+fn escaped[&h, &k](heap: &!h Heap, out: buffer.Buffer, name: &k [byte]) -> [heap] buffer.Buffer {
+    var o = out;
+    var i = 0;
+    while i < len(name) {
+        let ch = int_of(name[i]);
+        if ch == 126 {
+            o = buffer.append(heap, o, "~0");
+        } else if ch == 47 {
+            o = buffer.append(heap, o, "~1");
+        } else {
+            o = buffer.push(heap, o, name[i]);
+        }
+        i = i + 1;
+    }
+    return o;
+}

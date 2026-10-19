@@ -64,20 +64,20 @@ MUTANTS = [
     # ---------------------------------------------------------------- the refusals (fixtures of test_rules)
     mut("refuse-combination", "two strategies are accepted", SPEC, "    if n > 1 {\n        var a: &static [byte] = \"--stratify\";", "    if n > 7 {\n        var a: &static [byte] = \"--stratify\";", tests=R),
     mut("refuse-folds-range", "fifty folds are accepted", SPEC, "if sp.folds < 2 || sp.folds > folds_max() {", "if sp.folds < 2 || sp.folds > 99 {", tests=R),
-    mut("refuse-repeats-with-time", "repeats above 1 are accepted with a time split", SPEC, "} else if sp.repeats > 1 && sp.by_given && by_ok(sp.by) {", "} else if false {", tests=R),
-    mut("refuse-split-with-cv", "cv accepts --split", SPEC, "        if cli.has(parsed, table, \"split\") {\n            e = combination(heap, e, \"--split\", \"cv\");\n        }", "", tests=R),
+    mut("refuse-repeats-with-time", "repeats above 1 are accepted with a time split", SPEC, "} else if sp.repeats > 1 && sp.by_given && by_ok(argv.text(src, \"split-by\")) {", "} else if false {", tests=R),
+    mut("refuse-split-with-cv", "cv accepts --split", SPEC, "        if argv.has(src, \"split\") {\n            e = combination(heap, e, \"--split\", \"cv\");\n        }", "", tests=R),
     mut("refuse-stratify-target", "a regression is stratified", WIRE, "    if strategy == 1 && task != 2 {\n        return (assign, false,", "    if false {\n        return (assign, false,", tests=R),
     mut("refuse-stratify-target-holdout", "a regression is stratified in a holdout", WIRE, "    if strategy == 1 && task != 2 {\n        return (sel, 0, false,", "    if false {\n        return (sel, 0, false,", tests=R),
-    mut("refuse-column-target", "the target may be the group column", WIRE, "        if bytes.equal(col, o.target) {", "        if false {", tests=R),
+    mut("refuse-column-target", "the target may be the group column", WIRE, "        if bytes.equal(col, tg) {", "        if false {", tests=R),
     mut("refuse-emit-bound", "no bound on --emit-folds", SPEC, "return 1048576;", "return 1073741824;", tests=R),
     mut("refuse-missing-cell", "an empty group cell is a group of its own", COL, "        if off[i + 1] == off[i] {\n            return i + 1;", "        if false {\n            return i + 1;", tests=SR),
     mut("refuse-offset-reason", "an offset is reported as a form", COL, "                        return (3, 0, 0, 0);", "                        return (2, 0, 0, 0);"),
     mut("refuse-stratum-cv", "a class smaller than the folds goes to the library", PLAN, "        if n0 < k {\n            return (2, lo, n0);", "        if n0 < 0 {\n            return (2, lo, n0);", tests=R),
     mut("refuse-stratum-cv-high-class", "the larger class smaller than the folds goes to the library", PLAN, "        if n1 < k {\n            return (2, hi, n1);", "        if n1 < 0 {\n            return (2, hi, n1);", tests=R),
     mut("refuse-too-few-groups-cv", "fewer groups than folds are accepted", PLAN, "        if groups < k {", "        if groups < 0 {", tests=SR),
-    mut("repair-stratify-removed", "the repair of ml.split.stratify-target keeps a malformed --stratify= argument", SPEC, "    w = retry_edit(heap, w, args, \"--stratify\", false, false, \"\");", "    w = retry_edit(heap, w, args, \"--stratify\", false, true, \"\");", tests=R),
+    mut("repair-stratify-removed", "the repair of ml.split.stratify-target keeps a malformed --stratify= argument", SPEC, "    w = retry_edit(heap, w, src, \"--stratify\", false, false, \"\");", "    w = retry_edit(heap, w, src, \"--stratify\", false, true, \"\");", tests=R),
     mut("repair-folds-not-lowered", "the repair of a small class keeps --folds", SPEC, "    if cv && rows >= 2 {\n        var v = buffer.push_nat(heap, buffer.empty(heap, 8), rows);", "    if false {\n        var v = buffer.push_nat(heap, buffer.empty(heap, 8), rows);", tests=R),
-    mut("repair-emit-kept", "the repair of ml.split.emit-too-large keeps --emit-folds", SPEC, "    w = retry_edit(heap, w, args, \"--emit-folds\", false, false, \"\");", "    w = retry_edit(heap, w, args, \"--emit-folds\", false, true, \"\");", tests=R),
+    mut("repair-emit-kept", "the repair of ml.split.emit-too-large keeps --emit-folds", SPEC, "    w = retry_edit(heap, w, src, \"--emit-folds\", false, false, \"\");", "    w = retry_edit(heap, w, src, \"--emit-folds\", false, true, \"\");", tests=R),
     mut("refuse-single-class-fold", "a training fold with one class is fitted", CV, "                if lacking {", "                if false {", tests=SR),
     # ---------------------------------------------------------------- the aggregate
     mut("agg-population-std", "the standard deviation divides by m, not m - 1", CV, "return (mean, sqrt(ss / float_of(m - 1)));", "return (mean, sqrt(ss / float_of(m)));"),
@@ -97,7 +97,7 @@ MUTANTS = [
         "                        run.drop_fitted(heap, leaked);\n                        leaked = fl;\n                        matrix.drop(heap, xl);\n                    }\n"
         "                    matrix.drop(heap, xall);\n                    run.drop_fitted(heap, f2);\n                    matrix.drop(heap, xt2);\n"
         "                    run.drop_fitted(heap, fitted);\n                    matrix.drop(heap, xt);\n                    fitted = leaked;\n                    xt = xtl;\n                    if flt.code != 0 {\n                        e = wiredata.code_error(heap, e, flt.code, flt.a, flt.b, flt.c);", tests=S),
-    mut("leak-training-on-all-rows", "every fold is trained on all rows, the held-out ones included", CV, "wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, rep, f, e);", "wire.train(heap, args, dr, cir, cvr, pr, contents(sr), 0 - 1, o, retry_ok, rep, f, e);"),
+    mut("leak-training-on-all-rows", "every fold is trained on all rows, the held-out ones included", CV, "wire.train(heap, src, dr, cir, cvr, pr, contents(sr), 0, o, retry_ok, rep, f, e);", "wire.train(heap, src, dr, cir, cvr, pr, contents(sr), 0 - 1, o, retry_ok, rep, f, e);"),
     mut("leak-time-future-in-training", "a time fold trains on the blocks after the one it tests", CV, "} else if strategy == 3 && a > f {", "} else if strategy == 3 && a > f + 1 {"),
 ]
 

@@ -12,6 +12,7 @@ import std.io;
 import http.server;
 import web;
 import ml.app;
+import ml.argv;
 import ml.fsio;
 import ml.mdesc;
 import ml.paths;
@@ -43,7 +44,7 @@ fn refusal[&h, &m, &k, &v](heap: &!h Heap, e: fail.Errors, rule: &static [byte],
 }
 
 // a numeric flag given must be in 1..ceiling (the ceilings are sspec.limits())
-fn check_range[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, table: &static [byte]) -> [heap, args] fail.Errors {
+fn check_range[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, table: &static [byte]) -> [heap] fail.Errors {
     var e = errs;
     let limits = sspec.limits();
     let count = bytes.count_byte(limits, ';') + 1;
@@ -52,8 +53,8 @@ fn check_range[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
         let entry = bytes.field(limits, ';', k);
         let name = bytes.field(entry, '|', 1);
         let top = cli.parse_nat(bytes.field(entry, '|', 3));
-        if cli.has(parsed, table, name) {
-            let v = cli.nat(args, parsed, table, name);
+        if argv.has(src, name) {
+            let v = argv.nat(src, name);
             var least = 1;
             if bytes.equal(name, "max-out-of-range") {
                 least = 0;
@@ -75,8 +76,8 @@ fn check_range[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed,
 }
 
 // whether `--bind all` was given (the default, and `--bind loopback`, is 127.0.0.1)
-fn binds_everywhere[&g, &p](args: &g Args, parsed: &p cli.Parsed) -> [args] bool {
-    return bytes.equal(cli.text(args, parsed, sspec.flag_table(), "bind"), "all");
+fn binds_everywhere[&cl](src: &cl [byte]) -> [] bool {
+    return bytes.equal(argv.text(src, "bind"), "all");
 }
 
 // the listening socket: one of two calls with a literal host, because the compiler reads the host from the source (docs/native-sockets.md section 12 of the compiler repository)
@@ -88,24 +89,24 @@ fn open_listener[&n](net: &n Net(""), everywhere: bool, port: int) -> [net_in(""
 }
 
 // the command line, before any file is read
-fn check_cmdline[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors) -> [heap, args] fail.Errors {
+fn check_cmdline[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
     let table = sspec.flag_table();
     var e = errs;
-    if cli.operand_count(parsed) > 0 {
+    if argv.operand_count(src) > 0 {
         e = app.flag_problem(heap, e, "args.too-many-operands", "ml-serve takes no operand: it serves the model file named by --model-file", "ml-serve --model-file MODEL --token-file FILE", "operand", "FILE");
     }
-    if !cli.has(parsed, table, "model-file") {
+    if !argv.has(src, "model-file") {
         e = app.flag_problem(heap, e, "args.required-flag", "ml-serve needs --model-file, the model to serve", "ml-serve --model-file MODEL --token-file FILE", "flag", "--model-file");
     }
-    let everywhere = binds_everywhere(args, parsed);
-    if cli.has(parsed, table, "token-file") && cli.has(parsed, table, "no-token") {
+    let everywhere = binds_everywhere(src);
+    if argv.has(src, "token-file") && argv.has(src, "no-token") {
         e = app.flag_problem(heap, e, "args.conflict", "--token-file and --no-token say opposite things", "give one of them", "flag", "--no-token");
-    } else if everywhere && cli.has(parsed, table, "no-token") {
+    } else if everywhere && argv.has(src, "no-token") {
         e = app.flag_problem(heap, e, "args.conflict", "--bind all and --no-token say opposite things: a server on every address needs a token", "drop --no-token and give --token-file FILE, or drop --bind all to listen on 127.0.0.1 only", "flag", "--no-token");
-    } else if everywhere && !cli.has(parsed, table, "token-file") {
+    } else if everywhere && !argv.has(src, "token-file") {
         e = refusal(heap, e, "serve.no-token", "--bind all needs --token-file FILE: on every address any host that can reach the port can call the model", "give --token-file FILE, or drop --bind all to listen on 127.0.0.1 only", "flag", "--token-file");
     }
-    return check_range(heap, args, parsed, e, table);
+    return check_range(heap, src, e, table);
 }
 
 // the token: the bytes of the file without one trailing line break, printable ASCII without a space, 1 to 4096 of them
@@ -171,14 +172,14 @@ fn describe_model[&h, &f, &r, &m, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [b
 
 // Everything that can be refused before the server listens (docs/serving-http.md section 5.6): the paths, the model file, `describe`, the request schema and the documents,
 // the token. The server comes back whole, or the errors say why not.
-fn prepare[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), root: &r [byte], errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read] (srv.Served, fail.Errors) {
+fn prepare[&h, &f, &r, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (srv.Served, fail.Errors) {
     let table = sspec.flag_table();
-    let guarded = cli.has(parsed, table, "token-file");
-    let max_rows = cli.nat(args, parsed, table, "max-batch-rows");
-    let max_body = cli.nat(args, parsed, table, "max-body-bytes");
-    let max_model = cli.nat(args, parsed, table, "max-bytes");
-    let (mp, e1) = paths.from_flag(heap, args, parsed, table, root, "model-file", errs);
-    let (tp, e2) = paths.from_flag(heap, args, parsed, table, root, "token-file", e1);
+    let guarded = argv.has(src, "token-file");
+    let max_rows = argv.nat(src, "max-batch-rows");
+    let max_body = argv.nat(src, "max-body-bytes");
+    let max_model = argv.nat(src, "max-bytes");
+    let (mp, e1) = paths.from_flag(heap, src, table, root, "model-file", errs);
+    let (tp, e2) = paths.from_flag(heap, src, table, root, "token-file", e1);
     var e = e2;
     let (e3, clean) = app.clean(e);
     e = e3;
@@ -320,7 +321,7 @@ fn prepare[&h, &g, &p, &f, &r](heap: &!h Heap, args: &g Args, parsed: &p cli.Par
         }
     }
     buffer.drop(heap, shown);
-    let served = srv.make(heap, built, model, model_doc, stored, planned, tokens, guarded, max_rows, max_model, max_body, cli.nat(args, parsed, table, "max-out-of-range"), cli.has(parsed, table, "max-out-of-range"));
+    let served = srv.make(heap, built, model, model_doc, stored, planned, tokens, guarded, max_rows, max_model, max_body, argv.nat(src, "max-out-of-range"), argv.has(src, "max-out-of-range"));
     if go && guarded {
         var undecided = 0;
         borrow served as &sv in {
@@ -339,7 +340,7 @@ fn finish[&h, &i, &e](heap: &!h Heap, io: &!i Io, errs: &e fail.Errors) -> [heap
 }
 
 // the loop of docs/serving-http.md section 5.1: `wait`, then `next` until it answers -1, one answer for each request
-fn run[&h, &sv, &g, &f, &r, &k, &l, &i](heap: &!h Heap, served: &sv srv.Served, args: &g Args, fs: &f Fs(""), root: &r [byte], clock: &k Clock, listener: &!l Listener, con: &!i Io, host: &static [byte], port: int, idle: int, size: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock, err_write, args, fs_read(""), dir_read, file_read] int {
+fn run[&h, &sv, &f, &r, &k, &l, &i, &cl](heap: &!h Heap, served: &sv srv.Served, src: &cl [byte], fs: &f Fs(""), root: &r [byte], clock: &k Clock, listener: &!l Listener, con: &!i Io, host: &static [byte], port: int, idle: int, size: int) -> [heap, conn_accept, conn_read, conn_write, poll, clock, err_write, fs_read(""), dir_read, file_read] int {
     match poller_new() {
         Polling::Ok(p) => {
             var loop_server = server.open(heap, p, listener, size, 0, idle);
@@ -380,7 +381,7 @@ fn run[&h, &sv, &g, &f, &r, &k, &l, &i](heap: &!h Heap, served: &sv srv.Served, 
                             borrow mut params as &!pw in {
                                 borrow mut argv as &!aw in {
                                     borrow mut scratch as &!cw in {
-                                        out = srv.handle(heap, served, args, fs, root, server.head(sr), server.parsed(sr), contents(pw), contents(aw), contents(cw), server.body(sr), out);
+                                        out = srv.handle(heap, served, src, fs, root, server.head(sr), server.parsed(sr), contents(pw), contents(aw), contents(cw), server.body(sr), out);
                                     }
                                 }
                             }
@@ -414,14 +415,14 @@ fn run[&h, &sv, &g, &f, &r, &k, &l, &i](heap: &!h Heap, served: &sv srv.Served, 
 }
 
 // the server: the command line, `prepare`, then the socket
-fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, net: &n Net(""), clock: &k Clock, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock] int {
+fn serve[&h, &f, &i, &n, &k, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i Io, net: &n Net(""), clock: &k Clock, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read, io_write, err_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock] int {
     let table = sspec.flag_table();
-    let e0 = check_cmdline(heap, args, parsed, errs);
-    let (root, e1) = path.root(heap, args, cli.text(args, parsed, table, "root"), cli.value_index(parsed, table, "root"), e0);
+    let e0 = check_cmdline(heap, src, errs);
+    let (root, e1) = paths.root(heap, src, argv.text(src, "root"), argv.value_index(src, "root"), e0);
     var e = e1;
     borrow root as &rb in {
         if paths.has_double_dot(buffer.bytes(rb)) {
-            e = paths.refuse_double_dot(heap, e, buffer.bytes(rb), cli.value_index(parsed, table, "root"));
+            e = paths.refuse_double_dot(heap, e, buffer.bytes(rb), argv.value_index(src, "root"));
         }
     }
     var status = 0;
@@ -431,7 +432,7 @@ fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p c
     if clean {
         borrow root as &rr in {
             srv.drop(heap, served);
-            let (sv2, e3) = prepare(heap, args, parsed, fs, buffer.bytes(rr), e);
+            let (sv2, e3) = prepare(heap, src, fs, buffer.bytes(rr), e);
             served = sv2;
             e = e3;
         }
@@ -443,10 +444,10 @@ fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p c
             status = finish(heap, io, er);
         }
     } else {
-        let port = cli.nat(args, parsed, table, "port");
-        let idle = cli.nat(args, parsed, table, "idle-seconds");
-        let size = cli.nat(args, parsed, table, "max-body-bytes") + 16384;
-        let everywhere = binds_everywhere(args, parsed);
+        let port = argv.nat(src, "port");
+        let idle = argv.nat(src, "idle-seconds");
+        let size = argv.nat(src, "max-body-bytes") + 16384;
+        let everywhere = binds_everywhere(src);
         var host = "127.0.0.1";
         if everywhere {
             host = "0.0.0.0";
@@ -458,7 +459,7 @@ fn serve[&h, &g, &p, &f, &i, &n, &k](heap: &!h Heap, args: &g Args, parsed: &p c
                     listener_nonblocking(lh);
                     borrow served as &sv in {
                         borrow root as &rr in {
-                            status = run(heap, sv, args, fs, buffer.bytes(rr), clock, lh, io, host, port, idle, size);
+                            status = run(heap, sv, src, fs, buffer.bytes(rr), clock, lh, io, host, port, idle, size);
                         }
                     }
                 }
@@ -500,11 +501,15 @@ fn main(world: World) -> [] int {
                     } else {
                         let (parsed, e) = cli.parse(h, g, sspec.flag_table(), fail.empty_in(h, sspec.extra()));
                         borrow parsed as &pr in {
-                            borrow net as &nn in {
-                                borrow clock as &kk in {
-                                    status = serve(h, g, pr, f, i, nn, kk, e);
+                            let packed = argv.from_cli(h, g, pr, sspec.flag_table());
+                            borrow packed as &pk in {
+                                borrow net as &nn in {
+                                    borrow clock as &kk in {
+                                        status = serve(h, buffer.bytes(pk), f, i, nn, kk, e);
+                                    }
                                 }
                             }
+                            buffer.drop(h, packed);
                         }
                         cli.drop(h, parsed);
                     }
