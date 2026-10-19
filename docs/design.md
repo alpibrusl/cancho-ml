@@ -272,6 +272,9 @@ a parse failure 8, an I/O failure 1. The first set, to be completed in M2 to M9:
 | `ml.metric.undefined` | 8 | a metric with no defined value (empty fold, one class) | — |
 | `ml.model.bad-magic` / `version` / `truncated` / `checksum` | 8 | the model file fails a check in 4.1 | — |
 | `ml.model.schema-mismatch` | 8 | see `ml.schema.mismatch` | — |
+| `ml.jsonl.syntax` / `not-object` / `not-scalar` / `duplicate-key` / `too-many-nodes` | 8 | a line of JSON lines input that is not strict JSON, not an object, holds a nested value or a repeated key at a declared field, or has more nodes than `--max-json-nodes` (`docs/jsonl.md`) | — |
+| `ml.jsonl.missing-field` | 8 | a declared key a line lacks | `--absent empty` |
+| `ml.jsonl.type-mismatch` / `mixed-kinds` | 8 | a JSON string or boolean where a number is read, or a text column that mixes JSON kinds | `--cat`, or one kind |
 
 No refusal depends on running out of memory: every allocation sized by input is first compared to a limit (M2's gate).
 
@@ -660,3 +663,7 @@ standard deviation of the training cells as the reader read them. `eval` says wh
 (`out_of_range`, bounded by `--max-out-of-range`); `fit --track DIR` writes a canonical run record whose id is the hash of the inputs that determine the model bytes; `ml runs list|show|compare|verify`
 read the records and replay a fit in memory. The split of a record is the canonical split text of section 22 (`none`, `holdout train=0.8 stratify seed=1`, ...), and a replay holds the same rows out for every strategy. `ml cv` takes no `--track`
 (`docs/tracking.md` section 5.7). The registries are unchanged except the section tag (7) and the rule tags of section 8; no model kind, step kind or stream kind is added, and no capability.
+
+## 24. JSON lines as an input of `fit`, `predict`, `eval` and `cv` (`docs/jsonl.md`)
+
+`--input-format jsonl|ndjson` with `--fields` (at `fit` and `cv`), `--absent` and `--max-json-nodes`; `fit -` and `eval -` read standard input. The reader is `tools/ml/jsonl.cho`, written for `ml` over `std.json.parse` (cancho-table's reader was measured and not pinned: its closure holds the table's plan and needs a newer compiler, `docs/jsonl.md` section 1). It converts the lines to the CSV bytes the equivalent CSV file holds, so the model file and the answers are the CSV's byte for byte but for the identity of the training file (section 23) and the members `on` and `ignored_columns`. Section 8: eight rules `ml.jsonl.*` in `extra()` and `rules()` with a fixture each; `limit.line-too-long` and `limit.input-too-large` have a JSON lines cause. The model file records nothing about the input format; the run record of a fit (section 23) does: `inputs.data` holds `format`, `fields` and `absent` for JSON lines only, so no CSV run id changes, and `ml runs verify` replays the recorded file the same way. `ml cv` takes the same flags as `fit` and gives the bytes of the equivalent CSV for every strategy; a column named by `--drop` is read as text, which is how a group or a time column that is a JSON string reaches `--split-group` and `--split-by`. The identity of an input (the SHA-256 and size in the provenance section and in a run record) is that of the bytes the user gave, a file or standard input, never of the CSV made of them.

@@ -127,6 +127,35 @@ $ ml predict --model-file iris-lr.ml --max-out-of-range 0 iris_test.csv
 ```
 <!-- /gen:trackflow -->
 
+## JSON lines
+
+`--input-format jsonl` (or `ndjson`) reads one JSON object a line, for `fit`, `predict` and `eval`. `fit` declares the columns with `--fields` (the keys, in the order of the table); `predict` and `eval` take theirs from the model file, read each line by key in any order and ignore the keys the model does not read. A number is its exact text (never rounded through a double), a string is text (`"48.5"` is never the number 48.5), `null` is a missing cell, a key a line lacks is `ml.jsonl.missing-field` unless `--absent empty`, `true` and `false` are text in a `--cat` column and refused in a number column, and an object or an array is refused: nothing is guessed. The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size), and `predict` and `eval` print the same answers (but for `on` and `ignored_columns`, which name a file and a CSV column). `fit -`, `eval -` and `predict -` read standard input up to `--max-bytes`, CSV or JSON lines, so a table of nested JSON flattens into `ml` with a pipe: `table --input-format jsonl --fields id,user.age,spend --select '#2,#3' --format csv events.jsonl | ml predict --model-file m.ml -` (cancho-table's `--fields` follows dotted and indexed paths; `ml` reads flat keys). The reader, its mapping of every JSON value to a cell and its refusals are in [docs/jsonl.md](docs/jsonl.md).
+
+<!-- gen:jflow -->
+```console
+# houses.jsonl: one object a line. --fields declares the columns, in the order of the table. The model file is the one fitted from the CSV except the identity of the training file in its provenance section (its SHA-256 and size)
+$ ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-jl.ml houses.jsonl
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses-jl.ml","bytes":416,"sha256":"71bcbe8a7486e845b40bd66d8bea87363d1baf23ef0c9cdc25e49cda13ac74cd","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
+# predict reads the columns of the model file by key: any order, and keys it does not read (a nested object, a note) are ignored
+$ ml predict --model-file houses-jl.ml --input-format jsonl new.jsonl
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
+# standard input works for predict, and for fit and eval with the operand -
+$ ml predict --model-file houses-jl.ml --input-format jsonl - < new.jsonl
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
+$ ml fit --input-format jsonl --fields id,rooms,area,price --target price --overwrite --output houses-jl.ml - < houses.jsonl
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses-jl.ml","bytes":416,"sha256":"71bcbe8a7486e845b40bd66d8bea87363d1baf23ef0c9cdc25e49cda13ac74cd","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
+# a line with no rooms key is refused, with the repair that reads an absent key as a missing cell (a tree takes it)
+$ ml fit --model tree --input-format jsonl --fields id,rooms,area,price --target price --output houses-gap.ml gap.jsonl
+{"rule": "ml.jsonl.missing-field", "hint": "add the key, or read an absent key as a missing cell with --absent empty", "repair": {"kind": "retry", "argv": ["ml", "fit", "--model", "tree", "--input-format", "jsonl", "--fields", "id,rooms,area,price", "--target", "price", "--output", "houses-gap.ml", "gap.jsonl", "--absent", "empty"]}}
+# exit status 8; the rule, hint, repair of the JSON line it prints
+$ ml fit --model tree --input-format jsonl --fields id,rooms,area,price --target price --output houses-gap.ml gap.jsonl --absent empty
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"tree","task":"regression","rows":3,"columns":4,"target":"price","path":"houses-gap.ml","bytes":1097,"sha256":"36c670c400aa927411b696e00a28034dc5baf1dacdbeaf8660f3a872805a85a2","written":true,"summary":{"plan":"model kind=tree task=regression max-depth=8 min-leaf=1 bins=64 max-nodes=4194304\n","steps":0,"features":3,"forest":{"trees":1,"nodes":5,"bins":64,"max_depth":8,"min_leaf":1,"mtry":3}}},"meta":{"version":"0.1.0"}}
+# a JSON string is text, never a number: "48.5" is not read as 48.5
+$ ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-str.ml strings.jsonl
+{"rule": "ml.jsonl.type-mismatch", "hint": "write numbers as JSON numbers, or declare a text column with --cat (fit); a model file fixes which columns are text", "detail": {"path": "strings.jsonl", "line": 1, "row": 1, "column": 3, "name": "area", "found": "string"}}
+# exit status 8; the rule, hint, detail of the JSON line it prints
+```
+<!-- /gen:jflow -->
 ## Boosted trees: `--model boost`
 
 `--model boost` fits additive trees to the gradients and hessians of a loss, round by round: squared error for a regression (`--task regression`, the default) and logistic loss for a binary classification (`--task classification`). Each round grows one histogram tree on the quantile bins of the tree library, with a Newton step `-G / (H + l2)` in each leaf, multiplied by `--learning-rate`; a cell that is missing is accepted and each split learns the side it takes. `--rounds` (default 100), `--learning-rate` (0.1), `--max-depth` (4), `--min-leaf` (10), `--bins` (64), `--l2` (1.0), `--subsample` (the fraction of the rows each round fits on, seeded from `--seed` and the round, never from the thread count) and `--early-stopping N` are the flags. Early stopping is refused unless `--split train=F` declares a held-out part, and the stopping rule never reads it: it takes a random tenth of the training rows for its own validation loss and keeps the best round. A random tenth is not a group split or a time split of the training rows, so `--early-stopping` with `--split-group` or `--split-by` (in `fit --split` and in `ml cv`) is `ml.split.combination`, and its repair drops `--early-stopping`; with a plain or a `--stratify` split, or in `ml cv` with random folds, it runs. Every sum is a sequential sum in a fixed row order, so the file records the summation order 3, as the tree and the forest do, and the same data, plan and seed give the same bytes at every `--threads` (the threads only bin the columns: the rounds are sequential). The file is model kind 8; a boosted model holds all its trees, so `fit` refuses to write a file longer than `--max-bytes`. On the committed `docs/examples/data/breast_cancer_train.csv` and `breast_cancer_test.csv` (copy them next to where you run it):
@@ -619,19 +648,19 @@ The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`);
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler 0207556b)
-flags       57, for example
+flags       61, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
   --model-file  path             predict, eval, describe: the model file to read
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
-limits      24, for example
+limits      25, for example
   --max-rows         default 10,000,000   ceiling 1,000,000,000
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       101, for example
+rules       109, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes

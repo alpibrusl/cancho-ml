@@ -46,7 +46,7 @@ MUTANTS = [
     M("t1-flag-missing-from-the-schema", "T1", "the schema's flag enum loses --limit",
       [("schemas/ml.v1.json", '"--limit",', "", 1)], ["test_tables"]),
     M("t1-rule-without-fixture", "T1", "a rule is added to the table (schemas regenerated); no fixture reaches it",
-      [("tools/ml/spec.cho", ";ml.runs.not-replayable\";", ";ml.runs.not-replayable;ml.input.too-wide\";", 1),
+      [("tools/ml/spec.cho", ";ml.jsonl.too-many-nodes\";", ";ml.jsonl.too-many-nodes;ml.input.too-wide\";", 1),
        ("tools/ml/spec.cho", ";limit.log-full|8|never|", ";ml.input.too-wide|8|never|a rule nothing reaches. Hint: none. Repair: none.;limit.log-full|8|never|", 1)],
       ["test_tables"], regen=True),
     M("t1-fixture-reaches-another-rule", "T1", "the two fixtures of ml.model.malformed now claim another rule",

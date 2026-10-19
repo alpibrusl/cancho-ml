@@ -110,3 +110,11 @@ boost-pets-cat-t8	fit-exit	0
 boost-pets-cat-t8	model-file	486a95e9443baed1ab932c651e6b32c341077f17e183515fcb964a0c32e2a5ff
 boost-pets-cat-t8	predict	0	fce991e507b8079d6395f90d26690b8bea7c972e99323376cc4c42e532bfd84d
 boost-pets-cat-t8	eval	0	bc7723656d9a3e77ba2b4585e542b27ae3fcebbbb0aa542a6d94c6d19cb7430e
+logistic-iris-jsonl	fit-exit	0
+logistic-iris-jsonl	model-file	cc074c7aedaa31eb529bb22bd6c1e91c29043709087791a741b91901ef9f3658
+logistic-iris-jsonl	predict	0	887dfc0083a1335c0677158b9cc7553b3067957d9bdc3739500311ec4f418d48
+logistic-iris-jsonl	eval	0	544b008790f9440449f453218c68ee002a21999e11ea90be85310c831a1b55f3
+forest-pets-jsonl-cat	fit-exit	0
+forest-pets-jsonl-cat	model-file	8aad054cc9a7887a988a400d54b19838419cfc482360d6468a3eead164b3921a
+forest-pets-jsonl-cat	predict	0	b282f25a54c0d43034b023d3427a6cd9990b706fcdb5eb839bec927db0408b47
+forest-pets-jsonl-cat	eval	0	d9b102fe0040735ee735d5baa47ba51b685d11a883e1bc8d7bb22cf087753579

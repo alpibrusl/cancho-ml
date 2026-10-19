@@ -359,7 +359,7 @@ pub fn load_data[&h, &g, &f, &r, &pf, &tn, &nn](heap: &!h Heap, args: &g Args, f
         rep = rep2;
         code = code2;
     } else {
-        let (x2, sh2, rep2, code2) = csvload.load_t(heap, fs, root, paths.shown(file), paths.full(file), verbs.config(o, 0, 0, 0), tg, false);
+        let (x2, sh2, rep2, code2) = csvload.load_t_rp(heap, fs, root, file, verbs.config(o, 0, 0, 0), tg, false);
         matrix.drop(heap, x);
         csv.drop_shape(heap, sh);
         x = x2;
@@ -1410,7 +1410,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
     var size1 = 0;
     var hashed = false;
     if go {
-        let (dg1, sz1, st1, ax1) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+        let (dg1, sz1, st1, ax1) = fsio.sha_rp(heap, fs, root, file);
         buffer.drop(heap, h1);
         h1 = dg1;
         size1 = sz1;
@@ -1568,7 +1568,7 @@ pub fn make[&h, &g, &f, &r, &pf, &tn, &nn, &sk](heap: &!h Heap, args: &g Args, f
     }
     // the file must be the one that was read: hashed again after the fit, the digest must be the first one
     if go {
-        let (dg2, sz2, st2, ax2) = fsio.sha_file(heap, fs, root, paths.shown(file), paths.full(file));
+        let (dg2, sz2, st2, ax2) = fsio.sha_rp(heap, fs, root, file);
         var same = st2 == 0 && sz2 == size1;
         if same {
             borrow h1 as &hr1 in {

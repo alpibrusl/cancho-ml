@@ -70,7 +70,23 @@ def cases():
             ("boost-pets-cat-t" + t, "pets", "pets", ["--model", "boost", "--task", "classification", "--rounds", "30", "--min-leaf", "2", "--seed", "3", "--cat", "species,city", "--step", CAT,
                                                       "--drop", "id", "--threads", t], ["--proba", "--drop", "id"]),
         ]
+    # JSON lines (docs/jsonl.md): the files are made from the CSVs below, so the model file must be the bytes of the CSV fit; the cases are appended after the 88 lines of the others
+    out.append(("logistic-iris-jsonl", "iris_train", "iris_test", ["--model", "logistic", "--step", STD, "--l2", "0.1", "--input-format", "jsonl"], ["--proba", "--input-format", "jsonl"]))
+    out.append(("forest-pets-jsonl-cat", "pets", "pets", ["--model", "forest", "--task", "classification", "--trees", "10", "--seed", "3", "--cat", "species,city", "--step", HASH, "--drop", "id", "--input-format", "jsonl"], ["--proba", "--input-format", "jsonl"]))
     return out
+
+
+def jsonl_of(csv_path, cats):
+    """the JSON lines of a CSV with simple cells: a column in `cats` holds strings, any other its cell as the token text of a number"""
+    import csv as csvmod
+    import json as jsonmod
+    with open(csv_path, newline="") as f:
+        rows = list(csvmod.reader(f))
+    head = rows[0]
+    lines = []
+    for r in rows[1:]:
+        lines.append("{" + ",".join(jsonmod.dumps(k) + ":" + (jsonmod.dumps(v) if k in cats else v) for k, v in zip(head, r)) + "}")
+    return ("\n".join(lines) + "\n").encode()
 
 
 def sha(b):
@@ -107,8 +123,17 @@ def fingerprint(ml, data, ml_predict=None):
                 failures.append("%s: data file %s or %s is not in %s" % (name, tf, sf, data))
                 continue
             fa = ["fit"] + fit_args
+            if "--input-format" in fit_args:
+                # JSON lines: the same table as JSON, the fields its header, the model file the bytes of the CSV fit
+                cats = fit_args[fit_args.index("--cat") + 1].split(",") if "--cat" in fit_args else []
+                for src in (train, test):
+                    with open(os.path.join(work, src + ".jsonl"), "wb") as fh:
+                        fh.write(jsonl_of(os.path.join(work, src + ".csv"), cats))
+                with open(os.path.join(work, tf)) as fh:
+                    fa += ["--fields", fh.readline().strip()]
+                tf, sf = train + ".jsonl", test + ".jsonl"
             if fit_args[fit_args.index("--model") + 1] != "kmeans":
-                fa += ["--target", last_column(os.path.join(work, tf))]
+                fa += ["--target", last_column(os.path.join(work, train + ".csv"))]
             rc, so = run(ml, work, fa + ["--overwrite", "--output", out, tf])
             lines.append("%s\tfit-exit\t%d" % (name, rc))
             if rc != 0:
@@ -124,6 +149,8 @@ def fingerprint(ml, data, ml_predict=None):
             ev = ["eval", "--model-file", out]
             if "--drop" in pred_args:
                 ev += ["--drop", pred_args[pred_args.index("--drop") + 1]]
+            if "--input-format" in pred_args:
+                ev += ["--input-format", pred_args[pred_args.index("--input-format") + 1]]
             steps.append(("eval", ev + [sf]))
             for what, args in steps:
                 rc, so = run(ml, work, args)

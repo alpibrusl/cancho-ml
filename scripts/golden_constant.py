@@ -25,6 +25,8 @@ NEW_FLAGS = {"--plan", "--step", "--l2", "--iterations", "--positive", "--split"
              "--trees", "--max-depth", "--min-leaf", "--bins", "--mtry", "--bootstrap", "--max-nodes",
              # k-means (docs/wiring-kmeans.md section 2)
              "--k", "--init", "--distance",
+             # JSON lines as an input (docs/jsonl.md section 2)
+             "--input-format", "--fields", "--absent", "--max-json-nodes",
              # the split strategies and cross-validation (docs/splits.md)
              "--stratify", "--split-by", "--split-group", "--folds", "--repeats", "--emit-folds",
              # boosted trees (docs/models-boost.md section 6)

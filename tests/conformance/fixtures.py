@@ -713,6 +713,50 @@ def _refuse_cases():
 CASES += _refuse_cases()
 
 
+# ------------------------------------------------------------------ JSON lines as an input (docs/jsonl.md)
+def _jsonl_cases():
+    jl = "".join('{"a":%d,"y":%s}\n' % (i, v) for i, v in enumerate(["1.5", "2.5", "3.5", "4.5"]))
+    jfit = ["fit", "--input-format", "jsonl", "--fields", "a,y", "--target", "y", "--output", "m.cml"]
+    base = [("write", "d.jsonl", jl)]
+
+    def withd(text):
+        return [("write", "d.jsonl", text)]
+    return [
+        case("jsonl-fit", jfit + ["d.jsonl"], ok({"rows": 4, "columns": 2, "target": "y", "path": "m.cml", "written": True}), setup=base),
+        case("jsonl-fit-ndjson-absent-empty-nodes", ["fit", "--input-format", "ndjson", "--fields", "a,y", "--absent", "empty", "--max-json-nodes", "64", "--model", "tree", "--target", "y", "--output", "m.cml", "d.jsonl"],
+             ok({"rows": 4}), setup=base),
+        case("jsonl-predict", ["predict", "--model-file", "m.cml", "--input-format", "jsonl", "d.jsonl"], ok({"columns": ["prediction"]}), setup=base + [("fit", "--target", "y", "--output", "m.cml", "--input-format", "jsonl", "--fields", "a,y", "d.jsonl")]),
+        case("jsonl-eval", ["eval", "--model-file", "m.cml", "--input-format", "jsonl", "d.jsonl"], ok({"rows": 4}), setup=base + [("fit", "--target", "y", "--output", "m.cml", "--input-format", "jsonl", "--fields", "a,y", "d.jsonl")]),
+        case("ml-jsonl-syntax", jfit + ["d.jsonl"], bad("ml.jsonl.syntax"), setup=withd('{"a":1,"y":1.5}\n{"a":2,"y":\n')),
+        case("ml-jsonl-not-object", jfit + ["d.jsonl"], bad("ml.jsonl.not-object"), setup=withd('{"a":1,"y":1.5}\n[1,2]\n')),
+        case("ml-jsonl-missing-field", ["fit", "--input-format", "jsonl", "--fields", "a,y", "--model", "tree", "--target", "y", "--output", "m.cml", "d.jsonl"],
+             bad("ml.jsonl.missing-field", repair_retry=True), setup=withd('{"a":1,"y":1.5}\n{"y":2.5}\n{"a":3,"y":3.5}\n')),
+        case("ml-jsonl-not-scalar", jfit + ["d.jsonl"], bad("ml.jsonl.not-scalar"), setup=withd('{"a":1,"y":1.5}\n{"a":[2],"y":2.5}\n')),
+        case("ml-jsonl-duplicate-key", jfit + ["d.jsonl"], bad("ml.jsonl.duplicate-key"), setup=withd('{"a":1,"y":1.5}\n{"a":2,"a":3,"y":2.5}\n')),
+        case("ml-jsonl-type-mismatch", jfit + ["d.jsonl"], bad("ml.jsonl.type-mismatch"), setup=withd('{"a":1,"y":1.5}\n{"a":"2","y":2.5}\n')),
+        case("ml-jsonl-type-mismatch-boolean", jfit + ["d.jsonl"], bad("ml.jsonl.type-mismatch"), setup=withd('{"a":true,"y":1.5}\n')),
+        case("ml-jsonl-mixed-kinds", ["fit", "--input-format", "jsonl", "--fields", "c,y", "--cat", "c", "--step", "encode column=c kind=onehot", "--model", "tree", "--target", "y", "--output", "m.cml", "d.jsonl"],
+             bad("ml.jsonl.mixed-kinds"), setup=withd('{"c":"x","y":1.5}\n{"c":5,"y":2.5}\n')),
+        case("ml-jsonl-too-many-nodes", ["fit", "--input-format", "jsonl", "--fields", "a,y", "--max-json-nodes", "4", "--target", "y", "--output", "m.cml", "d.jsonl"], bad("ml.jsonl.too-many-nodes"), setup=base),
+        case("jsonl-limit-line-too-long", jfit + ["--max-line-bytes", "5", "d.jsonl"], bad("limit.line-too-long"), setup=base),
+        case("jsonl-limit-input-too-large", jfit + ["--max-bytes", "10", "d.jsonl"], bad("limit.input-too-large"), setup=base),
+        case("jsonl-args-required-flag-fields", ["fit", "--input-format", "jsonl", "--target", "y", "--output", "m.cml", "d.jsonl"], bad("args.required-flag"), setup=base),
+        case("jsonl-args-bad-value-fields", ["fit", "--input-format", "jsonl", "--fields", "a,,y", "--target", "y", "--output", "m.cml", "d.jsonl"], bad("args.bad-value"), setup=base),
+        case("jsonl-args-bad-value-fields-repeated", ["fit", "--input-format", "jsonl", "--fields", "a,a,y", "--target", "y", "--output", "m.cml", "d.jsonl"], bad("args.bad-value"), setup=base),
+        case("jsonl-args-conflict-fields-with-csv", ["fit", "--fields", "a,y", "--target", "y", "--output", "m.cml", "reg.csv"], bad("args.conflict")),
+        case("jsonl-args-conflict-absent-with-csv", ["fit", "--absent", "empty", "--target", "y", "--output", "m.cml", "reg.csv"], bad("args.conflict")),
+        case("jsonl-args-conflict-nodes-with-csv", ["fit", "--max-json-nodes", "9", "--target", "y", "--output", "m.cml", "reg.csv"], bad("args.conflict")),
+        case("jsonl-args-conflict-fields-at-predict", ["predict", "--model-file", "m.cml", "--input-format", "jsonl", "--fields", "a", "d.jsonl"], bad("args.conflict"), setup=WITH_MODEL),
+        case("jsonl-args-bad-value-format", ["fit", "--input-format", "yaml", "--target", "y", "--output", "m.cml", "reg.csv"], bad("args.bad-value")),
+        case("jsonl-cv", ["cv", "--model", "linear", "--target", "y", "--folds", "2", "--input-format", "jsonl", "--fields", "a,y", "d.jsonl"], ok({"strategy": "kfold", "folds": 2, "rows": 4}), setup=base),
+        case("jsonl-args-required-flag-fields-at-cv", ["cv", "--model", "linear", "--target", "y", "--input-format", "jsonl", "d.jsonl"], bad("args.required-flag"), setup=base),
+        case("jsonl-ml-param-out-of-range-nodes", jfit + ["--max-json-nodes", "0", "d.jsonl"], bad("ml.param.out-of-range"), setup=base),
+    ]
+
+
+CASES += _jsonl_cases()
+
+
 # ------------------------------------------------------------------ run tracking and the skew checks (docs/tracking.md)
 def _reseal_model_sha(sb):
     """the run record with another model hash, sealed again: what a record made by another compiler holds"""

@@ -99,7 +99,7 @@ else: the assignment is computed before any fit and by no thread.
 `--split-by` and `--split-group` name a column of the header (`ml.input.unknown-column`, exit 3, if it is not there; `ml.split.column-target` if it is the target). The column is read **a second time,
 as text**, by `tools/ml/splitcol.cho`, with the dialect of the reader (`docs/reader.md` section 2: a byte order mark dropped, CR before LF dropped, blank lines are not records, RFC 4180 quotes), so a text
 column that the numeric reader cannot take is usable: the column is also a feature unless `--drop` removes it (the usual case for a date or an id, and the refusal `ml.input.non-numeric` carries the `--drop` repair).
-The file is held in memory once, up to `--max-bytes` (`limit.input-too-large` beyond). An empty cell is `ml.split.missing-cell` (row in `detail`).
+The file is held in memory once, up to `--max-bytes` (`limit.input-too-large` beyond). An empty cell is `ml.split.missing-cell` (row in `detail`). With `--input-format jsonl` the bytes read are the CSV made of the lines (`docs/jsonl.md` section 4), so the column is the one the CSV holds: a string date is text (name the column with `--drop`, or `--cat`), a number is a number, and the cuts and the answers equal the CSV's byte for byte (`tests/conformance/test_jsonl_cv.py`).
 
 **Groups.** The identity of a group is the bytes of its cell after the CSV quotes are removed, compared bytewise, no trimming, no case folding, no number parsing: `7` and `07` are two groups. The column may be text
 or integer for this reason alone. No bound on the group count except the row count.

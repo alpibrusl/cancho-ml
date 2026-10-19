@@ -99,6 +99,11 @@ FILES = {
     "new2.csv": "id,visits,spend\n13,3,\n14,6,20.0\n15,1,1.5\n",
     # new rows for the model fitted on pets.csv: the columns in another order, a city and a species the training rows never held, and an empty city cell
     "newpets.csv": "city,species,age,visits\nOslo,rabbit,2,3\nLyon,axolotl,4,1\n,cat,1,2\n",
+    # JSON lines (docs/jsonl.md): the houses as objects; new rows with other keys, in another order, with a nested value ml does not read; a file with a key missing; a string where a number is read
+    "houses.jsonl": '{"id":1,"rooms":2,"area":48.5,"price":180000}\n{"id":2,"rooms":3,"area":71.25,"price":240000}\n{"id":3,"rooms":3,"area":64,"price":215000}\n{"id":4,"rooms":4,"area":98.5,"price":335000}\n{"id":5,"rooms":1,"area":31,"price":120000}\n',
+    "new.jsonl": '{"area":52.5,"id":6,"agent":{"name":"A. Costa","phones":[1,2]},"rooms":2}\n{"rooms":3,"note":"south, \\"quiet\\"","id":7,"area":80}\n',
+    "gap.jsonl": '{"id":1,"rooms":2,"area":48.5,"price":180000}\n{"id":2,"area":71.25,"price":240000}\n{"id":3,"rooms":3,"area":64,"price":215000}\n',
+    "strings.jsonl": '{"id":1,"rooms":2,"area":"48.5","price":180000}\n',
 }
 
 def iris_gaps():
@@ -174,6 +179,13 @@ DEMOS = [
     ("r_predict", "ml predict --model-file iris.ml --proba --limit 3 iris_test.csv"),
     ("r_eval", "ml eval --model-file iris.ml iris_test.csv"),
     ("r_bad", "ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv"),
+    # JSON lines as an input (docs/jsonl.md)
+    ("j_fit", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-jl.ml houses.jsonl"),
+    ("j_predict", "ml predict --model-file houses-jl.ml --input-format jsonl new.jsonl"),
+    ("j_stdin", "ml predict --model-file houses-jl.ml --input-format jsonl -", "new.jsonl"),
+    ("j_fit_stdin", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --overwrite --output houses-jl.ml -", "houses.jsonl"),
+    ("j_bad", "ml fit --model tree --input-format jsonl --fields id,rooms,area,price --target price --output houses-gap.ml gap.jsonl"),
+    ("j_str", "ml fit --input-format jsonl --fields id,rooms,area,price --target price --output houses-str.ml strings.jsonl"),
     # boosted trees on breast cancer (docs/models-boost.md): early stopping needs --split, a fit, the probabilities, the metrics, early stopping with a split, describe
     ("b_nosplit", "ml fit --model boost --target benign --early-stopping 10 --output cancer-boost.ml breast_cancer_train.csv"),
     ("b_fit", "ml fit --model boost --task classification --target benign --rounds 100 --learning-rate 0.1 --max-depth 3 --subsample 0.8 --seed 1 --output cancer-boost.ml breast_cancer_train.csv"),
@@ -212,6 +224,8 @@ SUMMARY = {
     "k_nok": ["rule", "hint", "detail"],
     "sp_combo": ["rule", "hint", "repair", "detail"],
     "sp_bad": ["rule", "hint", "repair"],
+    "j_bad": ["rule", "hint", "repair"],
+    "j_str": ["rule", "hint", "detail"],
     "b_nosplit": ["rule", "hint", "detail"],
 }
 # task name -> the demos shown for it
@@ -226,7 +240,7 @@ TASKS = {
 }
 QS = ["fit", "predict", "eval", "bad"]
 # a demo whose refusal carries a repair that is run as offered: the key of the repair's own result
-REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_bad": "r_fixed", "sp_bad": "sp_fixed", "r_col": "r_col_fixed", "r_sep": "r_sep_fixed"}
+REPAIRED = {"bad": "fixed", "p_bad": "p_fixed", "r_bad": "r_fixed", "j_bad": "j_fixed", "sp_bad": "sp_fixed", "r_col": "r_col_fixed", "r_sep": "r_sep_fixed"}
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -586,6 +600,20 @@ def catflow_items(ctx):
             item(ctx, "c_hash_new")]
 
 
+def jflow_items(ctx):
+    """JSON lines: fit with the columns declared, predict with other keys and another order, standard input, a key missing (and the repair, run), a string where a number is read."""
+    return [("# houses.jsonl: one object a line. --fields declares the columns, in the order of the table. The model file is the one fitted from the CSV except the identity of the training file in its provenance section (its SHA-256 and size)", None, 0, None),
+            item(ctx, "j_fit"),
+            ("# predict reads the columns of the model file by key: any order, and keys it does not read (a nested object, a note) are ignored", None, 0, None),
+            item(ctx, "j_predict"),
+            ("# standard input works for predict, and for fit and eval with the operand -", None, 0, None),
+            item(ctx, "j_stdin"),
+            item(ctx, "j_fit_stdin"),
+            ("# a line with no rooms key is refused, with the repair that reads an absent key as a missing cell (a tree takes it)", None, 0, None),
+            item(ctx, "j_bad"),
+            item(ctx, "j_fixed"),
+            ("# a JSON string is text, never a number: \"48.5\" is not read as 48.5", None, 0, None),
+            item(ctx, "j_str")]
 def refuse_items(ctx):
     """A fit that has no answer is refused by name, with the repair as an argv that is run as offered (docs/refusals-fit.md)."""
     return [("# The text column species is one-hot encoded: its columns add up to the intercept, so the normal equations of the first Newton pass are singular. The refusal names the column and the dependency", None, 0, None),
@@ -1040,6 +1068,9 @@ def landing_values(ctx):
     import re
     status = (ROOT / "docs" / "status.md").read_text()
     fp = (ROOT / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines()
+    # the figures of the landing page are the lines that three platforms print: the cases of JSON lines (names with `-jsonl`) are in the golden from the Mac only until the Linux runs
+    # print them too (docs/status.md says which); they are counted here when the golden is the same on every platform of the matrix
+    fp = [l for l in fp if "-jsonl" not in l.split("\t")[0]]
     fits = sum(1 for l in fp if l.split("\t")[1:2] == ["fit-exit"])
     m = re.search(r"agree on (\d+) fingerprint lines for (\d+) fits", status)
     if not m or (int(m.group(1)), int(m.group(2))) != (len(fp), fits):
@@ -1117,11 +1148,11 @@ def foot_html(rel):
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), pflow=lambda c: md_block(pflow_items(c)), qs=lambda c: md_block(qs_items(c)),
-                      catflow=lambda c: md_block(catflow_items(c)), refuse=lambda c: md_block(refuse_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)), bflow=lambda c: md_block(bflow_items(c)),
+                      catflow=lambda c: md_block(catflow_items(c)), refuse=lambda c: md_block(refuse_items(c)), sflow=lambda c: md_block(sflow_items(c)), hflow=lambda c: md_block(hflow_items(c)), kmflow=lambda c: md_block(kmflow_items(c)), jflow=lambda c: md_block(jflow_items(c)), splitflow=lambda c: md_block(splitflow_items(c)), trackflow=lambda c: md_block(track_items(c)), bflow=lambda c: md_block(bflow_items(c)),
                       agentio=agentio_md, authority=authority_md, **{"exit-codes": exit_codes}),
     "docs/guide.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             hero=hero, flow=lambda c: html_pre(flow_items(c)), pflow=lambda c: html_pre(pflow_items(c)), qs=lambda c: html_pre(qs_items(c)),
-                            catflow=lambda c: html_pre(catflow_items(c)), refuse=lambda c: html_pre(refuse_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)), bflow=lambda c: html_pre(bflow_items(c)),
+                            catflow=lambda c: html_pre(catflow_items(c)), refuse=lambda c: html_pre(refuse_items(c)), sflow=lambda c: html_pre(sflow_items(c)), hflow=lambda c: html_pre(hflow_items(c)), kmflow=lambda c: html_pre(kmflow_items(c)), jflow=lambda c: html_pre(jflow_items(c)), splitflow=lambda c: html_pre(splitflow_items(c)), trackflow=lambda c: html_pre(track_items(c)), bflow=lambda c: html_pre(bflow_items(c)),
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
 }

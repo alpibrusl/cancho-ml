@@ -177,7 +177,7 @@ bytes), `--output`, `--overwrite`, `--log`, `--format`. `verify` reads with the 
 
 ```
 {"schema":"ml.run.v1","id":"<64 hex>",
- "inputs":{"data":{"path":"iris_train.csv","bytes":N,"sha256":"..","rows":N},
+ "inputs":{"data":{"path":"iris_train.csv","bytes":N,"sha256":"..","rows":N[,"format":"jsonl","fields":"..","absent":"refuse"|"empty"]},
            "target":"virginica"|null,"task":"classification"|"regression"|"clustering",
            "plan":"<canonical plan text>","seed":0,"positive":null|N,"split":"none"|"holdout train=0.8 [stratify|group=C|time=C] seed=0",
            "drop":"..","float":"..","cat":"..","na_values":"..","reader":{"max_categories":64,"max_string_bytes":255,"max_pool_bytes":1048576,"max_cat_columns":128}|null,
@@ -189,7 +189,7 @@ bytes), `--output`, `--overwrite`, `--log`, `--format`. `verify` reads with the 
  "check":"<64 hex>"}
 ```
 
-(`drop`, `float`, `cat`, `na_values` are the strings as given, empty when absent; `reader` is null when `--cat` was not given. `sum_order` is null for the constant kinds.)
+(`format`, `fields` and `absent` are in `data` only for a fit of JSON lines (`--input-format jsonl|ndjson`, recorded as `jsonl`; `docs/jsonl.md` section 4): a record of a CSV has none of them and its id is the one it has always had. `path` is `-` and `bytes` and `sha256` are those of the bytes read when the training file was standard input. `drop`, `float`, `cat`, `na_values` are the strings as given, empty when absent; `reader` is null when `--cat` was not given. `sum_order` is null for the constant kinds.)
 
 `check` is the SHA-256 of every byte of the record before `,"check":"`; a reader recomputes it and the id, so a record that was edited by one byte is `ml.runs.damaged`. `metrics` is the metric object `eval` prints for the same rows: the **held-out rows** (chosen by the strategy of `split`) when `--split` was given (`"on":"held-out"`), else the **training rows** (`"on":"train"`, scored through the stored steps by the same
 code as `eval`). A constant model has `metrics` null (its summary, the mean or the classes, is in the answer of `fit`; scoring a constant on its training rows is `ml eval`).
@@ -217,7 +217,7 @@ All four go through the flag table, `introspect`, `skill`, the schemas and the m
 
 The columns that a fit read as `--drop`, `--float` or `--cat` are replayed from the lists of the record by position in the header of the training file, which the replay reads first. **Limit [choice]**: the replay of a
 column that carries one of these three flags needs its header position below 62 (a bit mask in the reader's configuration, because the reader's configuration is a plain structure that cannot hold a runtime
-string at the pinned compiler); a record that needs more is refused with `ml.runs.not-replayable` (detail: the column). Fits with such a flag on a column past the 62nd are not replayable by `verify`.
+string at the pinned compiler); a record that needs more is refused with `ml.runs.not-replayable` (detail: the column). A record of a fit of JSON lines is replayed from the recorded file read as the fit read it (the fields, the absent rule, the cat and drop columns as text); a record whose training file was standard input (`path` `-`) is refused with `ml.runs.not-replayable` (detail: `flag` `stdin`, `column` `-`), since there is no file to read again. Fits with such a flag on a column past the 62nd are not replayable by `verify`.
 
 The split of a replay is the split of the record for every strategy: the plain, the stratified, the group and the time holdout choose the same rows, because the replay uses the code of `fit` (`splitwire.holdout_sel`) with the strategy and the column of the text. A
 group or time column is found by its name in the header of the training file, so the limit of the 62nd position above does not apply to it. The model's SHA-256 is reproduced at 1 and at 8 threads for each strategy (`scripts/oracle_track.py --suite`, the cases `stratified`, `group` and `time`).

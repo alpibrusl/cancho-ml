@@ -217,6 +217,10 @@
         "--max-cells",
         "--max-line-bytes",
         "--max-bytes",
+        "--input-format",
+        "--fields",
+        "--absent",
+        "--max-json-nodes",
         "--track",
         "--max-out-of-range",
         "--log",
@@ -327,7 +331,15 @@
         "ml.runs.damaged",
         "ml.runs.data-changed",
         "ml.runs.model-differs",
-        "ml.runs.not-replayable"
+        "ml.runs.not-replayable",
+        "ml.jsonl.syntax",
+        "ml.jsonl.not-object",
+        "ml.jsonl.missing-field",
+        "ml.jsonl.not-scalar",
+        "ml.jsonl.duplicate-key",
+        "ml.jsonl.type-mismatch",
+        "ml.jsonl.mixed-kinds",
+        "ml.jsonl.too-many-nodes"
       ]
     },
     "repair": {
