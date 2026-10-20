@@ -1,0 +1,539 @@
+edition 5;
+
+module ml.idump;
+
+// `dump --model-file M [--tree I] [--max-nodes N]`: a tree or a forest as nodes, the coefficients of a linear or logistic model, the centroids of a k-means (docs/interpret.md section 4.3).
+// The file is decoded by the code `predict` uses (wireio.load_stored), so a damaged file is refused with the rule `predict` gives it before a field is read here. The node list is
+// built only after the number of nodes the payload states has been compared with --max-nodes, and that number is bounded by the bytes of the file.
+
+import std.buffer;
+import std.json;
+import std.math;
+import ml.est;
+import ml.fbits;
+import ml.fsio;
+import ml.interp;
+import ml.mdesc;
+import ml.mfile;
+import ml.paths;
+import ml.perm;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import ml.wireio;
+import pipeline.file;
+import pipeline.schema;
+import tree.model;
+import toolbox.fail;
+import toolbox.text;
+
+// the number of nodes `dump` prints when --max-nodes is not given, and the ceiling of the flag (the ceiling `fit` has)
+fn default_nodes() -> [] int {
+    return 10000;
+}
+
+fn node_ceiling() -> [] int {
+    return 4194304;
+}
+
+// ---------------------------------------------------------------- the text of a cell
+
+// the text a data cell of the raw column (type 0 int, 1 dec with `scale` digits, 2 float) would have for the value v, appended to `into`
+fn put_cell[&h](heap: &!h Heap, into: buffer.Buffer, ty: int, scale: int, v: float) -> [heap] buffer.Buffer {
+    var b = into;
+    if ty == 0 {
+        if interp.fabs(v) < 9.0e18 {
+            let iv = truncate(v);
+            if float_of(iv) == v {
+                if iv < 0 {
+                    b = buffer.push(heap, b, byte_of('-'));
+                    return buffer.push_nat(heap, b, 0 - iv);
+                }
+                return buffer.push_nat(heap, b, iv);
+            }
+        }
+        return interp.put_num(heap, b, v);
+    }
+    if ty == 1 && scale >= 1 && scale <= 18 {
+        var p = 1.0;
+        var q = 0;
+        while q < scale {
+            p = p * 10.0;
+            q = q + 1;
+        }
+        let t = v * p;
+        if interp.fabs(t) < 1125899906842624.0 {
+            var k = 0;
+            if t >= 0.0 {
+                k = truncate(t + 0.5);
+            } else {
+                k = 0 - truncate(0.0 - t + 0.5);
+            }
+            var a = k;
+            if k < 0 {
+                b = buffer.push(heap, b, byte_of('-'));
+                a = 0 - k;
+            }
+            var digits = buffer.push_nat(heap, buffer.empty(heap, 24), a);
+            var size = 0;
+            borrow digits as &dr in {
+                size = buffer.size(dr);
+            }
+            var zeros = scale + 1 - size;
+            var full = buffer.empty(heap, 24);
+            while zeros > 0 {
+                full = buffer.push(heap, full, byte_of('0'));
+                zeros = zeros - 1;
+            }
+            borrow digits as &dr in {
+                full = buffer.append(heap, full, buffer.bytes(dr));
+            }
+            buffer.drop(heap, digits);
+            borrow full as &fr in {
+                let all = buffer.bytes(fr);
+                let cut = len(all) - scale;
+                b = buffer.append(heap, b, all[0..cut]);
+                b = buffer.push(heap, b, byte_of('.'));
+                b = buffer.append(heap, b, all[cut..len(all)]);
+            }
+            buffer.drop(heap, full);
+            return b;
+        }
+    }
+    return interp.put_num(heap, b, v);
+}
+
+// ---------------------------------------------------------------- refusals
+
+fn out_of_range[&h](heap: &!h Heap, errs: fail.Errors, flag: &static [byte], value: int, lo: int, hi: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.param.out-of-range", "a numeric flag is below its minimum or above its ceiling", "the range is in the detail and in introspect limits");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    w = fail.detail_int(heap, w, "value", value);
+    w = fail.detail_int(heap, w, "min", lo);
+    w = fail.detail_int(heap, w, "max", hi);
+    return fail.add(heap, errs, w);
+}
+
+fn too_many_nodes[&h](heap: &!h Heap, errs: fail.Errors, nodes: int, max: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.limit.nodes", "the tree has more nodes than --max-nodes", "raise --max-nodes, up to 4194304");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "nodes", nodes);
+    w = fail.detail_int(heap, w, "max", max);
+    return fail.add(heap, errs, w);
+}
+
+fn over_ceiling[&h](heap: &!h Heap, errs: fail.Errors, value: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.limit.nodes", "--max-nodes is above the ceiling", "give --max-nodes up to 4194304");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "max", value);
+    w = fail.detail_int(heap, w, "ceiling", node_ceiling());
+    return fail.add(heap, errs, w);
+}
+
+fn unsupported[&h](heap: &!h Heap, errs: fail.Errors) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "ml.dump.unsupported-model", "the model is a constant or a boosted model, which has nothing to dump here", "dump prints a tree, a forest, a linear or logistic model and a k-means");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    return fail.add(heap, errs, w);
+}
+
+// ---------------------------------------------------------------- the models
+
+fn put_header[&h](heap: &!h Heap, w0: json.Writer, name: &static [byte], task: int, kind: int) -> [heap] json.Writer {
+    var w = json.put_key(heap, w0, "model");
+    w = json.put_string(heap, w, name);
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, wiredata.task_word(task));
+    w = json.put_key(heap, w, "kind");
+    return json.put_int(heap, w, kind);
+}
+
+fn put_name_line[&h, &n](heap: &!h Heap, into: buffer.Buffer, name: &n [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, into, name);
+}
+
+// The tree `ti` of the forest in the payload m, with the lineage of its columns. (payload, plain, the refusals so far)
+fn tree_dump[&h, &s, &l, &p](heap: &!h Heap, st: &s wireio.Stored, lin: &l interp.Lineage, m: &p [byte], ti: int, limit: int, errs: fail.Errors) -> [heap] (buffer.Buffer, buffer.Buffer, fail.Errors) {
+    let sc = wireio.stored_schema(st);
+    let task = fbits.get64(m, 20);
+    let trees = fbits.get64(m, 28);
+    let total = fbits.get64(m, 52);
+    var e = errs;
+    if ti >= trees {
+        e = out_of_range(heap, e, "tree", ti, 0, trees - 1);
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), e);
+    }
+    let lo = fbits.get64(m, 100 + 8 * ti);
+    let hi = fbits.get64(m, 100 + 8 * (ti + 1));
+    let n = hi - lo;
+    if n > limit {
+        e = too_many_nodes(heap, e, n, limit);
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), e);
+    }
+    // the depth of every node and the deepest: the children of a node come after it
+    var dep = box_slice(heap, n + 1, 0);
+    var maxd = 0;
+    borrow mut dep as &!dw in {
+        var i = 0;
+        while i < n {
+            let g = lo + i;
+            let d = contents(dw)[i];
+            if d > maxd {
+                maxd = d;
+            }
+            if fbits.get64(m, model.elem_at(3, trees, total, g)) >= 0 {
+                let l = fbits.get64(m, model.elem_at(6, trees, total, g));
+                let r = fbits.get64(m, model.elem_at(7, trees, total, g));
+                if l > i && l < n {
+                    contents(dw)[l] = d + 1;
+                }
+                if r > i && r < n {
+                    contents(dw)[r] = d + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    let name = est.name(wireio.stored_kind(st));
+    var w = json.writer(heap, 512);
+    var plain = buffer.append(heap, buffer.empty(heap, 256), "tree ");
+    plain = buffer.push_nat(heap, plain, ti);
+    plain = buffer.append(heap, plain, " of ");
+    plain = buffer.push_nat(heap, plain, trees);
+    plain = buffer.append(heap, plain, ": ");
+    plain = buffer.push_nat(heap, plain, n);
+    plain = buffer.append(heap, plain, " nodes, depth ");
+    plain = buffer.push_nat(heap, plain, maxd);
+    plain = buffer.push(heap, plain, byte_of(10));
+    w = json.begin_object(heap, w);
+    var tk = 1;
+    if task == 0 {
+        tk = 2;
+    }
+    w = put_header(heap, w, name, tk, 7);
+    w = json.put_key(heap, w, "trees");
+    w = json.put_int(heap, w, trees);
+    w = json.put_key(heap, w, "tree");
+    w = json.put_int(heap, w, ti);
+    w = json.put_key(heap, w, "nodes");
+    w = json.put_int(heap, w, n);
+    w = json.put_key(heap, w, "depth");
+    w = json.put_int(heap, w, maxd);
+    w = json.put_key(heap, w, "list");
+    w = json.begin_array(heap, w);
+    borrow dep as &dr in {
+        var i = 0;
+        while i < n {
+            let g = lo + i;
+            let feat = fbits.get64(m, model.elem_at(3, trees, total, g));
+            let na = fbits.get64(m, model.elem_at(8, trees, total, g));
+            let nb = fbits.get64(m, model.elem_at(9, trees, total, g));
+            let thr = fbits.decode(fbits.get64(m, model.elem_at(10, trees, total, g)));
+            let d = contents(dr)[i];
+            var rows = na;
+            if task == 0 {
+                rows = na + nb;
+            }
+            w = json.begin_object(heap, w);
+            w = json.put_key(heap, w, "id");
+            w = json.put_int(heap, w, i);
+            w = json.put_key(heap, w, "depth");
+            w = json.put_int(heap, w, d);
+            w = json.put_key(heap, w, "leaf");
+            var q = 0;
+            while q < d {
+                plain = buffer.append(heap, plain, "|   ");
+                q = q + 1;
+            }
+            plain = buffer.push_nat(heap, plain, i);
+            plain = buffer.push(heap, plain, byte_of(' '));
+            if feat < 0 {
+                w = json.put_bool(heap, w, true);
+                w = json.put_key(heap, w, "value");
+                w = verbs.put_double(heap, w, interp.bits(thr));
+                plain = buffer.append(heap, plain, "leaf ");
+                plain = interp.put_num(heap, plain, thr);
+            } else {
+                let l = fbits.get64(m, model.elem_at(6, trees, total, g));
+                let r = fbits.get64(m, model.elem_at(7, trees, total, g));
+                let dleft = fbits.get64(m, model.elem_at(5, trees, total, g));
+                w = json.put_bool(heap, w, false);
+                w = json.put_key(heap, w, "column");
+                w = text.put(heap, w, interp.l_name(lin, feat));
+                w = json.put_key(heap, w, "source");
+                let src = interp.l_src(lin, feat);
+                w = text.put(heap, w, schema.name(sc, src));
+                w = json.put_key(heap, w, "threshold");
+                w = verbs.put_double(heap, w, interp.bits(thr));
+                w = json.put_key(heap, w, "cell");
+                if interp.l_derived(lin, feat) || interp.l_scaled(lin, feat) {
+                    w = json.put_null(heap, w);
+                } else {
+                    var cb = put_cell(heap, buffer.empty(heap, 24), schema.type_of(sc, src), schema.scale_of(sc, src), thr);
+                    borrow cb as &cr in {
+                        w = json.put_string(heap, w, buffer.bytes(cr));
+                    }
+                    buffer.drop(heap, cb);
+                }
+                w = json.put_key(heap, w, "missing");
+                if dleft == 1 {
+                    w = json.put_string(heap, w, "left");
+                } else {
+                    w = json.put_string(heap, w, "right");
+                }
+                w = json.put_key(heap, w, "left");
+                w = json.put_int(heap, w, l);
+                w = json.put_key(heap, w, "right");
+                w = json.put_int(heap, w, r);
+                plain = buffer.append(heap, plain, interp.l_name(lin, feat));
+                plain = buffer.append(heap, plain, " < ");
+                plain = interp.put_num(heap, plain, thr);
+                plain = buffer.append(heap, plain, " -> left ");
+                plain = buffer.push_nat(heap, plain, l);
+                plain = buffer.append(heap, plain, ", right ");
+                plain = buffer.push_nat(heap, plain, r);
+                if dleft == 1 {
+                    plain = buffer.append(heap, plain, ", missing left");
+                } else {
+                    plain = buffer.append(heap, plain, ", missing right");
+                }
+            }
+            w = json.put_key(heap, w, "counts");
+            w = json.begin_array(heap, w);
+            w = json.put_int(heap, w, na);
+            plain = buffer.append(heap, plain, " [n=");
+            plain = buffer.push_nat(heap, plain, rows);
+            if task == 0 {
+                w = json.put_int(heap, w, nb);
+                plain = buffer.append(heap, plain, ": ");
+                plain = buffer.push_nat(heap, plain, na);
+                plain = buffer.push(heap, plain, byte_of('/'));
+                plain = buffer.push_nat(heap, plain, nb);
+            }
+            plain = buffer.append(heap, plain, "]\n");
+            w = json.end_array(heap, w);
+            w = json.put_key(heap, w, "rows");
+            w = json.put_int(heap, w, rows);
+            w = json.end_object(heap, w);
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, dep);
+    w = json.end_array(heap, w);
+    w = json.end_object(heap, w);
+    return (json.finish(w), plain, e);
+}
+
+// the stored coefficients of a linear or logistic model
+fn linear_dump[&h, &s, &l](heap: &!h Heap, st: &s wireio.Stored, lin: &l interp.Lineage, errs: fail.Errors) -> [heap] (buffer.Buffer, buffer.Buffer, fail.Errors) {
+    let sc = wireio.stored_schema(st);
+    let wv = wireio.stored_weights(st);
+    let w = interp.lineage_width(lin);
+    let key = wireio.stored_kind(st);
+    var o = json.writer(heap, 256);
+    var plain = buffer.append(heap, buffer.empty(heap, 128), "intercept ");
+    plain = interp.put_num(heap, plain, wv[w]);
+    plain = buffer.push(heap, plain, byte_of(10));
+    o = json.begin_object(heap, o);
+    o = put_header(heap, o, est.name(key), wireio.stored_task(st), est.kind_of(key));
+    o = json.put_key(heap, o, "intercept");
+    o = verbs.put_double(heap, o, interp.bits(wv[w]));
+    o = json.put_key(heap, o, "coefficients");
+    o = json.begin_array(heap, o);
+    var j = 0;
+    while j < w {
+        o = json.begin_object(heap, o);
+        o = json.put_key(heap, o, "column");
+        o = text.put(heap, o, interp.l_name(lin, j));
+        o = json.put_key(heap, o, "source");
+        o = text.put(heap, o, schema.name(sc, interp.l_src(lin, j)));
+        o = json.put_key(heap, o, "coefficient");
+        o = verbs.put_double(heap, o, interp.bits(wv[j]));
+        o = json.end_object(heap, o);
+        plain = buffer.append(heap, plain, interp.l_name(lin, j));
+        plain = buffer.append(heap, plain, " ");
+        plain = interp.put_num(heap, plain, wv[j]);
+        plain = buffer.push(heap, plain, byte_of(10));
+        j = j + 1;
+    }
+    o = json.end_array(heap, o);
+    o = json.end_object(heap, o);
+    return (json.finish(o), plain, errs);
+}
+
+// the centroids of a k-means, by column the model sees and, when every step that made the column is a scaling, in the units of the raw column
+fn kmeans_dump[&h, &s, &l, &p](heap: &!h Heap, st: &s wireio.Stored, lin: &l interp.Lineage, m: &p [byte], errs: fail.Errors) -> [heap] (buffer.Buffer, buffer.Buffer, fail.Errors) {
+    let sc = wireio.stored_schema(st);
+    let k = fbits.get64(m, 12);
+    let d = fbits.get64(m, 20);
+    var o = json.writer(heap, 256);
+    var plain = buffer.append(heap, buffer.empty(heap, 128), "kmeans: ");
+    plain = buffer.push_nat(heap, plain, k);
+    plain = buffer.append(heap, plain, " clusters\n");
+    o = json.begin_object(heap, o);
+    o = put_header(heap, o, "kmeans", 4, 6);
+    o = json.put_key(heap, o, "k");
+    o = json.put_int(heap, o, k);
+    o = json.put_key(heap, o, "centroids");
+    o = json.begin_array(heap, o);
+    var c = 0;
+    while c < k {
+        o = json.begin_object(heap, o);
+        o = json.put_key(heap, o, "cluster");
+        o = json.put_int(heap, o, c);
+        o = json.put_key(heap, o, "values");
+        o = json.begin_array(heap, o);
+        plain = buffer.append(heap, plain, "cluster ");
+        plain = buffer.push_nat(heap, plain, c);
+        plain = buffer.push(heap, plain, byte_of(':'));
+        var j = 0;
+        while j < d && j < interp.lineage_width(lin) {
+            let z = fbits.decode(fbits.get64(m, 28 + 8 * (c * d + j)));
+            o = json.begin_object(heap, o);
+            o = json.put_key(heap, o, "column");
+            o = text.put(heap, o, interp.l_name(lin, j));
+            o = json.put_key(heap, o, "source");
+            o = text.put(heap, o, schema.name(sc, interp.l_src(lin, j)));
+            o = json.put_key(heap, o, "value");
+            o = verbs.put_double(heap, o, interp.bits(z));
+            o = json.put_key(heap, o, "raw");
+            if interp.l_derived(lin, j) {
+                o = json.put_null(heap, o);
+            } else {
+                o = verbs.put_double(heap, o, interp.bits(z * interp.l_div(lin, j) + interp.l_off(lin, j)));
+            }
+            o = json.end_object(heap, o);
+            plain = buffer.push(heap, plain, byte_of(' '));
+            plain = buffer.append(heap, plain, interp.l_name(lin, j));
+            plain = buffer.push(heap, plain, byte_of('='));
+            plain = interp.put_num(heap, plain, z);
+            j = j + 1;
+        }
+        plain = buffer.push(heap, plain, byte_of(10));
+        o = json.end_array(heap, o);
+        o = json.end_object(heap, o);
+        c = c + 1;
+    }
+    o = json.end_array(heap, o);
+    o = json.end_object(heap, o);
+    return (json.finish(o), plain, errs);
+}
+
+// the dump of a decoded model: (payload, plain, errors); an empty payload when it was refused
+fn dump_stored[&h, &s](heap: &!h Heap, st: &s wireio.Stored, rq: perm.Req, errs: fail.Errors) -> [heap] (buffer.Buffer, buffer.Buffer, fail.Errors) {
+    let kind = est.kind_of(wireio.stored_kind(st));
+    var e = errs;
+    if kind == 8 {
+        // a boosted model has trees but no dump of them yet (docs/interpret.md section 7): a refusal, never the linear dump of a payload that is not a coefficient vector
+        e = unsupported(heap, e);
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), e);
+    }
+    if kind != 7 {
+        if rq.tree_given {
+            e = wiredata.conflict(heap, e, "tree", "only a tree or a forest has trees to choose from");
+        }
+        if rq.max_nodes_given {
+            e = wiredata.conflict(heap, e, "max-nodes", "only a tree or a forest has nodes to bound");
+        }
+        var none = true;
+        borrow e as &er in {
+            none = fail.count(er) == 0;
+        }
+        if !none {
+            return (buffer.empty(heap, 1), buffer.empty(heap, 1), e);
+        }
+    }
+    if kind == 7 {
+        var ti = 0;
+        if rq.tree_given {
+            ti = rq.tree;
+        }
+        var limit = default_nodes();
+        if rq.max_nodes_given {
+            limit = rq.max_nodes;
+            if limit > node_ceiling() {
+                e = over_ceiling(heap, e, limit);
+                return (buffer.empty(heap, 1), buffer.empty(heap, 1), e);
+            }
+        }
+        let lin = interp.lineage_of(heap, st);
+        var body = buffer.empty(heap, 1);
+        var plain = buffer.empty(heap, 1);
+        borrow lin as &lr in {
+            let (b2, p2, e2) = tree_dump(heap, st, lr, file.model_bytes(wireio.stored_file(st)), ti, limit, e);
+            buffer.drop(heap, body);
+            buffer.drop(heap, plain);
+            body = b2;
+            plain = p2;
+            e = e2;
+        }
+        interp.drop_lineage(heap, lin);
+        return (body, plain, e);
+    }
+    let lin = interp.lineage_of(heap, st);
+    var body = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    borrow lin as &lr in {
+        if kind == 6 {
+            let (b2, p2, e2) = kmeans_dump(heap, st, lr, file.model_bytes(wireio.stored_file(st)), e);
+            buffer.drop(heap, body);
+            buffer.drop(heap, plain);
+            body = b2;
+            plain = p2;
+            e = e2;
+        } else {
+            let (b2, p2, e2) = linear_dump(heap, st, lr, e);
+            buffer.drop(heap, body);
+            buffer.drop(heap, plain);
+            body = b2;
+            plain = p2;
+            e = e2;
+        }
+    }
+    interp.drop_lineage(heap, lin);
+    return (body, plain, e);
+}
+
+pub fn run[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], model: &pm paths.Rp, rq: perm.Req, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = errs;
+    let (data, st, aux) = fsio.read_model(heap, fs, root, model, o.max_bytes);
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if st != 0 {
+        e = mdesc.read_problem(heap, e, st, aux, o.max_bytes, paths.shown(model));
+        buffer.drop(heap, data);
+        return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+    }
+    borrow data as &dr in {
+        let bytes_of = buffer.bytes(dr);
+        if wireio.planned_file(bytes_of) {
+            let (stored, ok, e2) = wireio.load_stored(heap, bytes_of, paths.shown(model), e);
+            e = e2;
+            if ok {
+                borrow stored as &sr in {
+                    let (p3, t3, e3) = dump_stored(heap, sr, rq, e);
+                    buffer.drop(heap, payload);
+                    buffer.drop(heap, plain);
+                    payload = p3;
+                    plain = t3;
+                    e = e3;
+                }
+            }
+            wireio.drop_stored(heap, stored);
+        } else {
+            let (mo, ds, da) = mfile.decode(heap, bytes_of);
+            if ds != 0 {
+                e = verbs.model_error(heap, e, ds, da, paths.shown(model));
+            } else {
+                e = unsupported(heap, e);
+            }
+            mfile.drop_model(heap, mo);
+        }
+    }
+    buffer.drop(heap, data);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+}

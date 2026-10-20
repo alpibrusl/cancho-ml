@@ -117,8 +117,13 @@ pub fn stream_boost_validation() -> [] int {
     return 10;
 }
 
+// the shuffle of one raw column by `ml importance --data` (docs/interpret.md section 3.4), derive(derive(derive(seed, 11), repeat), column)
+pub fn stream_permutation() -> [] int {
+    return 11;
+}
+
 pub fn stream_count() -> [] int {
-    return 10;
+    return 11;
 }
 
 // ---- section tags of the CML1 file (docs/design.md section 4.1; only tools/ml/mfile.cho and lib/pipeline/file.cho write them)

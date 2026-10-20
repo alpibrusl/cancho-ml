@@ -148,7 +148,7 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
             }
         }
     }
-    if verb == 1 || verb == 3 || verb == 5 {
+    if verb == 1 || verb == 3 || verb == 5 || verb == 7 {
         if argv.has(src, "threads") {
             let t = argv.nat(src, "threads");
             if t < 1 || t > 64 {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The cross-platform determinism gate (docs/ci.md section 2): the fingerprint of `ml` against a committed golden.
 
-The fingerprint is one tab-separated line per artefact, for 28 fits of every model kind on the bundled example data (docs/examples/data):
+The fingerprint is one tab-separated line per artefact, for 28 fits of every model kind on the bundled example data (docs/examples/data), two more fits of JSON lines (docs/jsonl.md) and two more answers (the permutation importance of a forest, the dump of a tree; docs/interpret.md):
 `case  fit-exit  rc`, `case  model-file  sha256`, `case  predict  rc  sha256`, `case  eval  rc  sha256`. A model file is hashed whole; a
 predict or eval answer is hashed as the bytes the program printed. The golden, docs/bench/xplat_fp.txt, is those 112 lines (the first 88 written when the five
 older models were the whole list, the 24 of the boosted model appended) as written on
@@ -161,6 +161,14 @@ def fingerprint(ml, data, ml_predict=None):
                     rc2, so2 = run(ml_predict, work, args)
                     if (rc2, so2) != (rc, so):
                         failures.append("%s: ml-predict %s differs from ml (exit %d against %d, %d bytes against %d)" % (name, what, rc2, rc, len(so2), len(so)))
+        # the interpretability verbs (docs/interpret.md), appended after the fits: the answer of `importance` with a permutation run on the test file of a forest fitted above
+        # (the stream, the shuffle, the steps, the metric and the tables all reach the bytes), and the dump of a tree fitted above; one line each, `case verb rc sha256`
+        for name, args in (("importance-forest-cancer", ["importance", "--model-file", "forest-cancer-t1.ml", "--data", "breast_cancer_test.csv", "--metric", "roc_auc", "--repeats", "3", "--seed", "2"]),
+                           ("dump-tree-diabetes", ["dump", "--model-file", "tree-diabetes-t1.ml", "--max-nodes", "100000"])):
+            rc, so = run(ml, work, args)
+            lines.append("%s\t%s\t%d\t%s" % (name, args[0], rc, sha(so)))
+            if rc != 0:
+                failures.append("%s: %s exited %d: %s" % (name, args[0], rc, so[:300].decode("utf-8", "replace")))
     finally:
         shutil.rmtree(work, ignore_errors=True)
     failures += thread_faults(lines)
@@ -351,6 +359,12 @@ def mutants(a, lines, failures):
         w = wrapper("ml-nopred", "predict prints a changed answer", "*predict*", "echo '{\"ok\":true}'; exit 0", real)
         l2, f2 = fingerprint(w, data)
         expect_fail("a predict answer differs", check(l2, f2, golden), "diff")
+        w = wrapper("ml-noimportance", "importance prints another answer", "*importance*", "echo '{\"ok\":true}'; exit 0", real)
+        l2, f2 = fingerprint(w, data)
+        expect_fail("an importance answer differs", check(l2, f2, golden), "diff")
+        w = wrapper("ml-nodump", "dump prints another answer", "*dump*", "echo '{\"ok\":true}'; exit 0", real)
+        l2, f2 = fingerprint(w, data)
+        expect_fail("a dump answer differs", check(l2, f2, golden), "diff")
         if os.path.isfile(real_p):
             w = wrapper("ml-predict-other", "ml-predict prints another answer", "*predict*", "echo '{\"ok\":true}'; exit 0", real_p)
             l2, f2 = fingerprint(real, data, w)

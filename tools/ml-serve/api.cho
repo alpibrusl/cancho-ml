@@ -325,6 +325,9 @@ fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: 
     s = schema.add_field(heap, s, model_obj, "task", text, true);
     s = schema.add_field(heap, s, model_obj, "plan", text, true);
     s = schema.add_field(heap, s, model_obj, "file", file_obj, true);
+    // the table of docs/interpret.md that needs no data (an object, or null for a constant model and a k-means)
+    let (s15b, importance) = schema.new_any(heap, s);
+    s = schema.add_field(heap, s15b, model_obj, "importance", importance, false);
     // the problem
     let (s17, status) = schema.new_int(heap, s, 100, 599);
     let (s18, one_error) = schema.new_object(heap, s17, true);

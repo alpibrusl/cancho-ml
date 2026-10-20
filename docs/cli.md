@@ -327,7 +327,7 @@ issue for cancho-tools, not worked around by copying the module.
 
 ## 9. The MCP server
 
-`ml-mcp` is built ([mcp.md](mcp.md)). It derives its ten tools from the flag table as this section proposed (the verbs and their flags from `allowed(verb)` and the usage lines, `nat` as an integer with the ceiling of `introspect.limits`, `choice` as an enum, `bool` as a boolean, `text` and `path` as strings, the output schema from `schemas/ml.v1.json`), and it differs from the proposal in three places. A call runs the code of `ml` in the server's process on a **packed command line** (`tools/ml/argv.cho`) instead of through a child process, so the argv a path flag needs in two arguments is the argv the server builds; the library reads the command line through that module and not through `Args`; and the result is the document `ml` prints, as `structuredContent`, with `isError` true for a refusal and the exit code in `_meta`. The gates are in [mcp.md](mcp.md) section 8: the schema of every tool equal to a projection of the flag table (`scripts/check_mcp_tools.py`), the answer of every fixture of the command line a call can say equal to the command line's answer byte for byte, and mutants of the server.
+`ml-mcp` is built ([mcp.md](mcp.md)). It derives its twelve tools from the flag table as this section proposed (the verbs and their flags from `allowed(verb)` and the usage lines, `nat` as an integer with the ceiling of `introspect.limits`, `choice` as an enum, `bool` as a boolean, `text` and `path` as strings, the output schema from `schemas/ml.v1.json`), and it differs from the proposal in three places. A call runs the code of `ml` in the server's process on a **packed command line** (`tools/ml/argv.cho`) instead of through a child process, so the argv a path flag needs in two arguments is the argv the server builds; the library reads the command line through that module and not through `Args`; and the result is the document `ml` prints, as `structuredContent`, with `isError` true for a refusal and the exit code in `_meta`. The gates are in [mcp.md](mcp.md) section 8: the schema of every tool equal to a projection of the flag table (`scripts/check_mcp_tools.py`), the answer of every fixture of the command line a call can say equal to the command line's answer byte for byte, and mutants of the server.
 
 ## 10. Open questions
 
@@ -342,3 +342,26 @@ issue for cancho-tools, not worked around by copying the module.
 5. **The package's `describe` text** (section 8): upstream issues to file, not filed from here.
 6. **A second machine.** D2 (same bytes on Mac aarch64 and Linux x86-64) is claimed by construction (no libm, no `fma`) and tested only
    on this Mac. The Linux run is the gram box's job and was not done here.
+
+## 11. Explaining a model: `importance` and `dump`
+
+Two verbs of `ml` (not of `ml-predict` or `ml-serve`, whose tables and authority rows do not change) read a model file and change nothing. The design, the definitions and the gates are `docs/interpret.md`.
+
+```
+ml [FLAGS] importance --model-file M [--data FILE [--metric NAME] [--repeats R] [--seed N] [--drop NAMES] [--max-work N]] [--threads N]
+ml [FLAGS] dump       --model-file M [--tree I] [--max-nodes N]
+```
+
+| flag | verbs | meaning |
+|---|---|---|
+| `--data FILE` | importance | the CSV (with the target column) on which the permutation importance is measured; without it only the table that needs no data is printed |
+| `--metric NAME` | importance | `rmse` (default), `mae`, `r2` for a regression; `roc_auc` (default), `accuracy`, `precision`, `recall`, `f1`, `log_loss` for a classification; `ml.importance.bad-metric` otherwise |
+| `--repeats R` | importance | permutations per column, 1 to 100, default 5 (`ml.param.out-of-range` outside) |
+| `--seed N` | importance | the seed of the permutation streams (stream kind 11) |
+| `--max-work N` | importance | the most row evaluations (rows times columns times repeats), default 4,294,967,296: `ml.limit.work` past it, checked before the first permutation |
+| `--tree I` | dump | the tree of a forest to print, from 0; `ml.param.out-of-range` at or above the number of trees; `args.conflict` for a model that has no trees |
+| `--max-nodes N` | dump | refuse (`ml.limit.nodes`) a tree with more nodes, before the list is built; default 10,000, ceiling 4,194,304 |
+
+A flag that only means something with `--data` (`--metric`, `--repeats`, `--seed`, `--drop`, `--max-work`) is `args.conflict` without it. `--threads` is accepted, checked and unused: nothing in `importance` is threaded, and the
+bytes are the same at every value. New rule tags, all exit 8: `ml.importance.unsupported-model`, `ml.importance.no-scale`, `ml.importance.bad-metric`, `ml.importance.undefined-metric`, `ml.importance.too-few-rows`,
+`ml.limit.work`, `ml.dump.unsupported-model` (`design.md` section 8). `--format text` prints the tables as lines, best rank first, and a tree as one indented line per node.

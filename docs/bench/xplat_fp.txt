@@ -118,3 +118,5 @@ forest-pets-jsonl-cat	fit-exit	0
 forest-pets-jsonl-cat	model-file	8aad054cc9a7887a988a400d54b19838419cfc482360d6468a3eead164b3921a
 forest-pets-jsonl-cat	predict	0	b282f25a54c0d43034b023d3427a6cd9990b706fcdb5eb839bec927db0408b47
 forest-pets-jsonl-cat	eval	0	d9b102fe0040735ee735d5baa47ba51b685d11a883e1bc8d7bb22cf087753579
+importance-forest-cancer	importance	0	65a05f1034311e5143f3d7d5746920fb723fc56bf7179b90c88404eb7240dfcb
+dump-tree-diabetes	dump	0	c70de98a131e4b1455628c5118ba0810a070068d4ebd125b2218cbc8721760f6

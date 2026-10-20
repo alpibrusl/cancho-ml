@@ -238,7 +238,14 @@
         "ml.jsonl.duplicate-key",
         "ml.jsonl.type-mismatch",
         "ml.jsonl.mixed-kinds",
-        "ml.jsonl.too-many-nodes"
+        "ml.jsonl.too-many-nodes",
+        "ml.importance.unsupported-model",
+        "ml.importance.no-scale",
+        "ml.importance.bad-metric",
+        "ml.importance.undefined-metric",
+        "ml.importance.too-few-rows",
+        "ml.limit.work",
+        "ml.dump.unsupported-model"
       ]
     }
   }

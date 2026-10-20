@@ -127,6 +127,11 @@ for fn, name in (("kind_train_test", "stream_train_test"), ("kind_kfold", "strea
         fail("lib/metrics/splits.cho %s is not the registry's %s" % (fn, name))
 if consts("lib/models/kmeans/kmeans.cho").get("kind") != K["stream_kmeans"]:
     fail("lib/models/kmeans/kmeans.cho kind() is not the registry's stream_kmeans")
+# the permutation of `ml importance` (docs/interpret.md 3.4): the code draws from the registry's kind and the Python oracle writes the same number
+if "kinds.stream_permutation()" not in read("tools/ml/perm.cho"):
+    fail("tools/ml/perm.cho does not take its stream from kinds.stream_permutation()")
+if "STREAM_PERMUTATION = %d\n" % K["stream_permutation"] not in read("scripts/oracle_interp.py"):
+    fail("scripts/oracle_interp.py STREAM_PERMUTATION is not the registry's stream_permutation (%d)" % K["stream_permutation"])
 oracle = read("scripts/oracle_metrics.py")
 for kind, where in ((K["stream_train_test"], "py_train_test"), (K["stream_kfold"], "py_kfold"), (K["stream_stratified"], "py_strat")):
     body = oracle.split("def %s" % where)[1].split("\ndef ")[0]

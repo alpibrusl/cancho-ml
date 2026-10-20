@@ -275,7 +275,7 @@ class Hostile(unittest.TestCase):
         self.assertIn("result", c.read())
         c.write_slowly(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
         c.write_slowly((json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}) + "\n").encode())
-        self.assertEqual(len(c.read()["result"]["tools"]), 9)
+        self.assertEqual(len(c.read()["result"]["tools"]), 11)
         self.sb.write("m.csv", "id,x,y\n1,2.5,10\n2,3.5,20\n")
         c.write_slowly((json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "describe", "arguments": {"model-file": "absent.cml"}}}) + "\n").encode(), 3)
         r = c.read()

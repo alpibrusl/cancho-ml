@@ -13,9 +13,11 @@ import ml.cfit;
 import ml.cv;
 import ml.est;
 import ml.fsio;
+import ml.idump;
 import ml.logrec;
 import ml.mdesc;
 import ml.paths;
+import ml.perm;
 import ml.runs;
 import ml.spec;
 import ml.splitspec;
@@ -95,6 +97,14 @@ pub fn execute[&h, &f, &r, &pp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(
     }
     if verb == 6 {
         return (runs.run(heap, src, fs, root, ps.file, argv.operand(src, 1), argv.operand_or_empty(src, 3), argv.operand_or_empty(src, 4), o, e3, lg), log_ok);
+    }
+    if verb == 7 {
+        let rq = perm.request(src);
+        return (perm.run(heap, src, fs, root, ps.datap, ps.model, rq, o, e3, lg), log_ok);
+    }
+    if verb == 8 {
+        let rq = perm.request(src);
+        return (idump.run(heap, fs, root, ps.model, rq, o, e3, lg), log_ok);
     }
     return (wireio.eval(heap, src, fs, root, ps.file, ps.model, ps.trackp, o, sp, e3, lg), log_ok);
 }

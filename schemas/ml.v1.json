@@ -222,6 +222,10 @@
         "--absent",
         "--max-json-nodes",
         "--track",
+        "--data",
+        "--metric",
+        "--tree",
+        "--max-work",
         "--max-out-of-range",
         "--log",
         "--log-max-bytes",
@@ -339,7 +343,14 @@
         "ml.jsonl.duplicate-key",
         "ml.jsonl.type-mismatch",
         "ml.jsonl.mixed-kinds",
-        "ml.jsonl.too-many-nodes"
+        "ml.jsonl.too-many-nodes",
+        "ml.importance.unsupported-model",
+        "ml.importance.no-scale",
+        "ml.importance.bad-metric",
+        "ml.importance.undefined-metric",
+        "ml.importance.too-few-rows",
+        "ml.limit.work",
+        "ml.dump.unsupported-model"
       ]
     },
     "repair": {
@@ -4288,6 +4299,218 @@
                 "max_bytes"
               ],
               "additionalProperties": false
+            },
+            "importance": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "const": "standardised_coefficient"
+                    },
+                    "available": {
+                      "const": true
+                    },
+                    "measure": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "source": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "coefficient": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "std": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "std_source": {
+                            "enum": [
+                              "scale",
+                              "provenance"
+                            ]
+                          },
+                          "standardised": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "importance": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "rank": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "required": [
+                          "column",
+                          "source",
+                          "coefficient",
+                          "std",
+                          "std_source",
+                          "standardised",
+                          "importance",
+                          "rank"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "available",
+                    "measure",
+                    "total",
+                    "listed",
+                    "truncated",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "const": "impurity_decrease"
+                    },
+                    "available": {
+                      "const": true
+                    },
+                    "measure": {
+                      "type": "string"
+                    },
+                    "trees": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "total": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "source": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "importance": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "rank": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "splits": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "split_rows": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "column",
+                          "source",
+                          "importance",
+                          "rank",
+                          "splits",
+                          "split_rows"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "available",
+                    "measure",
+                    "trees",
+                    "total",
+                    "listed",
+                    "truncated",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "const": "standardised_coefficient"
+                    },
+                    "available": {
+                      "const": false
+                    },
+                    "reason": {
+                      "const": "ml.importance.no-scale"
+                    },
+                    "measure": {
+                      "type": "string"
+                    },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "missing": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/text_or_bytes"
+                      }
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "available",
+                    "reason",
+                    "measure",
+                    "listed",
+                    "truncated",
+                    "missing"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -4306,7 +4529,650 @@
             "classes",
             "positive",
             "output",
-            "limits"
+            "limits",
+            "importance"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "enum": [
+                "linear",
+                "logistic",
+                "tree",
+                "forest"
+              ]
+            },
+            "task": {
+              "enum": [
+                "regression",
+                "classification"
+              ]
+            },
+            "kind": {
+              "enum": [
+                4,
+                5,
+                7
+              ]
+            },
+            "importance": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "const": "standardised_coefficient"
+                    },
+                    "available": {
+                      "const": true
+                    },
+                    "measure": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "source": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "coefficient": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "std": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "std_source": {
+                            "enum": [
+                              "scale",
+                              "provenance"
+                            ]
+                          },
+                          "standardised": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "importance": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "rank": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "required": [
+                          "column",
+                          "source",
+                          "coefficient",
+                          "std",
+                          "std_source",
+                          "standardised",
+                          "importance",
+                          "rank"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "available",
+                    "measure",
+                    "total",
+                    "listed",
+                    "truncated",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "const": "impurity_decrease"
+                    },
+                    "available": {
+                      "const": true
+                    },
+                    "measure": {
+                      "type": "string"
+                    },
+                    "trees": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "total": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "source": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "importance": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "rank": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "splits": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "split_rows": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "column",
+                          "source",
+                          "importance",
+                          "rank",
+                          "splits",
+                          "split_rows"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "available",
+                    "measure",
+                    "trees",
+                    "total",
+                    "listed",
+                    "truncated",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "const": "standardised_coefficient"
+                    },
+                    "available": {
+                      "const": false
+                    },
+                    "reason": {
+                      "const": "ml.importance.no-scale"
+                    },
+                    "measure": {
+                      "type": "string"
+                    },
+                    "listed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "missing": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/text_or_bytes"
+                      }
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "available",
+                    "reason",
+                    "measure",
+                    "listed",
+                    "truncated",
+                    "missing"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "permutation": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "metric": {
+                      "enum": [
+                        "rmse",
+                        "mae",
+                        "r2",
+                        "roc_auc",
+                        "accuracy",
+                        "precision",
+                        "recall",
+                        "f1",
+                        "log_loss"
+                      ]
+                    },
+                    "direction": {
+                      "enum": [
+                        "loss",
+                        "score"
+                      ]
+                    },
+                    "repeats": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "seed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "baseline": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "importance": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "std": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "rank": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "required": [
+                          "column",
+                          "importance",
+                          "std",
+                          "rank"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "metric",
+                    "direction",
+                    "repeats",
+                    "seed",
+                    "rows",
+                    "baseline",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "kind",
+            "importance",
+            "permutation"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "enum": [
+                "tree",
+                "forest"
+              ]
+            },
+            "task": {
+              "enum": [
+                "regression",
+                "classification"
+              ]
+            },
+            "kind": {
+              "const": 7
+            },
+            "trees": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tree": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nodes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "depth": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "list": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "depth": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "leaf": {
+                        "const": true
+                      },
+                      "value": {
+                        "type": "string",
+                        "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                      },
+                      "counts": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "minItems": 1,
+                        "maxItems": 2
+                      },
+                      "rows": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "depth",
+                      "leaf",
+                      "value",
+                      "counts",
+                      "rows"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "depth": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "leaf": {
+                        "const": false
+                      },
+                      "column": {
+                        "$ref": "#/$defs/text_or_bytes"
+                      },
+                      "source": {
+                        "$ref": "#/$defs/text_or_bytes"
+                      },
+                      "threshold": {
+                        "type": "string",
+                        "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                      },
+                      "cell": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "missing": {
+                        "enum": [
+                          "left",
+                          "right"
+                        ]
+                      },
+                      "left": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "right": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "counts": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "minItems": 1,
+                        "maxItems": 2
+                      },
+                      "rows": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "depth",
+                      "leaf",
+                      "column",
+                      "source",
+                      "threshold",
+                      "cell",
+                      "missing",
+                      "left",
+                      "right",
+                      "counts",
+                      "rows"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "kind",
+            "trees",
+            "tree",
+            "nodes",
+            "depth",
+            "list"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "enum": [
+                "linear",
+                "logistic"
+              ]
+            },
+            "task": {
+              "enum": [
+                "regression",
+                "classification"
+              ]
+            },
+            "kind": {
+              "enum": [
+                4,
+                5
+              ]
+            },
+            "intercept": {
+              "type": "string",
+              "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+            },
+            "coefficients": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "column": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  },
+                  "source": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  },
+                  "coefficient": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  }
+                },
+                "required": [
+                  "column",
+                  "source",
+                  "coefficient"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "kind",
+            "intercept",
+            "coefficients"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "const": "kmeans"
+            },
+            "task": {
+              "const": "clustering"
+            },
+            "kind": {
+              "const": 6
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "centroids": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "cluster": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "values": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "column": {
+                          "$ref": "#/$defs/text_or_bytes"
+                        },
+                        "source": {
+                          "$ref": "#/$defs/text_or_bytes"
+                        },
+                        "value": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        "raw": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "column",
+                        "source",
+                        "value",
+                        "raw"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "cluster",
+                  "values"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "kind",
+            "k",
+            "centroids"
           ],
           "additionalProperties": false
         },

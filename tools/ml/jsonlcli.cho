@@ -426,7 +426,7 @@ pub fn input_into[&h, &cl, &f, &r](heap: &!h Heap, src: &cl [byte], table: &stat
             }
         }
         if fl.code == 0 {
-            let app.Paths { file, model, out, logp, planp, trackp } = cur;
+            let app.Paths { file, model, out, logp, planp, trackp, datap } = cur;
             var nf = paths.absent(heap);
             borrow csv as &cr in {
                 borrow shown as &sr2 in {
@@ -443,7 +443,7 @@ pub fn input_into[&h, &cl, &f, &r](heap: &!h Heap, src: &cl [byte], table: &stat
                 buffer.drop(heap, dg);
             }
             paths.drop(heap, file);
-            cur = app.Paths { file: nf, model: model, out: out, logp: logp, planp: planp, trackp: trackp };
+            cur = app.Paths { file: nf, model: model, out: out, logp: logp, planp: planp, trackp: trackp, datap: datap };
         }
         buffer.drop(heap, csv);
         buffer.drop(heap, shown);

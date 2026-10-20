@@ -127,6 +127,65 @@ $ ml predict --model-file iris-lr.ml --max-out-of-range 0 iris_test.csv
 ```
 <!-- /gen:trackflow -->
 
+## Explain a model
+
+A model that cannot be explained can only be trusted by its score. `ml importance` says which columns a model relies on, and `ml dump` prints the model itself; neither fits or changes anything. The design and its gates are in [docs/interpret.md](docs/interpret.md).
+
+**Linear and logistic models** get the standardised coefficients: the stored coefficient times the standard deviation of the column the model sees (`1.0` for a column the plan standardised, the deviation of the training column that the provenance section stores otherwise). The importance of a column is its share of the sum of the absolute values. A column with no stored deviation (a file fitted before run tracking, or a column an encoder made) is refused with `ml.importance.no-scale`.
+
+**Trees and forests** need nothing the file does not hold: every node stores the rows that reached it (the class counts of a classification), so the impurity decrease of every split, the quantity scikit-learn calls `feature_importances_`, is computed from the model file alone. The model file does not change. How often and how high a feature splits (`splits`, `split_rows`) is printed beside it under its own names, because it is not an importance.
+
+**Permutation importance** (`--data FILE`) measures what the model loses on held-out rows when one raw column is shuffled among them and the stored steps are applied again: the metric (`--metric`, a loss or a score, the sign says which) before and after, the mean and the standard deviation over `--repeats`. The shuffle of a column is drawn from the stream `derive(derive(derive(seed, 11), repeat), column)`, so the thread count, the order of the columns of the file and the order of the loop never change a number; a missing cell travels with its row.
+
+`describe` and the `GET /model` of `ml-serve` carry the table that needs no data (`importance`). `ml dump` prints a tree (or the I-th tree of a forest, `--tree I`) with the split, the side a missing cell takes, the rows and the counts of every node, bounded by `--max-nodes`; it prints the coefficients of a linear model and the centroids of a k-means.
+
+<!-- gen:interpflow -->
+```console
+# A linear model fitted on standardised columns: the coefficient is the effect of one standard deviation, and the importance is its share of the sum
+$ ml --format text importance --model-file iris-lin.ml
+standardised_coefficient total 1.0
+1. virginica  importance 0.392935687224293  coefficient 0.1980790949064484  std 1.0
+2. petal_length_cm  importance 0.3045127142597721  coefficient 0.1535050258584721  std 1.0
+3. sepal_width_cm  importance 0.2455067776252507  coefficient 0.12376010091862648  std 1.0
+4. sepal_length_cm  importance 0.057044820890684196  coefficient -0.02875632542044302  std 1.0
+# A forest on iris with a column of noise among the features: the impurity decrease is read from the counts the model file stores, which count the rows the trees were grown on, so the noise column keeps a share
+$ ml --format text importance --model-file iris-noise.ml
+impurity_decrease total 1.0 trees 50
+1. petal_width_cm  importance 0.41172030792715186  splits 67  rows 2821
+2. petal_length_cm  importance 0.3446184021781031  splits 74  rows 2636
+3. sepal_length_cm  importance 0.13647030407926877  splits 67  rows 1919
+4. noise  importance 0.06182389580212485  splits 68  rows 1195
+5. sepal_width_cm  importance 0.04536709001335149  splits 46  rows 991
+# Permutation importance on held-out rows: the drop of the score when one column is shuffled among the rows (seeded, 10 repeats), mean and standard deviation per column. The noise column loses nothing
+$ ml --format text importance --model-file iris-noise.ml --data iris_noise_test.csv --repeats 10 --seed 1
+impurity_decrease total 1.0 trees 50
+1. petal_width_cm  importance 0.41172030792715186  splits 67  rows 2821
+2. petal_length_cm  importance 0.3446184021781031  splits 74  rows 2636
+3. sepal_length_cm  importance 0.13647030407926877  splits 67  rows 1919
+4. noise  importance 0.06182389580212485  splits 68  rows 1195
+5. sepal_width_cm  importance 0.04536709001335149  splits 46  rows 991
+permutation roc_auc (score), repeats 10, rows 25, baseline 1.0
+1. petal_length_cm  importance 0.22756410256410256  std 0.10128407982389195
+2. petal_width_cm  importance 0.04615384615384614  std 0.030849254911579384
+3. sepal_length_cm  importance 0.0  std 0.0
+4. sepal_width_cm  importance 0.0  std 0.0
+5. noise  importance 0.0  std 0.0
+# A tree as text: the split, the side a missing cell takes, the rows and the class counts of every node
+$ ml --format text dump --model-file iris-tree.ml
+tree 0 of 1: 7 nodes, depth 2
+0 petal_width_cm < 1.8 -> left 1, right 4, missing right [n=75: 37/38]
+|   1 petal_length_cm < 5.0 -> left 2, right 3, missing right [n=41: 36/5]
+|   |   2 leaf 0.02857142857142857 [n=35: 34/1]
+|   |   3 leaf 0.6666666666666666 [n=6: 2/4]
+|   4 petal_length_cm < 4.9 -> left 5, right 6, missing right [n=34: 1/33]
+|   |   5 leaf 0.5 [n=2: 1/1]
+|   |   6 leaf 1.0 [n=32: 0/32]
+# A constant model has nothing to explain
+$ ml importance --model-file houses.ml
+{"rule": "ml.importance.unsupported-model", "hint": "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means"}
+# exit status 8; the rule, hint of the JSON line it prints
+```
+<!-- /gen:interpflow -->
 ## JSON lines
 
 `--input-format jsonl` (or `ndjson`) reads one JSON object a line, for `fit`, `predict` and `eval`. `fit` declares the columns with `--fields` (the keys, in the order of the table); `predict` and `eval` take theirs from the model file, read each line by key in any order and ignore the keys the model does not read. A number is its exact text (never rounded through a double), a string is text (`"48.5"` is never the number 48.5), `null` is a missing cell, a key a line lacks is `ml.jsonl.missing-field` unless `--absent empty`, `true` and `false` are text in a `--cat` column and refused in a number column, and an object or an array is refused: nothing is guessed. The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size), and `predict` and `eval` print the same answers (but for `on` and `ignored_columns`, which name a file and a CSV column). `fit -`, `eval -` and `predict -` read standard input up to `--max-bytes`, CSV or JSON lines, so a table of nested JSON flattens into `ml` with a pipe: `table --input-format jsonl --fields id,user.age,spend --select '#2,#3' --format csv events.jsonl | ml predict --model-file m.ml -` (cancho-table's `--fields` follows dotted and indexed paths; `ml` reads flat keys). The reader, its mapping of every JSON value to a cell and its refusals are in [docs/jsonl.md](docs/jsonl.md).
@@ -628,7 +687,7 @@ The model is read at start and changed by restarting. There is no TLS, no reload
 
 ### An MCP server
 
-`ml-mcp` is the fourth binary, built from the same sources ([docs/mcp.md](docs/mcp.md)). It speaks the [Model Context Protocol](https://modelcontextprotocol.io) (revision `2025-06-18`) over standard input and output, one JSON-RPC message per line, and exposes ten tools: `fit`, `predict`, `eval`, `cv`, `describe`, `introspect`, `runs_list`, `runs_show`, `runs_compare` and `runs_verify`. The tools are derived from the flag table that drives the parser, `introspect` and the schemas: `scripts/mcp_tools.py` writes `docs/mcp/tools.json` (the name, description, `inputSchema` and `outputSchema` of each tool) and `tools/ml-mcp/tools.cho`, and `scripts/check_mcp_tools.py` regenerates both and fails when a flag, a model or a rule is added to the table and the files are not. A tool call runs the code of `ml` in the same process, with no subprocess and no `exec`: `structuredContent` is the line `ml` prints for the same command (the bytes are compared, over 303 fixtures of the command line), `content[0].text` is its text form, a refusal is a tool result with `isError: true` that carries the rule, the exit code and the repair as `ml` prints them, and a malformed message is a JSON-RPC error.
+`ml-mcp` is the fourth binary, built from the same sources ([docs/mcp.md](docs/mcp.md)). It speaks the [Model Context Protocol](https://modelcontextprotocol.io) (revision `2025-06-18`) over standard input and output, one JSON-RPC message per line, and exposes twelve tools: `fit`, `predict`, `eval`, `cv`, `describe`, `importance`, `dump`, `introspect`, `runs_list`, `runs_show`, `runs_compare` and `runs_verify`. The tools are derived from the flag table that drives the parser, `introspect` and the schemas: `scripts/mcp_tools.py` writes `docs/mcp/tools.json` (the name, description, `inputSchema` and `outputSchema` of each tool) and `tools/ml-mcp/tools.cho`, and `scripts/check_mcp_tools.py` regenerates both and fails when a flag, a model or a rule is added to the table and the files are not. A tool call runs the code of `ml` in the same process, with no subprocess and no `exec`: `structuredContent` is the line `ml` prints for the same command (the bytes are compared, over 303 fixtures of the command line), `content[0].text` is its text form, a refusal is a tool result with `isError: true` that carries the rule, the exit code and the repair as `ml` prints them, and a malformed message is a JSON-RPC error.
 
 A client registers the server with a command and arguments. For a client that reads an `mcpServers` object:
 
@@ -652,7 +711,7 @@ $ ml-mcp --root . --allow-write
 < {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"ml-mcp","title":"cancho-ml","version":"0.1.0"},"instructions":"cancho-ml: fit, apply and score models on CSV files. Call describe on a model file to learn the columns it requires, predict with a file or with inline records, and read the rule, the exit code and the repair of a refusal in structuredContent. Paths are relative to the server's root. The server writes nothing unless it was started with --allow-write."}}
 > {"jsonrpc":"2.0","method":"notifications/initialized"}
 > {"jsonrpc":"2.0","id":2,"method":"tools/list"}
-< {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"fit",...},{"name":"predict",...},{"name":"eval",...},{"name":"cv",...},{"name":"describe",...},{"name":"introspect",...},{"name":"runs_list",...},{"name":"runs_show",...},{"name":"runs_compare",...},{"name":"runs_verify",...}]}}   (143133 bytes: each tool has a description, an inputSchema, an outputSchema and annotations)
+< {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"fit",...},{"name":"predict",...},{"name":"eval",...},{"name":"cv",...},{"name":"describe",...},{"name":"importance",...},{"name":"dump",...},{"name":"introspect",...},{"name":"runs_list",...},{"name":"runs_show",...},{"name":"runs_compare",...},{"name":"runs_verify",...}]}}   (173693 bytes: each tool has a description, an inputSchema, an outputSchema and annotations)
 > {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fit","arguments":{"file":"houses.csv","target":"price","model":"linear","output":"houses.ml","track":"runs"}}}
 < {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"fit: linear regression, 5 rows, wrote houses.ml (545 bytes, sha256 efc964354592c75833fdb9d1480ff210ca3f83873abc230dc1d02a120e2b9bde)\n"}],"structuredContent":{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"linear","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":545,"sha256":"efc964354592c75833fdb9d1480ff210ca3f83873abc230dc1d02a120e2b9bde","written":true,"summary":{"plan":"model kind=linear l2=0.0\n","steps":0,"features":3,"coefficients":[{"name":"id","value":"-1652.9736155598039"},{"name":"rooms","value":"-23941.898094639666"},{"name":"area","value":"4182.214443747278"}],"intercept":"23192.120991975593"},"run":{"id":"30f13b375b35ee46073f478e36ac274f7e162fb4124e6c50e3d78369a07d590d","dir":"runs","file":"30f13b375b35ee46073f478e36ac274f7e162fb4124e6c50e3d78369a07d590d.json","written":true,"sha256":"dd3056cb8e50bab98080661adf6c27f8182731afed508b38408a2b70ad4268b8"}},"meta":{"version":"0.1.0"}},"isError":false,"_meta":{"ml/exit":0}}}
 > {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"predict","arguments":{"model-file":"houses.ml","records":[{"id":6,"rooms":2,"area":52.5},{"id":7,"rooms":3,"area":80}]}}}
@@ -686,19 +745,19 @@ The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`);
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler 0207556b)
-flags       61, for example
+flags       65, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
-  --model-file  path             predict, eval, describe: the model file to read
+  --model-file  path             predict, eval, describe, importance, dump: the mode…
   --drop        text             columns to ignore, header names separated by commas…
   --dry-run     bool             fit: read, check and fit, then report what would be…
-limits      25, for example
+limits      27, for example
   --max-rows         default 10,000,000   ceiling 1,000,000,000
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       109, for example
+rules       116, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes

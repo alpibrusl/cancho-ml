@@ -1003,3 +1003,56 @@ def _split_cases():
 
 
 CASES += _split_cases()
+
+
+# ------------------------------------------------------------------ interpretability (docs/interpret.md): ml importance, ml dump, the importance member of describe; the gates are tests/conformance/test_interp*.py
+ITR = "a,b,y\n" + "".join("%d,%d,%s\n" % (i, (i * 7) % 11, repr(0.5 * i + 0.25 * ((i * 7) % 11) + (0.1 if i % 3 == 0 else -0.1))) for i in range(1, 41))
+ITC = "a,b,y\n" + "".join("%d,%d,%d\n" % (i, (i * 7) % 11, 1 if i + (i * 7) % 11 > 22 else 0) for i in range(1, 41))
+IBASE = [("write", "itr.csv", ITR), ("write", "itc.csv", ITC), ("write", "itr2.csv", ITR.replace("1,7,", "1,6,"))]
+WITH_IF = IBASE + [("fit", "--model", "forest", "--task", "regression", "--trees", "3", "--max-depth", "3", "--target", "y", "--output", "f.cml", "itr.csv")]
+WITH_IT = IBASE + [("fit", "--model", "tree", "--task", "classification", "--max-depth", "3", "--target", "y", "--output", "t.cml", "itc.csv")]
+WITH_IL = IBASE + [("fit", "--model", "linear", "--target", "y", "--output", "l.cml", "itr.csv"),
+                   ("fit", "--model", "logistic", "--target", "y", "--l2", "0.5", "--step", "scale column=* kind=standard", "--output", "g.cml", "itc.csv")]
+WITH_IK = IBASE + [("fit", "--model", "kmeans", "--k", "2", "--seed", "1", "--drop", "y", "--output", "k.cml", "itr.csv"),
+                   ("fit", "--model", "constant", "--task", "regression", "--target", "y", "--output", "c.cml", "itr.csv")]
+
+
+def _interp_cases():
+    return [
+        case("importance-forest", ["importance", "--model-file", "f.cml"],
+             ok({"model": "forest", "task": "regression", "importance": {"method": "impurity_decrease", "available": True, "trees": 3, "total": "1.0"}, "permutation": None}), setup=WITH_IF),
+        case("importance-tree-text", ["--format", "text", "importance", "--model-file", "t.cml"], ok(None, stdout_starts="impurity_decrease"), setup=WITH_IT),
+        case("importance-linear", ["importance", "--model-file", "l.cml"], ok({"model": "linear", "importance": {"method": "standardised_coefficient", "available": True, "total": "1.0"}}), setup=WITH_IL),
+        case("importance-logistic-scaled", ["importance", "--model-file", "g.cml"], ok({"model": "logistic", "importance": {"method": "standardised_coefficient"}}), setup=WITH_IL),
+        case("importance-permutation", ["importance", "--model-file", "f.cml", "--data", "itr2.csv", "--metric", "mae", "--repeats", "3", "--seed", "4", "--threads", "2"],
+             ok({"permutation": {"metric": "mae", "direction": "loss", "repeats": 3, "seed": 4, "rows": 40}}), setup=WITH_IF),
+        case("importance-permutation-classification", ["importance", "--model-file", "t.cml", "--data", "itc.csv", "--metric", "f1"], ok({"permutation": {"metric": "f1", "direction": "score", "repeats": 5}}), setup=WITH_IT),
+        case("dump-tree", ["dump", "--model-file", "t.cml"], ok({"model": "tree", "task": "classification", "trees": 1, "tree": 0}), setup=WITH_IT),
+        case("dump-forest-tree", ["dump", "--model-file", "f.cml", "--tree", "2", "--max-nodes", "1000"], ok({"model": "forest", "trees": 3, "tree": 2}), setup=WITH_IF),
+        case("dump-text", ["--format", "text", "dump", "--model-file", "f.cml"], ok(None, stdout_starts="tree 0 of 3"), setup=WITH_IF),
+        case("dump-linear", ["dump", "--model-file", "l.cml"], ok({"model": "linear"}), setup=WITH_IL),
+        case("dump-kmeans", ["dump", "--model-file", "k.cml"], ok({"model": "kmeans", "k": 2}), setup=WITH_IK),
+        case("describe-importance", ["describe", "--model-file", "f.cml"], ok({"importance": {"method": "impurity_decrease", "available": True}}), setup=WITH_IF),
+        case("describe-importance-null-for-kmeans", ["describe", "--model-file", "k.cml"], ok({"importance": None}), setup=WITH_IK),
+        # ---- refusals
+        case("ml-importance-unsupported-model-kmeans", ["importance", "--model-file", "k.cml"], bad("ml.importance.unsupported-model"), setup=WITH_IK),
+        case("ml-importance-unsupported-model-constant", ["importance", "--model-file", "c.cml"], bad("ml.importance.unsupported-model"), setup=WITH_IK),
+        case("ml-importance-no-scale", ["importance", "--model-file", "old.cml"], bad("ml.importance.no-scale"), setup=WITH_IL + [("mutate", "l.cml", "old.cml", without_provenance)]),
+        case("ml-importance-bad-metric", ["importance", "--model-file", "f.cml", "--data", "itr2.csv", "--metric", "accuracy"], bad("ml.importance.bad-metric"), setup=WITH_IF),
+        case("ml-importance-undefined-metric", ["importance", "--model-file", "f.cml", "--data", "flat.csv", "--metric", "r2"], bad("ml.importance.undefined-metric"),
+             setup=WITH_IF + [("write", "flat.csv", "a,b,y\n1,1,2.0\n2,3,2.0\n3,5,2.0\n")]),
+        case("ml-importance-too-few-rows", ["importance", "--model-file", "f.cml", "--data", "one.csv"], bad("ml.importance.too-few-rows"), setup=WITH_IF + [("write", "one.csv", "a,b,y\n1,1,2.0\n")]),
+        case("ml-limit-work", ["importance", "--model-file", "f.cml", "--data", "itr2.csv", "--max-work", "100"], bad("ml.limit.work"), setup=WITH_IF),
+        case("ml-dump-unsupported-model", ["dump", "--model-file", "c.cml"], bad("ml.dump.unsupported-model"), setup=WITH_IK),
+        case("ml-limit-nodes-dump", ["dump", "--model-file", "f.cml", "--max-nodes", "1"], bad("ml.limit.nodes"), setup=WITH_IF),
+        case("ml-param-out-of-range-dump-tree", ["dump", "--model-file", "f.cml", "--tree", "3"], bad("ml.param.out-of-range"), setup=WITH_IF),
+        case("ml-param-out-of-range-importance-repeats", ["importance", "--model-file", "f.cml", "--data", "itr2.csv", "--repeats", "101"], bad("ml.param.out-of-range"), setup=WITH_IF),
+        case("args-conflict-importance-metric-without-data", ["importance", "--model-file", "f.cml", "--metric", "rmse"], bad("args.conflict"), setup=WITH_IF),
+        case("args-conflict-dump-tree-on-linear", ["dump", "--model-file", "l.cml", "--tree", "0"], bad("args.conflict"), setup=WITH_IL),
+        case("args-conflict-dump-data", ["dump", "--model-file", "f.cml", "--data", "itr2.csv"], bad("args.conflict"), setup=WITH_IF),
+        case("ml-model-malformed-importance", ["importance", "--model-file", "bad.cml"], bad("ml.model.malformed"), setup=WITH_IL + [("mutate", "l.cml", "bad.cml", lambda d: model_kind_7(d))]),
+        case("ml-model-truncated-dump", ["dump", "--model-file", "bad.cml"], bad("ml.model.truncated"), setup=WITH_IF + [("mutate", "f.cml", "bad.cml", lambda d: d[:60])]),
+    ]
+
+
+CASES += _interp_cases()

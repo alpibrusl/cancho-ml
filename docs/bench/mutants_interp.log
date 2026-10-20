@@ -1,0 +1,79 @@
+KILLED    i1-coefficient-divided-by-the-deviation      I1  tests: test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte
+KILLED    i1-ddof-one-deviation-is-one                 I1  tests: test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte
+KILLED    i1-provenance-deviation-times-divisor        I1  tests: test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte
+KILLED    i1-provenance-mean-for-deviation             I1  tests: test_i1_a_constant_column_has_a_zero_deviation, test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte
+KILLED    i1-divisor-not-composed                      I1  tests: test_i1_the_table_equals_the_oracle_byte_for_byte
+KILLED    i1-unit-lost                                 I1  tests: test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte
+KILLED    i1-constant-column-unit                      I1  tests: test_i1_a_constant_column_has_a_zero_deviation, test_i1_the_table_equals_the_oracle_byte_for_byte
+KILLED    i1-share-not-normalised                      I1  tests: test_i1_a_file_with_no_stored_deviation_is_refused_with_a_repair, test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte, test_i1_the_table_equals_the_oracle_byte_for_byte
+KILLED    i1-rank-ties-to-the-higher-index             I1  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i3_all_zero_coefficients_have_total_zero
+KILLED    i1-derived-column-gets-a-deviation           I1  tests: test_i1_an_encoder_column_has_no_deviation, test_i1_an_onehot_column_of_a_numeric_encoder_is_derived, test_i1_the_permutation_needs_no_stored_deviation
+SURVIVED  i2-gini-without-the-factor-two               I2  
+KILLED    i2-gini-class-zero-counts                    I2  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+SURVIVED  i2-gini-symmetric-counts                     I2  
+KILLED    i2-variance-weight                           I2  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+KILLED    i2-leaf-sum-without-count                    I2  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+KILLED    i2-node-sum-difference                       I2  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+KILLED    i2-tree-not-normalised                       I2  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+KILLED    i2-forest-divided-by-trees                   I2  tests: test_i2_a_forest_with_a_tree_that_never_splits, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+KILLED    i2-task-swapped                              I2  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+KILLED    i2-split-count-by-two                        I2  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+KILLED    i2-split-rows-class-zero-only                I2  tests: test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte, test_i2_the_table_equals_the_oracle_byte_for_byte
+KILLED    i2-a-leaf-tree-adds-nan                      I2  tests: test_i2_a_forest_with_a_tree_that_never_splits, test_i2_the_table_equals_the_oracle_byte_for_byte
+SURVIVED  i2-total-of-an-unsplit-forest                I2  
+KILLED    i9-member-renamed                            I9  tests: test_i9_describe_and_the_verb_print_the_same_object, test_i9_the_kinds_with_no_importance_say_null, test_i9_the_limit_cuts_the_table_to_the_best_ranks, test_i9_the_limit_cuts_the_table_to_the_best_ranks
+KILLED    i9-member-null-for-trees                     I9  tests: test_i9_describe_and_the_verb_print_the_same_object, test_i9_describe_carries_the_member_after_limits, test_i9_describe_carries_the_member_after_limits, test_i9_describe_carries_the_member_after_limits
+KILLED    i10-depth-not-increased                      I10  tests: test_i10_a_scaled_column_has_no_cell_text, test_i10_every_tree_of_a_forest_equals_the_oracle, test_i10_every_tree_of_a_forest_equals_the_oracle, test_i10_every_tree_of_a_forest_equals_the_oracle
+KILLED    i10-default-side-flipped                     I10  tests: test_i10_a_scaled_column_has_no_cell_text, test_i10_every_tree_of_a_forest_equals_the_oracle, test_i10_every_tree_of_a_forest_equals_the_oracle, test_i10_every_tree_of_a_forest_equals_the_oracle
+KILLED    i10-cell-of-a-scaled-column                  I10  tests: test_i10_a_scaled_column_has_no_cell_text
+KILLED    i10-decimal-truncated                        I10  tests: test_i10_the_cell_text_of_an_int_and_a_decimal_column
+KILLED    i10-tree-bound-off-by-one                    I10  tests: test_i10_the_node_bound_is_exact
+KILLED    i10-tree-index-off-by-one                    I10  tests: test_i10_a_tree_out_of_range
+KILLED    i10-default-bound                            I10  tests: test_i10_a_dumped_tree_predicts_what_predict_predicts, test_i10_a_scaled_column_has_no_cell_text, test_i10_the_default_tree_is_the_first, test_i10_the_node_bound_is_exact
+KILLED    i10-ceiling                                  I10  tests: test_i10_the_ceiling_of_max_nodes
+KILLED    i10-raw-centroid-without-offset              I10  tests: test_i10_kmeans_centroids_and_linear_coefficients
+KILLED    i10-centroids-transposed                     I10  tests: test_i10_kmeans_centroids_and_linear_coefficients
+KILLED    i10-intercept-index                          I10  tests: test_i10_kmeans_centroids_and_linear_coefficients
+KILLED    i10-source-of-a-categorical-column           I10  tests: test_i10_every_tree_of_a_forest_equals_the_oracle, test_i10_every_tree_of_a_forest_equals_the_oracle, test_i10_every_tree_of_a_forest_equals_the_oracle, test_i10_every_tree_of_a_forest_equals_the_oracle
+SURVIVED  i10-cell-int-integral-check                  I10  
+KILLED    i6-stream-kind                               I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-repeat-index                              I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-column-index                              I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-seed-ignored                              I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-shuffle-bound                             I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-score-direction                           I6  tests: test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-log-loss-is-a-score                       I6  tests: test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-mean-divisor                              I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-std-divisor                               I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-nothing-permuted                          I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-numeric-column-not-shuffled               I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+KILLED    i6-categorical-column-not-shuffled           I6  tests: test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit
+KILLED    i6-missing-flag-stays                        I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit
+KILLED    i6-target-rotated                            I6  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit
+KILLED    i6-baseline-on-the-permuted-order            I6  tests: test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit
+KILLED    i12-repeats-ceiling                          I12  tests: test_refusals_of_the_permutation
+KILLED    i12-flags-without-data                       I12  tests: test_flags_without_data_are_a_conflict
+KILLED    i12-too-few-rows                             I12  tests: test_refusals_of_the_permutation
+KILLED    i12-work-bound-inclusive                     I12  tests: test_the_work_bound_is_exact
+KILLED    i12-metric-of-the-other-task                 I12  tests: test_refusals_of_the_permutation
+KILLED    i12-default-classification-metric            I12  tests: test_i6_the_default_metric_and_the_default_repeats
+KILLED    i12-default-repeats                          I12  tests: test_i6_the_default_metric_and_the_default_repeats
+KILLED    i12-no-scale-with-data                       I12  tests: test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit, test_i6_regression_models_bit_for_bit
+SURVIVED  i12-single-class-metric                      I12  
+SURVIVED  i12-foreign-label                            I12  
+KILLED    i12-stream-kind-registry                     I12  tests: test_i6_a_missing_cell_travels_with_the_shuffle, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit, test_i6_classification_models_bit_for_bit
+PASSED    baseline (the unchanged tree)                -  
+
+64 mutants: 58 killed, 6 survived, 0 invalid
+SURVIVOR i2-gini-without-the-factor-two: equivalent: the printed importance divides every decrease of a tree by the total of the tree, which divides the constant factor out (the factor 2 is the Gini definition, n G - nL GL - nR GR, and shows only in a raw decrease, which is not printed)
+SURVIVOR i2-gini-symmetric-counts: equivalent: with the class-0 counts D becomes -D and only D squared is used
+SURVIVOR i2-total-of-an-unsplit-forest: the total of the text form only: the JSON total is a separate branch, and the tests compare the JSON
+SURVIVOR i10-cell-int-integral-check: equivalent: the thresholds of an int column are cells of the training file, whole numbers
+SURVIVOR i12-single-class-metric: NO REASON GIVEN
+SURVIVOR i12-foreign-label: NO REASON GIVEN
+
+# reruns of the survivors that were gaps of a test, after the tests were strengthened (the same script, --only ID):
+KILLED    i2-total-of-an-unsplit-forest                I2  tests: test_i3_the_text_form_states_the_total
+KILLED    i12-single-class-metric                      I12  tests: test_refusals_of_the_permutation
+KILLED    i12-foreign-label                            I12  tests: test_refusals_of_the_permutation
+# 64 mutants: 61 killed, 3 survived and explained (i2-gini-without-the-factor-two, i2-gini-symmetric-counts, i10-cell-int-integral-check), 0 unexplained; the unchanged copy passes.

@@ -119,6 +119,11 @@ pub fn stored_task[&s](st: &s Stored) -> [] int {
     return st.task;
 }
 
+// the estimator's parameters of a linear or logistic model: the coefficients, then the intercept
+pub fn stored_weights[&s](st: &s Stored) -> [] &s [float] {
+    return contents(st.wv);
+}
+
 pub fn stored_c0[&s](st: &s Stored) -> [] int {
     return st.c0;
 }
@@ -349,7 +354,7 @@ pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte]
 // The CSV aligned to the fitted features by name: the matrix of the fitted features in the fitted order (`xa`), the matrix as read (`x`) and the shape (`sh`).
 // For a model with a string table `x` holds the NUMERIC columns only, `ids` the categorical ones (read through `voc`, the vocabulary of the stored steps: by name,
 // in any order of the file's columns) and `cols` the numeric features' places in `x`
-res struct Input {
+pub res struct Input {
     x: matrix.Matrix,
     sh: csv.Shape,
     // the fitted features' columns in x, in the order of the schema
@@ -360,7 +365,7 @@ res struct Input {
     voc: dict.Vocab,
 }
 
-fn drop_input[&h](heap: &!h Heap, i: Input) -> [heap] int {
+pub fn drop_input[&h](heap: &!h Heap, i: Input) -> [heap] int {
     let Input { x, sh, cols, tj, ids, voc } = i;
     matrix.drop(heap, x);
     csv.drop_shape(heap, sh);
@@ -370,13 +375,35 @@ fn drop_input[&h](heap: &!h Heap, i: Input) -> [heap] int {
     return tj;
 }
 
-fn empty_input[&h](heap: &!h Heap) -> [heap] Input {
+pub fn empty_input[&h](heap: &!h Heap) -> [heap] Input {
     return Input { x: matrix.empty(heap), sh: csv.empty_shape(heap), cols: box_slice(heap, 2, 0), tj: 0 - 1, ids: catmat.empty(heap), voc: dict.empty_vocab(heap) };
+}
+
+pub fn input_x[&i](i: &i Input) -> [] &i matrix.Matrix {
+    return i.x;
+}
+
+pub fn input_ids[&i](i: &i Input) -> [] &i catmat.Ids {
+    return i.ids;
+}
+
+pub fn input_voc[&i](i: &i Input) -> [] &i dict.Vocab {
+    return i.voc;
+}
+
+// the place in the matrix of each fitted numeric feature, in the order of the schema
+pub fn input_cols[&i](i: &i Input) -> [] &i [int] {
+    return contents(i.cols);
+}
+
+// the place of the target in the matrix, -1 when the matrix has none
+pub fn input_target[&i](i: &i Input) -> [] int {
+    return i.tj;
 }
 
 // Read the CSV (predict: the target column is skipped; eval: it is a column) and check it against the stored schema: the old schema check (ml.schema.mismatch,
 // named columns, --drop as the repair), then the place in the matrix of each fitted feature
-fn read_input[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, st: &ss Stored, o: verbs.Opts, need_target: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Input, bool, fail.Errors, buffer.Buffer) {
+pub fn read_input[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], datafile: &pf paths.Rp, st: &ss Stored, o: verbs.Opts, need_target: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Input, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
@@ -529,76 +556,79 @@ fn numeric_names[&h, &s](heap: &!h Heap, sc: &s schema.Schema) -> [heap] names.N
 }
 
 // the rows of the input that `want` selects, through the stored steps: (the matrix the estimator takes, the unknown categories met, ok, errors)
-fn through_steps[&h, &ii, &ss, &s, &cl](heap: &!h Heap, src: &cl [byte], inp: &ii Input, st: &ss Stored, sel: &s [int], want: int, o: verbs.Opts, errs: fail.Errors) -> [heap] (matrix.Matrix, int, bool, fail.Errors) {
+pub fn through_steps[&h, &ii, &ss, &s, &cl](heap: &!h Heap, src: &cl [byte], inp: &ii Input, st: &ss Stored, sel: &s [int], want: int, o: verbs.Opts, errs: fail.Errors) -> [heap] (matrix.Matrix, int, bool, fail.Errors) {
+    var e = errs;
+    var go = true;
+    let nfeat = schema.features(st.sc) - file.categorical_columns(st.lo);
+    var xa = matrix.empty(heap);
+    var idt = catmat.empty(heap);
+    if nfeat > 0 || !st.cat {
+        let (xa2, code) = wiredata.take(heap, inp.x, sel, want, contents(inp.cols), nfeat, o.max_rows, o.max_cols, o.max_cells);
+        matrix.drop(heap, xa);
+        xa = xa2;
+        if code != 0 {
+            e = wiredata.code_error(heap, e, code, 0, 0, 0);
+            go = false;
+        }
+    }
+    if go && st.cat {
+        let (idt2, icode) = catwire.take_ids(heap, inp.ids, sel, want, o.max_rows, o.max_cols, o.max_cells);
+        catmat.drop(heap, idt);
+        idt = idt2;
+        if icode != 0 {
+            e = wiredata.code_error(heap, e, icode, 0, 0, 0);
+            go = false;
+        }
+    }
+    var xs = matrix.empty(heap);
+    var unknown = 0;
+    if go {
+        borrow xa as &xr in {
+            borrow idt as &itr in {
+                let (x2, u2, ok2, e2) = apply_taken(heap, src, xr, itr, inp.voc, st, o, e);
+                matrix.drop(heap, xs);
+                xs = x2;
+                unknown = u2;
+                go = ok2;
+                e = e2;
+            }
+        }
+    }
+    matrix.drop(heap, xa);
+    catmat.drop(heap, idt);
+    return (xs, unknown, go, e);
+}
+
+// The stored steps applied to the matrices a caller has taken: `xa` the numeric features in the fitted order, `idt` the ids of the categorical columns of the same rows (an empty one for
+// a file with no string table), `voc` the vocabulary they refer to. (the matrix the estimator takes, the unknown categories met, ok, errors). The part of `through_steps` after the rows are taken.
+pub fn apply_taken[&h, &xx, &ii, &vv, &ss, &cl](heap: &!h Heap, src: &cl [byte], xa: &xx matrix.Matrix, idt: &ii catmat.Ids, voc: &vv dict.Vocab, st: &ss Stored, o: verbs.Opts, errs: fail.Errors) -> [heap] (matrix.Matrix, int, bool, fail.Errors) {
     var e = errs;
     var go = true;
     var unknown = 0;
     var xs = matrix.empty(heap);
-    let nfeat = schema.features(st.sc) - file.categorical_columns(st.lo);
     if st.cat {
-        // the numeric features in the fitted order, the ids of the same rows, and the stored steps over both
-        var xa = matrix.empty(heap);
-        if nfeat > 0 {
-            let (xa2, code) = wiredata.take(heap, inp.x, sel, want, contents(inp.cols), nfeat, o.max_rows, o.max_cols, o.max_cells);
-            matrix.drop(heap, xa);
-            xa = xa2;
-            if code != 0 {
-                e = wiredata.code_error(heap, e, code, 0, 0, 0);
-                go = false;
+        let trows = catmat.rows(idt);
+        let (x2, u2, f2) = mixed.apply_steps(heap, file.steps_bytes(st.lo), xa, trows, idt, voc, o.max_rows, o.max_cols, o.max_cells);
+        matrix.drop(heap, xs);
+        xs = x2;
+        unknown = u2;
+        if f2.code != 0 {
+            let epl = plan.empty(heap);
+            borrow epl as &eplr in {
+                e = catwire.fault_error(heap, src, e, f2, eplr, voc, false);
             }
-        }
-        var idt = catmat.empty(heap);
-        if go {
-            let (idt2, icode) = catwire.take_ids(heap, inp.ids, sel, want, o.max_rows, o.max_cols, o.max_cells);
-            catmat.drop(heap, idt);
-            idt = idt2;
-            if icode != 0 {
-                e = wiredata.code_error(heap, e, icode, 0, 0, 0);
-                go = false;
-            }
-        }
-        if go {
-            var trows = 0;
-            borrow idt as &itr in {
-                trows = catmat.rows(itr);
-            }
-            borrow xa as &xr in {
-                borrow idt as &itr in {
-                    let (x2, u2, f2) = mixed.apply_steps(heap, file.steps_bytes(st.lo), xr, trows, itr, inp.voc, o.max_rows, o.max_cols, o.max_cells);
-                    matrix.drop(heap, xs);
-                    xs = x2;
-                    unknown = u2;
-                    if f2.code != 0 {
-                        let epl = plan.empty(heap);
-                        borrow epl as &eplr in {
-                            e = catwire.fault_error(heap, src, e, f2, eplr, inp.voc, false);
-                        }
-                        plan.drop(heap, epl);
-                        go = false;
-                    }
-                }
-            }
-        }
-        matrix.drop(heap, xa);
-        catmat.drop(heap, idt);
-    } else {
-        let (xa, code) = wiredata.take(heap, inp.x, sel, want, contents(inp.cols), nfeat, o.max_rows, o.max_cols, o.max_cells);
-        if code != 0 {
-            e = wiredata.code_error(heap, e, code, 0, 0, 0);
+            plan.drop(heap, epl);
             go = false;
-        } else {
-            borrow xa as &xr in {
-                let (x2, u2, f2) = run.apply_steps(heap, file.steps_bytes(st.lo), xr, o.max_rows, o.max_cols, o.max_cells);
-                matrix.drop(heap, xs);
-                xs = x2;
-                unknown = u2;
-                if f2.code != 0 {
-                    e = wiredata.code_error(heap, e, f2.code, f2.a, f2.b, f2.c);
-                    go = false;
-                }
-            }
         }
-        matrix.drop(heap, xa);
+    } else {
+        let (x2, u2, f2) = run.apply_steps(heap, file.steps_bytes(st.lo), xa, o.max_rows, o.max_cols, o.max_cells);
+        matrix.drop(heap, xs);
+        xs = x2;
+        unknown = u2;
+        if f2.code != 0 {
+            e = wiredata.code_error(heap, e, f2.code, f2.a, f2.b, f2.c);
+            go = false;
+        }
     }
     if go {
         // the steps leave nothing empty: the names of the columns after the steps are the features' when no encoding widened them; a message with the count is enough
