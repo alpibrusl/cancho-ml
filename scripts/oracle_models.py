@@ -113,9 +113,10 @@ def linreg(X, y, l2):
 
 # ---------------------------------------------------------------- exp and log1p of std/math.cho (ports, elementwise)
 def exp_c(x):
-    """lib/models/mexp.cho exp: |x| <= 660 only (asserted); the same operations as std's exp, 2^k exact"""
+    """lib/models/mexp.cho exp: the same operations as std's exp. Inside |x| <= 660 the power of two is read from an exact table (one multiplication); outside, std's exp splits the
+    exponent in two halves (two multiplications, y * 2^(k - half) * 2^half, half = k / 2 truncated) and answers 0 below -750 (above 750 the argument is outside what this oracle needs)"""
     x = np.asarray(x, dtype=np.float64)
-    assert np.all(np.abs(x) <= 660.0), "exp argument outside the table form"
+    assert np.all(x <= 750.0), "exp argument above 750"
     kf = x * 1.44269504088896338700e+00
     h = np.where(kf < 0.0, -0.5, 0.5)
     k = np.trunc(kf + h)
@@ -125,7 +126,13 @@ def exp_c(x):
     t = r * r
     c = r - t * (1.66666666666666019037e-01 + t * (-2.77777777770155933842e-03 + t * (6.61375632143793436117e-05 + t * (-1.65339022054652515390e-06 + t * 4.13813679705723846039e-08))))
     y = 1.0 - (lo - r * c / (2.0 - c) - hi)
-    return y * np.ldexp(1.0, k.astype(np.int64))
+    ki = k.astype(np.int64)
+    inside = np.abs(x) <= 660.0
+    half = np.trunc(ki / 2).astype(np.int64)
+    out_fn = y * np.ldexp(1.0, ki - half) * np.ldexp(1.0, half)
+    tab = y * np.ldexp(1.0, np.where(inside, ki, 0))
+    res = np.where(inside, tab, out_fn)
+    return np.where(x < -750.0, 0.0, res)
 
 
 def log_c(u):
@@ -610,7 +617,7 @@ SUITE["softmax"] = [dict(n=n, d=d, seed=s, kc=k, l2m=l, iters=i, sep=sp, dup=du)
     # rows mod 4 in the last block (the tails of the lanes) with columns enough for the cells to show it
     (1002, 5, 31, 4, 0, 3, 0, 0), (1003, 5, 32, 3, 0, 3, 0, 0), (3001, 5, 33, 5, 100, 3, 0, 0), (1001, 4, 34, 3, 0, 3, 0, 0),
     # many classes, few columns (P = 126), and K = 10 (P = 54)
-    (600, 1, 41, 64, 0, 4, 0, 0), (900, 5, 42, 10, 0, 4, 0, 0),
+    (3000, 1, 41, 64, 0, 4, 0, 0), (900, 5, 42, 10, 0, 4, 0, 0),
     # separable classes with l2 = 0 are refused (docs/refusals-fit.md D2), fitted with a ridge; equal columns are refused with l2 = 0 and fitted with one
     (400, 2, 51, 3, 0, 40, 1, 0), (400, 2, 51, 3, 100, 40, 1, 0), (1000, 4, 5, 3, 0, 8, 0, 1), (1000, 4, 5, 3, 10, 8, 0, 1)]]
 SUITE["kmeans"] = [dict(n=n, d=d, seed=s, k=k, iters=i, init=ini, dup=du) for (n, d, s, k, i, ini, du) in [

@@ -1,0 +1,490 @@
+module models.softmax;
+
+import std.math;
+import linalg.tensor;
+import linalg.chol;
+import linalg.order;
+import ml.refuse;
+import ml.limits;
+import models.common;
+import models.score;
+import models.mexp;
+import models.spass;
+import models.par;
+import models.rank;
+
+// Softmax (multinomial logistic) regression by Newton's method with the full block Hessian, a fixed number of iterations, no line search, no stopping rule, optional l2 that
+// never touches a bias (docs/multiclass.md section 3.2, the normative text). K classes (3 to 64), class K - 1 the reference with the parameters 0; the parameters are class-major,
+// D = d + 1 values per modelled class, the bias last. The classes of the library are the integers 0 .. K - 1 given as floats; the wiring maps its labels to them.
+
+// the bound of the separation test (the binary one, docs/refusals-fit.md D2): a summed loss under it means every training row is classified with a margin
+pub fn separable_bound() -> [] float {
+    return 0.6931;
+}
+
+// the bound on the root mean square of the scores (the binary one)
+pub fn scale_bound() -> [] float {
+    return 50.0;
+}
+
+pub fn max_classes() -> [] int {
+    return 64;
+}
+
+pub fn max_params() -> [] int {
+    return 2048;
+}
+
+// the floats the pass holds, for n rows: one slot per chunk and one per chunk again in the threads' copies of their roots, one per tree level, the sequential scratch, and per thread
+// its stack (6 slots) and its scratch (4 slots and a little), at most 64 threads; the matrix and its factor
+pub fn pass_floats(n: int, d: int, kk: int) -> [] int {
+    let p = spass.params(d, kk);
+    let ww = spass.width(d, kk);
+    let nchunks = (n + 2047) / 2048;
+    var te = nchunks;
+    if te > 64 {
+        te = 64;
+    }
+    let depth = common.depth_for(order.blocks(n));
+    return ww * (2 * nchunks + depth + 2 + 10 * te) + 2 * p * p + n * (d + 1);
+}
+
+// the budget of the pass: 2^26 floats (512 MiB)
+pub fn budget() -> [] int {
+    return 67108864;
+}
+
+// 0, or ml.limit.classes / ml.limit.parameters, from the sizes alone (nothing is allocated; the answer does not depend on the thread count)
+pub fn check_sizes(n: int, d: int, kk: int) -> [] int {
+    if kk > max_classes() {
+        return refuse.limit_classes();
+    }
+    if kk < 3 {
+        return refuse.param_out_of_range();
+    }
+    if n > 1073741824 {
+        return refuse.too_many_rows();
+    }
+    if n < 1 || d < 1 || d > common.max_features() {
+        return refuse.param_out_of_range();
+    }
+    if spass.params(d, kk) > max_params() {
+        return refuse.limit_parameters();
+    }
+    if pass_floats(n, d, kk) > budget() {
+        return refuse.limit_parameters();
+    }
+    return 0;
+}
+
+// The record of a separation refusal in diag (floats), the layout of the binary one: [0] the pass, [1] the reason (0 the summed loss was under the bound, 1 the pivot test failed at a
+// pass after the first, 2 the root mean square of the scores was over its bound), [2] the summed loss of the pass, [3] the Euclidean norm of w, [4] the largest diagonal element of the
+// Hessian of pass 0, [5] the root mean square of the scores.
+fn note_separable[&w, &g](p: int, ww: int, nf: float, kc: int, it: int, reason: int, loss: float, qsum: float, wv: &w [float], diag: &!g [float]) -> [] int {
+    var hmax = 0.0;
+    var a = 0;
+    while a < p {
+        let v = diag[p + a * (a + 1) / 2 + a] / nf;
+        if v > hmax {
+            hmax = v;
+        }
+        a = a + 1;
+    }
+    var q = 0.0;
+    a = 0;
+    while a < p {
+        q = q + wv[a] * wv[a];
+        a = a + 1;
+    }
+    diag[0] = float_of(it);
+    diag[1] = float_of(reason);
+    diag[2] = loss;
+    diag[3] = math.sqrt(q);
+    diag[4] = hmax;
+    diag[5] = math.sqrt(qsum / (nf * float_of(kc)));
+    return 0;
+}
+
+// the iterations. xs positioned at X[0, 0], row stride rs. diag receives, per iteration, the W raw sums then the objective.
+fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, ys: &y [float], n: int, d: int, kk: int, iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    let kc = kk - 1;
+    let dd = d + 1;
+    let p = kc * dd;
+    let ww = spass.width(d, kk);
+    let sl = spass.scratch_len(d, kk);
+    let depth = common.depth_for(order.blocks(n));
+    let wv = box_slice(heap, p, 0.0);
+    let sc = box_slice(heap, sl, 0.0);
+    let st = box_slice(heap, depth * ww, 0.0);
+    let lv = box_slice(heap, depth + 1, 0);
+    let hm = box_slice(heap, p * p, 0.0);
+    let lm = box_slice(heap, p * p, 0.0);
+    let gv = box_slice(heap, p, 0.0);
+    let uv = box_slice(heap, p, 0.0);
+    let dl = box_slice(heap, p, 0.0);
+    let nf = float_of(n);
+    let nolab = box_slice(heap, 1, 0);
+    var code = 0;
+    var it = 0;
+    while it < iters && code == 0 {
+        borrow wv as &wr in {
+            borrow mut sc as &!scw in {
+                borrow mut st as &!stw in {
+                    borrow mut lv as &!lvw in {
+                        borrow mut nolab as &!nlw in {
+                            code = par.pass(heap, t, 3, xs, rs, ys, contents(wr), n, d, kk, ww, sl, contents(scw), contents(stw), contents(lvw), contents(nlw));
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow st as &sr in {
+                let sums = contents(sr);
+                var i = 0;
+                var finite = true;
+                while i < ww {
+                    diag[it * (ww + 1) + i] = sums[i];
+                    if !common.is_finite(sums[i]) {
+                        finite = false;
+                    }
+                    i = i + 1;
+                }
+                if !finite {
+                    code = refuse.fit_non_finite();
+                } else {
+                    borrow wv as &wr in {
+                        let w = contents(wr);
+                        // the objective at the w this iteration started from: the summed loss over n and half l2 times the squares of the weights (not the biases)
+                        var q = 0.0;
+                        var a = 0;
+                        while a < p {
+                            if a % dd < d {
+                                q = q + w[a] * w[a];
+                            }
+                            a = a + 1;
+                        }
+                        diag[it * (ww + 1) + ww] = sums[ww - 1] / nf + 0.5 * l2 * q;
+                        borrow mut gv as &!gw in {
+                            a = 0;
+                            while a < p {
+                                var gg = sums[a] / nf;
+                                if a % dd < d {
+                                    gg = gg + l2 * w[a];
+                                }
+                                contents(gw)[a] = gg;
+                                a = a + 1;
+                            }
+                        }
+                        borrow mut hm as &!hw in {
+                            a = 0;
+                            while a < p {
+                                var b = 0;
+                                while b <= a {
+                                    var hh = sums[p + a * (a + 1) / 2 + b] / nf;
+                                    if a % dd < d && b == a {
+                                        hh = hh + l2;
+                                    }
+                                    contents(hw)[a * p + b] = hh;
+                                    b = b + 1;
+                                }
+                                a = a + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 && l2 == 0.0 {
+            // separation (docs/multiclass.md 3.2): the summed loss under the bound, or the root mean square of the scores over its bound
+            borrow st as &sr in {
+                borrow wv as &wr in {
+                    let loss = contents(sr)[ww - 1];
+                    let qsum = contents(sr)[ww - 2];
+                    if loss < separable_bound() {
+                        note_separable(p, ww, nf, kc, it, 0, loss, qsum, contents(wr), diag);
+                        code = refuse.fit_separable();
+                    } else if math.sqrt(qsum / (nf * float_of(kc))) > scale_bound() {
+                        note_separable(p, ww, nf, kc, it, 2, loss, qsum, contents(wr), diag);
+                        code = refuse.fit_separable();
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow hm as &hr in {
+                borrow mut lm as &!lw in {
+                    code = chol.cholesky(common.mat(p, p), contents(hr), common.mat(p, p), contents(lw));
+                }
+            }
+            if code == refuse.not_positive_definite() {
+                if it == 0 {
+                    // the Hessian of the first pass is a Gram-like matrix: the columns are dependent (docs/refusals-fit.md D1)
+                    borrow hm as &hr in {
+                        if rank.record(heap, p, contents(hr), 0, diag) >= 0 {
+                            code = refuse.fit_collinear();
+                        }
+                    }
+                } else if l2 == 0.0 {
+                    // the first Hessian passed, so the columns are not dependent: the weights have vanished, the numerical face of separation
+                    borrow st as &sr in {
+                        borrow wv as &wr in {
+                            let loss = contents(sr)[ww - 1];
+                            let qsum = contents(sr)[ww - 2];
+                            note_separable(p, ww, nf, kc, it, 1, loss, qsum, contents(wr), diag);
+                            code = refuse.fit_separable();
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow lm as &lr in {
+                borrow gv as &gr in {
+                    borrow mut uv as &!uw in {
+                        code = chol.solve(0, common.mat(p, p), contents(lr), common.vec(p), contents(gr), common.vec(p), contents(uw));
+                    }
+                }
+                if code == 0 {
+                    borrow uv as &ur in {
+                        borrow mut dl as &!dw in {
+                            code = chol.solve(1, common.mat(p, p), contents(lr), common.vec(p), contents(ur), common.vec(p), contents(dw));
+                        }
+                    }
+                }
+            }
+        }
+        if code == 0 {
+            borrow dl as &dr in {
+                borrow mut wv as &!wm in {
+                    var a = 0;
+                    while a < p {
+                        contents(wm)[a] = contents(wm)[a] - contents(dr)[a];
+                        if !common.is_finite(contents(wm)[a]) {
+                            code = refuse.fit_non_finite();
+                        }
+                        a = a + 1;
+                    }
+                }
+            }
+        }
+        it = it + 1;
+    }
+    if code == 0 {
+        borrow wv as &wr in {
+            var a = 0;
+            while a < p {
+                out[a] = contents(wr)[a];
+                a = a + 1;
+            }
+        }
+    }
+    unbox_slice(heap, wv);
+    unbox_slice(heap, sc);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    unbox_slice(heap, hm);
+    unbox_slice(heap, lm);
+    unbox_slice(heap, gv);
+    unbox_slice(heap, uv);
+    unbox_slice(heap, dl);
+    unbox_slice(heap, nolab);
+    return code;
+}
+
+// Fit. xt: n x d rank 2, d <= 256; yd: n class indices, each exactly one of 0.0 .. K - 1.0, every class present; kk the number of classes, 3 to 64; iters in 1..1000; l2 >= 0 finite;
+// out: (K - 1) (d + 1) values (class-major, the bias last in a class); diag: iters * (W + 1) values, W = spass.width(d, K): per iteration the W raw decisive sums (the gradient, the lower
+// triangle of the Hessian by rows, the sum of the squared scores, the summed loss) and the objective at the start of the iteration.
+pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], kk: int, iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    if limits.check_threads(t) != 0 {
+        return refuse.threads();
+    }
+    if kk > max_classes() {
+        return refuse.limit_classes();
+    }
+    var c = common.check_iters(iters);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_l2(l2);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_x(xt, len(xd), common.max_features());
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    c = check_sizes(n, d, kk);
+    if c != 0 {
+        return c;
+    }
+    let p = spass.params(d, kk);
+    let ww = spass.width(d, kk);
+    c = common.check_len(n, len(yd));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(p, len(out));
+    if c != 0 {
+        return c;
+    }
+    if iters > len(diag) / (ww + 1) {
+        return refuse.tensor_bounds();
+    }
+    if common.count_bad(xd[xt.off..len(xd)], xt.t0, n, d) != 0 || common.count_bad_vec(yd, n) != 0 {
+        return refuse.input_non_finite();
+    }
+    // every label is a class index, every class has a row
+    let seen = box_slice(heap, kk, 0);
+    var sb = seen;
+    var bad = 0;
+    var present = 0;
+    borrow mut sb as &!sw in {
+        var i = 0;
+        while i < n {
+            let v = yd[i];
+            if v < 0.0 || v > float_of(kk - 1) || float_of(truncate(v)) != v {
+                bad = 1;
+            } else if contents(sw)[truncate(v)] == 0 {
+                contents(sw)[truncate(v)] = 1;
+                present = present + 1;
+            }
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, sb);
+    if bad != 0 || present != kk {
+        if bad == 0 && present < 2 {
+            return refuse.label_single_class();
+        }
+        return refuse.param_out_of_range();
+    }
+    return newton(heap, t, xd[xt.off..len(xd)], xt.t0, yd, n, d, kk, iters, l2, out, diag);
+}
+
+// the scores of the K - 1 modelled classes of one row into z, the largest of them and 0.0 answered
+fn row_scores[&x, &w, &z](row: &x [float], d: int, kc: int, wv: &w [float], z: &!z [float]) -> [] float {
+    let dd = d + 1;
+    var mx = 0.0;
+    var k = 0;
+    while k < kc {
+        var s = wv[k * dd + d];
+        var j = 0;
+        while j < d {
+            s = s + row[j] * wv[k * dd + j];
+            j = j + 1;
+        }
+        z[k] = s;
+        if s > mx {
+            mx = s;
+        }
+        k = k + 1;
+    }
+    return mx;
+}
+
+// The checks of predict: the descriptor, the parameters, the output, the class count.
+fn check_predict[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], kk: int, wv: &w [float], out: &!o [float], per_row: int) -> [] int {
+    if kk < 3 || kk > max_classes() {
+        return refuse.param_out_of_range();
+    }
+    var c = common.check_x(xt, len(xd), common.max_features());
+    if c != 0 {
+        return c;
+    }
+    let p = spass.params(xt.s1, kk);
+    if len(wv) < p {
+        return refuse.tensor_bounds();
+    }
+    c = common.check_len(xt.s0 * per_row, len(out));
+    if c != 0 {
+        return c;
+    }
+    if common.count_bad(xd[xt.off..len(xd)], xt.t0, xt.s0, xt.s1) != 0 {
+        return refuse.input_non_finite();
+    }
+    return 0;
+}
+
+// The probabilities of the K classes of every row, row-major, the reference class last: e_k / s with the sum of the exponentials in the order of the pass.
+pub fn predict_proba[&h, &x, &w, &o](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], kk: int, wv: &w [float], out: &!o [float]) -> [heap] int {
+    let c = check_predict(xt, xd, kk, wv, out, kk);
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    let kc = kk - 1;
+    let zb = box_slice(heap, kc, 0.0);
+    var zz = zb;
+    borrow mut zz as &!zw in {
+        let z = contents(zw);
+        let xs = xd[xt.off..len(xd)];
+        var i = 0;
+        while i < n {
+            let mx = row_scores(xs[i * xt.t0..i * xt.t0 + d], d, kc, wv, z);
+            var k = 0;
+            while k < kc {
+                z[k] = mexp.exp(z[k] - mx);
+                k = k + 1;
+            }
+            let eref = mexp.exp(0.0 - mx);
+            var s = z[0];
+            k = 1;
+            while k < kc {
+                s = s + z[k];
+                k = k + 1;
+            }
+            s = s + eref;
+            k = 0;
+            while k < kc {
+                out[i * kk + k] = z[k] / s;
+                k = k + 1;
+            }
+            out[i * kk + kc] = eref / s;
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, zz);
+    return 0;
+}
+
+// The class index (as a float) of every row: the first class with the largest score, the reference class scoring 0.0 and last.
+pub fn predict[&h, &x, &w, &o](heap: &!h Heap, xt: tensor.Tensor, xd: &x [float], kk: int, wv: &w [float], out: &!o [float]) -> [heap] int {
+    let c = check_predict(xt, xd, kk, wv, out, 1);
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    let kc = kk - 1;
+    let zb = box_slice(heap, kc, 0.0);
+    var zz = zb;
+    borrow mut zz as &!zw in {
+        let z = contents(zw);
+        let xs = xd[xt.off..len(xd)];
+        var i = 0;
+        while i < n {
+            row_scores(xs[i * xt.t0..i * xt.t0 + d], d, kc, wv, z);
+            var best = 0;
+            var bv = z[0];
+            var k = 1;
+            while k < kc {
+                if z[k] > bv {
+                    bv = z[k];
+                    best = k;
+                }
+                k = k + 1;
+            }
+            if 0.0 > bv {
+                best = kc;
+            }
+            out[i] = float_of(best);
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, zz);
+    return 0;
+}
