@@ -140,7 +140,7 @@ M = [
     ("sm-score-weight", SP, "z = z + row[j] * wv[k * dd + j];", "z = z + row[j] * wv[j];"),
     ("sm-label-row", SP, "let yi = truncate(ys[r0 + i]);", "let yi = truncate(ys[r0]);"),
     ("sm-bias-column", SP, "av[d] = 1.0;", "av[d] = 0.0;"),
-    ("sm-lane-map", SP, "let la = lanes[(i % 4) * ww..(i % 4) * ww + ww];", "let la = lanes[(i % 2) * ww..(i % 2) * ww + ww];"),
+    ("sm-lane-map", SP, "let la = lanes[i % 4 * ww..i % 4 * ww + ww];", "let la = lanes[i % 2 * ww..i % 2 * ww + ww];"),
     ("sm-lane-combine", SP, "slot[u] = order.lane_combine(lanes[u], lanes[ww + u], lanes[2 * ww + u], lanes[3 * ww + u]);", "slot[u] = order.lane_combine(lanes[u], lanes[2 * ww + u], lanes[ww + u], lanes[3 * ww + u]);"),
     ("sm-lane-zero", SP, "    while t < 4 * ww {\n        lanes[t] = 0.0;", "    while t < 3 * ww {\n        lanes[t] = 0.0;"),
     ("sm-width", SP, "return p + p * (p + 1) / 2 + 2;", "return p + p * (p + 1) / 2 + 3;"),

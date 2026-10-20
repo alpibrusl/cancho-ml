@@ -330,6 +330,9 @@ pub fn stream_at(i: int) -> [] int {
     if i == 10 {
         return stream_boost_validation();
     }
+    if i == 11 {
+        return stream_permutation();
+    }
     return 0;
 }
 

@@ -112,27 +112,61 @@ fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
                     let o = contents(ow);
                     let g = contents(dw);
                     // the thread count, the class count, the iterations, l2
-                    if softmax.fit(heap, 0, mat(n, d), x, y, 4, 8, 0.0, o, g) != refuse.threads() { bad = bad + 1; }
-                    if softmax.fit(heap, 65, mat(n, d), x, y, 4, 8, 0.0, o, g) != refuse.threads() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 8, 0.0, o, g) != refuse.limit_classes() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 100000, 8, 0.0, o, g) != refuse.limit_classes() { bad = bad + 1; }
+                    if softmax.fit(heap, 0, mat(n, d), x, y, 4, 8, 0.0, o, g) != refuse.threads() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 65, mat(n, d), x, y, 4, 8, 0.0, o, g) != refuse.threads() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 8, 0.0, o, g) != refuse.limit_classes() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 100000, 8, 0.0, o, g) != refuse.limit_classes() {
+                        bad = bad + 1;
+                    }
                     // the class count comes before the iterations, the descriptor and the data
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 0, 0.0, o, g) != refuse.limit_classes() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, 300), x, y, 65, 8, 0.0, o, g) != refuse.limit_classes() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 2, 8, 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 0 - 3, 8, 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 0, 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 1001, 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0 - 1.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0 / 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 1.0 / 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 0, 0.0, o, g) != refuse.limit_classes() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, 300), x, y, 65, 8, 0.0, o, g) != refuse.limit_classes() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 2, 8, 0.0, o, g) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 0 - 3, 8, 0.0, o, g) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 0, 0.0, o, g) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 1001, 0.0, o, g) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0 - 1.0, o, g) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0 / 0.0, o, g) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 1.0 / 0.0, o, g) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
                     // the buffers: the output and the diagnostics too short
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0, o[0..11], g) != refuse.tensor_bounds() { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0, o, g[0..100]) != refuse.tensor_bounds() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0, o[0..11], g) != refuse.tensor_bounds() {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0, o, g[0..100]) != refuse.tensor_bounds() {
+                        bad = bad + 1;
+                    }
                     // a descriptor longer than the data
-                    if softmax.fit(heap, 1, mat(n + 1, d), x, y, 4, 8, 0.0, o, g) != refuse.tensor_bounds() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n + 1, d), x, y, 4, 8, 0.0, o, g) != refuse.tensor_bounds() {
+                        bad = bad + 1;
+                    }
                     // a clean fit passes
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 1.0, o, g) != 0 { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 1.0, o, g) != 0 {
+                        bad = bad + 1;
+                    }
                 }
             }
         }
@@ -141,7 +175,9 @@ fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
         borrow ys as &yr in {
             borrow mut out as &!ow in {
                 borrow mut diag as &!dw in {
-                    if softmax.fit(heap, 1, mat(n, d), contents(nr), contents(yr), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.input_non_finite() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), contents(nr), contents(yr), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.input_non_finite() {
+                        bad = bad + 1;
+                    }
                 }
             }
         }
@@ -152,21 +188,35 @@ fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
             borrow mut diag as &!dw in {
                 borrow mut badlab as &!bw in {
                     contents(bw)[10] = 4.0;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
                     contents(bw)[10] = 0.0 - 1.0;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
                     contents(bw)[10] = 1.5;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
                     contents(bw)[10] = 1.0e300;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
                     contents(bw)[10] = 0.0 / 0.0;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.input_non_finite() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.input_non_finite() {
+                        bad = bad + 1;
+                    }
                 }
                 borrow absent as &ar in {
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(ar), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(ar), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
                 }
                 borrow mut one as &!oneW in {
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(oneW), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.label_single_class() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(oneW), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.label_single_class() {
+                        bad = bad + 1;
+                    }
                 }
             }
         }
@@ -186,33 +236,65 @@ fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
 fn test_limits_before_allocation() -> [] int {
     var bad = 0;
     // the classes
-    if softmax.check_sizes(100, 3, 64) != 0 { bad = bad + 1; }
-    if softmax.check_sizes(100, 3, 65) != refuse.limit_classes() { bad = bad + 1; }
-    if softmax.check_sizes(100, 3, 2) != refuse.param_out_of_range() { bad = bad + 1; }
+    if softmax.check_sizes(100, 3, 64) != 0 {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(100, 3, 65) != refuse.limit_classes() {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(100, 3, 2) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
     // the parameters: (K - 1) (d + 1) = 2048 passes the first bound, 2080 does not (K = 33, d = 63 and 64)
-    if spass.params(63, 33) != 2048 || spass.params(64, 33) != 2080 { bad = bad + 1; }
-    if softmax.check_sizes(100, 63, 33) != 0 { bad = bad + 1; }
-    if softmax.check_sizes(100, 64, 33) != refuse.limit_parameters() { bad = bad + 1; }
+    if spass.params(63, 33) != 2048 || spass.params(64, 33) != 2080 {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(100, 63, 33) != 0 {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(100, 64, 33) != refuse.limit_parameters() {
+        bad = bad + 1;
+    }
     // the memory of the pass, from the sizes alone: P = 2016 (K = 64, d = 31) is fine for 2,000 rows and over the budget for 20,000
-    if softmax.check_sizes(2000, 31, 64) != 0 { bad = bad + 1; }
-    if softmax.check_sizes(20000, 31, 64) != refuse.limit_parameters() { bad = bad + 1; }
+    if softmax.check_sizes(2000, 31, 64) != 0 {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(20000, 31, 64) != refuse.limit_parameters() {
+        bad = bad + 1;
+    }
     // the bound is monotone in n and is not the thread count's: the same answer from the sizes
     var n = 1;
     var last = 0;
     while n < 1073741824 {
         let c = softmax.check_sizes(n, 31, 64);
-        if c != 0 && c != refuse.limit_parameters() { bad = bad + 1; }
-        if last != 0 && c == 0 { bad = bad + 1; }
+        if c != 0 && c != refuse.limit_parameters() {
+            bad = bad + 1;
+        }
+        if last != 0 && c == 0 {
+            bad = bad + 1;
+        }
         last = c;
         n = n * 3 + 1;
     }
     // an n no heap could hold is refused from the number alone
-    if softmax.check_sizes(1073741825, 3, 3) != refuse.too_many_rows() { bad = bad + 1; }
-    if softmax.check_sizes(9223372036854775807, 3, 3) != refuse.too_many_rows() { bad = bad + 1; }
-    if softmax.check_sizes(0, 3, 3) != refuse.param_out_of_range() { bad = bad + 1; }
-    if softmax.check_sizes(0 - 5, 3, 3) != refuse.param_out_of_range() { bad = bad + 1; }
-    if softmax.check_sizes(10, 0, 3) != refuse.param_out_of_range() { bad = bad + 1; }
-    if softmax.check_sizes(10, 257, 3) != refuse.param_out_of_range() { bad = bad + 1; }
+    if softmax.check_sizes(1073741825, 3, 3) != refuse.too_many_rows() {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(9223372036854775807, 3, 3) != refuse.too_many_rows() {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(0, 3, 3) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(0 - 5, 3, 3) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(10, 0, 3) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
+    if softmax.check_sizes(10, 257, 3) != refuse.param_out_of_range() {
+        bad = bad + 1;
+    }
     return bad;
 }
 
@@ -234,13 +316,17 @@ fn test_predict_tie_rule_and_probabilities[&h](heap: &!h Heap) -> [heap] int {
                     bad = bad + softmax.predict(heap, mat(n, d), contents(xr), kk, contents(ww)[0..9], contents(pw)[0..n]);
                     var i = 0;
                     while i < n {
-                        if contents(pw)[i] != 0.0 { bad = bad + 1; }
+                        if contents(pw)[i] != 0.0 {
+                            bad = bad + 1;
+                        }
                         i = i + 1;
                     }
                     bad = bad + softmax.predict_proba(heap, mat(n, d), contents(xr), kk, contents(ww)[0..9], contents(qw)[0..n * kk]);
                     i = 0;
                     while i < n * kk {
-                        if bits_of(contents(qw)[i]) != bits_of(1.0 / 4.0) { bad = bad + 1; }
+                        if bits_of(contents(qw)[i]) != bits_of(1.0 / 4.0) {
+                            bad = bad + 1;
+                        }
                         i = i + 1;
                     }
                     // the bias of class 1 is the largest: class 1 wins; every bias negative: the reference class (index 3, score 0.0) wins
@@ -248,7 +334,9 @@ fn test_predict_tie_rule_and_probabilities[&h](heap: &!h Heap) -> [heap] int {
                     bad = bad + softmax.predict(heap, mat(n, d), contents(xr), kk, contents(ww)[0..9], contents(pw)[0..n]);
                     i = 0;
                     while i < n {
-                        if contents(pw)[i] != 1.0 { bad = bad + 1; }
+                        if contents(pw)[i] != 1.0 {
+                            bad = bad + 1;
+                        }
                         i = i + 1;
                     }
                     contents(ww)[3 + 2] = 0.0 - 2.0;
@@ -257,7 +345,9 @@ fn test_predict_tie_rule_and_probabilities[&h](heap: &!h Heap) -> [heap] int {
                     bad = bad + softmax.predict(heap, mat(n, d), contents(xr), kk, contents(ww)[0..9], contents(pw)[0..n]);
                     i = 0;
                     while i < n {
-                        if contents(pw)[i] != 3.0 { bad = bad + 1; }
+                        if contents(pw)[i] != 3.0 {
+                            bad = bad + 1;
+                        }
                         i = i + 1;
                     }
                     // the probabilities sum to 1 within K 2^-52 and the reference class's is the largest here
@@ -270,15 +360,27 @@ fn test_predict_tie_rule_and_probabilities[&h](heap: &!h Heap) -> [heap] int {
                             s = s + contents(qw)[i * kk + k];
                             k = k + 1;
                         }
-                        if math.fabs(s - 1.0) > 4.0 * 2.220446049250313e-16 { bad = bad + 1; }
-                        if contents(qw)[i * kk + 3] < contents(qw)[i * kk] { bad = bad + 1; }
+                        if math.fabs(s - 1.0) > 4.0 * 2.220446049250313e-16 {
+                            bad = bad + 1;
+                        }
+                        if contents(qw)[i * kk + 3] < contents(qw)[i * kk] {
+                            bad = bad + 1;
+                        }
                         i = i + 1;
                     }
                     // the checks: the class count, the parameters, the output
-                    if softmax.predict(heap, mat(n, d), contents(xr), 2, contents(ww)[0..9], contents(pw)[0..n]) != refuse.param_out_of_range() { bad = bad + 1; }
-                    if softmax.predict(heap, mat(n, d), contents(xr), kk, contents(ww)[0..8], contents(pw)[0..n]) != refuse.tensor_bounds() { bad = bad + 1; }
-                    if softmax.predict(heap, mat(n, d), contents(xr), kk, contents(ww)[0..9], contents(pw)[0..2]) != refuse.tensor_bounds() { bad = bad + 1; }
-                    if softmax.predict_proba(heap, mat(n, d), contents(xr), kk, contents(ww)[0..9], contents(qw)[0..n * kk - 1]) != refuse.tensor_bounds() { bad = bad + 1; }
+                    if softmax.predict(heap, mat(n, d), contents(xr), 2, contents(ww)[0..9], contents(pw)[0..n]) != refuse.param_out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if softmax.predict(heap, mat(n, d), contents(xr), kk, contents(ww)[0..8], contents(pw)[0..n]) != refuse.tensor_bounds() {
+                        bad = bad + 1;
+                    }
+                    if softmax.predict(heap, mat(n, d), contents(xr), kk, contents(ww)[0..9], contents(pw)[0..2]) != refuse.tensor_bounds() {
+                        bad = bad + 1;
+                    }
+                    if softmax.predict_proba(heap, mat(n, d), contents(xr), kk, contents(ww)[0..9], contents(qw)[0..n * kk - 1]) != refuse.tensor_bounds() {
+                        bad = bad + 1;
+                    }
                 }
             }
         }
@@ -334,8 +436,12 @@ fn test_bias_is_not_penalised[&h](heap: &!h Heap) -> [heap, conc] int {
             let o = contents(ow);
             let b0 = math.log(float_of(contents(cr)[0]) / float_of(contents(cr)[2]));
             let b1 = math.log(float_of(contents(cr)[1]) / float_of(contents(cr)[2]));
-            if math.fabs(o[d] - b0) > 1.0e-5 || math.fabs(o[2 * (d + 1) - 1] - b1) > 1.0e-5 { bad = bad + 1; }
-            if math.fabs(o[0]) > 1.0e-3 || math.fabs(o[1]) > 1.0e-3 { bad = bad + 1; }
+            if math.fabs(o[d] - b0) > 1.0e-5 || math.fabs(o[2 * (d + 1) - 1] - b1) > 1.0e-5 {
+                bad = bad + 1;
+            }
+            if math.fabs(o[0]) > 1.0e-3 || math.fabs(o[1]) > 1.0e-3 {
+                bad = bad + 1;
+            }
         }
     }
     unbox_slice(heap, xs);
@@ -370,11 +476,15 @@ fn test_objective_decreases[&h](heap: &!h Heap) -> [heap, conc] int {
         var it = 1;
         while it < 8 {
             // the objective at the start of pass it is no more than at the start of pass it - 1 (Newton with a ridge, from w = 0, on this data)
-            if g[it * (ww + 1) + ww] > g[(it - 1) * (ww + 1) + ww] { bad = bad + 1; }
+            if g[it * (ww + 1) + ww] > g[(it - 1) * (ww + 1) + ww] {
+                bad = bad + 1;
+            }
             it = it + 1;
         }
         // the start is w = 0: the mean loss is ln K
-        if math.fabs(g[ww - 1] / float_of(n) - math.log(float_of(kk))) > 1.0e-12 { bad = bad + 1; }
+        if math.fabs(g[ww - 1] / float_of(n) - math.log(float_of(kk))) > 1.0e-12 {
+            bad = bad + 1;
+        }
     }
     unbox_slice(heap, xs);
     unbox_slice(heap, ys);
@@ -383,21 +493,34 @@ fn test_objective_decreases[&h](heap: &!h Heap) -> [heap, conc] int {
     return bad;
 }
 
-
 // ---------------------------------------------------------------- the constants of the written text, the arithmetic of the memory bound, the record of a separation
 fn test_constants_and_the_memory_formula() -> [] int {
     var bad = 0;
-    if softmax.max_classes() != 64 || softmax.max_params() != 2048 || softmax.budget() != 67108864 { bad = bad + 1; }
-    if softmax.separable_bound() != 0.6931 || softmax.scale_bound() != 50.0 { bad = bad + 1; }
+    if softmax.max_classes() != 64 || softmax.max_params() != 2048 || softmax.budget() != 67108864 {
+        bad = bad + 1;
+    }
+    if softmax.separable_bound() != 0.6931 || softmax.scale_bound() != 50.0 {
+        bad = bad + 1;
+    }
     // K = 3, d = 1: P = 4, W = 4 + 10 + 2 = 16; one row: one chunk, depth 2 (common.depth_for), one thread: 16 (2 + 2 + 2 + 10) + 2 16 + 1 2 = 290
-    if spass.params(1, 3) != 4 || spass.width(1, 3) != 16 || softmax.pass_floats(1, 1, 3) != 290 { bad = bad + 1; }
+    if spass.params(1, 3) != 4 || spass.width(1, 3) != 16 || softmax.pass_floats(1, 1, 3) != 290 {
+        bad = bad + 1;
+    }
     // 5000 rows: 3 chunks of 2048, 20 blocks, depth 7 (2 + 5): W (6 + 7 + 2 + 30) + 2 P^2 + n D
-    if softmax.pass_floats(5000, 1, 3) != 16 * (6 + 7 + 2 + 30) + 2 * 16 + 5000 * 2 { bad = bad + 1; }
+    if softmax.pass_floats(5000, 1, 3) != 16 * (6 + 7 + 2 + 30) + 2 * 16 + 5000 * 2 {
+        bad = bad + 1;
+    }
     // 200,000 rows: 98 chunks, so 64 threads at most count; 782 blocks, depth 12: 16 (196 + 12 + 2 + 640) + 2 16 + 200000 2
-    if softmax.pass_floats(200000, 1, 3) != 16 * (196 + 12 + 2 + 640) + 2 * 16 + 200000 * 2 { bad = bad + 1; }
-    if refuse.limit_classes() != 24 || refuse.limit_parameters() != 25 { bad = bad + 1; }
+    if softmax.pass_floats(200000, 1, 3) != 16 * (196 + 12 + 2 + 640) + 2 * 16 + 200000 * 2 {
+        bad = bad + 1;
+    }
+    if refuse.limit_classes() != 24 || refuse.limit_parameters() != 25 {
+        bad = bad + 1;
+    }
     // the scratch holds the four lanes and the row's vectors
-    if spass.scratch_len(1, 3) != 4 * 16 + 2 + 8 + 4 + 8 { bad = bad + 1; }
+    if spass.scratch_len(1, 3) != 4 * 16 + 2 + 8 + 4 + 8 {
+        bad = bad + 1;
+    }
     return bad;
 }
 
@@ -443,13 +566,25 @@ fn test_separation_is_refused_with_a_record[&h](heap: &!h Heap) -> [heap, conc] 
             borrow mut out as &!ow in {
                 borrow mut diag as &!dw in {
                     let code = softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 60, 0.0, contents(ow), contents(dw));
-                    if code != refuse.fit_separable() { bad = bad + 1; }
+                    if code != refuse.fit_separable() {
+                        bad = bad + 1;
+                    }
                     let g = contents(dw);
-                    if g[1] != 0.0 && g[1] != 2.0 { bad = bad + 1; }
-                    if g[3] <= 0.0 || g[4] <= 0.0 || g[0] < 1.0 { bad = bad + 1; }
-                    if g[1] == 0.0 && !(g[2] < 0.6931) { bad = bad + 1; }
-                    if g[1] == 2.0 && !(g[5] > 50.0) { bad = bad + 1; }
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 60, 0.01, contents(ow), contents(dw)) != 0 { bad = bad + 1; }
+                    if g[1] != 0.0 && g[1] != 2.0 {
+                        bad = bad + 1;
+                    }
+                    if g[3] <= 0.0 || g[4] <= 0.0 || g[0] < 1.0 {
+                        bad = bad + 1;
+                    }
+                    if g[1] == 0.0 && !(g[2] < 0.6931) {
+                        bad = bad + 1;
+                    }
+                    if g[1] == 2.0 && !(g[5] > 50.0) {
+                        bad = bad + 1;
+                    }
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 60, 0.01, contents(ow), contents(dw)) != 0 {
+                        bad = bad + 1;
+                    }
                 }
             }
         }

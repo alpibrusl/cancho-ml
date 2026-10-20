@@ -192,6 +192,8 @@ ml.refuse: pub fn input_invalid_utf8() -> [] int
 ml.refuse: pub fn predict_non_finite() -> [] int
 ml.refuse: pub fn fit_collinear() -> [] int
 ml.refuse: pub fn fit_separable() -> [] int
+ml.refuse: pub fn limit_classes() -> [] int
+ml.refuse: pub fn limit_parameters() -> [] int
 ml.refuse: pub fn tag(code: int) -> [] &static [byte]
 ml.refuse: pub fn exit_code(code: int) -> [] int
 ml.refuse: pub fn repair(code: int) -> [] &static [byte]

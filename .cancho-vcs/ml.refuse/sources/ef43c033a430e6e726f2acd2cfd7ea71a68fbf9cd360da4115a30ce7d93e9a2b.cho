@@ -5,7 +5,7 @@ module ml.refuse;
 // lib/ answers one of these codes; tests/core.cho has a fixture for every one (and fails if a code has no tag).
 
 pub fn count() -> [] int {
-    return 23;
+    return 25;
 }
 
 pub fn tensor_rank() -> [] int {
@@ -104,6 +104,16 @@ pub fn fit_separable() -> [] int {
     return 23;
 }
 
+// more classes than the ceiling of 64 (docs/multiclass.md section 2)
+pub fn limit_classes() -> [] int {
+    return 24;
+}
+
+// the parameters of a multiclass fit, or the memory of its pass, over the bound (docs/multiclass.md section 3.2)
+pub fn limit_parameters() -> [] int {
+    return 25;
+}
+
 pub fn tag(code: int) -> [] &static [byte] {
     if code == 1 {
         return "ml.tensor.rank";
@@ -174,6 +184,12 @@ pub fn tag(code: int) -> [] &static [byte] {
     if code == 23 {
         return "ml.fit.separable";
     }
+    if code == 24 {
+        return "ml.limit.classes";
+    }
+    if code == 25 {
+        return "ml.limit.parameters";
+    }
     return "";
 }
 
@@ -182,7 +198,7 @@ pub fn exit_code(code: int) -> [] int {
     if code == 8 || code == 11 {
         return 2;
     }
-    if code >= 1 && code <= 10 || code >= 12 && code <= 23 {
+    if code >= 1 && code <= 10 || code >= 12 && code <= 25 {
         return 8;
     }
     return 0;
@@ -248,6 +264,12 @@ pub fn repair(code: int) -> [] &static [byte] {
     }
     if code == 23 {
         return "set l2 above 0: the classes are separated by a hyperplane, so no penalty-free optimum exists";
+    }
+    if code == 24 {
+        return "merge rare classes before fitting: at most 64 classes";
+    }
+    if code == 25 {
+        return "fit with fewer features or classes, or on fewer rows: the sizes and the bound are in detail";
     }
     return "";
 }

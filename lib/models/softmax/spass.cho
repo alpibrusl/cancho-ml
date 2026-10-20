@@ -53,7 +53,7 @@ pub fn block[&x, &y, &w, &c, &s](xs: &x [float], rs: int, ys: &y [float], r0: in
     var i = 0;
     while i < m {
         let row = xs[(r0 + i) * rs..(r0 + i) * rs + d];
-        let la = lanes[(i % 4) * ww..(i % 4) * ww + ww];
+        let la = lanes[i % 4 * ww..i % 4 * ww + ww];
         var j = 0;
         while j < d {
             av[j] = row[j];

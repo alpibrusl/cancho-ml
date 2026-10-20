@@ -807,6 +807,7 @@
     "pair",
     "param",
     "param_out_of_range",
+    "params",
     "parent_of",
     "parse_error",
     "parse_float",
@@ -1123,6 +1124,7 @@
     "width",
     "width",
     "width",
+    "width",
     "width_of",
     "width_ok",
     "width_out",
@@ -1140,5 +1142,5 @@
   ],
   "folded_operators": 273,
   "folded_calls": 2,
-  "functions": 1918
+  "functions": 1921
 }
