@@ -153,6 +153,8 @@ Gates for stages D and E repeat M1, M5 to M10 for the tree, the forest and the b
 
 **Wiring mutants** (`scripts/mutants_wire_softmax.py`, 49 mutants, this machine): 45 killed, 4 survive, each explained: `sw-reader-width-not-compared`, `sw-reader-kc-minimum`, `sw-reader-labels-end` and `sw-plan-payload-family` are guarded by a second check on the same path that refuses the same input with the same rule tag, so the mutant changes no observable answer. (`sw-metrics-nonfinite-not-scanned` and `sw-reader-class-ceiling` first survived because their test lists lacked the file tests; both are killed once those are included.)
 
-**Not measured at this stage:** the 16 fingerprint lines on macOS and Linux aarch64; `cv`, `importance` and `dump` (refused); a weighted fit.
+**Other platforms (CI run 39503909325 on b222980):** `build-test` passed on ubuntu-24.04, ubuntu-26.04, ubuntu-24.04-arm (Linux aarch64) and macos-26 (darwin arm64); the fingerprint step (`xplat_check.py --require-predict`, 138 lines for 36 fits, 16 of them softmax) equals the golden on each. The aarch64 run of the earlier head 945b7c6 printed the same 138 lines.
+
+**Not measured at this stage:** `cv`, `importance` and `dump` (refused); a weighted fit.
 
 Stages C to F are empty until they have run. A number is written here only if a script of this repository printed it, with the machine, the threads and the minimum of N.
