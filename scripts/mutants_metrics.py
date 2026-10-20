@@ -233,6 +233,7 @@ ALLOWED = {
     "r2-sst-zero": "equivalent: a zero SST makes SSE / SST an infinity or a NaN, and the finite test on the result refuses it with the same tag",
     "ratio-first-bit": "equivalent: r == b at the first bit happens only when the quotient is an exact power of two, and the 52 bits that follow then round up to the same value",
     "ratio-one": "equivalent: a == b is a shortcut; the general path also returns 1.0 (checked for a = b above)",
+    "mc-auc-missing-class": "equivalent: auc_ovr and auc_class both run check_probs with the same arguments, so a refusal other than a class without both sides has been returned before this branch; it is defensive",
     "sum-tree-level": "equivalent: stack levels strictly decrease from the bottom, so `lv[sp-1] > lv[sp-2]` never happens (docs/linalg.md 5.1 lists the same survivor, order-level-eq)",
 }
 

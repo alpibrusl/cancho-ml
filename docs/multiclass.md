@@ -72,8 +72,8 @@ All are functions of integer counts or of the probabilities, with every sum in t
 | per class `k`: `precision`, `recall`, `f1`, `support` | `C[k][k] / sum_a C[a][k]`, `C[k][k] / sum_b C[k][b]`, the harmonic mean of the two as the binary F1 (**[read]** `lib/metrics/classify.cho`), `sum_b C[k][b]`; `null` for a class with a zero denominator |
 | `macro` of precision, recall, F1 | the mean of the per-class values over the classes that have one **[choice]**; the number of classes left out is reported |
 | `micro` | for single-label multiclass, the micro precision, recall and F1 all equal the accuracy, and are reported as that one value, not three **[choice]** |
-| `weighted` | the mean of the per-class values weighted by `support` |
-| `log_loss` | the mean of `-ln(max(p_true, eps))` with the binary metric's `eps` (**[read]** `lib/metrics/logloss.cho`) |
+| `weighted` | `sum_k support_k * v_k / sum_k support_k` over the classes that have a value, the sum in the order of the classes; a class that has a value and no row weighs nothing; no row among the classes with a value is `undefined`; the classes left out are counted **[choice, written at stage A]** |
+| `log_loss` | the mean of `-ln(clip(p_true))` with the binary metric's clip to `[eps, 1 - eps]`, `eps = 2^-52` (**[read]** `lib/metrics/logloss.cho`; corrected at stage A: this row first said `max(p_true, eps)` and the code and the oracle use the binary clip on both sides); the sum is the decisive sum of `docs/linalg.md` section 2. The probability table is `n * K` finite values in `[0, 1]`; its rows are neither renormalised nor checked to sum to 1 |
 | `roc_auc_ovr` | the mean over the classes of the binary AUC of `class k` against the rest, using the probability of `k` as the score and the binary AUC's rule for ties (midranks, **[read]** `docs/metrics.md` M2); the per-class values are reported; a class absent from the rows, or the only one present, is left out and counted **[choice]** |
 
 **[open]** `roc_auc_ovo` (all pairs) is not built; if the maintainer asks for it, it is a section of its own.

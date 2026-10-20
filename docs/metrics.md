@@ -21,6 +21,11 @@ that the gates call, tests in `tests/t_metrics*.cho`, scripts in `scripts/*metri
 | T1 | **Tags.** Every refusal is a code of `lib/metrics/rules.cho` with a `<area>.<name>` tag, an exit code and a summary in the table convention of `tools/ml/spec.cho` (`tag|exit|repairable|summary`), every tag is reached by at least one fixture through the driver with the right tag and exit code, no tag is unreached, and the table is checked against `design.md` section 8 for the tags that exist there | `scripts/gate_metrics.py --tags` | a tag renamed, an exit changed, a fixture removed, an error returned as another code |
 | F1 | **No input reaches a trap; limits before allocation.** A fuzz program (`tests/t_metrics_fuzz.cho`) feeds random lengths, NaN, infinities, subnormals, extreme labels (`INT_MIN`, `INT_MAX`), huge `n`, `n_test`, `k`, caps and repeats, to every entry (it must also reach the value paths, and fails if it does not); the driver is run on the same classes of input (`gate_metrics.py --fuzz`, exit codes only 0, 2, 8, no signal). Every allocation sized by input is preceded by a comparison with the cap: a call with `n` from `2^40` to `INT_MAX` and an output slice of 3 entries must answer `ml.input.too-many-rows` (an allocation of that size, or a trap, would end the test) | `t_metrics_fuzz.cho`, `gate_metrics.py --fuzz` | a removed cap check, a removed finite check |
 | P1 | **Speed, reported not promised.** AUC and log-loss on 1,000,000 predictions against `sklearn.metrics.roc_auc_score`/`log_loss` and against a thin numpy version (`argsort` + `cumsum`; `np.log` + sum). One thread, minimum of 7 interleaved samples, spread and load printed | `scripts/bench_metrics.py` | none: whatever it prints is the verdict, "matches" only if the number says so |
+| MC1 | **Multiclass counts are exact.** The confusion matrix equals Python's, accuracy is the trace over `n` (and equals `classify.accuracy`), each per-class precision, recall and F1 is one division of two exact ints (bit equal to Python's `a / b`, `undefined` exactly where the denominator is 0), the macro and weighted means are the sequential sums in the order of the classes | `scripts/oracle_metrics.py --multiclass`, generated labels (K from 2 to 64, n up to 20,000), explicit labels that are negative, huge or gapped, and edge cases (absent classes, a class never predicted, nothing right) | a transposed matrix, a swapped axis, a wrong denominator, a skipped class, a weight dropped |
+| MC2 | **Multiclass log-loss** follows the binary rule: the terms are within 2 ulp of Python's `-math.log(clip(p))` and the mean is the written-order decisive sum of the library's own terms | the same script, K up to 64, n around the block edges | a wrong column of the table, the wrong clip, a mean over `n + 1` |
+| MC3 | **One-versus-rest AUC** per class is `float(Fraction)` from scipy midranks, the mean is the sequential sum over the classes that have both sides, the classes left out are counted | the same script, K up to 64, ties (quantised probabilities) | a wrong class column, a mean over `K` |
+| MC4 | **Tags and limits**: `ml.label.unseen`, `ml.limit.classes` and the refusals of the classes list are reached by fixtures through the driver (71 fixtures in all), the buffers are checked, and 600 hostile driver runs and 1,500 hostile rounds of `tests/t_metrics_mc.cho` never trap | `scripts/gate_metrics.py`, `tests/t_metrics_mc.cho` | a bound moved by one |
+| MC5 | **sklearn** (`accuracy_score`, `precision_recall_fscore_support`, `log_loss`, `roc_auc_score(multi_class="ovr")`) within bounds written before the numbers were seen: 150 u for the counts-based values and their means, 150 u for the AUC, 1e-12 absolute for the log-loss (`oracle_metrics.py --multiclass-sklearn`) | the same bounds with sklearn 1.8.0 | — |
 
 Mutants (section 6): 20 or more source edits of `lib/metrics`, each applied to a copy of the tree, the gates S1, S2, S3, M1 to M3, T1
 and F1 run on it, and the mutant is killed if one fails. A survivor is explained in `scripts/mutants_metrics.py` or the gate is fixed.
@@ -154,6 +159,27 @@ non-zero-ness of the remaining `r` (and of any later bit) as the sticky bit, rou
 `ml.metric.undefined` for `n = 0`. Differences from scikit-learn that are choices: undefined cases are refusals (not 0.0 or NaN with a warning); the
 clip is the same; the sum order is ours.
 
+### 2.9 Multiclass metrics (`lib/metrics/multiclass.cho`, stage A of `docs/multiclass.md`)
+
+**Classes.** The caller gives the labels of the model as a list of ints, strictly ascending; class `k` is the `k`-th. Zero classes or a list that is not strictly ascending is `ml.param.out-of-range`, one class is `ml.label.single-class`, more than 64 is `ml.limit.classes`. A true or predicted label that is not in the list is `ml.label.unseen`. The checks run in this order: the classes, the cap and the lengths and `n = 0` (`classify.check_size`), the size of the caller's buffer, the labels.
+
+**Confusion.** `C[a][b]` counts the rows of true class `a` predicted as class `b`, row-major, `K * K` ints. Every count is below the row cap (at most `2^30`), so every ratio below is one IEEE division of two exact ints, the correctly rounded value, as in 2.5.
+
+| value | definition | no value (`ml.metric.undefined`) |
+|---|---|---|
+| accuracy | `sum_k C[k][k] / n` (equal to `classify.accuracy` on the same labels) | `n = 0` |
+| precision of `k` | `C[k][k] / sum_a C[a][k]` | nothing predicted as `k` |
+| recall of `k` | `C[k][k] / sum_b C[k][b]` | no row of class `k` |
+| F1 of `k` | `2 C[k][k] / (sum_b C[k][b] + sum_a C[a][k])`, the binary F1 of `k` against the rest | no row of class `k` and none predicted as `k` |
+| macro mean | the sum over the classes that have a value, in the order of the classes, divided by their number | no class has a value |
+| weighted mean | `sum_k support_k * v_k / sum_k support_k` over the classes that have a value, the sum in the order of the classes | no class has a value, or all of them have no row |
+
+The classes without a value are left out of a mean and counted (`left_out`). The micro averages of a single-label problem are all the accuracy, so they are not separate values.
+
+**Log-loss.** `-log(clip(p_true))` per row with the binary term (2.8: the clip to `[eps, 1 - eps]`, `eps = 2^-52`, `std.math.log`), summed as the decisive sum of 2.4 and divided by `n`. The table is `n * K` probabilities, row-major; its length, finiteness and range are checked (`ml.metric.length-mismatch`, `ml.input.non-finite`, `ml.metric.bad-probability`) and then the labels (`ml.label.unseen`); the row sums are not checked.
+
+**One-versus-rest AUC.** For each class, the binary AUC of 2.6 with "is class `k`" as the positive label and the probability of `k` as the score, with the same tie rule. A class with no row, or the only class present, has no value and is left out (counted); the mean is the sequential sum in the order of the classes divided by the number of classes with a value; no class with a value is `ml.metric.undefined`.
+
 ## 3. References and what "equal" means (R1)
 
 | metric | reference route | expected |
@@ -193,8 +219,8 @@ library, so no fixture reached them); the wiring stage (W1) moved `ml.split.empt
 | `ml.metric.bad-probability` | 8 | a probability outside `[0, 1]` | yes (registered at integration) |
 | `ml.split.empty-fold` | 8 | `k > n`, or a train/test split that would leave a side empty | yes (registered at integration) |
 | `ml.split.stratum-too-small` | 8 | a class with fewer than `k` rows | yes (registered at integration) |
-| `ml.label.unseen` | 8 | a true or predicted label is not one of the classes of a multiclass metric (**new**, stage A of `multiclass.md`) | yes |
-| `ml.limit.classes` | 8 | more than 64 classes (**new**, stage A of `multiclass.md`) | yes |
+| `ml.label.unseen` | 8 | a true or predicted label is not one of the classes of a multiclass metric (stage A of `multiclass.md`, section 2.9) | yes |
+| `ml.limit.classes` | 8 | more than 64 classes (stage A of `multiclass.md`, section 2.9) | yes |
 
 ## 5. Results
 
