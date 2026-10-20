@@ -1,0 +1,194 @@
+edition 6;
+
+module ml.mcwire;
+
+import std.buffer;
+import std.json;
+import ml.fbits;
+import ml.matrix;
+import ml.mcdata;
+import ml.refuse;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import metrics.rules;
+import models.adapter_softmax;
+import models.softmax;
+import models.spass;
+import pipeline.names;
+import toolbox.fail;
+
+// The multiclass half of fit and eval (docs/multiclass.md section 3, stage B): the fit of the softmax model on the rows a plan leaves, the summary of a fit, and the refusals of a label the
+// model has no class for. The classes are the distinct labels of the target, ascending (ml.mcdata); the payload is models.adapter_softmax's.
+
+// A fit: (the payload of the model section, one byte when there is none; the code, 0 or a refusal of ml.refuse or, for a class with no training row, of metrics.rules; the record the
+// refusal of a separable or a collinear problem is made of; the index of the class that has no training row, -1 when every class has one).
+fn refused[&h](heap: &!h Heap, code: int, empty: int) -> [heap] (Box[[byte]], int, Box[[float]], int) {
+    return (box_slice(heap, 1, byte_of(0)), code, box_slice(heap, 8, 0.0), empty);
+}
+
+// Fit on the rows of xq (the matrix the steps left) against the labels ytr (one per row): the sizes first (the class count, the parameters and the memory of a pass are compared with the
+// bounds before anything is allocated), then the class of every row, then the Newton passes with one slot of diagnostics (the parameters do not depend on how many are kept).
+pub fn fit[&h, &x, &y, &l](heap: &!h Heap, threads: int, xq: &x matrix.Matrix, ytr: &y [float], labels: &l [int], kk: int, iters: int, l2: float) -> [heap, conc] (Box[[byte]], int, Box[[float]], int) {
+    let n = matrix.rows(xq);
+    let d = matrix.cols(xq);
+    let sz = softmax.check_sizes(n, d, kk);
+    if sz != 0 {
+        return refused(heap, sz, 0 - 1);
+    }
+    var yidx = box_slice(heap, n + 1, 0.0);
+    var counts = box_slice(heap, kk + 1, 0);
+    var foreign = 0 - 1;
+    var empty = 0 - 1;
+    borrow mut yidx as &!yw in {
+        borrow mut counts as &!cw in {
+            foreign = mcdata.indices(ytr, n, labels, kk, contents(yw)[0..n], contents(cw));
+            empty = mcdata.first_empty(contents(cw), kk);
+        }
+    }
+    if foreign >= 0 || empty >= 0 {
+        unbox_slice(heap, yidx);
+        unbox_slice(heap, counts);
+        return refused(heap, rules.unseen_label(), empty);
+    }
+    unbox_slice(heap, counts);
+    let p = spass.params(d, kk);
+    let ww = spass.width(d, kk);
+    var out = box_slice(heap, p + 1, 0.0);
+    var diag = box_slice(heap, ww + 1, 0.0);
+    var code = 0;
+    borrow yidx as &yr in {
+        borrow mut out as &!ow in {
+            borrow mut diag as &!dw in {
+                code = softmax.fit(heap, threads, matrix.shape(xq), contents(xq.data), contents(yr)[0..n], kk, iters, 1, l2, contents(ow)[0..p], contents(dw)[0..ww + 1]);
+            }
+        }
+    }
+    unbox_slice(heap, yidx);
+    var blob = box_slice(heap, 1, byte_of(0));
+    if code == 0 {
+        unbox_slice(heap, blob);
+        borrow out as &or in {
+            blob = adapter_softmax.make_payload(heap, kk, d, contents(or)[0..p], labels);
+        }
+    }
+    unbox_slice(heap, out);
+    return (blob, code, diag, 0 - 1);
+}
+
+// ml.label.unseen for a class of the data that has no row to train on (fit with a split): the label, not a row
+pub fn class_absent[&h](heap: &!h Heap, errs: fail.Errors, label: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.label.unseen");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "label", label);
+    w = fail.detail_str(heap, w, "reason", "no-training-row");
+    return fail.add(heap, errs, w);
+}
+
+// ml.label.unseen for the row `row` (0-based) of the data, whose label is not a class of the model
+pub fn unseen_row[&h](heap: &!h Heap, errs: fail.Errors, row: int, label: int, classes: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.label.unseen");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "row", row + 1);
+    w = fail.detail_int(heap, w, "label", label);
+    w = fail.detail_int(heap, w, "classes", classes);
+    return fail.add(heap, errs, w);
+}
+
+// The first of yv[0..rows] that is not a class of the model whose payload is `blob` (d features): (its index or -1, its label, the number of classes). A payload that does not parse has
+// no class, so its first row is unseen; load_stored has parsed it already.
+pub fn first_unseen[&h, &b, &y](heap: &!h Heap, blob: &b [byte], d: int, yv: &y [float], rows: int) -> [heap] (int, int, int) {
+    let (code, kk, wv, labels) = adapter_softmax.parts(heap, blob, d);
+    unbox_slice(heap, wv);
+    var at = 0 - 1;
+    var lab = 0;
+    if code == 0 {
+        borrow labels as &lr in {
+            var i = 0;
+            while i < rows && at < 0 {
+                if mcdata.index_of(contents(lr), kk, truncate(yv[i])) < 0 {
+                    at = i;
+                    lab = truncate(yv[i]);
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, labels);
+    return (at, lab, kk);
+}
+
+// The summary of a fitted multiclass model: the coefficient of every feature in each class but the reference, the intercepts, the classes and the reference class (the last).
+pub fn put_summary[&h, &b, &n](heap: &!h Heap, w0: json.Writer, blob: &b [byte], d: int, nm: &n names.Names) -> [heap] json.Writer {
+    var w = w0;
+    let (code, kk, wv, labels) = adapter_softmax.parts(heap, blob, d);
+    if code == 0 {
+        borrow wv as &wr in {
+            borrow labels as &lr in {
+                let ws = contents(wr);
+                let ls = contents(lr);
+                w = json.put_key(heap, w, "coefficients");
+                w = json.begin_array(heap, w);
+                var k = 0;
+                while k < kk - 1 {
+                    var j = 0;
+                    while j < d {
+                        w = json.begin_object(heap, w);
+                        w = json.put_key(heap, w, "class");
+                        w = json.put_int(heap, w, ls[k]);
+                        w = verbs.put_name(heap, w, "name", names.name(nm, j));
+                        w = json.put_key(heap, w, "value");
+                        w = verbs.put_double(heap, w, bits_of(ws[k * (d + 1) + j]));
+                        w = json.end_object(heap, w);
+                        j = j + 1;
+                    }
+                    k = k + 1;
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "intercepts");
+                w = json.begin_array(heap, w);
+                k = 0;
+                while k < kk - 1 {
+                    w = json.begin_object(heap, w);
+                    w = json.put_key(heap, w, "class");
+                    w = json.put_int(heap, w, ls[k]);
+                    w = json.put_key(heap, w, "value");
+                    w = verbs.put_double(heap, w, bits_of(ws[k * (d + 1) + d]));
+                    w = json.end_object(heap, w);
+                    k = k + 1;
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "classes");
+                w = json.begin_array(heap, w);
+                k = 0;
+                while k < kk {
+                    w = json.put_int(heap, w, ls[k]);
+                    k = k + 1;
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "reference");
+                w = json.put_int(heap, w, ls[kk - 1]);
+            }
+        }
+    }
+    unbox_slice(heap, wv);
+    unbox_slice(heap, labels);
+    return w;
+}
+
+// The classes of the model whose payload is `blob`, ascending (one 0 when the payload is not a multiclass one): the reader of `describe`, which has the file and not the width.
+pub fn classes_of[&h, &b](heap: &!h Heap, blob: &b [byte]) -> [heap] (Box[[int]], int) {
+    var d = 0;
+    if len(blob) >= 28 {
+        d = fbits.get64(blob, 20);
+    }
+    let (code, kk, wv, labels) = adapter_softmax.parts(heap, blob, d);
+    unbox_slice(heap, wv);
+    if code != 0 {
+        unbox_slice(heap, labels);
+        return (box_slice(heap, 2, 0), 0);
+    }
+    return (labels, kk);
+}

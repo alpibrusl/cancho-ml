@@ -15,6 +15,7 @@ import ml.csvcell;
 import ml.est;
 import ml.mfile;
 import ml.matrix;
+import ml.mcmetrics;
 import ml.refuse;
 import ml.spec;
 import ml.verbs;
@@ -974,6 +975,11 @@ pub fn cluster_metrics[&h, &x, &w, &b](heap: &!h Heap, w0: json.Writer, plain: b
 // precision and the rest are about.
 pub fn metrics_block[&h, &x, &y, &w, &b](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], blob: &b [byte], c0: int, c1: int, pos: int, cap: int, strict: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, Failed) {
     let n = matrix.rows(xs);
+    if kind == 9 {
+        // a multiclass model: the metrics of docs/multiclass.md section 3.4 (the labels are the model's own, so c0, c1 and pos are not read)
+        let (mobj, mplain, mund, mcode, mname, mrow) = mcmetrics.score(heap, xs, yv, blob, cap, strict);
+        return (mobj, mplain, mund, Failed { code: mcode, name: mname, row: mrow });
+    }
     var pred = box_slice(heap, n + 1, 0.0);
     var obj = json.writer(heap, 256);
     obj = json.begin_object(heap, obj);

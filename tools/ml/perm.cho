@@ -718,7 +718,7 @@ pub fn run[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs
                 borrow stored as &sr in {
                     let kind = est.kind_of(wireio.stored_kind(sr));
                     if kind != 4 && kind != 5 && kind != 7 {
-                        e = refuse(heap, e, "ml.importance.unsupported-model", "the model is a constant, a k-means or a boosted model, which have no importance per feature here", "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means");
+                        e = refuse(heap, e, "ml.importance.unsupported-model", "the model is a constant, a k-means, a boosted or a multiclass model, which have no importance per feature here", "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means");
                     } else {
                         let (ib, ist, imiss, ipl) = interp.table(heap, sr, 4294967296);
                         var go = true;
@@ -778,7 +778,7 @@ pub fn run[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs
             if ds != 0 {
                 e = verbs.model_error(heap, e, ds, da, paths.shown(model));
             } else {
-                e = refuse(heap, e, "ml.importance.unsupported-model", "the model is a constant, a k-means or a boosted model, which have no importance per feature here", "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means");
+                e = refuse(heap, e, "ml.importance.unsupported-model", "the model is a constant, a k-means, a boosted or a multiclass model, which have no importance per feature here", "importance explains a linear, logistic, tree or forest model; dump prints the centroids of a k-means");
             }
             mfile.drop_model(heap, mo);
         }

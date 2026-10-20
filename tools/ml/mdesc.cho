@@ -16,6 +16,7 @@ import ml.fbits;
 import ml.fsio;
 import ml.interp;
 import ml.kinds;
+import ml.mcwire;
 import ml.mfile;
 import ml.paths;
 import ml.prov;
@@ -414,7 +415,25 @@ fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static 
     }
     // classes, positive
     w = json.put_key(heap, w, "classes");
-    if task == 2 {
+    if task == 2 && kind == kinds.model_softmax() {
+        // a multiclass model: every class, ascending, and no positive one
+        let (mdat9, mdlen9) = section_at(data, 4);
+        var mlen9 = mdlen9;
+        if mlen9 < 0 {
+            mlen9 = 0;
+        }
+        let (cls, kk) = mcwire.classes_of(heap, data[mdat9..mdat9 + mlen9]);
+        w = json.begin_array(heap, w);
+        borrow cls as &clr in {
+            var q = 0;
+            while q < kk {
+                w = json.put_int(heap, w, contents(clr)[q]);
+                q = q + 1;
+            }
+        }
+        w = json.end_array(heap, w);
+        unbox_slice(heap, cls);
+    } else if task == 2 {
         w = json.begin_array(heap, w);
         w = json.put_int(heap, w, c0);
         w = json.put_int(heap, w, c1);
@@ -423,7 +442,7 @@ fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static 
         w = json.put_null(heap, w);
     }
     w = json.put_key(heap, w, "positive");
-    if task == 2 && kind > 3 {
+    if task == 2 && kind > 3 && kind != kinds.model_softmax() {
         w = json.put_int(heap, w, c1);
     } else {
         w = json.put_null(heap, w);
@@ -449,7 +468,11 @@ fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static 
     if task == 2 && kind > 3 {
         w = json.begin_array(heap, w);
         w = json.put_string(heap, w, "label");
-        w = json.put_string(heap, w, "probability");
+        if kind == kinds.model_softmax() {
+            w = json.put_string(heap, w, "probabilities");
+        } else {
+            w = json.put_string(heap, w, "probability");
+        }
         w = json.end_array(heap, w);
     } else {
         w = json.put_null(heap, w);
@@ -465,7 +488,7 @@ fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static 
         w = json.put_null(heap, w);
     }
     w = json.put_key(heap, w, "label_threshold");
-    if task == 2 && kind > 3 {
+    if task == 2 && kind > 3 && kind != kinds.model_softmax() {
         w = json.put_string(heap, w, "0.5");
     } else {
         w = json.put_null(heap, w);

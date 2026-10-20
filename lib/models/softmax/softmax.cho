@@ -80,18 +80,9 @@ pub fn check_sizes(n: int, d: int, kk: int) -> [] int {
 // The record of a separation refusal in diag (floats), the layout of the binary one: [0] the pass, [1] the reason (0 the summed loss was under the bound, 1 the pivot test failed at a
 // pass after the first, 2 the root mean square of the scores was over its bound), [2] the summed loss of the pass, [3] the Euclidean norm of w, [4] the largest diagonal element of the
 // Hessian of pass 0, [5] the root mean square of the scores.
-fn note_separable[&w, &g](p: int, ww: int, nf: float, kc: int, it: int, reason: int, loss: float, qsum: float, wv: &w [float], diag: &!g [float]) -> [] int {
-    var hmax = 0.0;
-    var a = 0;
-    while a < p {
-        let v = diag[p + a * (a + 1) / 2 + a] / nf;
-        if v > hmax {
-            hmax = v;
-        }
-        a = a + 1;
-    }
+fn note_separable[&w, &g](p: int, ww: int, nf: float, kc: int, it: int, reason: int, loss: float, qsum: float, hmax: float, wv: &w [float], diag: &!g [float]) -> [] int {
     var q = 0.0;
-    a = 0;
+    var a = 0;
     while a < p {
         q = q + wv[a] * wv[a];
         a = a + 1;
@@ -105,8 +96,22 @@ fn note_separable[&w, &g](p: int, ww: int, nf: float, kc: int, it: int, reason: 
     return 0;
 }
 
-// the iterations. xs positioned at X[0, 0], row stride rs. diag receives, per iteration, the W raw sums then the objective.
-fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, ys: &y [float], n: int, d: int, kk: int, iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+// the largest diagonal element of the Hessian of a pass, from its sums
+fn hess_max[&s](p: int, sums: &s [float], nf: float) -> [] float {
+    var hmax = 0.0;
+    var a = 0;
+    while a < p {
+        let v = sums[p + a * (a + 1) / 2 + a] / nf;
+        if v > hmax {
+            hmax = v;
+        }
+        a = a + 1;
+    }
+    return hmax;
+}
+
+// the iterations. xs positioned at X[0, 0], row stride rs. diag receives, per iteration, the W raw sums then the objective, in the slot it % keep (so the last `keep` iterations are kept).
+fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, ys: &y [float], n: int, d: int, kk: int, iters: int, keep: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
     let kc = kk - 1;
     let dd = d + 1;
     let p = kc * dd;
@@ -126,6 +131,7 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
     let nolab = box_slice(heap, 1, 0);
     var code = 0;
     var it = 0;
+    var h0 = 0.0;
     while it < iters && code == 0 {
         borrow wv as &wr in {
             borrow mut sc as &!scw in {
@@ -141,10 +147,11 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
         if code == 0 {
             borrow st as &sr in {
                 let sums = contents(sr);
+                let slot = it % keep * (ww + 1);
                 var i = 0;
                 var finite = true;
                 while i < ww {
-                    diag[it * (ww + 1) + i] = sums[i];
+                    diag[slot + i] = sums[i];
                     if !common.is_finite(sums[i]) {
                         finite = false;
                     }
@@ -164,7 +171,10 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
                             }
                             a = a + 1;
                         }
-                        diag[it * (ww + 1) + ww] = sums[ww - 1] / nf + 0.5 * l2 * q;
+                        diag[slot + ww] = sums[ww - 1] / nf + 0.5 * l2 * q;
+                        if it == 0 {
+                            h0 = hess_max(p, sums, nf);
+                        }
                         borrow mut gv as &!gw in {
                             a = 0;
                             while a < p {
@@ -202,10 +212,10 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
                     let loss = contents(sr)[ww - 1];
                     let qsum = contents(sr)[ww - 2];
                     if loss < separable_bound() {
-                        note_separable(p, ww, nf, kc, it, 0, loss, qsum, contents(wr), diag);
+                        note_separable(p, ww, nf, kc, it, 0, loss, qsum, h0, contents(wr), diag);
                         code = refuse.fit_separable();
                     } else if math.sqrt(qsum / (nf * float_of(kc))) > scale_bound() {
-                        note_separable(p, ww, nf, kc, it, 2, loss, qsum, contents(wr), diag);
+                        note_separable(p, ww, nf, kc, it, 2, loss, qsum, h0, contents(wr), diag);
                         code = refuse.fit_separable();
                     }
                 }
@@ -231,7 +241,7 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
                         borrow wv as &wr in {
                             let loss = contents(sr)[ww - 1];
                             let qsum = contents(sr)[ww - 2];
-                            note_separable(p, ww, nf, kc, it, 1, loss, qsum, contents(wr), diag);
+                            note_separable(p, ww, nf, kc, it, 1, loss, qsum, h0, contents(wr), diag);
                             code = refuse.fit_separable();
                         }
                     }
@@ -293,9 +303,10 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
 }
 
 // Fit. xt: n x d rank 2, d <= 256; yd: n class indices, each exactly one of 0.0 .. K - 1.0, every class present; kk the number of classes, 3 to 64; iters in 1..1000; l2 >= 0 finite;
-// out: (K - 1) (d + 1) values (class-major, the bias last in a class); diag: iters * (W + 1) values, W = spass.width(d, K): per iteration the W raw decisive sums (the gradient, the lower
-// triangle of the Hessian by rows, the sum of the squared scores, the summed loss) and the objective at the start of the iteration.
-pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], kk: int, iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+// out: (K - 1) (d + 1) values (class-major, the bias last in a class); diag: keep * (W + 1) values, 1 <= keep <= iters, W = spass.width(d, K): per iteration (in the slot it % keep, so the last keep iterations stay) the W raw decisive sums (the
+// gradient, the lower triangle of the Hessian by rows, the sum of the squared scores, the summed loss) and the objective at the start of the iteration. The parameters and the
+// refusals do not depend on keep; keep = iters keeps every iteration (the oracle's), a fit that needs no record uses keep = 1.
+pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], kk: int, iters: int, keep: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
     if limits.check_threads(t) != 0 {
         return refuse.threads();
     }
@@ -330,7 +341,10 @@ pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x
     if c != 0 {
         return c;
     }
-    if iters > len(diag) / (ww + 1) {
+    if keep < 1 || keep > iters {
+        return refuse.param_out_of_range();
+    }
+    if keep > len(diag) / (ww + 1) {
         return refuse.tensor_bounds();
     }
     if common.count_bad(xd[xt.off..len(xd)], xt.t0, n, d) != 0 || common.count_bad_vec(yd, n) != 0 {
@@ -361,7 +375,7 @@ pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x
         }
         return refuse.param_out_of_range();
     }
-    return newton(heap, t, xd[xt.off..len(xd)], xt.t0, yd, n, d, kk, iters, l2, out, diag);
+    return newton(heap, t, xd[xt.off..len(xd)], xt.t0, yd, n, d, kk, iters, keep, l2, out, diag);
 }
 
 // the scores of the K - 1 modelled classes of one row into z, the largest of them and 0.0 answered

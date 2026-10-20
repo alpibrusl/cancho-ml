@@ -72,8 +72,8 @@ def parse_manifest(path):
     m.setdefault("shape", "vector")
     if m["shape"] not in SHAPES:
         raise ManifestError("%s: shape %r (vector or blob)" % (where, m["shape"]))
-    if m["shape"] == "blob" and m["task"] not in ("both", "clustering"):
-        raise ManifestError("%s: a blob model serves both tasks or is a clustering" % where)
+    if m["shape"] == "blob" and m["task"] not in ("both", "clustering", "classification"):
+        raise ManifestError("%s: a blob model serves both tasks, is a clustering or a classifier" % where)
     if m["shape"] == "blob" and m["task"] == "both" and not any(h.get("name") == "task" and h.get("type") == "enum" for h in m.get("hyperparameter", [])):
         raise ManifestError("%s: a blob model of both tasks has a `task` enum hyperparameter" % where)
     if m["task"] == "both" and m["shape"] != "blob":

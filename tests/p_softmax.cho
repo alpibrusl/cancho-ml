@@ -112,59 +112,59 @@ fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
                     let o = contents(ow);
                     let g = contents(dw);
                     // the thread count, the class count, the iterations, l2
-                    if softmax.fit(heap, 0, mat(n, d), x, y, 4, 8, 0.0, o, g) != refuse.threads() {
+                    if softmax.fit(heap, 0, mat(n, d), x, y, 4, 8, 8, 0.0, o, g) != refuse.threads() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 65, mat(n, d), x, y, 4, 8, 0.0, o, g) != refuse.threads() {
+                    if softmax.fit(heap, 65, mat(n, d), x, y, 4, 8, 8, 0.0, o, g) != refuse.threads() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 8, 0.0, o, g) != refuse.limit_classes() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 8, 8, 0.0, o, g) != refuse.limit_classes() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 100000, 8, 0.0, o, g) != refuse.limit_classes() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 100000, 8, 8, 0.0, o, g) != refuse.limit_classes() {
                         bad = bad + 1;
                     }
                     // the class count comes before the iterations, the descriptor and the data
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 0, 0.0, o, g) != refuse.limit_classes() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 0, 0, 0.0, o, g) != refuse.limit_classes() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, 300), x, y, 65, 8, 0.0, o, g) != refuse.limit_classes() {
+                    if softmax.fit(heap, 1, mat(n, 300), x, y, 65, 8, 8, 0.0, o, g) != refuse.limit_classes() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 2, 8, 0.0, o, g) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 2, 8, 8, 0.0, o, g) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 0 - 3, 8, 0.0, o, g) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 0 - 3, 8, 8, 0.0, o, g) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 0, 0.0, o, g) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 0, 0, 0.0, o, g) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 1001, 0.0, o, g) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 1001, 1001, 0.0, o, g) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0 - 1.0, o, g) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 8, 0.0 - 1.0, o, g) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0 / 0.0, o, g) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 8, 0.0 / 0.0, o, g) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 1.0 / 0.0, o, g) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 8, 1.0 / 0.0, o, g) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
                     // the buffers: the output and the diagnostics too short
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0, o[0..11], g) != refuse.tensor_bounds() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 8, 0.0, o[0..11], g) != refuse.tensor_bounds() {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 0.0, o, g[0..100]) != refuse.tensor_bounds() {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 8, 0.0, o, g[0..100]) != refuse.tensor_bounds() {
                         bad = bad + 1;
                     }
                     // a descriptor longer than the data
-                    if softmax.fit(heap, 1, mat(n + 1, d), x, y, 4, 8, 0.0, o, g) != refuse.tensor_bounds() {
+                    if softmax.fit(heap, 1, mat(n + 1, d), x, y, 4, 8, 8, 0.0, o, g) != refuse.tensor_bounds() {
                         bad = bad + 1;
                     }
                     // a clean fit passes
-                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 1.0, o, g) != 0 {
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 4, 8, 8, 1.0, o, g) != 0 {
                         bad = bad + 1;
                     }
                 }
@@ -175,7 +175,7 @@ fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
         borrow ys as &yr in {
             borrow mut out as &!ow in {
                 borrow mut diag as &!dw in {
-                    if softmax.fit(heap, 1, mat(n, d), contents(nr), contents(yr), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.input_non_finite() {
+                    if softmax.fit(heap, 1, mat(n, d), contents(nr), contents(yr), 4, 8, 8, 0.0, contents(ow), contents(dw)) != refuse.input_non_finite() {
                         bad = bad + 1;
                     }
                 }
@@ -188,33 +188,33 @@ fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
             borrow mut diag as &!dw in {
                 borrow mut badlab as &!bw in {
                     contents(bw)[10] = 4.0;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
                     contents(bw)[10] = 0.0 - 1.0;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
                     contents(bw)[10] = 1.5;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
                     contents(bw)[10] = 1.0e300;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
                     contents(bw)[10] = 0.0 / 0.0;
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.input_non_finite() {
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(bw), 4, 8, 8, 0.0, contents(ow), contents(dw)) != refuse.input_non_finite() {
                         bad = bad + 1;
                     }
                 }
                 borrow absent as &ar in {
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(ar), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(ar), 4, 8, 8, 0.0, contents(ow), contents(dw)) != refuse.param_out_of_range() {
                         bad = bad + 1;
                     }
                 }
                 borrow mut one as &!oneW in {
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(oneW), 4, 8, 0.0, contents(ow), contents(dw)) != refuse.label_single_class() {
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(oneW), 4, 8, 8, 0.0, contents(ow), contents(dw)) != refuse.label_single_class() {
                         bad = bad + 1;
                     }
                 }
@@ -425,7 +425,7 @@ fn test_bias_is_not_penalised[&h](heap: &!h Heap) -> [heap, conc] int {
         borrow ys as &yr in {
             borrow mut out as &!ow in {
                 borrow mut diag as &!dw in {
-                    bad = bad + softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 8, 1.0e6, contents(ow), contents(dw));
+                    bad = bad + softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 8, 8, 1.0e6, contents(ow), contents(dw));
                 }
             }
         }
@@ -466,7 +466,7 @@ fn test_objective_decreases[&h](heap: &!h Heap) -> [heap, conc] int {
         borrow ys as &yr in {
             borrow mut out as &!ow in {
                 borrow mut diag as &!dw in {
-                    bad = bad + softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 8, 0.5, contents(ow), contents(dw));
+                    bad = bad + softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 8, 8, 0.5, contents(ow), contents(dw));
                 }
             }
         }
@@ -565,7 +565,7 @@ fn test_separation_is_refused_with_a_record[&h](heap: &!h Heap) -> [heap, conc] 
         borrow ys as &yr in {
             borrow mut out as &!ow in {
                 borrow mut diag as &!dw in {
-                    let code = softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 60, 0.0, contents(ow), contents(dw));
+                    let code = softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 60, 60, 0.0, contents(ow), contents(dw));
                     if code != refuse.fit_separable() {
                         bad = bad + 1;
                     }
@@ -582,7 +582,7 @@ fn test_separation_is_refused_with_a_record[&h](heap: &!h Heap) -> [heap, conc] 
                     if g[1] == 2.0 && !(g[5] > 50.0) {
                         bad = bad + 1;
                     }
-                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 60, 0.01, contents(ow), contents(dw)) != 0 {
+                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, 60, 60, 0.01, contents(ow), contents(dw)) != 0 {
                         bad = bad + 1;
                     }
                 }
@@ -593,6 +593,79 @@ fn test_separation_is_refused_with_a_record[&h](heap: &!h Heap) -> [heap, conc] 
     unbox_slice(heap, ys);
     unbox_slice(heap, out);
     unbox_slice(heap, diag);
+    return bad;
+}
+
+// the diagnostics may be a ring of keep slots: the parameters, the refusals and the record of a separation are those of the full record, and keep outside 1 .. iters is refused
+fn test_a_ring_of_diagnostics_changes_nothing[&h](heap: &!h Heap) -> [heap, conc] int {
+    let n = 120;
+    let d = 3;
+    let kk = 4;
+    let iters = 6;
+    let xs = fill(heap, n * d, 91);
+    let ys = classes(heap, n, d, kk, 92);
+    let ww = spass.width(d, kk);
+    let full = box_slice(heap, iters * (ww + 1) + 1, 0.0);
+    let ring = box_slice(heap, 2 * (ww + 1) + 1, 0.0);
+    let one = box_slice(heap, ww + 7, 0.0);
+    let o1 = box_slice(heap, 3 * (d + 1) + 1, 0.0);
+    let o2 = box_slice(heap, 3 * (d + 1) + 1, 0.0);
+    let o3 = box_slice(heap, 3 * (d + 1) + 1, 0.0);
+    var bad = 0;
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow mut full as &!fw in {
+                borrow mut ring as &!rw in {
+                    borrow mut one as &!nw in {
+                        borrow mut o1 as &!w1 in {
+                            borrow mut o2 as &!w2 in {
+                                borrow mut o3 as &!w3 in {
+                                    let a = softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, iters, iters, 0.5, contents(w1), contents(fw)[0..iters * (ww + 1)]);
+                                    let b = softmax.fit(heap, 2, mat(n, d), contents(xr), contents(yr), kk, iters, 2, 0.5, contents(w2), contents(rw)[0..2 * (ww + 1)]);
+                                    let c = softmax.fit(heap, 3, mat(n, d), contents(xr), contents(yr), kk, iters, 1, 0.5, contents(w3), contents(nw)[0..ww + 1]);
+                                    if a != 0 || b != 0 || c != 0 {
+                                        bad = bad + 1;
+                                    }
+                                    var i = 0;
+                                    while i < 3 * (d + 1) {
+                                        if contents(w1)[i] != contents(w2)[i] || contents(w1)[i] != contents(w3)[i] {
+                                            bad = bad + 1;
+                                        }
+                                        i = i + 1;
+                                    }
+                                    // the last iteration is in the slot it % keep: iteration 5 is slot 1 of the ring of 2 and slot 0 of the ring of 1
+                                    i = 0;
+                                    while i < ww + 1 {
+                                        if contents(fw)[5 * (ww + 1) + i] != contents(rw)[1 * (ww + 1) + i] || contents(fw)[5 * (ww + 1) + i] != contents(nw)[i] {
+                                            bad = bad + 1;
+                                        }
+                                        i = i + 1;
+                                    }
+                                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, iters, 0, 0.5, contents(w1), contents(fw)) != refuse.param_out_of_range() {
+                                        bad = bad + 1;
+                                    }
+                                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, iters, iters + 1, 0.5, contents(w1), contents(fw)) != refuse.param_out_of_range() {
+                                        bad = bad + 1;
+                                    }
+                                    if softmax.fit(heap, 1, mat(n, d), contents(xr), contents(yr), kk, iters, 2, 0.5, contents(w1), contents(nw)[0..ww + 1]) != refuse.tensor_bounds() {
+                                        bad = bad + 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, full);
+    unbox_slice(heap, ring);
+    unbox_slice(heap, one);
+    unbox_slice(heap, o1);
+    unbox_slice(heap, o2);
+    unbox_slice(heap, o3);
     return bad;
 }
 
@@ -659,7 +732,7 @@ fn test_fuzz_never_traps[&h](heap: &!h Heap) -> [heap, conc] int {
                         if dd < 1 {
                             dd = 1;
                         }
-                        code = softmax.fit(heap, 1 + round % 3, mat(n, dd), contents(xr), contents(yr), kk, iters, l2, contents(ow), contents(dw));
+                        code = softmax.fit(heap, 1 + round % 3, mat(n, dd), contents(xr), contents(yr), kk, iters, iters, l2, contents(ow), contents(dw));
                     }
                 }
             }
@@ -713,6 +786,7 @@ fn main(world: World) -> [conc] int {
             failed = failed + report(ip, "softmax_objective_decreases", test_objective_decreases(hp));
             failed = failed + report(ip, "softmax_constants_and_the_memory_formula", test_constants_and_the_memory_formula());
             failed = failed + report(ip, "softmax_separation_is_refused_with_a_record", test_separation_is_refused_with_a_record(hp));
+            failed = failed + report(ip, "softmax_a_ring_of_diagnostics_changes_nothing", test_a_ring_of_diagnostics_changes_nothing(hp));
             failed = failed + report(ip, "softmax_fuzz_never_traps", test_fuzz_never_traps(hp));
         }
     }

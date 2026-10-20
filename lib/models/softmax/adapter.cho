@@ -1,0 +1,217 @@
+module models.adapter_softmax;
+
+import linalg.tensor;
+import ml.fbits;
+import ml.refuse;
+import models.common;
+import models.record;
+import models.softmax;
+import models.spass;
+
+// The adapter of the `softmax` module (docs/modules.md section 4b, docs/multiclass.md section 3.3): the blob interface over models.softmax. No arithmetic of its own: the Newton pass,
+// the scores and the probabilities are the library's. Hyperparameters, in manifest order: ints [iterations], floats [l2].
+//
+// The payload (kind 9): `u32 kind = 9`, the record `coef` (f64, rank 2, [K - 1, d]), the record `intercept` (f64, rank 1, [K - 1]) and the record `labels` (i64, rank 1, [K], strictly
+// ascending). The library's parameters are class-major with the bias last in a class, (K - 1) (d + 1) values; the payload splits them the way a reader of the tensors expects.
+
+pub fn payload_kind() -> [] int {
+    return 9;
+}
+
+// bytes of the payload of K classes and d features
+pub fn payload_size(kk: int, d: int) -> [] int {
+    return 4 + record.size(2, (kk - 1) * d) + record.size(1, kk - 1) + record.size(1, kk);
+}
+
+// The payload of the parameters `wv` ((K - 1) (d + 1) values) and the K labels (ascending), or an empty payload when the sizes are not the library's.
+pub fn make_payload[&h, &w, &l](heap: &!h Heap, kk: int, d: int, wv: &w [float], labels: &l [int]) -> [heap] Box[[byte]] {
+    if softmax.check_sizes(1, d, kk) != 0 || len(wv) < spass.params(d, kk) || len(labels) < kk {
+        return box_slice(heap, 1, byte_of(0));
+    }
+    let kc = kk - 1;
+    let dd = d + 1;
+    var out = box_slice(heap, payload_size(kk, d), byte_of(0));
+    let coef = box_slice(heap, kc * d + 1, 0.0);
+    let icp = box_slice(heap, kc + 1, 0.0);
+    var cw = coef;
+    var iw = icp;
+    borrow mut cw as &!cc in {
+        borrow mut iw as &!ic in {
+            var k = 0;
+            while k < kc {
+                var j = 0;
+                while j < d {
+                    contents(cc)[k * d + j] = wv[k * dd + j];
+                    j = j + 1;
+                }
+                contents(ic)[k] = wv[k * dd + d];
+                k = k + 1;
+            }
+        }
+    }
+    borrow cw as &cr in {
+        borrow iw as &ir in {
+            borrow mut out as &!ow in {
+                let o = contents(ow);
+                record.put32(o, 0, payload_kind());
+                var pos = record.encode_f64(o, 4, 2, kc, d, contents(cr)[0..kc * d]);
+                pos = record.encode_f64(o, pos, 1, kc, 0, contents(ir)[0..kc]);
+                record.put32(o, pos, record.dtype_i64());
+                record.put32(o, pos + 4, 1);
+                fbits.put64(o, pos + 8, kk);
+                var k = 0;
+                while k < kk {
+                    fbits.put64(o, pos + 16 + 8 * k, labels[k]);
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, cw);
+    unbox_slice(heap, iw);
+    return out;
+}
+
+// What a payload holds once it is checked: the code (0, or 1 for malformed), K, the parameters (class-major, the bias last in a class) and the labels.
+pub res struct Parsed {
+    code: int,
+    kk: int,
+    wv: Box[[float]],
+    labels: Box[[int]],
+}
+
+fn bad[&h](heap: &!h Heap) -> [heap] Parsed {
+    return Parsed { code: 1, kk: 0, wv: box_slice(heap, 1, 0.0), labels: box_slice(heap, 1, 0) };
+}
+
+// The payload read for a model of `d` features. Every size the header announces is compared with the bytes that are there, and with the limits of the library, BEFORE anything is
+// allocated; every failure is malformed. The labels are strictly ascending and within +- record.label_max().
+pub fn parse[&h, &b](heap: &!h Heap, blob: &b [byte], d: int) -> [heap] Parsed {
+    if d < 1 || d > common.max_features() || len(blob) < 36 || record.get32(blob, 0) != payload_kind() {
+        return bad(heap);
+    }
+    if record.get32(blob, 4) != record.dtype_f64() || record.get32(blob, 8) != 2 {
+        return bad(heap);
+    }
+    let kc = fbits.get64(blob, 12);
+    let w = fbits.get64(blob, 20);
+    if kc < 2 || kc + 1 > softmax.max_classes() || w != d || spass.params(d, kc + 1) > softmax.max_params() {
+        return bad(heap);
+    }
+    let kk = kc + 1;
+    if len(blob) != payload_size(kk, d) {
+        return bad(heap);
+    }
+    var wv = box_slice(heap, spass.params(d, kk) + 1, 0.0);
+    var labels = box_slice(heap, kk + 1, 0);
+    var code = 0;
+    let coef = box_slice(heap, kc * d + 1, 0.0);
+    let icp = box_slice(heap, kc + 1, 0.0);
+    var cw = coef;
+    var iw = icp;
+    borrow mut cw as &!cc in {
+        borrow mut iw as &!ic in {
+            let r1 = record.decode_f64(blob, 4, kc * d, contents(cc)[0..kc * d]);
+            if r1.code != 0 || r1.rank != 2 || r1.s0 != kc || r1.s1 != d {
+                code = 1;
+            } else {
+                let r2 = record.decode_f64(blob, r1.end, kc, contents(ic)[0..kc]);
+                if r2.code != 0 || r2.rank != 1 || r2.s0 != kc {
+                    code = 1;
+                } else if record.get32(blob, r2.end) != record.dtype_i64() || record.get32(blob, r2.end + 4) != 1 || fbits.get64(blob, r2.end + 8) != kk || r2.end + 16 + 8 * kk != len(blob) {
+                    code = 1;
+                } else {
+                    borrow mut wv as &!ww in {
+                        var k = 0;
+                        while k < kc {
+                            var j = 0;
+                            while j < d {
+                                contents(ww)[k * (d + 1) + j] = contents(cc)[k * d + j];
+                                j = j + 1;
+                            }
+                            contents(ww)[k * (d + 1) + d] = contents(ic)[k];
+                            k = k + 1;
+                        }
+                    }
+                    borrow mut labels as &!lw in {
+                        var k = 0;
+                        while k < kk {
+                            let v = fbits.get64(blob, r2.end + 16 + 8 * k);
+                            if v < 0 - record.label_max() || v > record.label_max() || k > 0 && v <= contents(lw)[k - 1] {
+                                code = 1;
+                            }
+                            contents(lw)[k] = v;
+                            k = k + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, cw);
+    unbox_slice(heap, iw);
+    if code != 0 {
+        unbox_slice(heap, wv);
+        unbox_slice(heap, labels);
+        return bad(heap);
+    }
+    return Parsed { code: 0, kk: kk, wv: wv, labels: labels };
+}
+
+// parse() as a tuple: (the code, K, the parameters, the labels)
+pub fn parts[&h, &b](heap: &!h Heap, blob: &b [byte], d: int) -> [heap] (int, int, Box[[float]], Box[[int]]) {
+    let Parsed { code, kk, wv, labels } = parse(heap, blob, d);
+    return (code, kk, wv, labels);
+}
+
+// The multiclass fit is wired by tools/ml/mcwire.cho, which needs the labels and the record of a refusal: this entry answers ml.param.out-of-range.
+pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap] (Box[[byte]], int) {
+    return (box_slice(heap, 1, byte_of(0)), refuse.param_out_of_range());
+}
+
+// the class index of each row, as a double (ties to the smaller index)
+pub fn predict_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
+    let Parsed { code, kk, wv, labels } = parse(heap, blob, xt.s1);
+    var rc = refuse.param_out_of_range();
+    if code == 0 {
+        borrow wv as &wr in {
+            rc = softmax.predict(heap, xt, xd, kk, contents(wr), out);
+        }
+    }
+    unbox_slice(heap, wv);
+    unbox_slice(heap, labels);
+    return rc;
+}
+
+// the probabilities of the K classes of each row, row-major, in the order of the labels (`out` holds n K values)
+pub fn proba_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
+    let Parsed { code, kk, wv, labels } = parse(heap, blob, xt.s1);
+    var rc = refuse.param_out_of_range();
+    if code == 0 {
+        borrow wv as &wr in {
+            rc = softmax.predict_proba(heap, xt, xd, kk, contents(wr), out);
+        }
+    }
+    unbox_slice(heap, wv);
+    unbox_slice(heap, labels);
+    return rc;
+}
+
+// code, the smallest label in c0, the largest in c1, and in `end` the task: 2 classification
+pub fn decode_blob[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] record.Decoded {
+    let Parsed { code, kk, wv, labels } = parse(heap, src, d);
+    var lo = 0;
+    var hi = 0;
+    if code == 0 {
+        borrow labels as &lr in {
+            lo = contents(lr)[0];
+            hi = contents(lr)[kk - 1];
+        }
+    }
+    unbox_slice(heap, wv);
+    unbox_slice(heap, labels);
+    if code != 0 {
+        return record.decoded(1, 0, 0, 0);
+    }
+    return record.decoded(0, lo, hi, 2);
+}

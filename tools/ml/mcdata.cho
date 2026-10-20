@@ -1,0 +1,92 @@
+edition 6;
+
+module ml.mcdata;
+
+// The classes of a multiclass target (docs/multiclass.md section 2): the distinct integer labels of the target column, strictly ascending, so class k is the k-th smallest label. Nothing here reads
+// a file or writes an answer. The count stops at one past the ceiling, so a column of a million distinct labels costs the same as one of 65.
+
+pub fn max_classes() -> [] int {
+    return 64;
+}
+
+// the index of label v in the ascending labels[0..count), or -1
+pub fn index_of[&l](labels: &l [int], count: int, v: int) -> [] int {
+    var lo = 0;
+    var hi = count;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if labels[mid] < v {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo < count && labels[lo] == v {
+        return lo;
+    }
+    return 0 - 1;
+}
+
+// The distinct labels of yv[0..n] (each value truncated to an int as the binary path reads it), ascending, and their number; the number is at most max_classes() + 1, and
+// max_classes() + 1 means "more than the ceiling" (the labels are then the smallest 65 seen so far and not a list to use).
+pub fn distinct[&h, &y](heap: &!h Heap, yv: &y [float], n: int) -> [heap] (Box[[int]], int) {
+    var labs = box_slice(heap, max_classes() + 2, 0);
+    var count = 0;
+    borrow mut labs as &!lw in {
+        let l = contents(lw);
+        var i = 0;
+        while i < n && count <= max_classes() {
+            let v = truncate(yv[i]);
+            if index_of(l, count, v) < 0 {
+                // insert v in order
+                var at = count;
+                while at > 0 && l[at - 1] > v {
+                    l[at] = l[at - 1];
+                    at = at - 1;
+                }
+                l[at] = v;
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return (labs, count);
+}
+
+// The class index of every label of yv[0..n] in the ascending labels[0..kk), as floats (a label that is not a class is -1.0, which the fit refuses before it reads it), and the
+// number of rows of each class into counts[0..kk). The first label of yv that is not a class, or -1 when every label is.
+pub fn indices[&y, &l, &o, &c](yv: &y [float], n: int, labels: &l [int], kk: int, out: &!o [float], counts: &!c [int]) -> [] int {
+    var k = 0;
+    while k < kk {
+        counts[k] = 0;
+        k = k + 1;
+    }
+    var foreign = 0 - 1;
+    var i = 0;
+    while i < n {
+        let c = index_of(labels, kk, truncate(yv[i]));
+        if c < 0 {
+            out[i] = 0.0 - 1.0;
+            if foreign < 0 {
+                foreign = i;
+            }
+        } else {
+            out[i] = float_of(c);
+            counts[c] = counts[c] + 1;
+        }
+        i = i + 1;
+    }
+    return foreign;
+}
+
+// the first class with no row among counts[0..kk), or -1
+pub fn first_empty[&c](counts: &c [int], kk: int) -> [] int {
+    var k = 0;
+    while k < kk {
+        if counts[k] == 0 {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
