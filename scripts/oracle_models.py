@@ -7,7 +7,7 @@ the independent parts. It never calls numpy's BLAS, exp, log1p, sum or linalg: `
 compiled driver build/models-check must equal it bit for bit: the parameters, every raw decisive sum of every iteration, every loss
 or inertia line, and the hash of the predictions.
 
-    python3 scripts/oracle_models.py --suite [--threads 1,2,4,8,16] [--model linreg|logreg|kmeans]
+    python3 scripts/oracle_models.py --suite [--threads 1,2,4,8,16] [--model linreg|logreg|softmax|kmeans]
     python3 scripts/oracle_models.py CASE...        one case: MODEL n=.. d=.. seed=.. ...
 Exit 1 on any mismatch. MODELS_CHECK overrides the driver path."""
 import os, subprocess, sys, pathlib
@@ -54,6 +54,31 @@ def gen(model, n, d, seed, dup=0):
         X[:] = X[0]
     if dup == 3 and n > 2:
         X[2:] = X[np.arange(2, n) % 2]
+    return X, y
+
+
+def gen_softmax(n, d, seed, kk, sep=0, dup=0):
+    """docs/multiclass.md 3.2 (driver: gen_data, model softmax): class scores z_k = sum_j x_j wt[k][j] ascending, wt[k][j] = element(s3, k d + j), noise e[i][k] = element(s2, i kk + k);
+    y = the first class with the largest of z_k + 2 e (sep=1: no noise, so the classes are linearly separable)"""
+    s1, s2, s3 = ol.derive(seed, 1), ol.derive(seed, 2), ol.derive(seed, 3)
+    X = ol.elements(s1, n * d).reshape(n, d)
+    E = ol.elements(s2, n * kk).reshape(n, kk)
+    Wt = ol.elements(s3, kk * d).reshape(kk, d)
+    best = None
+    y = np.zeros(n)
+    for k in range(kk):
+        z = np.zeros(n)
+        for j in range(d):
+            z = z + X[:, j] * Wt[k, j]
+        sc = z if sep else z + 2.0 * E[:, k]
+        if best is None:
+            best = sc
+        else:
+            up = sc > best
+            best = np.where(up, sc, best)
+            y = np.where(up, float(k), y)
+    if dup == 1 and d >= 2:
+        X[:, 0] = X[:, 1]
     return X, y
 
 
@@ -237,6 +262,140 @@ def logreg(X, y, iters, l2, rows_chunk=16384):
 logreg.last = None  # the tag of the last refusal, for scripts/oracle_wire.py
 
 
+
+# ---------------------------------------------------------------- softmax regression (docs/multiclass.md 3.2)
+def softmax_probs(X, w, kk):
+    """(Z (n, Kc), m, E (n, Kc), eref, s): scores, the largest of 0 and the scores, the exponentials, their sum in the written order"""
+    n, d = X.shape
+    kc = kk - 1
+    D = d + 1
+    Z = np.zeros((n, kc))
+    for k in range(kc):
+        z = np.full(n, w[k * D + d])
+        for j in range(d):
+            z = z + X[:, j] * w[k * D + j]
+        Z[:, k] = z
+    m = np.zeros(n)
+    for k in range(kc):
+        m = np.where(Z[:, k] > m, Z[:, k], m)
+    E = exp_c(Z - m[:, None])
+    eref = exp_c(0.0 - m)
+    s = E[:, 0].copy()
+    for k in range(1, kc):
+        s = s + E[:, k]
+    s = s + eref
+    return Z, m, E, eref, s
+
+
+def softmax_terms(X, y, w, kk):
+    """(n, W) terms of the pass at w: G (P), H lower by rows (P (P+1)/2), Q, L"""
+    n, d = X.shape
+    kc = kk - 1
+    D = d + 1
+    P = kc * D
+    Z, m, E, eref, s = softmax_probs(X, w, kk)
+    p = E / s[:, None]
+    A = np.hstack([X, np.ones((n, 1))])
+    cols = []
+    for k in range(kc):
+        r = p[:, k] - np.where(y == float(k), 1.0, 0.0)
+        for a in range(D):
+            cols.append(r * A[:, a])
+    S = {}
+    for k in range(kc):
+        for j in range(k + 1):
+            S[(k, j)] = p[:, k] * (1.0 - p[:, k]) if k == j else 0.0 - p[:, k] * p[:, j]
+    for k in range(kc):
+        for a in range(D):
+            for j in range(k + 1):
+                sa = S[(k, j)] * A[:, a]
+                for b in range(a + 1 if j == k else D):
+                    cols.append(sa * A[:, b])
+    q = Z[:, 0] * Z[:, 0]
+    for k in range(1, kc):
+        q = q + Z[:, k] * Z[:, k]
+    zy = np.zeros(n)
+    for k in range(kc):
+        zy = np.where(y == float(k), Z[:, k], zy)
+    loss = (m + log_c(s)) - zy
+    cols.append(q)
+    cols.append(loss)
+    return np.stack(cols, axis=1)
+
+
+def softmax(X, y, kk, iters, l2, rows_chunk=16384):
+    n, d = X.shape
+    kc = kk - 1
+    D = d + 1
+    P = kc * D
+    W = P + P * (P + 1) // 2 + 2
+    nf = np.float64(n)
+    w = np.zeros(P)
+    diag = []
+    isw = np.array([(A % D) < d for A in range(P)])
+    for it in range(iters):
+        parts = []
+        for r0 in range(0, n, rows_chunk):
+            T = softmax_terms(X[r0:r0 + rows_chunk], y[r0:r0 + rows_chunk], w, kk)
+            m = T.shape[0]
+            nb = -(-m // K)
+            Pm = np.zeros((nb * K, W))
+            Pm[:m] = T
+            P3 = Pm.reshape(nb, K, W)
+            parts.append(ol.lane_partial(lambda t: P3[:, t, :], K, (nb, W)))
+        sums = ol.tree(np.concatenate(parts, axis=0))
+        q = np.float64(0.0)
+        for A in range(P):
+            if isw[A]:
+                q = q + w[A] * w[A]
+        f = sums[W - 1] / nf + (0.5 * l2) * q
+        diag.append(np.concatenate([sums, [f]]))
+        if l2 == 0.0:
+            rms = np.sqrt(sums[W - 2] / (nf * np.float64(kc)))
+            if sums[W - 1] < 0.6931 or rms > 50.0:
+                softmax.last = "ml.fit.separable"
+                return None
+        g = sums[:P] / nf
+        for A in range(P):
+            if isw[A]:
+                g[A] = g[A] + l2 * w[A]
+        H = np.zeros((P, P))
+        for A in range(P):
+            for B in range(A + 1):
+                H[A, B] = sums[P + A * (A + 1) // 2 + B] / nf
+        for A in range(P):
+            if isw[A]:
+                H[A, A] = H[A, A] + l2
+        L = ol.chol_o(H)
+        if L is None:
+            softmax.last = "ml.fit.collinear" if it == 0 else ("ml.fit.separable" if l2 == 0.0 else "ml.linalg.not-positive-definite")
+            return None
+        u = ol.fwd_o(L, g)
+        dl = ol.bwd_o(L, u)
+        w = w - dl
+    return w, np.concatenate(diag)
+
+
+softmax.last = None
+
+
+def softmax_pred(X, w, kk):
+    """the class index (ties to the smaller; the reference class last with score 0) and the probabilities (n, K) in class order, the reference last"""
+    n, d = X.shape
+    kc = kk - 1
+    Z, m, E, eref, s = softmax_probs(X, w, kk)
+    prob = np.hstack([E / s[:, None], (eref / s)[:, None]])
+    best = Z[:, 0].copy()
+    lab = np.zeros(n)
+    for k in range(1, kc):
+        up = Z[:, k] > best
+        best = np.where(up, Z[:, k], best)
+        lab = np.where(up, float(k), lab)
+    up = 0.0 > best
+    lab = np.where(up, float(kc), lab)
+    return lab, prob
+
+
 # ---------------------------------------------------------------- k-means
 M64 = (1 << 64) - 1
 
@@ -383,7 +542,10 @@ def bits(arr):
 
 def case(model, a, threads, quiet=False):
     n, d, seed = a["n"], a["d"], a["seed"]
-    X, y = gen(model, n, d, seed, a.get("dup", 0))
+    if model == "softmax":
+        X, y = gen_softmax(n, d, seed, a["kc"], a.get("sep", 0), a.get("dup", 0))
+    else:
+        X, y = gen(model, n, d, seed, a.get("dup", 0))
     ntr = a.get("ntr", n)
     l2 = float(a.get("l2m", 0)) / 1000.0
     exp = None
@@ -398,6 +560,12 @@ def case(model, a, threads, quiet=False):
         if res is not None:
             w, diag, _, _ = res
             _, _, lab, prob = logreg_pred(X, w)
+            exp = {"params": bits(w), "diag": bits(diag), "pred": "%016x" % ol.hash_bits(lab), "proba": "%016x" % ol.hash_bits(prob)}
+    if model == "softmax":
+        res = softmax(X[:ntr], y[:ntr], a["kc"], a.get("iters", 8), l2)
+        if res is not None:
+            w, diag = res
+            lab, prob = softmax_pred(X, w, a["kc"])
             exp = {"params": bits(w), "diag": bits(diag), "pred": "%016x" % ol.hash_bits(lab), "proba": "%016x" % ol.hash_bits(prob)}
     if model == "kmeans":
         cen, diag, lab, tr = kmeans(X[:ntr], a["k"], a["iters"], seed, a.get("init", 1))
@@ -435,6 +603,16 @@ SUITE["logreg"] = [dict(n=n, d=d, seed=s, l2m=l, iters=i) for (n, d, s, l, i) in
     (1000, 20, 7, 2000, 6), (2048, 7, 8, 0, 8), (2049, 7, 9, 100, 8), (4097, 21, 10, 0, 8), (5000, 3, 11, 0, 1), (20000, 20, 12, 0, 8),
     # rows mod 4 in the last block (the tails of the lanes) with enough columns for the tile cells to show it
     (1002, 9, 31, 0, 3), (1003, 9, 32, 0, 3), (3001, 9, 33, 100, 3), (1001, 6, 34, 0, 3)]]
+SUITE["softmax"] = [dict(n=n, d=d, seed=s, kc=k, l2m=l, iters=i, sep=sp, dup=du) for (n, d, s, k, l, i, sp, du) in [
+    (40, 1, 1, 3, 0, 6, 0, 0), (300, 2, 2, 3, 0, 8, 0, 0), (255, 3, 3, 4, 1000, 8, 0, 0), (256, 4, 4, 3, 0, 8, 0, 0), (257, 5, 5, 5, 500, 8, 0, 0),
+    (1000, 6, 6, 4, 0, 8, 0, 0), (1000, 3, 7, 3, 2000, 6, 0, 0), (2048, 3, 8, 3, 0, 8, 0, 0), (2049, 3, 9, 4, 100, 8, 0, 0), (4097, 4, 10, 3, 0, 8, 0, 0),
+    (5000, 2, 11, 3, 0, 1, 0, 0), (20000, 3, 12, 3, 0, 8, 0, 0),
+    # rows mod 4 in the last block (the tails of the lanes) with columns enough for the cells to show it
+    (1002, 5, 31, 4, 0, 3, 0, 0), (1003, 5, 32, 3, 0, 3, 0, 0), (3001, 5, 33, 5, 100, 3, 0, 0), (1001, 4, 34, 3, 0, 3, 0, 0),
+    # many classes, few columns (P = 126), and K = 10 (P = 54)
+    (600, 1, 41, 64, 0, 4, 0, 0), (900, 5, 42, 10, 0, 4, 0, 0),
+    # separable classes with l2 = 0 are refused (docs/refusals-fit.md D2), fitted with a ridge; equal columns are refused with l2 = 0 and fitted with one
+    (400, 2, 51, 3, 0, 40, 1, 0), (400, 2, 51, 3, 100, 40, 1, 0), (1000, 4, 5, 3, 0, 8, 0, 1), (1000, 4, 5, 3, 10, 8, 0, 1)]]
 SUITE["kmeans"] = [dict(n=n, d=d, seed=s, k=k, iters=i, init=ini, dup=du) for (n, d, s, k, i, ini, du) in [
     (9, 1, 1, 1, 3, 1, 0), (30, 2, 2, 3, 5, 1, 0), (255, 3, 3, 4, 4, 0, 0), (256, 4, 4, 5, 6, 1, 0), (257, 5, 5, 3, 5, 0, 0),
     (1000, 20, 6, 5, 8, 1, 0), (1000, 7, 7, 9, 6, 0, 0), (2048, 7, 8, 6, 5, 1, 0), (2049, 7, 9, 5, 5, 1, 0), (4097, 10, 10, 8, 4, 0, 0),
@@ -452,6 +630,8 @@ THREAD_SUITE["logreg"] = [dict(n=n, d=d, seed=s, l2m=l, iters=i) for (n, d, s, l
     (5000, 7, 3, 0, 4), (30000, 20, 4, 500, 6), (9000, 21, 5, 0, 5), (4097, 3, 6, 0, 8)]]
 
 
+THREAD_SUITE["softmax"] = [dict(n=n, d=d, seed=s, kc=k, l2m=l, iters=i) for (n, d, s, k, l, i) in [
+    (5000, 4, 3, 3, 0, 4), (30000, 6, 4, 4, 500, 5), (9000, 5, 5, 5, 0, 4), (4097, 3, 6, 3, 0, 6)]]
 THREAD_SUITE["kmeans"] = [dict(n=n, d=d, seed=s, k=k, iters=i, init=ini, dup=du) for (n, d, s, k, i, ini, du) in [
     (5000, 7, 3, 5, 4, 1, 0), (30000, 20, 4, 6, 5, 1, 0), (9000, 10, 5, 8, 3, 0, 0), (4097, 3, 6, 4, 6, 1, 0), (5000, 2, 7, 5, 3, 1, 2)]]
 
@@ -461,7 +641,7 @@ def main():
     threads = [1]
     if "--threads" in a:
         threads = [int(t) for t in a[a.index("--threads") + 1].split(",")]
-    models = a[a.index("--model") + 1].split(",") if "--model" in a else ["linreg", "logreg", "kmeans"]
+    models = a[a.index("--model") + 1].split(",") if "--model" in a else ["linreg", "logreg", "softmax", "kmeans"]
     if "--suite" in a:
         ok = True
         table = THREAD_SUITE if "--thread-suite" in a else SUITE
