@@ -122,7 +122,7 @@ def mutants(text):
         ("top-level permissions removed", rep("permissions:\n  contents: read\n\nconcurrency", "concurrency"), "W1"),
         ("top-level permissions write-all", rep("permissions:\n  contents: read\n\nconcurrency", "permissions: write-all\n\nconcurrency"), "W1"),
         ("top-level contents: write", rep("permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: write\n\nconcurrency"), "W1"),
-        ("a job other than release writes", rep("    timeout-minutes: 60\n", "    timeout-minutes: 60\n    permissions:\n      contents: write\n"), "W2"),
+        ("a job other than release writes", rep("    timeout-minutes: 75\n", "    timeout-minutes: 75\n    permissions:\n      contents: write\n"), "W2"),
         ("release also writes issues", rep("      contents: write\n", "      contents: write\n      issues: write\n"), "W3"),
         ("release is not limited to a tag", rep("if: startsWith(github.ref, 'refs/tags/v')", "if: true"), "W3"),
         ("an action pinned by tag", rep("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1", "actions/checkout@v4"), "W4"),
