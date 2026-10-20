@@ -199,9 +199,22 @@ fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) ->
                 var c = 0;
                 while good && c < json.count(tp, row) {
                     let cell = json.at(tp, row, c);
-                    good = json.is_string(tp, cell);
-                    if good && !num.is_json_number(json.string_view(payload, tp, cell)) {
+                    good = json.is_string(tp, cell) || json.is_object(tp, cell);
+                    if good && json.is_string(tp, cell) && !num.is_json_number(json.string_view(payload, tp, cell)) {
                         numeric = false;
+                    }
+                    if good && json.is_object(tp, cell) {
+                        // the probabilities of a model of three or more classes: an object keyed by the labels, whose values are numbers written as strings
+                        var q = cell + 1;
+                        var left = json.count(tp, cell);
+                        while good && left > 0 {
+                            good = json.is_string(tp, q) && json.is_string(tp, q + 1);
+                            if good && !num.is_json_number(json.string_view(payload, tp, q + 1)) {
+                                numeric = false;
+                            }
+                            q = json.skip(tp, q + 1);
+                            left = left - 1;
+                        }
                     }
                     c = c + 1;
                 }
@@ -231,7 +244,21 @@ fn prediction[&h, &p, &s](heap: &!h Heap, payload: &p [byte], sha: &s [byte]) ->
                     w = json.begin_array(heap, w);
                     c = 0;
                     while c < json.count(tp, row) {
-                        w = json.put_fragment(heap, w, json.string_view(payload, tp, json.at(tp, row, c)));
+                        let cell = json.at(tp, row, c);
+                        if json.is_object(tp, cell) {
+                            w = json.begin_object(heap, w);
+                            var q = cell + 1;
+                            var left = json.count(tp, cell);
+                            while left > 0 {
+                                w = json.put_key(heap, w, json.string_view(payload, tp, q));
+                                w = json.put_fragment(heap, w, json.string_view(payload, tp, q + 1));
+                                q = json.skip(tp, q + 1);
+                                left = left - 1;
+                            }
+                            w = json.end_object(heap, w);
+                        } else {
+                            w = json.put_fragment(heap, w, json.string_view(payload, tp, cell));
+                        }
                         c = c + 1;
                     }
                     w = json.end_array(heap, w);

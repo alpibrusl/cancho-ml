@@ -351,7 +351,7 @@ def q5(c):
     return "PASS", "the derived authority equals the committed manifest; %s" % ("this module adds %s (%s)" % (", ".join(sorted(mine)), c.model["authority"]["reason"][:60]) if mine else "this module adds no label")
 
 
-def sample_csv(task, n=1500, missing=False):
+def sample_csv(task, n=1500, missing=False, classes=2):
     """a seeded data set; with `missing`, about one cell in 17 of the last feature is empty (the models that take missing cells, docs/wiring-trees.md section 5)"""
     rng = random.Random(1234)
     rows = []
@@ -366,7 +366,13 @@ def sample_csv(task, n=1500, missing=False):
         if task == "regression":
             rows.append("%s,%.6f" % (",".join(cells), z + 2.0))
         else:
-            rows.append("%s,%d" % (",".join(cells), 1 if z + rng.gauss(0, 1.5) > 0 else 0))
+            zz = z + rng.gauss(0, 1.5)
+            if classes == 2:
+                rows.append("%s,%d" % (",".join(cells), 1 if zz > 0 else 0))
+            else:
+                # a target of `classes` classes (a manifest's target_classes): bands of the noisy score, the first classes of the sample holding every class
+                lab = min(classes - 1, max(0, int((zz + 4.0) * classes / 8.0)))
+                rows.append("%s,%d" % (",".join(cells), i % classes if i < classes else lab))
     head = "f0,f1,f2,f3,f4," + ("y" if task == "regression" else "lab")
     return head + "\n" + "\n".join(rows) + "\n"
 
@@ -407,7 +413,7 @@ def q6(c):
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for task in tasks_of(c):
-            (tmp / "d.csv").write_text(sample_csv(task, missing=takes_missing(c)))
+            (tmp / "d.csv").write_text(sample_csv(task, missing=takes_missing(c), classes=c.model.get("target_classes", 2)))
             files, stdouts = {}, {}
             for t in c.contract["limits"]["thread_counts"]:
                 rc, out, err = c.ml("--root", tmp, *fit_args(c, "m%d.cml" % t, ["--threads", t, "--overwrite"], task))
@@ -430,7 +436,7 @@ def small_model_flags(c):
     """a small model for the damaged-file check: the files of a forest of 100 trees would take minutes to damage byte by byte"""
     if not gen_models.is_blob(c.model) or c.model["task"] == "clustering":
         return []
-    extra = ["--max-depth", "4"]
+    extra = ["--max-depth", "4"] if any(h["name"] == "max-depth" for h in c.model["hyperparameter"]) else []
     if any(h["name"] == "trees" for h in c.model["hyperparameter"]):
         extra += ["--trees", "3"]
     if any(h["name"] == "rounds" for h in c.model["hyperparameter"]):
@@ -455,7 +461,7 @@ def q7(c):
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for task in tasks_of(c):
-            (tmp / "d.csv").write_text(sample_csv(task, 200, missing=takes_missing(c)))
+            (tmp / "d.csv").write_text(sample_csv(task, 200, missing=takes_missing(c), classes=c.model.get("target_classes", 2)))
             rc, out, err = c.ml("--root", tmp, *fit_args(c, "m.cml", small_model_flags(c) + ["--overwrite"], task))
             if rc != 0:
                 return "FAIL", "fit exited %d: %s" % (rc, out[:200].decode(errors="replace"))

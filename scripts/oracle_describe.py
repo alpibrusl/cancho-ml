@@ -94,7 +94,7 @@ def describe(data, limit=1000, max_bytes=16777216):
     model, task = m.group(1), m.group(2)
     if model == "linear":
         task = "regression"
-    elif model == "logistic":
+    elif model in ("logistic", "softmax"):
         task = "classification"
     elif model == "kmeans":
         task = "clustering"
@@ -110,11 +110,18 @@ def describe(data, limit=1000, max_bytes=16777216):
         if kind == 2:
             # constant: tensor record u32 kind | u32 dtype | u32 rank | u64 shape | i64 n, classes, c0, c1, n0, n1
             c0, c1 = struct.unpack_from("<qq", mdl, 20 + 16)
+        elif kind == 9:
+            # softmax (docs/multiclass.md section 3.3): kind | coef [K - 1, d] | intercept [K - 1] | labels [K], every label of the model in ascending order
+            kc, d9 = struct.unpack_from("<qq", mdl, 12)
+            lab = 28 + 8 * kc * d9 + 16 + 8 * kc
+            kk = struct.unpack_from("<q", mdl, lab + 8)[0]
+            classes = list(struct.unpack_from("<%dq" % kk, mdl, lab + 16))
         else:
             # logistic, tree, forest: the labels record closes the payload: i64 c0, c1
             c0, c1 = struct.unpack_from("<qq", mdl, len(mdl) - 16)
-        classes = [c0, c1]
-        positive = None if kind == 2 else c1
+        if kind != 9:
+            classes = [c0, c1]
+        positive = None if kind in (2, 9) else c1
     columns = []
     # a clustering has no target: the schema's target index is the number of columns, so every column is a feature (docs/wiring-kmeans.md section 4)
     has_target = target < len(cols)
@@ -157,6 +164,8 @@ def describe(data, limit=1000, max_bytes=16777216):
         output = {"columns": ["cluster"], "with_proba": None, "with_distance": ["cluster", "distance"], "label_threshold": None}
     elif kind <= 3:
         output = {"columns": ["label", "probability"], "with_proba": None, "with_distance": None, "label_threshold": None}
+    elif kind == 9:
+        output = {"columns": ["label"], "with_proba": ["label", "probabilities"], "with_distance": None, "label_threshold": None}
     else:
         output = {"columns": ["label"], "with_proba": ["label", "probability"], "with_distance": None, "label_threshold": "0.5"}
     target_obj = None

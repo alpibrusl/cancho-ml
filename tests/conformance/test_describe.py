@@ -67,8 +67,8 @@ class Oracle(unittest.TestCase):
 
     def test_the_corpus_covers_the_kinds_the_encoders_and_the_columns(self):
         docs = {mid: describe(mf).data() for mid, (mf, kind, fam) in MODELS.items()}
-        self.assertEqual({d["kind"] for d in docs.values()}, {1, 2, 3, 4, 5, 6, 7, 8})
-        self.assertEqual({d["model"] for d in docs.values()}, {"constant", "linear", "logistic", "kmeans", "tree", "forest", "boost"})
+        self.assertEqual({d["kind"] for d in docs.values()}, {1, 2, 3, 4, 5, 6, 7, 8, 9})
+        self.assertEqual({d["model"] for d in docs.values()}, {"constant", "linear", "logistic", "kmeans", "tree", "forest", "boost", "softmax"})
         self.assertEqual({d["task"] for d in docs.values()}, {"regression", "classification", "clustering"})
         self.assertEqual({c["encoder"] for d in docs.values() for c in d["categorical"]}, {"onehot", "label", "freq", "hash"})
         self.assertEqual({c["type"] for d in docs.values() for c in d["columns"]}, {"int", "dec", "float", "categorical"})

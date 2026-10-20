@@ -511,7 +511,11 @@ pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte]
                 e = verbs.problem(heap, e, "ml.label.single-class", "a classification target has one value", "a model needs both classes in the training rows", "", "");
                 go = false;
             } else if cnt > 2 {
-                e = verbs.problem(heap, e, "ml.label.not-binary", "a classification target has more than two values", "only two-class targets are built", "", "");
+                if kind == 5 {
+                    e = verbs.problem(heap, e, "ml.label.not-binary", "a classification target has more than two values", "a target of three or more classes is fitted with --model softmax", "", "");
+                } else {
+                    e = verbs.problem(heap, e, "ml.label.not-binary", "a classification target has more than two values", "only two-class targets are built", "", "");
+                }
                 go = false;
             } else {
                 var hi = a;

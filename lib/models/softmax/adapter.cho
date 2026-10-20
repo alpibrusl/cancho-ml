@@ -95,7 +95,7 @@ pub fn parse[&h, &b](heap: &!h Heap, blob: &b [byte], d: int) -> [heap] Parsed {
     }
     let kc = fbits.get64(blob, 12);
     let w = fbits.get64(blob, 20);
-    if kc < 2 || kc + 1 > softmax.max_classes() || w != d || spass.params(d, kc + 1) > softmax.max_params() {
+    if kc < 2 || kc > softmax.max_classes() - 1 || w != d || spass.params(d, kc + 1) > softmax.max_params() {
         return bad(heap);
     }
     let kk = kc + 1;

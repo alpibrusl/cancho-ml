@@ -25,7 +25,7 @@ DEFAULT_ROOT = HERE.parent
 TOP_KEYS = {
     "name": str, "kind": int, "extra_kinds": list, "kind_fn": str, "shares_kind_with": str, "task": str, "tier": str, "wired": bool,
     "adapter": str, "shape": str, "payload_version": int, "doc": str, "files": list, "plan_order": int, "limits": dict, "hyperparameter": list,
-    "tags": dict, "authority": dict, "sums": dict, "oracle": dict,
+    "tags": dict, "authority": dict, "sums": dict, "oracle": dict, "target_classes": int,
 }
 REQUIRED = {"name", "kind", "kind_fn", "task", "tier", "wired", "payload_version", "doc", "files", "plan_order", "tags", "authority", "sums"}
 HP_KEYS = {"name": str, "type": str, "min": int, "max": int, "values": list, "default": str, "required": bool, "doc": str, "nonneg": bool}

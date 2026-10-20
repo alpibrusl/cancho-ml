@@ -94,7 +94,7 @@ MUTANTS = [
     M("d-truncated-at-equal", "D1", "truncated is true when everything is listed", [(MDESC, "w = json.put_bool(heap, w, listed < ncat);", "w = json.put_bool(heap, w, listed <= ncat);", 1)], ["test_describe.Oracle"]),
     M("d-listed-one-short", "D1", "one string fewer than --limit is listed", [(MDESC, "listed = limit;", "listed = limit - 1;", 1)], ["test_describe.Oracle"]),
     M("d-count-of-the-first-string", "D1", "every count is the first string's", [(MDESC, "catenc.count(sr, c, k)", "catenc.count(sr, c, 0)", 1)], ["test_describe.Oracle"]),
-    M("d-positive-is-the-negative-label", "D1", "positive is c0", [(MDESC, "if task == 2 && kind > 3 {\n        w = json.put_int(heap, w, c1);", "if task == 2 && kind > 3 {\n        w = json.put_int(heap, w, c0);", 1)], ["test_describe.Oracle"]),
+    M("d-positive-is-the-negative-label", "D1", "positive is c0", [(MDESC, "if task == 2 && kind > 3 && kind != kinds.model_softmax() {\n        w = json.put_int(heap, w, c1);", "if task == 2 && kind > 3 && kind != kinds.model_softmax() {\n        w = json.put_int(heap, w, c0);", 1)], ["test_describe.Oracle"]),
     M("d-classes-swapped", "D1", "the classes are printed c1, c0", [(MDESC, "        w = json.put_int(heap, w, c0);\n        w = json.put_int(heap, w, c1);\n        w = json.end_array(heap, w);", "        w = json.put_int(heap, w, c1);\n        w = json.put_int(heap, w, c0);\n        w = json.end_array(heap, w);", 1)],
       ["test_describe.Oracle"]),
     M("d-missing-cells-of-linear", "D1", "linear is said to refuse missing cells", [(MDESC, "} else if kind <= 3 {\n        w = json.put_string(heap, w, \"refused\");", "} else if kind <= 4 {\n        w = json.put_string(heap, w, \"refused\");", 1)], ["test_describe.Oracle"]),

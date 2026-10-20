@@ -406,6 +406,27 @@ class Kinds(unittest.TestCase):
             self.assertEqual(d["task"], "classification")
             self.assertEqual(len(d["rows"][0]), 2)
 
+    def test_multiclass_has_label_and_probabilities_keyed_by_the_labels(self):
+        # docs/multiclass.md section 3.4: the same numbers as `ml predict --proba`, between no quotes, the keys the labels in ascending order
+        for mid, record, csv in (("softmax", {"a": 3, "b": 2.5, "c": 0.5}, "a,b,c\n3,2.5,0.5\n"), ("cat_softmax", {"c0": "red", "c1": "x", "n": 10}, "c0,c1,n\nred,x,10\n")):
+            s = self.serve(MODELS[mid][0])
+            SB.write("one.csv", csv)
+            want = SB.run("predict", "--model-file", MODELS[mid][0], "--proba", "one.csv").data()
+            r = s.request("POST", "/predict", body=json.dumps(record).encode(), headers=JSON)
+            self.assertEqual(r.status, 200, (mid, r.text()))
+            d = loads_tokens(r.text())
+            self.assertEqual(d["columns"], ["label", "probabilities"], mid)
+            self.assertEqual(d["task"], "classification")
+            self.assertEqual(len(d["rows"][0]), 2)
+            probs = d["rows"][0][1]
+            self.assertEqual(list(probs), list(want["rows"][0][1]), mid)
+            self.assertEqual([str(v) for v in probs.values()], list(want["rows"][0][1].values()), mid)
+            self.assertEqual(str(d["rows"][0][0]), want["rows"][0][0])
+            # the document says a cell is anything, and the response validates against it
+            doc = json.loads(s.request("GET", "/openapi.json").text())
+            self.assertEqual(doc["components"]["schemas"]["Prediction"]["properties"]["rows"]["items"]["items"], {})
+            self.assertIsNone(Doc(doc).check("/predict", "POST", r))
+
     def test_clustering_has_cluster_and_distance(self):
         s = self.serve(MODELS["kmeans"][0])
         d = loads_tokens(s.request("POST", "/predict", body=b'{"a":3,"b":2.5,"c":0.5}', headers=JSON).text())

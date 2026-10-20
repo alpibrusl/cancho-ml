@@ -7,6 +7,7 @@ fit and that their repairs work, a class with no training row, a label eval has 
 oracle is test_wire_softmax_oracle.py, the damaged files are test_wire_softmax_file.py."""
 
 import math
+import os
 import random
 import struct
 import unittest
@@ -274,6 +275,15 @@ class Softmax(unittest.TestCase):
         r = self.ml("fit", "--model", "softmax", "--target", "y", "--output", "w.cml", "--iterations", "1", "--l2", "1", "wide.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "ml.limit.parameters"), r)
 
+    def test_more_rows_than_a_tree_takes_are_fitted(self):
+        # a tree, a forest and a boost take at most 1,048,576 training rows; the memory budget of the softmax pass is the bound of this family, and it holds 1,048,600 rows of three classes
+        r = random.Random(6)
+        rows = ["a,y"] + ["%d,%d" % (i % 97 + r.randint(0, 3), (3, 5, 9)[i % 3]) for i in range(1048600)]
+        self.sb.write("million.csv", "\n".join(rows) + "\n")
+        res = self.ml("fit", "--model", "softmax", "--target", "y", "--output", "million.cml", "--overwrite", "--iterations", "2", "--l2", "1", "million.csv")
+        self.assertEqual(res.status, 0, res)
+        self.assertEqual(res.data()["rows"], 1048600)
+
     # ------------------------------------------------------------------ describe and the verbs that explain a model
     def test_describe(self):
         self.fit("mc7.csv")
@@ -296,6 +306,20 @@ class Softmax(unittest.TestCase):
         self.fit()
         p = self.ml("predict", "--model-file", "s.cml", "--limit", "2", "mc.csv").data()
         self.assertEqual(p["ignored_columns"], ["y"])
+
+    def test_a_tracked_fit_is_replayed_to_the_same_bytes(self):
+        os.makedirs(self.sb.dir / "runs", exist_ok=True)
+        r = self.ml("fit", "--model", "softmax", "--target", "y", "--split", "train=0.8", "--seed", "3", "--stratify", "--track", "runs", "--output", "tr.cml", "--overwrite", "mc7.csv")
+        self.assertEqual(r.status, 0, r)
+        rid = r.data()["run"]["id"]
+        v = self.ml("runs", "verify", "runs", rid)
+        self.assertEqual(v.status, 0, v)
+        self.assertEqual(v.data()["model_sha256"], r.data()["sha256"])
+        ev = self.ml("eval", "--model-file", "tr.cml", "--split", "train=0.8", "--seed", "3", "--stratify", "--track", "runs", "mc7.csv")
+        self.assertEqual(ev.status, 0, ev)
+        shown = self.ml("runs", "show", "runs", rid).data()["record"]
+        self.assertEqual(shown["metrics"]["on"], "held-out")
+        self.assertEqual(shown["metrics"]["metrics"]["classes"], [-4, 0, 2, 7, 11, 12, 30])
 
     def test_the_iterations_and_l2_are_hyperparameters(self):
         a = self.fit("mc.csv", "i5.cml", "--iterations", "5").data()["summary"]["plan"]

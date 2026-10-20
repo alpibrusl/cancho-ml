@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The cross-platform determinism gate (docs/ci.md section 2): the fingerprint of `ml` against a committed golden.
 
-The fingerprint is one tab-separated line per artefact, for 28 fits of every model kind on the bundled example data (docs/examples/data), two more fits of JSON lines (docs/jsonl.md) and two more answers (the permutation importance of a forest, the dump of a tree; docs/interpret.md):
+The fingerprint is one tab-separated line per artefact, for 36 fits of every model kind on the bundled example data and the generated targets of the softmax model (docs/examples/data), two more fits of JSON lines (docs/jsonl.md) and two more answers (the permutation importance of a forest, the dump of a tree; docs/interpret.md):
 `case  fit-exit  rc`, `case  model-file  sha256`, `case  predict  rc  sha256`, `case  eval  rc  sha256`. A model file is hashed whole; a
-predict or eval answer is hashed as the bytes the program printed. The golden, docs/bench/xplat_fp.txt, is those 112 lines (the first 88 written when the five
-older models were the whole list, the 24 of the boosted model appended) as written on
+predict or eval answer is hashed as the bytes the program printed. The golden, docs/bench/xplat_fp.txt, is those 138 lines (the first 88 written when the five
+older models were the whole list, the 24 of the boosted model appended, the 16 of the softmax model, kind 9, appended last) as written on
 macOS arm64 and read back on Linux x86-64 (docs/ci.md section 3). Every platform of the CI matrix runs this script on its own build and must
 print the golden's bytes: equal to the golden is equal to each other.
 
@@ -73,6 +73,34 @@ def cases():
     # JSON lines (docs/jsonl.md): the files are made from the CSVs below, so the model file must be the bytes of the CSV fit; the cases are appended after the 88 lines of the others
     out.append(("logistic-iris-jsonl", "iris_train", "iris_test", ["--model", "logistic", "--step", STD, "--l2", "0.1", "--input-format", "jsonl"], ["--proba", "--input-format", "jsonl"]))
     out.append(("forest-pets-jsonl-cat", "pets", "pets", ["--model", "forest", "--task", "classification", "--trees", "10", "--seed", "3", "--cat", "species,city", "--step", HASH, "--drop", "id", "--input-format", "jsonl"], ["--proba", "--input-format", "jsonl"]))
+    # the multinomial logistic regression (docs/multiclass.md, kind 9): appended last, after the cases above, whose golden lines are unchanged. The data are made here (generated_data), not
+    # taken from docs/examples/data, which holds two-class targets only
+    for t in ("1", "8"):
+        out += [
+            ("softmax-mc3-t" + t, "mc3_train", "mc3_test", ["--model", "softmax", "--step", STD, "--l2", "0.1", "--iterations", "20", "--threads", t], ["--proba"]),
+            ("softmax-mc7-t" + t, "mc7_train", "mc7_test", ["--model", "softmax", "--l2", "1", "--iterations", "10", "--threads", t], ["--proba"]),
+        ]
+    return out
+
+
+def generated_data():
+    """(file name, text): the targets of three and of seven classes the fits of the softmax model read; the features are two-decimal numbers drawn from a fixed seed (Python's random.Random
+    is the Mersenne Twister, the same stream on every platform), the class of a row the largest of linear scores plus noise"""
+    import random
+    out = []
+    for name, labels, n_train, n_test, seed in (("mc3", (2, 4, 7), 150, 60, 11), ("mc7", (-3, 0, 1, 5, 8, 13, 21), 280, 90, 12)):
+        rng = random.Random(seed)
+        k = len(labels)
+        coef = [(rng.uniform(-2, 2), rng.uniform(-2, 2), rng.uniform(-1, 1)) for _ in range(k)]
+        rows = []
+        for i in range(n_train + n_test):
+            a, b, c = round(rng.gauss(0, 1), 2), round(rng.gauss(0, 1), 2), round(rng.uniform(-3, 3), 2)
+            sc = [x * a + y * b + z * c + rng.gauss(0, 0.5) for x, y, z in coef]
+            cls = sc.index(max(sc)) if i >= k else i
+            rows.append("%.2f,%.2f,%.2f,%d" % (a, b, c, labels[cls]))
+        head = "a,b,c,y\n"
+        out.append((name + "_train.csv", head + "\n".join(rows[:n_train]) + "\n"))
+        out.append((name + "_test.csv", head + "\n".join(rows[n_train:]) + "\n"))
     return out
 
 
@@ -117,6 +145,9 @@ def fingerprint(ml, data, ml_predict=None):
         for f in os.listdir(data):
             if f.endswith(".csv"):
                 shutil.copy(os.path.join(data, f), work)
+        for f, text in generated_data():
+            with open(os.path.join(work, f), "w") as fh:
+                fh.write(text)
         for name, train, test, fit_args, pred_args in cases():
             tf, sf, out = train + ".csv", test + ".csv", name + ".ml"
             if not (os.path.exists(os.path.join(work, tf)) and os.path.exists(os.path.join(work, sf))):

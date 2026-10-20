@@ -302,7 +302,13 @@ fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: 
     let (s7, number) = schema.new_number(heap, s6);
     let (s8, count) = schema.new_int(heap, s7, 0, schema.int_max());
     let (s9, names) = schema.new_array(heap, s8, text, 0, schema.int_max());
-    let (s10, one_row) = schema.new_array(heap, s9, number, 0, schema.int_max());
+    // a cell is a number; a model of three or more classes (kind 9) answers the probabilities of a row as an object keyed by the labels
+    var cell = number;
+    let kind_node = json.get(desc, tape, 0, "kind");
+    if kind_node >= 0 && json.to_int(desc, tape, kind_node) == 9 {
+        cell = anything;
+    }
+    let (s10, one_row) = schema.new_array(heap, s9, cell, 0, schema.int_max());
     let (s11, all_rows) = schema.new_array(heap, s10, one_row, 0, schema.int_max());
     let (s12, prediction) = schema.new_object(heap, s11, true);
     s = schema.add_field(heap, s12, prediction, "model_sha256", text, true);

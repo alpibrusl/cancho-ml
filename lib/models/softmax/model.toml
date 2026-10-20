@@ -10,8 +10,9 @@ shape = "blob"
 adapter = "models.adapter_softmax"
 payload_version = 1
 doc = "docs/multiclass.md"
-files = ["lib/models/softmax/softmax.cho", "lib/models/softmax/spass.cho", "lib/models/softmax/adapter.cho", "lib/models/rank.cho"]
+files = ["lib/models/softmax/softmax.cho", "lib/models/softmax/spass.cho", "lib/models/softmax/adapter.cho"]
 plan_order = 7
+target_classes = 3
 
 [limits]
 max_features = 256
@@ -23,7 +24,7 @@ max_parameters = 2048
 emits = [
   "ml.tensor.rank", "ml.tensor.shape", "ml.tensor.bounds", "ml.input.non-finite", "ml.input.too-many-columns", "ml.param.out-of-range",
   "ml.linalg.not-positive-definite", "ml.linalg.singular", "ml.param.threads", "ml.fit.non-finite", "ml.fit.collinear", "ml.fit.separable", "ml.label.single-class",
-  "ml.limit.classes", "ml.limit.parameters",
+  "ml.limit.classes", "ml.limit.parameters", "ml.input.too-many-rows",
 ]
 
 [authority]

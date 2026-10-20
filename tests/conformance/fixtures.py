@@ -36,6 +36,11 @@ FIT_LOG = ["fit", "--model", "logistic", "--target", "lab", "--output", "log.cml
 LBASE = BASE + [("write", "lin.csv", LIN), ("write", "linmis.csv", LINMIS), ("write", "lcls.csv", LCLS)]
 WITH_LIN = LBASE + [("fit", "--model", "linear", "--target", "y", "--output", "lin.cml", "lin.csv")]
 WITH_LINMIS = LBASE + [("fit", "--model", "linear", "--target", "y", "--step", STEP_IMP, "--output", "lm.cml", "linmis.csv")]
+# a target of three classes (docs/multiclass.md): the multinomial logistic regression, and a file of 65 classes
+MC3 = "a,b,y\n" + "".join("%d,%d,%d\n" % (i % 7, (i * 3) % 5, (3, 5, 9)[(i + i // 4) % 3]) for i in range(30))
+MC65 = "a,y\n" + "".join("%d,%d\n" % (i, i % 65) for i in range(130))
+MCWIDE = ",".join("f%d" % j for j in range(64)) + ",y\n" + "".join(",".join("%d" % ((i * (j + 3)) % 11) for j in range(64)) + ",%d\n" % (i % 33) for i in range(70))
+WITH_SM = BASE + [("write", "mc.csv", MC3), ("fit", "--model", "softmax", "--target", "y", "--l2", "1", "--output", "sm.cml", "mc.csv")]
 WITH_LOG = LBASE + [("fit", "--model", "logistic", "--target", "lab", "--output", "log.cml", "--step", "scale column=* kind=standard", "lcls.csv")]
 
 
@@ -351,6 +356,24 @@ CASES = [
          setup=WITH_LIN + [("write", "t.csv", "a,b,y\n1,2,n/a\n2,1,\"x,y\"\n")]),
     case("ml-label-not-binary-eval-label-the-model-never-saw", ["eval", "--model-file", "log.cml", "other.csv"], bad("ml.label.not-binary"),
          setup=WITH_LOG + [("write", "other.csv", "a,b,lab\n1,2,0\n2,3,5\n")]),
+    case("ml-label-unseen-eval-label-the-model-never-saw", ["eval", "--model-file", "sm.cml", "alien.csv"], bad("ml.label.unseen"),
+         setup=WITH_SM + [("write", "alien.csv", "a,b,y\n1,2,3\n2,3,4\n")]),
+    case("ml-label-unseen-fit-class-with-no-training-row", ["fit", "--model", "softmax", "--target", "y", "--l2", "1", "--split", "train=0.5", "--seed", "1", "--output", "m.cml", "rare.csv"],
+         bad("ml.label.unseen"), setup=BASE + [("write", "rare.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (i, i % 3, 3 + 2 * (i % 2)) for i in range(40)) + "1,1,9\n")]),
+    case("ml-limit-classes-65-classes", ["fit", "--model", "softmax", "--target", "y", "--output", "m.cml", "mc65.csv"], bad("ml.limit.classes"), setup=BASE + [("write", "mc65.csv", MC65)]),
+    case("ml-limit-parameters-2080", ["fit", "--model", "softmax", "--target", "y", "--iterations", "1", "--l2", "1", "--output", "m.cml", "mcwide.csv"], bad("ml.limit.parameters"),
+         setup=BASE + [("write", "mcwide.csv", MCWIDE)]),
+    case("ml-param-out-of-range-softmax-two-classes", ["fit", "--model", "softmax", "--target", "lab", "--output", "m.cml", "cls.csv"], bad("ml.param.out-of-range"), setup=BASE),
+    case("args-conflict-positive-with-softmax", ["fit", "--model", "softmax", "--target", "y", "--positive", "5", "--output", "m.cml", "mc.csv"], bad("args.conflict"),
+         setup=BASE + [("write", "mc.csv", MC3)]),
+    case("args-conflict-positive-in-eval-of-a-multiclass-model", ["eval", "--model-file", "sm.cml", "--positive", "5", "mc.csv"], bad("args.conflict"), setup=WITH_SM),
+    case("ml-fit-collinear-softmax", ["fit", "--model", "softmax", "--target", "y", "--output", "m.cml", "dup.csv"], bad("ml.fit.collinear", repair_retry=True),
+         setup=BASE + [("write", "dup.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (i % 7, i % 7, (3, 5, 9)[i % 3]) for i in range(30)))]),
+    case("ml-fit-separable-softmax", ["fit", "--model", "softmax", "--target", "y", "--output", "m.cml", "sep.csv"], bad("ml.fit.separable", repair_retry=True),
+         setup=BASE + [("write", "sep.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (10 * (i % 3) + i % 2, 5 * (i % 3), (3, 5, 9)[i % 3]) for i in range(30)))]),
+    case("fit-softmax", ["fit", "--model", "softmax", "--target", "y", "--l2", "1", "--output", "m.cml", "mc.csv"], ok(), setup=BASE + [("write", "mc.csv", MC3)]),
+    case("predict-softmax-with-probabilities", ["predict", "--model-file", "sm.cml", "--proba", "mc.csv"], ok({"columns": ["label", "probabilities"]}), setup=WITH_SM),
+    case("eval-softmax", ["eval", "--model-file", "sm.cml", "mc.csv"], ok(), setup=WITH_SM),
     case("ml-schema-mismatch-in-a-pipeline-model", ["predict", "--model-file", "lin.cml", "other.csv"], bad("ml.schema.mismatch"),
          setup=WITH_LIN + [("write", "other.csv", "a,z\n1,2\n")]),
     case("ml-label-single-class-in-a-held-out-side", ["fit", "--model", "logistic", "--split", "train=0.5", "--seed", "0", "--target", "lab", "--output", "m.cml", "one.csv"],
