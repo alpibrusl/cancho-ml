@@ -28,6 +28,8 @@ class DescribeGolden(unittest.TestCase):
     def test_the_answers_without_the_member_are_the_answers_before(self):
         old = json.loads(BEFORE.read_text())
         new = json.loads(golden_describe.record())
+        # the models of kind 9 (softmax) came after the member: they have no answer from before it
+        new = {m: t for m, t in new.items() if "softmax" not in m}
         self.assertEqual(sorted(new), sorted(old))
         for model, text in new.items():
             stripped, value = without_member(text)

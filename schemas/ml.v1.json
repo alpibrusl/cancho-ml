@@ -352,7 +352,6 @@
         "ml.limit.work",
         "ml.dump.unsupported-model",
         "ml.label.unseen",
-        " a label the model never saw cannot be scored, and every class needs a training row, so use --stratify or another --seed. Repair: none.",
         "ml.limit.classes",
         "ml.limit.parameters"
       ]

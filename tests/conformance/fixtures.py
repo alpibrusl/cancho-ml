@@ -367,7 +367,7 @@ CASES = [
     case("args-conflict-positive-with-softmax", ["fit", "--model", "softmax", "--target", "y", "--positive", "5", "--output", "m.cml", "mc.csv"], bad("args.conflict"),
          setup=BASE + [("write", "mc.csv", MC3)]),
     case("args-conflict-positive-in-eval-of-a-multiclass-model", ["eval", "--model-file", "sm.cml", "--positive", "5", "mc.csv"], bad("args.conflict"), setup=WITH_SM),
-    case("ml-fit-collinear-softmax", ["fit", "--model", "softmax", "--target", "y", "--output", "m.cml", "dup.csv"], bad("ml.fit.collinear", repair_retry=True),
+    case("ml-fit-collinear-softmax", ["fit", "--model", "softmax", "--target", "y", "--output", "m.cml", "dup.csv"], bad("ml.fit.collinear"),
          setup=BASE + [("write", "dup.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (i % 7, i % 7, (3, 5, 9)[i % 3]) for i in range(30)))]),
     case("ml-fit-separable-softmax", ["fit", "--model", "softmax", "--target", "y", "--output", "m.cml", "sep.csv"], bad("ml.fit.separable", repair_retry=True),
          setup=BASE + [("write", "sep.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (10 * (i % 3) + i % 2, 5 * (i % 3), (3, 5, 9)[i % 3]) for i in range(30)))]),
