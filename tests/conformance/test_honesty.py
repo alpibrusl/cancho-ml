@@ -17,7 +17,7 @@ class Honesty(unittest.TestCase):
 
     def test_the_models_are_exactly_the_built_ones(self):
         flags = {f["name"]: f for f in introspect()["flags"]}
-        self.assertEqual(flags["--model"]["kind"], "choice:constant/linear/logistic/kmeans/tree/forest/boost")
+        self.assertEqual(flags["--model"]["kind"], "choice:constant/linear/logistic/kmeans/tree/forest/boost/softmax")
         self.assertEqual(flags["--model"]["default"], "constant")
 
     def test_another_model_name_is_refused(self):
