@@ -293,5 +293,39 @@ class Fuzz(unittest.TestCase):
                 self.check(["fit", "--target", "y", "--output", p, "reg.csv"], rooted)
 
 
+# ST_SHARD=I/N (docs/ci.md section 5.2): this process runs the tests of group I of GROUPS. The tests named in no group (the quick ones) run in shard 0. The groups balance the times of one run
+# of the tests alone (283 + 120 s, 168 + 173 + 39 s, 104 + 77 + 39 + 39 s)
+SHARD_I, SHARD_N = (int(x) for x in os.environ.get("ST_SHARD", "0/1").split("/"))
+GROUPS = (("test_every_flag_every_verb_every_one_mistake", "test_every_flag_of_kmeans_every_mistake"),
+          ("test_every_flag_of_the_tree_and_the_forest_every_mistake", "test_every_flag_of_boost_every_mistake", "test_seeded_vectors_with_boost"),
+          ("test_every_flag_of_the_planned_models_every_mistake", "test_seeded_vectors", "test_seeded_vectors_with_kmeans", "test_seeded_vectors_with_the_tree_and_the_forest"))
+
+
+class Partition(unittest.TestCase):
+    def test_the_groups_name_tests_that_exist_once(self):
+        names = [n for g in GROUPS for n in g]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(sorted(set(names) - set(unittest.TestLoader().getTestCaseNames(Fuzz))), [])
+
+
+def load_tests(loader, standard_tests, pattern):
+    """a shard keeps the tests of its group (shard 0 also those of no group, and the test of the groups); with one shard everything runs"""
+    if SHARD_N == 1:
+        return standard_tests
+    grouped = {n for g in GROUPS for n in g}
+    suite = unittest.TestSuite()
+
+    def walk(s):
+        for t in s:
+            if isinstance(t, unittest.TestSuite):
+                walk(t)
+            else:
+                n = t.id().rsplit(".", 1)[-1]
+                if (n in GROUPS[SHARD_I]) if n in grouped else SHARD_I == 0:
+                    suite.addTest(t)
+    walk(standard_tests)
+    return suite
+
+
 if __name__ == "__main__":
     unittest.main()
