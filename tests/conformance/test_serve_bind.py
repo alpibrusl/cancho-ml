@@ -13,12 +13,21 @@ and says so; the skip is printed, so a result of "skipped" is never read as a pa
 import json
 import socket
 import subprocess
+import time
 import unittest
 
 from harness import ROOT
 from serve_lib import SERVE_BIN, Conn, Server, corpus
 
 SB = None
+
+
+def banner(s, text):
+    """the log of the server once it holds `text`: the Server helper returns when the socket listens, and the line that says where is written just after, so a loaded machine can read the log too early"""
+    deadline = time.time() + 10
+    while text not in s.stderr() and time.time() < deadline:
+        time.sleep(0.02)
+    return s.stderr()
 
 
 def setUpModule():
@@ -75,7 +84,7 @@ class Loopback(unittest.TestCase):
     def check(self, *flags):
         with Server(SB.dir, "linear.cml", *flags, no_token=False) as s:
             self.assertEqual(get("127.0.0.1", s.port).status, 200)
-            self.assertIn("127.0.0.1", s.stderr())
+            self.assertIn("127.0.0.1", banner(s, "127.0.0.1"))
             self.assertNotIn("0.0.0.0", s.stderr())
             if OUTSIDE is not None:
                 self.assertTrue(refused(OUTSIDE, s.port), "the default server accepted a connection on %s" % OUTSIDE)
@@ -131,7 +140,7 @@ class Everywhere(unittest.TestCase):
     def test_all_with_a_token_answers_on_both_addresses(self):
         tok = "all-tok_1"
         with Server(SB.dir, "linear.cml", "--bind", "all", token=tok, no_token=False) as s:
-            self.assertIn("0.0.0.0", s.stderr())
+            self.assertIn("0.0.0.0", banner(s, "0.0.0.0"))
             addrs = ["127.0.0.1"] + ([OUTSIDE] if OUTSIDE else [])
             for a in addrs:
                 self.assertEqual(get(a, s.port, "/health").status, 200, a)
