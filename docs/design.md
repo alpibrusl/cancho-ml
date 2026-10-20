@@ -158,6 +158,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 6 | k-means | `centroids` f64 rank 2 `k x d`; the schema section of the file has no target (its target index is the number of columns) | `lib/models/record.cho`, `lib/models/kmeans/adapter.cho` | no (`pipeline.file`, `docs/wiring-kmeans.md` section 6) |
 | 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
 | 8 | gradient-boosted trees | nine records, i64 and f64, rank 1 (`docs/models-boost.md` section 5); the task is a field of the first; for a classification a tenth, `labels`, as kind 5 | `lib/models/boost/model.cho` | no |
+| 9 | multinomial logistic regression (softmax) | three records, i64 and f64: `coef` shape `[K - 1, d]`, `intercept` shape `[K - 1]`, `labels` shape `[K]` ascending (`docs/multiclass.md` section 3.3); **library only until the wiring stage** | `lib/models/softmax/softmax.cho` | no |
 
 **Step kinds** (the `u32` that opens one step in the `steps` section; `lib/core/kinds.cho` `step_*`, `docs/transforms.md` section 4; the `steps` payload is `u32 n` then `n` times `u64 length | step`, and `n = 0` is the four bytes `mfile.cho` writes):
 
@@ -337,6 +338,7 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.split.stratum-too-small` | 8 | a class with fewer rows than k *(reachable from `ml cv --stratify` and `fit --split --stratify`: `extra()` since `docs/splits.md`)* | fewer folds |
 | `ml.label.unseen` | 8 | a true or predicted label is not one of the classes of a multiclass metric *(library only until the multiclass wiring: `docs/multiclass.md` stage A, `spec.cho` `pending()`)* | none |
 | `ml.limit.classes` | 8 | more than 64 classes *(library only until the multiclass wiring)* | merge rare classes before fitting |
+| `ml.limit.parameters` | 8 | the parameters `(K - 1)(d + 1)` of a multiclass fit above 2048, or the floats its pass holds for `n` rows above the budget of 2^26 *(library only until the multiclass wiring: `docs/multiclass.md` section 3.2)* | fit with fewer features or classes, or on fewer rows |
 
 *Registered by the transforms and the pipeline stage (library only: `lib/transforms/codes.cho`, `docs/transforms.md` section 1 X7, `docs/pipeline.md` section 2.1; `tools/ml/spec.cho` `pending()`; none is reachable from `ml` yet):*
 
@@ -482,6 +484,8 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 21 | `ml.predict.non-finite` | 8 | `ml.refuse` |
 | 22 | `ml.fit.collinear` | 8 | `ml.refuse` |
 | 23 | `ml.fit.separable` | 8 | `ml.refuse` |
+| 24 | `ml.limit.classes` | 8 | `ml.refuse` |
+| 25 | `ml.limit.parameters` | 8 | `ml.refuse` |
 | 101 | `ml.input.non-finite` | 8 | `tree.deny` |
 | 102 | `ml.label.not-binary` | 8 | `tree.deny` |
 | 103 | `ml.label.single-class` | 8 | `tree.deny` |

@@ -583,6 +583,9 @@ def case(model, a, threads, quiet=False):
     got = run_driver(model, a, threads)
     if exp is None:
         ok = "refused" in got
+        if model == "softmax":
+            # the tag of the refusal is the oracle's too (scripts/oracle_models.py softmax.last)
+            ok = ok and got.get("refused") == softmax.last
     else:
         ok = all(got.get(k) == v for k, v in exp.items())
     label = "%-7s %s t=%-2d" % (model, " ".join("%s=%s" % kv for kv in a.items()), threads)

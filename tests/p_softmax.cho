@@ -116,6 +116,9 @@ fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
                     if softmax.fit(heap, 65, mat(n, d), x, y, 4, 8, 0.0, o, g) != refuse.threads() { bad = bad + 1; }
                     if softmax.fit(heap, 1, mat(n, d), x, y, 65, 8, 0.0, o, g) != refuse.limit_classes() { bad = bad + 1; }
                     if softmax.fit(heap, 1, mat(n, d), x, y, 100000, 8, 0.0, o, g) != refuse.limit_classes() { bad = bad + 1; }
+                    // the class count comes before the iterations, the descriptor and the data
+                    if softmax.fit(heap, 1, mat(n, d), x, y, 65, 0, 0.0, o, g) != refuse.limit_classes() { bad = bad + 1; }
+                    if softmax.fit(heap, 1, mat(n, 300), x, y, 65, 8, 0.0, o, g) != refuse.limit_classes() { bad = bad + 1; }
                     if softmax.fit(heap, 1, mat(n, d), x, y, 2, 8, 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
                     if softmax.fit(heap, 1, mat(n, d), x, y, 0 - 3, 8, 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
                     if softmax.fit(heap, 1, mat(n, d), x, y, 4, 0, 0.0, o, g) != refuse.param_out_of_range() { bad = bad + 1; }
@@ -390,6 +393,9 @@ fn test_constants_and_the_memory_formula() -> [] int {
     if spass.params(1, 3) != 4 || spass.width(1, 3) != 16 || softmax.pass_floats(1, 1, 3) != 290 { bad = bad + 1; }
     // 5000 rows: 3 chunks of 2048, 20 blocks, depth 7 (2 + 5): W (6 + 7 + 2 + 30) + 2 P^2 + n D
     if softmax.pass_floats(5000, 1, 3) != 16 * (6 + 7 + 2 + 30) + 2 * 16 + 5000 * 2 { bad = bad + 1; }
+    // 200,000 rows: 98 chunks, so 64 threads at most count; 782 blocks, depth 12: 16 (196 + 12 + 2 + 640) + 2 16 + 200000 2
+    if softmax.pass_floats(200000, 1, 3) != 16 * (196 + 12 + 2 + 640) + 2 * 16 + 200000 * 2 { bad = bad + 1; }
+    if refuse.limit_classes() != 24 || refuse.limit_parameters() != 25 { bad = bad + 1; }
     // the scratch holds the four lanes and the row's vectors
     if spass.scratch_len(1, 3) != 4 * 16 + 2 + 8 + 4 + 8 { bad = bad + 1; }
     return bad;
