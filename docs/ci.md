@@ -146,6 +146,8 @@ Four changes, none of which removes a check [choice]:
 
 **Estimate** (not measured): with `test_describe` in 4 shards of about 410 s each, the floor of the step is the larger of 4,513 s over 4 workers (1,128 s) and the longest other module (1,022 s), so about 1,130 s against 1,650 s, 31 percent less, if the shards cost the same and the corpus built by each shard (`setUpModule`) is small; both are checked by a run.
 
+**Limits** [choice]. The step still ends near its limit on the slower runners. Job times, build included, from the check-run timestamps [measured]: run 39351113784 (all four green) `ubuntu-24.04` 49 min 13 s, `ubuntu-26.04` 40 min 29 s, `macos-26` 43 min 03 s, `ubuntu-24.04-arm` 26 min 14 s; run 39384538867, a pull request that changes only documents, so the same code: `ubuntu-24.04` 49 min 24 s, `ubuntu-26.04` 50 min 18 s, `ubuntu-24.04-arm` 26 min 05 s, and `macos-26` stopped at the 45-minute limit of the step (the job ended at 50 min 17 s). The same code on the same runner type passes in one run and stops at the limit in the next, so the time of a run varies by more than the margin that is left. The limit of the step is 60 minutes and that of the job 75; no check is removed. Why a run is slower than another is not measured.
+
 **Gates** (written before the code; `scripts/check_runner.py`, and in `tests/conformance/test_describe.py`), each shown able to fail by the mutants of the script:
 
 | id | what must hold | mutants that must be killed |

@@ -41,7 +41,7 @@ jobs:
           - {os: ubuntu-24.04-arm, label: linux-aarch64-ubuntu24}
           - {os: macos-26, label: darwin-arm64}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - name: Check out this repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -174,7 +174,7 @@ jobs:
       # ST_STRIDE=5 flips every fifth byte of a damaged model file (the default, 1, flips every byte: about 27 minutes for test_describe alone on a Linux machine), and
       # FUZZ_N=500 draws 500 argument vectors of the fuzz (the default is 2,500). The full gate runs the defaults.
       - name: Conformance tests, including the ml-serve tests
-        timeout-minutes: 45
+        timeout-minutes: 60
         env:
           ST_STRIDE: "5"
           FUZZ_N: "500"
