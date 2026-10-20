@@ -9,9 +9,13 @@
 //   metrics-check metric NAME YTRUE YPRED_OR_SCORE POS CAP REPS
 //   metrics-check terms YTRUE PROB POS                     the log-loss terms, bits, space separated
 //   metrics-check testcount N NUM DEN
+//   metrics-check mc NAME YTRUE SECOND CLASSES CAP         the multiclass metrics (docs/multiclass.md section 4). CLASSES is `L:` ints, strictly ascending. NAME and SECOND:
+//       confusion accuracy precision recall f1 macro_precision macro_recall macro_f1 weighted_precision weighted_recall weighted_f1   SECOND = the predicted labels
+//       logloss auc_ovr terms                                                                                                           SECOND = n * K probabilities, row-major
+//     stdout: `row I C0 C1 ..`, `class K HEX|undefined`, `value HEX`, `left_out N`, `terms HEX ..`, or `refused TAG`
 //
 // A vector is a spec: `L:1,0,-3` ints; `H:3ff0000000000000,..` float bits; `GL:n:seed:permille` generated labels; `GF:mode:n:seed:seed2`
-// generated floats (tools/metrics-check/gen.cho). NAME is one of accuracy precision recall f1 auc logloss rmse mae r2.
+// generated floats (tools/metrics-check/gen.cho); `GM:n:seed:K` generated labels in 0..K-1, `GQ:mode:n:seed:K` generated probability rows (n * K floats). NAME is one of accuracy precision recall f1 auc logloss rmse mae r2.
 // stdout, one `key value` per line: `value HEX`, `ms T`, or `refused TAG`; the exit code is the toolbox exit code of the tag.
 edition 5;
 
@@ -25,6 +29,7 @@ import metrics.classify;
 import metrics.rank;
 import metrics.regress;
 import metrics.logloss;
+import metrics.multiclass;
 import metrics.gen;
 
 fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
@@ -204,6 +209,25 @@ fn make_ints[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[int]], int) {
         }
         return (o, n);
     }
+    if len(t) >= 3 && int_of(t[0]) == 'G' && int_of(t[1]) == 'M' && int_of(t[2]) == ':' {
+        let (ok1, n) = field_int(t, 1);
+        let (ok2, seed) = field_int(t, 2);
+        let (ok3, k) = field_int(t, 3);
+        if ok1 == false || ok2 == false || ok3 == false || n < 0 || n > 100000000 || k < 1 {
+            return (box_slice(heap, 1, 0), 0 - 1);
+        }
+        let b = box_slice(heap, n + 1, 0);
+        var o = b;
+        borrow mut o as &!w in {
+            let a = contents(w);
+            var i = 0;
+            while i < n {
+                a[i] = gen.mlabel(seed, i, k);
+                i = i + 1;
+            }
+        }
+        return (o, n);
+    }
     return (box_slice(heap, 1, 0), 0 - 1);
 }
 
@@ -270,6 +294,27 @@ fn make_floats[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[float]], in
             }
         }
         return (o, n);
+    }
+    if len(t) >= 3 && int_of(t[0]) == 'G' && int_of(t[1]) == 'Q' && int_of(t[2]) == ':' {
+        let (ok0, mode) = field_int(t, 1);
+        let (ok1, n) = field_int(t, 2);
+        let (ok2, seed) = field_int(t, 3);
+        let (ok3, k) = field_int(t, 4);
+        if ok0 == false || ok1 == false || ok2 == false || ok3 == false || n < 0 || k < 1 || n > 100000000 || k > 4096 || n * k > 100000000 {
+            return (box_slice(heap, 1, 0.0), 0 - 1);
+        }
+        let b = box_slice(heap, n * k + 1, 0.0);
+        var o = b;
+        borrow mut o as &!w in {
+            let a = contents(w);
+            var i = 0;
+            while i < n * k {
+                a[i] = gen.value(mode, i, seed, 0);
+                i = i + 1;
+            }
+            gen.normalise_rows(a[0..n * k], n, k);
+        }
+        return (o, n * k);
     }
     return (box_slice(heap, 1, 0.0), 0 - 1);
 }
@@ -573,6 +618,212 @@ fn run_terms[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_wr
     return 0;
 }
 
+fn print_class[&i](io: &!i Io, c: int, r: rules.Scored) -> [io_write] int {
+    io.write_all(io, "class ");
+    io.print_int(io, c);
+    io.write_all(io, " ");
+    if r.code != 0 {
+        io.write_all(io, "undefined");
+    } else {
+        hex16(io, bits_of(r.v));
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn print_avg[&i](io: &!i Io, a: multiclass.Avg) -> [io_write] int {
+    if a.code != 0 {
+        return refuse_line(io, a.code);
+    }
+    io.write_all(io, "value ");
+    hex16(io, bits_of(a.v));
+    io.newline(io);
+    io.write_all(io, "left_out ");
+    io.print_int(io, a.left_out);
+    io.newline(io);
+    return 0;
+}
+
+// the measures that read the confusion matrix: its K * K counts, then the one asked for
+fn mc_counts[&h, &i, &n, &y, &q, &c](heap: &!h Heap, io: &!i Io, name: &n [byte], yt: &y [int], yp: &q [int], classes: &c [int], cap: int) -> [heap, io_write] int {
+    var kk = len(classes);
+    if multiclass.check_classes(classes) != 0 {
+        kk = 0;
+    }
+    let conf = box_slice(heap, kk * kk + 1, 0);
+    var cb = conf;
+    var code = 0;
+    borrow mut cb as &!w in {
+        code = multiclass.confusion(yt, yp, classes, cap, contents(w)[0..kk * kk]);
+    }
+    var status = 0;
+    if code != 0 {
+        status = refuse_line(io, code);
+    } else {
+        borrow cb as &r in {
+            let m = contents(r)[0..kk * kk];
+            if same(name, "confusion") {
+                var a = 0;
+                while a < kk {
+                    io.write_all(io, "row ");
+                    io.print_int(io, a);
+                    var b = 0;
+                    while b < kk {
+                        io.write_all(io, " ");
+                        io.print_int(io, m[a * kk + b]);
+                        b = b + 1;
+                    }
+                    io.newline(io);
+                    a = a + 1;
+                }
+            } else if same(name, "accuracy") {
+                status = print_value(io, multiclass.accuracy_of(m, kk), 0);
+            } else if same(name, "precision") || same(name, "recall") || same(name, "f1") {
+                var which = 1;
+                if same(name, "recall") {
+                    which = 2;
+                } else if same(name, "f1") {
+                    which = 3;
+                }
+                var a = 0;
+                while a < kk {
+                    print_class(io, a, multiclass.class_value(m, kk, which, a));
+                    a = a + 1;
+                }
+            } else if same(name, "macro_precision") {
+                status = print_avg(io, multiclass.average(m, kk, 1, false));
+            } else if same(name, "macro_recall") {
+                status = print_avg(io, multiclass.average(m, kk, 2, false));
+            } else if same(name, "macro_f1") {
+                status = print_avg(io, multiclass.average(m, kk, 3, false));
+            } else if same(name, "weighted_precision") {
+                status = print_avg(io, multiclass.average(m, kk, 1, true));
+            } else if same(name, "weighted_recall") {
+                status = print_avg(io, multiclass.average(m, kk, 2, true));
+            } else if same(name, "weighted_f1") {
+                status = print_avg(io, multiclass.average(m, kk, 3, true));
+            } else {
+                status = 2;
+            }
+        }
+    }
+    unbox_slice(heap, cb);
+    return status;
+}
+
+// the measures that read the probability rows
+fn mc_probs[&h, &i, &n, &y, &p, &c](heap: &!h Heap, io: &!i Io, name: &n [byte], yt: &y [int], prob: &p [float], classes: &c [int], cap: int) -> [heap, io_write] int {
+    var status = 0;
+    if same(name, "logloss") {
+        status = print_value(io, multiclass.logloss_of(heap, yt, prob, classes, cap), 0);
+    } else if same(name, "terms") {
+        let out = box_slice(heap, len(yt) + 1, 0.0);
+        var ob = out;
+        var code = 0;
+        borrow mut ob as &!w in {
+            code = multiclass.terms(yt, prob, classes, cap, contents(w)[0..len(yt)]);
+        }
+        if code != 0 {
+            status = refuse_line(io, code);
+        } else {
+            borrow ob as &r in {
+                io.write_all(io, "terms");
+                var k = 0;
+                while k < len(yt) {
+                    io.write_all(io, " ");
+                    hex16(io, bits_of(contents(r)[k]));
+                    k = k + 1;
+                }
+                io.newline(io);
+            }
+        }
+        unbox_slice(heap, ob);
+    } else if same(name, "auc_ovr") {
+        let kk = len(classes);
+        let per = box_slice(heap, kk + 1, 0.0);
+        let has = box_slice(heap, kk + 1, 0);
+        var pb = per;
+        var hb = has;
+        var a = multiclass.Avg { code: 0, v: 0.0, left_out: 0 };
+        borrow mut pb as &!pw in {
+            borrow mut hb as &!hw in {
+                a = multiclass.auc_ovr(heap, yt, prob, classes, cap, contents(pw)[0..kk], contents(hw)[0..kk]);
+            }
+        }
+        if a.code != 0 {
+            status = refuse_line(io, a.code);
+        } else {
+            borrow pb as &pr in {
+                borrow hb as &hr in {
+                    var c = 0;
+                    while c < kk {
+                        var r = rules.fail(rules.undefined());
+                        if contents(hr)[c] == 1 {
+                            r = rules.ok(contents(pr)[c]);
+                        }
+                        print_class(io, c, r);
+                        c = c + 1;
+                    }
+                }
+            }
+            status = print_avg(io, a);
+        }
+        unbox_slice(heap, pb);
+        unbox_slice(heap, hb);
+    } else {
+        status = 2;
+    }
+    return status;
+}
+
+fn run_mc[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let name = operand(g, 2);
+    let cap = num(g, 6);
+    var by_prob = false;
+    if same(name, "logloss") || same(name, "auc_ovr") || same(name, "terms") {
+        by_prob = true;
+    }
+    let (ya, yn) = make_ints(heap, operand(g, 3));
+    let (ca, cn) = make_ints(heap, operand(g, 5));
+    var yb = ya;
+    var cb = ca;
+    var status = 2;
+    if by_prob {
+        let (pa, pn) = make_floats(heap, operand(g, 4));
+        var pb = pa;
+        if yn >= 0 && cn >= 0 && pn >= 0 {
+            borrow yb as &yr in {
+                borrow cb as &cr in {
+                    borrow pb as &pr in {
+                        status = mc_probs(heap, io, name, contents(yr)[0..yn], contents(pr)[0..pn], contents(cr)[0..cn], cap);
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, pb);
+    } else {
+        let (qa, qn) = make_ints(heap, operand(g, 4));
+        var qb = qa;
+        if yn >= 0 && cn >= 0 && qn >= 0 {
+            borrow yb as &yr in {
+                borrow cb as &cr in {
+                    borrow qb as &qr in {
+                        status = mc_counts(heap, io, name, contents(yr)[0..yn], contents(qr)[0..qn], contents(cr)[0..cn], cap);
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, qb);
+    }
+    if status == 2 && (yn < 0 || cn < 0) {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, yb);
+    unbox_slice(heap, cb);
+    return status;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(ffi);
@@ -591,6 +842,8 @@ fn main(world: World) -> [] int {
                         code = run_metric(hp, ip, g, kc);
                     } else if same(arg(g, 1), "terms") {
                         code = run_terms(hp, ip, g);
+                    } else if same(arg(g, 1), "mc") {
+                        code = run_mc(hp, ip, g);
                     } else if same(arg(g, 1), "ratio") {
                         let (oa, a) = parse_int(operand(g, 2));
                         let (ob, b) = parse_int(operand(g, 3));

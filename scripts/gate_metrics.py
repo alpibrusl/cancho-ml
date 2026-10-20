@@ -110,6 +110,7 @@ MORE = [
     ("ml.input.too-many-rows", ("mc", "accuracy", "L:0,1,1", "L:0,1,1", "L:0,1", 2)),
     ("ml.metric.bad-probability", ("mc", "logloss", "L:0,1", "H:%s,%s,%s,%s" % (ONE_AND_HALF, HALF, HALF, HALF), "L:0,1", 1000)),
     ("ml.metric.bad-probability", ("mc", "auc_ovr", "L:0,1", "H:%s,%s,%s,%s" % ("bfd0000000000000", HALF, HALF, HALF), "L:0,1", 1000)),
+    ("ml.metric.bad-probability", ("mc", "logloss", "L:0,1", "H:%s,%s,%s,%s" % (HALF, HALF, HALF, ONE_AND_HALF), "L:0,1", 1000)),      # the last entry of the table
     ("ml.input.non-finite", ("mc", "logloss", "L:0,1", "H:%s,%s,%s,%s" % (NAN, HALF, HALF, HALF), "L:0,1", 1000)),
     ("ml.input.non-finite", ("mc", "auc_ovr", "L:0,1", "H:%s,%s,%s,%s" % ("7ff0000000000000", HALF, HALF, HALF), "L:0,1", 1000)),
 ]

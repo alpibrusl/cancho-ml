@@ -1,0 +1,379 @@
+module metrics.multiclass;
+
+import std.math;
+import metrics.rules;
+import metrics.sums;
+import metrics.classify;
+import metrics.logloss;
+import metrics.rank;
+import metrics.regress;
+import linalg.order;
+
+// The multiclass metrics (docs/multiclass.md section 4, docs/metrics.md section 2.9). The classes are the labels of the model, strictly ascending; class k is the k-th
+// smallest. A label of the data that is not a class is `ml.label.unseen`. Every count is an exact int below the row cap, every ratio is one division of two exact ints (the
+// correctly rounded value, as the binary metrics), the averages are sequential sums in the order of the classes, and the log-loss is the decisive sum of metrics.sums.
+
+pub fn max_classes() -> [] int {
+    return 64;
+}
+
+// the result of an average: a refusal code, the value, and the number of classes that had no value and were left out of it
+pub struct Avg {
+    code: int,
+    v: float,
+    left_out: int,
+}
+
+fn avg_fail(code: int, left: int) -> [] Avg {
+    return Avg { code: code, v: 0.0, left_out: left };
+}
+
+// 0, or the refusal for a list of classes that cannot be the classes of a model: one class is `single-class`, none or a list that is not strictly ascending is `out-of-range`,
+// more than max_classes() is `limit.classes`
+pub fn check_classes[&c](classes: &c [int]) -> [] int {
+    let k = len(classes);
+    if k == 0 {
+        return rules.out_of_range();
+    }
+    if k == 1 {
+        return rules.single_class();
+    }
+    if k > max_classes() {
+        return rules.too_many_classes();
+    }
+    var i = 1;
+    while i < k {
+        if classes[i] <= classes[i - 1] {
+            return rules.out_of_range();
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// the index of label v in the strictly ascending classes, or -1
+fn find[&c](classes: &c [int], v: int) -> [] int {
+    var lo = 0;
+    var hi = len(classes);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if classes[mid] < v {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo < len(classes) && classes[lo] == v {
+        return lo;
+    }
+    return 0 - 1;
+}
+
+// the confusion matrix, row-major, K x K, row = the true class, column = the predicted one, into out (at least K * K ints, zeroed here). 0 or a refusal; out is partial on a refusal.
+pub fn confusion[&y, &p, &c, &o](y_true: &y [int], y_pred: &p [int], classes: &c [int], cap: int, out: &!o [int]) -> [] int {
+    let cc = check_classes(classes);
+    if cc != 0 {
+        return cc;
+    }
+    let k = len(classes);
+    let n = len(y_true);
+    let sz = classify.check_size(n, len(y_pred), cap, classify.ceiling_rows());
+    if sz != 0 {
+        return sz;
+    }
+    if len(out) < k * k {
+        return rules.out_of_range();
+    }
+    var j = 0;
+    while j < k * k {
+        out[j] = 0;
+        j = j + 1;
+    }
+    var i = 0;
+    while i < n {
+        let a = find(classes, y_true[i]);
+        let b = find(classes, y_pred[i]);
+        if a < 0 || b < 0 {
+            return rules.unseen_label();
+        }
+        out[a * k + b] = out[a * k + b] + 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// rows of class c (its support), the rows predicted as c, and all rows
+pub fn support[&o](conf: &o [int], k: int, c: int) -> [] int {
+    var s = 0;
+    var b = 0;
+    while b < k {
+        s = s + conf[c * k + b];
+        b = b + 1;
+    }
+    return s;
+}
+
+pub fn predicted[&o](conf: &o [int], k: int, c: int) -> [] int {
+    var s = 0;
+    var a = 0;
+    while a < k {
+        s = s + conf[a * k + c];
+        a = a + 1;
+    }
+    return s;
+}
+
+pub fn total[&o](conf: &o [int], k: int) -> [] int {
+    var s = 0;
+    var j = 0;
+    while j < k * k {
+        s = s + conf[j];
+        j = j + 1;
+    }
+    return s;
+}
+
+// accuracy: the trace over the rows; the micro precision, recall and F1 of a single-label problem are this number
+pub fn accuracy_of[&o](conf: &o [int], k: int) -> [] rules.Scored {
+    let n = total(conf, k);
+    if n == 0 {
+        return rules.fail(rules.undefined());
+    }
+    var d = 0;
+    var c = 0;
+    while c < k {
+        d = d + conf[c * k + c];
+        c = c + 1;
+    }
+    return rules.ok(float_of(d) / float_of(n));
+}
+
+// which: 1 precision, 2 recall, 3 F1 (2 tp / (row + column), the binary F1 of the class against the rest). A class with a zero denominator has no value.
+pub fn class_value[&o](conf: &o [int], k: int, which: int, c: int) -> [] rules.Scored {
+    let tp = conf[c * k + c];
+    var num = tp;
+    var den = predicted(conf, k, c);
+    if which == 2 {
+        den = support(conf, k, c);
+    }
+    if which == 3 {
+        num = 2 * tp;
+        den = support(conf, k, c) + predicted(conf, k, c);
+    }
+    if den == 0 {
+        return rules.fail(rules.undefined());
+    }
+    return rules.ok(float_of(num) / float_of(den));
+}
+
+// the macro (every class that has a value counts once) or the support-weighted (a class counts as often as it has rows) mean of a per-class value, the sum in the order of the
+// classes; the classes without a value are left out and counted. No class with a value (or, weighted, no row among them) is `undefined`.
+pub fn average[&o](conf: &o [int], k: int, which: int, weighted: bool) -> [] Avg {
+    var sum = 0.0;
+    var wsum = 0;
+    var have = 0;
+    var c = 0;
+    while c < k {
+        let r = class_value(conf, k, which, c);
+        if r.code == 0 {
+            if weighted {
+                let s = support(conf, k, c);
+                sum = sum + float_of(s) * r.v;
+                wsum = wsum + s;
+            } else {
+                sum = sum + r.v;
+            }
+            have = have + 1;
+        }
+        c = c + 1;
+    }
+    let left = k - have;
+    if have == 0 {
+        return avg_fail(rules.undefined(), left);
+    }
+    if weighted {
+        if wsum == 0 {
+            return avg_fail(rules.undefined(), left);
+        }
+        return Avg { code: 0, v: sum / float_of(wsum), left_out: left };
+    }
+    return Avg { code: 0, v: sum / float_of(have), left_out: left };
+}
+
+// the checks of the probability matrix (n rows of K, row-major) against the labels: the classes, the length, finite values in [0, 1], every label a class. 0 or a refusal.
+fn check_probs[&y, &p, &c](y_true: &y [int], prob: &p [float], classes: &c [int], cap: int) -> [] int {
+    let cc = check_classes(classes);
+    if cc != 0 {
+        return cc;
+    }
+    let k = len(classes);
+    let n = len(y_true);
+    let sz = classify.check_size(n, n, cap, classify.ceiling_rows());
+    if sz != 0 {
+        return sz;
+    }
+    if len(prob) != n * k {
+        return rules.length_mismatch();
+    }
+    if regress.all_finite(prob) == false {
+        return rules.non_finite();
+    }
+    var i = 0;
+    while i < n * k {
+        if prob[i] < 0.0 || prob[i] > 1.0 {
+            return rules.bad_probability();
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        if find(classes, y_true[i]) < 0 {
+            return rules.unseen_label();
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// the log-loss terms of rows [at, at + m) into buf: -log(clip(probability of the true class)), the binary term with the same clip
+fn fill[&y, &p, &c, &o](labels: &y [int], prob: &p [float], classes: &c [int], at: int, m: int, buf: &!o [float]) -> [] int {
+    let k = len(classes);
+    var j = 0;
+    while j < m {
+        let idx = find(classes, labels[at + j]);
+        buf[j] = logloss.term(true, prob[(at + j) * k + idx]);
+        j = j + 1;
+    }
+    return 0;
+}
+
+// the terms of every row, for the gate that compares them with Python's: out has n floats
+pub fn terms[&y, &p, &c, &o](y_true: &y [int], prob: &p [float], classes: &c [int], cap: int, out: &!o [float]) -> [] int {
+    let code = check_probs(y_true, prob, classes, cap);
+    if code != 0 {
+        return code;
+    }
+    if len(out) < len(y_true) {
+        return rules.out_of_range();
+    }
+    fill(y_true, prob, classes, 0, len(y_true), out);
+    return 0;
+}
+
+// the mean log-loss over the rows (the decisive sum of the terms, divided by n)
+pub fn logloss_of[&h, &y, &p, &c](heap: &!h Heap, y_true: &y [int], prob: &p [float], classes: &c [int], cap: int) -> [heap] rules.Scored {
+    let code = check_probs(y_true, prob, classes, cap);
+    if code != 0 {
+        return rules.fail(code);
+    }
+    let n = len(y_true);
+    let buf = box_slice(heap, 256, 0.0);
+    let st = box_slice(heap, 40, 0.0);
+    let lv = box_slice(heap, 40, 0);
+    var bb = buf;
+    var ss = st;
+    var ll = lv;
+    var total = 0.0;
+    borrow mut bb as &!bw in {
+        borrow mut ss as &!sw in {
+            borrow mut ll as &!lw in {
+                let b = contents(bw);
+                let s = contents(sw);
+                let l = contents(lw);
+                var sp = 0;
+                var at = 0;
+                while at < n {
+                    var m = n - at;
+                    if m > 256 {
+                        m = 256;
+                    }
+                    fill(y_true, prob, classes, at, m, b);
+                    s[sp] = order.block_partial(b, m);
+                    sp = order.settle(s, l, sp, 1);
+                    at = at + m;
+                }
+                order.finish(s, sp, 1);
+                total = s[0];
+            }
+        }
+    }
+    unbox_slice(heap, bb);
+    unbox_slice(heap, ss);
+    unbox_slice(heap, ll);
+    return rules.ok(total / float_of(n));
+}
+
+// the one-versus-rest AUC of class index cls: the binary AUC of "is class cls" against the probability of cls, with the binary AUC's rule for ties. A class with no row, or the only
+// class present, has no value (`single-class`); the checks of check_probs come first.
+pub fn auc_class[&h, &y, &p, &c](heap: &!h Heap, y_true: &y [int], prob: &p [float], classes: &c [int], cls: int, cap: int) -> [heap] rules.Scored {
+    let code = check_probs(y_true, prob, classes, cap);
+    if code != 0 {
+        return rules.fail(code);
+    }
+    let k = len(classes);
+    if cls < 0 || cls >= k {
+        return rules.fail(rules.out_of_range());
+    }
+    let n = len(y_true);
+    let lab = box_slice(heap, n + 1, 0);
+    let col = box_slice(heap, n + 1, 0.0);
+    var lb = lab;
+    var cb = col;
+    var r = rules.fail(rules.out_of_range());
+    borrow mut lb as &!lw in {
+        borrow mut cb as &!cw in {
+            let l = contents(lw);
+            let s = contents(cw);
+            var i = 0;
+            while i < n {
+                if find(classes, y_true[i]) == cls {
+                    l[i] = 1;
+                }
+                s[i] = prob[i * k + cls];
+                i = i + 1;
+            }
+        }
+    }
+    borrow lb as &lr in {
+        borrow cb as &cr in {
+            r = rank.auc(heap, contents(lr)[0..n], contents(cr)[0..n], 1, cap);
+        }
+    }
+    unbox_slice(heap, lb);
+    unbox_slice(heap, cb);
+    return r;
+}
+
+// the macro mean of the one-versus-rest AUCs in the order of the classes; per[c] is the value of class c and has[c] is 1 when it has one (both K long). A class without a value is left
+// out and counted; a refusal other than a missing class (a bad cap, a bad table) is returned as it is.
+pub fn auc_ovr[&h, &y, &p, &c, &o, &q](heap: &!h Heap, y_true: &y [int], prob: &p [float], classes: &c [int], cap: int, per: &!o [float], has: &!q [int]) -> [heap] Avg {
+    let code = check_probs(y_true, prob, classes, cap);
+    if code != 0 {
+        return avg_fail(code, 0);
+    }
+    let k = len(classes);
+    if len(per) < k || len(has) < k {
+        return avg_fail(rules.out_of_range(), 0);
+    }
+    var sum = 0.0;
+    var have = 0;
+    var cl = 0;
+    while cl < k {
+        per[cl] = 0.0;
+        has[cl] = 0;
+        let r = auc_class(heap, y_true, prob, classes, cl, cap);
+        if r.code == 0 {
+            per[cl] = r.v;
+            has[cl] = 1;
+            sum = sum + r.v;
+            have = have + 1;
+        } else if r.code != rules.single_class() {
+            return avg_fail(r.code, 0);
+        }
+        cl = cl + 1;
+    }
+    if have == 0 {
+        return avg_fail(rules.undefined(), k);
+    }
+    return Avg { code: 0, v: sum / float_of(have), left_out: k - have };
+}

@@ -193,6 +193,8 @@ library, so no fixture reached them); the wiring stage (W1) moved `ml.split.empt
 | `ml.metric.bad-probability` | 8 | a probability outside `[0, 1]` | yes (registered at integration) |
 | `ml.split.empty-fold` | 8 | `k > n`, or a train/test split that would leave a side empty | yes (registered at integration) |
 | `ml.split.stratum-too-small` | 8 | a class with fewer than `k` rows | yes (registered at integration) |
+| `ml.label.unseen` | 8 | a true or predicted label is not one of the classes of a multiclass metric (**new**, stage A of `multiclass.md`) | yes |
+| `ml.limit.classes` | 8 | more than 64 classes (**new**, stage A of `multiclass.md`) | yes |
 
 ## 5. Results
 
