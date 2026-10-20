@@ -158,7 +158,7 @@ differs from this table. Model kinds (the `u32` that opens the payload of the `m
 | 6 | k-means | `centroids` f64 rank 2 `k x d`; the schema section of the file has no target (its target index is the number of columns) | `lib/models/record.cho`, `lib/models/kmeans/adapter.cho` | no (`pipeline.file`, `docs/wiring-kmeans.md` section 6) |
 | 7 | decision tree or random forest | ten records, i64 and f64, rank 1 (`docs/models-tree.md` section 7); the task (classification or regression) is a field of the first | `lib/models/tree/model.cho` | no |
 | 8 | gradient-boosted trees | nine records, i64 and f64, rank 1 (`docs/models-boost.md` section 5); the task is a field of the first; for a classification a tenth, `labels`, as kind 5 | `lib/models/boost/model.cho` | no |
-| 9 | multinomial logistic regression (softmax) | three records, i64 and f64: `coef` shape `[K - 1, d]`, `intercept` shape `[K - 1]`, `labels` shape `[K]` ascending (`docs/multiclass.md` section 3.3); **library only until the wiring stage** | `lib/models/softmax/softmax.cho` | no |
+| 9 | multinomial logistic regression (softmax) | three records, i64 and f64: `coef` shape `[K - 1, d]`, `intercept` shape `[K - 1]`, `labels` shape `[K]` ascending (`docs/multiclass.md` section 3.3) | `lib/models/softmax/adapter.cho` | no (`pipeline.file`, since stage B of the multiclass work) |
 
 **Step kinds** (the `u32` that opens one step in the `steps` section; `lib/core/kinds.cho` `step_*`, `docs/transforms.md` section 4; the `steps` payload is `u32 n` then `n` times `u64 length | step`, and `n = 0` is the four bytes `mfile.cho` writes):
 
