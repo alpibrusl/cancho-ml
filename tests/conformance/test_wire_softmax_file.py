@@ -224,9 +224,8 @@ class SoftmaxFile(unittest.TestCase):
             r = self.sb.run(*verb, "--model-file", "o.cml", "big.csv")
             self.assertNotIn(r.status, TRAPS, r)
             self.assertEqual(validate(r), [], r)
-            self.assertIn(r.first_rule(), (None, "ml.predict.non-finite", "ml.metric.undefined", "ml.input.non-finite"), r)
-            if r.status != 0:
-                self.assertEqual(r.status, 8, r)
+            self.assertEqual((r.status, r.first_rule()), (8, "ml.predict.non-finite"), (verb, r))
+            self.assertEqual(r.error()["detail"]["row"], 1, (verb, r))
 
     def test_a_file_over_the_parameter_bound_is_refused_by_the_reader(self):
         # ml fit refuses K = 33 with 64 features (2080 parameters), so only a hand-made file reaches the reader with them: written here by the layout of design.md 4.1 (the oracle of
@@ -240,7 +239,7 @@ class SoftmaxFile(unittest.TestCase):
         def section(tag, payload):
             return struct.pack("<IQ", tag, len(payload)) + payload
 
-        for kk, d, ok in ((33, 64, False), (32, 64, True), (3, 256, True), (3, 257, False)):
+        for kk, d, ok in ((33, 64, False), (32, 64, True), (3, 256, True), (3, 257, False), (65, 3, False), (64, 3, True)):
             names = ["f%d" % j for j in range(d)] + ["y"]
             schema = struct.pack("<II", len(names), d) + b"".join(put_str(n) + struct.pack("<II", t, sc) for n, (t, sc) in zip(names, [(1, 1)] * d + [(0, 0)]))
             kc = kk - 1

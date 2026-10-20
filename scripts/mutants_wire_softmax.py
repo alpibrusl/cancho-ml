@@ -79,7 +79,8 @@ MUTANTS = [
     M("sw-reader-length-not-compared", "M8", "the reader does not compare the payload's length with the size it announces", [(A, "    if len(blob) != payload_size(kk, d) {", "    if false {")], FILES),
     M("sw-reader-labels-end", "M8", "bytes after the labels are accepted", [(A, "|| r2.end + 16 + 8 * kk != len(blob) {", "{")], FILES,
       why="the length comparison before the allocation refuses a payload of another length first (see sw-reader-length-not-compared)"),
-    M("sw-plan-payload-family", "M8", "a plan of softmax is accepted over any payload", [(FI, "        return mk == kinds.model_softmax();", "        return true;")], FILES),
+    M("sw-plan-payload-family", "M8", "a plan of softmax is accepted over any payload", [(FI, "        return mk == kinds.model_softmax();", "        return true;")], FILES,
+      why="a second line of defence: load_stored compares the dispatch kind the plan names with the kind of the payload (est.kind_of) and refuses a file whose two differ with the same tag, so no file reaches ml with a softmax plan over another payload; the check in pipeline.file serves the programs that read a file without ml.est"),
     # ------------------------------------------------------------------ predict
     M("sw-predict-columns-binary", "M5", "predict --proba names the second column probability", [(IO, "if with_proba && kind == 9 {", "if with_proba && kind == 99 {")], SM + ORACLE),
     M("sw-predict-label-by-threshold", "M5", "the label is chosen by the binary threshold", [(IO, "                    } else if kind == 9 {\n                        borrow labs as &lbr in {", "                    } else if kind == 99 {\n                        borrow labs as &lbr in {")], SM + ORACLE),
