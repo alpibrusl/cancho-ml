@@ -151,6 +151,8 @@ Gates for stages D and E repeat M1, M5 to M10 for the tree, the forest and the b
 * **Admission** (`scripts/admit.py softmax --fast`): Q0 to Q8 pass (fit at 1 to 16 threads gives one 1,006-byte file; 1,089 damaged files, none trapped, none accepted with a wrong checksum, 1,028 refused with a tag); Q9 to Q11 are not run (`--fast`). The largest source file of `tools/ml` is `wire.cho` at 1,844 lines.
 * **The diagnostics of a fit** are a ring of `keep` slots (`softmax.fit` takes `keep`; the wiring uses 1): the parameters and the refusals do not depend on it (`p_softmax`, `softmax_a_ring_of_diagnostics_changes_nothing`; the 22 oracle cases and the thread suite are equal after the change).
 
-**Not measured at this stage:** the 49 wiring mutants (`scripts/mutants_wire_softmax.py`; the patterns apply, `--check`); the 16 fingerprint lines on macOS and Linux aarch64; `cv`, `importance` and `dump` (refused); a weighted fit.
+**Wiring mutants** (`scripts/mutants_wire_softmax.py`, 49 mutants, this machine): 45 killed, 4 survive, each explained: `sw-reader-width-not-compared`, `sw-reader-kc-minimum`, `sw-reader-labels-end` and `sw-plan-payload-family` are guarded by a second check on the same path that refuses the same input with the same rule tag, so the mutant changes no observable answer. (`sw-metrics-nonfinite-not-scanned` and `sw-reader-class-ceiling` first survived because their test lists lacked the file tests; both are killed once those are included.)
+
+**Not measured at this stage:** the 16 fingerprint lines on macOS and Linux aarch64; `cv`, `importance` and `dump` (refused); a weighted fit.
 
 Stages C to F are empty until they have run. A number is written here only if a script of this repository printed it, with the machine, the threads and the minimum of N.
