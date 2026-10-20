@@ -229,19 +229,29 @@ class SoftmaxFile(unittest.TestCase):
                 self.assertEqual(r.status, 8, r)
 
     def test_a_file_over_the_parameter_bound_is_refused_by_the_reader(self):
-        # ml fit refuses K = 33 with 64 features (2080 parameters), so only a hand-made file reaches the reader with them: the oracle writes the file (scripts/oracle_wire.py)
-        import sys
-        from harness import ROOT
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import oracle_wire as ow
+        # ml fit refuses K = 33 with 64 features (2080 parameters), so only a hand-made file reaches the reader with them: written here by the layout of design.md 4.1 (the oracle of
+        # scripts/oracle_wire.py writes the same bytes but needs numpy, which the fast jobs of the workflow do not install)
+        import hashlib
+
+        def put_str(t):
+            b = t.encode()
+            return struct.pack("<I", len(b)) + b
+
+        def section(tag, payload):
+            return struct.pack("<IQ", tag, len(payload)) + payload
+
         for kk, d, ok in ((33, 64, False), (32, 64, True), (3, 256, True), (3, 257, False)):
             names = ["f%d" % j for j in range(d)] + ["y"]
-            types = [(1, 1)] * d + [(0, 0)]
-            labels = list(range(kk))
-            w = [0.0] * ((kk - 1) * (d + 1))
-            plan = ow.canon("model kind=softmax iterations=1 l2=1.0")
-            data = ow.file_bytes(plan, ow.schema_bytes(names, types, d), ow.steps_bytes([]), ow.mc_payload(w, d, labels), 10, d + 1, 0)
-            self.sb.write("big.cml", data)
+            schema = struct.pack("<II", len(names), d) + b"".join(put_str(n) + struct.pack("<II", t, sc) for n, (t, sc) in zip(names, [(1, 1)] * d + [(0, 0)]))
+            kc = kk - 1
+            payload = (struct.pack("<I", 9) + struct.pack("<IIQQ", 2, 2, kc, d) + bytes(8 * kc * d) + struct.pack("<IIQ", 2, 1, kc) + bytes(8 * kc)
+                       + struct.pack("<IIQ", 1, 1, kk) + struct.pack("<%dq" % kk, *range(kk)))
+            old = payloads(self.files["k3"])[5]
+            cl = struct.unpack_from("<I", old, 28)[0]
+            pin = struct.pack("<QQQII", 10, d + 1, 0, 0, cl) + old[32:32 + cl] + struct.pack("<I", 2)
+            body = (b"CML1" + struct.pack("<II", 1, 5) + section(1, b"model kind=softmax iterations=1 l2=1.0\n") + section(2, schema) + section(3, struct.pack("<I", 0))
+                    + section(4, payload) + section(5, pin))
+            self.sb.write("big.cml", body + hashlib.sha256(body).digest())
             self.sb.write("big.csv", ",".join(names[:-1]) + "\n" + ",".join("1.0" for _ in range(d)) + "\n")
             r = self.sb.run("predict", "--model-file", "big.cml", "big.csv")
             self.assertNotIn(r.status, TRAPS, (kk, d, r))
