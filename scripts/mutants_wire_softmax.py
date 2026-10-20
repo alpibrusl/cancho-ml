@@ -98,7 +98,7 @@ MUTANTS = [
     M("sw-metrics-predicted-label-zero", "M4", "every row is predicted as the first class", [(MM, "contents(ypw)[i] = contents(lr)[truncate(contents(pr)[i])];", "contents(ypw)[i] = contents(lr)[0];")], SM + ORACLE),
     M("sw-metrics-true-label-shift", "M4", "the true label of a row is its neighbour's", [(MM, "contents(tw)[i] = truncate(yv[i]);", "contents(tw)[i] = truncate(yv[(i + 1) % n]);")], SM + ORACLE),
     M("sw-metrics-left-out-zero", "M4", "the classes the macro averages left out are not counted", [(MM, "contents(lw)[which] = a.left_out;", "contents(lw)[which] = 0;")], SM + ORACLE),
-    M("sw-metrics-nonfinite-not-scanned", "M5", "a probability that is not finite is scored", [(MM, "            if strict {\n                borrow prob as &qr0 in {", "            if false {\n                borrow prob as &qr0 in {")], SM),
+    M("sw-metrics-nonfinite-not-scanned", "M5", "a probability that is not finite is scored", [(MM, "            if strict {\n                borrow prob as &qr0 in {", "            if false {\n                borrow prob as &qr0 in {")], SM + FILES),
     # ------------------------------------------------------------------ describe, cv, dump
     M("sw-describe-two-classes", "M5", "describe lists the smallest and the largest class only", [(MD, "    if task == 2 && kind == kinds.model_softmax() {", "    if task == 2 && kind == 99 {")], SM + ["test_describe"]),
     M("sw-describe-positive", "M5", "describe names a positive label", [(MD, "    w = json.put_key(heap, w, \"positive\");\n    if task == 2 && kind > 3 && kind != kinds.model_softmax() {", "    w = json.put_key(heap, w, \"positive\");\n    if task == 2 && kind > 3 {")], SM),
