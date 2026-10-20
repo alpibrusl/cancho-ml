@@ -24,7 +24,7 @@ that the gates call, tests in `tests/t_metrics*.cho`, scripts in `scripts/*metri
 | MC1 | **Multiclass counts are exact.** The confusion matrix equals Python's, accuracy is the trace over `n` (and equals `classify.accuracy`), each per-class precision, recall and F1 is one division of two exact ints (bit equal to Python's `a / b`, `undefined` exactly where the denominator is 0), the macro and weighted means are the sequential sums in the order of the classes | `scripts/oracle_metrics.py --multiclass`, generated labels (K from 2 to 64, n up to 20,000), explicit labels that are negative, huge or gapped, and edge cases (absent classes, a class never predicted, nothing right) | a transposed matrix, a swapped axis, a wrong denominator, a skipped class, a weight dropped |
 | MC2 | **Multiclass log-loss** follows the binary rule: the terms are within 2 ulp of Python's `-math.log(clip(p))` and the mean is the written-order decisive sum of the library's own terms | the same script, K up to 64, n around the block edges | a wrong column of the table, the wrong clip, a mean over `n + 1` |
 | MC3 | **One-versus-rest AUC** per class is `float(Fraction)` from scipy midranks, the mean is the sequential sum over the classes that have both sides, the classes left out are counted | the same script, K up to 64, ties (quantised probabilities) | a wrong class column, a mean over `K` |
-| MC4 | **Tags and limits**: `ml.label.unseen`, `ml.limit.classes` and the refusals of the classes list are reached by fixtures through the driver (71 fixtures in all), the buffers are checked, and 600 hostile driver runs and 1,500 hostile rounds of `tests/t_metrics_mc.cho` never trap | `scripts/gate_metrics.py`, `tests/t_metrics_mc.cho` | a bound moved by one |
+| MC4 | **Tags and limits**: `ml.label.unseen`, `ml.limit.classes` and the refusals of the classes list are reached by fixtures through the driver (72 fixtures in all), the buffers are checked, and 600 hostile driver runs and 1,500 hostile rounds of `tests/t_metrics_mc.cho` never trap | `scripts/gate_metrics.py`, `tests/t_metrics_mc.cho` | a bound moved by one |
 | MC5 | **sklearn** (`accuracy_score`, `precision_recall_fscore_support`, `log_loss`, `roc_auc_score(multi_class="ovr")`) within bounds written before the numbers were seen: 150 u for the counts-based values and their means, 150 u for the AUC, 1e-12 absolute for the log-loss (`oracle_metrics.py --multiclass-sklearn`) | the same bounds with sklearn 1.8.0 | — |
 
 Mutants (section 6): 20 or more source edits of `lib/metrics`, each applied to a copy of the tree, the gates S1, S2, S3, M1 to M3, T1
@@ -327,12 +327,24 @@ is `std.math.log`: the same terms summed by a single left fold take 14.20 ms of 
 So the tree costs 1.8 ms of 16 (1.13x of the left fold) and has the order that does not depend on the thread count; the exact accumulator was not built, and on this evidence it would buy nothing: the tree is already
 within 0 ulp of the exact sum of the rounded terms on this input (one input; the worst case of the tree is the bound of section 3, not 0).
 
+### 5.5 The multiclass metrics (stage A of `multiclass.md`; gates MC1 to MC5)
+
+Machine: Linux 6.18.44 x86-64, 4 cores, the compiler of `cancho.toml`; Python 3 with numpy 2.4.6, scipy 1.17.1 and scikit-learn 1.8.0; one run each. `sh scripts/gate_metrics.sh` passed (exit 0); a run of it before the last two fixtures were added took 38.0 s of wall clock.
+
+| gate | printed by the script |
+|---|---|
+| MC1, MC2, MC3 | `multiclass: 227 cases: confusion exact, per-class and averaged values bit equal to Python int / int, log-loss terms 13458 of 13896 bit equal to math.log (worst 1.00 ulp) and summed in the written order, one-versus-rest AUC bit equal to float(Fraction) from scipy midranks` |
+| MC4 | `tags: 13 registered, 13 reached by 72 fixtures, exit codes and design.md section 8 consistent`; `fuzz: 600 driver runs, 88 ok, 512 refused with a tag, no exit outside 0/2/8, no signal`; `tests/t_metrics_mc.cho`: 8 tests, among them 1,500 hostile rounds of class lists, labels, tables and caps that reach at least 100 confusion matrices and 20 log-loss and 20 AUC values (the test fails otherwise) and no trap |
+| MC5 | against scikit-learn 1.8.0, bounds fixed before the numbers were seen (150 u counts-based values and means, 150 u AUC, 1e-12 absolute log-loss); the worst gaps: accuracy, precision, recall, F1 per class 0 u (bit equal), macro precision 2 u, weighted precision 1.94 u, macro F1 1.03 u, weighted F1 2.01 u, macro and weighted recall 0 u, one-versus-rest AUC 1.99 u, log-loss 4.44e-16 absolute |
+
+The log-loss terms are not all bit equal to Python's `math.log` (13,458 of 13,896): `std.math.log` and the C library differ by up to 1 ulp on some arguments, and the gate bounds the terms by 2 ulp and judges the sum against the library's own terms, as for the binary log-loss (section 5.1). The oracle shares its author and its document with the code; the mutants of section 6 (51 of the multiclass code, 50 killed, 1 explained) test that the gates notice a one-place fault. Only this machine ran the stage: no other platform was run.
+
 ## 6. Mutants (`scripts/mutants_metrics.py`, 5 shards in parallel; the log is `docs/bench/mutants_metrics.log`)
 
-146 one-place edits of `lib/metrics` and of `lib/linalg/order.cho` (the shared tree), each applied to a copy of the tree, with the whole gate of section 1 run on it (the unmutated control passes first):
-by file: splits, stream names, draw, shuffle, folds, caps, stratification (44), the counts-based metrics (13), ROC-AUC and its radix sort (30), the correctly rounded division (8), the lane rule and block length (12), the shared tree `lib/linalg/order.cho` (3), RMSE, MAE, R-squared (14), log-loss (15), the registry (7).
+197 one-place edits of `lib/metrics` and of `lib/linalg/order.cho` (the shared tree), each applied to a copy of the tree, with the whole gate of section 1 run on it (the unmutated control passes first):
+by file: splits, stream names, draw, shuffle, folds, caps, stratification (44), the counts-based metrics (13), ROC-AUC and its radix sort (30), the correctly rounded division (8), the lane rule and block length (12), the shared tree `lib/linalg/order.cho` (3), RMSE, MAE, R-squared (14), log-loss (15), the registry (7), the multiclass metrics (51).
 
-**138 killed, 8 survive, each explained, 0 unexplained.** The ones named in the brief: tie rule (`auc-tie-zero`, `auc-tie-one`, `auc-tie-half-pos`), midrank off by one (`auc-below-ties`, `auc-midrank-off-by-one`, `auc-below-minus`), wrong positive class (`auc-wrong-positive`, `auc-positives-count`,
+**188 killed, 9 survive, each explained, 0 unexplained** (the log is the merge of five shard runs on Linux x86-64, 4 cores). The ones named in the brief: tie rule (`auc-tie-zero`, `auc-tie-one`, `auc-tie-half-pos`), midrank off by one (`auc-below-ties`, `auc-midrank-off-by-one`, `auc-below-minus`), wrong positive class (`auc-wrong-positive`, `auc-positives-count`,
 `cls-tp-class`, `ll-label-pos`, `ll-neg-class`), fold boundary (`fold-start-no-extra`, `fold-start-min-max`, `fold-start-always-mod`, `kfold-last-fold`, `kfold-hi-bound`), stratification rounding / deal (`strat-deal-offset`, `strat-deal-per-class`, `strat-deal-blocks`), seed derive index (`seed-derive-index`, `seed-derive-swap`, `seed-derive-single`, `strat-class1-stream`, `strat-class0-stream`): all killed.
 
 | survivor | why it cannot change a result |
@@ -343,6 +355,7 @@ by file: splits, stream names, draw, shuffle, folds, caps, stratification (44), 
 | `r2-sst-zero` | `SST = 0` gives an infinity or NaN in `SSE / SST`, which the finite test on the result refuses with the same tag |
 | `ratio-first-bit` | `r == b` at the first bit happens only for a quotient that is an exact power of two, and the 52 bits that follow round up to the same value (the oracle tests `1 / 2^61`, `2^61 - 1` over `2^61` and the exact-power quotients `2^e + 1` over `2^(53 + e)`) |
 | `ratio-one` | `a == b` is a shortcut; the general path also returns `1.0` (the oracle tests `1 / 1`, which with the mutant takes the general path) |
+| `mc-auc-missing-class` | `auc_ovr` and `auc_class` both run the checks of the probability table with the same arguments, so a refusal other than a class without both sides has been returned before that branch; it is defensive |
 | `sum-tree-level` | stack levels strictly decrease from the bottom, so a top level above the one below never happens (the same survivor as `docs/linalg.md` 5.1 `order-level-eq`) |
 
 ## 7. Open questions for the maintainer

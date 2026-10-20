@@ -109,4 +109,4 @@ Gates for stages D and E repeat M1, M5 to M10 for the tree, the forest and the b
 
 ## 9. Results
 
-Empty until the gates have run. A number is written here only if a script of this repository printed it, with the machine, the threads and the minimum of N.
+Stage A (the metrics of section 4): the gates MC1 to MC5 of `metrics.md` section 1 pass and their output is in `metrics.md` section 5.5, with the 51 mutants of the new code (50 killed, 1 explained) in section 6. The cost of a pass of the solver (gate M2), the comparison of the solver with scikit-learn (M3) and the rest of the stages are empty until they have run. A number is written here only if a script of this repository printed it, with the machine, the threads and the minimum of N.
