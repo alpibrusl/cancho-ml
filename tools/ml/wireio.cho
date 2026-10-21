@@ -1493,7 +1493,7 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
                                     borrow yv as &yr in {
                                         borrow xs as &xq in {
                                             borrow gte as &gtr in {
-                                                let (mobj, mplain, mund, fl) = rankcol.block(heap, rank, kind, task, xq, contents(yr), contents(sr.wv), file.model_bytes(sr.lo), c0, pos, o.max_rows, true, contents(gtr), gk, argv.nat(src, "rank-k"), bytes.equal(argv.text(src, "gain"), "linear"));
+                                                let (mobj, mplain, mund, fl) = rankcol.block(heap, rank, kind, task, xq, contents(yr), contents(sr.wv), file.model_bytes(sr.lo), c0, c1, pos, o.max_rows, true, contents(gtr), gk, argv.nat(src, "rank-k"), bytes.equal(argv.text(src, "gain"), "linear"));
                                                 if fl.code != 0 {
                                                     var fl2 = fl;
                                                     if fl.code == refuse.predict_non_finite() {

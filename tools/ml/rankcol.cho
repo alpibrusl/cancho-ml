@@ -449,11 +449,11 @@ pub fn metrics_block[&h, &x, &b, &y, &g](heap: &!h Heap, kind: int, xs: &x matri
 }
 
 // The metrics block of a held-out part: the ranking metrics for a ranking model (`is_rank`), else the metrics of wiredata for the task of the model.
-pub fn block[&h, &x, &y, &w, &b, &g](heap: &!h Heap, is_rank: bool, kind: int, task: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], blob: &b [byte], c0: int, pos: int, cap: int, strict: bool, gid: &g [int], ng: int, k: int, linear: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, wiredata.Failed) {
+pub fn block[&h, &x, &y, &w, &b, &g](heap: &!h Heap, is_rank: bool, kind: int, task: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], blob: &b [byte], c0: int, c1: int, pos: int, cap: int, strict: bool, gid: &g [int], ng: int, k: int, linear: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, wiredata.Failed) {
     if is_rank {
         return metrics_block(heap, kind, xs, blob, yv, gid, ng, k, linear, cap);
     }
-    return wiredata.metrics_block(heap, kind, task, xs, yv, wv, blob, c0, pos, pos, cap, strict);
+    return wiredata.metrics_block(heap, kind, task, xs, yv, wv, blob, c0, c1, pos, cap, strict);
 }
 
 // whether the model section of a file of kind `kind` is the payload of a ranking boost (docs/ranking.md section 4): kind 8 and the task field of its header 2

@@ -1883,66 +1883,175 @@
               "additionalProperties": false
              },
              "holdout": {
-              "type": "object",
-              "properties": {
-               "rows": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "on": {
-                "const": "held-out"
-               },
-               "metrics": {
+              "oneOf": [
+               {
                 "type": "object",
                 "properties": {
-                 "rmse": {
-                  "oneOf": [
-                   {
-                    "type": "string",
-                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                   },
-                   {
-                    "type": "null"
-                   }
-                  ]
+                 "rows": {
+                  "type": "integer",
+                  "minimum": 0
                  },
-                 "mae": {
-                  "oneOf": [
-                   {
-                    "type": "string",
-                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                   },
-                   {
-                    "type": "null"
-                   }
-                  ]
+                 "on": {
+                  "const": "held-out"
                  },
-                 "r2": {
-                  "oneOf": [
-                   {
-                    "type": "string",
-                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                 "metrics": {
+                  "type": "object",
+                  "properties": {
+                   "rmse": {
+                    "oneOf": [
+                     {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
                    },
-                   {
-                    "type": "null"
+                   "mae": {
+                    "oneOf": [
+                     {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   "r2": {
+                    "oneOf": [
+                     {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
                    }
-                  ]
+                  },
+                  "required": [
+                   "rmse",
+                   "mae",
+                   "r2"
+                  ],
+                  "additionalProperties": false
                  }
                 },
                 "required": [
-                 "rmse",
-                 "mae",
-                 "r2"
+                 "rows",
+                 "on",
+                 "metrics"
+                ],
+                "additionalProperties": false
+               },
+               {
+                "type": "object",
+                "properties": {
+                 "rows": {
+                  "type": "integer",
+                  "minimum": 0
+                 },
+                 "on": {
+                  "const": "held-out"
+                 },
+                 "metrics": {
+                  "type": "object",
+                  "properties": {
+                   "ndcg": {
+                    "oneOf": [
+                     {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   "map": {
+                    "oneOf": [
+                     {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   "mrr": {
+                    "oneOf": [
+                     {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   "precision": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                   },
+                   "recall": {
+                    "oneOf": [
+                     {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   "groups": {
+                    "type": "integer",
+                    "minimum": 0
+                   },
+                   "groups_scored": {
+                    "type": "integer",
+                    "minimum": 0
+                   },
+                   "k": {
+                    "type": "integer",
+                    "minimum": 0
+                   },
+                   "gain": {
+                    "enum": [
+                     "exp",
+                     "linear"
+                    ]
+                   },
+                   "ties": {
+                    "const": "file order"
+                   }
+                  },
+                  "required": [
+                   "ndcg",
+                   "map",
+                   "mrr",
+                   "precision",
+                   "recall",
+                   "groups",
+                   "groups_scored",
+                   "k",
+                   "gain",
+                   "ties"
+                  ],
+                  "additionalProperties": false
+                 }
+                },
+                "required": [
+                 "rows",
+                 "on",
+                 "metrics"
                 ],
                 "additionalProperties": false
                }
-              },
-              "required": [
-               "rows",
-               "on",
-               "metrics"
-              ],
-              "additionalProperties": false
+              ]
              }
             },
             "required": [
@@ -2248,298 +2357,6 @@
              "boost",
              "classes",
              "positive"
-            ],
-            "additionalProperties": false
-           },
-           {
-            "type": "object",
-            "properties": {
-             "plan": {
-              "type": "string"
-             },
-             "steps": {
-              "type": "integer",
-              "minimum": 0
-             },
-             "features": {
-              "type": "integer",
-              "minimum": 0
-             },
-             "boost": {
-              "type": "object",
-              "properties": {
-               "rounds": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "rounds_requested": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "nodes": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "bins": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "max_depth": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "min_leaf": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "learning_rate": {
-                "type": "string",
-                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-               },
-               "base_score": {
-                "type": "string",
-                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-               },
-               "best_round": {
-                "type": "integer",
-                "minimum": 0
-               }
-              },
-              "required": [
-               "rounds",
-               "rounds_requested",
-               "nodes",
-               "bins",
-               "max_depth",
-               "min_leaf",
-               "learning_rate",
-               "base_score"
-              ],
-              "additionalProperties": false
-             },
-             "steps_sha256": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-             },
-             "categorical": {
-              "type": "array",
-              "items": {
-               "type": "object",
-               "properties": {
-                "step": {
-                 "type": "integer",
-                 "minimum": 0
-                },
-                "kind": {
-                 "enum": [
-                  "onehot",
-                  "label",
-                  "freq",
-                  "hash"
-                 ]
-                },
-                "column": {
-                 "$ref": "#/$defs/text_or_bytes"
-                },
-                "categories": {
-                 "type": "integer",
-                 "minimum": 0
-                },
-                "output_columns": {
-                 "type": "integer",
-                 "minimum": 0
-                }
-               },
-               "required": [
-                "step",
-                "kind",
-                "column",
-                "categories",
-                "output_columns"
-               ],
-               "additionalProperties": false
-              }
-             },
-             "string_table": {
-              "type": "object",
-              "properties": {
-               "entries": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "strings": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "pool_bytes": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "bytes": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "sha256": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-               }
-              },
-              "required": [
-               "entries",
-               "strings",
-               "pool_bytes",
-               "bytes",
-               "sha256"
-              ],
-              "additionalProperties": false
-             },
-             "split": {
-              "type": "object",
-              "properties": {
-               "train": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "test": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "seed": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "spec": {
-                "type": "string"
-               },
-               "assignment": {
-                "type": "array",
-                "items": {
-                 "enum": [
-                  0,
-                  1
-                 ]
-                }
-               }
-              },
-              "required": [
-               "train",
-               "test",
-               "seed",
-               "spec"
-              ],
-              "additionalProperties": false
-             },
-             "holdout": {
-              "type": "object",
-              "properties": {
-               "rows": {
-                "type": "integer",
-                "minimum": 0
-               },
-               "on": {
-                "const": "held-out"
-               },
-               "metrics": {
-                "type": "object",
-                "properties": {
-                 "ndcg": {
-                  "oneOf": [
-                   {
-                    "type": "string",
-                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                   },
-                   {
-                    "type": "null"
-                   }
-                  ]
-                 },
-                 "map": {
-                  "oneOf": [
-                   {
-                    "type": "string",
-                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                   },
-                   {
-                    "type": "null"
-                   }
-                  ]
-                 },
-                 "mrr": {
-                  "oneOf": [
-                   {
-                    "type": "string",
-                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                   },
-                   {
-                    "type": "null"
-                   }
-                  ]
-                 },
-                 "precision": {
-                  "type": "string",
-                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                 },
-                 "recall": {
-                  "oneOf": [
-                   {
-                    "type": "string",
-                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                   },
-                   {
-                    "type": "null"
-                   }
-                  ]
-                 },
-                 "groups": {
-                  "type": "integer",
-                  "minimum": 0
-                 },
-                 "groups_scored": {
-                  "type": "integer",
-                  "minimum": 0
-                 },
-                 "k": {
-                  "type": "integer",
-                  "minimum": 0
-                 },
-                 "gain": {
-                  "enum": [
-                   "exp",
-                   "linear"
-                  ]
-                 },
-                 "ties": {
-                  "const": "file order"
-                 }
-                },
-                "required": [
-                 "ndcg",
-                 "map",
-                 "mrr",
-                 "precision",
-                 "recall",
-                 "groups",
-                 "groups_scored",
-                 "k",
-                 "gain",
-                 "ties"
-                ],
-                "additionalProperties": false
-               }
-              },
-              "required": [
-               "rows",
-               "on",
-               "metrics"
-              ],
-              "additionalProperties": false
-             }
-            },
-            "required": [
-             "plan",
-             "steps",
-             "features",
-             "boost"
             ],
             "additionalProperties": false
            },
@@ -10582,7 +10399,8 @@
            "enum": [
             "regression",
             "classification",
-            "clustering"
+            "clustering",
+            "ranking"
            ]
           },
           "data_sha256": {
@@ -19445,7 +19263,8 @@
            "enum": [
             "regression",
             "classification",
-            "clustering"
+            "clustering",
+            "ranking"
            ]
           },
           "data_sha256": {

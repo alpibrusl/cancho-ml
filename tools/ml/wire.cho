@@ -1374,7 +1374,7 @@ pub fn holdout[&h, &dd, &ci, &cv, &pp, &tt, &s, &cl](heap: &!h Heap, src: &cl [b
                         borrow yte as &yr in {
                             borrow xs as &xq2 in {
                                 borrow gte as &gtr in {
-                                    let (mo, mplain, mund, fl) = rankcol.block(heap, ds.ngroups > 0 && est.ranking(pls.kind, contents(pls.ip)), pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, o.max_rows, false, contents(gtr), gk, argv.nat(src, "rank-k"), bytes.equal(argv.text(src, "gain"), "linear"));
+                                    let (mo, mplain, mund, fl) = rankcol.block(heap, ds.ngroups > 0 && est.ranking(pls.kind, contents(pls.ip)), pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, ds.c1, o.max_rows, false, contents(gtr), gk, argv.nat(src, "rank-k"), bytes.equal(argv.text(src, "gain"), "linear"));
                                     buffer.drop(heap, mobj);
                                     mobj = mo;
                                     buffer.drop(heap, mplain);
