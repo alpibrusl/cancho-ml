@@ -5,6 +5,7 @@ kind_fn = "model_boost"
 task = "both"
 tier = "supported"
 wired = true
+weighted = true
 shape = "blob"
 adapter = "models.adapter_boost"
 payload_version = 1

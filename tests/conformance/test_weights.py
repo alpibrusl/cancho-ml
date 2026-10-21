@@ -183,14 +183,14 @@ class Weights(unittest.TestCase):
 
     # ------------------------------------------------------------------ the models and the verbs
     def test_the_other_models_have_no_weighted_fit(self):
-        for extra in (("--model", "boost", "--task", "regression"), ("--model", "kmeans", "--k", "2")):
+        for extra in (("--model", "kmeans", "--k", "2"),):
             args = ["fit", "--target", "y", "--output", "x.cml", "--overwrite", "--weight", "w", *extra, "lin.csv"]
             if extra[1] == "kmeans":
                 args.remove("--target")
                 args.remove("y")
             self.rule(self.ml(*args), "args.conflict", 2)
         self.rule(self.ml("fit", "--target", "y", "--output", "x.cml", "--overwrite", "--weight", "w", "lin.csv"), "args.conflict", 2)
-        self.sb.write("boost.plan", "model kind=boost task=regression\n")
+        self.sb.write("boost.plan", "model kind=kmeans k=2\n")
         self.rule(self.ml("fit", "--target", "y", "--output", "x.cml", "--overwrite", "--plan", "boost.plan", "--weight", "w", "lin.csv"), "args.conflict", 2)
         self.rule(self.ml("fit", "--model", "softmax", "--target", "y", "--output", "x.cml", "--overwrite", "--weight", "w", "log.csv"), "args.conflict", 2)
 
@@ -212,7 +212,7 @@ class Weights(unittest.TestCase):
         self.assertIn("folds", json.dumps(d))
         d2 = self.ok(self.ml("cv", "--model", "linear", "--target", "y", "--drop", "w", "--folds", "4", "--seed", "1", "lin.csv"))
         self.assertNotEqual(json.dumps(d), json.dumps(d2))
-        self.rule(self.ml("cv", "--model", "boost", "--target", "y", "--weight", "w", "--folds", "4", "lin.csv"), "args.conflict", 2)
+        self.rule(self.ml("cv", "--model", "softmax", "--target", "y", "--weight", "w", "--folds", "4", "log.csv"), "args.conflict", 2)
         self.sb.write("zero.csv", rows_csv(weights=[0] * 120))
         self.rule(self.ml("cv", "--model", "linear", "--target", "y", "--weight", "w", "--folds", "4", "zero.csv"), "ml.weight.zero-total", 8)
 
@@ -373,6 +373,85 @@ class WeightsTrees(unittest.TestCase):
     def test_a_tracked_weighted_fit_is_replayed_with_the_flag(self):
         (self.sb.dir / "runs").mkdir(exist_ok=True)
         d = self.ok(self.fit("forest", "reg.csv", "tr.cml", "--weight", "w", "--track", "runs"))
+        rec = json.loads((self.sb.dir / "runs" / (d["run"]["id"] + ".json")).read_text())
+        self.assertEqual(rec["inputs"]["weight"], "w", rec)
+        v = self.sb.run("runs", "verify", "runs", d["run"]["id"])
+        self.assertEqual(v.status, 0, v)
+
+
+class WeightsBoost(WeightsTrees):
+    """C3 -- `--weight COL` for `--model boost` (docs/weights.md section 2.6). The byte-for-byte comparison with the Python oracle is test_wire_boost_oracle.py
+    (weighted cases). The tests of the trees that do not depend on the model are not repeated."""
+
+    MODEL = "boost"
+    EXTRA = ("--rounds", "8", "--max-depth", "3", "--min-leaf", "1")
+
+    def test_the_weight_column_is_not_a_feature(self):
+        d = self.ok(self.fit("boost", "reg.csv", "w.cml", "--weight", "w", *self.EXTRA))
+        self.assertEqual(d["summary"]["features"], 2)
+        self.assertEqual(len(self.values("w.cml")), 100)
+
+    def test_unit_weights_are_the_unweighted_fit_as_bytes(self):
+        # exactly: 1.0 * x is x, and the sums of ones are the counts (section 2.6)
+        for csv in ("ones_reg.csv", "ones_cls.csv"):
+            for extra in ((), ("--subsample", "0.5"), ("--early-stopping", "3", "--split", "train=0.8", "--seed", "4")):
+                self.ok(self.fit("boost", csv, "w1.cml", "--weight", "w", *self.EXTRA, *extra))
+                self.ok(self.fit("boost", csv, "u1.cml", "--drop", "w", *self.EXTRA, *extra))
+                self.assertEqual(self.sb.read("w1.cml"), self.sb.read("u1.cml"), (csv, extra))
+
+    def test_integer_weights_give_the_predictions_of_the_file_with_the_rows_repeated(self):
+        for csv in ("reg.csv", "cls.csv"):
+            lines = self.sb.read(csv).decode().strip().split("\n")
+            rows = [ln.split(",") for ln in lines[1:]]
+            dup = ["a,b,y"] + [",".join([r[0], r[1], r[3]]) for r in rows for _ in range(int(r[2]))]
+            self.sb.write("dup.csv", "\n".join(dup) + "\n")
+            task = "classification" if csv == "cls.csv" else "regression"
+            self.ok(self.sb.run("fit", "--model", "boost", "--task", task, "--target", "y", "--weight", "w", *self.EXTRA, "--output", "a.cml", "--overwrite", csv))
+            self.ok(self.sb.run("fit", "--model", "boost", "--task", task, "--target", "y", *self.EXTRA, "--output", "b.cml", "--overwrite", "dup.csv"))
+            a, b = self.values("a.cml"), self.values("b.cml")
+            close_ = sum(1 for x, y in zip(a, b) if abs(float(x) - float(y)) <= 1e-9 * max(1.0, abs(float(y))))
+            self.assertGreaterEqual(close_, 95, (csv, close_))
+
+    def test_a_weighted_file_is_the_same_bytes_at_any_thread_count(self):
+        seen = set()
+        for t in (1, 2, 4, 8):
+            self.ok(self.fit("boost", "cls.csv", "t%d.cml" % t, "--weight", "w", "--threads", str(t), *self.EXTRA))
+            seen.add(self.sb.read("t%d.cml" % t))
+        self.assertEqual(len(seen), 1)
+
+    def test_the_weights_change_the_model(self):
+        self.ok(self.fit("boost", "reg.csv", "w.cml", "--weight", "w", *self.EXTRA))
+        self.ok(self.fit("boost", "reg.csv", "u.cml", "--drop", "w", *self.EXTRA))
+        self.assertNotEqual(self.sb.read("w.cml"), self.sb.read("u.cml"))
+
+    def test_no_weight_above_zero_and_a_class_without_weight(self):
+        self.rule(self.fit("boost", "zero.csv", "x.cml", "--weight", "w", *self.EXTRA), "ml.weight.zero-total", 8)
+        lines = self.sb.read("cls.csv").decode().strip().split("\n")
+        rows = [ln.split(",") for ln in lines[1:]]
+        self.sb.write("cls_one.csv", "a,b,w,y\n" + "".join("%s,%s,%d,%s\n" % (r[0], r[1], 0 if r[3] == "1" else 1, r[3]) for r in rows))
+        self.rule(self.fit("boost", "cls_one.csv", "x.cml", "--weight", "w", *self.EXTRA), "ml.label.single-class", 8)
+
+    def test_the_conflicts_of_the_column(self):
+        self.rule(self.fit("boost", "reg.csv", "x.cml", "--weight", "y"), "args.conflict", 2)
+        self.rule(self.fit("boost", "reg.csv", "x.cml", "--weight", "w", "--drop", "w"), "args.conflict", 2)
+
+    def test_cv_takes_the_flag(self):
+        args = ("cv", "--model", "boost", "--task", "classification", "--target", "y", "--folds", "4", "--seed", "1", *self.EXTRA)
+        a = self.ok(self.sb.run(*args, "--weight", "w", "cls.csv"))
+        b = self.ok(self.sb.run(*args, "--drop", "w", "cls.csv"))
+        self.assertNotEqual(json.dumps(a), json.dumps(b))
+
+    def test_the_held_out_rows_are_scored_without_weights(self):
+        d = self.ok(self.sb.run("fit", "--model", "boost", "--task", "regression", "--target", "y", "--weight", "w", "--split", "train=0.7", "--seed", "3", *self.EXTRA, "--output", "s.cml", "--overwrite", "reg.csv"))
+        e = self.ok(self.sb.run("eval", "--model-file", "s.cml", "--drop", "w", "--split", "train=0.7", "--seed", "3", "reg.csv"))
+        hold = d["summary"]["holdout"]
+        metrics = hold.get("metrics", hold)
+        for k, v in e["metrics"].items():
+            self.assertEqual(metrics[k], v, k)
+
+    def test_a_tracked_weighted_fit_is_replayed_with_the_flag(self):
+        (self.sb.dir / "runs").mkdir(exist_ok=True)
+        d = self.ok(self.fit("boost", "reg.csv", "tr.cml", "--weight", "w", "--track", "runs", *self.EXTRA))
         rec = json.loads((self.sb.dir / "runs" / (d["run"]["id"] + ".json")).read_text())
         self.assertEqual(rec["inputs"]["weight"], "w", rec)
         v = self.sb.run("runs", "verify", "runs", d["run"]["id"])

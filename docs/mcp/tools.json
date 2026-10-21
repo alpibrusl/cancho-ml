@@ -247,7 +247,7 @@
      "weight": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, cv: the name of the column that holds the weight of each training row, as the header spells it: a number from 0 to 1e12, and a row of weight w counts as w copies of the row in the fit. Only --model linear, logistic, tree and forest take it. The column is not a feature and is not stored in the model file, and the held-out rows are scored without weights. Not the target, not in --drop or --cat. docs/weights.md"
+      "description": "fit, cv: the name of the column that holds the weight of each training row, as the header spells it: a number from 0 to 1e12, and a row of weight w counts as w copies of the row in the fit. Only --model linear, logistic, tree, forest and boost take it. The column is not a feature and is not stored in the model file, and the held-out rows are scored without weights. Not the target, not in --drop or --cat. docs/weights.md"
      },
      "emit-folds": {
       "type": "boolean",
@@ -5898,7 +5898,7 @@
      "weight": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, cv: the name of the column that holds the weight of each training row, as the header spells it: a number from 0 to 1e12, and a row of weight w counts as w copies of the row in the fit. Only --model linear, logistic, tree and forest take it. The column is not a feature and is not stored in the model file, and the held-out rows are scored without weights. Not the target, not in --drop or --cat. docs/weights.md"
+      "description": "fit, cv: the name of the column that holds the weight of each training row, as the header spells it: a number from 0 to 1e12, and a row of weight w counts as w copies of the row in the fit. Only --model linear, logistic, tree, forest and boost take it. The column is not a feature and is not stored in the model file, and the held-out rows are scored without weights. Not the target, not in --drop or --cat. docs/weights.md"
      },
      "folds": {
       "type": "integer",
@@ -14358,7 +14358,7 @@
      "weight": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, cv: the name of the column that holds the weight of each training row, as the header spells it: a number from 0 to 1e12, and a row of weight w counts as w copies of the row in the fit. Only --model linear, logistic, tree and forest take it. The column is not a feature and is not stored in the model file, and the held-out rows are scored without weights. Not the target, not in --drop or --cat. docs/weights.md"
+      "description": "fit, cv: the name of the column that holds the weight of each training row, as the header spells it: a number from 0 to 1e12, and a row of weight w counts as w copies of the row in the fit. Only --model linear, logistic, tree, forest and boost take it. The column is not a feature and is not stored in the model file, and the held-out rows are scored without weights. Not the target, not in --drop or --cat. docs/weights.md"
      },
      "folds": {
       "type": "integer",

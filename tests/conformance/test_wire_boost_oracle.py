@@ -23,12 +23,12 @@ CASES = 30
 
 
 class BoostOracle(unittest.TestCase):
-    def suite(self, task, offset):
+    def suite(self, task, offset, weighted=False):
         bad = []
         with tempfile.TemporaryDirectory() as td:
             tmp = pathlib.Path(td)
             for seed in range(1, CASES + 1):
-                case = owb.gen_case(seed * 7919 + offset + 57, task)
+                case = owb.gen_case(seed * 7919 + offset + 57, task, weighted=weighted)
                 pr = owb.run_case(case, tmp, threads=1 + seed % 4)
                 if pr:
                     bad.append((task, seed, pr))
@@ -39,6 +39,26 @@ class BoostOracle(unittest.TestCase):
 
     def test_regression(self):
         self.suite("regression", 101)
+
+    # the weighted fit (docs/weights.md section 2.6): a `wt` column given to --weight, weights from 0 to 3 (zeros among them)
+    def test_weighted_classification(self):
+        self.suite("classification", 0, True)
+
+    def test_weighted_regression(self):
+        self.suite("regression", 101, True)
+
+    def test_the_weights_reach_the_file(self):
+        # a weighted case gives other bytes than the same case without weights: the comparison of the weighted suite can fail
+        import copy
+        differ = 0
+        for seed in range(1, 9):
+            case = owb.gen_case(seed * 7919 + 57, "regression", weighted=True)
+            plain = copy.deepcopy(case)
+            plain.weights = None
+            a, _ = owb.fit_oracle(case)
+            b, _ = owb.fit_oracle(plain)
+            differ += 1 if a != b else 0
+        self.assertGreaterEqual(differ, 7)
 
     def test_the_cases_reach_what_the_task_asks_for(self):
         seen = set()

@@ -21,6 +21,32 @@ import boost.predict;
 // [learning-rate, l2, subsample]. No arithmetic of its own but the class and the probability of a score; the seed is the contract's.
 
 pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    let none = box_slice(heap, 1, 0.0);
+    var out = box_slice(heap, 1, byte_of(0));
+    var code = 0;
+    borrow none as &nr in {
+        let (o2, c2) = blob_with(heap, threads, xt, xd, miss, wpc, yd, contents(nr)[0..0], false, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+        unbox_slice(heap, out);
+        out = o2;
+        code = c2;
+    }
+    unbox_slice(heap, none);
+    return (out, code);
+}
+
+// as fit_blob with a weight per row, wd (docs/weights.md section 2.6)
+pub fn fit_blob_weighted[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    return blob_with(heap, threads, xt, xd, miss, wpc, yd, wd, true, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+}
+
+fn fit_lib[&h, &x, &b, &y, &w](heap: &!h Heap, p: bparams.Params, n: int, d: int, xd: &x [float], bm: &b [byte], yd: &y [float], wd: &w [float], wtd: bool, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (fit.Boost, int) {
+    if wtd {
+        return fit.fit_weighted(heap, p, n, d, xd, bm, yd, wd, rows_cap, cols_cap, cells_cap);
+    }
+    return fit.fit(heap, p, n, d, xd, bm, yd, rows_cap, cols_cap, cells_cap);
+}
+
+fn blob_with[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], wtd: bool, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
     let p = bparams.Params { task: ip[0], rounds: ip[1], lr: fp[0], max_depth: ip[2], min_leaf: ip[3], bins: ip[4], l2: fp[1], subsample: fp[2], early: ip[5], max_nodes: ip[6], seed: seed, threads: threads };
     let n = xt.s0;
     let d = xt.s1;
@@ -30,12 +56,12 @@ pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, threads: int, xt: tensor
     borrow bm as &br in {
         let st = (n + 7) / 8;
         if any {
-            let (b2, c2) = fit.fit(heap, p, n, d, xd, contents(br)[0..d * st], yd, rows_cap, cols_cap, cells_cap);
+            let (b2, c2) = fit_lib(heap, p, n, d, xd, contents(br)[0..d * st], yd, wd, wtd, rows_cap, cols_cap, cells_cap);
             fit.drop(heap, f2);
             f2 = b2;
             code = c2;
         } else {
-            let (b2, c2) = fit.fit(heap, p, n, d, xd, contents(br)[0..0], yd, rows_cap, cols_cap, cells_cap);
+            let (b2, c2) = fit_lib(heap, p, n, d, xd, contents(br)[0..0], yd, wd, wtd, rows_cap, cols_cap, cells_cap);
             fit.drop(heap, f2);
             f2 = b2;
             code = c2;

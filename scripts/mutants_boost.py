@@ -34,6 +34,7 @@ AD = "lib/models/boost/adapter.cho"
 K = "lib/core/kinds.cho"
 
 ORACLE = ["test_wire_boost_oracle"]
+WORACLE = ["test_wire_boost_oracle", "test_weights"]
 BOOST = ["test_wire_boost"]
 F = "test_wire_boost_file.BoostFile."
 RULES = ["test_rules"]
@@ -44,6 +45,22 @@ def M(id, gate, what, edits, tests, **opt):
 
 
 MUTANTS = [
+    # ------------------------------------------------------------------ the weights (docs/weights.md section 2.6)
+    M("bw-gradient-not-weighted", "WG3", "the gradient of a weighted fit is not multiplied by the weight", [(FI, "gv[r2] = wv[r2] * gv[r2];", "gv[r2] = gv[r2];")], WORACLE),
+    M("bw-hessian-not-weighted", "WG3", "the hessian of a weighted fit is not multiplied by the weight", [(FI, "hv[r2] = wv[r2] * hv[r2];", "hv[r2] = hv[r2];")], WORACLE),
+    M("bw-weights-of-the-wrong-rows", "WG3", "the gradient takes the weight of the k-th fit row, not of row r", [(FI, "gv[r2] = wv[r2] * gv[r2];", "gv[r2] = wv[k] * gv[r2];")], WORACLE),
+    M("bw-weights-not-copied", "WG3", "the weights of the work arrays are ones", [(FI, "wcopy[q] = wd[q];", "wcopy[q] = 1.0;")], WORACLE),
+    M("bw-base-regression-unweighted-sum", "WG3", "the weighted mean sums y without the weights", [(FI, "sy = sy + wd[fs[k]] * ysv[fs[k]];", "sy = sy + ysv[fs[k]];")], WORACLE),
+    M("bw-base-regression-divides-by-rows", "WG3", "the weighted mean divides by the number of rows", [(FI, "f0 = sy / sw;", "f0 = sy / float_of(m);")], WORACLE),
+    M("bw-base-positive-counts-rows", "WG3", "the positive weight sum counts rows", [(FI, "w1 = w1 + wd[fs[k]];", "w1 = w1 + 1.0;")], WORACLE),
+    M("bw-base-negative-counts-rows", "WG3", "the negative weight sum counts rows", [(FI, "w0 = w0 + wd[fs[k]];", "w0 = w0 + 1.0;")], WORACLE),
+    M("bw-base-logit-uses-the-unweighted-counts", "WG3", "the weighted log-odds is taken of the row counts", [(FI, "f0 = math.log(w1 / w0);", "f0 = math.log(float_of(m) / float_of(n));")], WORACLE),
+    M("bw-class-without-weight-continues", "WG6", "a classification with no weight in one class goes on", [(FI, "            if !(w1 > 0.0) || !(w0 > 0.0) {", "            if false {")], WORACLE),
+    M("bw-zero-total-continues", "WG6", "a regression whose fit rows have no weight goes on", [(FI, "    if wtd && p.task == 1 && !(sw > 0.0) {", "    if false {")], WORACLE,
+      why="the command line refuses a training side with no weight above 0 (ml.weight.zero-total) before the library is called, and with early stopping only the fit rows count: the library's own check differs from the wire's only when every weight outside the validation rows is 0 and one inside is not, which the generated cases do not make; the unit-weight and zero-total tests of the command line see the wire's check"),
+    M("bw-weights-unchecked", "WG6", "the library does not check the weights", [(FI, "        code = common.check_weights(wd, n);", "        code = 0;")], WORACLE,
+      why="the command line refuses a negative, non-finite or too large weight cell (ml.weight.*) and a total of 0 before the library is called, so no input from `ml` reaches this check; it is the defence of the library function for a caller that is not `ml`"),
+    M("bw-adapter-fits-unweighted", "WG3", "the adapter calls the unweighted fit for a weighted blob", [(AD, "    if wtd {\n        return fit.fit_weighted(", "    if false {\n        return fit.fit_weighted(")], WORACLE),
     # ------------------------------------------------------------------ the gradient and the hessian
     M("b-regression-gradient-sign", "GB1", "the gradient of the squared error is y - F", [(FI, "gv[r2] = fv[r2] - yv[r2];", "gv[r2] = yv[r2] - fv[r2];")], ORACLE),
     M("b-regression-hessian-two", "GB1", "the hessian of the squared error is 2", [(FI, "hv[r2] = 1.0;", "hv[r2] = 2.0;")], ORACLE),

@@ -25,7 +25,7 @@ payload are new, because a boosting round fits a Newton step, not a mean or a Gi
 | flags | `--rounds --learning-rate --max-depth --min-leaf --bins --l2 --subsample --early-stopping --max-nodes` and the existing `--task --seed --threads --split --positive` | section 6 |
 
 **Not in this stage:** multiclass (waits for M16, issue 37), column sampling per tree or per node (**[choice]**: not cheap here, a second stream and a
-changed histogram loop; `docs/models-boost.md` section 10 lists it as open), categorical splits, sample weights, feature importance (M23 reads the splits),
+changed histogram loop; `docs/models-boost.md` section 10 lists it as open), categorical splits, sample weights (built later, `docs/weights.md` 2.6), feature importance (M23 reads the splits),
 monotone constraints, a `huber` or absolute loss, dart, a threaded round. The fit of the rounds is sequential (section 7).
 
 ## 2. The algorithm (normative; `scripts/oracle_boost.py` implements exactly this text)

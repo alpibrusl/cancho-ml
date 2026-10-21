@@ -82,6 +82,9 @@ MUTANTS = [
     M("wt-forest-weighted-flag", "WG6", "the forest takes no --weight", [(ES, "    if kind == 7 {\n        return true;\n    }\n    if kind == 107 {\n        return true;\n    }", "    if kind == 7 {\n        return true;\n    }")], WT),
     M("wt-tree-dispatch-unweighted", "WG3", "the dispatch of a tree to its weighted fit is the unweighted one", [(ES, "        return adapter_tree.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);", "        return adapter_tree.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);")], ORACLE_T),
     M("wt-forest-dispatch-unweighted", "WG3", "the dispatch of a forest to its weighted fit is the unweighted one", [(ES, "        return adapter_forest.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);", "        return adapter_forest.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);")], ORACLE_T),
+    # ------------------------------------------------------------------ boosting (docs/weights.md section 2.6)
+    M("wb-boost-weighted-flag", "WG6", "boost takes no --weight", [(ES, "    if kind == 8 {\n        return true;\n    }\n    return false;", "    return false;")], WT),
+    M("wb-boost-dispatch-unweighted", "WG3", "the dispatch of boost to its weighted fit is the unweighted one", [(ES, "        return adapter_boost.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);", "        return adapter_boost.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);")], ["test_weights", "test_wire_boost_oracle"]),
 ]
 
 

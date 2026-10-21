@@ -7,6 +7,7 @@ import ml.limits;
 import ml.refuse;
 import ml.rng;
 import ml.kinds;
+import models.common;
 import models.logreg;
 import models.mexp;
 import tree.deny;
@@ -58,6 +59,7 @@ res struct Work {
     fv: Box[[float]],
     gv: Box[[float]],
     hv: Box[[float]],
+    wv: Box[[float]],
     bins: Box[[byte]],
     ed: Box[[float]],
     idx: Box[[int]],
@@ -142,11 +144,12 @@ fn row_loss(task: int, f: float, y: float) -> [] float {
 }
 
 // the rounds. Answers 0, or the refusal code; the rounds kept are in pr[1]. m fit rows (frows), nv validation rows (vrows), the cap of nodes of a tree, the base score.
-fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: int, cap: int, f0: float) -> [] int {
+fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: int, cap: int, f0: float, wtd: bool) -> [] int {
     let yv = contents(w.yv);
     let fv = contents(w.fv);
     let gv = contents(w.gv);
     let hv = contents(w.hv);
+    let wv = contents(w.wv);
     let bins = contents(w.bins);
     let ed = contents(w.ed);
     let idx = contents(w.idx);
@@ -186,6 +189,16 @@ fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: i
                 hv[r2] = pp * (1.0 - pp);
             }
             k = k + 1;
+        }
+        if wtd {
+            // a weight is that many copies of the row (docs/weights.md section 2.6): the gradient and the hessian of the fit rows, each multiplied once
+            k = 0;
+            while k < m {
+                let r2 = frows[k];
+                gv[r2] = wv[r2] * gv[r2];
+                hv[r2] = wv[r2] * hv[r2];
+                k = k + 1;
+            }
         }
         // the sample of the round (section 2.3)
         var m0 = 0;
@@ -280,12 +293,41 @@ fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: i
 // Fit a boosted model on the n x d row-major matrix xs (with the missing bitmap bm, or empty) and the targets ys. Answers the model and the code of the refusal (0 for none;
 // the model is then empty). The caps are those of ml.limits (the caller's flags).
 pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Boost, int) {
+    let none = box_slice(heap, 1, 0.0);
+    var f = empty(heap);
+    var code = 0;
+    borrow none as &nr in {
+        let (f2, c2) = fit_with(heap, p, n, d, xs, bm, ys, contents(nr)[0..0], false, rows_cap, cols_cap, cells_cap);
+        drop(heap, f);
+        f = f2;
+        code = c2;
+    }
+    unbox_slice(heap, none);
+    return (f, code);
+}
+
+// Fit with a weight per row, wd (n values; docs/weights.md section 2.6): the base score and the gradients of the fit rows are weighted, the validation loss of early stopping is not.
+// A classification needs a fit row of positive weight in each class (ml.label.single-class otherwise). Answers as `fit`.
+pub fn fit_weighted[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], wd: &q [float], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Boost, int) {
+    if len(wd) != n {
+        return (empty(heap), refuse.param_out_of_range());
+    }
+    return fit_with(heap, p, n, d, xs, bm, ys, wd, true, rows_cap, cols_cap, cells_cap);
+}
+
+fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], wd: &q [float], wtd: bool, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Boost, int) {
     var code = bparams.check(p, n, d, rows_cap, cols_cap, cells_cap);
     if code != 0 {
         return (empty(heap), code);
     }
     if len(xs) != n * d || len(ys) != n {
         return (empty(heap), refuse.param_out_of_range());
+    }
+    if wtd {
+        code = common.check_weights(wd, n);
+        if code != 0 {
+            return (empty(heap), code);
+        }
     }
     code = bins.check_bitmap(bm, n, d);
     if code != 0 {
@@ -365,12 +407,35 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs
     // the base score (section 2.4); a classification whose fit rows hold one class is refused
     var f0 = 0.0;
     var n1 = 0;
+    // weighted (docs/weights.md section 2.6): sw the sum of the weights of the fit rows, w1 and w0 those of the positive and the negative ones, sequential in row order
+    var sw = 0.0;
+    var w1 = 0.0;
+    var w0 = 0.0;
     borrow frows as &fr in {
         borrow yv as &yr in {
             let fs = contents(fr);
             let ysv = contents(yr);
             var k = 0;
-            if p.task == 1 {
+            if wtd && p.task == 1 {
+                var sy = 0.0;
+                while k < m {
+                    sy = sy + wd[fs[k]] * ysv[fs[k]];
+                    sw = sw + wd[fs[k]];
+                    k = k + 1;
+                }
+                if sw > 0.0 {
+                    f0 = sy / sw;
+                }
+            } else if wtd {
+                while k < m {
+                    if ysv[fs[k]] == 1.0 {
+                        w1 = w1 + wd[fs[k]];
+                    } else {
+                        w0 = w0 + wd[fs[k]];
+                    }
+                    k = k + 1;
+                }
+            } else if p.task == 1 {
                 var sy = 0.0;
                 while k < m {
                     sy = sy + ysv[fs[k]];
@@ -387,14 +452,30 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs
             }
         }
     }
+    if wtd && p.task == 1 && !(sw > 0.0) {
+        unbox_slice(heap, yv);
+        unbox_slice(heap, frows);
+        unbox_slice(heap, vrows);
+        return (empty(heap), refuse.param_out_of_range());
+    }
     if p.task == 0 {
-        if n1 == 0 || n1 == m {
-            unbox_slice(heap, yv);
-            unbox_slice(heap, frows);
-            unbox_slice(heap, vrows);
-            return (empty(heap), deny.single_class());
+        if wtd {
+            if !(w1 > 0.0) || !(w0 > 0.0) {
+                unbox_slice(heap, yv);
+                unbox_slice(heap, frows);
+                unbox_slice(heap, vrows);
+                return (empty(heap), deny.single_class());
+            }
+            f0 = math.log(w1 / w0);
+        } else {
+            if n1 == 0 || n1 == m {
+                unbox_slice(heap, yv);
+                unbox_slice(heap, frows);
+                unbox_slice(heap, vrows);
+                return (empty(heap), deny.single_class());
+            }
+            f0 = math.log(float_of(n1) / float_of(m - n1));
         }
-        f0 = math.log(float_of(n1) / float_of(m - n1));
     }
     let cap = bparams.node_cap(p, m);
     let ne = p.bins - 1;
@@ -433,10 +514,20 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs
         }
         unbox_slice(heap, ep);
     }
-    var w = Work { yv: yv, fv: box_slice(heap, n + 1, 0.0), gv: box_slice(heap, n + 1, 0.0), hv: box_slice(heap, n + 1, 0.0), bins: binm, ed: ed, idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), frows: frows, vrows: vrows, wk: box_slice(heap, grow.work_ints(p.bins) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), si: box_slice(heap, p.rounds * 5 * cap + 1, 0), sv: box_slice(heap, p.rounds * cap + 1, 0.0), counts: box_slice(heap, p.rounds + 1, 0), pr: box_slice(heap, 4, 0) };
+    var w = Work { yv: yv, fv: box_slice(heap, n + 1, 0.0), gv: box_slice(heap, n + 1, 0.0), hv: box_slice(heap, n + 1, 0.0), wv: box_slice(heap, n + 1, 0.0), bins: binm, ed: ed, idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), frows: frows, vrows: vrows, wk: box_slice(heap, grow.work_ints(p.bins) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), si: box_slice(heap, p.rounds * 5 * cap + 1, 0), sv: box_slice(heap, p.rounds * cap + 1, 0.0), counts: box_slice(heap, p.rounds + 1, 0), pr: box_slice(heap, 4, 0) };
+    if wtd {
+        borrow mut w as &!wk3 in {
+            let wcopy = contents(wk3.wv);
+            var q = 0;
+            while q < n {
+                wcopy[q] = wd[q];
+                q = q + 1;
+            }
+        }
+    }
     var rc = 0;
     borrow mut w as &!wk2 in {
-        rc = rounds_loop(wk2, p, n, d, m, nv, cap, f0);
+        rc = rounds_loop(wk2, p, n, d, m, nv, cap, f0, wtd);
     }
     var kept = 0;
     borrow w as &wr in {
@@ -488,11 +579,12 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs
             }
         }
     }
-    let Work { yv, fv, gv, hv, bins, ed, idx, tmp, frows, vrows, wk, wf, si, sv, counts, pr } = w;
+    let Work { yv, fv, gv, hv, wv, bins, ed, idx, tmp, frows, vrows, wk, wf, si, sv, counts, pr } = w;
     unbox_slice(heap, yv);
     unbox_slice(heap, fv);
     unbox_slice(heap, gv);
     unbox_slice(heap, hv);
+    unbox_slice(heap, wv);
     unbox_slice(heap, bins);
     unbox_slice(heap, ed);
     unbox_slice(heap, idx);

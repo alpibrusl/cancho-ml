@@ -163,8 +163,9 @@ def node_cap(maxnodes, m, maxd):
     return min(maxnodes, 2 * m - 1, (1 << (maxd + 1)) - 1)
 
 
-def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed, stats=None):
-    """-> dict(base, trees, kept, requested, subk, edges); task 0 classification (y in {0.0, 1.0}), 1 regression. Raises LimitNodes."""
+def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed, stats=None, wts=None):
+    """-> dict(base, trees, kept, requested, subk, edges); task 0 classification (y in {0.0, 1.0}), 1 regression. Raises LimitNodes.
+    wts: None, or the weight of every row (docs/weights.md section 2.6): the base score and the gradients of the fit rows are weighted, the validation loss is not."""
     if stats is None:
         stats = {}
     n, d = X.shape
@@ -186,12 +187,21 @@ def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed,
         frows = np.nonzero(~mark)[0].astype(np.int64)
     m = frows.size
     yf = np.asarray(y, dtype=np.float64)
+    wf = None if wts is None else np.asarray(wts, dtype=np.float64)
     if task == 1:
-        base = seqsum(yf[frows]) / float(m)
-    else:
+        if wf is None:
+            base = seqsum(yf[frows]) / float(m)
+        else:
+            base = seqsum(wf[frows] * yf[frows]) / seqsum(wf[frows])
+    elif wf is None:
         n1 = int(yf[frows].sum())
         assert 0 < n1 < m
         base = float(log_c(np.array([float(n1) / float(m - n1)]))[0])
+    else:
+        w1 = seqsum(wf[frows][yf[frows] == 1.0])
+        w0 = seqsum(wf[frows][yf[frows] == 0.0])
+        assert w1 > 0.0 and w0 > 0.0
+        base = float(log_c(np.array([w1 / w0]))[0])
     F = np.full(n, base)
     cap = node_cap(maxnodes, m, maxd)
     trees = []
@@ -206,6 +216,9 @@ def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed,
             p = sigmoid(F[frows])
             g[frows] = p - yf[frows]
             h[frows] = p * (1.0 - p)
+        if wf is not None:
+            g[frows] = wf[frows] * g[frows]
+            h[frows] = wf[frows] * h[frows]
         if K == SCALE:
             sample = frows
         else:
