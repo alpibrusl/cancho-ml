@@ -137,10 +137,22 @@ class Weights(unittest.TestCase):
         self.assertEqual(e["detail"]["flag"], "--drop")
 
     def test_the_column_is_not_the_target_nor_dropped_nor_categorical(self):
-        self.rule(self.fit("linear", "lin.csv", "x.cml", "--weight", "y"), "args.conflict", 2)
-        self.rule(self.fit("linear", "lin.csv", "x.cml", "--weight", "w", "--drop", "w"), "args.conflict", 2)
-        self.rule(self.fit("linear", "lin.csv", "x.cml", "--weight", "w", "--drop", "a,w"), "args.conflict", 2)
-        self.rule(self.fit("linear", "lin.csv", "x.cml", "--weight", "w", "--cat", "w"), "args.conflict", 2)
+        # each refusal names the flag --weight (another check could answer args.conflict with another flag)
+        for args in (("--weight", "y"), ("--weight", "w", "--drop", "w"), ("--weight", "w", "--drop", "a,w"), ("--weight", "w", "--cat", "w")):
+            e = self.rule(self.fit("linear", "lin.csv", "x.cml", *args), "args.conflict", 2)
+            self.assertEqual(e["detail"]["flag"], "weight", args)
+
+    def test_a_dropped_column_and_a_weight_column_together(self):
+        # --drop names real columns and --weight another: the weight is not a feature, the dropped one is not either
+        text = rows_csv().replace("a,b,w,y", "a,junk,w,y", 1)
+        self.sb.write("junk.csv", text)
+        d = self.ok(self.fit("linear", "junk.csv", "j.cml", "--drop", "junk", "--weight", "w"))
+        self.assertEqual([c["name"] for c in d["summary"]["coefficients"]], ["a"])
+        # two dropped columns
+        self.sb.write("junk2.csv", text.replace("a,junk,w,y", "a,junk,w,y", 1).replace("\n", "\n", 1))
+        self.sb.write("j3.csv", "a,j1,j2,w,y\n" + "".join("%d,%d,%d,%d,%d\n" % (i, i * 7 % 5, i * 3 % 4, 1 + i % 3, 2 * i + i % 2) for i in range(30)))
+        d = self.ok(self.fit("linear", "j3.csv", "j3.cml", "--drop", "j1,j2", "--weight", "w"))
+        self.assertEqual([c["name"] for c in d["summary"]["coefficients"]], ["a"])
 
     def test_the_cells_are_checked(self):
         cases = (
