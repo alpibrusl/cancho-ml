@@ -306,7 +306,7 @@ trap or a hang (timeout) is a failure. The damage: **every prefix** (answer must
 `val` of every node set to NaN and to infinities; the eight header values; every tree offset; the kind and every record header. For
 those with a determined answer the reader's answer is compared with a rule written in the driver independently of the reader (for
 example: a leaf's `bin` must be -1, an internal node's `left` must be its index plus one, its `right` must be the original, a class
-leaf's `val` must be the ratio of its counts, a header `max_depth` below the real depth must be refused); a disagreement counts as
+leaf's `val` must be a fraction in 0 to 1 (corrected at C2b: the first rule was the ratio of its counts, which refused every weighted classification payload), a header `max_depth` below the real depth must be refused); a disagreement counts as
 `unexpected`. And **payloads built to break one rule at a time** that a single-field damage cannot reach: an empty tree, nodes that
 belong to no tree, the last node of a tree made internal. The undamaged payload must be accepted and write back the same bytes.
 *(Corrected in place: the first draft judged only "does not trap". The first mutant run showed that removing a validation was not
@@ -431,8 +431,8 @@ the two ties between the sides for missing rows (the unit test does), the checks
 
 
 ### 10.6 G-fuzz: passed (`scripts/gate_tree.py --fuzz`, about 0.6 s). Payloads of 13,836 bytes (classification, 4 trees, 212 nodes, with missing cells)
-and 11,588 bytes (regression, 3 trees, 177 nodes). Byte-level and seeded damage: 6,699 accepted and 43,771 refused (classification),
-9,062 accepted and 36,343 refused (regression), plus the structured set (every field of every node at 9 values, every `val` at 5, the
+and 11,588 bytes (regression, 3 trees, 177 nodes). Byte-level and seeded damage: 9,793 accepted and 40,677 refused (classification),
+9,064 accepted and 36,341 refused (regression), plus the structured set (every field of every node at 9 values, every `val` at 7, the
 header, the offsets, the record headers) and the crafted payloads; **no trap, no hang, no answer that disagrees with the rules
 (`unexpected 0`)**. Many accepted payloads are legitimate: a threshold or a count changed to another valid value; the file checksum of
 the envelope is what catches those, not the reader. The reader accepts what it can walk safely. The undamaged payload is accepted and
@@ -441,6 +441,7 @@ writes back the same bytes, and every prefix is `ml.model.truncated`.
 2^63 - 1 made the reader compute `na + nb` before it compared the counts with their bound of 2^20; cancho traps on an overflow, so a damaged payload ended the process (exit -4). It was found by the
 seeded damage by whole words of `tests/conformance/test_wire_trees_file.py`. The bounds are compared first now (`check_tree` in `lib/models/tree/model.cho`), the structured set also tries 2^63 - 1, and
 the mutant "reader: counts bounded before they are added" is killed by the fuzz. Nothing else of the library changed, and the payload bytes did not.)*
+*(Corrected in place at C2b, the stage that wired the weights. The rule "a class leaf's `val` is the ratio of its counts" refused every weighted classification file, whose leaf is the ratio of the weights (`docs/weights.md` 2.5). The reader now requires a fraction, `0 <= val <= 1`; the independent rule of the driver says the same, the structured set tries `val` at 7 values (the next double above 1 and -1 added), and the numbers above are those of the run after the change. The mutant "reader: class leaf value equals the counts" is replaced by "class leaf value at most 1" and "class leaf value at least 0", both killed by the fuzz.)*
 
 
 ### 10.7 Unit tests and refusals (`tests/t_tree.cho`, `scripts/gate_tree.py --unit`)

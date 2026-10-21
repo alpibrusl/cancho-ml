@@ -43,6 +43,13 @@ UNJUDGED = []
 COVER = {"cases": 0, "with_missing": 0, "missing_cells": 0, "v1_splits": 0, "nodes": 0, "split": 0, "steps": 0, "empty_columns": 0}
 
 
+WEIGHTS = [0.0, 0.25, 0.5, 1.0, 1.0, 1.5, 2.0, 3.0]
+
+
+def ow_cell(w):
+    return repr(w) if w != int(w) else str(int(w))
+
+
 class TCase:
     """A CSV, a tree or forest and a plan: everything `ml fit` is given."""
 
@@ -50,8 +57,11 @@ class TCase:
         self.model, self.task, self.names, self.rows, self.target = model, task, names, rows, target
         self.steps, self.step_text, self.hp = steps, step_text, hp
         self.split, self.seed, self.positive = split, seed, positive
+        self.weights = None     # one weight per row, written as the column `wt` before the others (docs/weights.md section 2.5), None for an unweighted fit
 
     def csv(self):
+        if self.weights is not None:
+            return ",".join(["wt"] + self.names) + "\n" + "".join(",".join([ow_cell(w)] + r) + "\n" for w, r in zip(self.weights, self.rows))
         return ",".join(self.names) + "\n" + "".join(",".join(r) + "\n" for r in self.rows)
 
     def model_line(self):
@@ -157,7 +167,17 @@ def fit_oracle(case):
     B = case.hp.get("bins", DEFAULTS["bins"])
     mtry = resolve_mtry(case, d)
     stats = {"ties": 0, "v1": 0, "equal_v": 0}
-    edges, trees = ot.fit(Xn, Mn, np.array(yfit, dtype=np.float64), task, T, maxd, ML, B, mtry, boot, case.seed, stats)
+    wts = None
+    if case.weights is not None:
+        # a weighted fit needs a row of positive weight (of each class, for a classification): the first row of a class that has none gets weight 1
+        w = list(case.weights)
+        groups = [[i for i in range(len(tr)) if yfit[i] == v] for v in (0.0, 1.0)] if task == 0 else [list(range(len(tr)))]
+        for g in groups:
+            if g and not any(w[tr[i]] > 0 for i in g):
+                w[tr[g[0]]] = 1.0
+        case.weights = w
+        wts = np.array([w[i] for i in tr], dtype=np.float64)
+    edges, trees = ot.fit(Xn, Mn, np.array(yfit, dtype=np.float64), task, T, maxd, ML, B, mtry, boot, case.seed, stats, wts)
     model = ot.payload(trees, task, d, B, maxd, ML, mtry)
     if labels:
         model += labels_record(*labels)
@@ -240,7 +260,7 @@ def eval_oracle(case, ctx, rows_idx):
 
 
 # ---------------------------------------------------------------- the data
-def gen_case(seed, model, task, rows=None):
+def gen_case(seed, model, task, rows=None, weighted=False):
     rng = random.Random(seed)
     n = rows or rng.choice([30, 64, 101, 257, 300, 513, 700])
     d = rng.randint(2, 7)
@@ -322,6 +342,9 @@ def gen_case(seed, model, task, rows=None):
         case.seed = rng.randint(0, 99)
     if task == "classification" and rng.random() < 0.4:
         case.positive = min(int(v) for v in ycol)
+    if weighted:
+        wr = random.Random(seed ^ 0x5EED)
+        case.weights = [wr.choice(WEIGHTS) for _ in range(n)]
     return case
 
 
@@ -331,6 +354,8 @@ def fit_args(case, out, sparse=True):
     for k, v in case.hp.items():
         if v != DEFAULTS[k] or not sparse:
             a += ["--" + k, str(v)]
+    if case.weights is not None:
+        a += ["--weight", "wt"]
     a += ow.step_flag(case)
     if case.split:
         a += ["--split", case.split, "--seed", str(case.seed)]
@@ -345,8 +370,8 @@ def run_case(case, tmp, threads=1, all_threads=False):
     """Compare the real `ml` with the oracle on one case. A list of problems."""
     problems = []
     (tmp / "m.cml").unlink(missing_ok=True)
-    (tmp / "d.csv").write_text(case.csv())
     expect, ctx = fit_oracle(case)
+    (tmp / "d.csv").write_text(case.csv())
     rc, out = ow.ml("--root", tmp, *fit_args(case, "m.cml"), "--threads", threads, "d.csv")
     doc = json.loads(out)
     if ctx is None:
@@ -372,7 +397,7 @@ def run_case(case, tmp, threads=1, all_threads=False):
                 problems.append("the file at --threads %d differs from the oracle's" % t)
     proba = case.task == "classification"
     base = ["--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000"] + (["--proba"] if proba else [])
-    rc, out = ow.ml(*base, "d.csv")
+    rc, out = ow.ml(*base, *(["--drop", "wt"] if case.weights is not None else []), "d.csv")
     doc = json.loads(out)
     if not doc.get("ok"):
         return problems + ["predict refused: %s" % out[:300]]
@@ -418,7 +443,7 @@ def compare_predict(case, doc, want, what):
 
 def check_eval(case, ctx, idx, tmp, threads):
     problems = []
-    ev = ["eval", "--model-file", "m.cml", "d.csv"]
+    ev = ["eval", "--model-file", "m.cml", *(["--drop", "wt"] if case.weights is not None else []), "d.csv"]
     if case.split:
         ev += ["--split", case.split, "--seed", str(case.seed)]
     if case.positive is not None and case.task == "classification":
@@ -460,6 +485,7 @@ def main():
         rest = [a for a in argv[1:] if a in models]
         if rest:
             models = (rest[0],)
+    weighted = "--weighted" in argv
     bad = 0
     refused = 0
     cases = 0
@@ -468,7 +494,7 @@ def main():
         for model in models:
             for task in ("classification", "regression"):
                 for seed in range(1, n + 1):
-                    case = gen_case(seed * 7919 + (101 if task == "regression" else 0) + (31 if model == "forest" else 0), model, task, rows=rows)
+                    case = gen_case(seed * 7919 + (101 if task == "regression" else 0) + (31 if model == "forest" else 0), model, task, rows=rows, weighted=weighted)
                     if large and model == "forest":
                         case.hp["trees"] = min(case.hp.get("trees", 3), 3)
                     pr = run_case(case, tmp, threads=1 + seed % 4, all_threads=large)

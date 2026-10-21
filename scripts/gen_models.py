@@ -541,8 +541,9 @@ def render_est(models):
     o += ["    return 0 - 1;", "}", ""]
     # a vector model that takes a weight per row (docs/weights.md): `weighted = true` in its manifest and a fit_weighted in its adapter
     wtd = [m for m in vec if m.get("weighted")]
+    wtd_all = [m for m in ws if m.get("weighted")]
     o += ["// whether the fit of this kind takes a weight per row (docs/weights.md section 2.4)", "pub fn weighted(kind: int) -> [] bool {"]
-    o += _chain(wtd, lambda m: ["return true;"], keys)
+    o += _chain(wtd_all, lambda m: ["return true;"], keys)
     o += ["    return false;", "}", ""]
     o += ["// 0, or a code of ml.refuse (ml.param.out-of-range for a kind that has no weighted fit); wd: one weight per row",
           "pub fn fit_weighted[&h, &x, &y, &w, &i, &f, &q, &g](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, out: &!q [float], diag: &!g [float]) -> [heap, conc] int {"]
@@ -573,6 +574,11 @@ def render_est(models):
     o += ["// 0, or a code of ml.refuse or of the library (the payload is then empty; ml.param.out-of-range for a kind that has no blob adapter)",
           "pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {"]
     o += _chain(blob, lambda m: ["return %s.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);" % ad(m)], keys)
+    o += ["    return (box_slice(heap, 1, byte_of(0)), 8);", "}", ""]
+    wblob = [m for m in blob if m.get("weighted")]
+    o += ["// as fit_blob with a weight per row (docs/weights.md section 2.5); wd: one weight per row",
+          "pub fn fit_blob_weighted[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {"]
+    o += _chain(wblob, lambda m: ["return %s.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);" % ad(m)], keys)
     o += ["    return (box_slice(heap, 1, byte_of(0)), 8);", "}", ""]
     for fn in ("predict", "proba"):
         o += ["pub fn %s_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!q [float]) -> [heap] int {" % fn]

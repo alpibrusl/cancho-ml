@@ -31,9 +31,12 @@ TK = "tools/ml/track.cho"
 VB = "tools/ml/verbs.cho"
 LN = "lib/models/linear/adapter.cho"
 LG = "lib/models/logistic/adapter.cho"
+ES = "tools/ml/est.cho"
+AT = "lib/models/treewire/adapt.cho"
 
 WT = ["test_weights"]
 ORACLE = ["test_weights", "test_wire_oracle"]
+ORACLE_T = ["test_weights", "test_wire_tree_oracle"]
 
 
 def M(id, gate, what, edits, tests, **opt):
@@ -70,6 +73,15 @@ MUTANTS = [
     M("ww-record-without-weight", "WG8", "the run record does not keep the weight column", [(TK, "    if len(weight) > 0 {\n        // the weight column of the fit", "    if false {\n        // the weight column of the fit")], WT),
     M("ww-replay-weight-not-dropped", "WG8", "the replay reads the weight column as a feature", [(RU, "                            drops = buffer.append(heap, drops, buffer.bytes(wn0));", "                            drops = drops;")], WT),
     M("ww-replay-weight-not-passed", "WG8", "the replay refits without the weights", [(RU, "buffer.bytes(nar), buffer.bytes(wnr), ro, spo", "buffer.bytes(nar), \"\", ro, spo")], WT),
+    # ------------------------------------------------------------------ the trees and the forest (docs/weights.md section 2.5)
+    M("wt-blob-weights-not-used", "WG3", "the fit of a tree or a forest ignores the weights", [(W, "            if go && len(contents(ds.wall)) > 1 {", "            if false && len(contents(ds.wall)) > 1 {")], ORACLE_T),
+    M("wt-blob-weights-of-the-wrong-rows", "WG3", "the weights of a tree's training side are those of the first rows", [(W, "contents(yfr)[0..rows], contents(wtr2)[0..rows]", "contents(yfr)[0..rows], contents(ds.wall)[0..rows]")], ORACLE_T),
+    M("wt-blob-zero-total-continues", "WG6", "a tree is fitted on a training side of weight 0", [(W, "                    e = weightcol.zero_total(heap, e, side);\n                    go = false;\n                } else {\n                    borrow yfit as &yfr in {", "                    e = weightcol.zero_total(heap, e, side);\n                } else {\n                    borrow yfit as &yfr in {")], WT),
+    M("wt-library-fit-unweighted", "WG3", "the adapters of the trees fit unweighted", [(AT, "    if wtd {\n        return forest.fit_weighted(", "    if false {\n        return forest.fit_weighted(")], ORACLE_T),
+    M("wt-tree-weighted-flag", "WG6", "the tree takes no --weight", [(ES, "    if kind == 7 {\n        return true;\n    }\n    if kind == 107 {\n        return true;\n    }", "    if kind == 107 {\n        return true;\n    }")], WT),
+    M("wt-forest-weighted-flag", "WG6", "the forest takes no --weight", [(ES, "    if kind == 7 {\n        return true;\n    }\n    if kind == 107 {\n        return true;\n    }", "    if kind == 7 {\n        return true;\n    }")], WT),
+    M("wt-tree-dispatch-unweighted", "WG3", "the dispatch of a tree to its weighted fit is the unweighted one", [(ES, "        return adapter_tree.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);", "        return adapter_tree.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);")], ORACLE_T),
+    M("wt-forest-dispatch-unweighted", "WG3", "the dispatch of a forest to its weighted fit is the unweighted one", [(ES, "        return adapter_forest.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);", "        return adapter_forest.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);")], ORACLE_T),
 ]
 
 

@@ -18,12 +18,12 @@ CASES = 30
 
 
 class TreeOracle(unittest.TestCase):
-    def suite(self, model, task, offset):
+    def suite(self, model, task, offset, weighted=False):
         bad = []
         with tempfile.TemporaryDirectory() as td:
             tmp = pathlib.Path(td)
             for seed in range(1, CASES + 1):
-                case = owt.gen_case(seed * 7919 + offset, model, task)
+                case = owt.gen_case(seed * 7919 + offset, model, task, weighted=weighted)
                 pr = owt.run_case(case, tmp, threads=1 + seed % 4)
                 if pr:
                     bad.append((model, task, seed, pr))
@@ -40,6 +40,32 @@ class TreeOracle(unittest.TestCase):
 
     def test_forest_regression(self):
         self.suite("forest", "regression", 132)
+
+    # the weighted fit (docs/weights.md section 2.5): the same files, a `wt` column given to --weight, eight weights from 0 to 3 (zeros among them)
+    def test_weighted_tree_classification(self):
+        self.suite("tree", "classification", 0, True)
+
+    def test_weighted_tree_regression(self):
+        self.suite("tree", "regression", 101, True)
+
+    def test_weighted_forest_classification(self):
+        self.suite("forest", "classification", 31, True)
+
+    def test_weighted_forest_regression(self):
+        self.suite("forest", "regression", 132, True)
+
+    def test_the_weights_reach_the_file(self):
+        # a weighted case gives other bytes than the same case without weights: the comparison of the weighted suite can fail
+        import copy
+        differ = 0
+        for seed in range(1, 9):
+            case = owt.gen_case(seed * 7919, "forest", "regression", weighted=True)
+            plain = copy.deepcopy(case)
+            plain.weights = None
+            a, _ = owt.fit_oracle(case)
+            b, _ = owt.fit_oracle(plain)
+            differ += 1 if a != b else 0
+        self.assertGreaterEqual(differ, 7)
 
     def test_the_cases_reach_what_the_task_asks_for(self):
         # missing cells kept and imputed, a column with no cell, a constant column, impute, min-max, standard, bucket and one-hot steps, a split, a positive label, bootstrap off,

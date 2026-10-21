@@ -160,8 +160,9 @@ fn check_tree[&n, &v](ni: &n [int], nv: &v [float], total: int, lo: int, hi: int
                     return deny.model_malformed();
                 }
                 if task == 0 {
-                    // (the bounds first: a count near 2^63 must not reach the sum)
-                    if na > 1048576 || nb > 1048576 || na + nb < 1 || bits_of(v) != bits_of(float_of(nb) / float_of(na + nb)) {
+                    // (the bounds first: a count near 2^63 must not reach the sum. The value is a fraction, not the ratio of the counts: a weighted fit's is the ratio of the
+                    // weights, docs/weights.md section 2.5)
+                    if na > 1048576 || nb > 1048576 || na + nb < 1 || v < 0.0 || v > 1.0 {
                         return deny.model_malformed();
                     }
                 } else if na < 1 || nb != 0 {

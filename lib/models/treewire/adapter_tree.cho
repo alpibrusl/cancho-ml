@@ -15,6 +15,13 @@ pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, threads: int, xt: tensor
     return adapt_trees.fit(heap, p, xd, miss, wpc, xt.s0, d, yd, c0, c1, rows_cap, cols_cap, cells_cap);
 }
 
+// as fit_blob with a weight per row, wd (docs/weights.md section 2.5)
+pub fn fit_blob_weighted[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    let d = xt.s1;
+    let p = params.Params { task: ip[0], trees: 1, max_depth: ip[1], min_leaf: ip[2], max_nodes: ip[4], bins: ip[3], mtry: d, bootstrap: 0, seed: seed, threads: threads };
+    return adapt_trees.fit_weighted(heap, p, xd, miss, wpc, xt.s0, xt.s1, yd, wd, c0, c1, rows_cap, cols_cap, cells_cap);
+}
+
 // 0.0 or 1.0 per row for a classification, the value for a regression
 pub fn predict_blob[&h, &b, &x, &m, &o](heap: &!h Heap, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!o [float]) -> [heap] int {
     return adapt_trees.predict_rows(heap, blob, xt, xd, miss, wpc, out, 0);
