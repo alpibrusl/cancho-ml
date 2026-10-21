@@ -142,3 +142,30 @@ pub fn depth_for(nb: int) -> [] int {
     }
     return dpt;
 }
+
+// the largest weight (docs/weights.md section 1)
+pub fn max_weight() -> [] float {
+    return 1000000000000.0;
+}
+
+// the checks of a weight vector: each finite (ml.input.non-finite), 0 <= w <= max_weight and not all zero (ml.param.out-of-range)
+pub fn check_weights[&w](wd: &w [float], n: int) -> [] int {
+    if count_bad_vec(wd, n) != 0 {
+        return refuse.input_non_finite();
+    }
+    var any = false;
+    var i = 0;
+    while i < n {
+        if wd[i] < 0.0 || wd[i] > max_weight() {
+            return refuse.param_out_of_range();
+        }
+        if wd[i] > 0.0 {
+            any = true;
+        }
+        i = i + 1;
+    }
+    if !any {
+        return refuse.param_out_of_range();
+    }
+    return 0;
+}

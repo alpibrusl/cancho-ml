@@ -261,9 +261,10 @@ fn tile22[&s, &a, &h](sx: &s [float], am: &a [float], pd: int, m: int, a0: int, 
 }
 
 // The partial of rows [r0, r1) (at most 256) into slot (W values). xs is positioned at X[0, 0] with row stride rs, ys at y[0]; wv
-// holds the d + 1 parameters; sc is the scratch (scratch_len(d)), zero on entry for the first block and left in a state that only
+// holds the d + 1 parameters; wo is 0 for an unweighted pass, else the weight of row i is ys[wo + i] (docs/weights.md 2.3: r, s and the loss term are
+// multiplied by it, each product rounded once, right after they are formed; a weight of 1.0 changes no bit); sc is the scratch (scratch_len(d)), zero on entry for the first block and left in a state that only
 // ever differs from zero in columns [0, d) of A (the padding columns are never written).
-pub fn block[&x, &y, &w, &c, &s](xs: &x [float], rs: int, ys: &y [float], r0: int, r1: int, d: int, wv: &w [float], sc: &!c [float], slot: &!s [float]) -> [] int {
+pub fn block[&x, &y, &w, &c, &s](xs: &x [float], rs: int, ys: &y [float], r0: int, r1: int, d: int, wv: &w [float], wo: int, sc: &!c [float], slot: &!s [float]) -> [] int {
     let pd = pad(d);
     let m = r1 - r0;
     let am = sc[0..256 * pd];
@@ -286,6 +287,16 @@ pub fn block[&x, &y, &w, &c, &s](xs: &x [float], rs: int, ys: &y [float], r0: in
     while i < m {
         row1(xs, rs, ys, r0, i, d, pd, wv, am, rr, ss, ll);
         i = i + 1;
+    }
+    if wo > 0 {
+        var q = 0;
+        while q < m {
+            let wq = ys[wo + r0 + q];
+            rr[q] = rr[q] * wq;
+            ss[q] = ss[q] * wq;
+            ll[q] = ll[q] * wq;
+            q = q + 1;
+        }
     }
     // phase 2: SX = s * A; gradient and bias-row accumulators, four lanes (row i to lane i mod 4), ascending in the row
     var j = 0;

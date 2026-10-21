@@ -2,6 +2,7 @@ module models.logreg;
 
 import linalg.tensor;
 import linalg.chol;
+import linalg.dot;
 import linalg.order;
 import ml.refuse;
 import ml.limits;
@@ -81,8 +82,9 @@ fn note_separable[&w, &g](p: int, ww: int, nf: float, it: int, reason: int, loss
     return 0;
 }
 
-// the iterations. xs positioned at X[0, 0], row stride rs. diag receives, per iteration, the W raw sums then the objective.
-fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, ys: &y [float], n: int, d: int, iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+// the iterations. xs positioned at X[0, 0], row stride rs; kind 1, or 4 with ys of 2 n values (the labels, then the weights), nf the divisor of the sums (n, or the sum
+// of the weights) and wmin the smallest positive weight (1.0 unweighted: docs/weights.md 2.3). diag receives, per iteration, the W raw sums then the objective.
+fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, kind: int, xs: &x [float], rs: int, ys: &y [float], n: int, d: int, iters: int, l2: float, nf: float, wmin: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
     let p = d + 1;
     let ww = npass.width(d);
     let sl = npass.scratch_len(d);
@@ -96,7 +98,6 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
     let gv = box_slice(heap, p, 0.0);
     let uv = box_slice(heap, p, 0.0);
     let dl = box_slice(heap, p, 0.0);
-    let nf = float_of(n);
     let nolab = box_slice(heap, 1, 0);
     var code = 0;
     var it = 0;
@@ -106,7 +107,7 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
                 borrow mut st as &!stw in {
                     borrow mut lv as &!lvw in {
                         borrow mut nolab as &!nlw in {
-                            code = par.pass(heap, t, 1, xs, rs, ys, contents(wr), n, d, 0, ww, sl, contents(scw), contents(stw), contents(lvw), contents(nlw));
+                            code = par.pass(heap, t, kind, xs, rs, ys, contents(wr), n, d, 0, ww, sl, contents(scw), contents(stw), contents(lvw), contents(nlw));
                         }
                     }
                 }
@@ -173,7 +174,7 @@ fn newton[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xs: &x [float], rs: int, y
             borrow st as &sr in {
                 borrow wv as &wr in {
                     let loss = contents(sr)[ww - 1];
-                    if loss < separable_bound() {
+                    if loss < wmin * separable_bound() {
                         note_separable(p, ww, nf, it, 0, loss, contents(wr), diag);
                         code = refuse.fit_separable();
                     } else if predictor_scale(p, nf, contents(wr), diag) > scale_bound() {
@@ -316,7 +317,110 @@ pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x
     if ones == 0 || ones == n {
         return refuse.label_single_class();
     }
-    return newton(heap, t, xd[xt.off..len(xd)], xt.t0, yd, n, d, iters, l2, out, diag);
+    return newton(heap, t, 1, xd[xt.off..len(xd)], xt.t0, yd, n, d, iters, l2, float_of(n), 1.0, out, diag);
+}
+
+// Fit with a weight per row (docs/weights.md section 2.3). wd: n weights, each finite, 0 <= w <= 1e12, not all 0; both classes must have a row of positive
+// weight. Same shapes of out and diag as `fit`. The sums are divided by the sum of the weights.
+pub fn fit_weighted[&h, &x, &y, &w, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], wd: &w [float], iters: int, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    if limits.check_threads(t) != 0 {
+        return refuse.threads();
+    }
+    var c = common.check_iters(iters);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_l2(l2);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_x(xt, len(xd), common.max_features());
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    let p = d + 1;
+    let ww = npass.width(d);
+    if ww > common.max_slot() {
+        return refuse.param_out_of_range();
+    }
+    c = common.check_len(n, len(yd));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(n, len(wd));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(p, len(out));
+    if c != 0 {
+        return c;
+    }
+    if iters > len(diag) / (ww + 1) {
+        return refuse.tensor_bounds();
+    }
+    if common.count_bad(xd[xt.off..len(xd)], xt.t0, n, d) != 0 || common.count_bad_vec(yd, n) != 0 {
+        return refuse.input_non_finite();
+    }
+    c = common.check_weights(wd, n);
+    if c != 0 {
+        return c;
+    }
+    // the classes are judged on the rows that have a weight
+    var ones = 0;
+    var zeros = 0;
+    var wmin = 0.0;
+    var i = 0;
+    while i < n {
+        if yd[i] != 1.0 && yd[i] != 0.0 {
+            return refuse.label_not_binary();
+        }
+        if wd[i] > 0.0 {
+            if yd[i] == 1.0 {
+                ones = ones + 1;
+            } else {
+                zeros = zeros + 1;
+            }
+            if wmin == 0.0 || wd[i] < wmin {
+                wmin = wd[i];
+            }
+        }
+        i = i + 1;
+    }
+    if ones == 0 || zeros == 0 {
+        return refuse.label_single_class();
+    }
+    // the sum of the weights: the package's dot with ones (the same order at any thread count), once
+    let one = box_slice(heap, n, 1.0);
+    var sw = 0.0;
+    borrow one as &onr in {
+        let r = dot.dot(heap, common.vec(n), wd[0..n], common.vec(n), contents(onr));
+        c = r.code;
+        sw = r.v;
+    }
+    unbox_slice(heap, one);
+    if c != 0 {
+        return c;
+    }
+    if !common.is_finite(sw) || sw <= 0.0 {
+        return refuse.fit_non_finite();
+    }
+    let yw = box_slice(heap, 2 * n, 0.0);
+    borrow mut yw as &!yq in {
+        var k = 0;
+        while k < n {
+            contents(yq)[k] = yd[k];
+            contents(yq)[n + k] = wd[k];
+            k = k + 1;
+        }
+    }
+    var code = 0;
+    borrow yw as &yr in {
+        code = newton(heap, t, 4, xd[xt.off..len(xd)], xt.t0, contents(yr), n, d, iters, l2, sw, wmin, out, diag);
+    }
+    unbox_slice(heap, yw);
+    return code;
 }
 
 // the probability of class 1: e = exp(-|z|); 1 / (1 + e) for z >= 0, else e / (1 + e)

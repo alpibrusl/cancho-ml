@@ -111,6 +111,43 @@ def linreg(X, y, l2):
     return w, diag, scores(X, w)
 
 
+# ---------------------------------------------------------------- sample weights (docs/weights.md section 2.2 and 2.3)
+W_MAX = 1e12
+
+
+def gen_weights(seed, n, kind):
+    """the weights of the driver (wt=KIND): s4 = derive(seed, 4), u_i = element(s4, i) in [-1, 1)
+    1: 1.0   2: float(1 + trunc((u + 1) * 2.0)), the integers 1..4   3: (u + 1) * 1.0 + 0.25, in [0.25, 2.25)   4: kind 3 with 0.0 at every row i with i mod 5 = 3"""
+    u = ol.elements(ol.derive(seed, 4), n)
+    if kind == 1:
+        return np.ones(n)
+    if kind == 2:
+        return (1.0 + np.trunc((u + 1.0) * 2.0))
+    w = (u + 1.0) * 1.0 + 0.25
+    if kind == 4:
+        w[np.arange(n) % 5 == 3] = 0.0
+    return w
+
+
+def linreg_w(X, y, wts, l2):
+    """section 2.2: s = sqrt(w); the sums of the unweighted fit on s * X, s * y and the vector s in the place of the ones"""
+    n, d = X.shape
+    s = np.sqrt(wts)
+    Xa = np.hstack([X * s[:, None], s[:, None]])
+    C = ol.syrk_o(Xa)
+    b = ol.gemv_t_o(Xa, y * s)
+    G = np.triu(C) + np.triu(C, 1).T
+    Gr = G.copy()
+    for j in range(d):
+        Gr[j, j] = Gr[j, j] + l2
+    L = ol.chol_o(Gr)
+    if L is None:
+        return None
+    u = ol.fwd_o(L, b)
+    w = ol.bwd_o(L, u)
+    return w, np.concatenate([G.ravel(), b]), scores(X, w)
+
+
 # ---------------------------------------------------------------- exp and log1p of std/math.cho (ports, elementwise)
 def exp_c(x):
     """lib/models/mexp.cho exp: the same operations as std's exp. Inside |x| <= 660 the power of two is read from an exact table (one multiplication); outside, std's exp splits the
@@ -189,12 +226,14 @@ def sigmoid_terms(z, y):
     return r, s, loss
 
 
-def newton_terms(X, y, w):
-    """(n, W) terms of the Newton pass at w: g (P), H lower by rows (P (P+1)/2), the loss"""
+def newton_terms(X, y, w, wts=None):
+    """(n, W) terms of the Newton pass at w: g (P), H lower by rows (P (P+1)/2), the loss. With wts (docs/weights.md 2.3) r, s and the loss are multiplied by the weight first."""
     n, d = X.shape
     P = d + 1
     z = scores(X, w)
     r, s, loss = sigmoid_terms(z, y)
+    if wts is not None:
+        r, s, loss = r * wts, s * wts, loss * wts
     A = np.hstack([X, np.ones((n, 1))])
     cols = [r * A[:, a] for a in range(P)]
     for a in range(P):
@@ -205,18 +244,22 @@ def newton_terms(X, y, w):
     return np.stack(cols, axis=1)
 
 
-def logreg(X, y, iters, l2, rows_chunk=16384):
+def logreg(X, y, iters, l2, rows_chunk=16384, wts=None):
     n, d = X.shape
     P = d + 1
     W = P + P * (P + 1) // 2 + 1
     nf = np.float64(n)
+    wmin = 1.0
+    if wts is not None:
+        nf = ol.dot_o(wts, np.ones(n))                   # the sum of the weights, by the package's dot with ones
+        wmin = float(wts[wts > 0.0].min())               # the smallest positive weight bounds the loss test
     w = np.zeros(P)
     diag = []
     for it in range(iters):
         # whole blocks per group so the partials are those of the global rule; groups of rows_chunk rows
         parts = []
         for r0 in range(0, n, rows_chunk):
-            T = newton_terms(X[r0:r0 + rows_chunk], y[r0:r0 + rows_chunk], w)
+            T = newton_terms(X[r0:r0 + rows_chunk], y[r0:r0 + rows_chunk], w, None if wts is None else wts[r0:r0 + rows_chunk])
             m = T.shape[0]
             nb = -(-m // K)
             Pm = np.zeros((nb * K, W))
@@ -239,7 +282,7 @@ def logreg(X, y, iters, l2, rows_chunk=16384):
                     G0[a, b] = G0[b, a] = 4.0 * (sums[P + a * (a + 1) // 2 + b] / nf)
         if l2 == 0.0:
             sc2 = float(w @ G0 @ w)
-            if sums[W - 1] < 0.6931 or np.sqrt(max(sc2, 0.0)) > 50.0:
+            if sums[W - 1] < wmin * 0.6931 or np.sqrt(max(sc2, 0.0)) > 50.0:
                 logreg.last = "ml.fit.separable"
                 return None
         g = sums[:P] / nf
@@ -555,15 +598,17 @@ def case(model, a, threads, quiet=False):
         X, y = gen(model, n, d, seed, a.get("dup", 0))
     ntr = a.get("ntr", n)
     l2 = float(a.get("l2m", 0)) / 1000.0
+    wk = a.get("wt", 0)
+    wts = gen_weights(seed, n, wk)[:ntr] if wk else None
     exp = None
     if model == "linreg":
-        res = linreg(X[:ntr], y[:ntr], l2)
+        res = linreg(X[:ntr], y[:ntr], l2) if wts is None else linreg_w(X[:ntr], y[:ntr], wts, l2)
         if res is not None:
             w, diag, pred = res
             pred = scores(X, w)
             exp = {"params": bits(w), "diag": bits(diag), "pred": "%016x" % ol.hash_bits(pred)}
     if model == "logreg":
-        res = logreg(X[:ntr], y[:ntr], a.get("iters", 8), l2)
+        res = logreg(X[:ntr], y[:ntr], a.get("iters", 8), l2, wts=wts)
         if res is not None:
             w, diag, _, _ = res
             _, _, lab, prob = logreg_pred(X, w)
@@ -588,6 +633,12 @@ def case(model, a, threads, quiet=False):
             ok = ok and got.get("refused") == softmax.last
     else:
         ok = all(got.get(k) == v for k, v in exp.items())
+    if ok and wk == 1 and exp is not None:
+        # gate WG2 (docs/weights.md): unit weights give the bytes of the unweighted fit, the driver against itself
+        base = run_driver(model, {k: v for k, v in a.items() if k != "wt"}, threads)
+        ok = all(got.get(k) == base.get(k) for k in exp)
+        if not ok:
+            print("   WG2: the unit-weight fit differs from the unweighted one")
     label = "%-7s %s t=%-2d" % (model, " ".join("%s=%s" % kv for kv in a.items()), threads)
     if not quiet or not ok:
         print("%s %s" % (label, "ok" if ok else "MISMATCH"), flush=True)
@@ -613,6 +664,15 @@ SUITE["logreg"] = [dict(n=n, d=d, seed=s, l2m=l, iters=i) for (n, d, s, l, i) in
     (1000, 20, 7, 2000, 6), (2048, 7, 8, 0, 8), (2049, 7, 9, 100, 8), (4097, 21, 10, 0, 8), (5000, 3, 11, 0, 1), (20000, 20, 12, 0, 8),
     # rows mod 4 in the last block (the tails of the lanes) with enough columns for the tile cells to show it
     (1002, 9, 31, 0, 3), (1003, 9, 32, 0, 3), (3001, 9, 33, 100, 3), (1001, 6, 34, 0, 3)]]
+# weighted fits (docs/weights.md 2.2, 2.3): wt = 1 unit weights, 2 integers 1..4, 3 floats in [0.25, 2.25), 4 the same with a zero at every fifth row;
+# the unit-weight cases must equal the unweighted ones (gate WG2) and are compared with the bytes of the unweighted oracle in wg2() below
+SUITE["linreg"] += [dict(n=n, d=d, seed=s, l2m=l, wt=w) for (n, d, s, l, w) in [
+    (30, 3, 3, 0, 2), (255, 3, 4, 0, 3), (256, 4, 5, 1500, 4), (257, 5, 6, 0, 3), (1000, 20, 7, 0, 2), (2049, 7, 9, 0, 4),
+    (4097, 21, 10, 1000, 3), (20000, 20, 12, 0, 3), (1000, 20, 7, 0, 1), (257, 5, 6, 0, 1)]]
+SUITE["logreg"] += [dict(n=n, d=d, seed=s, l2m=l, iters=i, wt=w) for (n, d, s, l, i, w) in [
+    (300, 2, 2, 0, 8, 2), (255, 3, 3, 1000, 8, 3), (256, 4, 4, 0, 8, 4), (257, 5, 5, 500, 8, 3), (1000, 20, 6, 0, 8, 2),
+    (2049, 7, 9, 100, 8, 4), (4097, 21, 10, 0, 8, 3), (20000, 20, 12, 0, 8, 3), (1002, 9, 31, 0, 3, 4), (1003, 9, 32, 0, 3, 3),
+    (1000, 20, 6, 0, 8, 1), (257, 5, 5, 500, 8, 1)]]
 SUITE["softmax"] = [dict(n=n, d=d, seed=s, kc=k, l2m=l, iters=i, sep=sp, dup=du) for (n, d, s, k, l, i, sp, du) in [
     (40, 1, 1, 3, 0, 6, 0, 0), (300, 2, 2, 3, 0, 8, 0, 0), (255, 3, 3, 4, 1000, 8, 0, 0), (256, 4, 4, 3, 0, 8, 0, 0), (257, 5, 5, 5, 500, 8, 0, 0),
     (1000, 6, 6, 4, 0, 8, 0, 0), (1000, 3, 7, 3, 2000, 6, 0, 0), (2048, 3, 8, 3, 0, 8, 0, 0), (2049, 3, 9, 4, 100, 8, 0, 0), (4097, 4, 10, 3, 0, 8, 0, 0),
@@ -640,6 +700,8 @@ THREAD_SUITE["logreg"] = [dict(n=n, d=d, seed=s, l2m=l, iters=i) for (n, d, s, l
     (5000, 7, 3, 0, 4), (30000, 20, 4, 500, 6), (9000, 21, 5, 0, 5), (4097, 3, 6, 0, 8)]]
 
 
+THREAD_SUITE["linreg"] += [dict(n=9000, d=21, seed=5, l2m=0, wt=3), dict(n=30000, d=20, seed=4, l2m=500, wt=4)]
+THREAD_SUITE["logreg"] += [dict(n=9000, d=21, seed=5, l2m=0, iters=5, wt=3), dict(n=30000, d=20, seed=4, l2m=500, iters=6, wt=4)]
 THREAD_SUITE["softmax"] = [dict(n=n, d=d, seed=s, kc=k, l2m=l, iters=i) for (n, d, s, k, l, i) in [
     (5000, 4, 3, 3, 0, 4), (30000, 6, 4, 4, 500, 5), (9000, 5, 5, 5, 0, 4), (4097, 3, 6, 3, 0, 6)]]
 THREAD_SUITE["kmeans"] = [dict(n=n, d=d, seed=s, k=k, iters=i, init=ini, dup=du) for (n, d, s, k, i, ini, du) in [
