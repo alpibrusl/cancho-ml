@@ -68,4 +68,16 @@ No weighted `eval` yet (**[choice]**, section 1), no per-class weights flag (`--
 
 ## 7. Results
 
-Empty until the gates have run. A number is written here only if a script of this repository printed it, with the machine, the threads and the minimum of N.
+### 7.1 Stage C1a: the linear and the logistic regression, library only
+
+Machine: Linux x86-64, 4 cores, one run of each script, nothing else deliberately running; the compiler at `0207556`. Nothing here is a speed figure.
+
+* **WG5, the oracle (bytes).** `scripts/oracle_models.py --suite` has 22 weighted cases (11 linear, 11 logistic, kinds 1 to 4 of weights, `n` from 30 to 20,000, ridge and no ridge, a zero weight at every fifth row in kind 4), and `--thread-suite` 4 more at 1, 2, 4, 8 and 16 threads: every parameter, every raw decisive sum of every iteration and the hash of the predictions equal the oracle's bit for bit ("suite: all bits equal"). The oracle is the numpy port of section 2.2 and 2.3 and calls no BLAS.
+* **WG2, unit weights.** The two unit-weight cases (kind 1) are compared with the driver's own unweighted fit as bytes, and `tests/p_weights.cho` does the same at 1 and 4 threads with the library: equal (**the claim of section 2.2 and 2.3 holds**: `sqrt(1.0) = 1.0` and `x * 1.0 = x`).
+* **WG3, WG4, WG6, WG7, WG9, `tests/p_weights.cho`** (8 tests, all ok; bounds fixed in the file before the numbers were seen): integer weights against the file with the rows repeated, and zero weights against the file without those rows, within 1e-8 relative, linear and logistic; weights `1024 w` with `1024 l2` (linear) and the same `l2` (logistic) within 1e-12, `1e6 w` within 1e-9; every weight at `1e12` and every weight at `1e-300` within 1e-9 of the unweighted fit, with finite parameters; the refusals of section 1 (negative, above 1e12, NaN, infinity, all zero, a short vector; exactly 1e12 is accepted; all rows of one class at weight 0 is `ml.label.single-class`); separable classes refused with `l2 = 0` and fitted with a ridge, the same classes with one relabelled row refused only if that row has a weight, and **overlapping classes with weights of 1e-3, 1e-9 and 1e9 are not mistaken for a separation** (the bound `wmin * 0.6931` of section 2.3; with `wmin` fixed at 1 that test fails); a view with a row stride bigger than the row; the same bits at 1, 2, 4 and 8 threads; 80 rounds of hostile weights (zeros, 1e-300, 1e12, 1.5e12, negative) that neither trap nor answer non-finite parameters.
+* **WG5, scikit-learn** (`scripts/gate_weights_sklearn.py`, bounds fixed in the file: 1e-9 relative for `Ridge(sample_weight)`, 1e-6 for `LogisticRegression(sample_weight)` with `C = 1 / (l2 sum(w))`, scikit-learn 1.8.0): linear worst gap 2.4e-15, logistic worst gap 4.7e-8; the control (scikit-learn fitted without the weights) exceeds the bound on all 8 cases (0.0039 to 0.042).
+* **WG9, mutants** (`scripts/mutants_models.py w- lin-count`): the 24 new mutants and 6 others of the same files: **30 killed, 0 survive**. The whole models gate (`scripts/gate_models.sh`) takes 37 s here.
+
+The matrix is copied once for the linear fit (`n * d * 8` bytes, section 2.2); the logistic one copies the labels and the weights (`16 n` bytes), and a threaded pass copies the weights of each piece as it copies the labels.
+
+**Not measured at this stage:** the flag, the file, `cv`, `describe` and the servers (C1b); trees, forest and boosting (C2, C3); softmax; the cost of the extra copy; other platforms than this one; the replay of a weighted run (WG8).
