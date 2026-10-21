@@ -745,7 +745,7 @@ The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`);
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
 tool        ml 0.1.0   (compiler 0207556b)
-flags       65, for example
+flags       66, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
   --output      path             fit: where to write the model file. The directory m…
@@ -757,7 +757,7 @@ limits      27, for example
   --max-columns      default 4,096        ceiling 8,192
   --max-line-bytes   default 1,048,576    ceiling 16,777,216
   --max-bytes        default 16,777,216   ceiling 268,435,456
-rules       119, for example
+rules       123, for example
   args.unknown-flag        exit 2   a repair: sometimes
   ml.input.non-numeric     exit 8   a repair: sometimes
   ml.schema.mismatch       exit 8   a repair: sometimes

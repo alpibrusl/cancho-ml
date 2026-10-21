@@ -175,6 +175,13 @@ class Case:
         self.model, self.names, self.rows, self.target = model, names, rows, target
         self.steps, self.step_text = steps, step_text
         self.l2, self.iterations, self.split, self.seed, self.positive = l2, iterations, split, seed, positive
+        self.weight = None      # the name of the weight column (docs/weights.md section 2.4), None for an unweighted fit
+
+    def feat_idx(self):
+        """the columns of the table that are features: not the target, not the weight"""
+        t = self.names.index(self.target)
+        wj = self.names.index(self.weight) if self.weight else -1
+        return [j for j in range(len(self.names)) if j != t and j != wj]
 
     def csv(self):
         return ",".join(self.names) + "\n" + "".join(",".join(r) + "\n" for r in self.rows)
@@ -205,8 +212,14 @@ def fit_oracle(case):
     names, rows = case.names, case.rows
     t = names.index(case.target)
     types = [column_type([r[j] for r in rows]) for j in range(len(names))]
-    feat = [j for j in range(len(names)) if j != t]
+    feat = case.feat_idx()
     fnames = [names[j] for j in feat]
+    wj = names.index(case.weight) if case.weight else -1
+    # the schema of the file lists the columns the reader kept: the weight column is dropped
+    keep = [j for j in range(len(names)) if j != wj]
+    snames = [names[j] for j in keep]
+    stypes = [types[j] for j in keep]
+    st_ = snames.index(case.target)
     X = [[to_float(r[j]) for j in feat] for r in rows]
     y = [to_float(r[t]) for r in rows]
     n = len(rows)
@@ -251,8 +264,11 @@ def fit_oracle(case):
     Xn = np.array(cur, dtype=np.float64).reshape(len(cur), d)
     yn = np.array(yfit, dtype=np.float64)
     l2 = float(case.l2)
+    wtr = None
+    if wj >= 0:
+        wtr = np.array([to_float(rows[i][wj]) for i in tr], dtype=np.float64)
     if case.model == "linear":
-        res = omod.linreg(Xn, yn, l2)
+        res = omod.linreg(Xn, yn, l2) if wtr is None else omod.linreg_w(Xn, yn, wtr, l2)
         if res is None:
             return "ml.fit.collinear", None
         w = res[0]
@@ -262,12 +278,12 @@ def fit_oracle(case):
             return omod.softmax.last or "ml.linalg.not-positive-definite", None
         w = res[0]
     else:
-        res = omod.logreg(Xn, yn, case.iterations, l2)
+        res = omod.logreg(Xn, yn, case.iterations, l2, wts=wtr)
         if res is None:
             return omod.logreg.last or "ml.linalg.not-positive-definite", None
         w = res[0]
     plan = op.canon_plan(case.plan_text()) if False else canon(case.plan_text())
-    data = file_bytes(plan, schema_bytes(names, types, t), steps_bytes(stored), (mc_payload(w, d, labels) if case.model == "softmax" else model_payload(KIND[case.model], w, d, *(labels or (0, 0)))), len(tr), len(names), case.seed, provenance_of(case, fnames, mask))
+    data = file_bytes(plan, schema_bytes(snames, stypes, st_), steps_bytes(stored), (mc_payload(w, d, labels) if case.model == "softmax" else model_payload(KIND[case.model], w, d, *(labels or (0, 0)))), len(tr), len(snames), case.seed, provenance_of(case, fnames, mask))
     ctx = {"stored": stored, "w": w, "d": d, "labels": labels, "types": types, "fnames": fnames, "mask": mask}
     return data, ctx
 
@@ -325,7 +341,7 @@ def eval_oracle(case, ctx, rows_idx):
     """the metrics `ml eval` prints for the rows `rows_idx` of the case's CSV: {name: float or None}"""
     names, rows = case.names, case.rows
     t = names.index(case.target)
-    feat = [j for j in range(len(names)) if j != t]
+    feat = case.feat_idx()
     X = [[to_float(rows[i][j]) for j in feat] for i in rows_idx]
     y = [to_float(rows[i][t]) for i in rows_idx]
     n = len(y)
@@ -517,6 +533,14 @@ def gen_case(seed, model):
         case.seed = rng.randint(0, 99)
     if model == "logistic" and rng.random() < 0.4:
         case.positive = min(int(v) for v in ycol)
+    if model in ("linear", "logistic") and rng.random() < 0.4:
+        # a weight column (docs/weights.md section 2.4): decimal texts, a zero at every eleventh row; it is not a feature and is not in the schema of the file
+        ws = [rng.choice(["1", "2", "0.5", "3.25", "1.5", "4", "0.125"]) for _ in range(n)]
+        for i in range(5, n, 11):
+            ws[i] = "0"
+        case.weight = "w"
+        case.names = case.names + ["w"]
+        case.rows = [r + [ws[i]] for i, r in enumerate(case.rows)]
     return case
 
 
@@ -537,6 +561,8 @@ def fit_args(case, out):
     if case.model in ("logistic", "softmax"):
         a += ["--iterations", str(case.iterations)]
     a += step_flag(case)
+    if case.weight:
+        a += ["--weight", case.weight]
     if case.split:
         a += ["--split", case.split, "--seed", str(case.seed)]
     elif case.seed:
@@ -577,14 +603,15 @@ def run_case(case, tmp, threads=1, quiet=False):
         problems.append("the model file differs from the oracle's (%d bytes, %d expected)" % (len(got), len(expect)))
         return problems
     # predict: every row
-    rc, out = ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "--proba", "d.csv") if case.model != "linear" else \
-        ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "d.csv")
+    dflag = ["--drop", case.weight] if case.weight else []     # the weight column is not in the schema: predict on the training file drops it
+    rc, out = ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "--proba", *dflag, "d.csv") if case.model != "linear" else \
+        ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", *dflag, "d.csv")
     doc = json.loads(out)
     if not doc.get("ok"):
         return problems + ["predict refused: %s" % out[:300]]
     names, rows = case.names, case.rows
     t = names.index(case.target)
-    feat = [j for j in range(len(names)) if j != t]
+    feat = case.feat_idx()
     X = [[to_float(r[j]) for j in feat] for r in rows]
     want = predict_oracle(case, ctx, X)
     cells = doc["data"]["rows"]
@@ -629,7 +656,7 @@ def run_case(case, tmp, threads=1, quiet=False):
 
 def check_eval(case, ctx, idx, tmp, threads):
     problems = []
-    ev = ["eval", "--model-file", "m.cml", "d.csv"]
+    ev = ["eval", "--model-file", "m.cml", *(["--drop", case.weight] if case.weight else []), "d.csv"]
     if case.split:
         ev += ["--split", case.split, "--seed", str(case.seed)]
     if case.positive is not None and case.model == "logistic":

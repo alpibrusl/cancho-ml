@@ -51,7 +51,13 @@ pub fn pass[&h, &f, &r, &pq, &pf, &t, &cm](heap: &!h Heap, cmd: &cm [byte], fs: 
 
 // the same with the categorical part of the scan (docs/categorical.md): (shape, report, sinks, state); report.status 99 when the open failed
 pub fn pass_cat[&h, &f, &r, &pf, &t, &cm](heap: &!h Heap, cmd: &cm [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, cfg: csv.Cfg, cc: csv.CatCfg, target: &t [byte], sk: csv.Sinks, cs: csv.CatState) -> [heap, fs_read(""), dir_read, file_read] (csv.Shape, csv.Report, csv.Sinks, csv.CatState) {
-    let tx = csv.texts(heap, target, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), argv.text(cmd, "na-values"));
+    let dl = argv.drop_list(heap, cmd);
+    var tx = buffer.empty(heap, 1);
+    borrow dl as &dlr in {
+        buffer.drop(heap, tx);
+        tx = csv.texts(heap, target, buffer.bytes(dlr), argv.text(cmd, "float"), argv.text(cmd, "cat"), argv.text(cmd, "na-values"));
+    }
+    buffer.drop(heap, dl);
     if paths.is_stdin(file) {
         // standard input was read once, into memory (docs/serving.md section 2.2): both passes run over those bytes
         let (src, sh, rep, k2, c2) = csv.scan_cat_tx(heap, csv.Source::Mem(0), paths.mem(file), cfg, cc, tx, sk, cs);

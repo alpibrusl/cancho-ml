@@ -92,6 +92,34 @@ pub fn text[&s, &n](src: &s [byte], name: &n [byte]) -> [] &s [byte] {
     return field_at(src, skip(src, p, 4));
 }
 
+// The number of names in a comma separated list (0 for the empty text).
+pub fn names_in[&t](text: &t [byte]) -> [] int {
+    if len(text) == 0 {
+        return 0;
+    }
+    var n = 1;
+    var i = 0;
+    while i < len(text) {
+        if int_of(text[i]) == 44 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// The columns the reader drops: those of --drop, then the --weight column (docs/weights.md section 2.4), which the reader numbers in this order.
+pub fn drop_list[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 64), text(src, "drop"));
+    if has(src, "weight") {
+        if len(text(src, "drop")) > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = buffer.append(heap, b, text(src, "weight"));
+    }
+    return b;
+}
+
 // A `nat` flag's value, or its default; -1 if neither is a number.
 pub fn nat[&s, &n](src: &s [byte], name: &n [byte]) -> [] int {
     return cli.parse_nat(text(src, name));

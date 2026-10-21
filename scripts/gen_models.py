@@ -25,7 +25,7 @@ DEFAULT_ROOT = HERE.parent
 TOP_KEYS = {
     "name": str, "kind": int, "extra_kinds": list, "kind_fn": str, "shares_kind_with": str, "task": str, "tier": str, "wired": bool,
     "adapter": str, "shape": str, "payload_version": int, "doc": str, "files": list, "plan_order": int, "limits": dict, "hyperparameter": list,
-    "tags": dict, "authority": dict, "sums": dict, "oracle": dict, "target_classes": int,
+    "tags": dict, "authority": dict, "sums": dict, "oracle": dict, "target_classes": int, "weighted": bool,
 }
 REQUIRED = {"name", "kind", "kind_fn", "task", "tier", "wired", "payload_version", "doc", "files", "plan_order", "tags", "authority", "sums"}
 HP_KEYS = {"name": str, "type": str, "min": int, "max": int, "values": list, "default": str, "required": bool, "doc": str, "nonneg": bool}
@@ -539,6 +539,15 @@ def render_est(models):
     o += ["pub fn diag_len[&i](kind: int, d: int, ip: &i [int]) -> [] int {"]
     o += _chain(vec, lambda m: ["return %s.diag_len(d, ip);" % ad(m)], keys)
     o += ["    return 0 - 1;", "}", ""]
+    # a vector model that takes a weight per row (docs/weights.md): `weighted = true` in its manifest and a fit_weighted in its adapter
+    wtd = [m for m in vec if m.get("weighted")]
+    o += ["// whether the fit of this kind takes a weight per row (docs/weights.md section 2.4)", "pub fn weighted(kind: int) -> [] bool {"]
+    o += _chain(wtd, lambda m: ["return true;"], keys)
+    o += ["    return false;", "}", ""]
+    o += ["// 0, or a code of ml.refuse (ml.param.out-of-range for a kind that has no weighted fit); wd: one weight per row",
+          "pub fn fit_weighted[&h, &x, &y, &w, &i, &f, &q, &g](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, out: &!q [float], diag: &!g [float]) -> [heap, conc] int {"]
+    o += _chain(wtd, lambda m: ["return %s.fit_weighted(heap, threads, xt, xd, yd, wd, ip, fp, seed, out, diag);" % ad(m)], keys)
+    o += ["    return 8;", "}", ""]
     o += ["pub fn out_len(kind: int, d: int) -> [] int {"]
     o += _chain(vec, lambda m: ["return %s.out_len(d);" % ad(m)], keys)
     o += ["    return 0 - 1;", "}", ""]

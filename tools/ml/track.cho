@@ -66,7 +66,7 @@ fn gcd(a: int, b: int) -> [] int {
 // ---------------------------------------------------------------- building
 
 // The `inputs` object (docs/tracking.md section 5.2): what determines the model's bytes. `split` is the canonical text of the split, `none` without one (docs/tracking.md section 5.2); `sum_order` below 0 is none (the constant kinds); `positive_given` says whether the label is one.
-pub fn inputs[&h, &sx, &p, &s, &t, &pl, &dr, &fl, &ct, &nv, &cm, &jf](heap: &!h Heap, path: &p [byte], data_bytes: int, sha_hex: &s [byte], data_rows: int, target: &t [byte], has_target: bool, task: &static [byte], plan: &pl [byte], seed: int, positive: int, positive_given: bool, split: &sx [byte], drops: &dr [byte], floats: &fl [byte], cats: &ct [byte], na: &nv [byte], cat_given: bool, max_cats: int, max_str: int, max_pool: int, max_catcols: int, compiler: &cm [byte], sum_order: int, jsonl_fields: &jf [byte], absent_empty: bool) -> [heap] buffer.Buffer {
+pub fn inputs[&h, &sx, &p, &s, &t, &pl, &dr, &fl, &ct, &nv, &cm, &jf, &wc](heap: &!h Heap, path: &p [byte], data_bytes: int, sha_hex: &s [byte], data_rows: int, target: &t [byte], has_target: bool, task: &static [byte], plan: &pl [byte], seed: int, positive: int, positive_given: bool, split: &sx [byte], drops: &dr [byte], floats: &fl [byte], cats: &ct [byte], na: &nv [byte], cat_given: bool, max_cats: int, max_str: int, max_pool: int, max_catcols: int, compiler: &cm [byte], sum_order: int, jsonl_fields: &jf [byte], absent_empty: bool, weight: &wc [byte]) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 512);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "data");
@@ -111,6 +111,10 @@ pub fn inputs[&h, &sx, &p, &s, &t, &pl, &dr, &fl, &ct, &nv, &cm, &jf](heap: &!h 
     w = json.put_key(heap, w, "split");
     w = json.put_string(heap, w, split);
     w = verbs.put_name(heap, w, "drop", drops);
+    if len(weight) > 0 {
+        // the weight column of the fit (docs/weights.md section 2.4); a record of an unweighted fit has no such member and keeps its bytes
+        w = verbs.put_name(heap, w, "weight", weight);
+    }
     w = verbs.put_name(heap, w, "float", floats);
     w = verbs.put_name(heap, w, "cat", cats);
     w = verbs.put_name(heap, w, "na_values", na);
@@ -511,7 +515,7 @@ pub fn plan[&h, &sp, &f, &r, &pt, &dp, &op, &fb, &sh, &tn, &pl, &mt, &nv, &cm](h
     var inp = buffer.empty(heap, 1);
     borrow shex as &sh in {
         buffer.drop(heap, inp);
-        inp = inputs(heap, data_path, file_bytes, buffer.bytes(sh), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, split, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order, argv.jsonl_fields(cmd), o.absent_empty);
+        inp = inputs(heap, data_path, file_bytes, buffer.bytes(sh), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, split, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order, argv.jsonl_fields(cmd), o.absent_empty, argv.text(cmd, "weight"));
     }
     buffer.drop(heap, shex);
     var id = buffer.empty(heap, 1);
@@ -575,7 +579,7 @@ pub fn plan[&h, &sp, &f, &r, &pt, &dp, &op, &fb, &sh, &tn, &pl, &mt, &nv, &cm](h
                                     let shex2 = prov.hex(heap, sha);
                                     borrow mhex2 as &mh2 in {
                                         borrow shex2 as &sh2 in {
-                                            let inp2 = inputs(heap, data_path, file_bytes, buffer.bytes(sh2), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, split, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order, argv.jsonl_fields(cmd), o.absent_empty);
+                                            let inp2 = inputs(heap, data_path, file_bytes, buffer.bytes(sh2), file_rows, tg, has_target, task, ptext, o.seed, o.positive_v, o.positive_given, split, argv.text(cmd, "drop"), argv.text(cmd, "float"), argv.text(cmd, "cat"), na, o.cat_given, o.max_cats, o.max_str, o.max_pool, o.max_catcols, built.compiler(), sum_order, argv.jsonl_fields(cmd), o.absent_empty, argv.text(cmd, "weight"));
                                             borrow inp2 as &i2 in {
                                                 if true {
                                                     let cand = record(heap, buffer.bytes(idr), buffer.bytes(i2), pthreads, buffer.bytes(ppr), len(model), buffer.bytes(mh2), file_rows, trows, ntest, features, steps, metrics);

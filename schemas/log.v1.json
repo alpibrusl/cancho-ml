@@ -248,7 +248,11 @@
         "ml.dump.unsupported-model",
         "ml.label.unseen",
         "ml.limit.classes",
-        "ml.limit.parameters"
+        "ml.limit.parameters",
+        "ml.weight.missing",
+        "ml.weight.negative",
+        "ml.weight.too-large",
+        "ml.weight.zero-total"
       ]
     }
   }

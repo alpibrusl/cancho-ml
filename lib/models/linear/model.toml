@@ -5,6 +5,7 @@ kind_fn = "model_linear"
 task = "regression"
 tier = "supported"
 wired = true
+weighted = true
 adapter = "models.adapter_linear"
 payload_version = 1
 doc = "docs/models-linear.md"

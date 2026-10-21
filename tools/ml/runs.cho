@@ -639,7 +639,22 @@ fn verify[&h, &f, &r, &pd, &i, &cl](heap: &!h Heap, cmd: &cl [byte], fs: &f Fs("
                 let dabsent = field_str(heap, text, contents(tp), data, "absent");
                 let target = field_str(heap, text, contents(tp), inp, "target");
                 let plan = field_str(heap, text, contents(tp), inp, "plan");
-                let drops = field_str(heap, text, contents(tp), inp, "drop");
+                let drops0 = field_str(heap, text, contents(tp), inp, "drop");
+                let wname = field_str(heap, text, contents(tp), inp, "weight");
+                // the weight column is dropped from the matrix like a --drop column (argv.drop_list): the reader numbers the names in this order
+                var drops = buffer.empty(heap, 16);
+                borrow drops0 as &d0r in {
+                    borrow wname as &wn0 in {
+                        drops = buffer.append(heap, drops, buffer.bytes(d0r));
+                        if len(buffer.bytes(wn0)) > 0 {
+                            if len(buffer.bytes(d0r)) > 0 {
+                                drops = buffer.push(heap, drops, byte_of(','));
+                            }
+                            drops = buffer.append(heap, drops, buffer.bytes(wn0));
+                        }
+                    }
+                }
+                buffer.drop(heap, drops0);
                 let floats = field_str(heap, text, contents(tp), inp, "float");
                 let cats = field_str(heap, text, contents(tp), inp, "cat");
                 let na = field_str(heap, text, contents(tp), inp, "na_values");
@@ -837,13 +852,15 @@ fn verify[&h, &f, &r, &pd, &i, &cl](heap: &!h Heap, cmd: &cl [byte], fs: &f Fs("
                                                                             // the strategy and the column of the split come from the record's text (a runtime column cannot be a field of the options)
                                                                             let spo = splitspec.SplitOpts { stratify: sstrat == 1, by_given: sstrat == 3, group_given: sstrat == 2, folds: 0, repeats: 0, repeats_given: false, emit: false };
                                                                             borrow scol as &scr in {
-                                                                                let m = wire.make(heap, cmd, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), ro, spo, buffer.bytes(scr), false, e, lg);
-                                                                                let (mfb, merr, mlg, mok) = wire.made_file(heap, m);
-                                                                                buffer.drop(heap, fbytes);
-                                                                                fbytes = mfb;
-                                                                                made_ok = mok;
-                                                                                e = merr;
-                                                                                lg = mlg;
+                                                                                borrow wname as &wnr in {
+                                                                                    let m = wire.make(heap, cmd, fs, root, rpr, ptxt, true, buffer.bytes(tgr), buffer.bytes(nar), buffer.bytes(wnr), ro, spo, buffer.bytes(scr), false, e, lg);
+                                                                                    let (mfb, merr, mlg, mok) = wire.made_file(heap, m);
+                                                                                    buffer.drop(heap, fbytes);
+                                                                                    fbytes = mfb;
+                                                                                    made_ok = mok;
+                                                                                    e = merr;
+                                                                                    lg = mlg;
+                                                                                }
                                                                             }
                                                                         }
                                                                     }
@@ -910,6 +927,7 @@ fn verify[&h, &f, &r, &pd, &i, &cl](heap: &!h Heap, cmd: &cl [byte], fs: &f Fs("
                 buffer.drop(heap, target);
                 buffer.drop(heap, plan);
                 buffer.drop(heap, drops);
+                buffer.drop(heap, wname);
                 buffer.drop(heap, floats);
                 buffer.drop(heap, cats);
                 buffer.drop(heap, na);
