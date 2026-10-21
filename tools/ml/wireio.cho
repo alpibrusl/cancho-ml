@@ -1267,6 +1267,9 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
             if sqz.rank && !argv.has(src, "group") {
                 e = rankcol.eval_needs_group(heap, e);
                 go = false;
+            } else if !sqz.rank && argv.has(src, "group") {
+                e = rankcol.unsupported(heap, e);
+                go = false;
             }
         }
     }

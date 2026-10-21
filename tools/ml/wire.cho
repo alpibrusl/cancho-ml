@@ -1576,7 +1576,7 @@ fn failed_made[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer) -> [he
 
 // Fit the model of the plan text `ptxt` (consumed; `ok` false when the text could not be had) on the file `file`, as `fit` does, and make its file. `tg` is the target's name and `na` the
 // missing-value markers: they come from the command line, or from a record (a runtime text cannot be a field of Opts). `want_rec`: also score the rows for the run record.
-pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], wn: &wp [byte], o: verbs.Opts, sp: splitspec.SplitOpts, spcol: &sk [byte], want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] Made {
+pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &gq, &sk, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], wn: &wp [byte], gn: &gq [byte], o: verbs.Opts, sp: splitspec.SplitOpts, spcol: &sk [byte], want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] Made {
     var e = errs;
     var lg = log;
     let (pls, ok1, e1) = build_plan(heap, ptxt, ok0, o, e);
@@ -1611,10 +1611,10 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [
         borrow pls as &rkq in {
             rk = est.ranking(kind, contents(rkq.ip));
         }
-        if rk && !argv.has(src, "group") {
+        if rk && len(gn) == 0 {
             e = rankcol.needs_group(heap, e);
             go = false;
-        } else if !rk && argv.has(src, "group") {
+        } else if !rk && len(gn) > 0 {
             e = rankcol.unsupported(heap, e);
             go = false;
         }
@@ -1656,7 +1656,7 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [
         hashed = st1 == 0;
     }
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, wn, argv.text(src, "group"), mixed_plan, task, kind, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, wn, gn, mixed_plan, task, kind, e, lg);
         drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -1883,7 +1883,7 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [
 
 pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, trackp: &pt paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
     let (ptxt, ok0, e0) = plan_source(heap, src, fs, root, planp, o, tokens, errs);
-    let m = make(heap, src, fs, root, file, ptxt, ok0, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), o, sp, splitspec.column(src, sp), o.track_given, e0, log);
+    let m = make(heap, src, fs, root, file, ptxt, ok0, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), argv.text(src, "group"), o, sp, splitspec.column(src, sp), o.track_given, e0, log);
     var made_ok = false;
     var kind = 0;
     var task = 0;
@@ -1969,7 +1969,7 @@ pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [by
                 borrow action as &acr in {
                     borrow rname as &rnr in {
                         borrow recbuf as &rcr in {
-                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), rankcol.word(task, argv.has(src, "group")), trows, cols, argv.text(src, "target"), buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
+                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), rankcol.word(task, len(argv.text(src, "group")) > 0), trows, cols, argv.text(src, "target"), buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
                         }
                     }
                 }
