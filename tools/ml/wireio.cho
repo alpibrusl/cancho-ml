@@ -951,8 +951,9 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g, &gd](heap: &!h Heap, kind: int, task: 
                         if rank {
                             plain = buffer.push(heap, plain, byte_of(9));
                             borrow rk as &rkr in {
-                                w = json.put_int(heap, w, contents(rkr)[k]);
-                                plain = buffer.push_nat(heap, plain, contents(rkr)[k]);
+                                let (w3, p3) = put_label(heap, w, plain, contents(rkr)[k]);
+                                w = w3;
+                                plain = p3;
                             }
                         }
                     } else if task == 4 {

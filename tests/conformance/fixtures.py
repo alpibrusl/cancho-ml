@@ -39,6 +39,11 @@ WITH_LINMIS = LBASE + [("fit", "--model", "linear", "--target", "y", "--step", S
 # a target of three classes (docs/multiclass.md): the multinomial logistic regression, and a file of 65 classes
 MC3 = "a,b,y\n" + "".join("%d,%d,%d\n" % (i % 7, (i * 3) % 5, (3, 5, 9)[(i + i // 4) % 3]) for i in range(30))
 WTD = "a,b,w,y\n" + "".join("%d,%d,%d,%d\n" % (i % 7, (i * 3) % 5, 1 + i % 3, 3 * (i % 7) + (i * 3) % 5 + i % 2) for i in range(24))
+# a ranking file: a group (query) of every row, two features, a relevance 0 to 3 (docs/ranking.md section 2)
+RKD = "qid,a,b,rel\n" + "".join("q%d,%d,%d,%d\n" % (i // 4, i % 7, (i * 3) % 5, (i * 3 + i // 4) % 4) for i in range(40))
+RK_BIG = "qid,a,rel\n" + "".join("big,%d,%d\n" % (i % 13, i % 2) for i in range(4097))
+RK_PAIRS = "qid,a,rel\n" + "".join("g%d,%d,%d\n" % (i // 4096, i % 13, i % 2) for i in range(4096 * 65))
+WITH_RK = BASE + [("write", "rk.csv", RKD), ("fit", "--model", "boost", "--task", "ranking", "--group", "qid", "--target", "rel", "--rounds", "3", "--min-leaf", "2", "--output", "rk.cml", "rk.csv")]
 MC65 = "a,y\n" + "".join("%d,%d\n" % (i, i % 65) for i in range(130))
 MCWIDE = ",".join("f%d" % j for j in range(64)) + ",y\n" + "".join(",".join("%d" % ((i * (j + 3)) % 11) for j in range(64)) + ",%d\n" % (i % 33) for i in range(70))
 WITH_SM = BASE + [("write", "mc.csv", MC3), ("fit", "--model", "softmax", "--target", "y", "--l2", "1", "--output", "sm.cml", "mc.csv")]
@@ -374,6 +379,16 @@ CASES = [
     case("ml-weight-forest-cv", ["cv", "--model", "forest", "--trees", "5", "--target", "y", "--weight", "w", "--folds", "3", "wt.csv"], ok({"model": "forest"}), setup=BASE + [("write", "wt.csv", WTD)]),
     case("ml-weight-boost", ["fit", "--model", "boost", "--task", "regression", "--target", "y", "--weight", "w", "--rounds", "5", "--output", "m.cml", "wt.csv"], ok({"model": "boost"}), setup=BASE + [("write", "wt.csv", WTD)]),
     case("ml-weight-boost-cv", ["cv", "--model", "boost", "--task", "regression", "--rounds", "5", "--target", "y", "--weight", "w", "--folds", "3", "wt.csv"], ok({"model": "boost"}), setup=BASE + [("write", "wt.csv", WTD)]),
+    case("ml-rank-fit", ["fit", "--model", "boost", "--task", "ranking", "--group", "qid", "--target", "rel", "--rounds", "3", "--min-leaf", "2", "--output", "m.cml", "rk.csv"], ok({"model": "boost", "task": "ranking"}), setup=BASE + [("write", "rk.csv", RKD)]),
+    case("ml-rank-eval", ["eval", "--model-file", "rk.cml", "--group", "qid", "--rank-k", "3", "--gain", "linear", "rk.csv"], ok({"model": "boost", "task": "ranking"}), setup=WITH_RK),
+    case("ml-rank-eval-without-group", ["eval", "--model-file", "rk.cml", "rk.csv"], bad("args.conflict", 2), setup=WITH_RK),
+    case("ml-rank-predict", ["predict", "--model-file", "rk.cml", "--rank", "--group", "qid", "--drop", "rel", "rk.csv"], ok({"model": "boost", "task": "ranking"}), setup=WITH_RK),
+    case("ml-rank-cv", ["cv", "--model", "boost", "--task", "ranking", "--group", "qid", "--target", "rel", "--rounds", "3", "--min-leaf", "2", "--folds", "3", "rk.csv"], ok({"model": "boost", "task": "ranking"}), setup=BASE + [("write", "rk.csv", RKD)]),
+    case("ml-rank-bad-relevance", ["fit", "--model", "boost", "--task", "ranking", "--group", "qid", "--target", "rel", "--rounds", "3", "--min-leaf", "2", "--output", "m.cml", "rk.csv"], bad("ml.rank.bad-relevance"), setup=BASE + [("write", "rk.csv", RKD.replace(",0\nq5", ",31\nq5", 1))]),
+    case("ml-rank-group-missing", ["fit", "--model", "boost", "--task", "ranking", "--group", "qid", "--target", "rel", "--rounds", "3", "--min-leaf", "2", "--output", "m.cml", "rk.csv"], bad("ml.rank.group-missing"), setup=BASE + [("write", "rk.csv", RKD.replace("q3,", ",", 1))]),
+    case("ml-limit-group-size", ["fit", "--model", "boost", "--task", "ranking", "--group", "qid", "--target", "rel", "--rounds", "3", "--output", "m.cml", "big.csv"], bad("ml.limit.group-size"), setup=BASE + [("write", "big.csv", RK_BIG)]),
+    case("ml-limit-pairs", ["fit", "--model", "boost", "--task", "ranking", "--group", "qid", "--target", "rel", "--rounds", "1", "--output", "m.cml", "pairs.csv"], bad("ml.limit.pairs"), setup=BASE + [("write", "pairs.csv", RK_PAIRS)]),
+    case("ml-split-group-required", ["fit", "--model", "boost", "--task", "ranking", "--group", "qid", "--target", "rel", "--rounds", "3", "--split", "train=0.7", "--stratify", "--output", "m.cml", "rk.csv"], bad("ml.split.group-required", 2), setup=BASE + [("write", "rk.csv", RKD)]),
     case("ml-weight-cv", ["cv", "--model", "linear", "--target", "y", "--weight", "w", "--folds", "3", "wt.csv"], ok({"model": "linear"}), setup=BASE + [("write", "wt.csv", WTD)]),
     case("ml-limit-classes-65-classes", ["fit", "--model", "softmax", "--target", "y", "--output", "m.cml", "mc65.csv"], bad("ml.limit.classes"), setup=BASE + [("write", "mc65.csv", MC65)]),
     case("ml-limit-parameters-2080", ["fit", "--model", "softmax", "--target", "y", "--iterations", "1", "--l2", "1", "--output", "m.cml", "mcwide.csv"], bad("ml.limit.parameters"),
