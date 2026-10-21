@@ -23,7 +23,7 @@ The library is **internal**: it is not wired into the `ml` command line yet. It 
 | model bytes | node arrays as tensor records for the `model` section of CML1 | section 7 |
 
 A decision tree is a forest of one tree with `bootstrap = 0` and `mtry = d` (all columns). There is one entry point.
-**Not in this stage**: the command line, the pipeline, multiclass, categorical splits, sample weights, feature importance,
+**Not in this stage**: the command line, the pipeline, multiclass, categorical splits, sample weights (built later, `docs/weights.md` 2.5), feature importance,
 out-of-bag scores, boosting.
 
 ## 2. The algorithm (normative; `oracle_tree.py` implements exactly this text)

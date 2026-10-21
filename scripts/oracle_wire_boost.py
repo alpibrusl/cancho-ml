@@ -90,9 +90,19 @@ def fit_oracle(case):
     yv = np.array(yfit, dtype=np.float64)
     if task == 0 and (yv.sum() == 0 or yv.sum() == len(yv)):
         return "ml.label.single-class", None
+    wts = None
+    if case.weights is not None:
+        # the first row of a class with no weight above 0 on the training side gets weight 1 (the refusal of such a side is judged by the tests of the command line)
+        w = list(case.weights)
+        for v in ((0.0, 1.0) if task == 0 else (None,)):
+            g = [i for i in range(len(tr)) if v is None or yfit[i] == v]
+            if g and not any(w[tr[i]] > 0 for i in g):
+                w[tr[g[0]]] = 1.0
+        case.weights = w
+        wts = np.array([w[i] for i in tr], dtype=np.float64)
     try:
         res = ob.fit(Xn, Mn, yv, task, int(hp["rounds"]), float(hp["learning-rate"]), int(hp["max-depth"]), int(hp["min-leaf"]), int(hp["bins"]), float(hp["l2"]),
-                     float(hp["subsample"]), int(hp["early-stopping"]), int(hp["max-nodes"]), case.seed, stats)
+                     float(hp["subsample"]), int(hp["early-stopping"]), int(hp["max-nodes"]), case.seed, stats, wts)
     except ob.LimitNodes:
         return "ml.limit.nodes", None
     except AssertionError:
@@ -185,7 +195,7 @@ def eval_oracle(case, ctx, rows_idx):
 
 
 # ---------------------------------------------------------------- the data
-def gen_case(seed, task, rows=None):
+def gen_case(seed, task, rows=None, weighted=False):
     """the generator of the tree oracle (missing cells, constant and empty columns, int/dec/big/float columns, an ordinal category, impute, scale, bucket and encode
     steps, a split, --positive), with the hyperparameters of a boosted model"""
     base = owt.gen_case(seed, "tree", task, rows=rows)
@@ -218,12 +228,17 @@ def gen_case(seed, task, rows=None):
         hp["rounds"] = max(hp.get("rounds", 100), 30)
         if len(case.rows) * float(case.split[6:]) < 20:
             hp.pop("early-stopping")
+    if weighted:
+        wr = random.Random(seed ^ 0x5EED)
+        case.weights = [wr.choice(owt.WEIGHTS) for _ in range(len(case.rows))]
     return case
 
 
 # ---------------------------------------------------------------- the binary
 def fit_args(case, out, sparse=True):
     a = ["fit", "--model", "boost", "--task", case.task, "--target", case.target, "--output", out]
+    if case.weights is not None:
+        a += ["--weight", "wt"]
     for k, v in case.hp.items():
         if str(v) != str(DEFAULTS[k]) or not sparse:
             a += ["--" + k, str(v)]
@@ -241,8 +256,8 @@ def run_case(case, tmp, threads=1, all_threads=False):
     """Compare the real `ml` with the oracle on one case. A list of problems."""
     problems = []
     (tmp / "m.cml").unlink(missing_ok=True)
-    (tmp / "d.csv").write_text(case.csv())
     expect, ctx = fit_oracle(case)
+    (tmp / "d.csv").write_text(case.csv())
     rc, out = ow.ml("--root", tmp, *fit_args(case, "m.cml"), "--threads", threads, "d.csv")
     doc = json.loads(out)
     if ctx is None:
@@ -271,7 +286,7 @@ def run_case(case, tmp, threads=1, all_threads=False):
                 problems.append("the file at --threads %d differs from the oracle's" % t)
     proba = case.task == "classification"
     base = ["--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000"] + (["--proba"] if proba else [])
-    rc, out = ow.ml(*base, "d.csv")
+    rc, out = ow.ml(*base, *(["--drop", "wt"] if case.weights is not None else []), "d.csv")
     doc = json.loads(out)
     if not doc.get("ok"):
         return problems + ["predict refused: %s" % out[:300]]
@@ -307,7 +322,7 @@ UNJUDGED = []
 
 def check_eval(case, ctx, idx, tmp, threads):
     problems = []
-    ev = ["eval", "--model-file", "m.cml", "d.csv"]
+    ev = ["eval", "--model-file", "m.cml", *(["--drop", "wt"] if case.weights is not None else []), "d.csv"]
     if case.split:
         ev += ["--split", case.split, "--seed", str(case.seed)]
     if case.positive is not None and case.task == "classification":
@@ -344,13 +359,14 @@ def main():
         large, n, rows = True, 2, 100000
     elif argv and argv[0] == "boost":
         n = 6
+    weighted = "--weighted" in argv
     bad = 0
     cases = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for task in ("classification", "regression"):
             for seed in range(1, n + 1):
-                case = gen_case(seed * 7919 + (101 if task == "regression" else 0) + 57, task, rows=rows)
+                case = gen_case(seed * 7919 + (101 if task == "regression" else 0) + 57, task, rows=rows, weighted=weighted)
                 pr = run_case(case, tmp, threads=1 + seed % 4, all_threads=large)
                 cases += 1
                 (tmp / "m.cml").unlink(missing_ok=True)
