@@ -8,7 +8,7 @@
 // YFILE   path of float64 targets (ignored for kmeans), or `-`
 // keys    n (rows generated, or rows of the files that are read), d (columns), seed, l2m (l2 in thousandths), iters, k, init
 //         (0 random, 1 plusplus), threads, reps, ntr (rows used for the fit; default n), dup (generated data: copy column 1 into column 0),
-//         kc (softmax: the number of classes, default 3), sep (softmax: 1 = no noise in the generated classes, so they are linearly separable)
+//         wt (linreg, logreg: generated weights of kind 1 to 4, docs/weights.md; the fit is the weighted one), kc (softmax: the number of classes, default 3), sep (softmax: 1 = no noise in the generated classes, so they are linearly separable)
 //
 // stdout, one `key value...` per line:
 //     params H...        the fitted parameters, bits as 16 hex digits
@@ -255,6 +255,28 @@ fn gen_data[&x, &y](model: int, n: int, d: int, seed: int, dup: int, kc: int, se
     return 0;
 }
 
+// The weights of wt=KIND (docs/weights.md; scripts/oracle_models.py gen_weights): u_i = element(derive(seed, 4), i) in [-1, 1)
+//   1: 1.0   2: float(1 + trunc((u + 1) * 2.0))   3: (u + 1) * 1.0 + 0.25   4: kind 3 with 0.0 at every row i with i mod 5 = 3
+fn gen_weights[&w](kind: int, n: int, seed: int, ws: &!w [float]) -> [] int {
+    let s4 = rng.derive(seed, 4);
+    var i = 0;
+    while i < n {
+        let u = rng.element(s4, i);
+        var v = 1.0;
+        if kind == 2 {
+            v = float_of(1 + truncate((u + 1.0) * 2.0));
+        } else if kind >= 3 {
+            v = (u + 1.0) * 1.0 + 0.25;
+            if kind == 4 && i % 5 == 3 {
+                v = 0.0;
+            }
+        }
+        ws[i] = v;
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn read_all[&h, &f](heap: &!h Heap, file: &!f File, text: buffer.Buffer) -> [heap, file_read] buffer.Buffer {
     var out = text;
     var chunk = buffer.empty(heap, 4194304);
@@ -296,7 +318,7 @@ fn load_bytes[&h, &b, &o](heap: &!h Heap, bytes: &b [byte], out: &!o [float], co
 }
 
 // ---------------------------------------------------------------- linreg
-fn run_linreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], n: int, ntr: int, d: int, l2: float, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
+fn run_linreg[&h, &i, &c, &x, &y, &w](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], wv: &w [float], wt: int, n: int, ntr: int, d: int, l2: float, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
     let p = d + 1;
     let out = box_slice(heap, p, 0.0);
     let diag = box_slice(heap, p * p + p, 0.0);
@@ -309,7 +331,11 @@ fn run_linreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, x
             var r = 0;
             t0 = clock_ms(clock);
             while r < reps {
-                code = linreg.fit(heap, threads, common.mat(ntr, d), xv, yv, l2, contents(ow), contents(dw));
+                if wt == 0 {
+                    code = linreg.fit(heap, threads, common.mat(ntr, d), xv, yv, l2, contents(ow), contents(dw));
+                } else {
+                    code = linreg.fit_weighted(heap, threads, common.mat(ntr, d), xv, yv, wv[0..ntr], l2, contents(ow), contents(dw));
+                }
                 r = r + 1;
             }
             t1 = clock_ms(clock);
@@ -339,7 +365,7 @@ fn run_linreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, x
 }
 
 // ---------------------------------------------------------------- logreg
-fn run_logreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], n: int, ntr: int, d: int, l2: float, iters: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
+fn run_logreg[&h, &i, &c, &x, &y, &w](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], wv: &w [float], wt: int, n: int, ntr: int, d: int, l2: float, iters: int, threads: int, reps: int) -> [heap, io_write, clock, conc] int {
     let p = d + 1;
     let ww = npass.width(d);
     let out = box_slice(heap, p, 0.0);
@@ -354,7 +380,11 @@ fn run_logreg[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, x
             var r = 0;
             t0 = clock_ms(clock);
             while r < reps {
-                code = logreg.fit(heap, threads, common.mat(ntr, d), xv, yv, iters, l2, contents(ow), contents(dw));
+                if wt == 0 {
+                    code = logreg.fit(heap, threads, common.mat(ntr, d), xv, yv, iters, l2, contents(ow), contents(dw));
+                } else {
+                    code = logreg.fit_weighted(heap, threads, common.mat(ntr, d), xv, yv, wv[0..ntr], iters, l2, contents(ow), contents(dw));
+                }
                 r = r + 1;
             }
             t1 = clock_ms(clock);
@@ -510,16 +540,16 @@ fn run_kmeans[&h, &i, &c, &x](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &
 }
 
 // ---------------------------------------------------------------- the run
-fn run[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], model: int, n: int, ntr: int, d: int, l2m: int, iters: int, k: int, init: int, seed: int, threads: int, reps: int, kcl: int) -> [heap, io_write, clock, conc] int {
+fn run[&h, &i, &c, &x, &y, &w](heap: &!h Heap, io: &!i Io, clock: &c Clock, xv: &x [float], yv: &y [float], wv: &w [float], wt: int, model: int, n: int, ntr: int, d: int, l2m: int, iters: int, k: int, init: int, seed: int, threads: int, reps: int, kcl: int) -> [heap, io_write, clock, conc] int {
     let l2 = float_of(l2m) / 1000.0;
     if model == 1 {
-        return run_linreg(heap, io, clock, xv, yv, n, ntr, d, l2, threads, reps);
+        return run_linreg(heap, io, clock, xv, yv, wv, wt, n, ntr, d, l2, threads, reps);
     }
     if model == 3 {
         return run_kmeans(heap, io, clock, xv, n, ntr, d, k, iters, seed, init, threads, reps);
     }
     if model == 2 {
-        return run_logreg(heap, io, clock, xv, yv, n, ntr, d, l2, iters, threads, reps);
+        return run_logreg(heap, io, clock, xv, yv, wv, wt, n, ntr, d, l2, iters, threads, reps);
     }
     if model == 4 {
         return run_softmax(heap, io, clock, xv, yv, n, ntr, d, kcl, l2, iters, threads, reps);
@@ -546,6 +576,7 @@ fn main(world: World) -> [conc] int {
     var dup = 0;
     var kcl = 3;
     var sep = 0;
+    var wt = 0;
     var bad_arg = 0;
     var dotdot = 0;
     borrow args as &g in {
@@ -612,6 +643,9 @@ fn main(world: World) -> [conc] int {
                 } else if starts(t, "sep=") {
                     v = number_at(t, 4);
                     sep = v;
+                } else if starts(t, "wt=") {
+                    v = number_at(t, 3);
+                    wt = v;
                 }
                 if v < 0 {
                     bad_arg = 1;
@@ -625,6 +659,9 @@ fn main(world: World) -> [conc] int {
     }
     var code = 0;
     var refused = 0;
+    if wt > 4 || wt > 0 && model != 1 && model != 2 {
+        bad_arg = 1;
+    }
     if bad_arg != 0 || n < 1 || d < 1 || reps < 1 || ntr > n || ntr < 1 {
         refused = refuse.param_out_of_range();
     } else {
@@ -650,6 +687,12 @@ fn main(world: World) -> [conc] int {
         borrow mut heap as &!hp in {
             let xs = box_slice(hp, n * d + 1, 0.0);
             let ys = box_slice(hp, n + 1, 0.0);
+            let wsv = box_slice(hp, n + 1, 1.0);
+            if wt > 0 {
+                borrow mut wsv as &!ww in {
+                    gen_weights(wt, n, seed, contents(ww));
+                }
+            }
             var bad = 0;
             if gen == 1 {
                 borrow mut xs as &!xw in {
@@ -711,7 +754,9 @@ fn main(world: World) -> [conc] int {
                     borrow clock as &kc in {
                         borrow xs as &xr in {
                             borrow ys as &yr in {
-                                code = run(hp, ip, kc, contents(xr), contents(yr), model, n, ntr, d, l2m, iters, k, init, seed, threads, reps, kcl);
+                              borrow wsv as &wr in {
+                                code = run(hp, ip, kc, contents(xr), contents(yr), contents(wr), wt, model, n, ntr, d, l2m, iters, k, init, seed, threads, reps, kcl);
+                              }
                             }
                         }
                     }
@@ -719,6 +764,7 @@ fn main(world: World) -> [conc] int {
             }
             unbox_slice(hp, xs);
             unbox_slice(hp, ys);
+            unbox_slice(hp, wsv);
         }
     }
     release(args);

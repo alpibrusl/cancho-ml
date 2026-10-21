@@ -1,0 +1,832 @@
+edition 5;
+
+import std.io;
+import std.math;
+import ml.refuse;
+import ml.rng;
+import linalg.tensor;
+import models.common;
+import models.linreg;
+import models.logreg;
+import models.npass;
+
+// The program of the unit, refusal, equivalence, limit and fuzz gates of the weighted linear and logistic regression (docs/weights.md section 5: gates WG2 to WG7 and WG9
+// at the library). A program and not `cancho test` tests, because the fits spawn threads and the test runner's main has no `conc`. It prints one line per test and exits with
+// the number of failing tests. scripts/gate_models.sh builds and runs it. The bounds are fixed here, before the numbers were seen: 1e-8 relative for the equivalences that are
+// not bit equal (WG3), 1e-9 for the extremes (WG6).
+
+fn mat(rows: int, cols: int) -> [] tensor.Tensor {
+    return common.mat(rows, cols);
+}
+
+fn fill[&h](heap: &!h Heap, n: int, seed: int) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!w in {
+        var i = 0;
+        while i < n {
+            contents(w)[i] = rng.element(seed, i);
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// y = 2 x0 - x1 + 0.3 e (d >= 2), or the label 1.0 when x0 + 0.5 e > 0 with both classes present in the first rows
+fn target[&h, &x](heap: &!h Heap, xv: &x [float], n: int, d: int, seed: int, label: bool) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!w in {
+        var i = 0;
+        while i < n {
+            let e = rng.element(seed, i);
+            if label {
+                var l = 0.0;
+                if xv[i * d] + 0.5 * e > 0.0 {
+                    l = 1.0;
+                }
+                contents(w)[i] = l;
+            } else {
+                contents(w)[i] = 2.0 * xv[i * d] - xv[i * d + 1] + 0.3 * e;
+            }
+            i = i + 1;
+        }
+        if label && n > 1 {
+            contents(w)[0] = 0.0;
+            contents(w)[1] = 1.0;
+        }
+    }
+    return o;
+}
+
+// weights: kind 0 all 1.0, 1 integers 1..3, 2 floats in [0.25, 2.25)
+fn weights[&h](heap: &!h Heap, n: int, kind: int, seed: int) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 1.0);
+    var o = b;
+    borrow mut o as &!w in {
+        var i = 0;
+        while i < n {
+            let u = rng.element(seed, i);
+            if kind == 1 {
+                contents(w)[i] = float_of(1 + truncate((u + 1.0) * 1.5));
+            } else if kind == 2 {
+                contents(w)[i] = (u + 1.0) + 0.25;
+            }
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// the fits, with their own diagnostics buffers; out has d + 1 values
+fn lin_w[&h, &x, &y, &w, &o](heap: &!h Heap, t: int, xv: &x [float], yv: &y [float], wv: &w [float], n: int, d: int, l2: float, out: &!o [float]) -> [heap, conc] int {
+    let p = d + 1;
+    let diag = box_slice(heap, p * p + p, 0.0);
+    var code = 0;
+    borrow mut diag as &!dw in {
+        code = linreg.fit_weighted(heap, t, mat(n, d), xv, yv, wv[0..n], l2, out, contents(dw));
+    }
+    unbox_slice(heap, diag);
+    return code;
+}
+
+fn lin[&h, &x, &y, &o](heap: &!h Heap, t: int, xv: &x [float], yv: &y [float], n: int, d: int, l2: float, out: &!o [float]) -> [heap, conc] int {
+    let p = d + 1;
+    let diag = box_slice(heap, p * p + p, 0.0);
+    var code = 0;
+    borrow mut diag as &!dw in {
+        code = linreg.fit(heap, t, mat(n, d), xv, yv, l2, out, contents(dw));
+    }
+    unbox_slice(heap, diag);
+    return code;
+}
+
+fn log_w[&h, &x, &y, &w, &o](heap: &!h Heap, t: int, xv: &x [float], yv: &y [float], wv: &w [float], n: int, d: int, iters: int, l2: float, out: &!o [float]) -> [heap, conc] int {
+    let diag = box_slice(heap, iters * (npass.width(d) + 1) + 1, 0.0);
+    var code = 0;
+    borrow mut diag as &!dw in {
+        code = logreg.fit_weighted(heap, t, mat(n, d), xv, yv, wv[0..n], iters, l2, out, contents(dw));
+    }
+    unbox_slice(heap, diag);
+    return code;
+}
+
+fn log_[&h, &x, &y, &o](heap: &!h Heap, t: int, xv: &x [float], yv: &y [float], n: int, d: int, iters: int, l2: float, out: &!o [float]) -> [heap, conc] int {
+    let diag = box_slice(heap, iters * (npass.width(d) + 1) + 1, 0.0);
+    var code = 0;
+    borrow mut diag as &!dw in {
+        code = logreg.fit(heap, t, mat(n, d), xv, yv, iters, l2, out, contents(dw));
+    }
+    unbox_slice(heap, diag);
+    return code;
+}
+
+fn bits_equal[&a, &b](x: &a [float], y: &b [float], n: int) -> [] bool {
+    var i = 0;
+    while i < n {
+        if bits_of(x[i]) != bits_of(y[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// the largest |x - y| / max(1, |y|)
+fn maxrel[&a, &b](x: &a [float], y: &b [float], n: int) -> [] float {
+    var m = 0.0;
+    var i = 0;
+    while i < n {
+        var den = math.fabs(y[i]);
+        if den < 1.0 {
+            den = 1.0;
+        }
+        let r = math.fabs(x[i] - y[i]) / den;
+        if r > m || r != r {
+            m = r;
+            if r != r {
+                return 1.0e300;
+            }
+        }
+        i = i + 1;
+    }
+    return m;
+}
+
+// a copy of w with element idx set to newv
+fn variant[&h, &w](heap: &!h Heap, wv: &w [float], n: int, idx: int, newv: float) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!q in {
+        var i = 0;
+        while i < n {
+            contents(q)[i] = wv[i];
+            i = i + 1;
+        }
+        if idx >= 0 && idx < n {
+            contents(q)[idx] = newv;
+        }
+    }
+    return o;
+}
+
+fn miss_lin[&h, &x, &y, &w](heap: &!h Heap, xv: &x [float], yv: &y [float], wv: &w [float], n: int, d: int, want: int) -> [heap, conc] int {
+    let out = box_slice(heap, d + 1, 0.0);
+    var code = 0;
+    borrow mut out as &!ow in {
+        code = lin_w(heap, 1, xv, yv, wv, n, d, 0.0, contents(ow));
+    }
+    unbox_slice(heap, out);
+    if code != want {
+        return 1;
+    }
+    return 0;
+}
+
+fn miss_log[&h, &x, &y, &w](heap: &!h Heap, xv: &x [float], yv: &y [float], wv: &w [float], n: int, d: int, want: int) -> [heap, conc] int {
+    let out = box_slice(heap, d + 1, 0.0);
+    var code = 0;
+    borrow mut out as &!ow in {
+        code = log_w(heap, 1, xv, yv, wv, n, d, 6, 0.0, contents(ow));
+    }
+    unbox_slice(heap, out);
+    if code != want {
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------- WG6: the refusals of a weight vector
+fn test_refusals[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 80;
+    let d = 3;
+    let xs = fill(heap, n * d, 5);
+    let ws = weights(heap, n, 2, 7);
+    borrow xs as &xr in {
+        let yl = target(heap, contents(xr), n, d, 6, false);
+        let yc = target(heap, contents(xr), n, d, 6, true);
+        borrow ws as &wr in {
+            borrow yl as &lr in {
+                borrow yc as &cr in {
+                    let w = contents(wr);
+                    let x = contents(xr);
+                    let nan = 0.0 / 0.0;
+                    let inf = 1.0e308 * 10.0;
+                    // a negative weight, a weight over 1e12, NaN and infinity, all weights 0
+                    let v1 = variant(heap, w, n, 5, 0.0 - 0.25);
+                    let v2 = variant(heap, w, n, 5, 1000000000000.0 * 1.0001);
+                    let v3 = variant(heap, w, n, 5, nan);
+                    let v4 = variant(heap, w, n, 5, inf);
+                    let v5 = variant(heap, w, n, 5, 1000000000000.0);
+                    let zero = box_slice(heap, n + 1, 0.0);
+                    borrow v1 as &a1 in { bad = bad + miss_lin(heap, x, contents(lr), contents(a1), n, d, refuse.param_out_of_range()) + miss_log(heap, x, contents(cr), contents(a1), n, d, refuse.param_out_of_range()); }
+                    borrow v2 as &a2 in { bad = bad + miss_lin(heap, x, contents(lr), contents(a2), n, d, refuse.param_out_of_range()) + miss_log(heap, x, contents(cr), contents(a2), n, d, refuse.param_out_of_range()); }
+                    borrow v3 as &a3 in { bad = bad + miss_lin(heap, x, contents(lr), contents(a3), n, d, refuse.input_non_finite()) + miss_log(heap, x, contents(cr), contents(a3), n, d, refuse.input_non_finite()); }
+                    borrow v4 as &a4 in { bad = bad + miss_lin(heap, x, contents(lr), contents(a4), n, d, refuse.input_non_finite()) + miss_log(heap, x, contents(cr), contents(a4), n, d, refuse.input_non_finite()); }
+                    // exactly 1e12 is allowed
+                    borrow v5 as &a5 in { bad = bad + miss_lin(heap, x, contents(lr), contents(a5), n, d, 0) + miss_log(heap, x, contents(cr), contents(a5), n, d, 0); }
+                    borrow zero as &az in { bad = bad + miss_lin(heap, x, contents(lr), contents(az), n, d, refuse.param_out_of_range()) + miss_log(heap, x, contents(cr), contents(az), n, d, refuse.param_out_of_range()); }
+                    // a weight vector of the wrong length is a refusal, not a trap
+                    let out = box_slice(heap, d + 1, 0.0);
+                    let diag = box_slice(heap, (d + 1) * (d + 1) + d + 1, 0.0);
+                    borrow mut out as &!ow in {
+                        borrow mut diag as &!dw in {
+                            if linreg.fit_weighted(heap, 1, mat(n, d), x, contents(lr), w[0..n - 1], 0.0, contents(ow), contents(dw)) == 0 {
+                                bad = bad + 1;
+                            }
+                        }
+                    }
+                    // the classes are judged on the rows that have a weight: every row of class 1 at weight 0 is a single class
+                    let v6 = box_slice(heap, n + 1, 1.0);
+                    borrow mut v6 as &!q6 in {
+                        var i = 0;
+                        while i < n {
+                            if contents(cr)[i] == 1.0 {
+                                contents(q6)[i] = 0.0;
+                            }
+                            i = i + 1;
+                        }
+                    }
+                    borrow v6 as &a6 in { bad = bad + miss_log(heap, x, contents(cr), contents(a6), n, d, refuse.label_single_class()); }
+                    unbox_slice(heap, out);
+                    unbox_slice(heap, diag);
+                    unbox_slice(heap, v1);
+                    unbox_slice(heap, v2);
+                    unbox_slice(heap, v3);
+                    unbox_slice(heap, v4);
+                    unbox_slice(heap, v5);
+                    unbox_slice(heap, v6);
+                    unbox_slice(heap, zero);
+                }
+            }
+        }
+        unbox_slice(heap, yl);
+        unbox_slice(heap, yc);
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ws);
+    return bad;
+}
+
+// the rows of the file in which row i appears w_i times (w_i integer valued, 0 removes the row): x, y and the row count
+fn expand[&h, &x, &y, &w](heap: &!h Heap, xv: &x [float], yv: &y [float], wv: &w [float], n: int, d: int) -> [heap] (Box[[float]], Box[[float]], int) {
+    var m = 0;
+    var i = 0;
+    while i < n {
+        m = m + truncate(wv[i]);
+        i = i + 1;
+    }
+    let xe = box_slice(heap, m * d + 1, 0.0);
+    let ye = box_slice(heap, m + 1, 0.0);
+    var xo = xe;
+    var yo = ye;
+    borrow mut xo as &!xq in {
+        borrow mut yo as &!yq in {
+            var r = 0;
+            i = 0;
+            while i < n {
+                var c = 0;
+                while c < truncate(wv[i]) {
+                    var j = 0;
+                    while j < d {
+                        contents(xq)[r * d + j] = xv[i * d + j];
+                        j = j + 1;
+                    }
+                    contents(yq)[r] = yv[i];
+                    r = r + 1;
+                    c = c + 1;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return (xo, yo, m);
+}
+
+fn scaled[&h, &w](heap: &!h Heap, wv: &w [float], n: int, c: float) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!q in {
+        var i = 0;
+        while i < n {
+            contents(q)[i] = wv[i] * c;
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// ---------------------------------------------------------------- WG2 (unit weights), WG3 (duplication, zero weights) and WG4 (scale)
+fn test_equivalences[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 700;
+    let d = 4;
+    let p = d + 1;
+    let xs = fill(heap, n * d, 11);
+    let ones = box_slice(heap, n + 1, 1.0);
+    let wi = weights(heap, n, 1, 12);
+    let wz = box_slice(heap, n + 1, 1.0);
+    borrow mut wz as &!zq in {
+        var i = 0;
+        while i < n {
+            if i % 7 == 3 {
+                contents(zq)[i] = 0.0;
+            }
+            i = i + 1;
+        }
+    }
+    let wf = weights(heap, n, 2, 13);
+    borrow xs as &xr in {
+        let yl = target(heap, contents(xr), n, d, 14, false);
+        let yc = target(heap, contents(xr), n, d, 14, true);
+        borrow yl as &lr in {
+            borrow yc as &cr in {
+                borrow ones as &or in {
+                    borrow wi as &ir in {
+                        borrow wz as &zr in {
+                            borrow wf as &fr in {
+                                let x = contents(xr);
+                                let yl2 = contents(lr);
+                                let yc2 = contents(cr);
+                                let a = box_slice(heap, p, 0.0);
+                                let b = box_slice(heap, p, 0.0);
+                                let c = box_slice(heap, p, 0.0);
+                                let e = box_slice(heap, p, 0.0);
+                                let f = box_slice(heap, p, 0.0);
+                                let g = box_slice(heap, p, 0.0);
+                                borrow mut a as &!aw in { borrow mut b as &!bw in {
+                                    // WG2: unit weights are the unweighted fit, bit for bit (linear, then logistic), at one and four threads
+                                    bad = bad + lin(heap, 1, x, yl2, n, d, 0.5, contents(aw)) + lin_w(heap, 4, x, yl2, contents(or), n, d, 0.5, contents(bw));
+                                    if !bits_equal(contents(aw), contents(bw), p) { bad = bad + 1; }
+                                    bad = bad + log_(heap, 1, x, yc2, n, d, 6, 0.1, contents(aw)) + log_w(heap, 4, x, yc2, contents(or), n, d, 6, 0.1, contents(bw));
+                                    if !bits_equal(contents(aw), contents(bw), p) { bad = bad + 1; }
+                                } }
+                                // WG3: integer weights are the file with the rows repeated (not bit equal: another order of the sums)
+                                let (xe, ye, m) = expand(heap, x, yl2, contents(ir), n, d);
+                                let (xc, yc3, m2) = expand(heap, x, yc2, contents(ir), n, d);
+                                borrow xe as &xer in { borrow ye as &yer in { borrow xc as &xcr in { borrow yc3 as &ycr in {
+                                    borrow mut a as &!aw in { borrow mut b as &!bw in {
+                                        bad = bad + lin(heap, 1, contents(xer), contents(yer), m, d, 0.5, contents(aw)) + lin_w(heap, 1, x, yl2, contents(ir), n, d, 0.5, contents(bw));
+                                        if maxrel(contents(bw), contents(aw), p) > 1.0e-8 { bad = bad + 1; }
+                                        bad = bad + log_(heap, 1, contents(xcr), contents(ycr), m2, d, 6, 0.1, contents(aw)) + log_w(heap, 1, x, yc2, contents(ir), n, d, 6, 0.1, contents(bw));
+                                        if maxrel(contents(bw), contents(aw), p) > 1.0e-8 { bad = bad + 1; }
+                                    } }
+                                } } } }
+                                // zero weights are removed rows
+                                let (xz, yz, mz) = expand(heap, x, yl2, contents(zr), n, d);
+                                let (xz2, yz2, mz2) = expand(heap, x, yc2, contents(zr), n, d);
+                                borrow xz as &xzr in { borrow yz as &yzr in { borrow xz2 as &xz2r in { borrow yz2 as &yz2r in {
+                                    borrow mut a as &!aw in { borrow mut b as &!bw in {
+                                        bad = bad + lin(heap, 1, contents(xzr), contents(yzr), mz, d, 0.5, contents(aw)) + lin_w(heap, 1, x, yl2, contents(zr), n, d, 0.5, contents(bw));
+                                        if maxrel(contents(bw), contents(aw), p) > 1.0e-8 { bad = bad + 1; }
+                                        bad = bad + log_(heap, 1, contents(xz2r), contents(yz2r), mz2, d, 6, 0.1, contents(aw)) + log_w(heap, 1, x, yc2, contents(zr), n, d, 6, 0.1, contents(bw));
+                                        if maxrel(contents(bw), contents(aw), p) > 1.0e-8 { bad = bad + 1; }
+                                    } }
+                                } } } }
+                                // WG4: weights c w with c l2 (linear) and weights c w with the same l2 (logistic) are the model of w; c = 1024 exactly, c = 1e6 not
+                                let w1k = scaled(heap, contents(fr), n, 1024.0);
+                                let w1m = scaled(heap, contents(fr), n, 1000000.0);
+                                borrow w1k as &k1 in { borrow w1m as &m1 in {
+                                    borrow mut a as &!aw in { borrow mut b as &!bw in { borrow mut c as &!cw in { borrow mut e as &!ew in {
+                                        bad = bad + lin_w(heap, 1, x, yl2, contents(fr), n, d, 0.5, contents(aw)) + lin_w(heap, 1, x, yl2, contents(k1), n, d, 512.0, contents(bw)) + lin_w(heap, 1, x, yl2, contents(m1), n, d, 500000.0, contents(cw));
+                                        if maxrel(contents(bw), contents(aw), p) > 1.0e-12 { bad = bad + 1; }
+                                        if maxrel(contents(cw), contents(aw), p) > 1.0e-9 { bad = bad + 1; }
+                                        bad = bad + log_w(heap, 1, x, yc2, contents(fr), n, d, 6, 0.1, contents(aw)) + log_w(heap, 1, x, yc2, contents(k1), n, d, 6, 0.1, contents(bw)) + log_w(heap, 1, x, yc2, contents(m1), n, d, 6, 0.1, contents(cw));
+                                        if maxrel(contents(bw), contents(aw), p) > 1.0e-12 { bad = bad + 1; }
+                                        if maxrel(contents(cw), contents(aw), p) > 1.0e-9 { bad = bad + 1; }
+                                    } } } }
+                                } }
+                                unbox_slice(heap, w1k);
+                                unbox_slice(heap, w1m);
+                                unbox_slice(heap, xe);
+                                unbox_slice(heap, ye);
+                                unbox_slice(heap, xc);
+                                unbox_slice(heap, yc3);
+                                unbox_slice(heap, xz);
+                                unbox_slice(heap, yz);
+                                unbox_slice(heap, xz2);
+                                unbox_slice(heap, yz2);
+                                unbox_slice(heap, a);
+                                unbox_slice(heap, b);
+                                unbox_slice(heap, c);
+                                unbox_slice(heap, e);
+                                unbox_slice(heap, f);
+                                unbox_slice(heap, g);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, yl);
+        unbox_slice(heap, yc);
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ones);
+    unbox_slice(heap, wi);
+    unbox_slice(heap, wz);
+    unbox_slice(heap, wf);
+    return bad;
+}
+
+fn finite_all[&o](v: &o [float], n: int) -> [] bool {
+    var i = 0;
+    while i < n {
+        if !(v[i] - v[i] == 0.0) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------- WG6: the extremes of the weight range give the unweighted model
+fn test_extremes[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 400;
+    let d = 3;
+    let p = d + 1;
+    let xs = fill(heap, n * d, 31);
+    let big = box_slice(heap, n + 1, 1000000000000.0);
+    let tiny = box_slice(heap, n + 1, 1.0e-300);
+    borrow xs as &xr in {
+        let yl = target(heap, contents(xr), n, d, 32, false);
+        let yc = target(heap, contents(xr), n, d, 32, true);
+        borrow yl as &lr in { borrow yc as &cr in { borrow big as &br in { borrow tiny as &tr in {
+            let a = box_slice(heap, p, 0.0);
+            let b = box_slice(heap, p, 0.0);
+            let c = box_slice(heap, p, 0.0);
+            borrow mut a as &!aw in { borrow mut b as &!bw in { borrow mut c as &!cw in {
+                bad = bad + lin(heap, 1, contents(xr), contents(lr), n, d, 0.0, contents(aw));
+                bad = bad + lin_w(heap, 1, contents(xr), contents(lr), contents(br), n, d, 0.0, contents(bw));
+                bad = bad + lin_w(heap, 1, contents(xr), contents(lr), contents(tr), n, d, 0.0, contents(cw));
+                if !finite_all(contents(bw), p) || !finite_all(contents(cw), p) { bad = bad + 1; }
+                if maxrel(contents(bw), contents(aw), p) > 1.0e-9 { bad = bad + 1; }
+                if maxrel(contents(cw), contents(aw), p) > 1.0e-9 { bad = bad + 1; }
+                bad = bad + log_(heap, 1, contents(xr), contents(cr), n, d, 8, 0.0, contents(aw));
+                bad = bad + log_w(heap, 1, contents(xr), contents(cr), contents(br), n, d, 8, 0.0, contents(bw));
+                bad = bad + log_w(heap, 1, contents(xr), contents(cr), contents(tr), n, d, 8, 0.0, contents(cw));
+                if !finite_all(contents(bw), p) || !finite_all(contents(cw), p) { bad = bad + 1; }
+                if maxrel(contents(bw), contents(aw), p) > 1.0e-9 { bad = bad + 1; }
+                if maxrel(contents(cw), contents(aw), p) > 1.0e-9 { bad = bad + 1; }
+            } } }
+            unbox_slice(heap, a);
+            unbox_slice(heap, b);
+            unbox_slice(heap, c);
+        } } } }
+        unbox_slice(heap, yl);
+        unbox_slice(heap, yc);
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, big);
+    unbox_slice(heap, tiny);
+    return bad;
+}
+
+// ---------------------------------------------------------------- WG7: separation is judged on the rows that have a weight
+fn test_separation_with_weights[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 200;
+    let d = 2;
+    let p = d + 1;
+    let xs = fill(heap, n * d, 41);
+    let ys = box_slice(heap, n + 1, 0.0);
+    // the classes are separated by the first feature, with a gap
+    var xo = xs;
+    borrow mut xo as &!xq in {
+        borrow mut ys as &!yq in {
+            var i = 0;
+            while i < n {
+                var v = contents(xq)[i * d];
+                if v >= 0.0 {
+                    v = v + 0.2;
+                    contents(yq)[i] = 1.0;
+                } else {
+                    v = v - 0.2;
+                }
+                contents(xq)[i * d] = v;
+                i = i + 1;
+            }
+        }
+    }
+    // the row with the largest first feature, relabelled (a point of class 0 inside class 1)
+    var top = 0;
+    borrow xo as &xr in {
+        var i = 0;
+        while i < n {
+            if contents(xr)[i * d] > contents(xr)[top * d] {
+                top = i;
+            }
+            i = i + 1;
+        }
+    }
+    let flipped = box_slice(heap, n + 1, 0.0);
+    borrow ys as &yr in {
+        borrow mut flipped as &!fq in {
+            var i = 0;
+            while i < n {
+                contents(fq)[i] = contents(yr)[i];
+                i = i + 1;
+            }
+            contents(fq)[top] = 0.0;
+        }
+    }
+    let wf = weights(heap, n, 2, 42);
+    let w1 = box_slice(heap, n + 1, 1.0);
+    var wzero = box_slice(heap, n + 1, 1.0);
+    borrow mut wzero as &!zq in {
+        contents(zq)[top] = 0.0;
+    }
+    let out = box_slice(heap, p, 0.0);
+    borrow xo as &xr in { borrow ys as &yr in { borrow flipped as &fr in { borrow wf as &wr in { borrow w1 as &o1 in { borrow wzero as &zr in {
+        borrow mut out as &!ow in {
+            // separable, unit weights and float weights: refused
+            if log_w(heap, 1, contents(xr), contents(yr), contents(o1), n, d, 40, 0.0, contents(ow)) != refuse.fit_separable() { bad = bad + 1; }
+            if log_w(heap, 1, contents(xr), contents(yr), contents(wr), n, d, 40, 0.0, contents(ow)) != refuse.fit_separable() { bad = bad + 1; }
+            // with a ridge it is fitted
+            if log_w(heap, 1, contents(xr), contents(yr), contents(wr), n, d, 40, 0.1, contents(ow)) != 0 { bad = bad + 1; }
+            // the relabelled row at weight 1 makes the classes overlap: not a separation
+            if log_w(heap, 1, contents(xr), contents(fr), contents(o1), n, d, 40, 0.0, contents(ow)) == refuse.fit_separable() { bad = bad + 1; }
+            // the relabelled row at weight 0 is not part of the fit: the classes of the others are separated
+            if log_w(heap, 1, contents(xr), contents(fr), contents(zr), n, d, 40, 0.0, contents(ow)) != refuse.fit_separable() { bad = bad + 1; }
+        }
+    } } } } } }
+    unbox_slice(heap, xo);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, flipped);
+    unbox_slice(heap, wf);
+    unbox_slice(heap, w1);
+    unbox_slice(heap, wzero);
+    unbox_slice(heap, out);
+    return bad;
+}
+
+// ---------------------------------------------------------------- a strided view (the first d columns of a wider matrix) is the contiguous matrix
+fn test_strided_view[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 300;
+    let d = 3;
+    let p = d + 1;
+    let xs = fill(heap, n * d, 61);
+    let ws = weights(heap, n, 2, 62);
+    // the same rows inside a matrix with one extra column holding garbage
+    let wide = box_slice(heap, n * (d + 1) + 1, 7.0);
+    borrow xs as &xr in {
+        borrow mut wide as &!wq in {
+            var i = 0;
+            while i < n {
+                var j = 0;
+                while j < d {
+                    contents(wq)[i * (d + 1) + j] = contents(xr)[i * d + j];
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+        let yl = target(heap, contents(xr), n, d, 63, false);
+        let yc = target(heap, contents(xr), n, d, 63, true);
+        borrow yl as &lr in { borrow yc as &cr in { borrow ws as &wr in { borrow wide as &br in {
+            var view = mat(n, d);
+            match tensor.matrix_strided(0, n, d, d + 1, 1) {
+                tensor.Made::Ok(t) => {
+                    view = t;
+                }
+                tensor.Made::Err(c) => {
+                    bad = bad + 1;
+                }
+            }
+            let a = box_slice(heap, p, 0.0);
+            let b = box_slice(heap, p, 0.0);
+            let diag = box_slice(heap, p * p + p, 0.0);
+            let ldiag = box_slice(heap, 6 * (npass.width(d) + 1) + 1, 0.0);
+            borrow mut a as &!aw in { borrow mut b as &!bw in { borrow mut diag as &!dw in { borrow mut ldiag as &!ldw in {
+                bad = bad + lin_w(heap, 1, contents(xr), contents(lr), contents(wr), n, d, 0.5, contents(aw));
+                bad = bad + linreg.fit_weighted(heap, 1, view, contents(br), contents(lr), contents(wr)[0..n], 0.5, contents(bw), contents(dw));
+                if !bits_equal(contents(aw), contents(bw), p) { bad = bad + 1; }
+                bad = bad + log_w(heap, 1, contents(xr), contents(cr), contents(wr), n, d, 6, 0.1, contents(aw));
+                bad = bad + logreg.fit_weighted(heap, 2, view, contents(br), contents(cr), contents(wr)[0..n], 6, 0.1, contents(bw), contents(ldw));
+                if !bits_equal(contents(aw), contents(bw), p) { bad = bad + 1; }
+            } } } }
+            unbox_slice(heap, a);
+            unbox_slice(heap, b);
+            unbox_slice(heap, diag);
+            unbox_slice(heap, ldiag);
+        } } } }
+        unbox_slice(heap, yl);
+        unbox_slice(heap, yc);
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ws);
+    unbox_slice(heap, wide);
+    return bad;
+}
+
+// ---------------------------------------------------------------- tiny weights do not turn overlapping classes into a separation
+fn test_tiny_weights_are_not_separation[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 200;
+    let d = 2;
+    let p = d + 1;
+    let xs = fill(heap, n * d, 71);
+    borrow xs as &xr in {
+        let yc = target(heap, contents(xr), n, d, 72, true);
+        borrow yc as &cr in {
+            let out = box_slice(heap, p, 0.0);
+            var k = 0;
+            while k < 3 {
+                var c = 1.0e-3;
+                if k == 1 {
+                    c = 1.0e-9;
+                }
+                if k == 2 {
+                    c = 1.0e9;
+                }
+                let w = box_slice(heap, n + 1, c);
+                borrow w as &wr in { borrow mut out as &!ow in {
+                    // classes that overlap: the weighted loss of the first pass is n c ln 2, below 0.6931 for the first two, which the bound wmin * 0.6931 must not mistake for a separation
+                    if log_w(heap, 1, contents(xr), contents(cr), contents(wr), n, d, 8, 0.0, contents(ow)) != 0 { bad = bad + 1; }
+                } }
+                unbox_slice(heap, w);
+                k = k + 1;
+            }
+            unbox_slice(heap, out);
+        }
+        unbox_slice(heap, yc);
+    }
+    unbox_slice(heap, xs);
+    return bad;
+}
+
+// ---------------------------------------------------------------- WG9: the bits do not depend on the thread count
+fn test_threads[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 5000;
+    let d = 6;
+    let p = d + 1;
+    let xs = fill(heap, n * d, 51);
+    let ws = weights(heap, n, 2, 52);
+    borrow xs as &xr in {
+        let yl = target(heap, contents(xr), n, d, 53, false);
+        let yc = target(heap, contents(xr), n, d, 53, true);
+        borrow yl as &lr in { borrow yc as &cr in { borrow ws as &wr in {
+            let a = box_slice(heap, p, 0.0);
+            let b = box_slice(heap, p, 0.0);
+            let la = box_slice(heap, p, 0.0);
+            let lb = box_slice(heap, p, 0.0);
+            borrow mut a as &!aw in { borrow mut la as &!law in {
+                bad = bad + lin_w(heap, 1, contents(xr), contents(lr), contents(wr), n, d, 0.25, contents(aw));
+                bad = bad + log_w(heap, 1, contents(xr), contents(cr), contents(wr), n, d, 5, 0.25, contents(law));
+            } }
+            var t = 2;
+            while t <= 8 {
+                borrow mut b as &!bw in { borrow mut lb as &!lbw in {
+                    bad = bad + lin_w(heap, t, contents(xr), contents(lr), contents(wr), n, d, 0.25, contents(bw));
+                    bad = bad + log_w(heap, t, contents(xr), contents(cr), contents(wr), n, d, 5, 0.25, contents(lbw));
+                } }
+                borrow a as &ar in { borrow b as &br in { borrow la as &lar in { borrow lb as &lbr in {
+                    if !bits_equal(contents(ar), contents(br), p) { bad = bad + 1; }
+                    if !bits_equal(contents(lar), contents(lbr), p) { bad = bad + 1; }
+                } } } }
+                t = t * 2;
+            }
+            unbox_slice(heap, a);
+            unbox_slice(heap, b);
+            unbox_slice(heap, la);
+            unbox_slice(heap, lb);
+        } } }
+        unbox_slice(heap, yl);
+        unbox_slice(heap, yc);
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ws);
+    return bad;
+}
+
+fn pick(r: int) -> [] float {
+    let m = r % 8;
+    if m == 0 {
+        return 0.0;
+    }
+    if m == 1 {
+        return 1.0e-300;
+    }
+    if m == 2 {
+        return 1.0e-5;
+    }
+    if m == 3 {
+        return 1.0;
+    }
+    if m == 4 {
+        return 3.7;
+    }
+    if m == 5 {
+        return 1000000000000.0;
+    }
+    if m == 6 {
+        return 1.5e12;
+    }
+    return 0.0 - 1.0;
+}
+
+// ---------------------------------------------------------------- WG9: hostile weights never trap; a fit that answers 0 has finite parameters
+fn test_fuzz_never_traps[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    var round = 0;
+    while round < 80 {
+        let n = 1 + rng_int(round, 0, 300);
+        let d = 1 + rng_int(round, 1, 4);
+        let p = d + 1;
+        let xs = fill(heap, n * d + 2, 100 + round);
+        let ws = box_slice(heap, n + 1, 1.0);
+        borrow mut ws as &!wq in {
+            var i = 0;
+            let mode = rng_int(round, 2, 4);
+            while i < n {
+                if mode == 0 {
+                    contents(wq)[i] = pick(rng_int(round * 1000 + i, 3, 8));
+                } else if mode == 1 {
+                    contents(wq)[i] = pick(rng_int(round * 1000 + i, 3, 5));
+                } else {
+                    contents(wq)[i] = 1.0 + float_of(rng_int(round * 1000 + i, 3, 3));
+                }
+                i = i + 1;
+            }
+        }
+        borrow xs as &xr in {
+            // d >= 2 is needed by the linear target
+            if d >= 2 {
+                let yl = target(heap, contents(xr), n, d, 200 + round, false);
+                let yc = target(heap, contents(xr), n, d, 200 + round, true);
+                borrow yl as &lr in { borrow yc as &cr in { borrow ws as &wr in {
+                    let out = box_slice(heap, p, 0.0);
+                    borrow mut out as &!ow in {
+                        let c1 = lin_w(heap, 1 + round % 3, contents(xr), contents(lr), contents(wr), n, d, 0.1, contents(ow));
+                        if c1 < 0 || c1 > refuse.count() { bad = bad + 1; }
+                        if c1 == 0 && !finite_all(contents(ow), p) { bad = bad + 1; }
+                        let c2 = log_w(heap, 1 + round % 3, contents(xr), contents(cr), contents(wr), n, d, 4, 0.1, contents(ow));
+                        if c2 < 0 || c2 > refuse.count() { bad = bad + 1; }
+                        if c2 == 0 && !finite_all(contents(ow), p) { bad = bad + 1; }
+                    }
+                    unbox_slice(heap, out);
+                } } }
+                unbox_slice(heap, yl);
+                unbox_slice(heap, yc);
+            }
+        }
+        unbox_slice(heap, xs);
+        unbox_slice(heap, ws);
+        round = round + 1;
+    }
+    return bad;
+}
+
+// a deterministic integer in [0, m) from (a, b)
+fn rng_int(a: int, b: int, m: int) -> [] int {
+    let u = rng.element(1000 + b, a);
+    var v = truncate((u + 1.0) * 0.5 * float_of(m));
+    if v < 0 {
+        v = 0;
+    }
+    if v >= m {
+        v = m - 1;
+    }
+    return v;
+}
+
+fn report[&i](io: &!i Io, name: &static [byte], bad: int) -> [io_write] int {
+    io.write_all(io, name);
+    if bad == 0 {
+        io.write_all(io, " ... ok\n");
+        return 0;
+    }
+    io.write_all(io, " ... FAILED (");
+    io.print_int(io, bad);
+    io.write_all(io, ")\n");
+    return 1;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    var failed = 0;
+    borrow mut heap as &!hp in {
+        borrow mut io as &!ip in {
+            failed = failed + report(ip, "weights_refusals", test_refusals(hp));
+            failed = failed + report(ip, "weights_equivalences", test_equivalences(hp));
+            failed = failed + report(ip, "weights_extremes", test_extremes(hp));
+            failed = failed + report(ip, "weights_separation_with_weights", test_separation_with_weights(hp));
+            failed = failed + report(ip, "weights_strided_view", test_strided_view(hp));
+            failed = failed + report(ip, "weights_tiny_weights_are_not_separation", test_tiny_weights_are_not_separation(hp));
+            failed = failed + report(ip, "weights_threads", test_threads(hp));
+            failed = failed + report(ip, "weights_fuzz_never_traps", test_fuzz_never_traps(hp));
+        }
+    }
+    release(heap);
+    release(io);
+    return failed;
+}

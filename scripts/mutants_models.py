@@ -18,6 +18,7 @@ KP = "lib/models/kmeans/kpass.cho"
 PAR = "lib/models/par.cho"
 LPAR = "lib/linalg/par.cho"
 LCH = "lib/linalg/chol.cho"
+CM = "lib/models/common.cho"
 SC = "lib/models/score.cho"
 MX = "lib/models/mexp.cho"
 RC = "lib/models/record.cho"
@@ -30,7 +31,7 @@ M = [
     ("lin-ridge-on-intercept", LIN, "            while j < d {\n                gv[j * p + j] = gv[j * p + j] + l2;", "            while j < p {\n                gv[j * p + j] = gv[j * p + j] + l2;"),
     ("lin-ridge-sign", LIN, "gv[j * p + j] = gv[j * p + j] + l2;", "gv[j * p + j] = gv[j * p + j] - l2;"),
     ("lin-ridge-dropped", LIN, "gv[j * p + j] = gv[j * p + j] + l2;", "gv[j * p + j] = gv[j * p + j];"),
-    ("lin-count", LIN, "diag[d * p + d] = float_of(n);", "diag[d * p + d] = float_of(n) - 1.0;"),
+    ("lin-count", LIN, "diag[d * p + d] = corner;", "diag[d * p + d] = corner - 1.0;"),
     ("lin-sum-y", LIN, "diag[p * p + d] = sy;", "diag[p * p + d] = 0.0;"),
     ("lin-backward-as-forward", LIN, "code = chol.solve(1, common.mat(p, p), contents(lr), common.vec(p), contents(ur), common.vec(p), contents(wwr));", "code = chol.solve(0, common.mat(p, p), contents(lr), common.vec(p), contents(ur), common.vec(p), contents(wwr));"),
     ("lin-mirror", LIN, "diag[k * p + j] = cc[j * d + k];", "diag[k * p + j] = 0.0;"),
@@ -181,6 +182,31 @@ M = [
     ("sm-par-dispatch", PAR, "            } else if kind == 3 {\n                spass.block(xs, rs, ys, b * 256, hi, d, k, wv, sc, st[sp * ww..sp * ww + ww]);", "            } else if kind == 3 {\n                spass.block(xs, rs, ys, b * 256, hi, d, k + 1, wv, sc, st[sp * ww..sp * ww + ww]);"),
     ("sm-par-labels-copy", PAR, "        if kind != 2 {\n            copy_floats(contents(jk.jy), ys[r0..r1], rows);", "        if kind == 1 {\n            copy_floats(contents(jk.jy), ys[r0..r1], rows);"),
     ("sm-refuse-classes-code", RF, "pub fn limit_classes() -> [] int {\n    return 24;", "pub fn limit_classes() -> [] int {\n    return 25;"),
+    # ---- sample weights (docs/weights.md section 2.2 and 2.3)
+    ("w-lin-no-sqrt", LIN, "let si = sqrt(wd[i]);", "let si = wd[i];"),
+    ("w-lin-corner-n", LIN, "        corner = r.v;", "        corner = float_of(n);"),
+    ("w-lin-y-unscaled", LIN, "contents(yw)[i] = si * yd[i];", "contents(yw)[i] = yd[i];"),
+    ("w-lin-x-unscaled", LIN, "contents(xw)[i * d + j] = si * xd[xt.off + i * xt.t0 + j * xt.t1];", "contents(xw)[i * d + j] = xd[xt.off + i * xt.t0 + j * xt.t1];"),
+    ("w-lin-view-stride", LIN, "xd[xt.off + i * xt.t0 + j * xt.t1];", "xd[xt.off + i * d + j];"),
+    ("w-lin-weighted-flag", LIN, "if code == 0 && weighted {", "if code == 0 && false {"),
+    ("w-check-negative", CM, "if wd[i] < 0.0 || wd[i] > max_weight() {", "if wd[i] < 0.0 - 1.0 || wd[i] > max_weight() {"),
+    ("w-check-max", CM, "|| wd[i] > max_weight() {", "|| wd[i] >= max_weight() {"),
+    ("w-check-max-value", CM, "return 1000000000000.0;", "return 10000000000000.0;"),
+    ("w-check-nonfinite", CM, "    if count_bad_vec(wd, n) != 0 {\n        return refuse.input_non_finite();\n    }\n    var any = false;", "    var any = false;"),
+    ("w-check-all-zero", CM, "    if !any {\n        return refuse.param_out_of_range();", "    if false {\n        return refuse.param_out_of_range();"),
+    ("w-log-nf-rows", LOG, "        sw = r.v;", "        sw = float_of(n);"),
+    ("w-log-wmin-ignored", LOG, "contents(yr), n, d, iters, l2, sw, wmin, out, diag);", "contents(yr), n, d, iters, l2, sw, 1.0, out, diag);"),
+    ("w-log-classes-all-rows", LOG, "        if wd[i] > 0.0 {\n            if yd[i] == 1.0 {", "        if true {\n            if yd[i] == 1.0 {"),
+    ("w-log-kind", LOG, "code = newton(heap, t, 4, xd[xt.off..len(xd)]", "code = newton(heap, t, 1, xd[xt.off..len(xd)]"),
+    ("w-log-weights-after-labels", LOG, "contents(yq)[n + k] = wd[k];", "contents(yq)[n + k] = 1.0;"),
+    ("w-np-r", NP, "rr[q] = rr[q] * wq;", "rr[q] = rr[q];"),
+    ("w-np-s", NP, "ss[q] = ss[q] * wq;", "ss[q] = ss[q];"),
+    ("w-np-loss", NP, "ll[q] = ll[q] * wq;", "ll[q] = ll[q];"),
+    ("w-np-row-offset", NP, "let wq = ys[wo + r0 + q];", "let wq = ys[wo + q];"),
+    ("w-par-weights-copy", PAR, "ys[n + r0..n + r1], rows);", "ys[r0..r1], rows);"),
+    ("w-par-piece-offset", PAR, "let wo = contents(job.jp)[6] * rows;", "let wo = contents(job.jp)[6] * (rows - 1);"),
+    ("w-par-sequential-offset", PAR, "npass.block(xs, rs, ys, b * 256, hi, d, wv, n, sc, st[sp * ww..sp * ww + ww]);", "npass.block(xs, rs, ys, b * 256, hi, d, wv, 0, sc, st[sp * ww..sp * ww + ww]);"),
+    ("w-par-kind4-dispatch", PAR, "if kind == 1 || kind == 4 {", "if kind == 1 {"),
     # ---- the threads (shared by the three)
     ("par-thread-order", LPAR, "    var sp = 0;\n    var c = 0;\n    while c < nchunks {\n        sp = order.settle_root(st, lv, sp, w, roots, c * w, 3);\n        c = c + 1;\n    }\n    order.finish(st, sp, w);\n    return 0;", "    var j = 0;\n    while j < w {\n        st[j] = 0.0;\n        j = j + 1;\n    }\n    var k = 0;\n    while k < t {\n        j = 0;\n        while j < w {\n            st[w + j] = 0.0;\n            j = j + 1;\n        }\n        var c = bound(k, t, nchunks);\n        let c1 = bound(k + 1, t, nchunks);\n        while c < c1 {\n            j = 0;\n            while j < w {\n                st[w + j] = st[w + j] + roots[c * w + j];\n                j = j + 1;\n            }\n            c = c + 1;\n        }\n        j = 0;\n        while j < w {\n            st[j] = st[j] + st[w + j];\n            j = j + 1;\n        }\n        k = k + 1;\n    }\n    return 0;"),
     ("par-models-chunk-misaligned", PAR, "let r0 = c0 * 2048;", "let r0 = c0 * 2047;"),

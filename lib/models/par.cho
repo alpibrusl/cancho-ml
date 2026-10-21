@@ -16,6 +16,7 @@ import models.kpass;
 // rows it needs (cancho gives a thread one pointer-width payload and no shared reads, docs/linalg.md 5.6 U2), made at every pass and
 // counted in the time.
 //   kind 1: the Newton pass of logistic regression (npass.block)
+//   kind 4: the same with a weight per row (docs/weights.md 2.3): ys holds the n labels, then the n weights
 //   kind 2: the Lloyd pass of k-means (kpass.block): the labels of the piece come back with the roots
 //   kind 3: the Newton pass of softmax regression (spass.block), the parameter k (kc of `pass`) is the number of classes
 
@@ -31,7 +32,8 @@ res struct Job {
     jp: Box[[int]],
 }
 
-// jp: 0 kind, 1 rows of the piece, 2 chunks in the piece, 3 d, 4 slot width W, 5 parameter k (kind 2: clusters)
+// jp: 0 kind, 1 rows of the piece, 2 chunks in the piece, 3 d, 4 slot width W, 5 parameter k (kind 2: clusters), 6 weighted (kind 4): jy then holds the piece's labels followed by its weights
+// A weighted pass (kind 4) is given ys of 2 n values: the labels, then the weights (docs/weights.md 2.3).
 
 fn copy_floats[&d, &s](dst: &!d [float], src: &s [float], n: int) -> [] int {
     let o = dst[0..n];
@@ -45,7 +47,7 @@ fn copy_floats[&d, &s](dst: &!d [float], src: &s [float], n: int) -> [] int {
 }
 
 // the chunks of the piece, one root each, into out[c * W ..]
-fn chunks_of[&x, &y, &w, &c, &o, &s, &l, &q](kind: int, xs: &x [float], rs: int, ys: &y [float], wv: &w [float], sc: &!c [float], ov: &!o [float], st: &!s [float], lv: &!l [int], lab: &!q [int], rows: int, nchunks: int, d: int, k: int, ww: int) -> [] int {
+fn chunks_of[&x, &y, &w, &c, &o, &s, &l, &q](kind: int, xs: &x [float], rs: int, ys: &y [float], wv: &w [float], sc: &!c [float], ov: &!o [float], st: &!s [float], lv: &!l [int], lab: &!q [int], rows: int, nchunks: int, d: int, k: int, ww: int, wo: int) -> [] int {
     let nb = order.blocks(rows);
     var c = 0;
     while c < nchunks {
@@ -60,8 +62,8 @@ fn chunks_of[&x, &y, &w, &c, &o, &s, &l, &q](kind: int, xs: &x [float], rs: int,
             if hi > rows {
                 hi = rows;
             }
-            if kind == 1 {
-                npass.block(xs, rs, ys, b * 256, hi, d, wv, sc, st[sp * ww..sp * ww + ww]);
+            if kind == 1 || kind == 4 {
+                npass.block(xs, rs, ys, b * 256, hi, d, wv, wo, sc, st[sp * ww..sp * ww + ww]);
             } else if kind == 3 {
                 spass.block(xs, rs, ys, b * 256, hi, d, k, wv, sc, st[sp * ww..sp * ww + ww]);
             } else {
@@ -84,7 +86,8 @@ fn work[&r](job: &!r Job) -> [] int {
     let d = contents(job.jp)[3];
     let ww = contents(job.jp)[4];
     let k = contents(job.jp)[5];
-    chunks_of(kind, contents(job.jx), d, contents(job.jy), contents(job.jw), contents(job.jsc), contents(job.jout), contents(job.jst), contents(job.jlv), contents(job.jlab), rows, nch, d, k, ww);
+    let wo = contents(job.jp)[6] * rows;
+    chunks_of(kind, contents(job.jx), d, contents(job.jy), contents(job.jw), contents(job.jsc), contents(job.jout), contents(job.jst), contents(job.jlv), contents(job.jlab), rows, nch, d, k, ww, wo);
     return 0;
 }
 
@@ -105,6 +108,11 @@ fn fan[&h, &x, &y, &w, &o, &q](heap: &!h Heap, kind: int, xs: &x [float], rs: in
     if kind == 2 {
         ylen = 0;
     }
+    var weighted = 0;
+    if kind == 4 {
+        weighted = 1;
+        ylen = 2 * rows;
+    }
     var job = Job { jx: box_slice(heap, rows * d + 1, 0.0), jy: box_slice(heap, ylen + 1, 0.0), jw: box_slice(heap, len(wv) + 1, 0.0), jout: box_slice(heap, (c1 - c0) * ww + 1, 0.0), jst: box_slice(heap, 6 * ww + 1, 0.0), jlv: box_slice(heap, 8, 0), jsc: box_slice(heap, scratch + 1, 0.0), jlab: box_slice(heap, rows + 1, 0), jp: box_slice(heap, 8, 0) };
     borrow mut job as &!jk in {
         contents(jk.jp)[0] = kind;
@@ -113,6 +121,7 @@ fn fan[&h, &x, &y, &w, &o, &q](heap: &!h Heap, kind: int, xs: &x [float], rs: in
         contents(jk.jp)[3] = d;
         contents(jk.jp)[4] = ww;
         contents(jk.jp)[5] = kc;
+        contents(jk.jp)[6] = weighted;
         var i = 0;
         let jx = contents(jk.jx);
         while i < rows {
@@ -121,6 +130,9 @@ fn fan[&h, &x, &y, &w, &o, &q](heap: &!h Heap, kind: int, xs: &x [float], rs: in
         }
         if kind != 2 {
             copy_floats(contents(jk.jy), ys[r0..r1], rows);
+        }
+        if weighted == 1 {
+            copy_floats(contents(jk.jy)[rows..2 * rows], ys[n + r0..n + r1], rows);
         }
         copy_floats(contents(jk.jw), wv, len(wv));
     }
@@ -173,7 +185,9 @@ pub fn pass[&h, &x, &y, &w, &c, &s, &l, &q](heap: &!h Heap, t: int, kind: int, x
                 hi = n;
             }
             if kind == 1 {
-                npass.block(xs, rs, ys, b * 256, hi, d, wv, sc, st[sp * ww..sp * ww + ww]);
+                npass.block(xs, rs, ys, b * 256, hi, d, wv, 0, sc, st[sp * ww..sp * ww + ww]);
+            } else if kind == 4 {
+                npass.block(xs, rs, ys, b * 256, hi, d, wv, n, sc, st[sp * ww..sp * ww + ww]);
             } else if kind == 3 {
                 spass.block(xs, rs, ys, b * 256, hi, d, kc, wv, sc, st[sp * ww..sp * ww + ww]);
             } else {

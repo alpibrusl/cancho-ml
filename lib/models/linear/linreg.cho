@@ -15,11 +15,10 @@ import models.rank;
 // solves. The parameters are w[0..d) and the intercept w[d].
 
 // the work after the checks: sums, assembly, solve. Answers a refusal code. diag receives G (P x P, mirrored) then b (P).
-fn run[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+fn run[&h, &x, &y, &v, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], ov: &v [float], weighted: bool, l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
     let n = xt.s0;
     let d = xt.s1;
     let p = d + 1;
-    let ones = box_slice(heap, n, 1.0);
     let cmat = box_slice(heap, d * d, 0.0);
     let csum = box_slice(heap, d, 0.0);
     let bsum = box_slice(heap, d, 0.0);
@@ -30,25 +29,30 @@ fn run[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [fl
     let ww = box_slice(heap, p, 0.0);
     var code = 0;
     var sy = 0.0;
-    borrow ones as &onr in {
-        borrow mut cmat as &!cw in {
-            code = par.syrk_par(heap, t, xt, xd, common.mat(d, d), contents(cw));
+    var corner = float_of(n);
+    borrow mut cmat as &!cw in {
+        code = par.syrk_par(heap, t, xt, xd, common.mat(d, d), contents(cw));
+    }
+    if code == 0 {
+        borrow mut csum as &!sw in {
+            code = par.gemv_t_par(heap, t, xt, xd, common.vec(n), ov[0..n], common.vec(d), contents(sw));
         }
-        if code == 0 {
-            borrow mut csum as &!sw in {
-                code = par.gemv_t_par(heap, t, xt, xd, common.vec(n), contents(onr), common.vec(d), contents(sw));
-            }
+    }
+    if code == 0 {
+        borrow mut bsum as &!bw in {
+            code = par.gemv_t_par(heap, t, xt, xd, common.vec(n), yd[0..n], common.vec(d), contents(bw));
         }
-        if code == 0 {
-            borrow mut bsum as &!bw in {
-                code = par.gemv_t_par(heap, t, xt, xd, common.vec(n), yd[0..n], common.vec(d), contents(bw));
-            }
-        }
-        if code == 0 {
-            let r = par.dot_par(heap, t, common.vec(n), yd[0..n], common.vec(n), contents(onr));
-            code = r.code;
-            sy = r.v;
-        }
+    }
+    if code == 0 {
+        let r = par.dot_par(heap, t, common.vec(n), yd[0..n], common.vec(n), ov[0..n]);
+        code = r.code;
+        sy = r.v;
+    }
+    if code == 0 && weighted {
+        // the corner is the sum of s * s in the package's order (for unit weights it is n, exact in any order)
+        let r = par.dot_par(heap, t, common.vec(n), ov[0..n], common.vec(n), ov[0..n]);
+        code = r.code;
+        corner = r.v;
     }
     if code == 0 {
         // assemble G (upper from syrk, mirrored) and b into diag
@@ -71,7 +75,7 @@ fn run[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [fl
                         diag[p * p + j] = bs[j];
                         j = j + 1;
                     }
-                    diag[d * p + d] = float_of(n);
+                    diag[d * p + d] = corner;
                     diag[p * p + d] = sy;
                 }
             }
@@ -148,7 +152,6 @@ fn run[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [fl
             }
         }
     }
-    unbox_slice(heap, ones);
     unbox_slice(heap, cmat);
     unbox_slice(heap, csum);
     unbox_slice(heap, bsum);
@@ -192,7 +195,88 @@ pub fn fit[&h, &x, &y, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x
     if common.count_bad(xd[xt.off..len(xd)], xt.t0, n, d) != 0 || common.count_bad_vec(yd, n) != 0 {
         return refuse.input_non_finite();
     }
-    return run(heap, t, xt, xd, yd, l2, out, diag);
+    let ones = box_slice(heap, n, 1.0);
+    var code = 0;
+    borrow ones as &onr in {
+        code = run(heap, t, xt, xd, yd, contents(onr), false, l2, out, diag);
+    }
+    unbox_slice(heap, ones);
+    return code;
+}
+
+// Fit with a weight per row (docs/weights.md section 2.2): s_i = sqrt(w_i); the sums of `fit` on the rows s_i x_i, the targets s_i y_i and
+// the vector s in the place of the ones. wd: n weights, each finite, 0 <= w <= 1e12, not all 0. Same shapes of out and diag as `fit`.
+pub fn fit_weighted[&h, &x, &y, &w, &o, &g](heap: &!h Heap, t: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], wd: &w [float], l2: float, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    if limits.check_threads(t) != 0 {
+        return refuse.threads();
+    }
+    var c = common.check_l2(l2);
+    if c != 0 {
+        return c;
+    }
+    c = common.check_x(xt, len(xd), common.max_features());
+    if c != 0 {
+        return c;
+    }
+    let n = xt.s0;
+    let d = xt.s1;
+    let p = d + 1;
+    c = common.check_len(n, len(yd));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(n, len(wd));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(p, len(out));
+    if c != 0 {
+        return c;
+    }
+    c = common.check_len(p * p + p, len(diag));
+    if c != 0 {
+        return c;
+    }
+    if common.count_bad(xd[xt.off..len(xd)], xt.t0, n, d) != 0 || common.count_bad_vec(yd, n) != 0 {
+        return refuse.input_non_finite();
+    }
+    c = common.check_weights(wd, n);
+    if c != 0 {
+        return c;
+    }
+    let sv = box_slice(heap, n, 0.0);
+    let ysv = box_slice(heap, n, 0.0);
+    let xs = box_slice(heap, n * d, 0.0);
+    borrow mut sv as &!sw in {
+        borrow mut ysv as &!yw in {
+            borrow mut xs as &!xw in {
+                var i = 0;
+                while i < n {
+                    let si = sqrt(wd[i]);
+                    contents(sw)[i] = si;
+                    contents(yw)[i] = si * yd[i];
+                    var j = 0;
+                    while j < d {
+                        contents(xw)[i * d + j] = si * xd[xt.off + i * xt.t0 + j * xt.t1];
+                        j = j + 1;
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    var code = 0;
+    borrow xs as &xr in {
+        borrow ysv as &yr in {
+            borrow sv as &sr in {
+                code = run(heap, t, common.mat(n, d), contents(xr), contents(yr), contents(sr), true, l2, out, diag);
+            }
+        }
+    }
+    unbox_slice(heap, sv);
+    unbox_slice(heap, ysv);
+    unbox_slice(heap, xs);
+    return code;
 }
 
 // predicted values: the scores (the intercept first, then the features ascending)
