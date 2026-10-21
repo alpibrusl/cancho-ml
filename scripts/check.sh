@@ -51,6 +51,7 @@ sh scripts/gate_models.sh
 $CANCHO test --std lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho lib/transforms/*.cho lib/pipeline/*.cho tools/ml/csvcell.cho build/deps/*.cho tests/t_registry.cho
 python3 scripts/check_registry.py
 python3 scripts/mutants_metrics.py --check
+python3 scripts/mutants_rank.py --check
 sh scripts/gate_metrics.sh
 sh scripts/check_tree.sh
 # stage 2: the command line. Package mode: `cancho install` fetches the pinned contract modules into build/deps (not committed).

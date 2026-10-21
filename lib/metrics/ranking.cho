@@ -1,0 +1,338 @@
+module metrics.ranking;
+
+import std.math;
+import metrics.rules;
+import metrics.rank;
+import metrics.classify;
+import metrics.regress;
+
+// The ranking metrics (docs/ranking.md section 3). Rows carry a group number 0 .. G-1 (the rank of the group's cell among the distinct cells, bytewise), a relevance 0 .. 30
+// and a score. Per group the rows are ranked by score descending, ties by file order (the stable order); the metrics of the group are computed from that ranking and then
+// averaged: the sum of the per-group values in group order, sequential from +0.0, one division. A group with no relevant row (no row of relevance above 0) has no NDCG,
+// MAP, MRR or recall: it is left out of those means and counted in `groups` but not in `scored`; precision is defined for every group.
+
+pub fn max_relevance() -> [] int {
+    return 30;
+}
+
+pub fn max_group() -> [] int {
+    return 4096;
+}
+
+pub struct Ranked {
+    code: int,
+    groups: int,
+    scored: int,
+    ndcg: float,
+    map: float,
+    mrr: float,
+    prec: float,
+    recall: float,
+}
+
+fn fail(code: int) -> [] Ranked {
+    return Ranked { code: code, groups: 0, scored: 0, ndcg: 0.0, map: 0.0, mrr: 0.0, prec: 0.0, recall: 0.0 };
+}
+
+// 1 / log2(r + 1) as 1.0 / (log(float(r + 1)) / log(2.0)): three roundings, the log being std.math's
+fn discount(r: int, ln2: float) -> [] float {
+    return 1.0 / (math.log(float_of(r + 1)) / ln2);
+}
+
+// the gain of a relevance: 2^rel - 1 (exact as a double for rel <= 30), or rel itself
+fn gain_of(rel: int, linear: bool) -> [] float {
+    if linear {
+        return float_of(rel);
+    }
+    return float_of((1 << rel) - 1);
+}
+
+// sort idx[0, m) so that keys[idx[i]] is descending, stably (equal keys keep their order in idx); t is scratch of the same length. Bottom-up merge sort.
+fn sort_desc[&k, &i, &t](keys: &k [int], idx: &!i [int], t: &!t [int], m: int) -> [] int {
+    var width = 1;
+    var src_is_idx = true;
+    while width < m {
+        var lo = 0;
+        while lo < m {
+            var mid = lo + width;
+            if mid > m {
+                mid = m;
+            }
+            var hi = lo + 2 * width;
+            if hi > m {
+                hi = m;
+            }
+            var a = lo;
+            var b = mid;
+            var o = lo;
+            while o < hi {
+                var take_a = false;
+                if src_is_idx {
+                    if a < mid && (b >= hi || keys[idx[a]] >= keys[idx[b]]) {
+                        take_a = true;
+                    }
+                    if take_a {
+                        t[o] = idx[a];
+                        a = a + 1;
+                    } else {
+                        t[o] = idx[b];
+                        b = b + 1;
+                    }
+                } else {
+                    if a < mid && (b >= hi || keys[t[a]] >= keys[t[b]]) {
+                        take_a = true;
+                    }
+                    if take_a {
+                        idx[o] = t[a];
+                        a = a + 1;
+                    } else {
+                        idx[o] = t[b];
+                        b = b + 1;
+                    }
+                }
+                o = o + 1;
+            }
+            lo = lo + 2 * width;
+        }
+        src_is_idx = src_is_idx == false;
+        width = width * 2;
+    }
+    if src_is_idx == false {
+        var i = 0;
+        while i < m {
+            idx[i] = t[i];
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+// 0, or the refusal for the inputs: three arrays of one length, at least one row and at most `cap`, every group number in 0 .. ngroups - 1, every relevance in 0 .. 30,
+// every score finite, k between 0 (the whole group) and max_group(), every group at most max_group() rows
+fn check[&g, &r, &s](gid: &g [int], rel: &r [int], score: &s [float], ngroups: int, k: int, cap: int) -> [] int {
+    let n = len(gid);
+    if len(rel) != n || len(score) != n {
+        return rules.length_mismatch();
+    }
+    if n == 0 {
+        return rules.input_empty();
+    }
+    if n > cap || n > classify.ceiling_rows() {
+        return rules.too_many_rows();
+    }
+    if k < 0 || k > max_group() || ngroups < 1 || ngroups > n {
+        return rules.out_of_range();
+    }
+    if regress.all_finite(score) == false {
+        return rules.non_finite();
+    }
+    var i = 0;
+    while i < n {
+        if gid[i] < 0 || gid[i] >= ngroups || rel[i] < 0 || rel[i] > max_relevance() {
+            return rules.out_of_range();
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The metrics at k (0 = the whole group) of the rows given, with the gain 2^rel - 1 or, with `linear`, rel. `ngroups` groups are numbered 0 .. ngroups - 1 and each must
+// have a row. Refusals: the length, the size, a non-finite score, a group number or a relevance out of range, a group of more than max_group() rows.
+pub fn evaluate[&h, &g, &r, &s](heap: &!h Heap, gid: &g [int], rel: &r [int], score: &s [float], ngroups: int, k: int, linear: bool, cap: int) -> [heap] Ranked {
+    let c = check(gid, rel, score, ngroups, k, cap);
+    if c != 0 {
+        return fail(c);
+    }
+    let n = len(gid);
+    // the rows of each group in file order: a counting sort by group number (stable)
+    let start = box_slice(heap, ngroups + 2, 0);
+    let order = box_slice(heap, n + 1, 0);
+    let keys = box_slice(heap, n + 1, 0);
+    let tmp = box_slice(heap, n + 1, 0);
+    let ranked = box_slice(heap, n + 1, 0);
+    let disc = box_slice(heap, max_group() + 2, 0.0);
+    let cnt = box_slice(heap, max_relevance() + 2, 0);
+    var empty_group = false;
+    var too_big = false;
+    var i = 0;
+    borrow mut start as &!sw in {
+        borrow mut order as &!ow in {
+            borrow mut keys as &!kw in {
+                borrow mut disc as &!dw in {
+                    let st = contents(sw);
+                    let od = contents(ow);
+                    let ks = contents(kw);
+                    i = 0;
+                    while i < n {
+                        st[gid[i] + 1] = st[gid[i] + 1] + 1;
+                        ks[i] = rank.key_of(score[i]);
+                        i = i + 1;
+                    }
+                    var gi = 0;
+                    while gi < ngroups {
+                        if st[gi + 1] == 0 {
+                            empty_group = true;
+                        }
+                        if st[gi + 1] > max_group() {
+                            too_big = true;
+                        }
+                        gi = gi + 1;
+                    }
+                    gi = 0;
+                    while gi < ngroups {
+                        st[gi + 1] = st[gi + 1] + st[gi];
+                        gi = gi + 1;
+                    }
+                    let ln2 = math.log(2.0);
+                    var q = 1;
+                    while q <= max_group() {
+                        contents(dw)[q] = discount(q, ln2);
+                        q = q + 1;
+                    }
+                }
+            }
+        }
+    }
+    if empty_group {
+        free_all(heap, start, order, keys, tmp, ranked, disc, cnt);
+        return fail(rules.out_of_range());
+    }
+    if too_big {
+        free_all(heap, start, order, keys, tmp, ranked, disc, cnt);
+        return fail(rules.out_of_range());
+    }
+    var sum_ndcg = 0.0;
+    var sum_map = 0.0;
+    var sum_mrr = 0.0;
+    var sum_prec = 0.0;
+    var sum_rec = 0.0;
+    var scored = 0;
+    borrow start as &sr in {
+        borrow mut order as &!ow in {
+            borrow keys as &kr in {
+                borrow mut tmp as &!tw in {
+                    borrow mut ranked as &!rw in {
+                        borrow disc as &dr in {
+                            borrow mut cnt as &!cw in {
+                                let st = contents(sr);
+                                let od = contents(ow);
+                                let ks = contents(kr);
+                                let tm = contents(tw);
+                                let rk = contents(rw);
+                                let ds = contents(dr);
+                                let cn = contents(cw);
+                                // the rows of every group, file order: od[st[g] ..] filled by walking the file once with a cursor per group (rk holds the cursors)
+                                var gi = 0;
+                                while gi < ngroups {
+                                    rk[gi] = st[gi];
+                                    gi = gi + 1;
+                                }
+                                var row = 0;
+                                while row < n {
+                                    od[rk[gid[row]]] = row;
+                                    rk[gid[row]] = rk[gid[row]] + 1;
+                                    row = row + 1;
+                                }
+                                gi = 0;
+                                while gi < ngroups {
+                                    let lo = st[gi];
+                                    let hi = st[gi + 1];
+                                    let g = hi - lo;
+                                    // the ranking of the group: its rows by score descending, ties in file order
+                                    let grp = od[lo..hi];
+                                    sort_desc(ks, grp, tm[lo..hi], g);
+                                    var kk = g;
+                                    if k > 0 && k < g {
+                                        kk = k;
+                                    }
+                                    var dcg = 0.0;
+                                    var hits = 0;
+                                    var ap_sum = 0.0;
+                                    var first = 0;
+                                    var nrel = 0;
+                                    var r2 = 0;
+                                    while r2 < g {
+                                        let rl = rel[grp[r2]];
+                                        if rl > 0 {
+                                            nrel = nrel + 1;
+                                        }
+                                        if r2 < kk {
+                                            dcg = dcg + gain_of(rl, linear) * ds[r2 + 1];
+                                            if rl > 0 {
+                                                hits = hits + 1;
+                                                ap_sum = ap_sum + float_of(hits) / float_of(r2 + 1);
+                                                if first == 0 {
+                                                    first = r2 + 1;
+                                                }
+                                            }
+                                        }
+                                        r2 = r2 + 1;
+                                    }
+                                    var pden = g;
+                                    if k > 0 {
+                                        pden = k;
+                                    }
+                                    sum_prec = sum_prec + float_of(hits) / float_of(pden);
+                                    if nrel > 0 {
+                                        // the ideal DCG: relevances descending, by counting
+                                        var v = 0;
+                                        while v <= max_relevance() {
+                                            cn[v] = 0;
+                                            v = v + 1;
+                                        }
+                                        r2 = 0;
+                                        while r2 < g {
+                                            cn[rel[grp[r2]]] = cn[rel[grp[r2]]] + 1;
+                                            r2 = r2 + 1;
+                                        }
+                                        var idcg = 0.0;
+                                        var taken = 0;
+                                        v = max_relevance();
+                                        while v >= 0 && taken < kk {
+                                            var c2 = cn[v];
+                                            while c2 > 0 && taken < kk {
+                                                idcg = idcg + gain_of(v, linear) * ds[taken + 1];
+                                                taken = taken + 1;
+                                                c2 = c2 - 1;
+                                            }
+                                            v = v - 1;
+                                        }
+                                        scored = scored + 1;
+                                        sum_ndcg = sum_ndcg + dcg / idcg;
+                                        var apd = nrel;
+                                        if kk < nrel {
+                                            apd = kk;
+                                        }
+                                        sum_map = sum_map + ap_sum / float_of(apd);
+                                        if first > 0 {
+                                            sum_mrr = sum_mrr + 1.0 / float_of(first);
+                                        }
+                                        sum_rec = sum_rec + float_of(hits) / float_of(nrel);
+                                    }
+                                    gi = gi + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    free_all(heap, start, order, keys, tmp, ranked, disc, cnt);
+    var out = Ranked { code: 0, groups: ngroups, scored: scored, ndcg: 0.0, map: 0.0, mrr: 0.0, prec: sum_prec / float_of(ngroups), recall: 0.0 };
+    if scored > 0 {
+        out = Ranked { code: 0, groups: ngroups, scored: scored, ndcg: sum_ndcg / float_of(scored), map: sum_map / float_of(scored), mrr: sum_mrr / float_of(scored), prec: sum_prec / float_of(ngroups), recall: sum_rec / float_of(scored) };
+    }
+    return out;
+}
+
+fn free_all[&h](heap: &!h Heap, a: Box[[int]], b: Box[[int]], c: Box[[int]], d: Box[[int]], e: Box[[int]], f: Box[[float]], g: Box[[int]]) -> [heap] int {
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    unbox_slice(heap, c);
+    unbox_slice(heap, d);
+    unbox_slice(heap, e);
+    unbox_slice(heap, f);
+    unbox_slice(heap, g);
+    return 0;
+}

@@ -8,6 +8,8 @@
 //   metrics-check ratio A B                                the correctly rounded A / B, bits
 //   metrics-check metric NAME YTRUE YPRED_OR_SCORE POS CAP REPS
 //   metrics-check terms YTRUE PROB POS                     the log-loss terms, bits, space separated
+//   metrics-check rank GID REL SCORE K GAIN CAP            the ranking metrics (docs/ranking.md section 3). GID, REL: `L:` ints; SCORE: `H:` float bits; K: 0 = the whole group; GAIN: exp | linear
+//       stdout: `groups N`, `scored N`, `ndcg HEX|undefined`, `map`, `mrr`, `prec`, `recall`, or `refused TAG`
 //   metrics-check testcount N NUM DEN
 //   metrics-check mc NAME YTRUE SECOND CLASSES CAP         the multiclass metrics (docs/multiclass.md section 4). CLASSES is `L:` ints, strictly ascending. NAME and SECOND:
 //       confusion accuracy precision recall f1 macro_precision macro_recall macro_f1 weighted_precision weighted_recall weighted_f1   SECOND = the predicted labels
@@ -27,6 +29,7 @@ import metrics.ratio;
 import metrics.splits;
 import metrics.classify;
 import metrics.rank;
+import metrics.ranking;
 import metrics.regress;
 import metrics.logloss;
 import metrics.multiclass;
@@ -824,6 +827,72 @@ fn run_mc[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write
     return status;
 }
 
+fn print_opt[&i](io: &!i Io, name: &static [byte], defined: bool, v: float) -> [io_write] int {
+    io.write_all(io, name);
+    io.write_all(io, " ");
+    if defined {
+        hex16(io, bits_of(v));
+    } else {
+        io.write_all(io, "undefined");
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn run_rank[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (ga, gn) = make_ints(heap, operand(g, 2));
+    let (ra, rn) = make_ints(heap, operand(g, 3));
+    let (sa, sn) = make_floats(heap, operand(g, 4));
+    var gb = ga;
+    var rb = ra;
+    var sb = sa;
+    var status = 2;
+    if gn >= 0 && rn >= 0 && sn >= 0 {
+        var ng = 0;
+        borrow gb as &gr in {
+            let a = contents(gr)[0..gn];
+            var i = 0;
+            while i < gn {
+                if a[i] + 1 > ng {
+                    ng = a[i] + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow gb as &gr in {
+            borrow rb as &rr in {
+                borrow sb as &sr in {
+                    let r = ranking.evaluate(heap, contents(gr)[0..gn], contents(rr)[0..rn], contents(sr)[0..sn], ng, num(g, 5), same(operand(g, 6), "linear"), num(g, 7));
+                    if r.code != 0 {
+                        refuse_line(io, r.code);
+                        status = rules.exit_code(r.code);
+                    } else {
+                        io.write_all(io, "groups ");
+                        io.print_int(io, r.groups);
+                        io.newline(io);
+                        io.write_all(io, "scored ");
+                        io.print_int(io, r.scored);
+                        io.newline(io);
+                        print_opt(io, "ndcg", r.scored > 0, r.ndcg);
+                        print_opt(io, "map", r.scored > 0, r.map);
+                        print_opt(io, "mrr", r.scored > 0, r.mrr);
+                        print_opt(io, "prec", true, r.prec);
+                        print_opt(io, "recall", r.scored > 0, r.recall);
+                        status = 0;
+                    }
+                }
+            }
+        }
+    } else {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, gb);
+    unbox_slice(heap, rb);
+    unbox_slice(heap, sb);
+    return status;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(ffi);
@@ -844,6 +913,8 @@ fn main(world: World) -> [] int {
                         code = run_terms(hp, ip, g);
                     } else if same(arg(g, 1), "mc") {
                         code = run_mc(hp, ip, g);
+                    } else if same(arg(g, 1), "rank") {
+                        code = run_rank(hp, ip, g);
                     } else if same(arg(g, 1), "ratio") {
                         let (oa, a) = parse_int(operand(g, 2));
                         let (ob, b) = parse_int(operand(g, 3));
