@@ -48,11 +48,11 @@ pub fn drop[&h](heap: &!h Heap, f: Forest) -> [heap] int {
 
 // Trees t0 .. t1 - 1 into the slots: tree t at oi[(t - t0) * 7 * cap ..], ov[(t - t0) * cap ..], its node count (or 0 - code)
 // in cn[t - t0]. Stops at the first refusal.
-fn run_trees[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c, &q](p: params.Params, n: int, d: int, mtry: int, cap: int, t0: int, t1: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], ed: &e [float], idx: &!i [int], tmp: &!t [int], wk: &!w [int], wf: &!wfl [float], oi: &!a [int], ov: &!c [float], cn: &!q [int]) -> [] int {
+fn run_trees[&b, &y, &yf, &wq, &e, &i, &t, &w, &wfl, &a, &c, &q](p: params.Params, n: int, d: int, mtry: int, cap: int, t0: int, t1: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], wt: &wq [float], ed: &e [float], idx: &!i [int], tmp: &!t [int], wk: &!w [int], wf: &!wfl [float], oi: &!a [int], ov: &!c [float], cn: &!q [int]) -> [] int {
     var t = t0;
     while t < t1 {
         let j = t - t0;
-        let r = grow.grow(p, n, d, mtry, cap, t, bins, yb, yv, ed, idx, tmp, wk, wf, oi[j * 7 * cap..(j + 1) * 7 * cap], ov[j * cap..(j + 1) * cap]);
+        let r = grow.grow(p, n, d, mtry, cap, t, bins, yb, yv, wt, ed, idx, tmp, wk, wf, oi[j * 7 * cap..(j + 1) * 7 * cap], ov[j * cap..(j + 1) * cap]);
         cn[j] = r;
         if r < 0 {
             return r;
@@ -68,6 +68,7 @@ res struct Job {
     bins: Box[[byte]],
     yb: Box[[byte]],
     yv: Box[[float]],
+    wt: Box[[float]],
     ed: Box[[float]],
     idx: Box[[int]],
     tmp: Box[[int]],
@@ -102,7 +103,7 @@ fn put_params[&w](pr: &!w [int], p: params.Params, n: int, d: int, mtry: int, ca
 fn work[&r](job: &!r Job) -> [] int {
     let pr = contents(job.pr);
     let p = params.Params { task: pr[0], trees: pr[1], max_depth: pr[2], min_leaf: pr[3], max_nodes: pr[4], bins: pr[5], mtry: pr[6], bootstrap: pr[7], seed: pr[8], threads: pr[15] };
-    run_trees(p, pr[9], pr[10], pr[11], pr[12], pr[13], pr[14], contents(job.bins), contents(job.yb), contents(job.yv), contents(job.ed), contents(job.idx), contents(job.tmp), contents(job.wk), contents(job.wf), contents(job.oi), contents(job.ov), contents(job.cn));
+    run_trees(p, pr[9], pr[10], pr[11], pr[12], pr[13], pr[14], contents(job.bins), contents(job.yb), contents(job.yv), contents(job.wt), contents(job.ed), contents(job.idx), contents(job.tmp), contents(job.wk), contents(job.wf), contents(job.oi), contents(job.ov), contents(job.cn));
     return 0;
 }
 
@@ -138,15 +139,16 @@ pub fn group_start(k: int, te: int, trees: int) -> [] int {
     return k * trees / te;
 }
 
-fn make_job[&h, &b, &y, &yf, &e](heap: &!h Heap, p: params.Params, n: int, d: int, mtry: int, cap: int, t0: int, t1: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], ed: &e [float]) -> [heap] Job {
+fn make_job[&h, &b, &y, &yf, &wq, &e](heap: &!h Heap, p: params.Params, n: int, d: int, mtry: int, cap: int, t0: int, t1: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], wt: &wq [float], ed: &e [float]) -> [heap] Job {
     let q = t1 - t0;
     let ne = p.bins - 1;
-    var job = Job { bins: box_slice(heap, d * n + 1, byte_of(0)), yb: box_slice(heap, len(yb) + 1, byte_of(0)), yv: box_slice(heap, len(yv) + 1, 0.0), ed: box_slice(heap, d * ne + 1, 0.0), idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), wk: box_slice(heap, grow.work_ints(p.bins, d, mtry) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), oi: box_slice(heap, q * 7 * cap + 1, 0), ov: box_slice(heap, q * cap + 1, 0.0), cn: box_slice(heap, q + 1, 0), pr: box_slice(heap, 16, 0) };
+    var job = Job { bins: box_slice(heap, d * n + 1, byte_of(0)), yb: box_slice(heap, len(yb) + 1, byte_of(0)), yv: box_slice(heap, len(yv) + 1, 0.0), wt: box_slice(heap, len(wt) + 1, 0.0), ed: box_slice(heap, d * ne + 1, 0.0), idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), wk: box_slice(heap, grow.work_ints(p.bins, d, mtry) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), oi: box_slice(heap, q * 7 * cap + 1, 0), ov: box_slice(heap, q * cap + 1, 0.0), cn: box_slice(heap, q + 1, 0), pr: box_slice(heap, 16, 0) };
     borrow mut job as &!jk in {
         put_params(contents(jk.pr), p, n, d, mtry, cap, t0, t1);
         copy_bytes(contents(jk.bins), bins, d * n);
         copy_bytes(contents(jk.yb), yb, len(yb));
         copy_floats(contents(jk.yv), yv, len(yv));
+        copy_floats(contents(jk.wt), wt, len(wt));
         copy_floats(contents(jk.ed), ed, d * ne);
     }
     return job;
@@ -154,20 +156,20 @@ fn make_job[&h, &b, &y, &yf, &e](heap: &!h Heap, p: params.Params, n: int, d: in
 
 // Groups k .. te - 1: spawn group k, make and run the later ones, join, then copy group k's trees into the slots (tree t at
 // slot t). One level of the recursion per thread, as the number of threads is a call depth (cancho-table docs/parallel.md).
-fn fan[&h, &b, &y, &yf, &e, &o, &oo, &c](heap: &!h Heap, p: params.Params, n: int, d: int, mtry: int, cap: int, gb: &b [byte], gy: &y [byte], gv: &yf [float], ge: &e [float], k: int, te: int, so: &!o [int], sv: &!oo [float], sc: &!c [int]) -> [heap, conc] int {
+fn fan[&h, &b, &y, &yf, &wq, &e, &o, &oo, &c](heap: &!h Heap, p: params.Params, n: int, d: int, mtry: int, cap: int, gb: &b [byte], gy: &y [byte], gv: &yf [float], gw: &wq [float], ge: &e [float], k: int, te: int, so: &!o [int], sv: &!oo [float], sc: &!c [int]) -> [heap, conc] int {
     if k >= te {
         return 0;
     }
     let t0 = group_start(k, te, p.trees);
     let t1 = group_start(k + 1, te, p.trees);
-    var job = make_job(heap, p, n, d, mtry, cap, t0, t1, gb, gy, gv, ge);
+    var job = make_job(heap, p, n, d, mtry, cap, t0, t1, gb, gy, gv, gw, ge);
     borrow mut job as &!jk in {
         let body = work;
         let th = spawn(jk, body);
-        fan(heap, p, n, d, mtry, cap, gb, gy, gv, ge, k + 1, te, so, sv, sc);
+        fan(heap, p, n, d, mtry, cap, gb, gy, gv, gw, ge, k + 1, te, so, sv, sc);
         join(th);
     }
-    let Job { bins, yb, yv, ed, idx, tmp, wk, wf, oi, ov, cn, pr } = job;
+    let Job { bins, yb, yv, wt, ed, idx, tmp, wk, wf, oi, ov, cn, pr } = job;
     borrow oi as &or in {
         copy_ints(so[t0 * 7 * cap..t1 * 7 * cap], contents(or), (t1 - t0) * 7 * cap);
     }
@@ -180,6 +182,7 @@ fn fan[&h, &b, &y, &yf, &e, &o, &oo, &c](heap: &!h Heap, p: params.Params, n: in
     unbox_slice(heap, bins);
     unbox_slice(heap, yb);
     unbox_slice(heap, yv);
+    unbox_slice(heap, wt);
     unbox_slice(heap, ed);
     unbox_slice(heap, idx);
     unbox_slice(heap, tmp);
@@ -230,6 +233,47 @@ fn check_target[&y, &o](task: int, ys: &y [float], n: int, yb: &!o [byte]) -> []
 // Fit a forest on the n x d row-major matrix xs (with the missing bitmap bm, or empty) and the targets ys. Answers the forest and
 // the code of the refusal (0 for none; the forest is then empty). The caps are those of ml.limits (the caller's flags).
 pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Forest, int) {
+    return fit_with(heap, p, n, d, xs, bm, ys, ys[0..0], rows_cap, cols_cap, cells_cap);
+}
+
+// the largest weight (docs/weights.md section 1)
+pub fn max_weight() -> [] float {
+    return 1000000000000.0;
+}
+
+// 0, or the refusal for a weight vector: each finite (non-finite), 0 <= w <= 1e12 and not all 0 (ml.param.out-of-range)
+fn check_weights[&q](wd: &q [float], n: int) -> [] int {
+    var any = false;
+    var i = 0;
+    while i < n {
+        let v = wd[i];
+        if !(v == v && v - v == 0.0) {
+            return deny.non_finite();
+        }
+        if v < 0.0 || v > max_weight() {
+            return refuse.param_out_of_range();
+        }
+        if v > 0.0 {
+            any = true;
+        }
+        i = i + 1;
+    }
+    if !any {
+        return refuse.param_out_of_range();
+    }
+    return 0;
+}
+
+// Fit with a weight per row (docs/weights.md section 2.5): the weights wd (n values) enter the node sums and the leaf values; both classes of a classification need a row of
+// positive weight. Answers as `fit`.
+pub fn fit_weighted[&h, &x, &b, &y, &q](heap: &!h Heap, p: params.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], wd: &q [float], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Forest, int) {
+    if len(wd) != n {
+        return (empty(heap), refuse.param_out_of_range());
+    }
+    return fit_with(heap, p, n, d, xs, bm, ys, wd, rows_cap, cols_cap, cells_cap);
+}
+
+fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: params.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], wd: &q [float], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Forest, int) {
     var code = params.check(p, n, d, rows_cap, cols_cap, cells_cap);
     if code != 0 {
         return (empty(heap), code);
@@ -264,6 +308,49 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs:
     if p.task == 1 {
         borrow mut yv as &!yvw in {
             copy_floats(contents(yvw), ys, n);
+        }
+    }
+    // the weights: checked, the classes judged on the rows that have a weight, and the weighted value of the whole set after them (docs/weights.md 2.5)
+    var wt = box_slice(heap, 1, 0.0);
+    if len(wd) == n {
+        code = check_weights(wd, n);
+        if code == 0 && p.task == 0 {
+            var ones = 0;
+            var zeros = 0;
+            var i = 0;
+            while i < n {
+                if wd[i] > 0.0 {
+                    if ys[i] == 1.0 {
+                        ones = ones + 1;
+                    } else {
+                        zeros = zeros + 1;
+                    }
+                }
+                i = i + 1;
+            }
+            if ones == 0 || zeros == 0 {
+                code = deny.single_class();
+            }
+        }
+        if code != 0 {
+            unbox_slice(heap, yb);
+            unbox_slice(heap, yv);
+            unbox_slice(heap, wt);
+            return (empty(heap), code);
+        }
+        unbox_slice(heap, wt);
+        wt = box_slice(heap, n + 1, 0.0);
+        var sw = 0.0;
+        var sy = 0.0;
+        borrow mut wt as &!wtw in {
+            var i = 0;
+            while i < n {
+                contents(wtw)[i] = wd[i];
+                sw = sw + wd[i];
+                sy = sy + wd[i] * ys[i];
+                i = i + 1;
+            }
+            contents(wtw)[n] = sy / sw;
         }
     }
     let mtry = params.mtry_of(p, d);
@@ -316,6 +403,7 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs:
     borrow binm as &br in {
         borrow yb as &ybr in {
             borrow yv as &yvr in {
+              borrow wt as &wtr in {
                 borrow ed as &edr in {
                     borrow mut slots_i as &!siw in {
                         borrow mut slots_v as &!svw in {
@@ -329,7 +417,7 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs:
                                         borrow mut tmp as &!tw in {
                                             borrow mut wk as &!kw in {
                                                 borrow mut wf as &!fw in {
-                                                    run_trees(p, n, d, mtry, cap, 0, p.trees, contents(br), contents(ybr), contents(yvr), contents(edr), contents(iw), contents(tw), contents(kw), contents(fw), contents(siw), contents(svw), contents(cw));
+                                                    run_trees(p, n, d, mtry, cap, 0, p.trees, contents(br), contents(ybr), contents(yvr), contents(wtr), contents(edr), contents(iw), contents(tw), contents(kw), contents(fw), contents(siw), contents(svw), contents(cw));
                                                 }
                                             }
                                         }
@@ -339,16 +427,18 @@ pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: params.Params, n: int, d: int, xs:
                                     unbox_slice(heap, wk);
                                     unbox_slice(heap, wf);
                                 } else {
-                                    fan(heap, p, n, d, mtry, cap, contents(br), contents(ybr), contents(yvr), contents(edr), 0, used, contents(siw), contents(svw), contents(cw));
+                                    fan(heap, p, n, d, mtry, cap, contents(br), contents(ybr), contents(yvr), contents(wtr), contents(edr), 0, used, contents(siw), contents(svw), contents(cw));
                                 }
                             }
                         }
                     }
                 }
+              }
             }
         }
     }
     unbox_slice(heap, binm);
+    unbox_slice(heap, wt);
     unbox_slice(heap, ed);
     unbox_slice(heap, yb);
     unbox_slice(heap, yv);
