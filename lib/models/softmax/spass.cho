@@ -1,0 +1,178 @@
+module models.spass;
+
+import std.math;
+import linalg.order;
+import models.mexp;
+
+// One block of the Newton pass of softmax regression (docs/multiclass.md section 3.2, which is the normative text and scripts/oracle_models.py `softmax` its port): the
+// partial of the W decisive sums over the rows [r0, r1) of one block (at most 256, r0 a multiple of 256) by the package's lane rule (docs/linalg.md section 2): row i of the
+// block to lane i mod 4, each lane ascending from +0.0 in the rows' order, the partial of a sum (l0 + l1) + (l2 + l3). The partials of the blocks are combined by the package's
+// tree (linalg.order), by the caller. K classes, class K - 1 the reference; D = d + 1 columns with the bias last; P = (K - 1) D parameters, class-major.
+//
+// No tiling: each row forms its W terms one by one and adds them to its lane (the terms are fl(r * a_a), fl(fl(S * a_a) * a_b), q and the loss term), which is the order
+// of the oracle; the cost is W adds per row, P^2 / 2 of them for the Hessian.
+//
+// Scratch layout (floats): the four lanes 4 W, then the row's a (D), z (K - 1), e (K - 1), p (K - 1), r (K - 1) and S ((K - 1)^2).
+
+pub fn params(d: int, kk: int) -> [] int {
+    return (kk - 1) * (d + 1);
+}
+
+// number of sums: P + P (P + 1) / 2 + 2
+pub fn width(d: int, kk: int) -> [] int {
+    let p = params(d, kk);
+    return p + p * (p + 1) / 2 + 2;
+}
+
+pub fn scratch_len(d: int, kk: int) -> [] int {
+    let kc = kk - 1;
+    return 4 * width(d, kk) + (d + 1) + 4 * kc + kc * kc + 8;
+}
+
+// The partial of rows [r0, r1) (at most 256) into slot (W values). xs is positioned at X[0, 0] with row stride rs, ys at y[0] (the class index of a row as a float); wv holds the
+// P parameters; sc is the scratch (scratch_len), its contents on entry do not matter.
+pub fn block[&x, &y, &w, &c, &s](xs: &x [float], rs: int, ys: &y [float], r0: int, r1: int, d: int, kk: int, wv: &w [float], sc: &!c [float], slot: &!s [float]) -> [] int {
+    let kc = kk - 1;
+    let dd = d + 1;
+    let p = kc * dd;
+    let ww = width(d, kk);
+    let m = r1 - r0;
+    let lanes = sc[0..4 * ww];
+    let tmp = 4 * ww;
+    let av = sc[tmp..tmp + dd];
+    let zv = sc[tmp + dd..tmp + dd + kc];
+    let ev = sc[tmp + dd + kc..tmp + dd + 2 * kc];
+    let pv = sc[tmp + dd + 2 * kc..tmp + dd + 3 * kc];
+    let rv = sc[tmp + dd + 3 * kc..tmp + dd + 4 * kc];
+    let sm = sc[tmp + dd + 4 * kc..tmp + dd + 4 * kc + kc * kc];
+    var t = 0;
+    while t < 4 * ww {
+        lanes[t] = 0.0;
+        t = t + 1;
+    }
+    var i = 0;
+    while i < m {
+        let row = xs[(r0 + i) * rs..(r0 + i) * rs + d];
+        let la = lanes[i % 4 * ww..i % 4 * ww + ww];
+        var j = 0;
+        while j < d {
+            av[j] = row[j];
+            j = j + 1;
+        }
+        av[d] = 1.0;
+        // the scores, the largest of them and 0.0, the exponentials and their sum
+        var mx = 0.0;
+        var k = 0;
+        while k < kc {
+            var z = wv[k * dd + d];
+            j = 0;
+            while j < d {
+                z = z + row[j] * wv[k * dd + j];
+                j = j + 1;
+            }
+            zv[k] = z;
+            if z > mx {
+                mx = z;
+            }
+            k = k + 1;
+        }
+        k = 0;
+        while k < kc {
+            ev[k] = mexp.exp(zv[k] - mx);
+            k = k + 1;
+        }
+        let eref = mexp.exp(0.0 - mx);
+        var sum = ev[0];
+        k = 1;
+        while k < kc {
+            sum = sum + ev[k];
+            k = k + 1;
+        }
+        sum = sum + eref;
+        let yi = truncate(ys[r0 + i]);
+        k = 0;
+        while k < kc {
+            let pk = ev[k] / sum;
+            pv[k] = pk;
+            var tk = 0.0;
+            if yi == k {
+                tk = 1.0;
+            }
+            rv[k] = pk - tk;
+            k = k + 1;
+        }
+        k = 0;
+        while k < kc {
+            var jj = 0;
+            while jj <= k {
+                if jj == k {
+                    sm[k * kc + jj] = pv[k] * (1.0 - pv[k]);
+                } else {
+                    sm[k * kc + jj] = 0.0 - pv[k] * pv[jj];
+                }
+                jj = jj + 1;
+            }
+            k = k + 1;
+        }
+        // the gradient
+        k = 0;
+        while k < kc {
+            let rk = rv[k];
+            var a = 0;
+            while a < dd {
+                la[k * dd + a] = la[k * dd + a] + rk * av[a];
+                a = a + 1;
+            }
+            k = k + 1;
+        }
+        // the Hessian, lower triangle by rows
+        k = 0;
+        while k < kc {
+            var a = 0;
+            while a < dd {
+                let ai = k * dd + a;
+                let base = p + ai * (ai + 1) / 2;
+                let xa = av[a];
+                var jj = 0;
+                while jj <= k {
+                    let sa = sm[k * kc + jj] * xa;
+                    var bmax = dd;
+                    if jj == k {
+                        bmax = a + 1;
+                    }
+                    let off = base + jj * dd;
+                    var b = 0;
+                    while b < bmax {
+                        la[off + b] = la[off + b] + sa * av[b];
+                        b = b + 1;
+                    }
+                    jj = jj + 1;
+                }
+                a = a + 1;
+            }
+            k = k + 1;
+        }
+        // the sum of the squared scores and the loss term
+        var q = zv[0] * zv[0];
+        k = 1;
+        while k < kc {
+            q = q + zv[k] * zv[k];
+            k = k + 1;
+        }
+        var zy = 0.0;
+        if yi < kc {
+            zy = zv[yi];
+        }
+        let loss = mx + math.log(sum) - zy;
+        let qi = p + p * (p + 1) / 2;
+        la[qi] = la[qi] + q;
+        la[qi + 1] = la[qi + 1] + loss;
+        i = i + 1;
+    }
+    var u = 0;
+    while u < ww {
+        slot[u] = order.lane_combine(lanes[u], lanes[ww + u], lanes[2 * ww + u], lanes[3 * ww + u]);
+        u = u + 1;
+    }
+    return 0;
+}

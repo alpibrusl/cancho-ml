@@ -41,8 +41,13 @@ pub fn model_boost() -> [] int {
     return 8;
 }
 
+// multinomial logistic regression (docs/multiclass.md section 3)
+pub fn model_softmax() -> [] int {
+    return 9;
+}
+
 pub fn model_count() -> [] int {
-    return 8;
+    return 9;
 }
 
 // ---- the sum order recorded in `meta` (docs/design.md section 4.1, `v1-post`): a model of a kind from first_ordered_model() on has a `u32 sum_order` as the
@@ -288,6 +293,9 @@ pub fn model_at(i: int) -> [] int {
     if i == 8 {
         return model_boost();
     }
+    if i == 9 {
+        return model_softmax();
+    }
     return 0;
 }
 
@@ -321,6 +329,9 @@ pub fn stream_at(i: int) -> [] int {
     }
     if i == 10 {
         return stream_boost_validation();
+    }
+    if i == 11 {
+        return stream_permutation();
     }
     return 0;
 }

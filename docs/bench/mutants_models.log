@@ -1,3 +1,4 @@
+Linux x86-64 6.18.44, 4 cores, compiler 0207556, tree of the branch v1-mc-softmax; five processes run side by side on disjoint lists of names and merged here in the order of the list; the lines of the sm- mutants are from a second run after the formatter
 mutants_models: control (unmutated) passes
 lin-ridge-on-intercept                   killed
 lin-ridge-sign                           killed
@@ -82,6 +83,71 @@ log-lane-acc-init                        killed
 km-lane-map                              killed
 km-lane-combine                          killed
 km-lane-zero                             killed
+sm-loss-sign                             killed
+sm-loss-max                              killed
+sm-loss-reference                        killed
+sm-max-start                             killed
+sm-max-compare                           killed
+sm-reference-exp                         killed
+sm-exp-argument                          killed
+sm-sum-missing-reference                 killed
+sm-probability                           killed
+sm-target                                killed
+sm-s-diagonal                            killed
+sm-s-offdiagonal-sign                    killed
+sm-gradient-sign                         killed
+sm-hessian-triangle                      killed
+sm-hessian-class-pair                    killed
+sm-hessian-row-offset                    killed
+sm-hessian-class-offset                  killed
+sm-hessian-factor                        killed
+sm-q-first                               killed
+sm-q-square                              killed
+sm-score-bias                            killed
+sm-score-weight                          killed
+sm-label-row                             killed
+sm-bias-column                           killed
+sm-lane-map                              killed
+sm-lane-combine                          killed
+sm-lane-zero                             killed
+sm-width                                 killed
+sm-iters-minus-one                       killed
+sm-iters-plus-one                        killed
+sm-update-sign                           killed
+sm-l2-bias-gradient                      killed
+sm-l2-bias-hessian                       killed
+sm-l2-dropped-hessian                    killed
+sm-l2-dropped-gradient                   killed
+sm-l2-objective                          killed
+sm-l2-objective-bias                     killed
+sm-mean-gradient                         killed
+sm-mean-hessian                          killed
+sm-separable-bound                       killed
+sm-scale-bound                           killed
+sm-scale-formula                         killed
+sm-separable-only-with-ridge             killed
+sm-collinear-first-pass                  killed
+sm-max-classes                           killed
+sm-max-params                            killed
+sm-budget                                killed
+sm-memory-chunks                         killed
+sm-memory-matrix                         killed
+sm-memory-threads                        killed
+sm-rows-ceiling                          killed
+sm-classes-first                         killed
+sm-label-range                           killed
+sm-label-fraction                        killed
+sm-absent-class                          killed
+sm-predict-tie                           killed
+sm-predict-reference                     killed
+sm-predict-reference-missing             killed
+sm-proba-reference                       killed
+sm-proba-layout                          killed
+sm-proba-sum                             killed
+sm-predict-class-count                   killed
+sm-par-dispatch                          killed
+sm-par-labels-copy                       killed
+sm-refuse-classes-code                   killed
 par-thread-order                         killed
 par-models-chunk-misaligned              killed
 par-models-row-copy                      killed
@@ -92,4 +158,6 @@ par-models-y-copy                        killed
 par-models-labels                        killed
 par-models-weights                       killed
 par-models-ragged                        SURVIVED (explained: without the clamp the last chunk runs blocks past the end; each is an all-zero partial (m <= 0 rows), and x + 0.0 = x, so the tree of the real blocks keeps its bits: an equivalent mutant (the clamp is kept so that no block is made of nothing))
-mutants_models: 91 killed, 2 survived and explained, 0 unexplained
+mutants_models: 156 killed, 2 survived and explained, 0 unexplained
+EXIT 0
+Tue Oct 20 09:56 UTC 2026

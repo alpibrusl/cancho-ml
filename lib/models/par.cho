@@ -6,6 +6,7 @@ import linalg.order;
 import linalg.par;
 import models.common;
 import models.npass;
+import models.spass;
 import models.kpass;
 
 // The threaded pass of the models (docs/models-linear.md 3 and 5), in the shape of linalg.par: the rows are cut into CHUNKS of
@@ -16,6 +17,7 @@ import models.kpass;
 // counted in the time.
 //   kind 1: the Newton pass of logistic regression (npass.block)
 //   kind 2: the Lloyd pass of k-means (kpass.block): the labels of the piece come back with the roots
+//   kind 3: the Newton pass of softmax regression (spass.block), the parameter k (kc of `pass`) is the number of classes
 
 res struct Job {
     jx: Box[[float]],
@@ -60,6 +62,8 @@ fn chunks_of[&x, &y, &w, &c, &o, &s, &l, &q](kind: int, xs: &x [float], rs: int,
             }
             if kind == 1 {
                 npass.block(xs, rs, ys, b * 256, hi, d, wv, sc, st[sp * ww..sp * ww + ww]);
+            } else if kind == 3 {
+                spass.block(xs, rs, ys, b * 256, hi, d, k, wv, sc, st[sp * ww..sp * ww + ww]);
             } else {
                 kpass.block(xs, rs, b * 256, hi, d, k, wv, lab, sc, st[sp * ww..sp * ww + ww]);
             }
@@ -98,7 +102,7 @@ fn fan[&h, &x, &y, &w, &o, &q](heap: &!h Heap, kind: int, xs: &x [float], rs: in
     }
     let rows = r1 - r0;
     var ylen = rows;
-    if kind != 1 {
+    if kind == 2 {
         ylen = 0;
     }
     var job = Job { jx: box_slice(heap, rows * d + 1, 0.0), jy: box_slice(heap, ylen + 1, 0.0), jw: box_slice(heap, len(wv) + 1, 0.0), jout: box_slice(heap, (c1 - c0) * ww + 1, 0.0), jst: box_slice(heap, 6 * ww + 1, 0.0), jlv: box_slice(heap, 8, 0), jsc: box_slice(heap, scratch + 1, 0.0), jlab: box_slice(heap, rows + 1, 0), jp: box_slice(heap, 8, 0) };
@@ -115,7 +119,7 @@ fn fan[&h, &x, &y, &w, &o, &q](heap: &!h Heap, kind: int, xs: &x [float], rs: in
             copy_floats(jx[i * d..i * d + d], xs[(r0 + i) * rs..(r0 + i) * rs + d], d);
             i = i + 1;
         }
-        if kind == 1 {
+        if kind != 2 {
             copy_floats(contents(jk.jy), ys[r0..r1], rows);
         }
         copy_floats(contents(jk.jw), wv, len(wv));
@@ -170,6 +174,8 @@ pub fn pass[&h, &x, &y, &w, &c, &s, &l, &q](heap: &!h Heap, t: int, kind: int, x
             }
             if kind == 1 {
                 npass.block(xs, rs, ys, b * 256, hi, d, wv, sc, st[sp * ww..sp * ww + ww]);
+            } else if kind == 3 {
+                spass.block(xs, rs, ys, b * 256, hi, d, kc, wv, sc, st[sp * ww..sp * ww + ww]);
             } else {
                 kpass.block(xs, rs, b * 256, hi, d, kc, wv, lab, sc, st[sp * ww..sp * ww + ww]);
             }
