@@ -43,6 +43,13 @@ pub fn miss_bytes[&h, &m](heap: &!h Heap, miss: &m [int], wpc: int, rows: int, d
     return (out, any);
 }
 
+fn fit_lib[&h, &x, &b, &y, &w](heap: &!h Heap, p: params.Params, n: int, d: int, xd: &x [float], bm: &b [byte], yd: &y [float], wd: &w [float], wtd: bool, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (forest.Forest, int) {
+    if wtd {
+        return forest.fit_weighted(heap, p, n, d, xd, bm, yd, wd, rows_cap, cols_cap, cells_cap);
+    }
+    return forest.fit(heap, p, n, d, xd, bm, yd, rows_cap, cols_cap, cells_cap);
+}
+
 fn empty_payload[&h](heap: &!h Heap) -> [heap] Box[[byte]] {
     return box_slice(heap, 1, byte_of(0));
 }
@@ -50,18 +57,37 @@ fn empty_payload[&h](heap: &!h Heap) -> [heap] Box[[byte]] {
 // The library payload of a fitted forest, then for a classification the labels record (the negative and the positive label). (the payload, 0) or (an empty
 // payload, the refusal of the library)
 pub fn fit[&h, &x, &m, &y](heap: &!h Heap, p: params.Params, xd: &x [float], miss: &m [int], wpc: int, n: int, d: int, yd: &y [float], c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    let none = box_slice(heap, 1, 0.0);
+    var out = box_slice(heap, 1, byte_of(0));
+    var code = 0;
+    borrow none as &nr in {
+        let (o2, c2) = fit_any(heap, p, xd, miss, wpc, n, d, yd, contents(nr)[0..0], false, c0, c1, rows_cap, cols_cap, cells_cap);
+        unbox_slice(heap, out);
+        out = o2;
+        code = c2;
+    }
+    unbox_slice(heap, none);
+    return (out, code);
+}
+
+// As `fit` with a weight per row, wd (n values; docs/weights.md section 2.5)
+pub fn fit_weighted[&h, &x, &m, &y, &w](heap: &!h Heap, p: params.Params, xd: &x [float], miss: &m [int], wpc: int, n: int, d: int, yd: &y [float], wd: &w [float], c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    return fit_any(heap, p, xd, miss, wpc, n, d, yd, wd, true, c0, c1, rows_cap, cols_cap, cells_cap);
+}
+
+fn fit_any[&h, &x, &m, &y, &w](heap: &!h Heap, p: params.Params, xd: &x [float], miss: &m [int], wpc: int, n: int, d: int, yd: &y [float], wd: &w [float], wtd: bool, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
     let (bm, any) = miss_bytes(heap, miss, wpc, n, d);
     var f = forest.empty(heap);
     var code = 0;
     borrow bm as &br in {
         let st = (n + 7) / 8;
         if any {
-            let (f2, c2) = forest.fit(heap, p, n, d, xd, contents(br)[0..d * st], yd, rows_cap, cols_cap, cells_cap);
+            let (f2, c2) = fit_lib(heap, p, n, d, xd, contents(br)[0..d * st], yd, wd, wtd, rows_cap, cols_cap, cells_cap);
             forest.drop(heap, f);
             f = f2;
             code = c2;
         } else {
-            let (f2, c2) = forest.fit(heap, p, n, d, xd, contents(br)[0..0], yd, rows_cap, cols_cap, cells_cap);
+            let (f2, c2) = fit_lib(heap, p, n, d, xd, contents(br)[0..0], yd, wd, wtd, rows_cap, cols_cap, cells_cap);
             forest.drop(heap, f);
             f = f2;
             code = c2;

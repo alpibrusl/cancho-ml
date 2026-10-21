@@ -734,7 +734,7 @@ fn field_ok(r: int, v: int, leaf: bool, orig: int, loc: int, task: int, d: int, 
     if task == 1 {
         return a >= 1 && b == 0;
     }
-    return a <= 1048576 && b <= 1048576 && a + b >= 1 && bits_of(float_of(b) / float_of(a + b)) == valbits;
+    return a <= 1048576 && b <= 1048576 && a + b >= 1;
 }
 
 fn fvalue(k: int, ftotal: int) -> [] int {
@@ -801,12 +801,12 @@ fn structured[&h, &fr, &s, &w2](heap: &!h Heap, f: &fr forest.Forest, src: &s [b
         }
         rec = rec + 1;
     }
-    // the values: a finite number is accepted, except a class leaf's, which is the ratio of its counts; NaN and infinities never are
+    // the values: a finite number is accepted, except a class leaf's, which is a fraction in 0 to 1; NaN and infinities never are
     var g = 0;
     while g < f.total {
         let leaf = ni[g] == 0 - 1;
         var k = 0;
-        while k < 5 {
+        while k < 7 {
             var v = bits_of(nv[g]);
             var want = true;
             if k == 1 {
@@ -820,7 +820,12 @@ fn structured[&h, &fr, &s, &w2](heap: &!h Heap, f: &fr forest.Forest, src: &s [b
                 want = false;
             } else if k == 4 {
                 v = bits_of(1.0);
-                want = v == bits_of(nv[g]) || !(leaf && f.task == 0);
+            } else if k == 5 {
+                v = bits_of(1.0) + 1;
+                want = !(leaf && f.task == 0);
+            } else if k == 6 {
+                v = bits_of(0.0 - 1.0);
+                want = !(leaf && f.task == 0);
             }
             let at = model.elem_at(10, f.trees, f.total, g);
             fbits.put64(w, at, v);

@@ -183,15 +183,15 @@ class Weights(unittest.TestCase):
 
     # ------------------------------------------------------------------ the models and the verbs
     def test_the_other_models_have_no_weighted_fit(self):
-        for extra in (("--model", "tree"), ("--model", "forest"), ("--model", "boost", "--task", "regression"), ("--model", "kmeans", "--k", "2")):
+        for extra in (("--model", "boost", "--task", "regression"), ("--model", "kmeans", "--k", "2")):
             args = ["fit", "--target", "y", "--output", "x.cml", "--overwrite", "--weight", "w", *extra, "lin.csv"]
             if extra[1] == "kmeans":
                 args.remove("--target")
                 args.remove("y")
             self.rule(self.ml(*args), "args.conflict", 2)
         self.rule(self.ml("fit", "--target", "y", "--output", "x.cml", "--overwrite", "--weight", "w", "lin.csv"), "args.conflict", 2)
-        self.sb.write("tree.plan", "model kind=tree task=regression\n")
-        self.rule(self.ml("fit", "--target", "y", "--output", "x.cml", "--overwrite", "--plan", "tree.plan", "--weight", "w", "lin.csv"), "args.conflict", 2)
+        self.sb.write("boost.plan", "model kind=boost task=regression\n")
+        self.rule(self.ml("fit", "--target", "y", "--output", "x.cml", "--overwrite", "--plan", "boost.plan", "--weight", "w", "lin.csv"), "args.conflict", 2)
         self.rule(self.ml("fit", "--model", "softmax", "--target", "y", "--output", "x.cml", "--overwrite", "--weight", "w", "log.csv"), "args.conflict", 2)
 
     def test_the_verbs_that_do_not_fit_do_not_take_the_flag(self):
@@ -212,7 +212,7 @@ class Weights(unittest.TestCase):
         self.assertIn("folds", json.dumps(d))
         d2 = self.ok(self.ml("cv", "--model", "linear", "--target", "y", "--drop", "w", "--folds", "4", "--seed", "1", "lin.csv"))
         self.assertNotEqual(json.dumps(d), json.dumps(d2))
-        self.rule(self.ml("cv", "--model", "tree", "--target", "y", "--weight", "w", "--folds", "4", "lin.csv"), "args.conflict", 2)
+        self.rule(self.ml("cv", "--model", "boost", "--target", "y", "--weight", "w", "--folds", "4", "lin.csv"), "args.conflict", 2)
         self.sb.write("zero.csv", rows_csv(weights=[0] * 120))
         self.rule(self.ml("cv", "--model", "linear", "--target", "y", "--weight", "w", "--folds", "4", "zero.csv"), "ml.weight.zero-total", 8)
 
@@ -239,6 +239,143 @@ class Weights(unittest.TestCase):
         u = self.ok(self.fit("linear", "lin.csv", "tr2.cml", "--drop", "w", "--track", "runs"))
         self.assertNotEqual(u["run"]["id"], d["run"]["id"])
         v = self.ml("runs", "verify", "runs", d["run"]["id"])
+        self.assertEqual(v.status, 0, v)
+
+
+def grid_csv(n=120, seed=5, weights=None, kind="reg", header="a,b,w,y"):
+    """integer features 0 to 9, so that every value has a bin of its own and a repeated row changes no bin edge"""
+    r = random.Random(seed)
+    out = [header]
+    for i in range(n):
+        a, b = r.randint(0, 9), r.randint(0, 9)
+        w = weights[i] if weights is not None else r.choice([1, 2, 3])
+        z = a - 0.5 * b + r.gauss(0, 1.5)
+        y = ("%d" % (1 if z > 0 else 0)) if kind == "cls" else "%.4f" % z
+        out.append("%d,%d,%s,%s" % (a, b, w, y))
+    return "\n".join(out) + "\n"
+
+
+class WeightsTrees(unittest.TestCase):
+    """C2b -- `--weight COL` for `--model tree` and `--model forest` (docs/weights.md section 2.5). The byte-for-byte comparison with the Python oracle is
+    test_wire_tree_oracle.py (weighted cases)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sb = Sandbox()
+        cls.sb.write("reg.csv", grid_csv())
+        cls.sb.write("cls.csv", grid_csv(kind="cls"))
+        cls.sb.write("ones_reg.csv", grid_csv(weights=[1] * 120))
+        cls.sb.write("ones_cls.csv", grid_csv(weights=[1] * 120, kind="cls"))
+        cls.sb.write("zero.csv", grid_csv(weights=[0] * 120))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.sb.cleanup()
+
+    def fit(self, model, csv, out, *extra):
+        task = "classification" if "cls" in csv else "regression"
+        return self.sb.run("fit", "--model", model, "--task", task, "--target", "y", "--output", out, "--overwrite", *self.forest(model), *extra, csv)
+
+    @staticmethod
+    def forest(model):
+        return ("--trees", "6") if model == "forest" else ()
+
+    def ok(self, r):
+        self.assertEqual(r.status, 0, r)
+        self.assertEqual(validate(r), [], r)
+        return r.data()
+
+    def rule(self, r, rule, status=None):
+        self.assertEqual(validate(r), [], r)
+        self.assertNotEqual(r.status, 0, r)
+        self.assertEqual(r.doc()["error"]["rule"], rule, r)
+        if status is not None:
+            self.assertEqual(r.status, status, r)
+
+    def values(self, model_file, csv="grid.csv"):
+        self.sb.write(csv, "a,b\n" + "".join("%d,%d\n" % (a, b) for a in range(10) for b in range(10)))
+        r = self.sb.run("predict", "--model-file", model_file, "--limit", "1000", csv)
+        return [row[0] for row in self.ok(r)["rows"]]
+
+    def test_the_weight_column_is_not_a_feature(self):
+        for model in ("tree", "forest"):
+            d = self.ok(self.fit(model, "reg.csv", "w.cml", "--weight", "w") if model == "forest" else self.fit(model, "reg.csv", "w.cml", "--weight", "w"))
+            self.assertEqual(d["summary"]["features"], 2, model)
+            self.assertEqual(len(self.values("w.cml")), 100, model)
+
+    def test_unit_weights_are_the_unweighted_fit_as_bytes(self):
+        for model in ("tree", "forest"):
+            for csv in ("ones_reg.csv", "ones_cls.csv"):
+                self.ok(self.fit(model, csv, "w1.cml", "--weight", "w"))
+                self.ok(self.fit(model, csv, "u1.cml", "--drop", "w"))
+                self.assertEqual(self.sb.read("w1.cml"), self.sb.read("u1.cml"), (model, csv))
+
+    def test_integer_weights_give_the_predictions_of_the_file_with_the_rows_repeated(self):
+        for csv in ("reg.csv", "cls.csv"):
+            lines = self.sb.read(csv).decode().strip().split("\n")
+            rows = [ln.split(",") for ln in lines[1:]]
+            dup = ["a,b,y"] + [",".join([r[0], r[1], r[3]]) for r in rows for _ in range(int(r[2]))]
+            self.sb.write("dup.csv", "\n".join(dup) + "\n")
+            task = "classification" if csv == "cls.csv" else "regression"
+            self.ok(self.sb.run("fit", "--model", "tree", "--task", task, "--target", "y", "--weight", "w", "--max-depth", "5", "--output", "a.cml", "--overwrite", csv))
+            self.ok(self.sb.run("fit", "--model", "tree", "--task", task, "--target", "y", "--max-depth", "5", "--output", "b.cml", "--overwrite", "dup.csv"))
+            a, b = self.values("a.cml"), self.values("b.cml")
+            self.assertEqual(len(a), len(b))
+            close_ = sum(1 for x, y in zip(a, b) if abs(float(x) - float(y)) <= 1e-9)
+            self.assertGreaterEqual(close_, 95, (csv, close_))
+
+    def test_a_weighted_file_is_the_same_bytes_at_any_thread_count(self):
+        for model in ("tree", "forest"):
+            seen = set()
+            for t in (1, 2, 4, 8):
+                self.ok(self.fit(model, "cls.csv", "t%d.cml" % t, "--weight", "w", "--threads", str(t)))
+                seen.add(self.sb.read("t%d.cml" % t))
+            self.assertEqual(len(seen), 1, model)
+
+    def test_the_weights_change_the_model(self):
+        for model in ("tree", "forest"):
+            self.ok(self.fit(model, "reg.csv", "w.cml", "--weight", "w"))
+            self.ok(self.fit(model, "reg.csv", "u.cml", "--drop", "w"))
+            self.assertNotEqual(self.sb.read("w.cml"), self.sb.read("u.cml"), model)
+
+    def test_no_weight_above_zero_and_a_class_without_weight(self):
+        self.rule(self.fit("tree", "zero.csv", "x.cml", "--weight", "w"), "ml.weight.zero-total", 8)
+        lines = self.sb.read("cls.csv").decode().strip().split("\n")
+        rows = [ln.split(",") for ln in lines[1:]]
+        self.sb.write("cls_one.csv", "a,b,w,y\n" + "".join("%s,%s,%d,%s\n" % (r[0], r[1], 0 if r[3] == "1" else 1, r[3]) for r in rows))
+        self.rule(self.fit("tree", "cls_one.csv", "x.cml", "--weight", "w"), "ml.label.single-class", 8)
+        self.rule(self.fit("forest", "cls_one.csv", "x.cml", "--weight", "w"), "ml.label.single-class", 8)
+
+    def test_the_conflicts_of_the_column(self):
+        self.rule(self.fit("tree", "reg.csv", "x.cml", "--weight", "y"), "args.conflict", 2)
+        self.rule(self.fit("tree", "reg.csv", "x.cml", "--weight", "w", "--drop", "w"), "args.conflict", 2)
+        self.rule(self.fit("tree", "reg.csv", "x.cml", "--weight", "nope"), "ml.input.unknown-column", 3)
+
+    def test_cv_takes_the_flag(self):
+        for model in ("tree", "forest"):
+            args = ("cv", "--model", model, "--task", "classification", "--target", "y", "--folds", "4", "--seed", "1", *self.forest(model))
+            a = self.ok(self.sb.run(*args, "--weight", "w", "cls.csv"))
+            b = self.ok(self.sb.run(*args, "--drop", "w", "cls.csv"))
+            self.assertIn("folds", json.dumps(a))
+            self.assertNotEqual(json.dumps(a), json.dumps(b), model)
+        self.rule(self.sb.run("cv", "--model", "tree", "--task", "regression", "--target", "y", "--weight", "w", "--folds", "4", "zero.csv"), "ml.weight.zero-total", 8)
+
+    def test_the_held_out_rows_are_scored_without_weights(self):
+        # the metrics of `eval` on the held-out rows (no weight column read) are those the fit reported: the held-out part never meets a weight
+        for model in ("tree", "forest"):
+            d = self.ok(self.sb.run("fit", "--model", model, "--task", "regression", "--target", "y", "--weight", "w", "--split", "train=0.7", "--seed", "3", *self.forest(model), "--output", "s.cml", "--overwrite", "reg.csv"))
+            e = self.ok(self.sb.run("eval", "--model-file", "s.cml", "--drop", "w", "--split", "train=0.7", "--seed", "3", "reg.csv"))
+            hold = d["summary"]["holdout"]
+            metrics = hold.get("metrics", hold)
+            for k, v in e["metrics"].items():
+                self.assertEqual(metrics[k], v, (model, k))
+
+    def test_a_tracked_weighted_fit_is_replayed_with_the_flag(self):
+        (self.sb.dir / "runs").mkdir(exist_ok=True)
+        d = self.ok(self.fit("forest", "reg.csv", "tr.cml", "--weight", "w", "--track", "runs"))
+        rec = json.loads((self.sb.dir / "runs" / (d["run"]["id"] + ".json")).read_text())
+        self.assertEqual(rec["inputs"]["weight"], "w", rec)
+        v = self.sb.run("runs", "verify", "runs", d["run"]["id"])
         self.assertEqual(v.status, 0, v)
 
 

@@ -6,6 +6,7 @@ shares_kind_with = "tree"
 task = "both"
 tier = "supported"
 wired = true
+weighted = true
 shape = "blob"
 adapter = "models.adapter_forest"
 payload_version = 2

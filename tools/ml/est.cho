@@ -532,6 +532,12 @@ pub fn weighted(kind: int) -> [] bool {
     if kind == 5 {
         return true;
     }
+    if kind == 7 {
+        return true;
+    }
+    if kind == 107 {
+        return true;
+    }
     return false;
 }
 
@@ -633,6 +639,17 @@ pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, kind: int, threads: int,
     }
     if kind == 9 {
         return adapter_softmax.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+    }
+    return (box_slice(heap, 1, byte_of(0)), 8);
+}
+
+// as fit_blob with a weight per row (docs/weights.md section 2.5); wd: one weight per row
+pub fn fit_blob_weighted[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    if kind == 7 {
+        return adapter_tree.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+    }
+    if kind == 107 {
+        return adapter_forest.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
     }
     return (box_slice(heap, 1, byte_of(0)), 8);
 }

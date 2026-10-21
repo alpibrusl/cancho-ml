@@ -50,7 +50,7 @@ pub fn check_columns[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors
 
 // --weight with a model that has no weighted fit
 pub fn unsupported[&h](heap: &!h Heap, errs: fail.Errors) -> [heap] fail.Errors {
-    return wiredata.conflict(heap, errs, "weight", "this model has no weighted fit yet: only --model linear and --model logistic take --weight (docs/weights.md section 2.1)");
+    return wiredata.conflict(heap, errs, "weight", "this model has no weighted fit yet: only --model linear, logistic, tree and forest take --weight (docs/weights.md sections 2.1 and 2.5)");
 }
 
 fn weight_error[&h, &n](heap: &!h Heap, errs: fail.Errors, rule: &static [byte], row: int, name: &n [byte], reason: &static [byte]) -> [heap] fail.Errors {
