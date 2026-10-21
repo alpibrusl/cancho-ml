@@ -216,6 +216,19 @@ class Weights(unittest.TestCase):
         self.sb.write("zero.csv", rows_csv(weights=[0] * 120))
         self.rule(self.ml("cv", "--model", "linear", "--target", "y", "--weight", "w", "--folds", "4", "zero.csv"), "ml.weight.zero-total", 8)
 
+    def test_json_lines_take_the_flag_and_give_the_csv_fit(self):
+        r = random.Random(5)
+        recs = [{"a": round(r.uniform(-1, 1), 3), "b": round(r.uniform(-1, 1), 3), "w": r.choice([1, 2, 3])} for _ in range(60)]
+        for x in recs:
+            x["y"] = round(2 * x["a"] - x["b"] + r.gauss(0, 0.1), 3)
+        self.sb.write("w.jsonl", "".join(json.dumps(x) + "\n" for x in recs))
+        self.sb.write("wj.csv", "a,b,w,y\n" + "".join("%s,%s,%s,%s\n" % (x["a"], x["b"], x["w"], x["y"]) for x in recs))
+        a = self.ok(self.ml("fit", "--model", "linear", "--target", "y", "--weight", "w", "--input-format", "jsonl", "--fields", "a,b,w,y", "--output", "wj1.cml", "--overwrite", "w.jsonl"))
+        b = self.ok(self.fit("linear", "wj.csv", "wj2.cml", "--weight", "w"))
+        u = self.ok(self.ml("fit", "--model", "linear", "--target", "y", "--drop", "w", "--input-format", "jsonl", "--fields", "a,b,w,y", "--output", "wj3.cml", "--overwrite", "w.jsonl"))
+        self.assertEqual(coefs(a), coefs(b))
+        self.assertNotEqual(coefs(a), coefs(u))
+
     # ------------------------------------------------------------------ the replay
     def test_a_tracked_weighted_fit_is_replayed_with_the_flag(self):
         (self.sb.dir / "runs").mkdir(exist_ok=True)
