@@ -57,6 +57,36 @@ def make_bins(X, M, B):
     return edges, binsm
 
 
+def rank_grad(F, rel, groups, wts=None):
+    """the gradient and the hessian of the pairwise ranking loss (docs/ranking.md section 4). groups: for each group, the row numbers in file order; rel: the relevance of
+    every row. For every ordered pair (i, j) of one group with rel[i] > rel[j], i ascending then j ascending, rho = sigmoid(F[j] - F[i]) = 1 / (1 + exp(F[i] - F[j])) and
+    tg = w * rho, th = w * (rho * (1 - rho)) with w = wts[i] * wts[j] (or 1): g[i] -= tg, g[j] += tg, h[i] += th, h[j] += th. Every accumulator is a sequential sum in the
+    order the pair loop reaches its terms, from +0.0."""
+    n = len(F)
+    g = np.zeros(n)
+    h = np.zeros(n)
+    F = np.asarray(F, dtype=np.float64)
+    for rows in groups:
+        rows = np.asarray(rows, dtype=np.int64)
+        for ai in range(rows.size):
+            i = int(rows[ai])
+            js = rows[rel[rows] < rel[i]]
+            if js.size == 0:
+                continue
+            rho = sigmoid(F[js] - F[i])
+            tg = rho
+            th = rho * (1.0 - rho)
+            if wts is not None:
+                w = wts[i] * wts[js]
+                tg = w * rho
+                th = w * (rho * (1.0 - rho))
+            g[i] = np.add.accumulate(np.concatenate(([g[i]], 0.0 - tg)))[-1]
+            h[i] = np.add.accumulate(np.concatenate(([h[i]], th)))[-1]
+            g[js] = g[js] + tg
+            h[js] = h[js] + th
+    return g, h
+
+
 def leaf_value(eta, L, G, H):
     lv = 0.0
     if H + L >= HMIN:
