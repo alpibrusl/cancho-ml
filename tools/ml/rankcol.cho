@@ -8,12 +8,17 @@ module ml.rankcol;
 // library sees anything (the library has its own second line, which answers ml.param.out-of-range).
 
 import std.buffer;
+import std.json;
 import std.bytes;
 import linalg.tensor;
+import metrics.ranking;
+import metrics.rules;
 import ml.argv;
 import ml.est;
+import ml.fbits;
 import ml.weightcol;
 import ml.fsio;
+import ml.matrix;
 import ml.paths;
 import ml.spec;
 import ml.splitcol;
@@ -172,6 +177,9 @@ pub fn check_relevance[&h, &y, &n](heap: &!h Heap, yall: &y [float], rows: int, 
 // The rows r with sel[r] == want (all rows when want < 0), their groups renumbered 0 .. k-1 in ascending order of the old number (so that every group has a row), and
 // k: (the group number of each such row, k)
 pub fn gather[&h, &g, &s](heap: &!h Heap, gall: &g [int], ngall: int, sel: &s [int], want: int, n: int) -> [heap] (Box[[int]], int) {
+    if ngall < 1 {
+        return (box_slice(heap, 1, 0), 0);
+    }
     var cnt = 0;
     let used = box_slice(heap, ngall + 2, 0);
     var r = 0;
@@ -359,4 +367,112 @@ pub fn fit_blob[&h, &x, &m, &y, &wl, &gl, &s, &i, &f](heap: &!h Heap, kind: int,
     unbox_slice(heap, gid);
     unbox_slice(heap, wtr);
     return (blob, go, e);
+}
+
+// The ranking metrics of the rows `xs` (a matrix the stored steps produced) against their relevances `yv` and their groups `gid` (0 .. ng - 1, every group with a row): the members
+// of docs/ranking.md section 3 as a JSON object, the lines of the text format, the names of the undefined metrics, and the refusal if any. k is the cut-off (0 the whole group).
+pub fn metrics_block[&h, &x, &b, &y, &g](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, blob: &b [byte], yv: &y [float], gid: &g [int], ng: int, k: int, linear: bool, cap: int) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, wiredata.Failed) {
+    let n = matrix.rows(xs);
+    var score = box_slice(heap, n + 1, 0.0);
+    let none = box_slice(heap, 1, 0.0);
+    var code = 0;
+    borrow none as &nr in {
+        borrow mut score as &!sw in {
+            code = wiredata.predict_into(heap, kind, xs, contents(nr)[0..0], blob, contents(sw));
+        }
+    }
+    unbox_slice(heap, none);
+    var obj = json.writer(heap, 256);
+    obj = json.begin_object(heap, obj);
+    var plain = buffer.empty(heap, 64);
+    var und = buffer.empty(heap, 16);
+    var fl = wiredata.fine();
+    if code != 0 {
+        fl = wiredata.Failed { code: code, name: "predict", row: 0 };
+    } else {
+        var rel = box_slice(heap, n + 1, 0);
+        borrow mut rel as &!rw in {
+            var i = 0;
+            while i < n {
+                contents(rw)[i] = truncate(yv[i]);
+                i = i + 1;
+            }
+        }
+        borrow rel as &rr in {
+            borrow score as &sr in {
+                let r = ranking.evaluate(heap, gid[0..n], contents(rr)[0..n], contents(sr)[0..n], ng, k, linear, cap);
+                if r.code != 0 {
+                    fl = wiredata.Failed { code: r.code, name: "ranking", row: 0 };
+                } else {
+                    var s1 = rules.fail(rules.undefined());
+                    var s2 = s1;
+                    var s3 = s1;
+                    var s5 = s1;
+                    if r.scored > 0 {
+                        s1 = rules.ok(r.ndcg);
+                        s2 = rules.ok(r.map);
+                        s3 = rules.ok(r.mrr);
+                        s5 = rules.ok(r.recall);
+                    }
+                    let (o1, t1, u1, c1) = wiredata.member(heap, obj, plain, "ndcg", "ndcg ", s1, und);
+                    let (o2, t2, u2, c2) = wiredata.member(heap, o1, t1, "map", "map ", s2, u1);
+                    let (o3, t3, u3, c3) = wiredata.member(heap, o2, t2, "mrr", "mrr ", s3, u2);
+                    let (o4, t4, u4, c4) = wiredata.member(heap, o3, t3, "precision", "precision ", rules.ok(r.prec), u3);
+                    let (o5, t5, u5, c5) = wiredata.member(heap, o4, t4, "recall", "recall ", s5, u4);
+                    obj = o5;
+                    plain = t5;
+                    und = u5;
+                    obj = json.put_key(heap, obj, "groups");
+                    obj = json.put_int(heap, obj, r.groups);
+                    plain = verbs.line_int(heap, plain, "groups ", r.groups);
+                    obj = json.put_key(heap, obj, "groups_scored");
+                    obj = json.put_int(heap, obj, r.scored);
+                    plain = verbs.line_int(heap, plain, "groups_scored ", r.scored);
+                    obj = json.put_key(heap, obj, "k");
+                    obj = json.put_int(heap, obj, k);
+                    obj = json.put_key(heap, obj, "gain");
+                    if linear {
+                        obj = json.put_string(heap, obj, "linear");
+                    } else {
+                        obj = json.put_string(heap, obj, "exp");
+                    }
+                    obj = json.put_key(heap, obj, "ties");
+                    obj = json.put_string(heap, obj, "file order");
+                }
+            }
+        }
+        unbox_slice(heap, rel);
+    }
+    unbox_slice(heap, score);
+    obj = json.end_object(heap, obj);
+    return (json.finish(obj), plain, und, fl);
+}
+
+// The metrics block of a held-out part: the ranking metrics for a ranking model (`is_rank`), else the metrics of wiredata for the task of the model.
+pub fn block[&h, &x, &y, &w, &b, &g](heap: &!h Heap, is_rank: bool, kind: int, task: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], blob: &b [byte], c0: int, pos: int, cap: int, strict: bool, gid: &g [int], ng: int, k: int, linear: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, wiredata.Failed) {
+    if is_rank {
+        return metrics_block(heap, kind, xs, blob, yv, gid, ng, k, linear, cap);
+    }
+    return wiredata.metrics_block(heap, kind, task, xs, yv, wv, blob, c0, pos, pos, cap, strict);
+}
+
+// whether the model section of a file of kind `kind` is the payload of a ranking boost (docs/ranking.md section 4): kind 8 and the task field of its header 2
+pub fn payload_ranking[&b](kind: int, src: &b [byte]) -> [] bool {
+    if kind != 8 || len(src) < 28 {
+        return false;
+    }
+    return fbits.get64(src, 20) == 2;
+}
+
+// the word of the task in an answer: ranking for a ranking model, else the word of wiredata
+pub fn word(task: int, rank: bool) -> [] &static [byte] {
+    if rank {
+        return "ranking";
+    }
+    return wiredata.task_word(task);
+}
+
+// eval of a ranking model without --group
+pub fn eval_needs_group[&h](heap: &!h Heap, errs: fail.Errors) -> [heap] fail.Errors {
+    return wiredata.conflict(heap, errs, "group", "a ranking model is scored by group: give --group COLUMN, the column of the file that says which rows are ranked together");
 }

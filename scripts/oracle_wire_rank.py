@@ -12,8 +12,11 @@ import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import oracle_rank as orank  # noqa: E402
+import oracle_wire as ow  # noqa: E402
 import oracle_wire_boost as owb  # noqa: E402
 import oracle_wire_tree as owt  # noqa: E402
+import json  # noqa: E402
 
 COVER = {"cases": 0, "groups": 0, "rows": 0}
 
@@ -61,6 +64,37 @@ def gen_case(seed, rows=None, weighted=False):
     return case
 
 
+def check_eval(case, tmp, k, gain):
+    """`ml eval --group qid` on the file against the metrics of the oracle over the scores of the oracle's model (all rows; docs/ranking.md section 3)"""
+    expect, ctx = owb.fit_oracle(case)
+    if ctx is None:
+        return []
+    names, rows = case.names, case.rows
+    t = names.index(case.target)
+    feat = [j for j in range(len(names)) if j != t]
+    X = [[ow.to_float(r[j]) for j in feat] for r in rows]
+    scores = owb.predict_oracle(case, ctx, X)
+    rel = [int(r[t]) for r in rows]
+    want = orank.evaluate(case.groups, rel, scores, k, gain)
+    extra = ["--drop", "wt"] if case.weights is not None else []
+    rc, out = ow.ml("--root", tmp, "eval", "--model-file", "m.cml", "--group", "qid", "--rank-k", str(k), "--gain", gain, *extra, "d.csv")
+    doc = json.loads(out)
+    if not doc.get("ok"):
+        return ["eval refused: %s" % out[:300]]
+    got = doc["data"]["metrics"]
+    problems = []
+    for key, name in (("ndcg", "ndcg"), ("map", "map"), ("mrr", "mrr"), ("precision", "prec"), ("recall", "recall")):
+        w = want[name]
+        if w is None:
+            if got.get(key, "missing") is not None:
+                problems.append("eval %s: expected null, got %r" % (key, got.get(key)))
+        elif got.get(key) != ow.put_float(w):
+            problems.append("eval %s (k=%d, %s): %r vs %r" % (key, k, gain, got.get(key), ow.put_float(w)))
+    if got.get("groups") != want["groups"] or got.get("groups_scored") != want["scored"]:
+        problems.append("eval groups %r/%r vs %r/%r" % (got.get("groups"), got.get("groups_scored"), want["groups"], want["scored"]))
+    return problems
+
+
 def main():
     argv = sys.argv[1:]
     n = 24
@@ -75,6 +109,9 @@ def main():
         for seed in range(1, n + 1):
             case = gen_case(seed * 7919 + 211, weighted=weighted)
             pr = owb.run_case(case, tmp, threads=1 + seed % 4)
+            if not pr and (tmp / "m.cml").exists():
+                for k, gain in ((10, "exp"), (3, "linear"), (0, "exp"), (1, "exp")):
+                    pr += check_eval(case, tmp, k, gain)
             (tmp / "m.cml").unlink(missing_ok=True)
             if pr:
                 bad += 1

@@ -1369,20 +1369,25 @@ pub fn holdout[&h, &dd, &ci, &cv, &pp, &tt, &s, &cl](heap: &!h Heap, src: &cl [b
                         } else {
                             hc0 = contents(pls.ip)[0];
                         }
+                        // a ranking model is scored by group (docs/ranking.md section 3): the groups of the held-out rows, renumbered
+                        let (gte, gk) = rankcol.gather(heap, contents(ds.gall), ds.ngroups, sel, which, ds.nrows);
                         borrow yte as &yr in {
                             borrow xs as &xq2 in {
-                                let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, ds.c1, o.max_rows, false);
-                                buffer.drop(heap, mobj);
-                                mobj = mo;
-                                buffer.drop(heap, mplain);
-                                buffer.drop(heap, mund);
-                                if fl.code != 0 {
-                                    e = wiredata.bad_metric(heap, e, fl);
-                                    go = false;
+                                borrow gte as &gtr in {
+                                    let (mo, mplain, mund, fl) = rankcol.block(heap, ds.ngroups > 0 && est.ranking(pls.kind, contents(pls.ip)), pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, o.max_rows, false, contents(gtr), gk, argv.nat(src, "rank-k"), bytes.equal(argv.text(src, "gain"), "linear"));
+                                    buffer.drop(heap, mobj);
+                                    mobj = mo;
+                                    buffer.drop(heap, mplain);
+                                    buffer.drop(heap, mund);
+                                    if fl.code != 0 {
+                                        e = wiredata.bad_metric(heap, e, fl);
+                                        go = false;
+                                    }
                                 }
                             }
                         }
                         unbox_slice(heap, yte);
+                        unbox_slice(heap, gte);
                     }
                     matrix.drop(heap, xs);
                 }

@@ -28,6 +28,7 @@ import ml.mcwire;
 import ml.mfile;
 import ml.paths;
 import ml.prov;
+import ml.rankcol;
 import ml.refuse;
 import ml.spec;
 import ml.track;
@@ -189,10 +190,12 @@ pub res struct Stored {
     view: mfile.Model,
     // whether the file has a string table: the categorical columns are then read through the vocabulary of its steps (docs/stringtable.md section 5)
     cat: bool,
+    // whether the model is a ranking model (the payload of a boost says task 2): it is read as a regression and scored by group
+    rank: bool,
 }
 
 pub fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
-    let Stored { lo, sc, kind, wv, c0, c1, d, task, view, cat } = s;
+    let Stored { lo, sc, kind, wv, c0, c1, d, task, view, cat, rank } = s;
     file.drop(heap, lo);
     schema.drop(heap, sc);
     unbox_slice(heap, wv);
@@ -201,7 +204,7 @@ pub fn drop_stored[&h](heap: &!h Heap, s: Stored) -> [heap] int {
 }
 
 pub fn empty_stored[&h](heap: &!h Heap) -> [heap] Stored {
-    return Stored { lo: file.empty(heap), sc: schema.empty(heap), kind: 0, wv: box_slice(heap, 2, 0.0), c0: 0, c1: 0, d: 0, task: 0, view: mfile.empty_model(heap), cat: false };
+    return Stored { lo: file.empty(heap), sc: schema.empty(heap), kind: 0, wv: box_slice(heap, 2, 0.0), c0: 0, c1: 0, d: 0, task: 0, view: mfile.empty_model(heap), cat: false, rank: false };
 }
 
 // the schema as an mfile.Model without statistics
@@ -253,6 +256,7 @@ pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte]
     var plan_task = 0;
     // the k of the plan's model line (a clustering); 0 for the others
     var plan_k = 0;
+    var plan_rank = false;
     borrow lo as &lr in {
         let (pl, pf) = plan.parse(heap, file.plan_bytes(lr));
         borrow pl as &pr in {
@@ -270,6 +274,7 @@ pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte]
                     borrow ip as &ir in {
                         if est.task(key) == 3 {
                             plan_task = est.task_of(key, contents(ir));
+                            plan_rank = est.ranking(key, contents(ir));
                         } else {
                             plan_k = contents(ir)[0];
                         }
@@ -308,6 +313,7 @@ pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte]
     var c1 = 0;
     var dcode = 0;
     var task = est.task(kind);
+    var rk = false;
     borrow lo as &lr in {
         if est.is_blob(kind) {
             // the tree and the forest: the payload is checked whole, and kept in the file (the model section) for predict
@@ -316,6 +322,7 @@ pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte]
             c0 = dec.c0;
             c1 = dec.c1;
             task = dec.end;
+            rk = rankcol.payload_ranking(kind, file.model_bytes(lr));
         } else {
             borrow mut wv as &!ww in {
                 let dec = est.decode(kind, file.model_bytes(lr), width, contents(ww));
@@ -327,6 +334,10 @@ pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte]
     }
     if dcode == 0 && plan_task != 0 && plan_task != task {
         // the plan says classification and the payload is a regression, or the other way: a file that disagrees with itself
+        dcode = 1;
+    }
+    if dcode == 0 && plan_rank != rk {
+        // the plan says ranking and the payload does not, or the other way: a file that disagrees with itself
         dcode = 1;
     }
     if dcode == 0 && plan_k != 0 && plan_k != c0 {
@@ -348,7 +359,7 @@ pub fn load_stored[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte]
     borrow lo as &lr in {
         is_cat = file.has_table(lr);
     }
-    return (Stored { lo: lo, sc: sc, kind: kind, wv: wv, c0: c0, c1: c1, d: width, task: task, view: view, cat: is_cat }, true, e);
+    return (Stored { lo: lo, sc: sc, kind: kind, wv: wv, c0: c0, c1: c1, d: width, task: task, view: view, cat: is_cat, rank: rk }, true, e);
 }
 
 // ---------------------------------------------------------------- the input of predict and eval
@@ -1191,6 +1202,15 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
         go = ok2;
     }
     buffer.drop(heap, data);
+    // a ranking model is scored by group: the command line is judged before the file is read, whose group column would otherwise be read as a feature
+    if go {
+        borrow st as &sqz in {
+            if sqz.rank && !argv.has(src, "group") {
+                e = rankcol.eval_needs_group(heap, e);
+                go = false;
+            }
+        }
+    }
     var inp = empty_input(heap);
     if go {
         borrow st as &sq in {
@@ -1218,6 +1238,27 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
         var nrows = 0;
         borrow inp as &ir0 in {
             nrows = matrix.rows(ir0.x);
+        }
+        // a ranking model is scored by group (docs/ranking.md section 3): the groups of the rows of the file, read again
+        var rank = false;
+        borrow st as &sqk in {
+            rank = sqk.rank;
+        }
+        var gall = box_slice(heap, 1, 0);
+        var ngall = 0;
+        if rank && !argv.has(src, "group") {
+            e = rankcol.eval_needs_group(heap, e);
+            go = false;
+        } else if !rank && argv.has(src, "group") {
+            e = rankcol.unsupported(heap, e);
+            go = false;
+        } else if rank {
+            let (g2, n2, ok2, e2) = rankcol.read(heap, argv.text(src, "group"), fs, root, file, o, nrows, e);
+            unbox_slice(heap, gall);
+            gall = g2;
+            ngall = n2;
+            e = e2;
+            go = ok2;
         }
         // the labels the model knows
         var pos = c1;
@@ -1318,6 +1359,19 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
             borrow sel as &sq4 in {
                 rows = wiredata.count_rows(contents(sq4), nrows, want);
             }
+            // the groups of the rows scored, renumbered 0 .. gk - 1 (a ranking model only)
+            var gte = box_slice(heap, 1, 0);
+            var gk = 0;
+            if go && rank {
+                borrow gall as &gar in {
+                    borrow sel as &sqg in {
+                        let (g3, k3) = rankcol.gather(heap, contents(gar), ngall, contents(sqg), want, nrows);
+                        unbox_slice(heap, gte);
+                        gte = g3;
+                        gk = k3;
+                    }
+                }
+            }
             if go && kind == 9 {
                 // a multiclass model: a label that is not one of its classes is ml.label.unseen
                 borrow yv as &yq9 in {
@@ -1376,79 +1430,81 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
                                 if rok && ost == 0 {
                                     borrow yv as &yr in {
                                         borrow xs as &xq in {
-                                            let (mobj, mplain, mund, fl) = wiredata.metrics_block(heap, kind, task, xq, contents(yr), contents(sr.wv), file.model_bytes(sr.lo), c0, c1, pos, o.max_rows, true);
-                                            if fl.code != 0 {
-                                                var fl2 = fl;
-                                                if fl.code == refuse.predict_non_finite() {
-                                                    // the row of the file, not of the held-out rows
-                                                    fl2 = wiredata.Failed { code: fl.code, name: fl.name, row: wiredata.file_row(contents(sr2), nrows, want, fl.row) };
-                                                }
-                                                e = wiredata.bad_metric(heap, e, fl2);
-                                                buffer.drop(heap, mplain);
-                                            } else {
-                                                var w = json.writer(heap, 256);
-                                                w = json.begin_object(heap, w);
-                                                w = json.put_key(heap, w, "model");
-                                                w = json.put_string(heap, w, est.name(kind));
-                                                w = json.put_key(heap, w, "task");
-                                                w = json.put_string(heap, w, wiredata.task_word(task));
-                                                w = json.put_key(heap, w, "rows");
-                                                w = json.put_int(heap, w, rows);
-                                                w = json.put_key(heap, w, "on");
-                                                w = json.put_string(heap, w, onw);
-                                                if task == 4 {
-                                                    w = json.put_key(heap, w, "clusters");
-                                                    w = json.put_int(heap, w, c0);
-                                                }
-                                                if task == 2 && kind != 9 {
-                                                    w = json.put_key(heap, w, "positive");
-                                                    w = json.put_int(heap, w, pos);
-                                                }
-                                                w = json.put_key(heap, w, "metrics");
-                                                borrow mobj as &mor in {
-                                                    w = json.put_fragment(heap, w, buffer.bytes(mor));
-                                                }
-                                                w = json.put_key(heap, w, "unknown_categories");
-                                                w = json.put_int(heap, w, unk);
-                                                w = json.put_key(heap, w, "out_of_range");
-                                                borrow oor as &orr in {
-                                                    w = json.put_fragment(heap, w, buffer.bytes(orr));
-                                                }
-                                                if o.split_given {
-                                                    w = json.put_key(heap, w, "split");
-                                                    w = json.begin_object(heap, w);
-                                                    w = json.put_key(heap, w, "train");
-                                                    w = json.put_int(heap, w, nrows - ntest);
-                                                    w = json.put_key(heap, w, "test");
-                                                    w = json.put_int(heap, w, ntest);
-                                                    w = json.put_key(heap, w, "seed");
-                                                    w = json.put_int(heap, w, o.seed);
-                                                    w = json.put_key(heap, w, "spec");
-                                                    borrow spec_buf as &spb in {
-                                                        w = json.put_string(heap, w, buffer.bytes(spb));
+                                            borrow gte as &gtr in {
+                                                let (mobj, mplain, mund, fl) = rankcol.block(heap, rank, kind, task, xq, contents(yr), contents(sr.wv), file.model_bytes(sr.lo), c0, pos, o.max_rows, true, contents(gtr), gk, argv.nat(src, "rank-k"), bytes.equal(argv.text(src, "gain"), "linear"));
+                                                if fl.code != 0 {
+                                                    var fl2 = fl;
+                                                    if fl.code == refuse.predict_non_finite() {
+                                                        // the row of the file, not of the held-out rows
+                                                        fl2 = wiredata.Failed { code: fl.code, name: fl.name, row: wiredata.file_row(contents(sr2), nrows, want, fl.row) };
                                                     }
-                                                    borrow assign_buf as &asb in {
-                                                        if buffer.size(asb) > 0 {
-                                                            w = json.put_key(heap, w, "assignment");
-                                                            w = json.put_fragment(heap, w, buffer.bytes(asb));
+                                                    e = wiredata.bad_metric(heap, e, fl2);
+                                                    buffer.drop(heap, mplain);
+                                                } else {
+                                                    var w = json.writer(heap, 256);
+                                                    w = json.begin_object(heap, w);
+                                                    w = json.put_key(heap, w, "model");
+                                                    w = json.put_string(heap, w, est.name(kind));
+                                                    w = json.put_key(heap, w, "task");
+                                                    w = json.put_string(heap, w, rankcol.word(task, rank));
+                                                    w = json.put_key(heap, w, "rows");
+                                                    w = json.put_int(heap, w, rows);
+                                                    w = json.put_key(heap, w, "on");
+                                                    w = json.put_string(heap, w, onw);
+                                                    if task == 4 {
+                                                        w = json.put_key(heap, w, "clusters");
+                                                        w = json.put_int(heap, w, c0);
+                                                    }
+                                                    if task == 2 && kind != 9 {
+                                                        w = json.put_key(heap, w, "positive");
+                                                        w = json.put_int(heap, w, pos);
+                                                    }
+                                                    w = json.put_key(heap, w, "metrics");
+                                                    borrow mobj as &mor in {
+                                                        w = json.put_fragment(heap, w, buffer.bytes(mor));
+                                                    }
+                                                    w = json.put_key(heap, w, "unknown_categories");
+                                                    w = json.put_int(heap, w, unk);
+                                                    w = json.put_key(heap, w, "out_of_range");
+                                                    borrow oor as &orr in {
+                                                        w = json.put_fragment(heap, w, buffer.bytes(orr));
+                                                    }
+                                                    if o.split_given {
+                                                        w = json.put_key(heap, w, "split");
+                                                        w = json.begin_object(heap, w);
+                                                        w = json.put_key(heap, w, "train");
+                                                        w = json.put_int(heap, w, nrows - ntest);
+                                                        w = json.put_key(heap, w, "test");
+                                                        w = json.put_int(heap, w, ntest);
+                                                        w = json.put_key(heap, w, "seed");
+                                                        w = json.put_int(heap, w, o.seed);
+                                                        w = json.put_key(heap, w, "spec");
+                                                        borrow spec_buf as &spb in {
+                                                            w = json.put_string(heap, w, buffer.bytes(spb));
                                                         }
+                                                        borrow assign_buf as &asb in {
+                                                            if buffer.size(asb) > 0 {
+                                                                w = json.put_key(heap, w, "assignment");
+                                                                w = json.put_fragment(heap, w, buffer.bytes(asb));
+                                                            }
+                                                        }
+                                                        w = json.end_object(heap, w);
                                                     }
                                                     w = json.end_object(heap, w);
+                                                    buffer.drop(heap, payload);
+                                                    payload = json.finish(w);
+                                                    buffer.drop(heap, plain);
+                                                    plain = buffer.append(heap, buffer.empty(heap, 64), "on ");
+                                                    plain = buffer.append(heap, plain, onw);
+                                                    plain = buffer.push(heap, plain, byte_of(10));
+                                                    borrow mplain as &mpr in {
+                                                        plain = buffer.append(heap, plain, buffer.bytes(mpr));
+                                                    }
+                                                    buffer.drop(heap, mplain);
                                                 }
-                                                w = json.end_object(heap, w);
-                                                buffer.drop(heap, payload);
-                                                payload = json.finish(w);
-                                                buffer.drop(heap, plain);
-                                                plain = buffer.append(heap, buffer.empty(heap, 64), "on ");
-                                                plain = buffer.append(heap, plain, onw);
-                                                plain = buffer.push(heap, plain, byte_of(10));
-                                                borrow mplain as &mpr in {
-                                                    plain = buffer.append(heap, plain, buffer.bytes(mpr));
-                                                }
-                                                buffer.drop(heap, mplain);
+                                                buffer.drop(heap, mobj);
+                                                buffer.drop(heap, mund);
                                             }
-                                            buffer.drop(heap, mobj);
-                                            buffer.drop(heap, mund);
                                         }
                                     }
                                 }
@@ -1460,8 +1516,10 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
                 }
             }
             unbox_slice(heap, yv);
+            unbox_slice(heap, gte);
         }
         unbox_slice(heap, sel);
+        unbox_slice(heap, gall);
         buffer.drop(heap, spec_buf);
         buffer.drop(heap, assign_buf);
     }
