@@ -6445,7 +6445,8 @@
                     "enum": [
                       "regression",
                       "classification",
-                      "clustering"
+                      "clustering",
+                      "ranking"
                     ]
                   },
                   "data_sha256": {

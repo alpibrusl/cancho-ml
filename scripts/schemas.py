@@ -109,7 +109,7 @@ OOR = {"oneOf": [{"type": "null"}, obj({"cells": NAT, "rows": NAT, "columns": {"
 
 def runs_data():
     """The answers of ml runs list, show, compare and verify (docs/tracking.md section 5.4)."""
-    entry = obj({"id": SHA, "model": {"type": "string"}, "task": {"enum": ["regression", "classification", "clustering"]}, "data_sha256": SHA, "model_sha256": SHA,
+    entry = obj({"id": SHA, "model": {"type": "string"}, "task": {"enum": ["regression", "classification", "clustering", "ranking"]}, "data_sha256": SHA, "model_sha256": SHA,
                  "train_rows": NAT, "metrics_on": {"oneOf": [{"enum": ["train", "held-out"]}, {"type": "null"}]}, "evals": NAT})
     lst = obj({"dir": TB, "count": NAT, "truncated": {"type": "boolean"}, "runs": {"type": "array", "items": entry}})
     show = obj({"record": {"type": "object"}})

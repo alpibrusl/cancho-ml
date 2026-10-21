@@ -1920,7 +1920,7 @@ pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [by
             if est.kind_of(mq.kind) >= kinds.first_ordered_model() {
                 sum_order = kinds.sum_order_for(est.kind_of(mq.kind));
             }
-            let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(mq.fbytes), buffer.bytes(mq.sha), mq.file_bytes, mq.file_rows, mq.trows, mq.ntest, mq.features, mq.steps, argv.text(src, "target"), mq.task != 4, wiredata.task_word(mq.task), buffer.bytes(mq.ptext), buffer.bytes(mq.splt), buffer.bytes(mq.rec), sum_order, argv.text(src, "na-values"), src, o, fail.empty_in(heap, spec.extra()));
+            let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(mq.fbytes), buffer.bytes(mq.sha), mq.file_bytes, mq.file_rows, mq.trows, mq.ntest, mq.features, mq.steps, argv.text(src, "target"), mq.task != 4, rankcol.word(mq.task, len(argv.text(src, "group")) > 0), buffer.bytes(mq.ptext), buffer.bytes(mq.splt), buffer.bytes(mq.rec), sum_order, argv.text(src, "na-values"), src, o, fail.empty_in(heap, spec.extra()));
             buffer.drop(heap, recbuf);
             buffer.drop(heap, idbuf);
             recbuf = rb;
