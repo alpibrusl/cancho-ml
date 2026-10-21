@@ -1049,6 +1049,397 @@ fn t_model[&h](heap: &!h Heap) -> [heap, conc] int {
 
 // ---------------------------------------------------------------- main
 
+// ---------------------------------------------------------------- weights (docs/weights.md section 2.5)
+
+fn wfit_code[&h, &x, &y, &q](heap: &!h Heap, p: params.Params, n: int, d: int, xs: &x [float], ys: &y [float], wd: &q [float]) -> [heap, conc] int {
+    let none = "";
+    let (f, code) = forest.fit_weighted(heap, p, n, d, xs, none, ys, wd, 10000000, 4096, 400000000);
+    forest.drop(heap, f);
+    return code;
+}
+
+fn with_weight[&h, &q](heap: &!h Heap, base: &q [float], n: int, at: int, v: float) -> [heap] Box[[float]] {
+    let b = box_slice(heap, n + 1, 0.0);
+    var o = b;
+    borrow mut o as &!w in {
+        var i = 0;
+        while i < n {
+            contents(w)[i] = base[i];
+            i = i + 1;
+        }
+        if at >= 0 && at < n {
+            contents(w)[at] = v;
+        }
+    }
+    return o;
+}
+
+// the refusals of a weight vector: negative, over 1e12, NaN, infinity, all zero, a short vector, a class with no row of positive weight; exactly 1e12 and a tiny weight are fitted
+fn t_weights_refuse[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let n = 40;
+    let (xs, ys) = make_data(heap, n, 3, 0);
+    let ones = box_slice(heap, n + 1, 1.0);
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow ones as &or in {
+                let p = prm(0, 3, 4, 1, 16, 2, 1, 1);
+                let nan = 0.0 / 0.0;
+                let inf = 1.0e308 * 10.0;
+                bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(or)[0..n]) == 0);
+                let w1 = with_weight(heap, contents(or), n, 5, 0.0 - 0.5);
+                let w2 = with_weight(heap, contents(or), n, 5, 1.5e12);
+                let w3 = with_weight(heap, contents(or), n, 5, nan);
+                let w4 = with_weight(heap, contents(or), n, 5, inf);
+                let w5 = with_weight(heap, contents(or), n, 5, 1.0e12);
+                let w6 = with_weight(heap, contents(or), n, 5, 1.0e-300);
+                let zero = box_slice(heap, n + 1, 0.0);
+                borrow w1 as &a1 in {
+                    bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(a1)[0..n]) == refuse.param_out_of_range());
+                }
+                borrow w2 as &a2 in {
+                    bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(a2)[0..n]) == refuse.param_out_of_range());
+                }
+                borrow w3 as &a3 in {
+                    bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(a3)[0..n]) == deny.non_finite());
+                }
+                borrow w4 as &a4 in {
+                    bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(a4)[0..n]) == deny.non_finite());
+                }
+                borrow w5 as &a5 in {
+                    bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(a5)[0..n]) == 0);
+                }
+                borrow w6 as &a6 in {
+                    bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(a6)[0..n]) == 0);
+                }
+                borrow zero as &az in {
+                    bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(az)[0..n]) == refuse.param_out_of_range());
+                }
+                bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(or)[0..n - 1]) == refuse.param_out_of_range());
+                // every row of class 1 at weight 0: one class has weight
+                let w7 = box_slice(heap, n + 1, 1.0);
+                borrow mut w7 as &!q7 in {
+                    var i = 0;
+                    while i < n {
+                        if contents(yr)[i] == 1.0 {
+                            contents(q7)[i] = 0.0;
+                        }
+                        i = i + 1;
+                    }
+                }
+                borrow w7 as &a7 in {
+                    bad = bad + pass(wfit_code(heap, p, n, 3, contents(xr)[0..n * 3], contents(yr)[0..n], contents(a7)[0..n]) == deny.single_class());
+                }
+                unbox_slice(heap, w1);
+                unbox_slice(heap, w2);
+                unbox_slice(heap, w3);
+                unbox_slice(heap, w4);
+                unbox_slice(heap, w5);
+                unbox_slice(heap, w6);
+                unbox_slice(heap, w7);
+                unbox_slice(heap, zero);
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, ones);
+    return bad;
+}
+
+// rows of weight 0 take no part in purity: x = 0 .. 5, class 1 at 0, 2, 3 (weight 1), class 0 at 1 (weight 0), 4 and 5 (weight 1). The best split is between 3 and 4 and both sides are pure
+// in weight, so the tree is the root and two leaves, with the values 1.0 and 0.0 (an unweighted tree splits the row at 1 off)
+fn t_weights_zero_rows_are_not_in_purity[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let xs = box_slice(heap, 7, 0.0);
+    let ys = box_slice(heap, 7, 0.0);
+    let ws = box_slice(heap, 7, 1.0);
+    borrow mut xs as &!xw in {
+        borrow mut ys as &!yw in {
+            borrow mut ws as &!ww in {
+                var i = 0;
+                while i < 6 {
+                    contents(xw)[i] = float_of(i);
+                    i = i + 1;
+                }
+                contents(yw)[0] = 1.0;
+                contents(yw)[2] = 1.0;
+                contents(yw)[3] = 1.0;
+                contents(ww)[1] = 0.0;
+            }
+        }
+    }
+    let none = "";
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow ws as &wr in {
+                let (f, code) = forest.fit_weighted(heap, prm(0, 1, 4, 1, 8, 1, 0, 1), 6, 1, contents(xr)[0..6], none, contents(yr)[0..6], contents(wr)[0..6], 100, 100, 100);
+                bad = bad + pass(code == 0);
+                borrow f as &fr in {
+                    bad = bad + pass(fr.total == 3);
+                    let out = box_slice(heap, 8, 0.5);
+                    borrow mut out as &!ow in {
+                        bad = bad + pass(predict.predict(heap, fr, contents(xr)[0..6], none, 6, 1, 1, contents(ow)[0..6]) == 0);
+                        var k = 0;
+                        while k < 6 {
+                            var want = 0.0;
+                            if k <= 3 {
+                                want = 1.0;
+                            }
+                            bad = bad + pass(contents(ow)[k] == want);
+                            k = k + 1;
+                        }
+                    }
+                    unbox_slice(heap, out);
+                }
+                forest.drop(heap, f);
+                // unweighted, the same rows split further
+                let (g, code2) = forest.fit(heap, prm(0, 1, 4, 1, 8, 1, 0, 1), 6, 1, contents(xr)[0..6], none, contents(yr)[0..6], 100, 100, 100);
+                bad = bad + pass(code2 == 0);
+                borrow g as &gr in {
+                    bad = bad + pass(gr.total > 3);
+                }
+                forest.drop(heap, g);
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, ws);
+    return bad;
+}
+
+// a tree of a forest whose bootstrap drew only rows of weight 0 is a leaf of the weighted value of the whole set: every prediction is finite and within 0 and 1 (without the fallback it is 0 / 0)
+fn t_weights_zero_root_fallback[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let xs = box_slice(heap, 7, 0.0);
+    let ys = box_slice(heap, 7, 0.0);
+    let ws = box_slice(heap, 7, 0.0);
+    borrow mut xs as &!xw in {
+        borrow mut ys as &!yw in {
+            borrow mut ws as &!ww in {
+                var i = 0;
+                while i < 6 {
+                    contents(xw)[i] = float_of(i);
+                    if i >= 3 {
+                        contents(yw)[i] = 1.0;
+                    }
+                    i = i + 1;
+                }
+                contents(ww)[2] = 1.0;
+                contents(ww)[3] = 1.0;
+            }
+        }
+    }
+    let none = "";
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow ws as &wr in {
+                let (f, code) = forest.fit_weighted(heap, prm(0, 60, 3, 1, 8, 1, 1, 1), 6, 1, contents(xr)[0..6], none, contents(yr)[0..6], contents(wr)[0..6], 100, 100, 100);
+                bad = bad + pass(code == 0);
+                borrow f as &fr in {
+                    let out = box_slice(heap, 8, 0.5);
+                    borrow mut out as &!ow in {
+                        bad = bad + pass(predict.predict(heap, fr, contents(xr)[0..6], none, 6, 1, 1, contents(ow)[0..6]) == 0);
+                        var k = 0;
+                        while k < 6 {
+                            let v = contents(ow)[k];
+                            bad = bad + pass(v == v && v >= 0.0 && v <= 1.0);
+                            k = k + 1;
+                        }
+                    }
+                    unbox_slice(heap, out);
+                }
+                forest.drop(heap, f);
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, ws);
+    return bad;
+}
+
+// the root of a bootstrap sample with no weight is a leaf of the weighted value of the whole set: 8 rows, one tree; its draws (stream 1) are the rows 0, 1, 3, 4, 7, and only the rows 2
+// (class 1, weight 3) and 5 (class 0, weight 1) have a weight, so every prediction is 3 / 4 exactly
+fn t_weights_zero_root_value[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let xs = box_slice(heap, 9, 0.0);
+    let ys = box_slice(heap, 9, 0.0);
+    let ws = box_slice(heap, 9, 0.0);
+    borrow mut xs as &!xw in {
+        borrow mut ys as &!yw in {
+            borrow mut ws as &!ww in {
+                var i = 0;
+                while i < 8 {
+                    contents(xw)[i] = float_of(i);
+                    contents(yw)[i] = float_of(i % 2);
+                    i = i + 1;
+                }
+                contents(yw)[2] = 1.0;
+                contents(yw)[5] = 0.0;
+                contents(ww)[2] = 3.0;
+                contents(ww)[5] = 1.0;
+            }
+        }
+    }
+    let none = "";
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow ws as &wr in {
+                let (f, code) = forest.fit_weighted(heap, prm(0, 1, 3, 1, 8, 1, 1, 1), 8, 1, contents(xr)[0..8], none, contents(yr)[0..8], contents(wr)[0..8], 100, 100, 100);
+                bad = bad + pass(code == 0);
+                borrow f as &fr in {
+                    bad = bad + pass(fr.total == 1);
+                    let out = box_slice(heap, 9, 0.0);
+                    borrow mut out as &!ow in {
+                        bad = bad + pass(predict.predict(heap, fr, contents(xr)[0..8], none, 8, 1, 1, contents(ow)[0..8]) == 0);
+                        var k = 0;
+                        while k < 8 {
+                            bad = bad + pass(contents(ow)[k] == 0.75);
+                            k = k + 1;
+                        }
+                    }
+                    unbox_slice(heap, out);
+                }
+                forest.drop(heap, f);
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, ws);
+    return bad;
+}
+
+// the same for a regression: y = 4 at the row 2 (weight 3) and 2 at the row 5 (weight 1), so every prediction is (3 * 4 + 1 * 2) / 4 = 3.5 exactly; 8 rows, one tree; its draws (stream 1) are the rows 0, 1, 3, 4, 7, and only the rows 2
+// (class 1, weight 3) and 5 (class 0, weight 1) have a weight, so every prediction is 3 / 4 exactly
+fn t_weights_zero_root_value_reg[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    let xs = box_slice(heap, 9, 0.0);
+    let ys = box_slice(heap, 9, 0.0);
+    let ws = box_slice(heap, 9, 0.0);
+    borrow mut xs as &!xw in {
+        borrow mut ys as &!yw in {
+            borrow mut ws as &!ww in {
+                var i = 0;
+                while i < 8 {
+                    contents(xw)[i] = float_of(i);
+                    contents(yw)[i] = float_of(i % 3);
+                    i = i + 1;
+                }
+                contents(yw)[2] = 4.0;
+                contents(yw)[5] = 2.0;
+                contents(ww)[2] = 3.0;
+                contents(ww)[5] = 1.0;
+            }
+        }
+    }
+    let none = "";
+    borrow xs as &xr in {
+        borrow ys as &yr in {
+            borrow ws as &wr in {
+                let (f, code) = forest.fit_weighted(heap, prm(1, 1, 3, 1, 8, 1, 1, 1), 8, 1, contents(xr)[0..8], none, contents(yr)[0..8], contents(wr)[0..8], 100, 100, 100);
+                bad = bad + pass(code == 0);
+                borrow f as &fr in {
+                    bad = bad + pass(fr.total == 1);
+                    let out = box_slice(heap, 9, 0.0);
+                    borrow mut out as &!ow in {
+                        bad = bad + pass(predict.predict(heap, fr, contents(xr)[0..8], none, 8, 1, 1, contents(ow)[0..8]) == 0);
+                        var k = 0;
+                        while k < 8 {
+                            bad = bad + pass(contents(ow)[k] == 3.5);
+                            k = k + 1;
+                        }
+                    }
+                    unbox_slice(heap, out);
+                }
+                forest.drop(heap, f);
+            }
+        }
+    }
+    unbox_slice(heap, xs);
+    unbox_slice(heap, ys);
+    unbox_slice(heap, ws);
+    return bad;
+}
+
+fn wpick(r: int) -> [] float {
+    let m = r % 8;
+    if m == 0 {
+        return 0.0;
+    }
+    if m == 1 {
+        return 1.0e-300;
+    }
+    if m == 2 {
+        return 1.0e-5;
+    }
+    if m == 3 {
+        return 1.0;
+    }
+    if m == 4 {
+        return 3.7;
+    }
+    if m == 5 {
+        return 1.0e12;
+    }
+    if m == 6 {
+        return 1.5e12;
+    }
+    return 0.0 - 1.0;
+}
+
+// hostile weights never trap; a fit that answers 0 predicts finite values
+fn t_weights_fuzz[&h](heap: &!h Heap) -> [heap, conc] int {
+    var bad = 0;
+    var round = 0;
+    while round < 60 {
+        let n = 2 + truncate((rng.element(900, round) + 1.0) * 0.5 * 50.0);
+        let d = 1 + truncate((rng.element(901, round) + 1.0) * 0.5 * 3.0);
+        let task = round % 2;
+        let (xs, ys) = make_data(heap, n, 3, task);
+        let ws = box_slice(heap, n + 1, 1.0);
+        borrow mut ws as &!wq in {
+            var i = 0;
+            while i < n {
+                contents(wq)[i] = wpick(truncate((rng.element(902 + round, i) + 1.0) * 0.5 * 8.0));
+                i = i + 1;
+            }
+        }
+        let none = "";
+        borrow xs as &xr in {
+            borrow ys as &yr in {
+                borrow ws as &wr in {
+                    let (f, code) = forest.fit_weighted(heap, prm(task, 3, 4, 1, 16, 2, round % 2, 1 + round % 3), n, 3, contents(xr)[0..n * 3], none, contents(yr)[0..n], contents(wr)[0..n], 10000000, 4096, 400000000);
+                    bad = bad + pass(code >= 0 && code <= 250);
+                    if code == 0 {
+                        borrow f as &fr in {
+                            let out = box_slice(heap, n + 1, 0.0);
+                            borrow mut out as &!ow in {
+                                bad = bad + pass(predict.predict(heap, fr, contents(xr)[0..n * 3], none, n, 3, 1, contents(ow)) == 0);
+                                var k = 0;
+                                while k < n {
+                                    let v = contents(ow)[k];
+                                    bad = bad + pass(v == v && v - v == 0.0);
+                                    k = k + 1;
+                                }
+                            }
+                            unbox_slice(heap, out);
+                        }
+                    }
+                    forest.drop(heap, f);
+                }
+            }
+        }
+        unbox_slice(heap, xs);
+        unbox_slice(heap, ys);
+        unbox_slice(heap, ws);
+        round = round + 1;
+    }
+    return bad;
+}
+
 fn main(world: World) -> [conc] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(ffi);
@@ -1080,6 +1471,12 @@ fn main(world: World) -> [conc] int {
             bad = bad + report(i, "threads_bytes", t_threads_bytes(hp));
             bad = bad + report(i, "threads_more_than_work", t_threads_more_than_work(hp));
             bad = bad + report(i, "model", t_model(hp));
+            bad = bad + report(i, "weights_refuse", t_weights_refuse(hp));
+            bad = bad + report(i, "weights_zero_rows_are_not_in_purity", t_weights_zero_rows_are_not_in_purity(hp));
+            bad = bad + report(i, "weights_zero_root_fallback", t_weights_zero_root_fallback(hp));
+            bad = bad + report(i, "weights_zero_root_value", t_weights_zero_root_value(hp));
+            bad = bad + report(i, "weights_zero_root_value_reg", t_weights_zero_root_value_reg(hp));
+            bad = bad + report(i, "weights_fuzz", t_weights_fuzz(hp));
         }
     }
     release(heap);

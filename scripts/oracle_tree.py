@@ -7,9 +7,13 @@ Writes the E / N / P lines that `tree-check mode=fit` prints (byte for byte the 
     equal_v = candidates where the variant 1 equals the variant 0 (no missing row), to show the skipped duplicate is harmless.
 Exact integer arithmetic (Python ints) for the Gini comparison; IEEE float64 sequential sums (np.bincount with weights, a Python
 loop over bins, np.add.accumulate) for regression; np.sum is never used (pairwise)."""
+import os
 import struct
 import sys
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import oracle_linalg as ol  # the elements of a data set (lib/core/rng.cho), for the weights of wt=KIND
 
 M64 = (1 << 64) - 1
 GOLD = 0x9E3779B97F4A7C15
@@ -60,8 +64,34 @@ def float_of_key(k):
     return np.uint64(bits).view(np.float64)
 
 
-def fit(Xtr, mtr, ytr, task, T, maxd, ML, B, mtry, boot, seed, stats):
+def gen_weights(seed, n, kind):
+    """the weights of the driver (wt=KIND; docs/weights.md): u_i = element(derive(seed, 4), i) in [-1, 1)
+    1: 1.0   2: float(1 + trunc((u + 1) * 2.0))   3: (u + 1) * 1.0 + 0.25   4: kind 3 with 0.0 at every row i with i mod 5 = 3   5: float(trunc((u + 1) * 2.0)), the integers 0 to 3"""
+    u = ol.elements(ol.derive(seed, 4), n)
+    if kind == 1:
+        return np.ones(n)
+    if kind == 2:
+        return 1.0 + np.trunc((u + 1.0) * 2.0)
+    if kind == 5:
+        return np.trunc((u + 1.0) * 2.0)
+    w = (u + 1.0) * 1.0 + 0.25
+    if kind == 4:
+        w[np.arange(n) % 5 == 3] = 0.0
+    return w
+
+
+def seqsum(v):
+    """a sequential float sum in element order (np.sum is pairwise and is never used)"""
+    return float(np.add.accumulate(np.concatenate(([0.0], np.asarray(v, dtype=np.float64))))[-1])
+
+
+def fit(Xtr, mtr, ytr, task, T, maxd, ML, B, mtry, boot, seed, stats, wts=None):
+    """wts: None, or the weight of every training row (docs/weights.md section 2.5): the weighted growth, the unweighted one being untouched"""
     n, d = Xtr.shape
+    wtd = wts is not None
+    wdef = 0.0
+    if wtd:
+        wdef = seqsum(wts * ytr) / seqsum(wts)
     edges = np.zeros((d, B - 1))
     binsm = np.zeros((d, n), dtype=np.int64)
     for f in range(d):
@@ -102,10 +132,21 @@ def fit(Xtr, mtr, ytr, task, T, maxd, ML, B, mtry, boot, seed, stats):
                 n1 = int(yr.sum())
                 n0 = m - n1
                 can = dep < maxd and m >= 2 * ML and n0 > 0 and n1 > 0
+                if wtd:
+                    wr_ = wts[rows]
+                    W1 = seqsum(np.where(yr == 1, wr_, 0.0))
+                    W0 = seqsum(np.where(yr == 0, wr_, 0.0))
+                    can = dep < maxd and m >= 2 * ML and W0 > 0.0 and W1 > 0.0
             else:
                 yv = ytr[rows]
                 sm = float(np.add.accumulate(np.concatenate(([0.0], yv)))[-1])
                 can = dep < maxd and m >= 2 * ML and bool(yv.min() != yv.max())
+                if wtd:
+                    wr_ = wts[rows]
+                    sm = seqsum(wr_ * yv)
+                    sw = seqsum(wr_)
+                    pos = wr_ > 0.0
+                    can = dep < maxd and m >= 2 * ML and bool(pos.any()) and bool(yv[pos].min() != yv[pos].max())
             best = None
             if can:
                 r = SM(derive(derive(derive(seed, 2), t), hid))
@@ -116,7 +157,71 @@ def fit(Xtr, mtr, ytr, task, T, maxd, ML, B, mtry, boot, seed, stats):
                 sub = sorted(a[:mtry])
                 for f in sub:
                     bf = binsm[f][rows]
-                    if task == 0:
+                    if wtd and task == 0:
+                        c = np.bincount(bf * 2 + yr, minlength=2 * (B + 1))
+                        hf = np.bincount(bf * 2 + yr, weights=wr_, minlength=2 * (B + 1)).tolist()
+                        pos = c[1::2]
+                        cnt = c[0::2] + pos
+                        NL = np.cumsum(cnt[: B - 1]).tolist()
+                        PL = np.cumsum(pos[: B - 1]).tolist()
+                        mc, mp = int(cnt[B]), int(pos[B])
+                        m0, m1 = hf[2 * B], hf[2 * B + 1]
+                        l0 = l1 = 0.0
+                        for b in range(B - 1):
+                            l0 = l0 + hf[2 * b]
+                            l1 = l1 + hf[2 * b + 1]
+                            for dl in (0, 1):
+                                nl, pl, a0, a1 = NL[b], PL[b], l0, l1
+                                if dl == 1:
+                                    if mc == 0:
+                                        continue
+                                    nl += mc
+                                    pl += mp
+                                    a0 = l0 + m0
+                                    a1 = l1 + m1
+                                nr = m - nl
+                                if nl < ML or nr < ML:
+                                    continue
+                                wl = a0 + a1
+                                r0 = W0 - a0
+                                r1 = W1 - a1
+                                wr = r0 + r1
+                                if not (wl > 0.0 and wr > 0.0):
+                                    continue
+                                sc = (a0 * a0 + a1 * a1) / wl + (r0 * r0 + r1 * r1) / wr
+                                if best is None or sc > best[0]:
+                                    best = (sc, f, b, dl, nl, pl)
+                    elif wtd:
+                        cnt = np.bincount(bf, minlength=B + 1).tolist()
+                        sums = np.bincount(bf, weights=wr_ * yv, minlength=B + 1).tolist()
+                        wsum = np.bincount(bf, weights=wr_, minlength=B + 1).tolist()
+                        mc, ms, mw = cnt[B], sums[B], wsum[B]
+                        nlc = 0
+                        sl = 0.0
+                        wl_ = 0.0
+                        for b in range(B - 1):
+                            nlc += cnt[b]
+                            sl = sl + sums[b]
+                            wl_ = wl_ + wsum[b]
+                            for dl in (0, 1):
+                                nl, SL, WL = nlc, sl, wl_
+                                if dl == 1:
+                                    if mc == 0:
+                                        continue
+                                    nl = nlc + mc
+                                    SL = sl + ms
+                                    WL = wl_ + mw
+                                nr = m - nl
+                                if nl < ML or nr < ML:
+                                    continue
+                                SR = sm - SL
+                                WR = sw - WL
+                                if not (WL > 0.0 and WR > 0.0):
+                                    continue
+                                sc = SL * SL / WL + SR * SR / WR
+                                if best is None or sc > best[0]:
+                                    best = (sc, f, b, dl, nl)
+                    elif task == 0:
                         c = np.bincount(bf * 2 + yr, minlength=2 * (B + 1))
                         pos = c[1::2]
                         cnt = c[0::2] + pos
@@ -178,10 +283,16 @@ def fit(Xtr, mtr, ytr, task, T, maxd, ML, B, mtry, boot, seed, stats):
             if best is None:
                 if task == 0:
                     nodes[ni] = [-1, -1, 0, -1, -1, n0, n1, n1 / (n0 + n1)]
+                    if wtd:
+                        nodes[ni][7] = W1 / (W0 + W1) if W0 + W1 > 0.0 else wdef
                 else:
                     nodes[ni] = [-1, -1, 0, -1, -1, m, 0, sm / float(m)]
+                    if wtd:
+                        nodes[ni][7] = sm / sw if sw > 0.0 else wdef
                 continue
-            if task == 0:
+            if wtd and task == 0:
+                _, f, b, dl, nl, pl = best
+            elif task == 0:
                 _, _, f, b, dl, nl, pl = best
             else:
                 _, f, b, dl, nl = best
@@ -261,7 +372,9 @@ def main():
             while (mtry + 1) * (mtry + 1) <= d: mtry += 1
     stats = {"ties": 0, "v1": 0, "equal_v": 0}
     with np.errstate(invalid="ignore"):
-        edges, trees = fit(X[:ntr], mask[:ntr], y[:ntr], task, T, maxd, ML, B, mtry, boot, seed, stats)
+        wk = arg_int(a, "wt", 0)
+        wts = gen_weights(seed, n, wk)[:ntr] if wk else None
+        edges, trees = fit(X[:ntr], mask[:ntr], y[:ntr], task, T, maxd, ML, B, mtry, boot, seed, stats, wts)
         pf = predict(trees, X[ntr:], mask[ntr:], T)
     with open(a["out"], "w") as o:
         for f in range(d):

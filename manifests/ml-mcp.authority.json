@@ -185,6 +185,7 @@
     "check_tree",
     "check_tree",
     "check_weights",
+    "check_weights",
     "check_x",
     "checksum",
     "chosen_before",
@@ -684,6 +685,7 @@
     "max_strings",
     "max_tokens",
     "max_weight",
+    "max_weight",
     "mean_of",
     "mean_scaled",
     "measure_mdi",
@@ -1179,5 +1181,5 @@
   ],
   "folded_operators": 285,
   "folded_calls": 2,
-  "functions": 2007
+  "functions": 2016
 }

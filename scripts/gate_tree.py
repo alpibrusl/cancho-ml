@@ -224,15 +224,135 @@ def spike_gate(cancho, verbose=True):
     return bad
 
 
+# ---------------------------------------------------------------- the weighted growth (docs/weights.md section 2.5)
+
+WEIGHTED = ("E1", "E2", "E3", "E4")
+
+
+def weighted(exe, verbose=True):
+    """G-weights: for each edge configuration and each weight kind (1 unit, 2 integers, 3 floats, 4 floats with zeros) the weighted driver equals the weighted oracle line for line
+    (E, N and P), and the weighted forest is the same bytes at 1, 2, 4 and 8 threads. Also, with unit weights a regression forest is the unweighted one (the sums of 1.0 are exact)"""
+    bad = 0
+    for cid in WEIGHTED:
+        cfg = CONFIGS[cid]
+        i = inputs(cfg, "1000")
+        for kind in (1, 2, 3, 4, 5):
+            code, out = run(exe, cfg, "1000", extra=["wt=%d" % kind])
+            p = f"{ROOT}/build/oracle/w{kind}_{cid}.txt"
+            os.makedirs(f"{ROOT}/build/oracle", exist_ok=True)
+            a = ["x=" + i["x"], "y=" + i["y"], "n=%d" % i["n"], "d=%d" % i["d"], "task=%d" % cfg["task"], "seed=" + SEED, "trees=%d" % cfg["trees"], "depth=%d" % cfg["depth"],
+                 "leaf=%d" % cfg["leaf"], "bins=%d" % cfg["bins"], "mtry=%d" % cfg["mtry"], "boot=%d" % cfg["boot"], "miss=" + i["miss"], "wt=%d" % kind, "out=" + p]
+            summ = subprocess.run([sys.executable, f"{ROOT}/scripts/oracle_tree.py"] + a, capture_output=True, text=True, check=True).stdout.strip()
+            d = "program exit %d" % code if code else same(lines_of(out), open(p).read().splitlines())
+            if verbose:
+                print("wident %-3s wt=%d %s   [%s]" % (cid, kind, "IDENTICAL" if d is None else "DIFFERENT: " + d, summ))
+            bad += d is not None
+            if kind == 3 or kind == 4:
+                ref = None
+                for t in (1, 2, 4, 8):
+                    c2, o2 = run(exe, dict(cfg), "1000", threads=t, out="hash", extra=["wt=%d" % kind])
+                    h = hashes(o2) if c2 == 0 else {"exit": str(c2)}
+                    if ref is None:
+                        ref = h
+                    elif h != ref:
+                        bad += 1
+                        print("wthread %-3s wt=%d DIFFERENT at %d threads" % (cid, kind, t))
+        if cfg["task"] == 1:
+            c1, o1 = run(exe, cfg, "1000")
+            c2, o2 = run(exe, cfg, "1000", extra=["wt=1"])
+            same_unit = c1 == 0 and c2 == 0 and lines_of(o1) == lines_of(o2)
+            if verbose:
+                print("wunit  %-3s unit weights equal the unweighted regression forest: %s" % (cid, "EQUAL" if same_unit else "DIFFERENT"))
+            bad += not same_unit
+    return bad
+
+
+def few_valued(n, d, seed, task):
+    """a data set whose columns take 6 values each (so the quantile bins separate every value whatever the duplication), a class or a number by a planted rule"""
+    import numpy as np
+    r = np.random.default_rng(seed)
+    x = r.integers(0, 6, size=(n, d)).astype(np.float64)
+    z = x[:, 0] * 1.5 - x[:, 1] + 0.7 * (x[:, 2] > 2) + r.normal(0, 1.0, n)
+    y = (z > np.median(z)).astype(np.float64) if task == 0 else z
+    return x, y
+
+
+def node_rows(out):
+    rows = [l.split() for l in out.splitlines() if l.startswith("N ")]
+    # the bin number is left out: several bins of a column with 6 values share one edge, and the bin that holds an edge is a detail of the counts; the threshold (the last field of a node that splits) says the same
+    return [(int(t[3]), int(t[5]), int(t[6]), int(t[7]), t[10]) for t in rows]
+
+
+def dup_gate(exe, verbose=True):
+    """G-dup (docs/weights.md WG3): a single tree on integer weights predicts, for every training row, what the tree of the file with the rows repeated predicts (a weight of 0 is a row
+    left out), within 1e-12 relative (the sums are made in another order). The training rows are given again as the rows to predict. The trees themselves may differ in a
+    node where two splits make the same partition (their scores are equal in real arithmetic and rounding orders them), which is why predictions and not nodes are compared: the
+    number of nodes that agree is printed. The bins are the same because every column has 6 values and each has far more than n / bins rows"""
+    import struct
+    import numpy as np
+    sys.path.insert(0, f"{ROOT}/scripts")
+    import oracle_tree as ot
+    os.makedirs(f"{ROOT}/build/wdup", exist_ok=True)
+    bad = 0
+
+    def bits_to_f(h):
+        return struct.unpack("<d", struct.pack("<Q", int(h, 16)))[0]
+
+    def preds(out):
+        return [bits_to_f(l.split()[2]) for l in out.splitlines() if l.startswith("P ")]
+
+    for task in (0, 1):
+        for kind in (2, 5):
+            n, d = 400, 4
+            x, y = few_valued(n, d, 17 + task, task)
+            w = ot.gen_weights(int(SEED), n, kind)
+            keep = []
+            for i in range(n):
+                keep += [i] * int(w[i])
+            xa, ya = np.concatenate([x, x]), np.concatenate([y, y])
+            xd, yd = np.concatenate([x[keep], x]), np.concatenate([y[keep], y])
+            for name, arr in (("x", xa), ("y", ya), ("xd", xd), ("yd", yd)):
+                arr.astype("<f8").tofile(f"{ROOT}/build/wdup/{name}.bin")
+            common = ["trees=1", "depth=6", "leaf=1", "bins=64", "mtry=%d" % d, "boot=0", "d=%d" % d, "task=%d" % task, "seed=" + SEED, "out=full"]
+            r1 = subprocess.run([exe, "mode=fit", f"x={ROOT}/build/wdup/x.bin", f"y={ROOT}/build/wdup/y.bin", "n=%d" % (2 * n), "ntr=%d" % n, "wt=%d" % kind] + common, capture_output=True, text=True)
+            r2 = subprocess.run([exe, "mode=fit", f"x={ROOT}/build/wdup/xd.bin", f"y={ROOT}/build/wdup/yd.bin", "n=%d" % (len(keep) + n), "ntr=%d" % len(keep)] + common, capture_output=True, text=True)
+            a1, a2 = preds(r1.stdout), preds(r2.stdout)
+            ok = r1.returncode == 0 and r2.returncode == 0 and len(a1) == n and len(a2) == n
+            worst = max((abs(u - v) / max(1.0, abs(v)) for u, v in zip(a1, a2)), default=1.0) if ok else 1.0
+            ok = ok and worst <= 1e-12
+            na, nb = node_rows(r1.stdout), node_rows(r2.stdout)
+            agree = sum(1 for u, v in zip(na, nb) if u[:4] == v[:4]) if len(na) == len(nb) else 0
+            if verbose:
+                print("wdup   task=%d wt=%d rows %d -> %d, %d training predictions %s (largest difference %.2e, bound 1e-12; nodes %d and %d, %d agree in place)" % (task, kind, n, len(keep), n, "EQUAL" if ok else "DIFFERENT", worst, len(na), len(nb), agree))
+            bad += not ok
+    return bad
+
+
+def unit_gate(exe, verbose=True):
+    """G-unit (docs/weights.md WG2), measured and not asserted: with unit weights a classification forest uses a float score where the unweighted one uses an exact integer comparison;
+    the number of the configurations whose N, E and P lines are equal is printed. The regression forests are asserted equal in `weighted`"""
+    same_n = 0
+    tot = 0
+    for cid in ("E1", "E3"):
+        c1, o1 = run(exe, CONFIGS[cid], "1000")
+        c2, o2 = run(exe, CONFIGS[cid], "1000", extra=["wt=1"])
+        tot += 1
+        e = c1 == 0 and c2 == 0 and lines_of(o1) == lines_of(o2)
+        same_n += e
+        if verbose:
+            print("wunit  %-3s classification, unit weights against the unweighted forest: %s" % (cid, "EQUAL" if e else "DIFFERENT (a float tie or rounding ordered two candidates differently)"))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ident", action="store_true"); ap.add_argument("--threads", action="store_true"); ap.add_argument("--spike", action="store_true")
-    ap.add_argument("--unit", action="store_true"); ap.add_argument("--fuzz", action="store_true"); ap.add_argument("--exact", action="store_true")
+    ap.add_argument("--unit", action="store_true"); ap.add_argument("--fuzz", action="store_true"); ap.add_argument("--exact", action="store_true"); ap.add_argument("--weighted", action="store_true")
     ap.add_argument("--sizes", default="1000,100000"); ap.add_argument("--configs", default=",".join(CONFIGS))
     ap.add_argument("--cancho", default=CANCHO); ap.add_argument("--src", default=ROOT)
     a = ap.parse_args()
-    if not (a.ident or a.threads or a.spike or a.unit or a.fuzz or a.exact):
-        a.ident = a.threads = a.spike = a.unit = a.fuzz = a.exact = True
+    if not (a.ident or a.threads or a.spike or a.unit or a.fuzz or a.exact or a.weighted):
+        a.ident = a.threads = a.spike = a.unit = a.fuzz = a.exact = a.weighted = True
     if not os.path.exists(TD):
         subprocess.run([sys.executable, f"{ROOT}/scripts/gen_tree_data.py"], check=True)
     os.makedirs(f"{ROOT}/build", exist_ok=True)
@@ -247,6 +367,10 @@ def main():
         bad += ident(exe, a.configs.split(","), a.sizes.split(","))
     if a.threads:
         bad += thread_gate(exe)
+    if a.weighted:
+        bad += weighted(exe)
+        bad += dup_gate(exe)
+        unit_gate(exe)
     if a.fuzz:
         bad += fuzz(exe)
     if a.spike:

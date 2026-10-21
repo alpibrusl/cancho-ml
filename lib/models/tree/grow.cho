@@ -180,13 +180,135 @@ fn scan_r[&w, &f](wk: &!w [int], wf: &!f [float], hb: int, fb: int, ob: int, ofb
     return 0;
 }
 
+// ---------------------------------------------------------------- the weighted path (docs/weights.md section 2.5)
+// One feature at a time. The row counts stay ints (min-leaf and the stack count rows); the weights are float sums, each a sequential sum in the node's row order.
+// classification: counts hc[2 * bin + class], weights hf[2 * bin + class]; regression: counts hc[bin], sums of w * y in hf[bin], sums of w in hf[w + bin]
+
+fn histw_c[&a, &y, &q, &i, &h, &f](c0: &a [byte], yb: &y [byte], wt: &q [float], idx: &i [int], lo: int, hi: int, hc: &!h [int], hf: &!f [float]) -> [] int {
+    var k = lo;
+    while k < hi {
+        let r = idx[k];
+        let i0 = int_of(c0[r]) * 2 + int_of(yb[r]);
+        hc[i0] = hc[i0] + 1;
+        hf[i0] = hf[i0] + wt[r];
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn histw_r[&a, &y, &q, &i, &h, &f](c0: &a [byte], yv: &y [float], wt: &q [float], idx: &i [int], lo: int, hi: int, hc: &!h [int], hf: &!f [float], w: int) -> [] int {
+    var k = lo;
+    while k < hi {
+        let r = idx[k];
+        let i0 = int_of(c0[r]);
+        hc[i0] = hc[i0] + 1;
+        hf[i0] = hf[i0] + wt[r] * yv[r];
+        hf[w + i0] = hf[w + i0] + wt[r];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// a weighted classification candidate: left side nl rows (pl of class 1), weights wl0 and wl1; the node's weights are w0 and w1
+fn cand_cw[&w, &f](wk: &!w [int], wf: &!f [float], ob: int, ofb: int, nl: int, pl: int, wl0: float, wl1: float, dl: int, b: int, fi: int, m: int, w0: float, w1: float, ml: int) -> [] int {
+    let nr = m - nl;
+    if nl >= ml && nr >= ml {
+        let wl = wl0 + wl1;
+        let wr0 = w0 - wl0;
+        let wr1 = w1 - wl1;
+        let wr = wr0 + wr1;
+        if wl > 0.0 && wr > 0.0 {
+            let sc = (wl0 * wl0 + wl1 * wl1) / wl + (wr0 * wr0 + wr1 * wr1) / wr;
+            if wk[ob] == 0 || sc > wf[ofb] {
+                wk[ob] = 1;
+                wf[ofb] = sc;
+                wk[ob + 3] = fi;
+                wk[ob + 4] = b;
+                wk[ob + 5] = dl;
+                wk[ob + 6] = nl;
+                wk[ob + 7] = pl;
+            }
+        }
+    }
+    return 0;
+}
+
+fn scan_cw[&w, &f](wk: &!w [int], wf: &!f [float], hb: int, ob: int, ofb: int, nbins: int, fi: int, m: int, ml: int, w0: float, w1: float) -> [] int {
+    let mc = wk[hb + 2 * nbins] + wk[hb + 2 * nbins + 1];
+    let mp = wk[hb + 2 * nbins + 1];
+    let m0 = wf[2 * nbins];
+    let m1 = wf[2 * nbins + 1];
+    var nl = 0;
+    var pl = 0;
+    var l0 = 0.0;
+    var l1 = 0.0;
+    var b = 0;
+    while b < nbins - 1 {
+        let h1 = wk[hb + 2 * b + 1];
+        nl = nl + wk[hb + 2 * b] + h1;
+        pl = pl + h1;
+        l0 = l0 + wf[2 * b];
+        l1 = l1 + wf[2 * b + 1];
+        cand_cw(wk, wf, ob, ofb, nl, pl, l0, l1, 0, b, fi, m, w0, w1, ml);
+        if mc > 0 {
+            cand_cw(wk, wf, ob, ofb, nl + mc, pl + mp, l0 + m0, l1 + m1, 1, b, fi, m, w0, w1, ml);
+        }
+        b = b + 1;
+    }
+    return 0;
+}
+
+// a weighted regression candidate: left side nl rows, sum of w * y sl, sum of w wl; the node has sm and sw
+fn cand_rw[&w, &f](wk: &!w [int], wf: &!f [float], ob: int, ofb: int, nl: int, sl: float, wl: float, dl: int, b: int, fi: int, m: int, sm: float, sw: float, ml: int) -> [] int {
+    let nr = m - nl;
+    if nl >= ml && nr >= ml {
+        let sr = sm - sl;
+        let wr = sw - wl;
+        if wl > 0.0 && wr > 0.0 {
+            let sc = sl * sl / wl + sr * sr / wr;
+            if wk[ob] == 0 || sc > wf[ofb] {
+                wk[ob] = 1;
+                wf[ofb] = sc;
+                wk[ob + 3] = fi;
+                wk[ob + 4] = b;
+                wk[ob + 5] = dl;
+                wk[ob + 6] = nl;
+            }
+        }
+    }
+    return 0;
+}
+
+fn scan_rw[&w, &f](wk: &!w [int], wf: &!f [float], hb: int, ob: int, ofb: int, nbins: int, fi: int, m: int, sm: float, sw: float, ml: int) -> [] int {
+    let w1 = nbins + 1;
+    let mc = wk[hb + nbins];
+    let ms = wf[nbins];
+    let mw = wf[w1 + nbins];
+    var nl = 0;
+    var sl = 0.0;
+    var wl = 0.0;
+    var b = 0;
+    while b < nbins - 1 {
+        nl = nl + wk[hb + b];
+        sl = sl + wf[b];
+        wl = wl + wf[w1 + b];
+        cand_rw(wk, wf, ob, ofb, nl, sl, wl, 0, b, fi, m, sm, sw, ml);
+        if mc > 0 {
+            cand_rw(wk, wf, ob, ofb, nl + mc, sl + ms, wl + mw, 1, b, fi, m, sm, sw, ml);
+        }
+        b = b + 1;
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------- the tree
 
 // Grow tree number `tree`. Answers the number of nodes (>= 1), or 0 - the refusal code (ml.limit.nodes when the tree needs more
 // than `cap` nodes). Needs the parameters to have passed `params.check`, the arrays to have the sizes documented above
-// (idx, tmp: n; bins: d * n; yb: n bytes for classification; yv: n floats for regression; ed: d * (nbins - 1); oi: 7 * cap;
+// (idx, tmp: n; bins: d * n; yb: n bytes for classification; yv: n floats for regression; wt: empty, or n + 1 floats (the weight of every row, then the weighted value of the
+// whole training set, docs/weights.md 2.5); ed: d * (nbins - 1); oi: 7 * cap;
 // ov: cap; wk, wf: work_ints, work_floats).
-pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int, d: int, mtry: int, cap: int, tree: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], ed: &e [float], idx: &!i [int], tmp: &!t [int], wk: &!w [int], wf: &!wfl [float], oi: &!a [int], ov: &!c [float]) -> [] int {
+pub fn grow[&b, &y, &yf, &q, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int, d: int, mtry: int, cap: int, tree: int, bins: &b [byte], yb: &y [byte], yv: &yf [float], wt: &q [float], ed: &e [float], idx: &!i [int], tmp: &!t [int], wk: &!w [int], wf: &!wfl [float], oi: &!a [int], ov: &!c [float]) -> [] int {
     let nbins = p.bins;
     let hs = 2 * (nbins + 1);
     let w1 = nbins + 1;
@@ -198,6 +320,7 @@ pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int,
     let ofb = 4 * w1;
     let ne = nbins - 1;
     let task = p.task;
+    let wtd = len(wt) > n;
     // bootstrap (2.2)
     var s = rng.derive(rng.derive(p.seed, 1), tree);
     var root1 = 0;
@@ -250,7 +373,50 @@ pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int,
         }
         var can = dep < p.max_depth && m >= 2 * p.min_leaf;
         var sm = 0.0;
-        if task == 0 {
+        var sw = 0.0;
+        var w0 = 0.0;
+        var w1t = 0.0;
+        if wtd {
+            // the weighted node totals, sequential in the node's row order; purity is judged on the rows that have a weight
+            var wseen = false;
+            var wlo = 0.0;
+            var whi = 0.0;
+            k = lo;
+            while k < hi {
+                let r = idx[k];
+                let wr = wt[r];
+                if task == 0 {
+                    if int_of(yb[r]) == 1 {
+                        w1t = w1t + wr;
+                    } else {
+                        w0 = w0 + wr;
+                    }
+                } else {
+                    let v = yv[r];
+                    sm = sm + wr * v;
+                    sw = sw + wr;
+                    if wr > 0.0 {
+                        if !wseen {
+                            wlo = v;
+                            whi = v;
+                            wseen = true;
+                        }
+                        if v < wlo {
+                            wlo = v;
+                        }
+                        if v > whi {
+                            whi = v;
+                        }
+                    }
+                }
+                k = k + 1;
+            }
+            if task == 0 {
+                can = can && w0 > 0.0 && w1t > 0.0;
+            } else {
+                can = can && wseen && wlo != whi;
+            }
+        } else if task == 0 {
             can = can && n0 > 0 && n1 > 0;
         } else {
             // the node total in row order, and whether the targets are all equal
@@ -312,12 +478,19 @@ pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int,
             var g = 0;
             while g < mtry {
                 var gn = 4;
-                if g + 4 > mtry {
+                if g + 4 > mtry || wtd {
                     gn = 1;
                 }
                 // clear
                 j = 0;
-                if task == 0 {
+                if wtd {
+                    // counts in wk, weights in wf (2 * w1 floats for either task)
+                    while j < hs {
+                        wk[j] = 0;
+                        wf[j] = 0.0;
+                        j = j + 1;
+                    }
+                } else if task == 0 {
                     while j < gn * hs {
                         wk[j] = 0;
                         j = j + 1;
@@ -343,6 +516,10 @@ pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int,
                     } else {
                         hist4r(c0, c1, c2, c3, yv, idx, lo, hi, wk, wf, w1);
                     }
+                } else if wtd && task == 0 {
+                    histw_c(c0, yb, wt, idx, lo, hi, wk, wf);
+                } else if wtd {
+                    histw_r(c0, yv, wt, idx, lo, hi, wk, wf, w1);
                 } else if task == 0 {
                     hist1c(c0, yb, idx, lo, hi, wk, 0);
                 } else {
@@ -351,7 +528,11 @@ pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int,
                 var u = 0;
                 while u < gn {
                     let fu = wk[o_sub + g + u];
-                    if task == 0 {
+                    if wtd && task == 0 {
+                        scan_cw(wk, wf, u * hs, o_best, ofb, nbins, fu, m, p.min_leaf, w0, w1t);
+                    } else if wtd {
+                        scan_rw(wk, wf, u * w1, o_best, ofb, nbins, fu, m, sm, sw, p.min_leaf);
+                    } else if task == 0 {
                         scan_c(wk, u * hs, o_best, nbins, fu, m, n1, p.min_leaf);
                     } else {
                         scan_r(wk, wf, u * w1, u * w1, o_best, ofb, nbins, fu, m, sm, p.min_leaf);
@@ -372,10 +553,22 @@ pub fn grow[&b, &y, &yf, &e, &i, &t, &w, &wfl, &a, &c](p: params.Params, n: int,
                 oi[5 * cap + ni] = n0;
                 oi[6 * cap + ni] = n1;
                 ov[ni] = float_of(n1) / float_of(n0 + n1);
+                if wtd {
+                    ov[ni] = wt[n];
+                    if w0 + w1t > 0.0 {
+                        ov[ni] = w1t / (w0 + w1t);
+                    }
+                }
             } else {
                 oi[5 * cap + ni] = m;
                 oi[6 * cap + ni] = 0;
                 ov[ni] = sm / float_of(m);
+                if wtd {
+                    ov[ni] = wt[n];
+                    if sw > 0.0 {
+                        ov[ni] = sm / sw;
+                    }
+                }
             }
         } else {
             let bf = wk[o_best + 3];

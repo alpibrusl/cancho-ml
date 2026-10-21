@@ -342,9 +342,33 @@ fn mode_gt[&i](io: &!i Io) -> [io_write] int {
 
 // ---------------------------------------------------------------- mode fit
 
+// The weights of wt=KIND (docs/weights.md; scripts/oracle_tree.py weights): u_i = element(derive(seed, 4), i) in [-1, 1)
+//   1: 1.0   2: float(1 + trunc((u + 1) * 2.0))   3: (u + 1) * 1.0 + 0.25   4: kind 3 with 0.0 at every row i with i mod 5 = 3   5: float(trunc((u + 1) * 2.0)), the integers 0 to 3
+fn gen_weights[&w](kind: int, n: int, seed: int, ws: &!w [float]) -> [] int {
+    let s4 = rng.derive(seed, 4);
+    var i = 0;
+    while i < n {
+        let u = rng.element(s4, i);
+        var v = 1.0;
+        if kind == 2 {
+            v = float_of(1 + truncate((u + 1.0) * 2.0));
+        } else if kind == 5 {
+            v = float_of(truncate((u + 1.0) * 2.0));
+        } else if kind >= 3 {
+            v = (u + 1.0) * 1.0 + 0.25;
+            if kind == 4 && i % 5 == 3 {
+                v = 0.0;
+            }
+        }
+        ws[i] = v;
+        i = i + 1;
+    }
+    return 0;
+}
+
 // The forest on the first ntr rows, its predictions on the others; prints the lines of the header. xs holds n rows, ys n values,
 // bmfull the bitmap of the n rows (or empty).
-fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, xs: &x [float], ys: &y [float], bmfull: &b [byte], n: int, d: int, ntr: int, p: params.Params, full: bool, reps: int, preps: int, phase: int) -> [heap, io_write, clock, conc] int {
+fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, xs: &x [float], ys: &y [float], bmfull: &b [byte], n: int, d: int, ntr: int, p: params.Params, full: bool, reps: int, preps: int, phase: int, wkind: int) -> [heap, io_write, clock, conc] int {
     let nte = n - ntr;
     var trbytes = 1;
     var tebytes = 1;
@@ -367,6 +391,12 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
         repack(bmfull, n, d, ntr, n, contents(ew));
     }
     let line = box_slice(heap, 16, byte_of(10));
+    let wts = box_slice(heap, n + 1, 1.0);
+    if wkind > 0 {
+        borrow mut wts as &!wtw in {
+            gen_weights(wkind, n, p.seed, contents(wtw));
+        }
+    }
     var code = 0;
     var best = forest.empty(heap);
     var t0 = 0;
@@ -376,7 +406,21 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
         var r = 0;
         t0 = clock_ms(clock);
         while r < reps {
-            let (f, c) = forest.fit(heap, p, ntr, d, xs[0..ntr * d], tbm, ys[0..ntr], 10000000, 4096, 400000000);
+            var f = forest.empty(heap);
+            var c = 0;
+            if wkind > 0 {
+                borrow wts as &wtr in {
+                    let (f2, c2) = forest.fit_weighted(heap, p, ntr, d, xs[0..ntr * d], tbm, ys[0..ntr], contents(wtr)[0..ntr], 10000000, 4096, 400000000);
+                    forest.drop(heap, f);
+                    f = f2;
+                    c = c2;
+                }
+            } else {
+                let (f2, c2) = forest.fit(heap, p, ntr, d, xs[0..ntr * d], tbm, ys[0..ntr], 10000000, 4096, 400000000);
+                forest.drop(heap, f);
+                f = f2;
+                c = c2;
+            }
             code = c;
             if r == 0 {
                 forest.drop(heap, best);
@@ -394,6 +438,7 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
         unbox_slice(heap, trbm);
         unbox_slice(heap, tebm);
         unbox_slice(heap, line);
+        unbox_slice(heap, wts);
         return 0;
     }
     // predictions
@@ -517,6 +562,7 @@ fn run_fit[&h, &i, &k, &x, &y, &b](heap: &!h Heap, io: &!i Io, clock: &k Clock, 
     unbox_slice(heap, trbm);
     unbox_slice(heap, tebm);
     unbox_slice(heap, line);
+    unbox_slice(heap, wts);
     unbox_slice(heap, pr);
     unbox_slice(heap, ed);
     return 0;
@@ -1252,6 +1298,7 @@ fn main(world: World) -> [conc] int {
     var reps = 1;
     var preps = 1;
     var phase = 0;
+    var wkind = 0;
     var code = 0;
     var dotdot = false;
     borrow args as &g in {
@@ -1282,6 +1329,7 @@ fn main(world: World) -> [conc] int {
         reps = int_arg(g, "reps", 1);
         preps = int_arg(g, "preps", reps);
         phase = int_arg(g, "phase", 0);
+        wkind = int_arg(g, "wt", 0);
         let oi = find_arg(g, "out");
         if oi >= 0 {
             if len(arg(g, oi)) >= 5 && arg(g, oi)[4] == byte_of('h') {
@@ -1353,7 +1401,7 @@ fn main(world: World) -> [conc] int {
                             borrow mb as &mr in {
                                 if mode == 1 {
                                     borrow clock as &kc in {
-                                        run_fit(hp, i, kc, contents(xr)[0..n * d], contents(yr)[0..n], buffer.bytes(mr), n, d, ntr, p, full, reps, preps, phase);
+                                        run_fit(hp, i, kc, contents(xr)[0..n * d], contents(yr)[0..n], buffer.bytes(mr), n, d, ntr, p, full, reps, preps, phase, wkind);
                                     }
                                 } else {
                                     run_fuzz(hp, i, contents(xr), contents(yr), buffer.bytes(mr), n, ntr, d);
