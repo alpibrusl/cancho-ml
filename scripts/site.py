@@ -1180,9 +1180,9 @@ def landing_values(ctx):
     import re
     status = (ROOT / "docs" / "status.md").read_text()
     fp = (ROOT / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines()
-    # the figures of the landing page are the lines that three platforms print: the cases of JSON lines (names with `-jsonl`) and the two answers of the explanation verbs (the cases `importance-` and `dump-`) are in the golden from fewer than three platforms until the other runs
+    # the figures of the landing page are the lines that three platforms print: the cases of JSON lines (names with `-jsonl`), the two answers of the explanation verbs (the cases `importance-` and `dump-`) and the four fits of the softmax model (`softmax-`) are in the golden from fewer than three platforms until the other runs
     # print them too (docs/status.md says which); they are counted here when the golden is the same on every platform of the matrix
-    fp = [l for l in fp if "-jsonl" not in l.split("\t")[0] and not l.startswith(("importance-", "dump-"))]
+    fp = [l for l in fp if "-jsonl" not in l.split("\t")[0] and not l.startswith(("importance-", "dump-", "softmax-"))]
     fits = sum(1 for l in fp if l.split("\t")[1:2] == ["fit-exit"])
     m = re.search(r"agree on (\d+) fingerprint lines for (\d+) fits", status)
     if not m or (int(m.group(1)), int(m.group(2))) != (len(fp), fits):

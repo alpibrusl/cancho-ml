@@ -114,6 +114,10 @@ pub fn run[&h, &f, &r, &pf, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &
             }
         }
     }
+    if go && kind == 9 {
+        e = wiredata.conflict(heap, e, "model", "cross-validation of a model with more than two classes is not built yet: fit it with --split and score the held-out rows");
+        go = false;
+    }
     var mixed_plan = false;
     borrow pls as &mpq in {
         mixed_plan = plan.needs_mixed(mpq.pl);
@@ -122,7 +126,7 @@ pub fn run[&h, &f, &r, &pf, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &
     var cids = catmat.empty(heap);
     var cvoc = dict.empty_vocab(heap);
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, src, fs, root, file, o, argv.text(src, "target"), argv.text(src, "na-values"), mixed_plan, task, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, src, fs, root, file, o, argv.text(src, "target"), argv.text(src, "na-values"), mixed_plan, task, kind, e, lg);
         wire.drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);

@@ -42,7 +42,7 @@ import oracle_pipe as op  # noqa: E402
 BIN = os.environ.get("ML_BIN", str(ROOT / "build" / "ml"))
 PIN = (ROOT / "cancho.toml").read_text().split('cancho = "')[1].split('"')[0]
 SUM_ORDER = 2
-KIND = {"linear": 4, "logistic": 5}
+KIND = {"linear": 4, "logistic": 5, "softmax": 9}
 UNJUDGED = []
 
 
@@ -135,6 +135,18 @@ def model_payload(kind, w, d, c0, c1):
     return out
 
 
+def i64_record(vals):
+    return struct.pack("<II", 1, 1) + struct.pack("<Q", len(vals)) + struct.pack("<%dq" % len(vals), *vals)
+
+
+def mc_payload(w, d, labels):
+    """kind 9 (docs/multiclass.md section 3.3): kind | coef f64 [K - 1, d] | intercept f64 [K - 1] | labels i64 [K]; w is class-major, the bias last in a class"""
+    kc = len(labels) - 1
+    coef = [w[k * (d + 1) + j] for k in range(kc) for j in range(d)]
+    out = struct.pack("<I", 9) + struct.pack("<II", 2, 2) + struct.pack("<QQ", kc, d) + struct.pack("<%dd" % len(coef), *coef)
+    return out + f64_record([w[k * (d + 1) + d] for k in range(kc)]) + i64_record(list(labels))
+
+
 def section(tag, payload):
     return struct.pack("<IQ", tag, len(payload)) + payload
 
@@ -170,7 +182,7 @@ class Case:
     def model_line(self):
         if self.model == "linear":
             return "model kind=linear l2=%s" % self.l2
-        return "model kind=logistic iterations=%d l2=%s" % (self.iterations, self.l2)
+        return "model kind=%s iterations=%d l2=%s" % (self.model, self.iterations, self.l2)
 
     def plan_text(self):
         return "".join(self.step_text) + self.model_line()
@@ -203,7 +215,15 @@ def fit_oracle(case):
     Xtr = [X[i] for i in tr]
     ytr = [y[i] for i in tr]
     labels = None
-    if case.model == "logistic":
+    if case.model == "softmax":
+        labels = sorted(set(int(v) for v in y))
+        if len(labels) < 3:
+            return "ml.param.out-of-range", None
+        seen = set(int(v) for v in ytr)
+        if any(c not in seen for c in labels):
+            return "ml.label.unseen", None
+        yfit = [float(labels.index(int(v))) for v in ytr]
+    elif case.model == "logistic":
         vals = sorted(set(int(v) for v in y))
         hi, lo = vals[-1], vals[0]
         c1, c0 = hi, lo
@@ -236,13 +256,18 @@ def fit_oracle(case):
         if res is None:
             return "ml.fit.collinear", None
         w = res[0]
+    elif case.model == "softmax":
+        res = omod.softmax(Xn, yn, len(labels), case.iterations, l2)
+        if res is None:
+            return omod.softmax.last or "ml.linalg.not-positive-definite", None
+        w = res[0]
     else:
         res = omod.logreg(Xn, yn, case.iterations, l2)
         if res is None:
             return omod.logreg.last or "ml.linalg.not-positive-definite", None
         w = res[0]
     plan = op.canon_plan(case.plan_text()) if False else canon(case.plan_text())
-    data = file_bytes(plan, schema_bytes(names, types, t), steps_bytes(stored), model_payload(KIND[case.model], w, d, *(labels or (0, 0))), len(tr), len(names), case.seed, provenance_of(case, fnames, mask))
+    data = file_bytes(plan, schema_bytes(names, types, t), steps_bytes(stored), (mc_payload(w, d, labels) if case.model == "softmax" else model_payload(KIND[case.model], w, d, *(labels or (0, 0)))), len(tr), len(names), case.seed, provenance_of(case, fnames, mask))
     ctx = {"stored": stored, "w": w, "d": d, "labels": labels, "types": types, "fnames": fnames, "mask": mask}
     return data, ctx
 
@@ -274,11 +299,22 @@ def predict_oracle(case, ctx, X_rows):
     """the values `ml predict` prints: ('prediction', [floats]) or ('label', [ints], [probabilities])"""
     cur = through_steps(ctx["stored"], X_rows)
     Xn = np.array(cur, dtype=np.float64).reshape(len(cur), ctx["d"])
-    z = omod.scores(Xn, ctx["w"])
+    z = None if case.model == "softmax" else omod.scores(Xn, ctx["w"])
     if case.model == "linear":
         return [float(v) for v in z]
+    if case.model == "softmax":
+        lab, prob = omod.softmax_pred(Xn, ctx["w"], len(ctx["labels"]))
+        return [ctx["labels"][int(k)] for k in lab], [[float(v) for v in row] for row in prob]
     c0, c1 = ctx["labels"]
     return [c1 if v > 0.0 else c0 for v in z], [proba_of(float(v)) for v in z]
+
+
+def prob_cell(c):
+    """a probability cell: a float string (binary) or an object label -> float string in ascending label order (multiclass), as floats / a list of floats"""
+    if isinstance(c, dict):
+        assert list(c) == [str(k) for k in sorted(int(k) for k in c)], "the keys are not the labels in ascending order"
+        return [float(v) for v in c.values()]
+    return float(c)
 
 
 def ordered(vals):
@@ -307,6 +343,8 @@ def eval_oracle(case, ctx, rows_idx):
             sse = ordered(sq)
             out["r2"] = 1.0 - sse / sst
         return out
+    if case.model == "softmax":
+        return eval_softmax(case, ctx, X, y)
     c0, c1 = ctx["labels"]
     pos = case.positive if case.positive is not None else c1
     lab, prob = predict_oracle(case, ctx, X)
@@ -335,6 +373,47 @@ def eval_oracle(case, ctx, rows_idx):
         x = min(max(x, eps), 1.0 - eps)
         terms.append(-math.log(x))
     out["log_loss"] = ordered(terms) / float(n)
+    return out
+
+
+def eval_softmax(case, ctx, X, y):
+    """the multiclass answer of docs/multiclass.md section 3.4: ({metric: float | None | 'single-class'}, classes, confusion, per-class lines, left out)"""
+    classes = ctx["labels"]
+    lab, prob = predict_oracle(case, ctx, X)
+    yt = [int(v) for v in y]
+    unseen = sorted(set(yt) - set(classes))
+    if unseen:
+        return {"unseen": unseen[0]}
+    conf = om_.mc_confusion(yt, lab, classes)
+    n = len(yt)
+    out = {"accuracy": sum(conf[k][k] for k in range(len(classes))) / n}
+    left = {}
+    for name, which in (("precision", 1), ("recall", 2), ("f1", 3)):
+        for kind, weighted in (("macro", False), ("weighted", True)):
+            v, lo = om_.mc_average(conf, which, weighted)
+            out["%s_%s" % (name, kind)] = v
+            if not weighted:
+                left[name] = lo
+    terms = []
+    eps = 2.220446049250313e-16
+    for t, row in zip(yt, prob):
+        x = min(max(row[classes.index(t)], eps), 1.0 - eps)
+        terms.append(-math.log(x))
+    out["log_loss"] = ordered(terms) / float(n)
+    from scipy.stats import rankdata
+    acc, have = 0.0, 0
+    for c, cls in enumerate(classes):
+        isp = np.array([v == cls for v in yt])
+        P, N = int(isp.sum()), n - int(isp.sum())
+        if P == 0 or N == 0:
+            continue
+        r2 = np.rint(rankdata(np.array([row[c] for row in prob]), method="average") * 2).astype(np.int64)
+        acc = acc + float(Fraction(int(r2[isp].sum()) - P * (P + 1), 2 * P * N))
+        have += 1
+    out["roc_auc_ovr"] = acc / float(have) if have else None
+    left["roc_auc_ovr"] = len(classes) - have
+    out["_extra"] = {"classes": classes, "confusion": conf, "left_out": left,
+                     "per_class": [{"class": cls, "support": sum(conf[c]), "precision": om_.mc_value(conf, 1, c), "recall": om_.mc_value(conf, 2, c), "f1": om_.mc_value(conf, 3, c)} for c, cls in enumerate(classes)]}
     return out
 
 
@@ -388,6 +467,15 @@ def gen_case(seed, model):
     if model == "linear":
         ycol = ["%.4f" % (v + 3.0) for v in z]
         target = "y"
+    elif model == "softmax":
+        kk = rng.choice([3, 4, 5, 7])
+        pool = sorted(rng.sample(range(-4, 30), kk))
+        cf = [[rng.uniform(-2, 2) / (1 + (j % 3) * 50) for j in range(d)] for _ in range(kk)]
+        lab = [max(range(kk), key=lambda k: sum(c * v for c, v in zip(cf[k], row)) + rng.gauss(0, 0.5)) for row in X]
+        for i in range(min(kk, n)):
+            lab[i] = i
+        ycol = [str(pool[v]) for v in lab]
+        target = "lab"
     else:
         med = sorted(z)[n // 2]
         lab = [1 if v + rng.gauss(0, 0.3) > med else 0 for v in z]
@@ -419,9 +507,10 @@ def gen_case(seed, model):
         steps.append(st)
         text.append(op.plan_line(st, names, None) + "\n")
     l2 = rng.choice(["0.0", "0.25", "1.5"]) if model == "linear" else rng.choice(["0.0", "0.5", "2.0"])
+    iters = rng.choice([5, 25, 100]) if model != "softmax" else rng.choice([3, 8, 20])
     if (const or categorical) and l2 == "0.0":
         l2 = "0.5"
-    case = Case(model, allnames, rows, target, steps, text, l2=l2, iterations=rng.choice([5, 25, 100]))
+    case = Case(model, allnames, rows, target, steps, text, l2=l2, iterations=iters)
     if rng.random() < 0.4:
         case.split, case.seed = rng.choice(["train=0.8", "train=0.7", "train=0.5", "train=0.9"]), rng.randint(0, 2 ** 31)
     elif rng.random() < 0.3:
@@ -445,7 +534,7 @@ def fit_args(case, out):
     a = ["fit", "--model", case.model, "--target", case.target, "--output", out]
     if case.l2 != "0.0" or case.model == "linear":
         a += ["--l2", case.l2]
-    if case.model == "logistic":
+    if case.model in ("logistic", "softmax"):
         a += ["--iterations", str(case.iterations)]
     a += step_flag(case)
     if case.split:
@@ -488,7 +577,7 @@ def run_case(case, tmp, threads=1, quiet=False):
         problems.append("the model file differs from the oracle's (%d bytes, %d expected)" % (len(got), len(expect)))
         return problems
     # predict: every row
-    rc, out = ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "--proba", "d.csv") if case.model == "logistic" else \
+    rc, out = ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "--proba", "d.csv") if case.model != "linear" else \
         ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "d.csv")
     doc = json.loads(out)
     if not doc.get("ok"):
@@ -504,13 +593,13 @@ def run_case(case, tmp, threads=1, quiet=False):
             problems.append("predict: the values differ from the oracle's")
     else:
         labs, probs = want
-        if [int(c[0]) for c in cells] != labs or [float(c[1]) for c in cells] != probs:
+        if [int(c[0]) for c in cells] != labs or [prob_cell(c[1]) for c in cells] != probs:
             problems.append("predict: labels or probabilities differ from the oracle's")
     # predict on other rows: the last 40, in reverse order, the columns reversed and the target left out (columns are matched by name)
     sub = list(reversed(range(len(rows))))[:40]
     pn = [names[j] for j in reversed(feat)]
     (tmp / "p.csv").write_text(",".join(pn) + "\n" + "".join(",".join(rows[i][j] for j in reversed(feat)) + "\n" for i in sub))
-    rc, out = ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "--proba", "p.csv") if case.model == "logistic" else \
+    rc, out = ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "--proba", "p.csv") if case.model != "linear" else \
         ml("--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000", "p.csv")
     doc = json.loads(out)
     if not doc.get("ok"):
@@ -521,7 +610,7 @@ def run_case(case, tmp, threads=1, quiet=False):
         if case.model == "linear":
             if [float(c[0]) for c in cells] != want:
                 problems.append("predict on reordered columns: the values differ from the oracle's")
-        elif [int(c[0]) for c in cells] != want[0] or [float(c[1]) for c in cells] != want[1]:
+        elif [int(c[0]) for c in cells] != want[0] or [prob_cell(c[1]) for c in cells] != want[1]:
             problems.append("predict on reordered columns: labels or probabilities differ from the oracle's")
     # eval: on all rows, or on the test side of the split; for a classification once more with the OTHER label as the positive one
     idx = list(range(len(rows)))
@@ -548,6 +637,8 @@ def check_eval(case, ctx, idx, tmp, threads):
     rc, out = ml("--root", tmp, *ev, "--threads", threads)
     doc = json.loads(out)
     want = eval_oracle(case, ctx, idx)
+    if case.model == "softmax":
+        return check_eval_mc(doc, want)
     if not doc.get("ok"):
         if "roc_auc" in want and want["roc_auc"] == "single-class" and doc["error"]["rule"] == "ml.label.single-class":
             return problems
@@ -566,10 +657,51 @@ def check_eval(case, ctx, idx, tmp, threads):
     return problems
 
 
+def check_eval_mc(doc, want):
+    if "unseen" in want:
+        if doc.get("ok") or doc["error"]["rule"] != "ml.label.unseen":
+            return ["expected ml.label.unseen for the label %d, got %s" % (want["unseen"], json.dumps(doc)[:300])]
+        return []
+    if not doc.get("ok"):
+        return ["eval refused: %s" % json.dumps(doc)[:300]]
+    problems = []
+    data = doc["data"]
+    if "positive" in data:
+        problems.append("a multiclass answer has no positive label")
+    extra = want.pop("_extra")
+    got = dict(data["metrics"])
+    data = {k: got.pop(k) for k in ("classes", "confusion", "per_class", "left_out") if k in got}
+    for k, v in want.items():
+        g = got.get(k, "missing")
+        if v is None:
+            if g is not None:
+                problems.append("eval %s: expected null, got %r" % (k, g))
+        elif k == "log_loss":
+            if g is None or abs(float(g) - v) > 4e-16 * max(1.0, abs(v)) * 8:
+                problems.append("eval %s: %r vs %r" % (k, g, put_float(v)))
+        elif g != put_float(v):
+            problems.append("eval %s: %r vs %r" % (k, g, put_float(v)))
+    if sorted(got) != sorted(want):
+        problems.append("the metrics are %s, expected %s" % (sorted(got), sorted(want)))
+    if data.get("classes") != extra["classes"] or data.get("confusion") != extra["confusion"] or data.get("left_out") != extra["left_out"]:
+        problems.append("classes, confusion or left_out differ")
+    pc = data.get("per_class", [])
+    if len(pc) != len(extra["per_class"]):
+        problems.append("per_class has %d lines" % len(pc))
+    else:
+        for a, b in zip(pc, extra["per_class"]):
+            for k in ("precision", "recall", "f1"):
+                if a.get(k) != (None if b[k] is None else put_float(b[k])):
+                    problems.append("per_class %s of %s: %r vs %r" % (k, b["class"], a.get(k), b[k]))
+            if a.get("class") != b["class"] or a.get("support") != b["support"]:
+                problems.append("per_class class or support of %s" % b["class"])
+    return problems
+
+
 def main():
     argv = sys.argv[1:]
     n = 40
-    models = ("linear", "logistic")
+    models = ("linear", "logistic", "softmax")
     if argv and argv[0] == "--suite":
         n = int(argv[1]) if len(argv) > 1 else 40
         if len(argv) > 2:
@@ -580,7 +712,7 @@ def main():
         tmp = pathlib.Path(td)
         for model in models:
             for seed in range(1, n + 1):
-                case = gen_case(seed * 7919 + (0 if model == "linear" else 101), model)
+                case = gen_case(seed * 7919 + {"linear": 0, "logistic": 101, "softmax": 202}[model], model)
                 pr = run_case(case, tmp, threads=1 + seed % 4)
                 (tmp / "m.cml").unlink(missing_ok=True)
                 if pr:

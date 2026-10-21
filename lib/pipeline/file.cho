@@ -367,6 +367,9 @@ fn model_family_ok(pk: int, mk: int) -> [] bool {
     if pk == 6 {
         return mk == kinds.model_boost();
     }
+    if pk == 7 {
+        return mk == kinds.model_softmax();
+    }
     return mk == kinds.model_tree();
 }
 

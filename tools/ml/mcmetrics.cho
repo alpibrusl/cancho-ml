@@ -1,0 +1,326 @@
+edition 6;
+
+module ml.mcmetrics;
+
+import std.buffer;
+import std.json;
+import ml.est;
+import ml.matrix;
+import ml.refuse;
+import ml.verbs;
+import models.adapter_softmax;
+import models.common;
+import metrics.multiclass;
+import metrics.rules;
+
+// The metrics of a multiclass classification as the object `metrics` of eval and of the held-out report of fit (docs/multiclass.md section 3.4, docs/metrics.md section 2.9): the scalars
+// (accuracy, the macro and the support-weighted precision, recall and F1, the one-versus-rest ROC-AUC, the log-loss), then the classes, the confusion matrix, one line per class and the number of
+// classes each average left out. A value that has none is null, named in `und`. Nothing here predicts: the labels, the predicted labels and the probabilities are given.
+
+pub res struct Block {
+    obj: buffer.Buffer,
+    plain: buffer.Buffer,
+    und: buffer.Buffer,
+    code: int,
+    name: &static [byte],
+    // the 0-based row a refusal of ml.predict.non-finite names, else 0
+    row: int,
+}
+
+// One scalar: its member and its line, or null and the name in `und` when the library says it has no value; any other refusal stops the report.
+fn member[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, key: &static [byte], sc: rules.Scored, undefined: buffer.Buffer) -> [heap] (json.Writer, buffer.Buffer, buffer.Buffer, int) {
+    var o = w;
+    var t = plain;
+    var u = undefined;
+    if sc.code == 0 {
+        o = json.put_key(heap, o, key);
+        o = verbs.put_double(heap, o, bits_of(sc.v));
+        t = buffer.append(heap, t, key);
+        t = buffer.push(heap, t, byte_of(' '));
+        t = verbs.line_double(heap, t, "", bits_of(sc.v));
+        return (o, t, u, 0);
+    }
+    if sc.code == rules.undefined() {
+        o = json.put_key(heap, o, key);
+        o = json.put_null(heap, o);
+        t = buffer.append(heap, t, key);
+        t = buffer.append(heap, t, " undefined\n");
+        u = buffer.append(heap, u, key);
+        u = buffer.push(heap, u, byte_of(','));
+        return (o, t, u, 0);
+    }
+    return (o, t, u, sc.code);
+}
+
+fn scored(a: multiclass.Avg) -> [] rules.Scored {
+    if a.code != 0 {
+        return rules.fail(a.code);
+    }
+    return rules.ok(a.v);
+}
+
+// a report that stopped at the refusal `code` (the object closed after the members written so far)
+fn stopped[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, und: buffer.Buffer, code: int, name: &static [byte]) -> [heap] Block {
+    return Block { obj: json.finish(json.end_object(heap, w)), plain: plain, und: und, code: code, name: name, row: 0 };
+}
+
+// the classes, the confusion matrix, one line per class and the numbers of classes the averages left out, then the end of the object
+fn put_tables[&h, &o, &c, &l](heap: &!h Heap, w0: json.Writer, cm: &o [int], classes: &c [int], kk: int, left: &l [int], auc_left: int) -> [heap] json.Writer {
+    var w = w0;
+    w = json.put_key(heap, w, "classes");
+    w = json.begin_array(heap, w);
+    var k = 0;
+    while k < kk {
+        w = json.put_int(heap, w, classes[k]);
+        k = k + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "confusion");
+    w = json.begin_array(heap, w);
+    var a = 0;
+    while a < kk {
+        w = json.begin_array(heap, w);
+        var b = 0;
+        while b < kk {
+            w = json.put_int(heap, w, cm[a * kk + b]);
+            b = b + 1;
+        }
+        w = json.end_array(heap, w);
+        a = a + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "per_class");
+    w = json.begin_array(heap, w);
+    a = 0;
+    while a < kk {
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "class");
+        w = json.put_int(heap, w, classes[a]);
+        w = json.put_key(heap, w, "support");
+        w = json.put_int(heap, w, multiclass.support(cm, kk, a));
+        var q = 1;
+        while q <= 3 {
+            var key: &static [byte] = "precision";
+            if q == 2 {
+                key = "recall";
+            }
+            if q == 3 {
+                key = "f1";
+            }
+            let v = multiclass.class_value(cm, kk, q, a);
+            w = json.put_key(heap, w, key);
+            if v.code == 0 {
+                w = verbs.put_double(heap, w, bits_of(v.v));
+            } else {
+                w = json.put_null(heap, w);
+            }
+            q = q + 1;
+        }
+        w = json.end_object(heap, w);
+        a = a + 1;
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "left_out");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "precision");
+    w = json.put_int(heap, w, left[1]);
+    w = json.put_key(heap, w, "recall");
+    w = json.put_int(heap, w, left[2]);
+    w = json.put_key(heap, w, "f1");
+    w = json.put_int(heap, w, left[3]);
+    w = json.put_key(heap, w, "roc_auc_ovr");
+    w = json.put_int(heap, w, auc_left);
+    w = json.end_object(heap, w);
+    return json.end_object(heap, w);
+}
+
+// yt and yp are labels (yp the label of the largest probability), prob the n * K probabilities in the order of the classes, classes ascending. cap is the row cap.
+pub fn block[&h, &y, &p, &q, &c](heap: &!h Heap, yt: &y [int], yp: &p [int], prob: &q [float], classes: &c [int], cap: int) -> [heap] Block {
+    let kk = len(classes);
+    var w = json.writer(heap, 512);
+    w = json.begin_object(heap, w);
+    var plain = buffer.empty(heap, 64);
+    var und = buffer.empty(heap, 16);
+    var cf = box_slice(heap, kk * kk + 1, 0);
+    var code = 0;
+    var name: &static [byte] = "confusion";
+    borrow mut cf as &!cw in {
+        code = multiclass.confusion(yt, yp, classes, cap, contents(cw)[0..kk * kk]);
+    }
+    var left = box_slice(heap, 8, 0);
+    var per = box_slice(heap, kk + 1, 0.0);
+    var has = box_slice(heap, kk + 1, 0);
+    var auc_left = 0;
+    if code == 0 {
+        borrow cf as &cr in {
+            let cm = contents(cr);
+            name = "accuracy";
+            let (w1, p1, u1, c1) = member(heap, w, plain, "accuracy", multiclass.accuracy_of(cm, kk), und);
+            w = w1;
+            plain = p1;
+            und = u1;
+            code = c1;
+            // precision (1), recall (2), F1 (3): the macro mean, then the weighted
+            var which = 1;
+            while which <= 3 && code == 0 {
+                var weighted = 0;
+                while weighted < 2 && code == 0 {
+                    let a = multiclass.average(cm, kk, which, weighted == 1);
+                    var key: &static [byte] = "precision_macro";
+                    if which == 1 && weighted == 1 {
+                        key = "precision_weighted";
+                    }
+                    if which == 2 {
+                        key = "recall_macro";
+                        if weighted == 1 {
+                            key = "recall_weighted";
+                        }
+                    }
+                    if which == 3 {
+                        key = "f1_macro";
+                        if weighted == 1 {
+                            key = "f1_weighted";
+                        }
+                    }
+                    name = key;
+                    let (w2, p2, u2, c2) = member(heap, w, plain, key, scored(a), und);
+                    w = w2;
+                    plain = p2;
+                    und = u2;
+                    code = c2;
+                    if weighted == 0 {
+                        borrow mut left as &!lw in {
+                            contents(lw)[which] = a.left_out;
+                        }
+                    }
+                    weighted = weighted + 1;
+                }
+                which = which + 1;
+            }
+            // the one-versus-rest ROC-AUC and the log-loss
+            if code == 0 {
+                name = "roc_auc_ovr";
+                borrow mut per as &!pw in {
+                    borrow mut has as &!hw in {
+                        let a = multiclass.auc_ovr(heap, yt, prob, classes, cap, contents(pw)[0..kk], contents(hw)[0..kk]);
+                        auc_left = a.left_out;
+                        let (w3, p3, u3, c3) = member(heap, w, plain, "roc_auc_ovr", scored(a), und);
+                        w = w3;
+                        plain = p3;
+                        und = u3;
+                        code = c3;
+                    }
+                }
+            }
+            if code == 0 {
+                name = "log_loss";
+                let (w4, p4, u4, c4) = member(heap, w, plain, "log_loss", multiclass.logloss_of(heap, yt, prob, classes, cap), und);
+                w = w4;
+                plain = p4;
+                und = u4;
+                code = c4;
+            }
+            if code == 0 {
+                borrow left as &lr in {
+                    w = put_tables(heap, w, cm, classes, kk, contents(lr), auc_left);
+                }
+            }
+        }
+    }
+    unbox_slice(heap, cf);
+    unbox_slice(heap, left);
+    unbox_slice(heap, per);
+    unbox_slice(heap, has);
+    if code != 0 {
+        return stopped(heap, w, plain, und, code, name);
+    }
+    return Block { obj: json.finish(w), plain: plain, und: und, code: 0, name: "", row: 0 };
+}
+
+// The metrics of the model whose payload is `blob` (kind 9) on the rows of xs (a matrix the stored steps produced) against the labels yv: the predicted labels, the probabilities, then block().
+// `strict`: a probability that is not finite is the refusal ml.predict.non-finite, with its row, before any metric (the rule of eval).
+pub fn drop_block[&h](heap: &!h Heap, b: Block) -> [heap] int {
+    let Block { obj, plain, und, code, name, row } = b;
+    buffer.drop(heap, obj);
+    buffer.drop(heap, plain);
+    buffer.drop(heap, und);
+    return code;
+}
+
+fn swap[&h](heap: &!h Heap, old: Block, fresh: Block) -> [heap] Block {
+    drop_block(heap, old);
+    return fresh;
+}
+
+pub fn score[&h, &x, &y, &b](heap: &!h Heap, xs: &x matrix.Matrix, yv: &y [float], blob: &b [byte], cap: int, strict: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, int, &static [byte], int) {
+    let n = matrix.rows(xs);
+    let (code, kk, wv, labels) = adapter_softmax.parts(heap, blob, matrix.cols(xs));
+    unbox_slice(heap, wv);
+    var result = Block { obj: buffer.empty(heap, 1), plain: buffer.empty(heap, 1), und: buffer.empty(heap, 1), code: refuse.param_out_of_range(), name: "predict", row: 0 };
+    if code == 0 {
+        var pred = box_slice(heap, n + 1, 0.0);
+        var prob = box_slice(heap, n * kk + 1, 0.0);
+        var c1 = 0;
+        var c2 = 0;
+        borrow mut pred as &!pw in {
+            c1 = est.predict_blob(heap, 9, blob, matrix.shape(xs), contents(xs.data), contents(xs.miss), matrix.wpc(xs), contents(pw));
+        }
+        borrow mut prob as &!qw in {
+            c2 = est.proba_blob(heap, 9, blob, matrix.shape(xs), contents(xs.data), contents(xs.miss), matrix.wpc(xs), contents(qw));
+        }
+        if c1 != 0 {
+            result = swap(heap, result, Block { obj: buffer.empty(heap, 1), plain: buffer.empty(heap, 1), und: buffer.empty(heap, 1), code: c1, name: "predict", row: 0 });
+        } else if c2 != 0 {
+            result = swap(heap, result, Block { obj: buffer.empty(heap, 1), plain: buffer.empty(heap, 1), und: buffer.empty(heap, 1), code: c2, name: "proba", row: 0 });
+        } else {
+            var bad = 0 - 1;
+            if strict {
+                borrow prob as &qr0 in {
+                    var i = 0;
+                    while i < n * kk && bad < 0 {
+                        if !common.is_finite(contents(qr0)[i]) {
+                            bad = i / kk;
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+            if bad >= 0 {
+                result = swap(heap, result, Block { obj: buffer.empty(heap, 1), plain: buffer.empty(heap, 1), und: buffer.empty(heap, 1), code: refuse.predict_non_finite(), name: "proba", row: bad });
+            } else {
+                var yt = box_slice(heap, n + 1, 0);
+                var yp = box_slice(heap, n + 1, 0);
+                borrow mut yt as &!tw in {
+                    borrow mut yp as &!ypw in {
+                        borrow labels as &lr in {
+                            borrow pred as &pr in {
+                                var i = 0;
+                                while i < n {
+                                    contents(tw)[i] = truncate(yv[i]);
+                                    contents(ypw)[i] = contents(lr)[truncate(contents(pr)[i])];
+                                    i = i + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                borrow yt as &tr in {
+                    borrow yp as &ypr in {
+                        borrow prob as &qr in {
+                            borrow labels as &lr2 in {
+                                result = swap(heap, result, block(heap, contents(tr)[0..n], contents(ypr)[0..n], contents(qr)[0..n * kk], contents(lr2)[0..kk], cap));
+                            }
+                        }
+                    }
+                }
+                unbox_slice(heap, yt);
+                unbox_slice(heap, yp);
+            }
+        }
+        unbox_slice(heap, pred);
+        unbox_slice(heap, prob);
+    }
+    unbox_slice(heap, labels);
+    let Block { obj, plain, und, code, name, row } = result;
+    return (obj, plain, und, code, name, row);
+}

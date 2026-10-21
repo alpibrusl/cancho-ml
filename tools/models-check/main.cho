@@ -415,7 +415,7 @@ fn run_softmax[&h, &i, &c, &x, &y](heap: &!h Heap, io: &!i Io, clock: &c Clock, 
             var r = 0;
             t0 = clock_ms(clock);
             while r < reps {
-                code = softmax.fit(heap, threads, common.mat(ntr, d), xv, yv, kk, iters, l2, contents(ow), contents(dw));
+                code = softmax.fit(heap, threads, common.mat(ntr, d), xv, yv, kk, iters, iters, l2, contents(ow), contents(dw));
                 r = r + 1;
             }
             t1 = clock_ms(clock);

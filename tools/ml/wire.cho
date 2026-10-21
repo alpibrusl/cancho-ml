@@ -25,6 +25,8 @@ import ml.fsio;
 import ml.kinds;
 import ml.logrec;
 import ml.matrix;
+import ml.mcdata;
+import ml.mcwire;
 import ml.mfile;
 import ml.paths;
 import ml.prov;
@@ -317,6 +319,8 @@ pub res struct Data {
     ncols: int,
     c0: int,
     c1: int,
+    // the number of classes of a multiclass target (docs/multiclass.md), 2 for a binary one, 0 when there is no classification target; c0 and c1 are then the smallest and the largest label
+    ncls: int,
     yall: Box[[float]],
     // whether the file was read with the categorical columns of --cat (docs/categorical-encoders.md): x and sc then hold the NUMERIC columns only, and the ids and
     // the vocabulary they refer to travel beside the Data (load_data answers them; a field cannot be borrowed by itself)
@@ -324,7 +328,7 @@ pub res struct Data {
 }
 
 pub fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
-    let Data { x, sh, sc, tj, nrows, ncols, c0, c1, yall, cat } = d;
+    let Data { x, sh, sc, tj, nrows, ncols, c0, c1, ncls, yall, cat } = d;
     matrix.drop(heap, x);
     csv.drop_shape(heap, sh);
     schema.drop(heap, sc);
@@ -333,10 +337,10 @@ pub fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
 }
 
 pub fn empty_data[&h](heap: &!h Heap) -> [heap] Data {
-    return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, yall: box_slice(heap, 2, 0.0), cat: false };
+    return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, ncls: 0, yall: box_slice(heap, 2, 0.0), cat: false };
 }
 
-pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], mixed_plan: bool, task: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
+pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], mixed_plan: bool, task: int, kind: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
@@ -438,6 +442,7 @@ pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte]
     var yall = box_slice(heap, 2, 0.0);
     var c0 = 0;
     var c1 = 0;
+    var ncls = 0;
     if go && task != 4 {
         let none = box_slice(heap, 1, 0);
         var bad = 0;
@@ -453,6 +458,45 @@ pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte]
         if bad > 0 {
             e = wiredata.empty_target(heap, e, tg, bad);
             go = false;
+        } else if task == 2 && kind == 9 {
+            // a multiclass target (docs/multiclass.md section 2): the classes are the distinct labels, ascending
+            var labs = box_slice(heap, 2, 0);
+            var kk = 0;
+            borrow yall as &yq in {
+                let (labs2, kk2) = mcdata.distinct(heap, contents(yq), nrows);
+                unbox_slice(heap, labs);
+                labs = labs2;
+                kk = kk2;
+            }
+            if kk < 2 {
+                e = verbs.problem(heap, e, "ml.label.single-class", "a classification target has one value", "a model needs both classes in the training rows", "", "");
+                go = false;
+            } else if kk > mcdata.max_classes() {
+                var w = wiredata.open_tag(heap, "ml.limit.classes");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_int(heap, w, "max", mcdata.max_classes());
+                e = fail.add(heap, e, w);
+                go = false;
+            } else if kk == 2 {
+                var w = fail.open_in(heap, spec.extra(), "ml.param.out-of-range", "softmax is for a target with three to 64 classes", "a two-class target is fitted with --model logistic");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_str(heap, w, "flag", "--model");
+                w = fail.detail_int(heap, w, "classes", 2);
+                e = fail.add(heap, e, w);
+                go = false;
+            } else if o.positive_given {
+                e = wiredata.conflict(heap, e, "positive", "a model of more than two classes has no positive label: its metrics are those of every class");
+                go = false;
+            } else {
+                ncls = kk;
+                borrow labs as &lr in {
+                    c0 = contents(lr)[0];
+                    c1 = contents(lr)[kk - 1];
+                }
+            }
+            unbox_slice(heap, labs);
         } else if task == 2 {
             var cnt = 0;
             var a = 0;
@@ -467,7 +511,11 @@ pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte]
                 e = verbs.problem(heap, e, "ml.label.single-class", "a classification target has one value", "a model needs both classes in the training rows", "", "");
                 go = false;
             } else if cnt > 2 {
-                e = verbs.problem(heap, e, "ml.label.not-binary", "a classification target has more than two values", "only two-class targets are built", "", "");
+                if kind == 5 {
+                    e = verbs.problem(heap, e, "ml.label.not-binary", "a classification target has more than two values", "a target of three or more classes is fitted with --model softmax", "", "");
+                } else {
+                    e = verbs.problem(heap, e, "ml.label.not-binary", "a classification target has more than two values", "only two-class targets are built", "", "");
+                }
                 go = false;
             } else {
                 var hi = a;
@@ -478,6 +526,7 @@ pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte]
                 }
                 c1 = hi;
                 c0 = lo;
+                ncls = 2;
                 if o.positive_given {
                     let pv = o.positive_v;
                     if pv == lo {
@@ -498,7 +547,7 @@ pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte]
             }
         }
     }
-    return (Data { x: x, sh: sh, sc: sc, tj: tj, nrows: nrows, ncols: ncols, c0: c0, c1: c1, yall: yall, cat: o.cat_given || mixed_plan }, ids, voc, go, e, lg);
+    return (Data { x: x, sh: sh, sc: sc, tj: tj, nrows: nrows, ncols: ncols, c0: c0, c1: c1, ncls: ncls, yall: yall, cat: o.cat_given || mixed_plan }, ids, voc, go, e, lg);
 }
 
 fn distinct_labels[&y](yv: &y [float], n: int) -> [] (int, int, int) {
@@ -675,7 +724,52 @@ pub fn train[&h, &dd, &ci, &cv, &pp, &s, &cl](heap: &!h Heap, src: &cl [byte], d
     var wv = box_slice(heap, 2, 0.0);
     var blob = box_slice(heap, 1, byte_of(0));
     var report = buffer.empty(heap, 1);
-    if go && est.is_blob(pls.kind) {
+    if go && pls.kind == 9 {
+        // a multiclass model (docs/multiclass.md section 3): the labels are the classes of the whole file; a class with no training row is refused
+        let (labs, kk) = mcdata.distinct(heap, contents(ds.yall), ds.nrows);
+        var fcode = 0;
+        var fempty = 0 - 1;
+        var fdiag = box_slice(heap, 8, 0.0);
+        borrow xt as &xq in {
+            borrow ytr as &yr in {
+                borrow labs as &lbr in {
+                    d = matrix.cols(xq);
+                    rows = matrix.rows(xq);
+                    let (fblob, fc, fd, fe) = mcwire.fit(heap, o.threads, xq, contents(yr), contents(lbr)[0..kk], kk, contents(pls.ip)[0], contents(pls.fp)[0]);
+                    unbox_slice(heap, blob);
+                    blob = fblob;
+                    unbox_slice(heap, fdiag);
+                    fdiag = fd;
+                    fcode = fc;
+                    fempty = fe;
+                }
+            }
+        }
+        if fcode == refuse.fit_collinear() {
+            borrow fdiag as &dgr in {
+                borrow fitted as &fq2 in {
+                    e = fitfail.collinear(heap, src, e, pls.kind, contents(dgr), fq2.nm, contents(pls.fp)[0], o, rep, fold);
+                }
+            }
+            go = false;
+        } else if fcode == refuse.fit_separable() {
+            borrow fdiag as &dgr in {
+                e = fitfail.separable(heap, src, e, contents(dgr), contents(pls.ip)[0], contents(pls.fp)[0], o, rep, fold);
+            }
+            go = false;
+        } else if fcode == rules.unseen_label() {
+            borrow labs as &lbr2 in {
+                e = mcwire.class_absent(heap, e, contents(lbr2)[fempty]);
+            }
+            go = false;
+        } else if fcode != 0 {
+            e = wiredata.code_error(heap, e, fcode, 0, 0, 0);
+            go = false;
+        }
+        unbox_slice(heap, fdiag);
+        unbox_slice(heap, labs);
+    }
+    if go && est.is_blob(pls.kind) && pls.kind != 9 {
         // the tree and the forest: the fitted model is a payload; missing cells go to the library with their bitmap (docs/wiring-trees.md section 5)
         borrow xt as &xq in {
             d = matrix.cols(xq);
@@ -789,7 +883,7 @@ pub fn train[&h, &dd, &ci, &cv, &pp, &s, &cl](heap: &!h Heap, src: &cl [byte], d
             if code == refuse.fit_collinear() {
                 borrow diag as &dgr in {
                     borrow fitted as &fq2 in {
-                        e = fitfail.collinear(heap, src, e, kind == 5, contents(dgr), fq2.nm, contents(pls.fp)[0], o, rep, fold);
+                        e = fitfail.collinear(heap, src, e, kind, contents(dgr), fq2.nm, contents(pls.fp)[0], o, rep, fold);
                     }
                 }
             } else if code == refuse.fit_separable() {
@@ -1043,6 +1137,8 @@ fn fit_summary[&h, &pp, &dd, &sp, &tb, &ii, &xs, &xa](heap: &!h Heap, tr: &pp Tr
     w = json.put_int(heap, w, tr.d);
     if task == 4 {
         w = put_clusters(heap, w, tr, ip);
+    } else if kind == 9 {
+        w = mcwire.put_summary(heap, w, contents(tr.blob), tr.d, tr.fitted.nm);
     } else if est.is_blob(kind) && record.get32(contents(tr.blob), 0) == kinds.model_boost() {
         w = put_boost(heap, w, contents(tr.blob));
     } else if est.is_blob(kind) {
@@ -1050,7 +1146,7 @@ fn fit_summary[&h, &pp, &dd, &sp, &tb, &ii, &xs, &xa](heap: &!h Heap, tr: &pp Tr
     } else {
         w = put_coefficients(heap, w, tr);
     }
-    if task == 2 {
+    if task == 2 && kind != 9 {
         w = json.put_key(heap, w, "classes");
         w = json.begin_array(heap, w);
         w = json.put_int(heap, w, c0);
@@ -1418,7 +1514,7 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &sk, &cl](heap: &!h Heap, src: &cl [byte]
         hashed = st1 == 0;
     }
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, mixed_plan, task, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, mixed_plan, task, kind, e, lg);
         drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -1469,7 +1565,7 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &sk, &cl](heap: &!h Heap, src: &cl [byte]
         }
     }
     // a tree or forest fit takes at most params.rows_max() training rows (docs/wiring-trees.md section 6): counted here, before any copy of the rows is made
-    if go && est.is_blob(kind) && task != 4 {
+    if go && est.is_blob(kind) && task != 4 && kind != 9 {
         var ntrain = 0;
         borrow sel as &sq0 in {
             ntrain = wiredata.count_rows(contents(sq0), dn, want);

@@ -25,7 +25,7 @@ DEFAULT_ROOT = HERE.parent
 TOP_KEYS = {
     "name": str, "kind": int, "extra_kinds": list, "kind_fn": str, "shares_kind_with": str, "task": str, "tier": str, "wired": bool,
     "adapter": str, "shape": str, "payload_version": int, "doc": str, "files": list, "plan_order": int, "limits": dict, "hyperparameter": list,
-    "tags": dict, "authority": dict, "sums": dict, "oracle": dict,
+    "tags": dict, "authority": dict, "sums": dict, "oracle": dict, "target_classes": int,
 }
 REQUIRED = {"name", "kind", "kind_fn", "task", "tier", "wired", "payload_version", "doc", "files", "plan_order", "tags", "authority", "sums"}
 HP_KEYS = {"name": str, "type": str, "min": int, "max": int, "values": list, "default": str, "required": bool, "doc": str, "nonneg": bool}
@@ -72,8 +72,8 @@ def parse_manifest(path):
     m.setdefault("shape", "vector")
     if m["shape"] not in SHAPES:
         raise ManifestError("%s: shape %r (vector or blob)" % (where, m["shape"]))
-    if m["shape"] == "blob" and m["task"] not in ("both", "clustering"):
-        raise ManifestError("%s: a blob model serves both tasks or is a clustering" % where)
+    if m["shape"] == "blob" and m["task"] not in ("both", "clustering", "classification"):
+        raise ManifestError("%s: a blob model serves both tasks, is a clustering or a classifier" % where)
     if m["shape"] == "blob" and m["task"] == "both" and not any(h.get("name") == "task" and h.get("type") == "enum" for h in m.get("hyperparameter", [])):
         raise ManifestError("%s: a blob model of both tasks has a `task` enum hyperparameter" % where)
     if m["task"] == "both" and m["shape"] != "blob":

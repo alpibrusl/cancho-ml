@@ -24,6 +24,7 @@ import ml.fsio;
 import ml.kinds;
 import ml.logrec;
 import ml.matrix;
+import ml.mcwire;
 import ml.mfile;
 import ml.paths;
 import ml.prov;
@@ -36,6 +37,7 @@ import metrics.rules;
 import metrics.splits;
 import ml.splitspec;
 import ml.splitwire;
+import models.adapter_softmax;
 import models.record;
 import pipeline.mixed;
 import pipeline.file;
@@ -801,6 +803,30 @@ fn put_label[&h](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, v: int) -
     return (o, p);
 }
 
+// The probabilities of one row of a multiclass model as an object keyed by the labels, which are in ascending order, and as tab-separated cells of the text. (writer, text, whether every
+// value was finite); predict_page has refused a row with a value that is not finite before it writes the first cell.
+fn put_probs[&h, &l, &q](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, labs: &l [int], kk: int, probs: &q [float], base: int) -> [heap] (json.Writer, buffer.Buffer, bool) {
+    var o = json.begin_object(heap, w);
+    var p = plain;
+    var ok = true;
+    var j = 0;
+    while j < kk {
+        let key = exact.put_scaled(heap, buffer.empty(heap, 24), labs[j], 0);
+        borrow key as &kr in {
+            o = json.put_key(heap, o, buffer.bytes(kr));
+        }
+        buffer.drop(heap, key);
+        p = buffer.push(heap, p, byte_of(9));
+        let (o2, p2, f2) = put_cell(heap, o, p, probs[base + j]);
+        o = o2;
+        p = p2;
+        ok = ok && f2;
+        j = j + 1;
+    }
+    o = json.end_object(heap, o);
+    return (o, p, ok);
+}
+
 // the page of predictions: (the data object, the text, the refusal code of the estimator)
 fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w2 [float], blob: &bl [byte], c0: int, c1: int, unknown: int, oor: &q [byte], ign: &g [byte], with_proba: bool, with_distance: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int, int, int) {
     let total = matrix.rows(xs);
@@ -812,8 +838,20 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
     if start + o.limit < end {
         end = start + o.limit;
     }
+    // a multiclass model (kind 9): the number of classes and their labels come from the payload, and the probabilities are K a row
+    var kk = 1;
+    var labs = box_slice(heap, 2, 0);
+    if kind == 9 {
+        let (pc, k2, pw0, pl0) = adapter_softmax.parts(heap, blob, matrix.cols(xs));
+        unbox_slice(heap, pw0);
+        unbox_slice(heap, labs);
+        labs = pl0;
+        if pc == 0 {
+            kk = k2;
+        }
+    }
     var pred = box_slice(heap, total + 1, 0.0);
-    var prob = box_slice(heap, total + 1, 0.0);
+    var prob = box_slice(heap, total * kk + 1, 0.0);
     var code = 0;
     borrow mut pred as &!pw in {
         code = wiredata.predict_into(heap, kind, xs, wv, blob, contents(pw));
@@ -829,9 +867,17 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
     if code == 0 {
         borrow pred as &pq0 in {
             borrow prob as &qq0 in {
-                let (br, bc) = wiredata.first_bad_score(task, contents(pq0), contents(qq0), total, with_distance);
-                badrow = br;
-                badcol = bc;
+                if kind == 9 {
+                    let at = wiredata.first_non_finite(contents(qq0), total * kk);
+                    if at >= 0 {
+                        badrow = at / kk;
+                        badcol = 2;
+                    }
+                } else {
+                    let (br, bc) = wiredata.first_bad_score(task, contents(pq0), contents(qq0), total, with_distance);
+                    badrow = br;
+                    badcol = bc;
+                }
             }
         }
         if badrow >= 0 {
@@ -860,7 +906,9 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
                     }
                 } else {
                     w = json.put_string(heap, w, "label");
-                    if with_proba {
+                    if with_proba && kind == 9 {
+                        w = json.put_string(heap, w, "probabilities");
+                    } else if with_proba {
                         w = json.put_string(heap, w, "probability");
                     }
                 }
@@ -885,6 +933,18 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
                             w = w3;
                             plain = p3;
                             printed = printed && f3;
+                        }
+                    } else if kind == 9 {
+                        borrow labs as &lbr in {
+                            let (w2, p2) = put_label(heap, w, plain, contents(lbr)[truncate(contents(pq)[k])]);
+                            w = w2;
+                            plain = p2;
+                            if with_proba {
+                                let (w3, p3, f3) = put_probs(heap, w, plain, contents(lbr), kk, contents(qq), k * kk);
+                                w = w3;
+                                plain = p3;
+                                printed = printed && f3;
+                            }
                         }
                     } else {
                         var label = c0;
@@ -934,6 +994,7 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
     }
     unbox_slice(heap, pred);
     unbox_slice(heap, prob);
+    unbox_slice(heap, labs);
     if code == 0 && !printed {
         // not reachable after the scan; if it were, the answer is the refusal and no cell of it is kept
         code = refuse.predict_non_finite();
@@ -1164,7 +1225,11 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
             e = wiredata.conflict(heap, e, "positive", "a clustering has no positive label");
             go = false;
         }
-        if go && task == 2 && o.positive_given {
+        if go && kind == 9 && o.positive_given {
+            e = wiredata.conflict(heap, e, "positive", "a model of more than two classes has no positive label: its metrics are those of every class");
+            go = false;
+        }
+        if go && task == 2 && kind != 9 && o.positive_given {
             let (pok, pv) = wiredata.parse_label(argv.text(src, "positive"));
             if pv == c0 || pv == c1 {
                 pos = pv;
@@ -1253,7 +1318,19 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
             borrow sel as &sq4 in {
                 rows = wiredata.count_rows(contents(sq4), nrows, want);
             }
-            if go && task == 2 {
+            if go && kind == 9 {
+                // a multiclass model: a label that is not one of its classes is ml.label.unseen
+                borrow yv as &yq9 in {
+                    borrow st as &sq9 in {
+                        let (at, lab, kk) = mcwire.first_unseen(heap, file.model_bytes(sq9.lo), sq9.d, contents(yq9), rows);
+                        if at >= 0 {
+                            e = mcwire.unseen_row(heap, e, at, lab, kk);
+                            go = false;
+                        }
+                    }
+                }
+            }
+            if go && task == 2 && kind != 9 {
                 var i = 0;
                 var foreign = 0 - 1;
                 borrow yv as &yq in {
@@ -1323,7 +1400,7 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
                                                     w = json.put_key(heap, w, "clusters");
                                                     w = json.put_int(heap, w, c0);
                                                 }
-                                                if task == 2 {
+                                                if task == 2 && kind != 9 {
                                                     w = json.put_key(heap, w, "positive");
                                                     w = json.put_int(heap, w, pos);
                                                 }

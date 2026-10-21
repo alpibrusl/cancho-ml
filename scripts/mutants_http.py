@@ -101,7 +101,7 @@ MUTANTS = [
     M("s-no-distance", "S1", "a clustering is asked without its distance", [e(SRV, "proba: proba, distance: distance,", "proba: proba, distance: false,")], S1),
     M("s-body-json-error-is-200", "S2", "a body that is not JSON is judged as an empty record", [e(SRV, "        if nodes < 0 {\n            var detail", "        if nodes < 0 && false {\n            var detail")], ["test_serve.Refusals.test_invalid_json"]),
     M("s-non-finite-status-is-500", "S2", "the rule ml.predict.non-finite is not in the 422 list of status_of: a row that is not finite is a server fault", [e(SRV, 'if app.listed("ml.predict.non-finite,ml.schema.mismatch,', 'if app.listed("ml.schema.mismatch,')], ["test_serve_json.Http"]),
-    M("s-non-finite-guard-dropped", "S2", "a document with a cell that is not a number is written as text", [e(SRV, "                    if good && !num.is_json_number(json.string_view(payload, tp, cell)) {\n                        numeric = false;\n                    }", "                    if good && false {\n                        numeric = false;\n                    }")], ["test_serve_json.Http"],
+    M("s-non-finite-guard-dropped", "S2", "a document with a cell that is not a number is written as text", [e(SRV, "                    if good && json.is_string(tp, cell) && !num.is_json_number(json.string_view(payload, tp, cell)) {\n                        numeric = false;\n                    }", "                    if good && false {\n                        numeric = false;\n                    }")], ["test_serve_json.Http"],
       why="a guard that no request reaches since the predictor refuses a row that is not finite before it writes a cell (docs/nonfinite.md section 4); the refusal itself is judged by s-non-finite-status-is-500 and by the mutants of scripts/mutants_nonfinite.py"),
     M("s-answer-limit", "S2", "an answer past 60,000 bytes is sent", [e(SRV, "if made == 0 && len(buffer.bytes(bo)) <= answer_limit() {", "if made == 0 {")], ["test_serve"],
       why="the check is a backstop: the ceilings (1,000 rows of at most about 56 bytes) keep an answer under 60,000 bytes, so no request reaches it; an equivalent mutant of the tests, not of the design"),
@@ -162,7 +162,7 @@ MUTANTS = [
 def build_serve(tree):
     g = lambda pat: sorted(glob.glob(str(tree / pat)))
     libs = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/boost/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
-            g("lib/models/logistic/*.cho") + g("lib/models/tree/*.cho") + g("lib/models/treewire/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho"))
+            g("lib/models/logistic/*.cho") + g("lib/models/softmax/*.cho") + g("lib/models/tree/*.cho") + g("lib/models/treewire/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho"))
     shared = [f for f in g("tools/ml/*.cho") if not f.endswith("/main.cho")]
     files = libs + [str(tree / "generated/ml-serve/built.cho")] + shared + g("tools/ml-serve/*.cho")
     target = tree / "build" / "ml-serve"

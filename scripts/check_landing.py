@@ -166,8 +166,8 @@ def _int(s):
 def figures(root):
     """name -> value, from the sources, computed here."""
     status = (root / "docs" / "status.md").read_text()
-    # the lines that the three platforms print: the cases of JSON lines (`-jsonl` in the name) and the two answers of the explanation verbs (`importance-`, `dump-`) are in the golden from fewer than three platforms (as scripts/site.py counts)
-    fp = [l for l in (root / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines() if "-jsonl" not in l.split("\t")[0] and not l.startswith(("importance-", "dump-"))]
+    # the lines that the three platforms print: the cases of JSON lines (`-jsonl` in the name) the two answers of the explanation verbs (`importance-`, `dump-`) and the four fits of the softmax model (`softmax-`) are in the golden from fewer than three platforms (as scripts/site.py counts)
+    fp = [l for l in (root / "docs" / "bench" / "xplat_fp.txt").read_text().splitlines() if "-jsonl" not in l.split("\t")[0] and not l.startswith(("importance-", "dump-", "softmax-"))]
     out = {"fp_lines": str(len(fp)), "fp_fits": str(sum(1 for l in fp if l.split("\t")[1:2] == ["fit-exit"])), "platforms": "3"}
     row = next(l for l in status.splitlines() if l.startswith("| other platforms"))
     named = [p for p in ("macOS arm64", "Linux x86-64", "Linux aarch64") if p in row]

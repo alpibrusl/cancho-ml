@@ -350,7 +350,10 @@
         "ml.importance.undefined-metric",
         "ml.importance.too-few-rows",
         "ml.limit.work",
-        "ml.dump.unsupported-model"
+        "ml.dump.unsupported-model",
+        "ml.label.unseen",
+        "ml.limit.classes",
+        "ml.limit.parameters"
       ]
     },
     "repair": {
@@ -809,7 +812,8 @@
                 "kmeans",
                 "tree",
                 "forest",
-                "boost"
+                "boost",
+                "softmax"
               ]
             },
             "task": {
@@ -2681,6 +2685,445 @@
                     "clusters"
                   ],
                   "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string"
+                    },
+                    "steps": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "features": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "coefficients": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "class": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          }
+                        },
+                        "required": [
+                          "class",
+                          "name",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "intercepts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "class": {
+                            "type": "integer"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          }
+                        },
+                        "required": [
+                          "class",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "classes": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      },
+                      "minItems": 3,
+                      "maxItems": 64
+                    },
+                    "reference": {
+                      "type": "integer"
+                    },
+                    "steps_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "categorical": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "kind": {
+                            "enum": [
+                              "onehot",
+                              "label",
+                              "freq",
+                              "hash"
+                            ]
+                          },
+                          "column": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "categories": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "output_columns": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "kind",
+                          "column",
+                          "categories",
+                          "output_columns"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "string_table": {
+                      "type": "object",
+                      "properties": {
+                        "entries": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "strings": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "pool_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "entries",
+                        "strings",
+                        "pool_bytes",
+                        "bytes",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "split": {
+                      "type": "object",
+                      "properties": {
+                        "train": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "test": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "seed": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "spec": {
+                          "type": "string"
+                        },
+                        "assignment": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              0,
+                              1
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "train",
+                        "test",
+                        "seed",
+                        "spec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "holdout": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "on": {
+                          "const": "held-out"
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "accuracy": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "precision_macro": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "precision_weighted": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "recall_macro": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "recall_weighted": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "f1_macro": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "f1_weighted": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "roc_auc_ovr": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "log_loss": {
+                              "oneOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "classes": {
+                              "type": "array",
+                              "items": {
+                                "type": "integer"
+                              },
+                              "minItems": 3,
+                              "maxItems": 64
+                            },
+                            "confusion": {
+                              "type": "array",
+                              "items": {
+                                "type": "array",
+                                "items": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "minItems": 3,
+                                "maxItems": 64
+                              },
+                              "minItems": 3,
+                              "maxItems": 64
+                            },
+                            "per_class": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "class": {
+                                    "type": "integer"
+                                  },
+                                  "support": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  "precision": {
+                                    "oneOf": [
+                                      {
+                                        "type": "string",
+                                        "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "recall": {
+                                    "oneOf": [
+                                      {
+                                        "type": "string",
+                                        "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "f1": {
+                                    "oneOf": [
+                                      {
+                                        "type": "string",
+                                        "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "class",
+                                  "support",
+                                  "precision",
+                                  "recall",
+                                  "f1"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "minItems": 3,
+                              "maxItems": 64
+                            },
+                            "left_out": {
+                              "type": "object",
+                              "properties": {
+                                "precision": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "recall": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "f1": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "roc_auc_ovr": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "precision",
+                                "recall",
+                                "f1",
+                                "roc_auc_ovr"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "accuracy",
+                            "precision_macro",
+                            "precision_weighted",
+                            "recall_macro",
+                            "recall_weighted",
+                            "f1_macro",
+                            "f1_weighted",
+                            "roc_auc_ovr",
+                            "log_loss",
+                            "classes",
+                            "confusion",
+                            "per_class",
+                            "left_out"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "on",
+                        "metrics"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "plan",
+                    "steps",
+                    "features",
+                    "coefficients",
+                    "intercepts",
+                    "classes",
+                    "reference"
+                  ],
+                  "additionalProperties": false
                 }
               ]
             },
@@ -2739,7 +3182,8 @@
                 "kmeans",
                 "tree",
                 "forest",
-                "boost"
+                "boost",
+                "softmax"
               ]
             },
             "task": {
@@ -2760,7 +3204,17 @@
               "items": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  ]
                 }
               }
             },
@@ -2877,7 +3331,8 @@
                 "kmeans",
                 "tree",
                 "forest",
-                "boost"
+                "boost",
+                "softmax"
               ]
             },
             "task": {
@@ -3046,7 +3501,8 @@
                 "kmeans",
                 "tree",
                 "forest",
-                "boost"
+                "boost",
+                "softmax"
               ]
             },
             "task": {
@@ -3255,7 +3711,362 @@
                 "kmeans",
                 "tree",
                 "forest",
-                "boost"
+                "boost",
+                "softmax"
+              ]
+            },
+            "task": {
+              "const": "classification"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "on": {
+              "enum": [
+                "train",
+                "other",
+                "unknown"
+              ]
+            },
+            "metrics": {
+              "type": "object",
+              "properties": {
+                "accuracy": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "precision_macro": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "precision_weighted": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "recall_macro": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "recall_weighted": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "f1_macro": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "f1_weighted": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "roc_auc_ovr": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "log_loss": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "classes": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "minItems": 3,
+                  "maxItems": 64
+                },
+                "confusion": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "minItems": 3,
+                    "maxItems": 64
+                  },
+                  "minItems": 3,
+                  "maxItems": 64
+                },
+                "per_class": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "class": {
+                        "type": "integer"
+                      },
+                      "support": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "precision": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "recall": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "f1": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "class",
+                      "support",
+                      "precision",
+                      "recall",
+                      "f1"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 3,
+                  "maxItems": 64
+                },
+                "left_out": {
+                  "type": "object",
+                  "properties": {
+                    "precision": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "recall": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "f1": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "roc_auc_ovr": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "precision",
+                    "recall",
+                    "f1",
+                    "roc_auc_ovr"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "accuracy",
+                "precision_macro",
+                "precision_weighted",
+                "recall_macro",
+                "recall_weighted",
+                "f1_macro",
+                "f1_weighted",
+                "roc_auc_ovr",
+                "log_loss",
+                "classes",
+                "confusion",
+                "per_class",
+                "left_out"
+              ],
+              "additionalProperties": false
+            },
+            "unknown_categories": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "out_of_range": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cells": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "cells",
+                    "rows",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "split": {
+              "type": "object",
+              "properties": {
+                "train": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "test": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "seed": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "spec": {
+                  "type": "string"
+                },
+                "assignment": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "train",
+                "test",
+                "seed",
+                "spec"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "rows",
+            "on",
+            "metrics",
+            "unknown_categories",
+            "out_of_range"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "enum": [
+                "linear",
+                "logistic",
+                "kmeans",
+                "tree",
+                "forest",
+                "boost",
+                "softmax"
               ]
             },
             "task": {
@@ -3428,7 +4239,8 @@
                 "kmeans",
                 "tree",
                 "forest",
-                "boost"
+                "boost",
+                "softmax"
               ]
             },
             "task": {
@@ -3797,7 +4609,8 @@
                 "kmeans",
                 "tree",
                 "forest",
-                "boost"
+                "boost",
+                "softmax"
               ]
             },
             "task": {
@@ -3810,7 +4623,7 @@
             "kind": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 8
+              "maximum": 9
             },
             "plan": {
               "$ref": "#/$defs/text_or_bytes"
@@ -4212,7 +5025,7 @@
                     "type": "integer"
                   },
                   "minItems": 2,
-                  "maxItems": 2
+                  "maxItems": 64
                 }
               ]
             },

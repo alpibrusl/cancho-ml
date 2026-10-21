@@ -1,15 +1,18 @@
 # Softmax (multinomial logistic) regression by Newton's method with the full block Hessian, a fixed number of iterations, optional l2 (docs/multiclass.md section 3).
-# Stage B1: the library only (wired = false); the wiring into the verbs, the file payload and the answers are stage B2.
+# Stage B2: wired into fit, predict and eval by the blob interface (the payload carries the labels); the fit itself is tools/ml/mcwire.cho (it needs the labels and the record of a refusal).
 name = "softmax"
 kind = 9
 kind_fn = "model_softmax"
 task = "classification"
 tier = "experimental"
-wired = false
+wired = true
+shape = "blob"
+adapter = "models.adapter_softmax"
 payload_version = 1
 doc = "docs/multiclass.md"
-files = ["lib/models/softmax/softmax.cho", "lib/models/softmax/spass.cho", "lib/models/rank.cho"]
+files = ["lib/models/softmax/softmax.cho", "lib/models/softmax/spass.cho", "lib/models/softmax/adapter.cho"]
 plan_order = 7
+target_classes = 3
 
 [limits]
 max_features = 256
@@ -21,7 +24,7 @@ max_parameters = 2048
 emits = [
   "ml.tensor.rank", "ml.tensor.shape", "ml.tensor.bounds", "ml.input.non-finite", "ml.input.too-many-columns", "ml.param.out-of-range",
   "ml.linalg.not-positive-definite", "ml.linalg.singular", "ml.param.threads", "ml.fit.non-finite", "ml.fit.collinear", "ml.fit.separable", "ml.label.single-class",
-  "ml.limit.classes", "ml.limit.parameters",
+  "ml.limit.classes", "ml.limit.parameters", "ml.input.too-many-rows",
 ]
 
 [authority]

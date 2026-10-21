@@ -15,12 +15,13 @@ import models.adapter_forest;
 import models.adapter_kmeans;
 import models.adapter_linear;
 import models.adapter_logistic;
+import models.adapter_softmax;
 import models.adapter_tree;
 import models.record;
 
 // whether a file whose model section opens with this kind is one `ml` builds
 pub fn wired(kind: int) -> [] bool {
-    return kind == 4 || kind == 5 || kind == 6 || kind == 7 || kind == 8;
+    return kind == 4 || kind == 5 || kind == 6 || kind == 7 || kind == 8 || kind == 9;
 }
 
 // the kind a file has for the dispatch key of a model (0 if there is none)
@@ -42,6 +43,9 @@ pub fn kind_of(kind: int) -> [] int {
     }
     if kind == 8 {
         return 8;
+    }
+    if kind == 9 {
+        return 9;
     }
     return 0;
 }
@@ -66,6 +70,9 @@ pub fn kind_named[&n](name: &n [byte]) -> [] int {
     if bytes.equal(name, "boost") {
         return 8;
     }
+    if bytes.equal(name, "softmax") {
+        return 9;
+    }
     return 0;
 }
 
@@ -88,6 +95,9 @@ pub fn name(kind: int) -> [] &static [byte] {
     if kind == 8 {
         return "boost";
     }
+    if kind == 9 {
+        return "softmax";
+    }
     return "";
 }
 
@@ -109,6 +119,9 @@ pub fn tier(kind: int) -> [] &static [byte] {
     }
     if kind == 8 {
         return "supported";
+    }
+    if kind == 9 {
+        return "experimental";
     }
     return "";
 }
@@ -133,6 +146,9 @@ pub fn task(kind: int) -> [] int {
     if kind == 8 {
         return 3;
     }
+    if kind == 9 {
+        return 2;
+    }
     return 0;
 }
 
@@ -155,6 +171,9 @@ pub fn nints(kind: int) -> [] int {
     if kind == 8 {
         return 7;
     }
+    if kind == 9 {
+        return 1;
+    }
     return 0;
 }
 
@@ -176,6 +195,9 @@ pub fn nfloats(kind: int) -> [] int {
     }
     if kind == 8 {
         return 3;
+    }
+    if kind == 9 {
+        return 1;
     }
     return 0;
 }
@@ -295,6 +317,14 @@ pub fn takes[&f](kind: int, flag: &f [byte]) -> [] bool {
             return true;
         }
     }
+    if kind == 9 {
+        if bytes.equal(flag, "iterations") {
+            return true;
+        }
+        if bytes.equal(flag, "l2") {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -350,7 +380,7 @@ pub fn hparam_flag[&f](flag: &f [byte]) -> [] bool {
 
 // whether the model keeps its fitted state as a byte payload that its adapter builds and reads (the blob interface), not as a vector of floats
 pub fn is_blob(kind: int) -> [] bool {
-    return kind == 6 || kind == 7 || kind == 107 || kind == 8;
+    return kind == 6 || kind == 7 || kind == 107 || kind == 8 || kind == 9;
 }
 
 // whether the model takes a cell that is still missing after the steps (a blob model of both tasks: the tree and the forest); the others are refused with ml.input.missing-value
@@ -579,6 +609,9 @@ pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, kind: int, threads: int,
     if kind == 8 {
         return adapter_boost.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
     }
+    if kind == 9 {
+        return adapter_softmax.fit_blob(heap, threads, xt, xd, miss, wpc, yd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+    }
     return (box_slice(heap, 1, byte_of(0)), 8);
 }
 
@@ -594,6 +627,9 @@ pub fn predict_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byt
     }
     if kind == 8 {
         return adapter_boost.predict_blob(heap, blob, xt, xd, miss, wpc, out);
+    }
+    if kind == 9 {
+        return adapter_softmax.predict_blob(heap, blob, xt, xd, miss, wpc, out);
     }
     return 8;
 }
@@ -611,6 +647,9 @@ pub fn proba_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte]
     if kind == 8 {
         return adapter_boost.proba_blob(heap, blob, xt, xd, miss, wpc, out);
     }
+    if kind == 9 {
+        return adapter_softmax.proba_blob(heap, blob, xt, xd, miss, wpc, out);
+    }
     return 8;
 }
 
@@ -627,6 +666,9 @@ pub fn decode_blob[&h, &s](heap: &!h Heap, kind: int, src: &s [byte], d: int) ->
     }
     if kind == 8 {
         return adapter_boost.decode_blob(heap, src, d);
+    }
+    if kind == 9 {
+        return adapter_softmax.decode_blob(heap, src, d);
     }
     return record.decoded(1, 0, 0, 0);
 }
@@ -777,6 +819,17 @@ pub fn hparams[&l, &i, &f](kind: int, line: &l [byte], ip: &!i [int], fp: &!f [f
         ip[6] = int_value(value_of(bytes.field(line, ' ', 12)));
         if ip[6] < 0 {
             return 10;
+        }
+        return 0;
+    }
+    if kind == 9 {
+        ip[0] = int_value(value_of(bytes.field(line, ' ', 3)));
+        if ip[0] < 0 {
+            return 1;
+        }
+        fp[0] = float_value(value_of(bytes.field(line, ' ', 4)));
+        if fp[0] < 0.0 {
+            return 2;
         }
         return 0;
     }

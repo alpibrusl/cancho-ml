@@ -1,4 +1,4 @@
-"""The corpus of the serving gates (docs/serving.md section 1): stored models of every kind, 1 to 8 (k-means is 6, boost 8), with categorical steps, missing cells, unseen categories and hash
+"""The corpus of the serving gates (docs/serving.md section 1): stored models of every kind, 1 to 9 (k-means is 6, boost 8, softmax 9), with categorical steps, missing cells, unseen categories and hash
 steps, and the inputs to predict from. Everything is written in a sandbox by `ml fit`, from data a seeded generator makes, so a gate can rebuild it.
 
     build(sb)  ->  MODELS (id -> file name in the sandbox), INPUTS (id -> (file name, model ids it suits))
@@ -10,6 +10,9 @@ import random
 NUM = "num.csv"
 CAT = "cat.csv"
 WIDE = "wide.csv"
+# the same rows with a target of three classes, lab3 (stage B of docs/multiclass.md)
+NUM3 = "num3.csv"
+CAT3 = "cat3.csv"
 
 FITS = {
     # kinds 1 to 3: the constant models
@@ -28,6 +31,10 @@ FITS = {
     "boost_cls": (["--model", "boost", "--task", "classification", "--rounds", "8", "--min-leaf", "3", "--seed", "3", "--target", "lab", "--drop", "y"], NUM, 8),
     "cat_boost_hash": (["--model", "boost", "--task", "regression", "--rounds", "6", "--min-leaf", "2", "--seed", "5", "--cat", "c0,c1", "--max-categories", "9", "--step",
                         "hash column=c0 buckets=8;encode column=c1 kind=onehot unknown=refuse", "--target", "y", "--drop", "lab"], CAT, 8),
+    # kind 9: the multinomial logistic regression (docs/multiclass.md): numeric with steps, and categorical with a string table and missing cells
+    "softmax": (["--model", "softmax", "--iterations", "12", "--l2", "0.5", "--step", "scale column=* kind=standard", "--target", "lab3", "--drop", "y,lab"], NUM3, 9),
+    "cat_softmax": (["--model", "softmax", "--iterations", "10", "--l2", "1", "--cat", "c0,c1", "--na-values", "NA", "--step",
+                     "impute column=n strategy=median;encode column=c0 kind=label missing=zero;encode column=c1 kind=onehot missing=zero", "--target", "lab3", "--drop", "y,lab"], CAT3, 9),
     # kind 6: k-means, which has no target (docs/wiring-kmeans.md): numeric with steps, numeric with the other initialisation and no step, categorical with a string table
     "kmeans": (["--model", "kmeans", "--k", "3", "--seed", "2", "--step", "impute column=* strategy=mean;scale column=* kind=standard", "--drop", "y,lab"], NUM, 6),
     "kmeans_random": (["--model", "kmeans", "--k", "4", "--init", "random", "--iterations", "7", "--seed", "9", "--drop", "y,lab"], NUM, 6),
@@ -93,6 +100,22 @@ def cat_csv(rng, n=80):
     return "\n".join(rows) + "\n"
 
 
+def with_lab3(text):
+    """the rows of a corpus file with one more column: lab3, 0 / 1 / 2 by terciles of the column y (the corpus file's own values, so no random number is drawn)"""
+    lines = text.splitlines()
+    head = lines[0].split(",")
+    out = [lines[0] + ",lab3"]
+    vals = []
+    for ln in lines[1:]:
+        cells = ln.rsplit(",", 2)
+        vals.append(float(cells[-2]))
+    lo, hi = sorted(vals)[len(vals) // 3], sorted(vals)[2 * len(vals) // 3]
+    for ln, v in zip(lines[1:], vals):
+        out.append("%s,%d" % (ln, 0 if v < lo else 1 if v < hi else 2))
+    assert head[-2] == "y"
+    return "\n".join(out) + "\n"
+
+
 def inputs(rng):
     """id -> (file name, text or bytes, the models it suits: 'num', 'cat', 'cat0')."""
     out = {}
@@ -147,11 +170,13 @@ def build(sb, seed=17):
     sb.write(NUM, num_csv(rng))
     sb.write(CAT, cat_csv(rng))
     sb.write(WIDE, wide_csv(rng))
+    sb.write(NUM3, with_lab3(sb.read(NUM).decode()))
+    sb.write(CAT3, with_lab3(sb.read(CAT).decode()))
     models = {}
     for mid, (args, csv, kind) in FITS.items():
         r = sb.run("fit", *args, "--output", mid + ".cml", csv)
         assert r.status == 0, (mid, r)
-        family = {NUM: "num", WIDE: "wide"}.get(csv) or {"cat_tree_ignore": "cat0", "cat_only_forest": "catonly"}.get(mid, "cat")
+        family = {NUM: "num", NUM3: "num", WIDE: "wide"}.get(csv) or {"cat_tree_ignore": "cat0", "cat_only_forest": "catonly"}.get(mid, "cat")
         models[mid] = (mid + ".cml", kind, family)
     ins = {}
     for iid, (name, data, family) in inputs(rng).items():

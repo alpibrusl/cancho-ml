@@ -111,8 +111,8 @@ fn plan_repair[&h](heap: &!h Heap, w: json.Writer) -> [heap] json.Writer {
 }
 
 // ml.fit.collinear. diag is the record of lib/models/rank.cho: [0] pass, [1] j, [2] s_jj / a_jj, [3] the largest diagonal element, [4 + k] c_k. nm the names of the p - 1 columns
-// of the matrix the estimator got; the column p - 1 is the intercept. `logistic` adds the pass to the detail.
-pub fn collinear[&h, &cl, &d, &n](heap: &!h Heap, src: &cl [byte], e: fail.Errors, logistic: bool, diag: &d [float], nm: &n names.Names, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap] fail.Errors {
+// of the matrix the estimator got; the column p - 1 is the intercept. `kind` (4 linear, 5 logistic, 9 softmax) names the model, and a logistic one adds the pass to the detail.
+pub fn collinear[&h, &cl, &d, &n](heap: &!h Heap, src: &cl [byte], e: fail.Errors, kind: int, diag: &d [float], nm: &n names.Names, l2: float, o: verbs.Opts, rep: int, fold: int) -> [heap] fail.Errors {
     let nfeat = names.count(nm);
     let j = truncate(diag[1]);
     let maxdiag = diag[3];
@@ -172,8 +172,12 @@ pub fn collinear[&h, &cl, &d, &n](heap: &!h Heap, src: &cl [byte], e: fail.Error
         }
     }
     w = fail.detail_open(heap, w);
-    if logistic {
-        w = fail.detail_str(heap, w, "model", "logistic");
+    if kind == 5 || kind == 9 {
+        if kind == 9 {
+            w = fail.detail_str(heap, w, "model", "softmax");
+        } else {
+            w = fail.detail_str(heap, w, "model", "logistic");
+        }
         w = fail.detail_int(heap, w, "pass", truncate(diag[0]));
     } else {
         w = fail.detail_str(heap, w, "model", "linear");

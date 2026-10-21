@@ -617,6 +617,7 @@ MODEL_TABLE = {
     "constant": [("task", "enum:regression,classification", None, None)],
     "linear": [("l2", "fnn", "0.0", None)],
     "logistic": [("iterations", "int:1,1000", "100", None), ("l2", "fnn", "0.0", None)],
+    "softmax": [("iterations", "int:1,1000", "100", None), ("l2", "fnn", "0.0", None)],
     "kmeans": [("k", "int:1,1024", None, None), ("iterations", "int:1,1000", "10", None), ("init", "enum:random,kmeans++", "kmeans++", None)],
     "tree": [("task", "enum:classification,regression", None, None), ("max-depth", "int:1,1000", "8", None), ("min-leaf", "int:1,1000000", "1", None), ("bins", "int:2,255", "64", None),
              ("max-nodes", "int:1,999999999", "4194304", None)],

@@ -137,7 +137,7 @@ At start the server calls the code of `ml describe` on the model bytes (the same
 ```
 
 * `columns` is `describe.output.columns` for a regression (`["prediction"]`), `["label","probability"]` for every classification (the probability of the positive label; a constant classification has both
-  always, the others are asked for with the `--proba` option of the same code), `["cluster","distance"]` for a clustering (the squared distance to the centre of its cluster, the `--distance` option).
+  always, the others are asked for with the `--proba` option of the same code), `["cluster","distance"]` for a clustering (the squared distance to the centre of its cluster, the `--distance` option), and `["label","probabilities"]` for a model of three or more classes (`softmax`, [multiclass.md](multiclass.md) section 3.4): the second value of a row is then an object whose keys are the labels, in ascending order, and whose values are the probabilities as JSON numbers, and the document names a cell as anything (`{}`) for that model only.
 * Each row is an array with a value per column. **The value is the text the command line prints, as a JSON number**: the document of `ml predict` holds each value as a string made by
   `flt.put_float` (shortest decimal that reads back to the double, positional from 1e-6 to 1e21 with a point, scientific outside) or `exact.put_scaled` (a label, an integer), and the server writes the same string
   between no quotes after checking that it is a JSON number (`json.put_fragment` parses it: a text that is not one is `serve.internal`, 500, never a quoted string). The decimal text is the same; nothing is printed twice. 
