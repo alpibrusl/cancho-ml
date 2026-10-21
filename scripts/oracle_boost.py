@@ -193,9 +193,10 @@ def node_cap(maxnodes, m, maxd):
     return min(maxnodes, 2 * m - 1, (1 << (maxd + 1)) - 1)
 
 
-def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed, stats=None, wts=None):
+def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed, stats=None, wts=None, groups=None):
     """-> dict(base, trees, kept, requested, subk, edges); task 0 classification (y in {0.0, 1.0}), 1 regression. Raises LimitNodes.
-    wts: None, or the weight of every row (docs/weights.md section 2.6): the base score and the gradients of the fit rows are weighted, the validation loss is not."""
+    wts: None, or the weight of every row (docs/weights.md section 2.6): the base score and the gradients of the fit rows are weighted, the validation loss is not.
+    task 2 is the pairwise ranking objective (docs/ranking.md section 4): y the relevances, groups the row numbers of each group in file order; the base score is 0.0, there is no early stopping."""
     if stats is None:
         stats = {}
     n, d = X.shape
@@ -218,7 +219,10 @@ def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed,
     m = frows.size
     yf = np.asarray(y, dtype=np.float64)
     wf = None if wts is None else np.asarray(wts, dtype=np.float64)
-    if task == 1:
+    if task == 2:
+        assert early == 0 and groups is not None
+        base = 0.0
+    elif task == 1:
         if wf is None:
             base = seqsum(yf[frows]) / float(m)
         else:
@@ -239,14 +243,16 @@ def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed,
     for r in range(R):
         g = np.zeros(n)
         h = np.zeros(n)
-        if task == 1:
+        if task == 2:
+            g, h = rank_grad(F, yf, groups, wf)
+        elif task == 1:
             g[frows] = F[frows] - yf[frows]
             h[frows] = 1.0
         else:
             p = sigmoid(F[frows])
             g[frows] = p - yf[frows]
             h[frows] = p * (1.0 - p)
-        if wf is not None:
+        if wf is not None and task != 2:
             g[frows] = wf[frows] * g[frows]
             h[frows] = wf[frows] * h[frows]
         if K == SCALE:

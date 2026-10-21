@@ -136,7 +136,7 @@ pub fn lib_size[&s](src: &s [byte]) -> [] int {
     return model.size_of(rounds, total);
 }
 
-// code 0 or 1 (malformed), the two labels (0 for a regression or a ranking), and in `end` the task as the wiring numbers it: 1 regression, 2 classification, 5 ranking
+// code 0 or 1 (malformed), the two labels (0 for a regression or a ranking), and in `end` the task as the wiring numbers it: 1 regression or a ranking (read as a regression: a score per row), 2 classification
 pub fn decode_blob[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] record.Decoded {
     let ls = lib_size(src);
     if ls < 0 {
@@ -163,7 +163,7 @@ pub fn decode_blob[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] rec
         return record.decoded(0, 0, 0, 1);
     }
     if task == 2 {
-        return record.decoded(0, 0, 0, 5);
+        return record.decoded(0, 0, 0, 1);
     }
     let lab = record.decode_labels(src, ls);
     if lab.code != 0 || lab.end != len(src) {

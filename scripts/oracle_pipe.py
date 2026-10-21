@@ -623,7 +623,7 @@ MODEL_TABLE = {
              ("max-nodes", "int:1,999999999", "4194304", None)],
     "forest": [("task", "enum:classification,regression", None, None), ("trees", "int:1,1024", "100", None), ("max-depth", "int:1,1000", "8", None), ("min-leaf", "int:1,1000000", "1", None),
                ("bins", "int:2,255", "64", None), ("mtry", "int:0,4096", "0", None), ("bootstrap", "int:0,1", "1", None), ("max-nodes", "int:1,999999999", "4194304", None)],
-    "boost": [("task", "enum:classification,regression", None, None), ("rounds", "int:1,10000", "100", None), ("learning-rate", "fnn", "0.1", None), ("max-depth", "int:1,1000", "4", None),
+    "boost": [("task", "enum:classification,regression,ranking", None, None), ("rounds", "int:1,10000", "100", None), ("learning-rate", "fnn", "0.1", None), ("max-depth", "int:1,1000", "4", None),
               ("min-leaf", "int:1,1000000", "10", None), ("bins", "int:2,255", "64", None), ("l2", "fnn", "1.0", None), ("subsample", "fnn", "1.0", None),
               ("early-stopping", "int:0,1000", "0", None), ("max-nodes", "int:1,999999999", "4194304", None)],
 }

@@ -202,7 +202,7 @@ pub fn nfloats(kind: int) -> [] int {
     return 0;
 }
 
-// 1 regression or 2 classification: the task of the model whose integer hyperparameters are `ip` (a model of both tasks has it in `task`)
+// 1 regression or 2 classification (a ranking model is read as a regression: it answers a score per row; est.ranking tells them apart): the task of the model whose integer hyperparameters are `ip` (a model of both tasks has it in `task`)
 pub fn task_of[&i](kind: int, ip: &i [int]) -> [] int {
     if kind == 7 {
         if ip[0] == 0 {
@@ -669,9 +669,17 @@ pub fn fit_blob_rank[&h, &x, &m, &y, &w, &u, &i, &f](heap: &!h Heap, kind: int, 
 }
 
 // whether the kind has a ranking objective (--task ranking)
-pub fn ranking(kind: int) -> [] bool {
+pub fn has_ranking(kind: int) -> [] bool {
     if kind == 8 {
         return true;
+    }
+    return false;
+}
+
+// whether the model whose integer hyperparameters are `ip` is a ranking model (its `task` is the value ranking)
+pub fn ranking[&i](kind: int, ip: &i [int]) -> [] bool {
+    if kind == 8 {
+        return ip[0] == 2;
     }
     return false;
 }
@@ -842,6 +850,8 @@ pub fn hparams[&l, &i, &f](kind: int, line: &l [byte], ip: &!i [int], fp: &!f [f
             ip[0] = 0;
         } else if bytes.equal(value_of(bytes.field(line, ' ', 3)), "regression") {
             ip[0] = 1;
+        } else if bytes.equal(value_of(bytes.field(line, ' ', 3)), "ranking") {
+            ip[0] = 2;
         } else {
             return 1;
         }

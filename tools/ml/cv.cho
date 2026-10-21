@@ -132,7 +132,7 @@ pub fn run[&h, &f, &r, &pf, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &
     var cids = catmat.empty(heap);
     var cvoc = dict.empty_vocab(heap);
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, src, fs, root, file, o, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), mixed_plan, task, kind, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, src, fs, root, file, o, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), argv.text(src, "group"), mixed_plan, task, kind, e, lg);
         wire.drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
