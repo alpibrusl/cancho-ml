@@ -11,8 +11,8 @@ Each stage is a pull request of its own and ends with its gates passing. The ord
 | stage | what | why here |
 |---|---|---|
 | R1 | the **metrics** in `lib/metrics`: NDCG@k, MAP@k, MRR@k, precision@k, recall@k, per group and averaged, with the tie rule and the groups the metric is not defined for; the Python oracle | they define "better" for every later stage, and they are testable with no model |
-| R2 | the **group column**: `--group COL` read like `--split-group`, the limits on a group, the refusals, `eval` of a score column against a relevance column | the model needs the groups; this stage needs no model |
-| R3 | **pairwise ranking with `--model boost --task ranking`**: the pairwise logistic loss, the file, `fit`, `predict` (and `--rank`), `eval`, `cv` by group, `describe` | the first model that ranks |
+| R2 | *(folded into R3)* | a group column read with no model has no user in the tool: nothing in `ml` takes scores that are not a model's, and a verb for external scores is a surface the issue does not ask for; the reading, the limits and the refusals can be judged from outside only through `fit --task ranking` *(corrected in place: the first plan had this stage alone)* |
+| R3 | **the group column and pairwise ranking with `--model boost --task ranking`**: `--group COL` read like `--split-group`, the limits on a group, the refusals, the pairwise logistic loss, the file, `fit`, `predict` (and `--rank`), `eval`, `cv` by group, `describe` | the first model that ranks |
 | R4 | **LambdaRank**: the pairs weighted by the change in NDCG that swapping them would make; `ml-serve`, `ml-mcp`, JSON lines | the better objective, and the surfaces that already exist |
 
 **Not in this stage:** position-bias correction and counterfactual ranking from click logs (the logged-feedback line of issue 59), neural rankers, a candidate generator (issue 70), early stopping with a ranking task (section 6), the group weights of section 5, a ranking tree or forest (`--model tree` and `forest` answer `args.conflict` for `--task ranking`).
