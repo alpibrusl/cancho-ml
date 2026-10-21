@@ -754,9 +754,9 @@ fn main(world: World) -> [conc] int {
                     borrow clock as &kc in {
                         borrow xs as &xr in {
                             borrow ys as &yr in {
-                              borrow wsv as &wr in {
-                                code = run(hp, ip, kc, contents(xr), contents(yr), contents(wr), wt, model, n, ntr, d, l2m, iters, k, init, seed, threads, reps, kcl);
-                              }
+                                borrow wsv as &wr in {
+                                    code = run(hp, ip, kc, contents(xr), contents(yr), contents(wr), wt, model, n, ntr, d, l2m, iters, k, init, seed, threads, reps, kcl);
+                                }
                             }
                         }
                     }
