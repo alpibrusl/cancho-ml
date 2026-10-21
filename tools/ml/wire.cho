@@ -1969,7 +1969,7 @@ pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [by
                 borrow action as &acr in {
                     borrow rname as &rnr in {
                         borrow recbuf as &rcr in {
-                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), wiredata.task_word(task), trows, cols, argv.text(src, "target"), buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
+                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), rankcol.word(task, argv.has(src, "group")), trows, cols, argv.text(src, "target"), buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
                         }
                     }
                 }

@@ -336,3 +336,99 @@ fn free_all[&h](heap: &!h Heap, a: Box[[int]], b: Box[[int]], c: Box[[int]], d: 
     unbox_slice(heap, g);
     return 0;
 }
+
+// The rank of every row inside its group (docs/ranking.md section 7): 1 for the highest score, ties in file order. gid: the group number of every row, 0 .. ng - 1, every group
+// with a row; score: finite. Answers (the ranks, 0) or (an empty array, the refusal): the length, an empty input, a non-finite score, a group number out of range or a group of
+// more than max_group() rows.
+pub fn ranks[&h, &g, &s](heap: &!h Heap, gid: &g [int], score: &s [float], ng: int) -> [heap] (Box[[int]], int) {
+    let n = len(gid);
+    if len(score) != n {
+        return (box_slice(heap, 1, 0), rules.length_mismatch());
+    }
+    if n == 0 {
+        return (box_slice(heap, 1, 0), rules.input_empty());
+    }
+    if ng < 1 || ng > n {
+        return (box_slice(heap, 1, 0), rules.out_of_range());
+    }
+    if regress.all_finite(score) == false {
+        return (box_slice(heap, 1, 0), rules.non_finite());
+    }
+    var i = 0;
+    while i < n {
+        if gid[i] < 0 || gid[i] >= ng {
+            return (box_slice(heap, 1, 0), rules.out_of_range());
+        }
+        i = i + 1;
+    }
+    let start = box_slice(heap, ng + 2, 0);
+    let order = box_slice(heap, n + 1, 0);
+    let keys = box_slice(heap, n + 1, 0);
+    let tmp = box_slice(heap, n + 1, 0);
+    let cur = box_slice(heap, ng + 2, 0);
+    var out = box_slice(heap, n + 1, 0);
+    var code = 0;
+    borrow mut start as &!sw in {
+        borrow mut order as &!ow in {
+            borrow mut keys as &!kw in {
+                borrow mut tmp as &!tw in {
+                    borrow mut cur as &!cw in {
+                        borrow mut out as &!rw in {
+                            let st = contents(sw);
+                            let od = contents(ow);
+                            let ks = contents(kw);
+                            let tm = contents(tw);
+                            let cu = contents(cw);
+                            let rk = contents(rw);
+                            i = 0;
+                            while i < n {
+                                st[gid[i] + 1] = st[gid[i] + 1] + 1;
+                                ks[i] = rank.key_of(score[i]);
+                                i = i + 1;
+                            }
+                            var gi = 0;
+                            while gi < ng {
+                                if st[gi + 1] == 0 || st[gi + 1] > max_group() {
+                                    code = rules.out_of_range();
+                                }
+                                st[gi + 1] = st[gi + 1] + st[gi];
+                                cu[gi] = st[gi];
+                                gi = gi + 1;
+                            }
+                            if code == 0 {
+                                i = 0;
+                                while i < n {
+                                    od[cu[gid[i]]] = i;
+                                    cu[gid[i]] = cu[gid[i]] + 1;
+                                    i = i + 1;
+                                }
+                                gi = 0;
+                                while gi < ng {
+                                    let lo = st[gi];
+                                    let hi = st[gi + 1];
+                                    sort_desc(ks, od[lo..hi], tm[lo..hi], hi - lo);
+                                    var r2 = lo;
+                                    while r2 < hi {
+                                        rk[od[r2]] = r2 - lo + 1;
+                                        r2 = r2 + 1;
+                                    }
+                                    gi = gi + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, start);
+    unbox_slice(heap, order);
+    unbox_slice(heap, keys);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, cur);
+    if code != 0 {
+        unbox_slice(heap, out);
+        return (box_slice(heap, 1, 0), code);
+    }
+    return (out, 0);
+}

@@ -29,6 +29,7 @@ import ml.mfile;
 import ml.paths;
 import ml.prov;
 import ml.rankcol;
+import metrics.ranking;
 import ml.refuse;
 import ml.spec;
 import ml.track;
@@ -839,7 +840,7 @@ fn put_probs[&h, &l, &q](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, l
 }
 
 // the page of predictions: (the data object, the text, the refusal code of the estimator)
-fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w2 [float], blob: &bl [byte], c0: int, c1: int, unknown: int, oor: &q [byte], ign: &g [byte], with_proba: bool, with_distance: bool, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int, int, int) {
+fn predict_page[&h, &x, &w2, &bl, &q, &g, &gd](heap: &!h Heap, kind: int, task: int, xs: &x matrix.Matrix, wv: &w2 [float], blob: &bl [byte], c0: int, c1: int, unknown: int, oor: &q [byte], ign: &g [byte], with_proba: bool, with_distance: bool, rank: bool, gid: &gd [int], ng: int, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int, int, int) {
     let total = matrix.rows(xs);
     var start = o.from;
     if start > total {
@@ -870,6 +871,16 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
     if code == 0 && (task == 2 || task == 4 && with_distance) {
         borrow mut prob as &!qw in {
             code = wiredata.proba_into(heap, kind, xs, wv, blob, contents(qw));
+        }
+    }
+    // --rank on a ranking model: the rank of every row inside its group (docs/ranking.md section 7)
+    var rk = box_slice(heap, 2, 0);
+    if code == 0 && rank {
+        borrow pred as &pqr in {
+            let (r2, rc) = ranking.ranks(heap, gid, contents(pqr)[0..total], ng);
+            unbox_slice(heap, rk);
+            rk = r2;
+            code = rc;
         }
     }
     // docs/nonfinite.md section 4: every value of every row scored (not only the page), before the first byte of the answer
@@ -905,11 +916,14 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
                 w = json.put_key(heap, w, "model");
                 w = json.put_string(heap, w, est.name(kind));
                 w = json.put_key(heap, w, "task");
-                w = json.put_string(heap, w, wiredata.task_word(task));
+                w = json.put_string(heap, w, rankcol.word(task, rankcol.payload_ranking(kind, blob)));
                 w = json.put_key(heap, w, "columns");
                 w = json.begin_array(heap, w);
                 if task == 1 {
                     w = json.put_string(heap, w, "prediction");
+                    if rank {
+                        w = json.put_string(heap, w, "rank");
+                    }
                 } else if task == 4 {
                     w = json.put_string(heap, w, "cluster");
                     if with_distance {
@@ -934,6 +948,13 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
                         w = w2;
                         plain = p2;
                         printed = printed && f2;
+                        if rank {
+                            plain = buffer.push(heap, plain, byte_of(9));
+                            borrow rk as &rkr in {
+                                w = json.put_int(heap, w, contents(rkr)[k]);
+                                plain = buffer.push_nat(heap, plain, contents(rkr)[k]);
+                            }
+                        }
                     } else if task == 4 {
                         let (w2, p2) = put_label(heap, w, plain, truncate(contents(pq)[k]));
                         w = w2;
@@ -1006,6 +1027,7 @@ fn predict_page[&h, &x, &w2, &bl, &q, &g](heap: &!h Heap, kind: int, task: int, 
     unbox_slice(heap, pred);
     unbox_slice(heap, prob);
     unbox_slice(heap, labs);
+    unbox_slice(heap, rk);
     if code == 0 && !printed {
         // not reachable after the scan; if it were, the answer is the refusal and no cell of it is kept
         code = refuse.predict_non_finite();
@@ -1122,6 +1144,20 @@ pub fn predict_loaded[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte]
         e = no_provenance_error(heap, e);
         go = false;
     }
+    // --rank --group COLUMN on a ranking model add the rank of each row inside its group; they go together, and only with a ranking model (docs/ranking.md section 7)
+    let want_rank = argv.has(src, "rank");
+    if go && (want_rank || argv.has(src, "group")) {
+        if !stored.rank {
+            e = rankcol.unsupported(heap, e);
+            go = false;
+        } else if !want_rank {
+            e = wiredata.conflict(heap, e, "group", "--group on predict is read for --rank, the rank of each row inside its group: give --rank too");
+            go = false;
+        } else if !argv.has(src, "group") {
+            e = wiredata.conflict(heap, e, "rank", "--rank needs --group COLUMN, the column of the file that says which rows are ranked together");
+            go = false;
+        }
+    }
     var inp = empty_input(heap);
     if go {
         let (i2, ok3, e3, lg3) = read_input(heap, src, fs, root, file, stored, o, false, e, lg);
@@ -1133,6 +1169,21 @@ pub fn predict_loaded[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte]
     }
     var payload = buffer.empty(heap, 1);
     var plain = buffer.empty(heap, 1);
+    // the groups of the rows of the file, for --rank
+    var gall = box_slice(heap, 1, 0);
+    var ngall = 0;
+    if go && want_rank {
+        var nr0 = 0;
+        borrow inp as &ir0 in {
+            nr0 = matrix.rows(ir0.x);
+        }
+        let (g2, n2, ok2, e2) = rankcol.read(heap, argv.text(src, "group"), fs, root, file, o, nr0, e);
+        unbox_slice(heap, gall);
+        gall = g2;
+        ngall = n2;
+        e = e2;
+        go = ok2;
+    }
     if go {
         let none = box_slice(heap, 1, 0);
         borrow inp as &ir in {
@@ -1148,15 +1199,21 @@ pub fn predict_loaded[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte]
                         borrow oor as &orr in {
                             borrow ign as &igr in {
                                 borrow xs as &xq in {
-                                    let (p2, t2, code, brow, bcol) = predict_page(heap, stored.kind, stored.task, xq, contents(stored.wv), file.model_bytes(stored.lo), stored.c0, stored.c1, unk, buffer.bytes(orr), buffer.bytes(igr), o.proba, o.distance, o);
-                                    buffer.drop(heap, payload);
-                                    buffer.drop(heap, plain);
-                                    payload = p2;
-                                    plain = t2;
-                                    if code == refuse.predict_non_finite() {
-                                        e = wiredata.non_finite_prediction(heap, e, brow + 1, wiredata.column_word(bcol));
-                                    } else if code != 0 {
-                                        e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                                    borrow gall as &gar in {
+                                        var gcount = 0;
+                                        if want_rank {
+                                            gcount = matrix.rows(xq);
+                                        }
+                                        let (p2, t2, code, brow, bcol) = predict_page(heap, stored.kind, stored.task, xq, contents(stored.wv), file.model_bytes(stored.lo), stored.c0, stored.c1, unk, buffer.bytes(orr), buffer.bytes(igr), o.proba, o.distance, want_rank, contents(gar)[0..gcount], ngall, o);
+                                        buffer.drop(heap, payload);
+                                        buffer.drop(heap, plain);
+                                        payload = p2;
+                                        plain = t2;
+                                        if code == refuse.predict_non_finite() {
+                                            e = wiredata.non_finite_prediction(heap, e, brow + 1, wiredata.column_word(bcol));
+                                        } else if code != 0 {
+                                            e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                                        }
                                     }
                                 }
                             }
@@ -1170,6 +1227,7 @@ pub fn predict_loaded[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte]
         }
         unbox_slice(heap, none);
     }
+    unbox_slice(heap, gall);
     drop_input(heap, inp);
     return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
 }

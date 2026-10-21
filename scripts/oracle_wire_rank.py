@@ -95,6 +95,35 @@ def check_eval(case, tmp, k, gain):
     return problems
 
 
+def check_rank_column(case, tmp):
+    """`ml predict --rank --group qid`: the column rank is the position of the row in its group by score descending, ties in file order"""
+    expect, ctx = owb.fit_oracle(case)
+    if ctx is None:
+        return []
+    names, rows = case.names, case.rows
+    t = names.index(case.target)
+    feat = [j for j in range(len(names)) if j != t]
+    X = [[ow.to_float(r[j]) for j in feat] for r in rows]
+    scores = owb.predict_oracle(case, ctx, X)
+    want = [0] * len(rows)
+    for lab in sorted(set(case.groups)):
+        idx = [i for i in range(len(rows)) if case.groups[i] == lab]
+        order = orank.ranking([scores[i] for i in idx])
+        for pos, k in enumerate(order):
+            want[idx[k]] = pos + 1
+    drops = ["--drop", ",".join([case.target] + (["wt"] if case.weights is not None else []))]
+    rc, out = ow.ml("--root", tmp, "predict", "--model-file", "m.cml", "--rank", "--group", "qid", "--limit", "1000000", *drops, "d.csv")
+    doc = json.loads(out)
+    if not doc.get("ok"):
+        return ["predict --rank refused: %s" % out[:300]]
+    cells = doc["data"]["rows"]
+    if [int(c[1]) for c in cells] != want:
+        return ["predict --rank: the ranks differ from the oracle's"]
+    if [float(c[0]) for c in cells] != scores:
+        return ["predict --rank: the scores differ from the oracle's"]
+    return []
+
+
 def main():
     argv = sys.argv[1:]
     n = 24
@@ -112,6 +141,7 @@ def main():
             if not pr and (tmp / "m.cml").exists():
                 for k, gain in ((10, "exp"), (3, "linear"), (0, "exp"), (1, "exp")):
                     pr += check_eval(case, tmp, k, gain)
+                pr += check_rank_column(case, tmp)
             (tmp / "m.cml").unlink(missing_ok=True)
             if pr:
                 bad += 1
