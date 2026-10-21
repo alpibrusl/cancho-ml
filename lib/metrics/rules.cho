@@ -1,13 +1,13 @@
 module metrics.rules;
 
 // The refusals of lib/metrics (docs/metrics.md section 4): a code (an int, 0 is "no refusal"), a stable rule tag, an exit code
-// from the toolbox table (arguments 2, a limit or a parse failure 8). The codes are this library's own band, 201 to 211, and no other
+// from the toolbox table (arguments 2, a limit or a parse failure 8). The codes are this library's own band, 201 to 213, and no other
 // library uses a number in it (the registry is the table of design.md section 8.1; ml.refuse has 1 to 99, tree.deny 101 to 199,
 // tests/t_registry.cho fails if two libraries claim one number); the tags are design.md section 8's where they exist there. `table()` has the convention of tools/ml/spec.cho
 // (tag|exit|repairable|summary, entries separated by `;`), so the wiring stage appends it to `extra()`.
 
 pub fn count() -> [] int {
-    return 11;
+    return 13;
 }
 
 // the band of this library's codes: first() .. last()
@@ -16,7 +16,7 @@ pub fn first() -> [] int {
 }
 
 pub fn last() -> [] int {
-    return 211;
+    return 213;
 }
 
 pub fn input_empty() -> [] int {
@@ -63,6 +63,14 @@ pub fn stratum_too_small() -> [] int {
     return 211;
 }
 
+pub fn unseen_label() -> [] int {
+    return 212;
+}
+
+pub fn too_many_classes() -> [] int {
+    return 213;
+}
+
 pub fn tag(code: int) -> [] &static [byte] {
     if code == 201 {
         return "ml.input.empty";
@@ -97,6 +105,12 @@ pub fn tag(code: int) -> [] &static [byte] {
     if code == 211 {
         return "ml.split.stratum-too-small";
     }
+    if code == 212 {
+        return "ml.label.unseen";
+    }
+    if code == 213 {
+        return "ml.limit.classes";
+    }
     return "";
 }
 
@@ -105,7 +119,7 @@ pub fn exit_code(code: int) -> [] int {
     if code == 207 {
         return 2;
     }
-    if code >= 201 && code <= 211 {
+    if code >= 201 && code <= 213 {
         return 8;
     }
     return 0;
@@ -113,7 +127,7 @@ pub fn exit_code(code: int) -> [] int {
 
 // tag|exit|repairable|summary, in the convention of tools/ml/spec.cho extra(); the order is the order of the codes
 pub fn table() -> [] &static [byte] {
-    return "ml.input.empty|8|never|a split of zero rows. Hint: give at least two rows. Repair: none.;ml.input.too-many-rows|8|never|more rows than the row cap. Hint: raise the cap up to its ceiling, or use a sample. Repair: none.;ml.input.non-finite|8|never|a score, target or prediction is nan or an infinity. Hint: remove the row or impute. Repair: none.;ml.label.single-class|8|never|ROC-AUC or a stratified split with one class. Hint: both classes must be present. Repair: none.;ml.label.not-binary|8|never|more than two distinct labels where two are needed. Hint: only two-class labels are built. Repair: none.;ml.metric.undefined|8|never|the metric has no value: empty input, a constant target for R-squared, a ratio with a zero denominator, a non-finite result. Hint: the fold or data has too little in it. Repair: none.;ml.param.out-of-range|2|never|k below 2, a test size out of range, a cap out of range or a negative repeat. Hint: the range is in detail. Repair: none.;ml.metric.length-mismatch|8|never|two arrays have different lengths. Hint: give one prediction per row. Repair: none.;ml.metric.bad-probability|8|never|a probability outside 0 to 1. Hint: log-loss needs the probability of the positive class. Repair: none.;ml.split.empty-fold|8|never|k is larger than the number of rows, or a train/test split would leave a side empty. Hint: use fewer folds or a smaller test size. Repair: none.;ml.split.stratum-too-small|8|never|a class has fewer rows than k. Hint: use fewer folds. Repair: none.";
+    return "ml.input.empty|8|never|a split of zero rows. Hint: give at least two rows. Repair: none.;ml.input.too-many-rows|8|never|more rows than the row cap. Hint: raise the cap up to its ceiling, or use a sample. Repair: none.;ml.input.non-finite|8|never|a score, target or prediction is nan or an infinity. Hint: remove the row or impute. Repair: none.;ml.label.single-class|8|never|ROC-AUC or a stratified split with one class. Hint: both classes must be present. Repair: none.;ml.label.not-binary|8|never|more than two distinct labels where two are needed. Hint: only two-class labels are built. Repair: none.;ml.metric.undefined|8|never|the metric has no value: empty input, a constant target for R-squared, a ratio with a zero denominator, a non-finite result. Hint: the fold or data has too little in it. Repair: none.;ml.param.out-of-range|2|never|k below 2, a test size out of range, a cap out of range or a negative repeat. Hint: the range is in detail. Repair: none.;ml.metric.length-mismatch|8|never|two arrays have different lengths. Hint: give one prediction per row. Repair: none.;ml.metric.bad-probability|8|never|a probability outside 0 to 1. Hint: log-loss needs the probability of the positive class. Repair: none.;ml.split.empty-fold|8|never|k is larger than the number of rows, or a train/test split would leave a side empty. Hint: use fewer folds or a smaller test size. Repair: none.;ml.split.stratum-too-small|8|never|a class has fewer rows than k. Hint: use fewer folds. Repair: none.;ml.label.unseen|8|never|a true or a predicted label is not one of the classes the model was fitted on. Hint: the classes of the model are in describe, and a label the model never saw cannot be scored. Repair: none.;ml.limit.classes|8|never|a model or a score table with more classes than the ceiling of 64. Hint: merge rare classes before fitting. Repair: none.";
 }
 
 // a metric's answer: the value, or the code of the refusal (v is 0.0 then)

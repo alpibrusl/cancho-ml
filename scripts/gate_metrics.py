@@ -47,7 +47,10 @@ FIXTURES = {
     "ml.metric.bad-probability": ("metric", "logloss", "L:1,0", "H:%s,%s" % (ONE_AND_HALF, HALF), 1, 100, 1),
     "ml.split.empty-fold": ("split", "kfold", 3, 5, 1, 0, 100),
     "ml.split.stratum-too-small": ("split", "strat", "L:0,0,0,1", 2, 1, 0, 100),
+    "ml.label.unseen": ("mc", "accuracy", "L:0,1,5", "L:0,1,1", "L:0,1", 1000),
+    "ml.limit.classes": ("mc", "confusion", "L:0", "L:0", "L:" + ",".join(str(i) for i in range(65)), 1000),
 }
+MC_HALF3 = "H:" + ",".join([HALF] * 6)
 # more routes to a tag, to show that it is the rule and not one input that raises it
 MORE = [
     ("ml.metric.undefined", ("metric", "precision", "L:0,1", "L:0,0", 1, 100, 1)),
@@ -84,6 +87,32 @@ MORE = [
     ("ml.param.out-of-range", ("metric", "accuracy", "L:1", "L:1", 1, 0, 1)),
     ("ml.split.empty-fold", ("split", "train_test", 5, 5, 1, 0, 100)),
     ("ml.split.empty-fold", ("split", "train_test", 1, 1, 1, 0, 100)),
+    # the multiclass metrics (docs/multiclass.md section 4)
+    ("ml.label.unseen", ("mc", "confusion", "L:0,1", "L:0,7", "L:0,1,2", 1000)),
+    ("ml.label.unseen", ("mc", "f1", "L:-1,1", "L:1,1", "L:0,1", 1000)),
+    ("ml.label.unseen", ("mc", "logloss", "L:0,9", "H:%s" % ",".join([HALF] * 6), "L:0,1,2", 1000)),
+    ("ml.label.unseen", ("mc", "auc_ovr", "L:0,9", "H:%s" % ",".join([HALF] * 6), "L:0,1,2", 1000)),
+    ("ml.limit.classes", ("mc", "logloss", "L:0", "H:" + ",".join([HALF] * 65), "L:" + ",".join(str(i) for i in range(65)), 1000)),
+    ("ml.limit.classes", ("mc", "macro_f1", "L:0", "L:0", "L:" + ",".join(str(i) for i in range(1000)), 1000)),
+    ("ml.param.out-of-range", ("mc", "accuracy", "L:0,1", "L:0,1", "L:1,0", 1000)),              # classes must be strictly ascending
+    ("ml.param.out-of-range", ("mc", "accuracy", "L:0,1", "L:0,1", "L:0,0,1", 1000)),
+    ("ml.param.out-of-range", ("mc", "accuracy", "L:0,1", "L:0,1", "L:", 1000)),                 # no classes
+    ("ml.param.out-of-range", ("mc", "accuracy", "L:0,1", "L:0,1", "L:0,1", 0)),                 # the cap
+    ("ml.param.out-of-range", ("mc", "accuracy", "L:0,1", "L:0,1", "L:0,1", 2 ** 40)),
+    ("ml.label.single-class", ("mc", "accuracy", "L:0,0", "L:0,0", "L:0", 1000)),                # one class is not a multiclass problem
+    ("ml.metric.length-mismatch", ("mc", "accuracy", "L:0,1,1", "L:0,1", "L:0,1", 1000)),
+    ("ml.metric.length-mismatch", ("mc", "logloss", "L:0,1", "H:%s" % ",".join([HALF] * 3), "L:0,1", 1000)),   # n * K probabilities
+    ("ml.metric.length-mismatch", ("mc", "auc_ovr", "L:0,1", "H:%s" % ",".join([HALF] * 5), "L:0,1", 1000)),
+    ("ml.metric.undefined", ("mc", "accuracy", "L:", "L:", "L:0,1", 1000)),
+    ("ml.metric.undefined", ("mc", "macro_f1", "L:", "L:", "L:0,1", 1000)),
+    ("ml.metric.undefined", ("mc", "auc_ovr", "L:0,0", "H:%s" % ",".join([HALF] * 4), "L:0,1", 1000)),          # no class has both sides
+    ("ml.metric.undefined", ("mc", "weighted_precision", "L:0,0", "L:1,1", "L:0,1,2", 1000)),                   # precision of class 1 is defined but its support is 0
+    ("ml.input.too-many-rows", ("mc", "accuracy", "L:0,1,1", "L:0,1,1", "L:0,1", 2)),
+    ("ml.metric.bad-probability", ("mc", "logloss", "L:0,1", "H:%s,%s,%s,%s" % (ONE_AND_HALF, HALF, HALF, HALF), "L:0,1", 1000)),
+    ("ml.metric.bad-probability", ("mc", "auc_ovr", "L:0,1", "H:%s,%s,%s,%s" % ("bfd0000000000000", HALF, HALF, HALF), "L:0,1", 1000)),
+    ("ml.metric.bad-probability", ("mc", "logloss", "L:0,1", "H:%s,%s,%s,%s" % (HALF, HALF, HALF, ONE_AND_HALF), "L:0,1", 1000)),      # the last entry of the table
+    ("ml.input.non-finite", ("mc", "logloss", "L:0,1", "H:%s,%s,%s,%s" % (NAN, HALF, HALF, HALF), "L:0,1", 1000)),
+    ("ml.input.non-finite", ("mc", "auc_ovr", "L:0,1", "H:%s,%s,%s,%s" % ("7ff0000000000000", HALF, HALF, HALF), "L:0,1", 1000)),
 ]
 
 
@@ -167,11 +196,20 @@ def fuzz_gate():
         k = rnd.randrange(0, 12)
         return "H:" + ",".join(rnd.choice(hexes) for _ in range(k))
 
+    def mc_classes():
+        r = rnd.random()
+        if r < 0.1:
+            return "L:" + ",".join(str(i) for i in range(rnd.choice([64, 65, 200])))
+        pool = sorted(set(rnd.choice([0, 1, 2, 3, 7, -1, 2 ** 63 - 1, -(2 ** 63)]) for _ in range(rnd.randrange(0, 6))))
+        if r < 0.3:
+            rnd.shuffle(pool)
+        return "L:" + ",".join(str(v) for v in pool)
+
     bad_exit = 0
     seen_ok = seen_refused = 0
     runs = 0
-    for _ in range(400):
-        kind = rnd.randrange(0, 6)
+    for _ in range(600):
+        kind = rnd.randrange(0, 8)
         if kind == 0:
             args = ("metric", rnd.choice(names_i), ints_spec(), ints_spec(), rnd.choice(nums), rnd.choice([100, 5, 0, -1, 2 ** 40, 10 ** 7]), 1)
         elif kind == 1:
@@ -182,8 +220,13 @@ def fuzz_gate():
             args = ("split", rnd.choice(["kfold", "train_test"]), rnd.choice(nums), rnd.choice(nums), rnd.choice(nums), rnd.choice([0, 1, 5, -1, 2 ** 62]), rnd.choice([100, 5, 0, -1, 2 ** 40, 10 ** 7, 2 ** 30, 2 ** 30 + 1]))
         elif kind == 4:
             args = ("split", "strat", ints_spec(), rnd.choice(nums), rnd.choice(nums), rnd.choice([0, 1, 5, -1]), rnd.choice([100, 5, 0, -1, 2 ** 30 + 1, 10 ** 7]))
-        else:
+        elif kind == 5:
             args = ("ratio", rnd.choice(nums), rnd.choice(nums))
+        elif kind == 6:
+            args = ("mc", rnd.choice(["confusion", "accuracy", "precision", "recall", "f1", "macro_f1", "weighted_recall", "macro_precision"]),
+                    ints_spec(), ints_spec(), mc_classes(), rnd.choice([100, 5, 0, -1, 2 ** 40, 10 ** 7]))
+        else:
+            args = ("mc", rnd.choice(["logloss", "auc_ovr", "terms"]), ints_spec(), floats_spec(), mc_classes(), rnd.choice([100, 5, 0, -1, 2 ** 40, 10 ** 7]))
         runs += 1
         if kind == 3 and isinstance(args[2], int) and 20000000 < args[2] and False:
             continue

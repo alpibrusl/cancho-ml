@@ -96,6 +96,8 @@ metrics.rules: pub fn length_mismatch() -> [] int
 metrics.rules: pub fn bad_probability() -> [] int
 metrics.rules: pub fn empty_fold() -> [] int
 metrics.rules: pub fn stratum_too_small() -> [] int
+metrics.rules: pub fn unseen_label() -> [] int
+metrics.rules: pub fn too_many_classes() -> [] int
 metrics.rules: pub fn tag(code: int) -> [] &static [byte]
 metrics.rules: pub fn exit_code(code: int) -> [] int
 metrics.rules: pub fn table() -> [] &static [byte]

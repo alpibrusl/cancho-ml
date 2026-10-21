@@ -12,6 +12,8 @@ from the written spec in Python (own SplitMix64 on Python ints, own rejection sa
     python3 scripts/oracle_metrics.py --auc         M2: AUC against Fraction from scipy midranks
     python3 scripts/oracle_metrics.py --sums        M3: rmse, mae, r2, logloss against numpy in the written order
     python3 scripts/oracle_metrics.py --sklearn     R1: all against sklearn.metrics with the stated bounds
+    python3 scripts/oracle_metrics.py --multiclass  MC1 to MC4: the multiclass metrics of docs/multiclass.md section 4 against Python integers, Fractions, scipy midranks and numpy
+    python3 scripts/oracle_metrics.py --multiclass-sklearn   MC5: the same against sklearn.metrics with bounds fixed in advance
     python3 scripts/oracle_metrics.py --all
 Exit 1 on any mismatch. METRICS_CHECK names the driver."""
 import math, os, subprocess, sys, pathlib
@@ -683,13 +685,275 @@ def oracle_sklearn():
         print("%-10s %3d of %-6d %.2f" % (name, exact[name][0], exact[name][1], worst[name]))
 
 
+
+# ---------------------------------------------------------------- MC1 to MC5 (docs/multiclass.md section 4, stage A)
+def run_lines(*args):
+    """the whole stdout of the driver, line by line, and its exit code (the multiclass commands print one line per class)"""
+    r = subprocess.run([BIN] + [str(a) for a in args], capture_output=True, text=True, timeout=600)
+    return r.returncode, r.stdout.splitlines(), r.stderr
+
+
+def gen_mlabels(n, seed, k):
+    """label(seed, i) mod k: GM:n:seed:K of tools/metrics-check/gen.cho"""
+    return ((seq(seed, n) >> np.uint64(1)) % np.uint64(k)).astype(np.int64)
+
+
+def gen_probs(mode, n, k, seed):
+    """GQ:mode:n:seed:K: n * k floats of mode `mode`, every row divided by its sequential sum (a zero sum gives 1 / k)"""
+    raw = gen_floats(mode, n * k, seed).reshape(n, k)
+    s = np.zeros(n)
+    for j in range(k):
+        s = s + raw[:, j]
+    pos = s > 0.0
+    return np.where(pos[:, None], raw / np.where(pos, s, 1.0)[:, None], 1.0 / k)
+
+
+def mc_confusion(yt, yp, classes):
+    idx = {c: i for i, c in enumerate(classes)}
+    k = len(classes)
+    conf = [[0] * k for _ in range(k)]
+    for t, p in zip(yt, yp):
+        conf[idx[int(t)]][idx[int(p)]] += 1
+    return conf
+
+
+def mc_value(conf, which, c):
+    """precision (1), recall (2), f1 (3) of class index c as Python's correctly rounded int / int, or None for 0 / 0"""
+    k = len(conf)
+    tp = conf[c][c]
+    row = sum(conf[c])
+    col = sum(conf[a][c] for a in range(k))
+    num, den = {1: (tp, col), 2: (tp, row), 3: (2 * tp, row + col)}[which]
+    return None if den == 0 else num / den
+
+
+def mc_average(conf, which, weighted):
+    """(value, classes left out) with the sums in the order of the classes; value None when no class has one"""
+    k = len(conf)
+    s = 0.0
+    wsum = 0
+    have = 0
+    for c in range(k):
+        v = mc_value(conf, which, c)
+        if v is None:
+            continue
+        sup = sum(conf[c])
+        if weighted:
+            s = s + float(sup) * v
+            wsum += sup
+        else:
+            s = s + v
+        have += 1
+    left = k - have
+    if have == 0 or (weighted and wsum == 0):
+        return None, left
+    return (s / float(wsum) if weighted else s / float(have)), left
+
+
+def mc_args(name, yt, second, classes, cap=1000000):
+    return ("mc", name, yt, second, classes, cap)
+
+
+def mc_check_all(tag, yspec, pspec, yt, yp, classes):
+    """every confusion-based output of the driver for one case against the Python computation"""
+    cspec = spec_int(classes)
+    conf = mc_confusion(yt, yp, classes)
+    k = len(classes)
+    n = len(yt)
+    code, lines, _ = run_lines(*mc_args("confusion", yspec, pspec, cspec))
+    rows = [[int(x) for x in l.split()[2:]] for l in lines if l.startswith("row ")]
+    check(code == 0 and rows == conf, "%s: confusion differs: %s vs %s" % (tag, rows, conf))
+    got = run(*mc_args("accuracy", yspec, pspec, cspec))
+    trace = sum(conf[i][i] for i in range(k))
+    check(got.get("value") == bits(trace / n), "%s: accuracy %s want %s" % (tag, got.get("value"), bits(trace / n)))
+    # the same number from the binary-agnostic accuracy of metrics.classify (any labels): the matrix and the direct count agree
+    got2 = run("metric", "accuracy", yspec, pspec, 0, 1000000, 1)
+    check(got2.get("value") == got.get("value"), "%s: accuracy of the matrix differs from classify.accuracy" % tag)
+    cases = 2
+    for which, name in ((1, "precision"), (2, "recall"), (3, "f1")):
+        code, lines, _ = run_lines(*mc_args(name, yspec, pspec, cspec))
+        per = {}
+        for l in lines:
+            f = l.split()
+            if f[0] == "class":
+                per[int(f[1])] = f[2]
+        want = {c: ("undefined" if mc_value(conf, which, c) is None else bits(mc_value(conf, which, c))) for c in range(k)}
+        check(code == 0 and per == want, "%s: per-class %s differs: %s vs %s" % (tag, name, per, want))
+        for weighted, pre in ((False, "macro_"), (True, "weighted_")):
+            v, left = mc_average(conf, which, weighted)
+            code, lines, _ = run_lines(*mc_args(pre + name, yspec, pspec, cspec))
+            d = dict(l.split(" ", 1) for l in lines)
+            if v is None:
+                check(d.get("refused") == "ml.metric.undefined", "%s: %s%s expected undefined, got %s" % (tag, pre, name, d))
+            else:
+                check(d.get("value") == bits(v) and d.get("left_out") == str(left), "%s: %s%s got %s want %s left %d" % (tag, pre, name, d, bits(v), left))
+            cases += 1
+        cases += 1
+    return cases
+
+
+def oracle_multiclass():
+    n_cases = 0
+    # MC1: generated labels, the classes 0 .. K-1
+    for n, k, s1, s2 in ((1, 3, 1, 2), (2, 3, 1, 2), (7, 3, 3, 4), (100, 5, 5, 6), (1000, 7, 7, 8), (4097, 11, 9, 10), (20000, 64, 11, 12), (300, 2, 13, 14)):
+        classes = list(range(k))
+        yt = gen_mlabels(n, s1, k).tolist()
+        yp = gen_mlabels(n, s2, k).tolist()
+        n_cases += mc_check_all("GM n=%d K=%d" % (n, k), "GM:%d:%d:%d" % (n, s1, k), "GM:%d:%d:%d" % (n, s2, k), yt, yp, classes)
+    # MC1: correlated predictions and labels that are not 0 .. K-1 (negative, large, gaps), generated here and passed as lists
+    rs = np.random.RandomState(20261020)
+    for n, classes in ((50, [-7, 0, 3]), (300, [-5, 2, 3, 100]), (2000, [-1000000007, -1, 0, 1, 9223372036854775806, 9223372036854775807]),
+                       (1500, list(range(-4, 6))), (800, [4, 5])):
+        k = len(classes)
+        yt = [classes[i] for i in rs.randint(0, k, size=n)]
+        flip = rs.random_sample(n) < 0.25
+        other = [classes[i] for i in rs.randint(0, k, size=n)]
+        yp = [o if f else t for t, o, f in zip(yt, other, flip)]
+        n_cases += mc_check_all("explicit n=%d K=%d" % (n, k), spec_int(yt), spec_int(yp), yt, yp, classes)
+    # MC1: the classes with no row, a class never predicted, nothing predicted right, one class everywhere
+    edge = [
+        ([5], [5], [3, 5, 8]),                                   # two classes absent: undefined, left out
+        ([0, 1], [0, 0], [0, 1]),                                # class 1 never predicted: precision undefined, recall 0
+        ([0, 0, 1, 1], [1, 1, 0, 0], [0, 1]),                    # nothing right: every value 0, F1 0 / 4
+        ([2, 2, 2], [2, 2, 2], [1, 2, 3]),                       # one class: precision, recall, F1 of the other two undefined
+        ([0, 1, 2], [0, 1, 2], [0, 1, 2]),                       # perfect
+        ([0, 1, 2, 2], [2, 2, 2, 0], [0, 1, 2]),
+    ]
+    for yt, yp, classes in edge:
+        n_cases += mc_check_all("edge %s %s" % (yt, yp), spec_int(yt), spec_int(yp), yt, yp, classes)
+    # MC2: log-loss: the library's own terms are within 2 ulp of Python's, the sum is the written order
+    n_terms = n_exact = 0
+    worst = 0.0
+    for n, k, mode, ls, ss in ((1, 3, 0, 1, 2), (3, 3, 0, 1, 2), (255, 4, 0, 4, 5), (256, 4, 0, 4, 5), (257, 4, 0, 4, 5), (1025, 7, 1, 6, 7), (3000, 5, 3, 8, 9), (5000, 10, 0, 10, 11), (4099, 64, 3, 12, 13)):
+        y = gen_mlabels(n, ls, k)
+        p = gen_probs(mode, n, k, ss)
+        yspec, pspec, cspec = "GM:%d:%d:%d" % (n, ls, k), "GQ:%d:%d:%d:%d" % (mode, n, ss, k), spec_int(list(range(k)))
+        code, lines, _ = run_lines("mc", "terms", yspec, pspec, cspec, 1000000)
+        terms = np.array([unbits(h) for h in lines[0].split()[1:]])
+        eps = 2.0 ** -52
+        x = np.minimum(np.maximum(p[np.arange(n), y], eps), 1.0 - eps)
+        for a, b in zip(terms, np.array([-math.log(v) for v in x])):
+            n_terms += 1
+            if a == b:
+                n_exact += 1
+            else:
+                ulp = abs(a - b) / math.ulp(b)
+                worst = max(worst, ulp)
+                check(ulp <= 2, "multiclass logloss term differs by %.1f ulp" % ulp)
+        got = run("mc", "logloss", yspec, pspec, cspec, 1000000)
+        n_cases += 1
+        check(got.get("value") == bits(float(ordered_sum(terms) / float(n))), "multiclass logloss n=%d K=%d mode=%d: not the ordered sum of its own terms" % (n, k, mode))
+    # MC3: one-versus-rest AUC: each class against the rest is float(Fraction) from scipy midranks, the mean in the order of the classes
+    for n, k, mode, ls, ss in ((2, 2, 0, 1, 2), (10, 3, 0, 3, 4), (100, 4, 1, 5, 6), (1000, 7, 0, 7, 8), (4097, 5, 2, 9, 10), (20000, 10, 0, 11, 12), (300, 64, 1, 13, 14)):
+        y = gen_mlabels(n, ls, k)
+        p = gen_probs(mode, n, k, ss)
+        yspec, pspec, cspec = "GM:%d:%d:%d" % (n, ls, k), "GQ:%d:%d:%d:%d" % (mode, n, ss, k), spec_int(list(range(k)))
+        code, lines, _ = run_lines("mc", "auc_ovr", yspec, pspec, cspec, 1000000)
+        per = {}
+        d = {}
+        for l in lines:
+            f = l.split()
+            if f[0] == "class":
+                per[int(f[1])] = f[2]
+            else:
+                d[f[0]] = f[1] if len(f) > 1 else ""
+        want = {}
+        s = 0.0
+        have = 0
+        for c in range(k):
+            isp = y == c
+            if isp.all() or not isp.any():
+                want[c] = "undefined"
+                continue
+            f, _, _ = exact_auc(isp.astype(np.int64), p[:, c], 1)
+            want[c] = bits(float(f))
+            s = s + float(f)
+            have += 1
+        n_cases += 1
+        check(per == want, "auc_ovr n=%d K=%d: per-class values differ" % (n, k))
+        if have == 0:
+            check(d.get("refused") == "ml.metric.undefined", "auc_ovr n=%d K=%d: expected undefined" % (n, k))
+        else:
+            check(d.get("value") == bits(s / float(have)) and d.get("left_out") == str(k - have), "auc_ovr n=%d K=%d: macro %s want %s" % (n, k, d, bits(s / float(have))))
+    # MC3: explicit values written by hand (the tie rule is the binary one: a tie counts half)
+    code, lines, _ = run_lines("mc", "auc_ovr", spec_int([0, 1, 2]), spec_hex([0.5, 0.25, 0.25, 0.25, 0.5, 0.25, 0.25, 0.25, 0.5]), spec_int([0, 1, 2]), 1000)
+    d = dict(l.split(" ", 1) for l in lines if not l.startswith("class"))
+    check(d.get("value") == bits(1.0) and d.get("left_out") == "0", "auc_ovr perfect: %s" % d)
+    code, lines, _ = run_lines("mc", "auc_ovr", spec_int([0, 1]), spec_hex([0.5, 0.25, 0.25, 0.5, 0.0, 0.0]), spec_int([0, 1, 2]), 1000)
+    check(code == 0 and "class 2 undefined" in lines, "auc_ovr: an absent class is undefined and left out")
+    n_cases += 2
+    print("multiclass: %d cases: confusion exact, per-class and averaged values bit equal to Python int / int, log-loss terms %d of %d bit equal to math.log (worst %.2f ulp) and summed in the written order, "
+          "one-versus-rest AUC bit equal to float(Fraction) from scipy midranks" % (n_cases, n_exact, n_terms, worst))
+
+
+# MC5: sklearn, with the bounds written here before the numbers were looked at: counts-based values and their averages 130 u (the bound of the binary metrics, docs/metrics.md section 3) + 20 u for the mean of up to 64
+# values taken in another order, the one-versus-rest AUC 150 u, the log-loss 1e-12 absolute (sklearn renormalises the rows, ours sum to 1 within K 2^-52)
+MC_BOUND_COUNTS = 150
+MC_BOUND_AUC = 150
+MC_LOGLOSS_ABS = 1e-12
+
+
+def oracle_multiclass_sklearn():
+    import sklearn
+    from sklearn import metrics as sm
+    import warnings
+    warnings.simplefilter("ignore")
+    print("sklearn %s, numpy %s (multiclass)" % (sklearn.__version__, np.__version__))
+    worst = {}
+
+    def note(name, mine, ref, bound_u, what):
+        rel = abs(mine - ref) / max(abs(ref), 1e-300)
+        ok = mine == ref or rel <= bound_u * U
+        check(ok, "sklearn %s %s: mine %r ref %r rel %.3g u (bound %g u)" % (name, what, mine, ref, rel / U, bound_u))
+        worst[name] = max(worst.get(name, 0.0), 0.0 if mine == ref else rel / U)
+
+    for n, k, s1, s2 in ((10, 3, 3, 4), (257, 4, 5, 6), (5000, 7, 7, 8), (20000, 12, 9, 10), (4000, 64, 11, 12)):
+        classes = list(range(k))
+        yt = gen_mlabels(n, s1, k)
+        yp = gen_mlabels(n, s2, k)
+        # a mostly right prediction as well: the diagonal is dense
+        ys, ps, cs = "GM:%d:%d:%d" % (n, s1, k), "GM:%d:%d:%d" % (n, s2, k), spec_int(classes)
+        got = run("mc", "accuracy", ys, ps, cs, 10000000)
+        note("accuracy", unbits(got["value"]), float(sm.accuracy_score(yt, yp)), MC_BOUND_COUNTS, "n=%d K=%d" % (n, k))
+        pr, rc, f1, _ = sm.precision_recall_fscore_support(yt, yp, labels=classes, average=None, zero_division=np.nan)
+        for name, ref in (("precision", pr), ("recall", rc), ("f1", f1)):
+            code, lines, _e = run_lines("mc", name, ys, ps, cs, 10000000)
+            for l in lines:
+                f = l.split()
+                if f[0] == "class" and f[2] != "undefined":
+                    note(name, unbits(f[2]), float(ref[int(f[1])]), MC_BOUND_COUNTS, "n=%d K=%d class %s" % (n, k, f[1]))
+                elif f[0] == "class":
+                    check(math.isnan(float(ref[int(f[1])])), "sklearn %s: undefined here, a number there (class %s)" % (name, f[1]))
+            for avg, pre in (("macro", "macro_"), ("weighted", "weighted_")):
+                d = dict(l.split(" ", 1) for l in run_lines("mc", pre + name, ys, ps, cs, 10000000)[1])
+                if d.get("left_out") == "0":
+                    p2, r2, f2, _ = sm.precision_recall_fscore_support(yt, yp, labels=classes, average=avg)
+                    ref2 = {"precision": p2, "recall": r2, "f1": f2}[name]
+                    note(pre + name, unbits(d["value"]), float(ref2), MC_BOUND_COUNTS, "n=%d K=%d" % (n, k))
+    for n, k, mode, ls, ss in ((50, 3, 0, 3, 4), (1000, 5, 0, 5, 6), (5000, 10, 1, 7, 8), (20000, 7, 0, 9, 10), (400, 64, 0, 11, 12)):
+        classes = list(range(k))
+        y = gen_mlabels(n, ls, k)
+        p = gen_probs(mode, n, k, ss)
+        ys, ps, cs = "GM:%d:%d:%d" % (n, ls, k), "GQ:%d:%d:%d:%d" % (mode, n, ss, k), spec_int(classes)
+        mine = unbits(run("mc", "logloss", ys, ps, cs, 10000000)["value"])
+        ref = float(sm.log_loss(y, p, labels=classes))
+        check(abs(mine - ref) <= MC_LOGLOSS_ABS, "sklearn logloss n=%d K=%d: mine %r ref %r" % (n, k, mine, ref))
+        worst["logloss (absolute)"] = max(worst.get("logloss (absolute)", 0.0), abs(mine - ref))
+        d = dict(l.split(" ", 1) for l in run_lines("mc", "auc_ovr", ys, ps, cs, 10000000)[1] if not l.startswith("class"))
+        if d.get("left_out") == "0":
+            ref = float(sm.roc_auc_score(y, p, multi_class="ovr", average="macro", labels=classes))
+            note("auc_ovr", unbits(d["value"]), ref, MC_BOUND_AUC, "n=%d K=%d" % (n, k))
+    print("%-18s worst gap" % "metric")
+    for name, w in worst.items():
+        print("%-18s %.3g%s" % (name, w, " (absolute)" if "absolute" in name else " u"))
+
 def main():
     a = sys.argv[1:]
     if not os.path.exists(BIN):
         print("no driver at %s (build it: sh scripts/build_metrics.sh)" % BIN)
         return 1
     steps = {"--splits": oracle_splits, "--draw": oracle_draw, "--ratio": oracle_ratio, "--metrics": oracle_metrics, "--auc": oracle_auc,
-             "--sums": oracle_sums, "--sklearn": oracle_sklearn}
+             "--sums": oracle_sums, "--sklearn": oracle_sklearn, "--multiclass": oracle_multiclass, "--multiclass-sklearn": oracle_multiclass_sklearn}
     todo = list(steps) if "--all" in a or not a else [x for x in a if x in steps]
     for k in todo:
         steps[k]()

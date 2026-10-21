@@ -335,6 +335,8 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.metric.bad-probability` | 8 | a probability outside 0 to 1 | the probability of the positive class |
 | `ml.split.empty-fold` | 8 | k above the number of rows, or a train/test split that leaves a side empty | fewer folds, a smaller test size |
 | `ml.split.stratum-too-small` | 8 | a class with fewer rows than k *(reachable from `ml cv --stratify` and `fit --split --stratify`: `extra()` since `docs/splits.md`)* | fewer folds |
+| `ml.label.unseen` | 8 | a true or predicted label is not one of the classes of a multiclass metric *(library only until the multiclass wiring: `docs/multiclass.md` stage A, `spec.cho` `pending()`)* | none |
+| `ml.limit.classes` | 8 | more than 64 classes *(library only until the multiclass wiring)* | merge rare classes before fitting |
 
 *Registered by the transforms and the pipeline stage (library only: `lib/transforms/codes.cho`, `docs/transforms.md` section 1 X7, `docs/pipeline.md` section 2.1; `tools/ml/spec.cho` `pending()`; none is reachable from `ml` yet):*
 
@@ -499,6 +501,8 @@ sources and against the tables of section 8 and `tools/ml/spec.cho`.
 | 209 | `ml.metric.bad-probability` | 8 | `metrics.rules` |
 | 210 | `ml.split.empty-fold` | 8 | `metrics.rules` |
 | 211 | `ml.split.stratum-too-small` | 8 | `metrics.rules` |
+| 212 | `ml.label.unseen` | 8 | `metrics.rules` |
+| 213 | `ml.limit.classes` | 8 | `metrics.rules` |
 | 301 | `ml.input.empty` | 8 | `transforms.codes` |
 | 302 | `ml.input.too-many-columns` | 8 | `transforms.codes` |
 | 303 | `ml.param.out-of-range` | 2 | `transforms.codes` |

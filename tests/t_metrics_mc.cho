@@ -1,0 +1,484 @@
+import std.test;
+import std.math;
+import metrics.rules;
+import metrics.classify;
+import metrics.multiclass;
+import ml.rng;
+import mt;
+
+// the multiclass metrics against values written by hand (docs/metrics.md section 2.9, docs/multiclass.md section 4), and the guards of the buffers that the driver never
+// reaches (a buffer shorter than the table). A test answers 0 to pass.
+
+fn want(r: rules.Scored, code: int, v: float) -> [] int {
+    if r.code != code {
+        return 1;
+    }
+    if code == 0 && bits_of(r.v) != bits_of(v) {
+        return 1;
+    }
+    return 0;
+}
+
+// 3 classes, labels 0 1 2: the true labels 0 0 0 1 1 2 and the predictions 0 0 1 1 2 2
+//   confusion  [[2,1,0],[0,1,1],[0,0,1]]    support 3 2 1    predicted 2 2 2
+// the number of places where the first n entries of two int slices differ
+fn differ[&a, &b](x: &a [int], y: &b [int], n: int) -> [] int {
+    var d = 0;
+    var i = 0;
+    while i < n {
+        if x[i] != y[i] {
+            d = d + 1;
+        }
+        i = i + 1;
+    }
+    return d;
+}
+
+fn test_confusion_and_values[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "0,0,0,1,1,2");
+    let (pa, m) = mt.ints(heap, "0,0,1,1,2,2");
+    let (ca, kn) = mt.ints(heap, "0,1,2");
+    let (wa, wn) = mt.ints(heap, "2,1,0,0,1,1,0,0,1");
+    let out = box_slice(heap, 9, 0 - 7);
+    var ob = out;
+    borrow ya as &yr in {
+        borrow pa as &pr in {
+            borrow ca as &cr in {
+                borrow wa as &wr in {
+                    borrow mut ob as &!ow in {
+                        let o = contents(ow);
+                        let code = multiclass.confusion(contents(yr)[0..n], contents(pr)[0..m], contents(cr)[0..kn], 100, o);
+                        bad = bad + code + differ(o, contents(wr), wn);
+                        bad = bad + want(multiclass.accuracy_of(o, 3), 0, 4.0 / 6.0);
+                        // precision 2/2 1/2 1/2, recall 2/3 1/2 1/1, F1 = 2 tp / (row + column) = 4/5 2/4 2/3
+                        bad = bad + want(multiclass.class_value(o, 3, 1, 0), 0, 1.0);
+                        bad = bad + want(multiclass.class_value(o, 3, 1, 1), 0, 0.5);
+                        bad = bad + want(multiclass.class_value(o, 3, 2, 0), 0, 2.0 / 3.0);
+                        bad = bad + want(multiclass.class_value(o, 3, 2, 2), 0, 1.0);
+                        bad = bad + want(multiclass.class_value(o, 3, 3, 0), 0, 4.0 / 5.0);
+                        bad = bad + want(multiclass.class_value(o, 3, 3, 2), 0, 2.0 / 3.0);
+                        // the macro precision (1 + 1/2 + 1/2) / 3, weighted by support (3 * 1 + 2 * 1/2 + 1 * 1/2) / 6
+                        let ma = multiclass.average(o, 3, 1, false);
+                        if ma.code != 0 || ma.left_out != 0 || bits_of(ma.v) != bits_of((1.0 + 0.5 + 0.5) / 3.0) {
+                            bad = bad + 1;
+                        }
+                        let wa = multiclass.average(o, 3, 1, true);
+                        if wa.code != 0 || wa.left_out != 0 || bits_of(wa.v) != bits_of((3.0 * 1.0 + 2.0 * 0.5 + 1.0 * 0.5) / 6.0) {
+                            bad = bad + 1;
+                        }
+                        if multiclass.support(o, 3, 0) != 3 || multiclass.predicted(o, 3, 2) != 2 || multiclass.total(o, 3) != 6 {
+                            bad = bad + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ob);
+    unbox_slice(heap, ya);
+    unbox_slice(heap, pa);
+    unbox_slice(heap, ca);
+    unbox_slice(heap, wa);
+    return bad;
+}
+
+// a class that was never predicted has no precision, and its recall is 0: the macro precision leaves it out and counts it
+fn test_a_class_without_a_value_is_left_out[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "0,1");
+    let (pa, m) = mt.ints(heap, "0,0");
+    let (ca, kn) = mt.ints(heap, "0,1");
+    let out = box_slice(heap, 4, 0);
+    var ob = out;
+    borrow ya as &yr in {
+        borrow pa as &pr in {
+            borrow ca as &cr in {
+                borrow mut ob as &!ow in {
+                    let o = contents(ow);
+                    bad = bad + multiclass.confusion(contents(yr)[0..n], contents(pr)[0..m], contents(cr)[0..kn], 100, o);
+                    bad = bad + want(multiclass.class_value(o, 2, 1, 1), rules.undefined(), 0.0);
+                    bad = bad + want(multiclass.class_value(o, 2, 2, 1), 0, 0.0);
+                    let ma = multiclass.average(o, 2, 1, false);
+                    if ma.code != 0 || ma.left_out != 1 || bits_of(ma.v) != bits_of(0.5) {
+                        bad = bad + 1;
+                    }
+                    // weighted: class 0 has support 1 and precision 1/2; class 1 has no precision
+                    let wa = multiclass.average(o, 2, 1, true);
+                    if wa.code != 0 || wa.left_out != 1 || bits_of(wa.v) != bits_of(0.5) {
+                        bad = bad + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ob);
+    unbox_slice(heap, ya);
+    unbox_slice(heap, pa);
+    unbox_slice(heap, ca);
+    return bad;
+}
+
+// a matrix with no row has no accuracy and no mean, whatever the class: the average does not divide by zero
+fn test_an_empty_matrix_has_no_values[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let zero = box_slice(heap, 9, 0);
+    var zb = zero;
+    borrow mut zb as &!zw in {
+        let z = contents(zw)[0..9];
+        bad = bad + want(multiclass.accuracy_of(z, 3), rules.undefined(), 0.0);
+        var which = 1;
+        while which <= 3 {
+            let a = multiclass.average(z, 3, which, false);
+            let b = multiclass.average(z, 3, which, true);
+            if a.code != rules.undefined() || a.left_out != 3 || b.code != rules.undefined() || b.left_out != 3 {
+                bad = bad + 1;
+            }
+            which = which + 1;
+        }
+    }
+    unbox_slice(heap, zb);
+    return bad;
+}
+
+// labels that are not 0 .. K-1 are mapped through the sorted classes; a label that is not a class is refused
+fn test_the_classes_are_the_labels[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "-5,7,100,7");
+    let (pa, m) = mt.ints(heap, "-5,7,7,100");
+    let (ca, kn) = mt.ints(heap, "-5,7,100");
+    let (ua, un) = mt.ints(heap, "-5,7,8,7");
+    let (wa, wn) = mt.ints(heap, "1,0,0,0,1,1,0,1,0");
+    let out = box_slice(heap, 9, 0);
+    var ob = out;
+    borrow ya as &yr in {
+        borrow pa as &pr in {
+            borrow ca as &cr in {
+                borrow ua as &ur in {
+                    borrow wa as &wr in {
+                        borrow mut ob as &!ow in {
+                            let o = contents(ow);
+                            bad = bad + multiclass.confusion(contents(yr)[0..n], contents(pr)[0..m], contents(cr)[0..kn], 100, o);
+                            // true -5 predicted -5; true 7 predicted 7; true 100 predicted 7; true 7 predicted 100
+                            bad = bad + differ(o, contents(wr), wn);
+                            if multiclass.confusion(contents(yr)[0..n], contents(ur)[0..un], contents(cr)[0..kn], 100, o) != rules.unseen_label() {
+                                bad = bad + 1;
+                            }
+                            if multiclass.confusion(contents(ur)[0..un], contents(pr)[0..m], contents(cr)[0..kn], 100, o) != rules.unseen_label() {
+                                bad = bad + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ob);
+    unbox_slice(heap, ya);
+    unbox_slice(heap, pa);
+    unbox_slice(heap, ca);
+    unbox_slice(heap, ua);
+    unbox_slice(heap, wa);
+    return bad;
+}
+
+fn test_the_classes_are_checked[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (a, n) = mt.ints(heap, "0,1,2");
+    let (b, bn) = mt.ints(heap, "0,2,1");
+    let (c, cn) = mt.ints(heap, "0,1,1");
+    let (d, dn) = mt.ints(heap, "4");
+    borrow a as &ar in {
+        borrow b as &br in {
+            borrow c as &cr in {
+                borrow d as &dr in {
+                    bad = bad + multiclass.check_classes(contents(ar)[0..n]);
+                    if multiclass.check_classes(contents(br)[0..bn]) != rules.out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if multiclass.check_classes(contents(cr)[0..cn]) != rules.out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if multiclass.check_classes(contents(dr)[0..dn]) != rules.single_class() {
+                        bad = bad + 1;
+                    }
+                    if multiclass.check_classes(contents(ar)[0..0]) != rules.out_of_range() {
+                        bad = bad + 1;
+                    }
+                }
+            }
+        }
+    }
+    // 64 classes pass, 65 do not
+    let many = box_slice(heap, 66, 0);
+    var mb = many;
+    borrow mut mb as &!mw in {
+        var i = 0;
+        while i < 66 {
+            contents(mw)[i] = i;
+            i = i + 1;
+        }
+    }
+    borrow mb as &mr in {
+        bad = bad + multiclass.check_classes(contents(mr)[0..64]);
+        if multiclass.check_classes(contents(mr)[0..65]) != rules.too_many_classes() {
+            bad = bad + 1;
+        }
+    }
+    unbox_slice(heap, mb);
+    unbox_slice(heap, a);
+    unbox_slice(heap, b);
+    unbox_slice(heap, c);
+    unbox_slice(heap, d);
+    return bad;
+}
+
+// the buffers the caller gives are checked: a table shorter than K * K, rows or classes
+fn test_a_short_buffer_is_refused[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "0,1,2");
+    let (ca, kn) = mt.ints(heap, "0,1,2");
+    let (pa, pn) = mt.eighths(heap, "4,2,2,2,4,2,2,2,4");
+    let small = box_slice(heap, 4, 0);
+    var sb = small;
+    let few = box_slice(heap, 2, 0.0);
+    var fb = few;
+    let two = box_slice(heap, 2, 0);
+    var tb = two;
+    borrow ya as &yr in {
+        borrow ca as &cr in {
+            borrow pa as &pr in {
+                borrow mut sb as &!sw in {
+                    if multiclass.confusion(contents(yr)[0..n], contents(yr)[0..n], contents(cr)[0..kn], 100, contents(sw)[0..4]) != rules.out_of_range() {
+                        bad = bad + 1;
+                    }
+                }
+                borrow mut fb as &!fw in {
+                    if multiclass.terms(contents(yr)[0..n], contents(pr)[0..pn], contents(cr)[0..kn], 100, contents(fw)[0..2]) != rules.out_of_range() {
+                        bad = bad + 1;
+                    }
+                }
+                borrow mut fb as &!fw in {
+                    borrow mut tb as &!tw in {
+                        let a = multiclass.auc_ovr(heap, contents(yr)[0..n], contents(pr)[0..pn], contents(cr)[0..kn], 100, contents(fw)[0..2], contents(tw)[0..2]);
+                        if a.code != rules.out_of_range() {
+                            bad = bad + 1;
+                        }
+                    }
+                }
+                // a class index outside the table
+                if multiclass.auc_class(heap, contents(yr)[0..n], contents(pr)[0..pn], contents(cr)[0..kn], 3, 100).code != rules.out_of_range() {
+                    bad = bad + 1;
+                }
+                if multiclass.auc_class(heap, contents(yr)[0..n], contents(pr)[0..pn], contents(cr)[0..kn], 0 - 1, 100).code != rules.out_of_range() {
+                    bad = bad + 1;
+                }
+                bad = bad + want(multiclass.auc_class(heap, contents(yr)[0..n], contents(pr)[0..pn], contents(cr)[0..kn], 2, 100), 0, 1.0);
+            }
+        }
+    }
+    unbox_slice(heap, sb);
+    unbox_slice(heap, fb);
+    unbox_slice(heap, tb);
+    unbox_slice(heap, ya);
+    unbox_slice(heap, ca);
+    unbox_slice(heap, pa);
+    return bad;
+}
+
+// the log-loss: three rows, the probabilities of the true class 0.5, 0.5 and 1.0 (clipped below 1): (ln 2 + ln 2 + ~0) / 3
+fn test_the_log_loss_and_the_terms[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let (ya, n) = mt.ints(heap, "0,1,2");
+    let (ca, kn) = mt.ints(heap, "0,1,2");
+    let (pa, pn) = mt.eighths(heap, "4,4,0,4,4,0,0,0,8");
+    let out = box_slice(heap, 3, 0.0);
+    var ob = out;
+    borrow ya as &yr in {
+        borrow ca as &cr in {
+            borrow pa as &pr in {
+                borrow mut ob as &!ow in {
+                    bad = bad + multiclass.terms(contents(yr)[0..n], contents(pr)[0..pn], contents(cr)[0..kn], 100, contents(ow)[0..3]);
+                    let t = contents(ow);
+                    // the same clip and the same log as the binary term
+                    if bits_of(t[0]) != bits_of(0.0 - math.log(0.5)) || bits_of(t[1]) != bits_of(0.0 - math.log(0.5)) {
+                        bad = bad + 1;
+                    }
+                    if t[2] < 0.0 || t[2] > 1.0e-15 {
+                        bad = bad + 1;
+                    }
+                }
+                let r = multiclass.logloss_of(heap, contents(yr)[0..n], contents(pr)[0..pn], contents(cr)[0..kn], 100);
+                if r.code != 0 || r.v < 0.46 || r.v > 0.47 {
+                    bad = bad + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ob);
+    unbox_slice(heap, ya);
+    unbox_slice(heap, ca);
+    unbox_slice(heap, pa);
+    return bad;
+}
+
+fn band_ok(c: int) -> [] int {
+    if c != 0 && (c < rules.first() || c > rules.last()) {
+        return 1;
+    }
+    return 0;
+}
+
+fn in_unit(r: rules.Scored) -> [] int {
+    if band_ok(r.code) != 0 {
+        return 1;
+    }
+    if r.code == 0 && (r.v - r.v != 0.0 || r.v < 0.0 || r.v > 1.0) {
+        return 1;
+    }
+    return 0;
+}
+
+// hostile class lists (unsorted, repeated, empty, over 64), labels that are not classes, probability tables of the wrong length, hostile values, caps: no call traps, every
+// answer is 0 or a code of the band, every value is finite and in its range
+fn test_fuzz_multiclass[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var ok_conf = 0;
+    var ok_auc = 0;
+    var ok_ll = 0;
+    var conf = box_slice(heap, 4900, 0);
+    var round = 0;
+    while round < 1500 {
+        let seed = round * 104729 + 7;
+        let n = mt.draw(seed, 0) >> 1 & 63;
+        let k = (mt.draw(seed, 1) >> 1 & 127) % 70;
+        let wide = round % 2 == 0;
+        let tidy = round % 5 != 0;
+        let clean = round % 7 != 0;
+        var plen = n * k;
+        if round % 11 == 0 {
+            plen = plen + 1;
+        }
+        var cl = box_slice(heap, k + 1, 0);
+        var yt = box_slice(heap, n + 1, 0);
+        var yp = box_slice(heap, n + 1, 0);
+        var pr = box_slice(heap, plen + 1, 0.0);
+        borrow mut cl as &!a in {
+            borrow mut yt as &!b in {
+                borrow mut yp as &!c in {
+                    borrow mut pr as &!d in {
+                        var i = 0;
+                        var cur = (mt.draw(seed, 2) >> 1 & 1023) - 512;
+                        while i < k {
+                            if tidy {
+                                cur = cur + 1 + (mt.draw(seed + 9, i) >> 1 & 3);
+                                contents(a)[i] = cur;
+                            } else {
+                                contents(a)[i] = mt.label(mt.draw(seed + 9, i), wide);
+                            }
+                            i = i + 1;
+                        }
+                        i = 0;
+                        while i < n {
+                            if clean && k > 0 {
+                                contents(b)[i] = contents(a)[(mt.draw(seed + 3, i) >> 1 & 9223372036854775807) % k];
+                                contents(c)[i] = contents(a)[(mt.draw(seed + 4, i) >> 1 & 9223372036854775807) % k];
+                            } else {
+                                contents(b)[i] = mt.label(mt.draw(seed + 3, i), wide);
+                                contents(c)[i] = mt.label(mt.draw(seed + 4, i), wide);
+                            }
+                            i = i + 1;
+                        }
+                        i = 0;
+                        while i < plen {
+                            if round % 4 < 2 && round % 3 == 0 {
+                                contents(d)[i] = mt.hostile(mt.draw(seed + 5, i));
+                            } else {
+                                contents(d)[i] = (rng.unit(mt.draw(seed + 5, i)) + 1.0) * 0.5;
+                            }
+                            i = i + 1;
+                        }
+                    }
+                }
+            }
+        }
+        var cap = 100;
+        if round % 13 == 0 {
+            cap = mt.draw(seed, 6);
+        }
+        if round % 17 == 0 {
+            cap = n;
+        }
+        borrow cl as &clr in {
+            borrow yt as &ytr in {
+                borrow yp as &ypr in {
+                    borrow pr as &prr in {
+                        let classes = contents(clr)[0..k];
+                        let t = contents(ytr)[0..n];
+                        let p = contents(ypr)[0..n];
+                        borrow mut conf as &!w in {
+                            let code = multiclass.confusion(t, p, classes, cap, contents(w)[0..k * k]);
+                            bad = bad + band_ok(code);
+                            if code == 0 {
+                                ok_conf = ok_conf + 1;
+                                let m = contents(w)[0..k * k];
+                                bad = bad + in_unit(multiclass.accuracy_of(m, k));
+                                var c = 0;
+                                while c < k {
+                                    bad = bad + in_unit(multiclass.class_value(m, k, 1, c)) + in_unit(multiclass.class_value(m, k, 2, c)) + in_unit(multiclass.class_value(m, k, 3, c));
+                                    c = c + 1;
+                                }
+                                var which = 1;
+                                while which <= 3 {
+                                    let a1 = multiclass.average(m, k, which, false);
+                                    let a2 = multiclass.average(m, k, which, true);
+                                    bad = bad + band_ok(a1.code) + band_ok(a2.code);
+                                    if a1.code == 0 && (a1.v - a1.v != 0.0 || a1.v < 0.0 || a1.v > 1.0 || a1.left_out < 0 || a1.left_out > k) {
+                                        bad = bad + 1;
+                                    }
+                                    which = which + 1;
+                                }
+                            }
+                        }
+                        let pm = contents(prr)[0..plen];
+                        let ll = multiclass.logloss_of(heap, t, pm, classes, cap);
+                        bad = bad + band_ok(ll.code);
+                        if ll.code == 0 {
+                            ok_ll = ok_ll + 1;
+                            if ll.v - ll.v != 0.0 || ll.v < 0.0 || ll.v > 40.0 {
+                                bad = bad + 1;
+                            }
+                        }
+                        var per = box_slice(heap, k + 1, 0.0);
+                        var has = box_slice(heap, k + 1, 0);
+                        borrow mut per as &!pw in {
+                            borrow mut has as &!hw in {
+                                let av = multiclass.auc_ovr(heap, t, pm, classes, cap, contents(pw)[0..k], contents(hw)[0..k]);
+                                bad = bad + band_ok(av.code);
+                                if av.code == 0 {
+                                    ok_auc = ok_auc + 1;
+                                    if av.v - av.v != 0.0 || av.v < 0.0 || av.v > 1.0 {
+                                        bad = bad + 1;
+                                    }
+                                }
+                            }
+                        }
+                        unbox_slice(heap, per);
+                        unbox_slice(heap, has);
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, cl);
+        unbox_slice(heap, yt);
+        unbox_slice(heap, yp);
+        unbox_slice(heap, pr);
+        round = round + 1;
+    }
+    unbox_slice(heap, conf);
+    // the fuzz must reach the value paths too, or it proves little
+    if ok_conf < 100 || ok_ll < 20 || ok_auc < 20 {
+        bad = bad + 1;
+    }
+    return bad;
+}

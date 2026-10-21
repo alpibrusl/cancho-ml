@@ -1,4 +1,4 @@
-frozen copy of commit ea9ff28, arm64
+Linux x86-64 6.18.44, 4 cores, compiler 0207556, tree of the branch v1-mc-metrics; five shards run in parallel (--shard I/5) and merged here in the order of the list
 mutants_metrics: control (unmutated) passes
 seed-derive-index                        killed
 seed-derive-swap                         killed
@@ -139,6 +139,57 @@ ll-finite                                killed
 ll-order-probs                           killed
 ll-label-pos                             killed
 ll-fill-offset                           killed
+mc-find-le                               killed
+mc-find-nearest                          killed
+mc-classes-max                           killed
+mc-classes-max-edge                      killed
+mc-classes-order                         killed
+mc-classes-none                          killed
+mc-classes-one                           killed
+mc-conf-transpose                        killed
+mc-conf-pred-unseen                      killed
+mc-conf-true-unseen                      killed
+mc-conf-zeroing                          killed
+mc-conf-out-size                         killed
+mc-support-axis                          killed
+mc-predicted-axis                        killed
+mc-total-short                           killed
+mc-accuracy-diag                         killed
+mc-accuracy-empty                        killed
+mc-recall-den                            killed
+mc-precision-den                         killed
+mc-f1-num                                killed
+mc-f1-den                                killed
+mc-value-zero                            killed
+mc-avg-weight                            killed
+mc-avg-wsum                              killed
+mc-avg-den                               killed
+mc-avg-left                              killed
+mc-avg-skip-first                        killed
+mc-avg-none                              killed
+mc-avg-no-weight                         killed
+mc-probs-length                          killed
+mc-probs-finite                          killed
+mc-probs-high                            killed
+mc-probs-low                             killed
+mc-probs-last                            killed
+mc-probs-unseen                          killed
+mc-term-column                           killed
+mc-term-row                              killed
+mc-term-class                            killed
+mc-logloss-mean                          killed
+mc-terms-out                             killed
+mc-auc-class                             killed
+mc-auc-column                            killed
+mc-auc-class-range                       killed
+mc-auc-missing-class                     SURVIVED (explained: equivalent: auc_ovr and auc_class both run check_probs with the same arguments, so a refusal other than a class without both sides has been returned before this branch; it is defensive)
+mc-auc-den                               killed
+mc-auc-left                              killed
+mc-auc-none                              killed
+mc-auc-per-size                          killed
+mc-rules-unseen-tag                      killed
+mc-rules-classes-exit                    killed
+mc-rules-classes-code                    killed
 rules-exit-param                         killed
 rules-exit-range                         killed
 rules-dup-tag                            killed
@@ -146,6 +197,6 @@ rules-tag-rename                         killed
 rules-table-exit                         killed
 rules-table-drop                         killed
 rules-code-swap                          killed
-mutants_metrics: 138 killed, 8 survived and explained, 0 unexplained
+mutants_metrics: 188 killed, 9 survived and explained, 0 unexplained
 EXIT 0
-Wed Oct 14 12:35:52 CEST 2026
+Tue Oct 20 08:11 UTC 2026
