@@ -403,37 +403,37 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: params.Params, n: int, d: int
     borrow binm as &br in {
         borrow yb as &ybr in {
             borrow yv as &yvr in {
-              borrow wt as &wtr in {
-                borrow ed as &edr in {
-                    borrow mut slots_i as &!siw in {
-                        borrow mut slots_v as &!svw in {
-                            borrow mut counts as &!cw in {
-                                if used == 1 {
-                                    let idx = box_slice(heap, n + 1, 0);
-                                    let tmp = box_slice(heap, n + 1, 0);
-                                    let wk = box_slice(heap, grow.work_ints(p.bins, d, mtry) + 1, 0);
-                                    let wf = box_slice(heap, grow.work_floats(p.bins) + 1, 0.0);
-                                    borrow mut idx as &!iw in {
-                                        borrow mut tmp as &!tw in {
-                                            borrow mut wk as &!kw in {
-                                                borrow mut wf as &!fw in {
-                                                    run_trees(p, n, d, mtry, cap, 0, p.trees, contents(br), contents(ybr), contents(yvr), contents(wtr), contents(edr), contents(iw), contents(tw), contents(kw), contents(fw), contents(siw), contents(svw), contents(cw));
+                borrow wt as &wtr in {
+                    borrow ed as &edr in {
+                        borrow mut slots_i as &!siw in {
+                            borrow mut slots_v as &!svw in {
+                                borrow mut counts as &!cw in {
+                                    if used == 1 {
+                                        let idx = box_slice(heap, n + 1, 0);
+                                        let tmp = box_slice(heap, n + 1, 0);
+                                        let wk = box_slice(heap, grow.work_ints(p.bins, d, mtry) + 1, 0);
+                                        let wf = box_slice(heap, grow.work_floats(p.bins) + 1, 0.0);
+                                        borrow mut idx as &!iw in {
+                                            borrow mut tmp as &!tw in {
+                                                borrow mut wk as &!kw in {
+                                                    borrow mut wf as &!fw in {
+                                                        run_trees(p, n, d, mtry, cap, 0, p.trees, contents(br), contents(ybr), contents(yvr), contents(wtr), contents(edr), contents(iw), contents(tw), contents(kw), contents(fw), contents(siw), contents(svw), contents(cw));
+                                                    }
                                                 }
                                             }
                                         }
+                                        unbox_slice(heap, idx);
+                                        unbox_slice(heap, tmp);
+                                        unbox_slice(heap, wk);
+                                        unbox_slice(heap, wf);
+                                    } else {
+                                        fan(heap, p, n, d, mtry, cap, contents(br), contents(ybr), contents(yvr), contents(wtr), contents(edr), 0, used, contents(siw), contents(svw), contents(cw));
                                     }
-                                    unbox_slice(heap, idx);
-                                    unbox_slice(heap, tmp);
-                                    unbox_slice(heap, wk);
-                                    unbox_slice(heap, wf);
-                                } else {
-                                    fan(heap, p, n, d, mtry, cap, contents(br), contents(ybr), contents(yvr), contents(wtr), contents(edr), 0, used, contents(siw), contents(svw), contents(cw));
                                 }
                             }
                         }
                     }
                 }
-              }
             }
         }
     }
