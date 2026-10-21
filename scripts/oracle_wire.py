@@ -446,7 +446,7 @@ def gen_cell(rng, kind, scale, miss):
     return "%.6e" % rng.uniform(-2.0, 30.0)
 
 
-def gen_case(seed, model):
+def gen_case(seed, model, weighted=False):
     rng = random.Random(seed)
     n = rng.choice([30, 64, 101, 257, 300, 513, 700])
     d = rng.randint(2, 6)
@@ -533,7 +533,7 @@ def gen_case(seed, model):
         case.seed = rng.randint(0, 99)
     if model == "logistic" and rng.random() < 0.4:
         case.positive = min(int(v) for v in ycol)
-    if model in ("linear", "logistic") and rng.random() < 0.4:
+    if weighted and model in ("linear", "logistic") and rng.random() < 0.4:
         # a weight column (docs/weights.md section 2.4): decimal texts, a zero at every eleventh row; it is not a feature and is not in the schema of the file
         ws = [rng.choice(["1", "2", "0.5", "3.25", "1.5", "4", "0.125"]) for _ in range(n)]
         for i in range(5, n, 11):
@@ -739,7 +739,7 @@ def main():
         tmp = pathlib.Path(td)
         for model in models:
             for seed in range(1, n + 1):
-                case = gen_case(seed * 7919 + {"linear": 0, "logistic": 101, "softmax": 202}[model], model)
+                case = gen_case(seed * 7919 + {"linear": 0, "logistic": 101, "softmax": 202}[model], model, weighted=True)
                 pr = run_case(case, tmp, threads=1 + seed % 4)
                 (tmp / "m.cml").unlink(missing_ok=True)
                 if pr:

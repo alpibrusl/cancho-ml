@@ -22,7 +22,7 @@ class Oracle(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             tmp = pathlib.Path(td)
             for seed in range(1, CASES + 1):
-                case = ow.gen_case(seed * 7919 + offset, model)
+                case = ow.gen_case(seed * 7919 + offset, model, weighted=True)
                 before = len(ow.UNJUDGED)
                 pr = ow.run_case(case, tmp, threads=1 + seed % 4)
                 judged += len(ow.UNJUDGED) == before
@@ -42,7 +42,7 @@ class Oracle(unittest.TestCase):
         seen = set()
         for model, off in (("linear", 0), ("logistic", 101)):
             for seed in range(1, CASES + 1):
-                c = ow.gen_case(seed * 7919 + off, model)
+                c = ow.gen_case(seed * 7919 + off, model, weighted=True)
                 if any("" in r for r in c.rows):
                     seen.add("missing")
                 for st in c.steps:

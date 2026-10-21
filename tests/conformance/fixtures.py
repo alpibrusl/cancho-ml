@@ -38,6 +38,7 @@ WITH_LIN = LBASE + [("fit", "--model", "linear", "--target", "y", "--output", "l
 WITH_LINMIS = LBASE + [("fit", "--model", "linear", "--target", "y", "--step", STEP_IMP, "--output", "lm.cml", "linmis.csv")]
 # a target of three classes (docs/multiclass.md): the multinomial logistic regression, and a file of 65 classes
 MC3 = "a,b,y\n" + "".join("%d,%d,%d\n" % (i % 7, (i * 3) % 5, (3, 5, 9)[(i + i // 4) % 3]) for i in range(30))
+WTD = "a,b,w,y\n" + "".join("%d,%d,%d,%d\n" % (i % 7, (i * 3) % 5, 1 + i % 3, 3 * (i % 7) + (i * 3) % 5 + i % 2) for i in range(24))
 MC65 = "a,y\n" + "".join("%d,%d\n" % (i, i % 65) for i in range(130))
 MCWIDE = ",".join("f%d" % j for j in range(64)) + ",y\n" + "".join(",".join("%d" % ((i * (j + 3)) % 11) for j in range(64)) + ",%d\n" % (i % 33) for i in range(70))
 WITH_SM = BASE + [("write", "mc.csv", MC3), ("fit", "--model", "softmax", "--target", "y", "--l2", "1", "--output", "sm.cml", "mc.csv")]
@@ -360,6 +361,16 @@ CASES = [
          setup=WITH_SM + [("write", "alien.csv", "a,b,y\n1,2,3\n2,3,4\n")]),
     case("ml-label-unseen-fit-class-with-no-training-row", ["fit", "--model", "softmax", "--target", "y", "--l2", "1", "--split", "train=0.5", "--seed", "1", "--output", "m.cml", "rare.csv"],
          bad("ml.label.unseen"), setup=BASE + [("write", "rare.csv", "a,b,y\n" + "".join("%d,%d,%d\n" % (i, i % 3, 3 + 2 * (i % 2)) for i in range(40)) + "1,1,9\n")]),
+    # --weight (docs/weights.md section 2.4)
+    case("ml-weight-fit-with-a-weight-column", ["fit", "--model", "linear", "--target", "y", "--weight", "w", "--output", "m.cml", "wt.csv"], ok({"model": "linear", "rows": 24}), setup=BASE + [("write", "wt.csv", WTD)]),
+    case("ml-weight-missing-empty-cell", ["fit", "--model", "linear", "--target", "y", "--weight", "w", "--output", "m.cml", "wt.csv"], bad("ml.weight.missing"), setup=BASE + [("write", "wt.csv", WTD.replace("0,0,1,", "0,0,,", 1))]),
+    case("ml-weight-negative", ["fit", "--model", "linear", "--target", "y", "--weight", "w", "--output", "m.cml", "wt.csv"], bad("ml.weight.negative"), setup=BASE + [("write", "wt.csv", WTD.replace("0,0,1,", "0,0,-1,", 1))]),
+    case("ml-weight-too-large", ["fit", "--model", "linear", "--target", "y", "--weight", "w", "--output", "m.cml", "wt.csv"], bad("ml.weight.too-large"), setup=BASE + [("write", "wt.csv", WTD.replace("0,0,1,", "0,0,1000000000001,", 1))]),
+    case("ml-weight-zero-total", ["fit", "--model", "linear", "--target", "y", "--weight", "w", "--output", "m.cml", "wt.csv"], bad("ml.weight.zero-total"), setup=BASE + [("write", "wt.csv", "a,b,w,y\n" + "".join("%d,%d,0,%d\n" % (i, i % 3, i) for i in range(10)))]),
+    case("ml-weight-unknown-column", ["fit", "--model", "linear", "--target", "y", "--weight", "nosuch", "--output", "m.cml", "wt.csv"], bad("ml.input.unknown-column"), setup=BASE + [("write", "wt.csv", WTD)]),
+    case("ml-weight-is-the-target", ["fit", "--model", "linear", "--target", "y", "--weight", "y", "--output", "m.cml", "wt.csv"], bad("args.conflict"), setup=BASE + [("write", "wt.csv", WTD)]),
+    case("ml-weight-model-without-a-weighted-fit", ["fit", "--model", "tree", "--target", "y", "--weight", "w", "--output", "m.cml", "wt.csv"], bad("args.conflict"), setup=BASE + [("write", "wt.csv", WTD)]),
+    case("ml-weight-cv", ["cv", "--model", "linear", "--target", "y", "--weight", "w", "--folds", "3", "wt.csv"], ok({"model": "linear"}), setup=BASE + [("write", "wt.csv", WTD)]),
     case("ml-limit-classes-65-classes", ["fit", "--model", "softmax", "--target", "y", "--output", "m.cml", "mc65.csv"], bad("ml.limit.classes"), setup=BASE + [("write", "mc65.csv", MC65)]),
     case("ml-limit-parameters-2080", ["fit", "--model", "softmax", "--target", "y", "--iterations", "1", "--l2", "1", "--output", "m.cml", "mcwide.csv"], bad("ml.limit.parameters"),
          setup=BASE + [("write", "mcwide.csv", MCWIDE)]),
