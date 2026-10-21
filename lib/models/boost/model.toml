@@ -6,6 +6,7 @@ task = "both"
 tier = "supported"
 wired = true
 weighted = true
+ranking = true
 shape = "blob"
 adapter = "models.adapter_boost"
 payload_version = 1

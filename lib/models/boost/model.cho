@@ -193,13 +193,17 @@ pub fn read[&h, &s](heap: &!h Heap, data: &s [byte]) -> [heap] (fit.Boost, int) 
     let early = fbits.get64(data, 76);
     let requested = fbits.get64(data, 84);
     let subk = fbits.get64(data, 92);
-    if task < 0 || task > 1 || rounds < 1 || rounds > bparams.rounds_max() || d < 1 || d > 4096 || nbins < 2 || nbins > 255 || max_depth < 1 || max_depth > params.depth_max() || min_leaf < 1 {
+    if task < 0 || task > 2 || rounds < 1 || rounds > bparams.rounds_max() || d < 1 || d > 4096 || nbins < 2 || nbins > 255 || max_depth < 1 || max_depth > params.depth_max() || min_leaf < 1 {
         return bad(heap, deny.model_malformed());
     }
     if early < 0 || early > bparams.early_max() || requested < rounds || requested > bparams.rounds_max() || early == 0 && requested != rounds {
         return bad(heap, deny.model_malformed());
     }
     if subk < 1 || subk > bparams.subsample_scale() || total < rounds || total > bparams.nodes_total_max() {
+        return bad(heap, deny.model_malformed());
+    }
+    // a ranking model has no early stopping and its base score is 0.0 (docs/ranking.md section 4)
+    if task == 2 && early != 0 {
         return bad(heap, deny.model_malformed());
     }
     let size = size_of(rounds, total);
@@ -231,6 +235,9 @@ pub fn read[&h, &s](heap: &!h Heap, data: &s [byte]) -> [heap] (fit.Boost, int) 
         return bad(heap, deny.model_malformed());
     }
     if !(base - base == 0.0 && lr > 0.0 && lr <= 1.0 && l2 >= 0.0 && l2 <= bparams.l2_max()) {
+        return bad(heap, deny.model_malformed());
+    }
+    if task == 2 && bits_of(base) != 0 {
         return bad(heap, deny.model_malformed());
     }
     // the sizes are right; now the content

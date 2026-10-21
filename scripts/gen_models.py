@@ -25,7 +25,7 @@ DEFAULT_ROOT = HERE.parent
 TOP_KEYS = {
     "name": str, "kind": int, "extra_kinds": list, "kind_fn": str, "shares_kind_with": str, "task": str, "tier": str, "wired": bool,
     "adapter": str, "shape": str, "payload_version": int, "doc": str, "files": list, "plan_order": int, "limits": dict, "hyperparameter": list,
-    "tags": dict, "authority": dict, "sums": dict, "oracle": dict, "target_classes": int, "weighted": bool,
+    "tags": dict, "authority": dict, "sums": dict, "oracle": dict, "target_classes": int, "weighted": bool, "ranking": bool,
 }
 REQUIRED = {"name", "kind", "kind_fn", "task", "tier", "wired", "payload_version", "doc", "files", "plan_order", "tags", "authority", "sums"}
 HP_KEYS = {"name": str, "type": str, "min": int, "max": int, "values": list, "default": str, "required": bool, "doc": str, "nonneg": bool}
@@ -580,6 +580,14 @@ def render_est(models):
           "pub fn fit_blob_weighted[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {"]
     o += _chain(wblob, lambda m: ["return %s.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);" % ad(m)], keys)
     o += ["    return (box_slice(heap, 1, byte_of(0)), 8);", "}", ""]
+    rblob = [m for m in blob if m.get("ranking")]
+    o += ["// the pairwise ranking fit (docs/ranking.md section 4): as fit_blob with the group number of every row; ng groups; wtd says whether wd holds the weights",
+          "pub fn fit_blob_rank[&h, &x, &m, &y, &w, &u, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], wtd: bool, gid: &u [int], ng: int, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {"]
+    o += _chain(rblob, lambda m: ["return %s.fit_blob_rank(heap, threads, xt, xd, miss, wpc, yd, wd, wtd, gid, ng, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);" % ad(m)], keys)
+    o += ["    return (box_slice(heap, 1, byte_of(0)), 8);", "}", ""]
+    o += ["// whether the kind has a ranking objective (--task ranking)", "pub fn ranking(kind: int) -> [] bool {"]
+    o += _chain(rblob, lambda m: ["return true;"], keys)
+    o += ["    return false;", "}", ""]
     for fn in ("predict", "proba"):
         o += ["pub fn %s_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!q [float]) -> [heap] int {" % fn]
         o += _chain(blob, lambda m, fn=fn: ["return %s.%s_blob(heap, blob, xt, xd, miss, wpc, out);" % (ad(m), fn)], keys)

@@ -660,6 +660,22 @@ pub fn fit_blob_weighted[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, kind: int, 
     return (box_slice(heap, 1, byte_of(0)), 8);
 }
 
+// the pairwise ranking fit (docs/ranking.md section 4): as fit_blob with the group number of every row; ng groups; wtd says whether wd holds the weights
+pub fn fit_blob_rank[&h, &x, &m, &y, &w, &u, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], wtd: bool, gid: &u [int], ng: int, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    if kind == 8 {
+        return adapter_boost.fit_blob_rank(heap, threads, xt, xd, miss, wpc, yd, wd, wtd, gid, ng, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+    }
+    return (box_slice(heap, 1, byte_of(0)), 8);
+}
+
+// whether the kind has a ranking objective (--task ranking)
+pub fn ranking(kind: int) -> [] bool {
+    if kind == 8 {
+        return true;
+    }
+    return false;
+}
+
 pub fn predict_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!q [float]) -> [heap] int {
     if kind == 6 {
         return adapter_kmeans.predict_blob(heap, blob, xt, xd, miss, wpc, out);
