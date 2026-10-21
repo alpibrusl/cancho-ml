@@ -5,6 +5,7 @@ kind_fn = "model_logistic"
 task = "classification"
 tier = "supported"
 wired = true
+weighted = true
 adapter = "models.adapter_logistic"
 payload_version = 2
 doc = "docs/models-linear.md"

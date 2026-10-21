@@ -674,6 +674,7 @@
     "name",
     "name_of",
     "names_are_text",
+    "names_in",
     "names_of",
     "names_tree",
     "nat",
@@ -1023,5 +1024,5 @@
   ],
   "folded_operators": 326,
   "folded_calls": 0,
-  "functions": 1528
+  "functions": 1530
 }

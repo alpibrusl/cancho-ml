@@ -392,6 +392,7 @@
     "limits",
     "line",
     "lineage_width",
+    "list_has",
     "listed",
     "listed",
     "listed",
@@ -499,6 +500,7 @@
     "name",
     "name_at",
     "name_of",
+    "names_in",
     "names_of",
     "names_tree",
     "nat",
@@ -783,5 +785,5 @@
   ],
   "folded_operators": 160,
   "folded_calls": 0,
-  "functions": 1174
+  "functions": 1179
 }

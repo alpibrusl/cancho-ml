@@ -37,6 +37,7 @@ import ml.wiredata;
 import ml.refuse;
 import ml.splitspec;
 import ml.splitwire;
+import ml.weightcol;
 import metrics.rules;
 import metrics.splits;
 import models.common;
@@ -71,6 +72,9 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
     var i = 0;
     if verb == 1 {
         if !planned(plan_given, model) {
+            if argv.has(src, "weight") {
+                e = weightcol.unsupported(heap, e);
+            }
             let needing = "step,positive,split,seed,threads";
             var k = 1;
             while k <= 5 {
@@ -149,6 +153,9 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
                 e = wiredata.conflict(heap, e, "positive", "a clustering has no positive label");
             }
         }
+    }
+    if verb == 1 || verb == 5 {
+        e = weightcol.check_columns(heap, src, e);
     }
     if verb == 1 || verb == 3 || verb == 5 || verb == 7 {
         if argv.has(src, "threads") {
@@ -322,25 +329,28 @@ pub res struct Data {
     // the number of classes of a multiclass target (docs/multiclass.md), 2 for a binary one, 0 when there is no classification target; c0 and c1 are then the smallest and the largest label
     ncls: int,
     yall: Box[[float]],
+    // the weight of every row (docs/weights.md section 2.4), empty without --weight; the column itself is dropped from the matrix
+    wall: Box[[float]],
     // whether the file was read with the categorical columns of --cat (docs/categorical-encoders.md): x and sc then hold the NUMERIC columns only, and the ids and
     // the vocabulary they refer to travel beside the Data (load_data answers them; a field cannot be borrowed by itself)
     cat: bool,
 }
 
 pub fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
-    let Data { x, sh, sc, tj, nrows, ncols, c0, c1, ncls, yall, cat } = d;
+    let Data { x, sh, sc, tj, nrows, ncols, c0, c1, ncls, yall, wall, cat } = d;
     matrix.drop(heap, x);
     csv.drop_shape(heap, sh);
     schema.drop(heap, sc);
     unbox_slice(heap, yall);
+    unbox_slice(heap, wall);
     return nrows;
 }
 
 pub fn empty_data[&h](heap: &!h Heap) -> [heap] Data {
-    return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, ncls: 0, yall: box_slice(heap, 2, 0.0), cat: false };
+    return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, ncls: 0, yall: box_slice(heap, 2, 0.0), wall: box_slice(heap, 1, 0.0), cat: false };
 }
 
-pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], mixed_plan: bool, task: int, kind: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
+pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &wp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], wn: &wp [byte], mixed_plan: bool, task: int, kind: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
@@ -547,7 +557,16 @@ pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &cl](heap: &!h Heap, src: &cl [byte]
             }
         }
     }
-    return (Data { x: x, sh: sh, sc: sc, tj: tj, nrows: nrows, ncols: ncols, c0: c0, c1: c1, ncls: ncls, yall: yall, cat: o.cat_given || mixed_plan }, ids, voc, go, e, lg);
+    // the weights of --weight, read from the file again (the column is not in the matrix)
+    var wall = box_slice(heap, 1, 0.0);
+    if go && len(wn) > 0 {
+        unbox_slice(heap, wall);
+        let (w2, ok2, e2) = weightcol.read(heap, wn, fs, root, file, o, nrows, e);
+        wall = w2;
+        e = e2;
+        go = ok2;
+    }
+    return (Data { x: x, sh: sh, sc: sc, tj: tj, nrows: nrows, ncols: ncols, c0: c0, c1: c1, ncls: ncls, yall: yall, wall: wall, cat: o.cat_given || mixed_plan }, ids, voc, go, e, lg);
 }
 
 fn distinct_labels[&y](yv: &y [float], n: int) -> [] (int, int, int) {
@@ -871,11 +890,37 @@ pub fn train[&h, &dd, &ci, &cv, &pp, &s, &cl](heap: &!h Heap, src: &cl [byte], d
                 }
             }
             var code = 0;
-            borrow xt as &xr in {
-                borrow yfit as &yfr in {
-                    borrow mut wv as &!ww in {
-                        borrow mut diag as &!dw in {
-                            code = est.fit(heap, kind, o.threads, matrix.shape(xr), contents(xr.data), contents(yfr), contents(pls.ip), contents(pls.fp), o.seed, contents(ww), contents(dw));
+            if len(contents(ds.wall)) > 1 {
+                // a weight per training row (docs/weights.md section 2.4): the same rows as the labels
+                let (wtr, any) = weightcol.gather(heap, contents(ds.wall), sel, want, ds.nrows);
+                if !any {
+                    var side: &static [byte] = "train";
+                    if want < 0 {
+                        side = "all";
+                    }
+                    e = weightcol.zero_total(heap, e, side);
+                    go = false;
+                } else {
+                    borrow xt as &xr in {
+                        borrow yfit as &yfr in {
+                            borrow wtr as &wtr2 in {
+                                borrow mut wv as &!ww in {
+                                    borrow mut diag as &!dw in {
+                                        code = est.fit_weighted(heap, kind, o.threads, matrix.shape(xr), contents(xr.data), contents(yfr), contents(wtr2)[0..rows], contents(pls.ip), contents(pls.fp), o.seed, contents(ww), contents(dw));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                unbox_slice(heap, wtr);
+            } else {
+                borrow xt as &xr in {
+                    borrow yfit as &yfr in {
+                        borrow mut wv as &!ww in {
+                            borrow mut diag as &!dw in {
+                                code = est.fit(heap, kind, o.threads, matrix.shape(xr), contents(xr.data), contents(yfr), contents(pls.ip), contents(pls.fp), o.seed, contents(ww), contents(dw));
+                            }
                         }
                     }
                 }
@@ -1453,7 +1498,7 @@ fn failed_made[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer) -> [he
 
 // Fit the model of the plan text `ptxt` (consumed; `ok` false when the text could not be had) on the file `file`, as `fit` does, and make its file. `tg` is the target's name and `na` the
 // missing-value markers: they come from the command line, or from a record (a runtime text cannot be a field of Opts). `want_rec`: also score the rows for the run record.
-pub fn make[&h, &f, &r, &pf, &tn, &nn, &sk, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], o: verbs.Opts, sp: splitspec.SplitOpts, spcol: &sk [byte], want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] Made {
+pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], wn: &wp [byte], o: verbs.Opts, sp: splitspec.SplitOpts, spcol: &sk [byte], want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] Made {
     var e = errs;
     var lg = log;
     let (pls, ok1, e1) = build_plan(heap, ptxt, ok0, o, e);
@@ -1466,6 +1511,11 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &sk, &cl](heap: &!h Heap, src: &cl [byte]
     var task = est.task(kind);
     borrow pls as &pq2 in {
         task = est.task_of(kind, contents(pq2.ip));
+    }
+    // --weight: only the models with a weighted fit (docs/weights.md section 2.4)
+    if go && len(wn) > 0 && !est.weighted(kind) {
+        e = weightcol.unsupported(heap, e);
+        go = false;
     }
     // --target: a clustering has none and every other model needs one. The flag check of a command line with --model knows the model; with --plan it is the plan's
     if go && o.plan_given {
@@ -1514,7 +1564,7 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &sk, &cl](heap: &!h Heap, src: &cl [byte]
         hashed = st1 == 0;
     }
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, mixed_plan, task, kind, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, wn, mixed_plan, task, kind, e, lg);
         drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -1741,7 +1791,7 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &sk, &cl](heap: &!h Heap, src: &cl [byte]
 
 pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, trackp: &pt paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
     let (ptxt, ok0, e0) = plan_source(heap, src, fs, root, planp, o, tokens, errs);
-    let m = make(heap, src, fs, root, file, ptxt, ok0, argv.text(src, "target"), argv.text(src, "na-values"), o, sp, splitspec.column(src, sp), o.track_given, e0, log);
+    let m = make(heap, src, fs, root, file, ptxt, ok0, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), o, sp, splitspec.column(src, sp), o.track_given, e0, log);
     var made_ok = false;
     var kind = 0;
     var task = 0;

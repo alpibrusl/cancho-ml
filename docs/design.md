@@ -339,6 +339,10 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.label.unseen` | 8 | a true or predicted label is not one of the classes of a multiclass metric *(library only until the multiclass wiring: `docs/multiclass.md` stage A, `spec.cho` `pending()`)* | none |
 | `ml.limit.classes` | 8 | more than 64 classes *(library only until the multiclass wiring)* | merge rare classes before fitting |
 | `ml.limit.parameters` | 8 | the parameters `(K - 1)(d + 1)` of a multiclass fit above 2048, or the floats its pass holds for `n` rows above the budget of 2^26 *(library only until the multiclass wiring: `docs/multiclass.md` section 3.2)* | fit with fewer features or classes, or on fewer rows |
+| `ml.weight.missing` | 8 | a cell of the `--weight` column is empty (`flag`, `row`, `name`) *(`docs/weights.md` section 2.4)* | none |
+| `ml.weight.negative` | 8 | a weight is below 0 | none |
+| `ml.weight.too-large` | 8 | a weight is above 1e12 | none |
+| `ml.weight.zero-total` | 8 | no row of the training side has a weight above 0 (`side`) | none |
 
 *Registered by the transforms and the pipeline stage (library only: `lib/transforms/codes.cho`, `docs/transforms.md` section 1 X7, `docs/pipeline.md` section 2.1; `tools/ml/spec.cho` `pending()`; none is reachable from `ml` yet):*
 

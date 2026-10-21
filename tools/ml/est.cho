@@ -524,6 +524,28 @@ pub fn diag_len[&i](kind: int, d: int, ip: &i [int]) -> [] int {
     return 0 - 1;
 }
 
+// whether the fit of this kind takes a weight per row (docs/weights.md section 2.4)
+pub fn weighted(kind: int) -> [] bool {
+    if kind == 4 {
+        return true;
+    }
+    if kind == 5 {
+        return true;
+    }
+    return false;
+}
+
+// 0, or a code of ml.refuse (ml.param.out-of-range for a kind that has no weighted fit); wd: one weight per row
+pub fn fit_weighted[&h, &x, &y, &w, &i, &f, &q, &g](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, out: &!q [float], diag: &!g [float]) -> [heap, conc] int {
+    if kind == 4 {
+        return adapter_linear.fit_weighted(heap, threads, xt, xd, yd, wd, ip, fp, seed, out, diag);
+    }
+    if kind == 5 {
+        return adapter_logistic.fit_weighted(heap, threads, xt, xd, yd, wd, ip, fp, seed, out, diag);
+    }
+    return 8;
+}
+
 pub fn out_len(kind: int, d: int) -> [] int {
     if kind == 4 {
         return adapter_linear.out_len(d);

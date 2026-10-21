@@ -30,6 +30,11 @@ pub fn fit[&h, &x, &y, &i, &f, &o, &g](heap: &!h Heap, threads: int, xt: tensor.
 }
 
 // 0.0 or 1.0 per row
+// the same with a weight per row (docs/weights.md section 2.2 and 2.3)
+pub fn fit_weighted[&h, &x, &y, &w, &i, &f, &o, &g](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, out: &!o [float], diag: &!g [float]) -> [heap, conc] int {
+    return logreg.fit_weighted(heap, threads, xt, xd, yd, wd, ip[0], fp[0], out, diag);
+}
+
 pub fn predict[&x, &w, &o](xt: tensor.Tensor, xd: &x [float], wv: &w [float], out: &!o [float]) -> [] int {
     return logreg.predict(xt, xd, wv, out);
 }

@@ -1,0 +1,206 @@
+edition 6;
+
+module ml.weightcol;
+
+// The weight column of a fit (docs/weights.md section 2.4). The column is dropped from the matrix by the reader (csvload appends its name to the --drop list), so it is
+// neither a feature nor in the schema of the model; its cells are read from the file again, as the group column of --split-group is, and checked here. A row of weight w
+// counts as w copies of the row in the fit of section 2.2 and 2.3.
+
+import std.buffer;
+import std.bytes;
+import ml.argv;
+import ml.csvcell;
+import ml.fsio;
+import ml.paths;
+import ml.spec;
+import ml.splitcol;
+import ml.verbs;
+import ml.wiredata;
+import toolbox.fail;
+
+fn list_has[&t, &n](text: &t [byte], name: &n [byte]) -> [] bool {
+    var k = 1;
+    while k <= argv.names_in(text) {
+        if bytes.equal(bytes.field(text, ',', k), name) {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// args.conflict for a weight column that is also the target or listed in --drop or --cat. The checks that need no file.
+pub fn check_columns[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = errs;
+    if !argv.has(src, "weight") {
+        return e;
+    }
+    let w = argv.text(src, "weight");
+    if argv.has(src, "target") && bytes.equal(w, argv.text(src, "target")) {
+        e = wiredata.conflict(heap, e, "weight", "the weight column is the target: a column cannot be both what is predicted and how much a row counts");
+    }
+    if argv.has(src, "drop") && list_has(argv.text(src, "drop"), w) {
+        e = wiredata.conflict(heap, e, "weight", "the weight column is in --drop: it is read for the weights and left out of the features already, so do not drop it");
+    }
+    if argv.has(src, "cat") && list_has(argv.text(src, "cat"), w) {
+        e = wiredata.conflict(heap, e, "weight", "the weight column is in --cat: a weight is a number, not a category");
+    }
+    return e;
+}
+
+// --weight with a model that has no weighted fit
+pub fn unsupported[&h](heap: &!h Heap, errs: fail.Errors) -> [heap] fail.Errors {
+    return wiredata.conflict(heap, errs, "weight", "this model has no weighted fit yet: only --model linear and --model logistic take --weight (docs/weights.md section 2.1)");
+}
+
+fn weight_error[&h, &n](heap: &!h Heap, errs: fail.Errors, rule: &static [byte], row: int, name: &n [byte], reason: &static [byte]) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, rule);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", "--weight");
+    w = fail.detail_int(heap, w, "row", row);
+    w = fail.detail_text(heap, w, "name", name);
+    if len(reason) > 0 {
+        w = fail.detail_str(heap, w, "reason", reason);
+    }
+    return fail.add(heap, errs, w);
+}
+
+// A cell as a weight: (status, value). status 0 ok; 1 empty; 2 not a number; 3 not finite; 4 negative; 5 above 1e12
+fn cell_value[&c](cell: &c [byte]) -> [] (int, float) {
+    let (st, kind, m, frac, intd, key) = csvcell.read(cell);
+    if st == 1 {
+        return (1, 0.0);
+    }
+    if st == 2 || st == 5 || st == 6 {
+        return (2, 0.0);
+    }
+    if st == 3 || st == 4 {
+        return (3, 0.0);
+    }
+    let v = csvcell.double(kind, m, frac, key);
+    if v < 0.0 {
+        return (4, v);
+    }
+    if v > 1000000000000.0 {
+        return (5, v);
+    }
+    return (0, v);
+}
+
+// The weights of the n rows of the file, read again. (weights, ok, errors). The first bad cell of the file is the one reported.
+pub fn read[&h, &f, &r, &pf, &cl](heap: &!h Heap, name: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, n: int, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Box[[float]], bool, fail.Errors) {
+    var e = errs;
+    var go = true;
+    var out = box_slice(heap, n + 1, 0.0);
+    let (data, st, aux) = fsio.read_input(heap, fs, root, file, o.max_bytes);
+    if st == 1 || st == 2 {
+        e = fail.io_error(heap, e, aux, false, paths.shown(file));
+        go = false;
+    } else if st == 3 {
+        var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "the file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", aux);
+        w = fail.detail_int(heap, w, "max", o.max_bytes);
+        e = fail.add(heap, e, w);
+        go = false;
+    }
+    if go {
+        borrow data as &dr in {
+            let (text, off, rows, xs) = splitcol.extract(heap, buffer.bytes(dr), name, n);
+            if xs == 1 {
+                var w = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--weight names a column that is not in the header", "names are compared exactly, byte for byte");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_str(heap, w, "flag", "--weight");
+                w = fail.detail_text(heap, w, "name", name);
+                e = fail.add(heap, e, w);
+                go = false;
+            } else if xs != 0 || rows != n {
+                // the reader read this file and found n rows; a second reading that disagrees is reported as the ragged row it would be
+                var w = fail.open_in(heap, spec.extra(), "parse.csv-ragged-row", "a data row has a different number of fields from the header", "fix the row");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_int(heap, w, "rows", rows);
+                e = fail.add(heap, e, w);
+                go = false;
+            }
+            if go {
+                borrow text as &tr in {
+                    borrow off as &ofr in {
+                        borrow mut out as &!ow in {
+                            let t = buffer.bytes(tr);
+                            var i = 0;
+                            while i < n && go {
+                                let (cs, v) = cell_value(t[contents(ofr)[i]..contents(ofr)[i + 1]]);
+                                if cs == 1 {
+                                    e = weight_error(heap, e, "ml.weight.missing", i + 1, name, "");
+                                    go = false;
+                                } else if cs == 2 {
+                                    e = weight_error(heap, e, "ml.input.non-numeric", i + 1, name, "not a number");
+                                    go = false;
+                                } else if cs == 3 {
+                                    e = weight_error(heap, e, "ml.input.non-finite", i + 1, name, "not finite");
+                                    go = false;
+                                } else if cs == 4 {
+                                    e = weight_error(heap, e, "ml.weight.negative", i + 1, name, "");
+                                    go = false;
+                                } else if cs == 5 {
+                                    e = weight_error(heap, e, "ml.weight.too-large", i + 1, name, "");
+                                    go = false;
+                                } else {
+                                    contents(ow)[i] = v;
+                                }
+                                i = i + 1;
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, text);
+            unbox_slice(heap, off);
+        }
+    }
+    buffer.drop(heap, data);
+    return (out, go, e);
+}
+
+// The weights of the rows r with sel[r] == want (all rows when want < 0), in order: (weights, whether any is above 0)
+pub fn gather[&h, &w, &s](heap: &!h Heap, wall: &w [float], sel: &s [int], want: int, n: int) -> [heap] (Box[[float]], bool) {
+    var cnt = 0;
+    var r = 0;
+    while r < n {
+        if want < 0 || sel[r] == want {
+            cnt = cnt + 1;
+        }
+        r = r + 1;
+    }
+    var out = box_slice(heap, cnt + 1, 0.0);
+    var any = false;
+    borrow mut out as &!ow in {
+        var at = 0;
+        r = 0;
+        while r < n {
+            if want < 0 || sel[r] == want {
+                contents(ow)[at] = wall[r];
+                if wall[r] > 0.0 {
+                    any = true;
+                }
+                at = at + 1;
+            }
+            r = r + 1;
+        }
+    }
+    return (out, any);
+}
+
+// ml.weight.zero-total: no row of the side has a weight above 0
+pub fn zero_total[&h](heap: &!h Heap, errs: fail.Errors, side: &static [byte]) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.weight.zero-total");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", "--weight");
+    w = fail.detail_str(heap, w, "side", side);
+    return fail.add(heap, errs, w);
+}
