@@ -114,6 +114,13 @@ sources = ["lib/core", "lib/linalg", "lib/models", "lib/models/linear", "lib/mod
 std = true
 out = "build/models-check"
 
+# the driver of the pure parts of the recommender (scripts/gate_recommend.sh builds it from an explicit file list; `cancho build --bin recommend-check` builds it in package mode too)
+[[bin]]
+name = "recommend-check"
+sources = ["lib/core", "lib/linalg/tensor.cho", "lib/linalg/order.cho", "lib/metrics", "lib/models/recommend", "tools/recommend-check"]
+std = true
+out = "build/recommend-check"
+
 [[bin]]
 name = "ml"
 sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models", "lib/models/boost", "lib/models/kmeans", "lib/models/linear", "lib/models/logistic", "lib/models/softmax", "lib/models/tree", "lib/models/treewire", "lib/transforms", "lib/pipeline", "tools/ml", "generated/ml"]

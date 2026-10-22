@@ -1,0 +1,391 @@
+// recommend-check: runs the pure parts of the recommender library on listed data and prints the result (docs/recommend.md). The gates (scripts/oracle_recommend.py) call it; nothing
+// here is the product.
+//
+//   recommend-check log NUSERS NITEMS IMPLICIT UID IID VAL CAP     the compressed forms of an interaction log (lib/models/recommend/log.cho). IMPLICIT: 0 or 1; UID, IID: `L:` ints; VAL: `H:` float bits
+//       stdout: `nnz N`, `uoff L`, `uitem L`, `uval H`, `ioff L`, `iuser L`, `ival H` (L: comma separated ints, H: comma separated float bits), or `refused TAG why N row R row2 R2`
+//   recommend-check split UID TKEY NUSERS LAST                      the rows held out by --split-user-last: `mask L` (1 = test), or `refused TAG`
+//
+// stdout, one `key value` per line; the exit code is the toolbox exit code of the tag.
+edition 5;
+
+import std.io;
+import ml.fbits;
+import ml.refuse;
+import recommend.log;
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// a signed decimal int (up to 19 digits, refused if it does not fit); (ok, value). Accumulated below zero so that INT_MIN parses.
+fn parse_int[&s](t: &s [byte]) -> [] (bool, int) {
+    var i = 0;
+    var neg = false;
+    if len(t) > 0 && int_of(t[0]) == '-' {
+        neg = true;
+        i = 1;
+    }
+    if len(t) - i < 1 || len(t) - i > 19 {
+        return (false, 0);
+    }
+    let lo = 0 - 9223372036854775807 - 1;
+    var v = 0;
+    while i < len(t) {
+        let c = int_of(t[i]);
+        if c < '0' || c > '9' {
+            return (false, 0);
+        }
+        let d = c - '0';
+        if v < (lo + d) / 10 {
+            return (false, 0);
+        }
+        v = v * 10 - d;
+        i = i + 1;
+    }
+    if neg {
+        return (true, v);
+    }
+    if v == lo {
+        return (false, 0);
+    }
+    return (true, 0 - v);
+}
+
+fn hexval(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10;
+    }
+    return 0 - 1;
+}
+
+// exactly 16 hex digits; (ok, bits)
+fn parse_hex[&s](t: &s [byte]) -> [] (bool, int) {
+    if len(t) != 16 {
+        return (false, 0);
+    }
+    var v = 0;
+    var i = 0;
+    while i < 16 {
+        let d = hexval(int_of(t[i]));
+        if d < 0 {
+            return (false, 0);
+        }
+        v = v << 4 | d;
+        i = i + 1;
+    }
+    return (true, v);
+}
+
+// the number of items of a list `a,b,c` (0 for the empty text)
+fn items[&s](t: &s [byte]) -> [] int {
+    if len(t) == 0 {
+        return 0;
+    }
+    var n = 1;
+    var i = 0;
+    while i < len(t) {
+        if int_of(t[i]) == ',' {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// start of field f of a `:`-separated spec (0-based); len(t) + 1 if there is no such field
+fn field_start[&s](t: &s [byte], f: int) -> [] int {
+    var at = 0;
+    var k = 0;
+    while k < f {
+        while at < len(t) && int_of(t[at]) != ':' {
+            at = at + 1;
+        }
+        if at >= len(t) {
+            return len(t) + 1;
+        }
+        at = at + 1;
+        k = k + 1;
+    }
+    return at;
+}
+
+fn field_end[&s](t: &s [byte], start: int) -> [] int {
+    var e = start;
+    while e < len(t) && int_of(t[e]) != ':' {
+        e = e + 1;
+    }
+    return e;
+}
+
+// field f as an int; (ok, value)
+fn field_int[&s](t: &s [byte], f: int) -> [] (bool, int) {
+    let a = field_start(t, f);
+    if a > len(t) {
+        return (false, 0);
+    }
+    return parse_int(t[a..field_end(t, a)]);
+}
+
+fn make_ints[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[int]], int) {
+    if len(t) >= 2 && int_of(t[0]) == 'L' && int_of(t[1]) == ':' {
+        let body = t[2..len(t)];
+        let n = items(body);
+        let b = box_slice(heap, n + 1, 0);
+        var o = b;
+        var bad = false;
+        borrow mut o as &!w in {
+            let a = contents(w);
+            var k = 0;
+            var at = 0;
+            while k < n {
+                var e = at;
+                while e < len(body) && int_of(body[e]) != ',' {
+                    e = e + 1;
+                }
+                let (ok, v) = parse_int(body[at..e]);
+                if ok == false {
+                    bad = true;
+                } else {
+                    a[k] = v;
+                }
+                at = e + 1;
+                k = k + 1;
+            }
+        }
+        if bad {
+            return (o, 0 - 1);
+        }
+        return (o, n);
+    }
+    return (box_slice(heap, 1, 0), 0 - 1);
+}
+
+fn make_floats[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[float]], int) {
+    if len(t) >= 2 && int_of(t[0]) == 'H' && int_of(t[1]) == ':' {
+        let body = t[2..len(t)];
+        let n = items(body);
+        let b = box_slice(heap, n + 1, 0.0);
+        var o = b;
+        var bad = false;
+        borrow mut o as &!w in {
+            let a = contents(w);
+            var k = 0;
+            var at = 0;
+            while k < n {
+                var e = at;
+                while e < len(body) && int_of(body[e]) != ',' {
+                    e = e + 1;
+                }
+                let (ok, v) = parse_hex(body[at..e]);
+                if ok == false {
+                    bad = true;
+                    // fbits.decode answers NaN for both infinities and NaNs; the library must see the infinities too
+                } else if v >> 52 & 2047 == 2047 && v & 4503599627370495 == 0 {
+                    if v < 0 {
+                        a[k] = 0.0 - 1.0 / 0.0;
+                    } else {
+                        a[k] = 1.0 / 0.0;
+                    }
+                } else {
+                    a[k] = fbits.decode(v);
+                }
+                at = e + 1;
+                k = k + 1;
+            }
+        }
+        if bad {
+            return (o, 0 - 1);
+        }
+        return (o, n);
+    }
+    return (box_slice(heap, 1, 0.0), 0 - 1);
+}
+
+fn hex16[&i](io: &!i Io, bits: int) -> [io_write] int {
+    var k = 0;
+    while k < 16 {
+        let nib = bits >> 60 - 4 * k & 15;
+        if nib < 10 {
+            putchar(io, '0' + nib);
+        } else {
+            putchar(io, 'a' + nib - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn operand[&g](g: &g Args, i: int) -> [args] &g [byte] {
+    if arg_count(g) <= i {
+        return "";
+    }
+    return arg(g, i);
+}
+
+fn num[&g](g: &g Args, i: int) -> [args] int {
+    if arg_count(g) <= i {
+        return 0 - 1;
+    }
+    let (ok, v) = parse_int(arg(g, i));
+    if ok == false {
+        return 0 - 1;
+    }
+    return v;
+}
+
+fn print_ints[&i, &a](io: &!i Io, name: &static [byte], a: &a [int], n: int) -> [io_write] int {
+    io.write_all(io, name);
+    io.write_all(io, " ");
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            io.write_all(io, ",");
+        }
+        io.print_int(io, a[k]);
+        k = k + 1;
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn print_floats[&i, &a](io: &!i Io, name: &static [byte], a: &a [float], n: int) -> [io_write] int {
+    io.write_all(io, name);
+    io.write_all(io, " ");
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            io.write_all(io, ",");
+        }
+        hex16(io, bits_of(a[k]));
+        k = k + 1;
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn refuse_line[&i](io: &!i Io, code: int, why: int, row: int, row2: int) -> [io_write] int {
+    io.write_all(io, "refused ");
+    io.write_all(io, refuse.tag(code));
+    io.write_all(io, " why ");
+    io.print_int(io, why);
+    io.write_all(io, " row ");
+    io.print_int(io, row);
+    io.write_all(io, " row2 ");
+    io.print_int(io, row2);
+    io.newline(io);
+    return refuse.exit_code(code);
+}
+
+fn run_log[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (ua, un) = make_ints(heap, operand(g, 5));
+    let (ia, inn) = make_ints(heap, operand(g, 6));
+    let (va, vn) = make_floats(heap, operand(g, 7));
+    var ub = ua;
+    var ib = ia;
+    var vb = va;
+    var status = 2;
+    if un >= 0 && inn >= 0 && vn >= 0 {
+        borrow ub as &ur in {
+            borrow ib as &ir in {
+                borrow vb as &vr in {
+                    let l = log.build(heap, contents(ur)[0..un], contents(ir)[0..inn], contents(vr)[0..vn], num(g, 2), num(g, 3), num(g, 4) == 1, num(g, 8));
+                    borrow l as &lr in {
+                        if lr.code != 0 {
+                            status = refuse_line(io, lr.code, lr.why, lr.row, lr.row2);
+                        } else {
+                            io.write_all(io, "nnz ");
+                            io.print_int(io, lr.nnz);
+                            io.newline(io);
+                            print_ints(io, "uoff", contents(lr.uoff), lr.nusers + 1);
+                            print_ints(io, "uitem", contents(lr.uitem), lr.nnz);
+                            print_floats(io, "uval", contents(lr.uval), lr.nnz);
+                            print_ints(io, "ioff", contents(lr.ioff), lr.nitems + 1);
+                            print_ints(io, "iuser", contents(lr.iuser), lr.nnz);
+                            print_floats(io, "ival", contents(lr.ival), lr.nnz);
+                            status = 0;
+                        }
+                    }
+                    log.drop(heap, l);
+                }
+            }
+        }
+    } else {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, ub);
+    unbox_slice(heap, ib);
+    unbox_slice(heap, vb);
+    return status;
+}
+
+fn run_split[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (ua, un) = make_ints(heap, operand(g, 2));
+    let (ta, tn) = make_ints(heap, operand(g, 3));
+    var ub = ua;
+    var tb = ta;
+    var status = 2;
+    if un >= 0 && tn >= 0 {
+        borrow ub as &ur in {
+            borrow tb as &tr in {
+                let (mask, code) = log.split_user_last(heap, contents(ur)[0..un], contents(tr)[0..tn], num(g, 4), num(g, 5));
+                if code != 0 {
+                    status = refuse_line(io, code, 0, 0, 0);
+                } else {
+                    borrow mask as &mr in {
+                        print_ints(io, "mask", contents(mr), un);
+                    }
+                    status = 0;
+                }
+                unbox_slice(heap, mask);
+            }
+        }
+    } else {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, ub);
+    unbox_slice(heap, tb);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(clock);
+    var code = 0;
+    borrow mut heap as &!hp in {
+        borrow mut io as &!ip in {
+            borrow args as &g in {
+                if arg_count(g) < 2 {
+                    code = 2;
+                } else if same(arg(g, 1), "log") {
+                    code = run_log(hp, ip, g);
+                } else if same(arg(g, 1), "split") {
+                    code = run_split(hp, ip, g);
+                } else {
+                    code = 2;
+                }
+            }
+        }
+    }
+    release(args);
+    release(heap);
+    release(io);
+    return code;
+}
