@@ -18,6 +18,5 @@ python3 scripts/gate_metrics.py --tags
 python3 scripts/oracle_metrics.py --ratio --draw --metrics --auc --sums --multiclass
 python3 scripts/oracle_metrics.py --splits
 python3 scripts/oracle_rank.py --controls --driver --metrics 300
-python3 scripts/oracle_recommend.py --controls --driver --metrics 300
 python3 scripts/oracle_metrics.py --sklearn --multiclass-sklearn
 python3 scripts/gate_metrics.py --fuzz

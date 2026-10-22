@@ -1,0 +1,373 @@
+module recommend.log;
+
+import ml.refuse;
+import metrics.rank;
+import metrics.ranking;
+import metrics.regress;
+
+// The interaction log of a recommender (docs/recommend.md section 2). The rows of the file carry a user number 0 .. U-1, an item number 0 .. I-1 (the rank of the id among the distinct
+// ids, bytewise: the reader of the tool gives them) and a value (an explicit rating, or the strength of an implicit event). `build` turns them into the two compressed forms the two half
+// passes of ALS and the neighbour method read: by user (items ascending) and by item (users ascending). A pair that occurs twice is a refusal (explicit) or the sum of its values in file
+// order (implicit). Every refusal is a core code and, in `why`, the reason the tool turns into its own rule tag; `row` and `row2` are the 0-based rows of the file.
+
+pub fn max_users() -> [] int {
+    return 1048576;
+}
+
+pub fn max_items() -> [] int {
+    return 1048576;
+}
+
+pub fn max_interactions() -> [] int {
+    return 33554432;
+}
+
+pub fn max_value() -> [] float {
+    return 1000000.0;
+}
+
+// the reasons
+pub fn why_bad_rating() -> [] int {
+    return 1;
+}
+
+pub fn why_duplicate() -> [] int {
+    return 2;
+}
+
+pub fn why_users() -> [] int {
+    return 3;
+}
+
+pub fn why_items() -> [] int {
+    return 4;
+}
+
+pub fn why_interactions() -> [] int {
+    return 5;
+}
+
+pub fn why_shape() -> [] int {
+    return 6;
+}
+
+pub struct Log {
+    code: int,
+    why: int,
+    row: int,
+    row2: int,
+    nusers: int,
+    nitems: int,
+    nnz: int,
+    uoff: Box[[int]],
+    uitem: Box[[int]],
+    uval: Box[[float]],
+    ioff: Box[[int]],
+    iuser: Box[[int]],
+    ival: Box[[float]],
+}
+
+fn refused[&h](heap: &!h Heap, code: int, why: int, row: int, row2: int) -> [heap] Log {
+    return Log { code: code, why: why, row: row, row2: row2, nusers: 0, nitems: 0, nnz: 0, uoff: box_slice(heap, 1, 0), uitem: box_slice(heap, 1, 0), uval: box_slice(heap, 1, 0.0), ioff: box_slice(heap, 1, 0), iuser: box_slice(heap, 1, 0), ival: box_slice(heap, 1, 0.0) };
+}
+
+pub fn drop[&h](heap: &!h Heap, l: Log) -> [heap] int {
+    let Log { code, why, row, row2, nusers, nitems, nnz, uoff, uitem, uval, ioff, iuser, ival } = l;
+    unbox_slice(heap, uoff);
+    unbox_slice(heap, uitem);
+    unbox_slice(heap, uval);
+    unbox_slice(heap, ioff);
+    unbox_slice(heap, iuser);
+    unbox_slice(heap, ival);
+    return 0;
+}
+
+// The first bad row in file order: (code, why, row), code 0 when every row is good. A row is bad when its user or item number is out of range, or its value is not finite or out of
+// range (explicit: |v| <= max_value(); implicit: 0 < v <= max_value()).
+fn first_bad_row[&u, &i, &v](uid: &u [int], iid: &i [int], vals: &v [float], nusers: int, nitems: int, implicit: bool) -> [] (int, int, int) {
+    var r = 0;
+    while r < len(uid) {
+        if uid[r] < 0 || uid[r] >= nusers || iid[r] < 0 || iid[r] >= nitems {
+            return (refuse.param_out_of_range(), why_shape(), r);
+        }
+        let x = vals[r];
+        if !(x - x == 0.0) {
+            return (refuse.input_non_finite(), why_bad_rating(), r);
+        }
+        if x > max_value() || x < 0.0 - max_value() || implicit && !(x > 0.0) {
+            return (refuse.param_out_of_range(), why_bad_rating(), r);
+        }
+        r = r + 1;
+    }
+    return (0, 0, 0);
+}
+
+// a stable counting sort of the rows in `src` (n entries) by key[row], keys in 0 .. k-1, into `dst`; `cnt` is scratch of k + 1 entries
+fn sort_by_key[&k, &s, &d, &c](key: &k [int], src: &s [int], dst: &!d [int], cnt: &!c [int], n: int, kn: int) -> [] int {
+    var j = 0;
+    while j <= kn {
+        cnt[j] = 0;
+        j = j + 1;
+    }
+    var r = 0;
+    while r < n {
+        cnt[key[src[r]] + 1] = cnt[key[src[r]] + 1] + 1;
+        r = r + 1;
+    }
+    j = 0;
+    while j < kn {
+        cnt[j + 1] = cnt[j + 1] + cnt[j];
+        j = j + 1;
+    }
+    r = 0;
+    while r < n {
+        dst[cnt[key[src[r]]]] = src[r];
+        cnt[key[src[r]]] = cnt[key[src[r]]] + 1;
+        r = r + 1;
+    }
+    return 0;
+}
+
+// Build the two forms of the log. uid, iid, vals: one entry per row of the file. nusers and nitems are the numbers of distinct ids (each id occurs, so each is at most the rows); n is at
+// most `cap` and at most max_interactions(). Answers the log or the refusal (code, why, rows).
+pub fn build[&h, &u, &i, &v](heap: &!h Heap, uid: &u [int], iid: &i [int], vals: &v [float], nusers: int, nitems: int, implicit: bool, cap: int) -> [heap] Log {
+    let n = len(uid);
+    if len(iid) != n || len(vals) != n {
+        return refused(heap, refuse.param_out_of_range(), why_shape(), 0, 0);
+    }
+    if n == 0 {
+        return refused(heap, refuse.input_empty(), why_shape(), 0, 0);
+    }
+    if n > max_interactions() || n > cap {
+        return refused(heap, refuse.too_many_rows(), why_interactions(), 0, 0);
+    }
+    if nusers > max_users() {
+        return refused(heap, refuse.param_out_of_range(), why_users(), 0, 0);
+    }
+    if nitems > max_items() {
+        return refused(heap, refuse.param_out_of_range(), why_items(), 0, 0);
+    }
+    if nusers < 1 || nitems < 1 || nusers > n || nitems > n {
+        return refused(heap, refuse.param_out_of_range(), why_shape(), 0, 0);
+    }
+    let (bc, bw, br) = first_bad_row(uid, iid, vals, nusers, nitems, implicit);
+    if bc != 0 {
+        return refused(heap, bc, bw, br, 0);
+    }
+    // the rows ordered by (user, item, row): a stable sort by item, then a stable sort by user
+    let ord0 = box_slice(heap, n + 1, 0);
+    let ord1 = box_slice(heap, n + 1, 0);
+    let ord2 = box_slice(heap, n + 1, 0);
+    var kmax = nusers;
+    if nitems > kmax {
+        kmax = nitems;
+    }
+    let cnt = box_slice(heap, kmax + 2, 0);
+    var empty_id = false;
+    borrow mut ord0 as &!o0 in {
+        borrow mut ord1 as &!o1 in {
+            borrow mut ord2 as &!o2 in {
+                borrow mut cnt as &!cw in {
+                    let a = contents(o0);
+                    var r = 0;
+                    while r < n {
+                        a[r] = r;
+                        r = r + 1;
+                    }
+                    sort_by_key(iid, a, contents(o1), contents(cw), n, nitems);
+                    // every item has a row: the counts of the first sort are cumulative, so look at the step between neighbours
+                    var j = 0;
+                    while j < nitems {
+                        if contents(cw)[j] == 0 || j > 0 && contents(cw)[j] == contents(cw)[j - 1] {
+                            empty_id = true;
+                        }
+                        j = j + 1;
+                    }
+                    sort_by_key(uid, contents(o1), contents(o2), contents(cw), n, nusers);
+                    j = 0;
+                    while j < nusers {
+                        if contents(cw)[j] == 0 || j > 0 && contents(cw)[j] == contents(cw)[j - 1] {
+                            empty_id = true;
+                        }
+                        j = j + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ord0);
+    unbox_slice(heap, ord1);
+    unbox_slice(heap, cnt);
+    if empty_id {
+        unbox_slice(heap, ord2);
+        return refused(heap, refuse.param_out_of_range(), why_shape(), 0, 0);
+    }
+    // the unique pairs, in (user, item) order: duplicates are adjacent, in file order
+    var nnz = 0;
+    var dup_a = 0 - 1;
+    var dup_b = 0 - 1;
+    borrow ord2 as &o2r in {
+        let o = contents(o2r);
+        var r = 0;
+        while r < n {
+            if r > 0 && uid[o[r]] == uid[o[r - 1]] && iid[o[r]] == iid[o[r - 1]] {
+                if dup_a < 0 {
+                    dup_a = o[r - 1];
+                    dup_b = o[r];
+                }
+            } else {
+                nnz = nnz + 1;
+            }
+            r = r + 1;
+        }
+    }
+    if dup_a >= 0 && implicit == false {
+        unbox_slice(heap, ord2);
+        return refused(heap, refuse.param_out_of_range(), why_duplicate(), dup_a, dup_b);
+    }
+    let uoff = box_slice(heap, nusers + 2, 0);
+    let uitem = box_slice(heap, nnz + 1, 0);
+    let uval = box_slice(heap, nnz + 1, 0.0);
+    let ioff = box_slice(heap, nitems + 2, 0);
+    let iuser = box_slice(heap, nnz + 1, 0);
+    let ival = box_slice(heap, nnz + 1, 0.0);
+    borrow ord2 as &o2r in {
+        borrow mut uoff as &!uw in {
+            borrow mut uitem as &!ui in {
+                borrow mut uval as &!uv in {
+                    let o = contents(o2r);
+                    let uo = contents(uw);
+                    let it = contents(ui);
+                    let vl = contents(uv);
+                    var k = 0 - 1;
+                    var r = 0;
+                    while r < n {
+                        if r > 0 && uid[o[r]] == uid[o[r - 1]] && iid[o[r]] == iid[o[r - 1]] {
+                            vl[k] = vl[k] + vals[o[r]];
+                        } else {
+                            k = k + 1;
+                            it[k] = iid[o[r]];
+                            vl[k] = vals[o[r]];
+                            uo[uid[o[r]] + 1] = uo[uid[o[r]] + 1] + 1;
+                        }
+                        r = r + 1;
+                    }
+                    var q = 0;
+                    while q < nusers {
+                        uo[q + 1] = uo[q + 1] + uo[q];
+                        q = q + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, ord2);
+    // the form by item: the unique pairs counted by item, then placed walking the users in order, so the users of an item come out ascending
+    let cur = box_slice(heap, nitems + 2, 0);
+    borrow uoff as &ur in {
+        borrow uitem as &ui in {
+            borrow uval as &uv in {
+                borrow mut ioff as &!iw in {
+                    borrow mut iuser as &!iu in {
+                        borrow mut ival as &!ivw in {
+                            borrow mut cur as &!cw in {
+                                let uo = contents(ur);
+                                let it = contents(ui);
+                                let vl = contents(uv);
+                                let io = contents(iw);
+                                let cu = contents(cw);
+                                var k = 0;
+                                while k < nnz {
+                                    io[it[k] + 1] = io[it[k] + 1] + 1;
+                                    k = k + 1;
+                                }
+                                var j = 0;
+                                while j < nitems {
+                                    io[j + 1] = io[j + 1] + io[j];
+                                    cu[j] = io[j];
+                                    j = j + 1;
+                                }
+                                var q = 0;
+                                while q < nusers {
+                                    k = uo[q];
+                                    while k < uo[q + 1] {
+                                        contents(iu)[cu[it[k]]] = q;
+                                        contents(ivw)[cu[it[k]]] = vl[k];
+                                        cu[it[k]] = cu[it[k]] + 1;
+                                        k = k + 1;
+                                    }
+                                    q = q + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, cur);
+    return Log { code: 0, why: 0, row: 0, row2: 0, nusers: nusers, nitems: nitems, nnz: nnz, uoff: uoff, uitem: uitem, uval: uval, ioff: ioff, iuser: iuser, ival: ival };
+}
+
+// The rows held out by `--split-user-last N` (docs/recommend.md section 7): for each user with more than N rows, its N latest by (time key, row), the later row last on a tie. `tkey` is
+// the order key of the time cell of every row. Answers (mask, code): mask[r] is 1 for a test row, 0 for a training row. A user with N rows or fewer is wholly in training.
+pub fn split_user_last[&h, &u, &t](heap: &!h Heap, uid: &u [int], tkey: &t [int], nusers: int, last: int) -> [heap] (Box[[int]], int) {
+    let n = len(uid);
+    if len(tkey) != n || n == 0 || last < 1 || nusers < 1 || nusers > n || nusers > max_users() || n > max_interactions() {
+        return (box_slice(heap, 1, 0), refuse.param_out_of_range());
+    }
+    var r = 0;
+    while r < n {
+        if uid[r] < 0 || uid[r] >= nusers {
+            return (box_slice(heap, 1, 0), refuse.param_out_of_range());
+        }
+        r = r + 1;
+    }
+    // latest first: the rows in reverse file order, then a stable sort by time key descending (equal keys keep the later row first), then a stable sort by user
+    let rev = box_slice(heap, n + 1, 0);
+    let tmp = box_slice(heap, n + 1, 0);
+    let byu = box_slice(heap, n + 1, 0);
+    let cnt = box_slice(heap, nusers + 2, 0);
+    let mask = box_slice(heap, n + 1, 0);
+    borrow mut rev as &!rw in {
+        borrow mut tmp as &!tw in {
+            borrow mut byu as &!bw in {
+                borrow mut cnt as &!cw in {
+                    borrow mut mask as &!mw in {
+                        let rv = contents(rw);
+                        let mk = contents(mw);
+                        var q = 0;
+                        while q < n {
+                            rv[q] = n - 1 - q;
+                            q = q + 1;
+                        }
+                        ranking.sort_desc(tkey, rv, contents(tw), n);
+                        sort_by_key(uid, rv, contents(bw), contents(cw), n, nusers);
+                        // the users' runs are contiguous in byu; the first `last` of each run are the latest
+                        let b = contents(bw);
+                        var pos = 0;
+                        while pos < n {
+                            var end = pos;
+                            while end < n && uid[b[end]] == uid[b[pos]] {
+                                end = end + 1;
+                            }
+                            if end - pos > last {
+                                var t = pos;
+                                while t < pos + last {
+                                    mk[b[t]] = 1;
+                                    t = t + 1;
+                                }
+                            }
+                            pos = end;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, rev);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, byu);
+    unbox_slice(heap, cnt);
+    return (mask, 0);
+}
