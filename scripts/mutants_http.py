@@ -108,7 +108,7 @@ MUTANTS = [
     M("s-unknown-count-dropped", "S1", "unknown_categories is always 0", [e(SRV, "unseen = json.to_int(payload, tp, unknown);", "unseen = 0;")], S1,
       why="a vocabulary the file lists in full is an enum, so a category the model has not seen is refused before the predictor counts it; the count is nonzero only for a hash column, which counts none"),
     M("s-out-of-range-dropped", "S1", "the answer's out_of_range is always null", [e(SRV, "                if oor >= 0 {\n                    w = track.put_node(heap, w, payload, tp, oor);", "                if false {\n                    w = track.put_node(heap, w, payload, tp, oor);")], ["test_serve_bytes", "test_track.Serve"]),
-    M("s-out-of-range-bound-ignored", "S1", "--max-out-of-range is not passed to the predictor", [e(SRV, "sv.max_oor, sv.max_oor_given);", "0, false);")], ["test_track.Serve"]),
+    M("s-out-of-range-bound-ignored", "S1", "--max-out-of-range is not passed to the predictor", [e(SRV, "sv.max_oor, sv.max_oor_given, batch);", "0, false, batch);")], ["test_track.Serve"]),
     # ------------------------------------------------------------------ S2: the process
     M("m-all-needs-no-token", "S10", "--bind all starts with neither --token-file nor --no-token", [e(MAIN, "} else if everywhere && !argv.has(src, \"token-file\") {", "} else if false {")], B),
     M("m-all-accepts-no-token", "S10", "--bind all --no-token is served: an open server on every address", [e(MAIN, "} else if everywhere && argv.has(src, \"no-token\") {", "} else if false {")], B),
@@ -156,6 +156,11 @@ MUTANTS = [
     M("w-a-copy-of-schema", "W1", "a file under lib declares module schema", [], kind="pin", create=[("lib/core/schema_copy.cho", "module schema;\n")]),
     M("w-a-copy-of-the-server", "W1", "a file under tools declares module http.server", [], kind="pin", create=[("tools/ml-serve/server_copy.cho", "module http.server;\n")]),
     M("w-bins-differ", "W2", "build/ml is not the bytes a build without the three dependencies makes (a byte of the binary is changed)", [], kind="bins", flip=("build/ml", 5000)),
+    # ------------------------------------------------------------------ RK12: a ranking model served (docs/ranking.md section 7)
+    M("r-the-batch-is-not-one-group", "RK12", "the records of a batch are not ranked (the option is off)", [e(SRV, "sv.max_oor, sv.max_oor_given, batch);", "sv.max_oor, sv.max_oor_given, false);")], ["test_serve_rank"]),
+    M("r-one-record-is-ranked", "RK12", "a single record is ranked too", [e(SRV, "sv.max_oor, sv.max_oor_given, batch);", "sv.max_oor, sv.max_oor_given, true);")], ["test_serve_rank"]),
+    M("r-every-model-is-ranked", "RK12", "a batch of a model that does not rank gets a rank column", [e("tools/ml/wireio.cho", "let serve_rank = o.one_group && stored.rank;", "let serve_rank = o.one_group;")], ["test_serve_rank"]),
+    M("r-each-row-its-own-group", "RK12", "the rows of a batch are numbered as groups of their own", [e("tools/ml/wireio.cho", "            gall = box_slice(heap, nr0 + 1, 0);\n            ngall = 1;", "            gall = box_slice(heap, nr0 + 1, 0);\n            var gi = 0;\n            borrow mut gall as &!gaw in {\n                while gi < nr0 {\n                    contents(gaw)[gi] = gi;\n                    gi = gi + 1;\n                }\n            }\n            ngall = nr0;")], ["test_serve_rank"]),
 ]
 
 

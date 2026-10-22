@@ -60,7 +60,7 @@ pub fn defs[&s](verb: &s [byte]) -> [] &static [byte] {
         return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 mtry:int=0,4096:=0 bootstrap:int=0,1:=1 max-nodes:int=1,999999999:=4194304";
     }
     if bytes.equal(verb, "model:boost") {
-        return "task:enum=classification,regression,ranking:req rounds:int=1,10000:=100 learning-rate:fnn:=0.1 max-depth:int=1,1000:=4 min-leaf:int=1,1000000:=10 bins:int=2,255:=64 l2:fnn:=1.0 subsample:fnn:=1.0 early-stopping:int=0,1000:=0 max-nodes:int=1,999999999:=4194304";
+        return "task:enum=classification,regression,ranking,lambdarank:req rounds:int=1,10000:=100 learning-rate:fnn:=0.1 max-depth:int=1,1000:=4 min-leaf:int=1,1000000:=10 bins:int=2,255:=64 l2:fnn:=1.0 subsample:fnn:=1.0 early-stopping:int=0,1000:=0 max-nodes:int=1,999999999:=4194304";
     }
     if bytes.equal(verb, "model:softmax") {
         return "iterations:int=1,1000:=100 l2:fnn:=0.0";
@@ -89,7 +89,7 @@ pub fn model_defs[&s](name: &s [byte]) -> [] &static [byte] {
         return "task:enum=classification,regression:req trees:int=1,1024:=100 max-depth:int=1,1000:=8 min-leaf:int=1,1000000:=1 bins:int=2,255:=64 mtry:int=0,4096:=0 bootstrap:int=0,1:=1 max-nodes:int=1,999999999:=4194304";
     }
     if bytes.equal(name, "boost") {
-        return "task:enum=classification,regression,ranking:req rounds:int=1,10000:=100 learning-rate:fnn:=0.1 max-depth:int=1,1000:=4 min-leaf:int=1,1000000:=10 bins:int=2,255:=64 l2:fnn:=1.0 subsample:fnn:=1.0 early-stopping:int=0,1000:=0 max-nodes:int=1,999999999:=4194304";
+        return "task:enum=classification,regression,ranking,lambdarank:req rounds:int=1,10000:=100 learning-rate:fnn:=0.1 max-depth:int=1,1000:=4 min-leaf:int=1,1000000:=10 bins:int=2,255:=64 l2:fnn:=1.0 subsample:fnn:=1.0 early-stopping:int=0,1000:=0 max-nodes:int=1,999999999:=4194304";
     }
     if bytes.equal(name, "softmax") {
         return "iterations:int=1,1000:=100 l2:fnn:=0.0";

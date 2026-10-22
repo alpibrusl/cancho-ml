@@ -76,6 +76,8 @@ pub struct Opts {
     track_given: bool,
     // fit: whether --absent is empty: what a run record holds of the input format, with the --fields list that is read from the command line (docs/jsonl.md section 4)
     absent_empty: bool,
+    // predict (ml-serve): the rows are one group, so a ranking model adds the rank column with no --group (docs/ranking.md section 7); false on every command line
+    one_group: bool,
 }
 
 // What a verb hands back. `payload` is the `data` object, `plain` the text of --format text, `extra` the keys of a dry run

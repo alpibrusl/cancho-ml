@@ -17,12 +17,14 @@ CASES = 24
 
 
 class RankOracle(unittest.TestCase):
-    def suite(self, weighted):
+    def suite(self, weighted, lam=False):
         bad = []
         with tempfile.TemporaryDirectory() as td:
             tmp = pathlib.Path(td)
             for seed in range(1, CASES + 1):
                 case = owr.gen_case(seed * 7919 + 211, weighted=weighted)
+                if lam:
+                    case.task = "lambdarank"
                 pr = owb.run_case(case, tmp, threads=1 + seed % 4)
                 if not pr and (tmp / "m.cml").exists():
                     for k, gain in ((10, "exp"), (3, "linear"), (0, "exp"), (1, "exp")):
@@ -38,6 +40,12 @@ class RankOracle(unittest.TestCase):
 
     def test_weighted_ranking(self):
         self.suite(True)
+
+    def test_lambdarank(self):
+        self.suite(False, True)
+
+    def test_weighted_lambdarank(self):
+        self.suite(True, True)
 
     def test_the_weights_reach_the_file(self):
         import copy
