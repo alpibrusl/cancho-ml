@@ -103,3 +103,17 @@ New rule tags **[choice]**: `ml.rank.bad-relevance`, `ml.rank.group-missing`, `m
 * **[open]** Whether the pairwise or the LambdaRank objective is the default after R4 is decided by the gates, not assumed.
 * **[open]** A weighted mean of the per-group metrics (by group size, or by a group weight) is not built; the mean is over groups.
 * **[open]** `MAP` uses `rel > 0` as relevant; a threshold flag (`--relevant-from R`) is a small addition if a graded file needs it.
+
+## 10. Results
+
+### 10.1 Stage R1: the metrics
+
+Machine: Linux x86-64, 4 cores, the compiler at `0207556`, one run of each script.
+
+* **Where.** `lib/metrics/ranking.cho` (`ranking.evaluate`): rows with a group number `0 .. G-1`, a relevance and a score; the driver `tools/metrics-check` has a `rank` mode; the oracle, written before the library, is `scripts/oracle_rank.py`. Nothing of it is reachable from `ml` yet (stage R2 reads the group column). The library answers the existing tags of `metrics.rules` (`ml.metric.length-mismatch`, `ml.input.empty`, `ml.input.too-many-rows`, `ml.input.non-finite`, `ml.param.out-of-range`); the tags of section 7 (`ml.rank.bad-relevance`, `ml.limit.group-size`) are those of the tool that reads the file, which checks the relevance and the group size first and so tells the user which row and which limit. The library's own check is the second line.
+* **RK1, the oracle, bit for bit.** `oracle_rank.py --metrics 300`: 300 seeded cases (1 to 40 groups of 1 to 200 rows, relevance 0 to 1, 0 to 4, 0 to 30 or all 0, scores with ties and with both zeros, rows of a group not next to each other in 133 cases, `k` of 0, 1, 2, 3, 5, 10, 100 and 4096, both gains; 69 cases with no scored group, 94 with some groups left out, 224 with equal scores): every per-group sum and every mean, `groups` and `scored` **equal the oracle's bits in all 300**.
+* **RK2, the controls.** The tie rule (the relevant row first or last in the file gives NDCG@1 of 1 or 0), `-0.0` and `0.0` one score, a group with no relevant row among others (`groups 2, scored 1`), every group empty (all four metrics undefined, precision 0, not a refusal), the textbook group (relevance 3 2 3 0 1 2, within 1e-12 of `math.log2` — the only comparison with a library function, a check of the *definition* and not of the bits), precision@k of a group smaller than `k`, MRR past `k`, AP of a hand-worked group: all as defined, in the oracle and again through the compiled driver.
+* **Refusals through the driver** (RK7, the part that belongs to this stage): a length mismatch, an empty input, a non-finite score, a relevance of 31 or -1, `k` of 4,097 or -1, more rows than the cap, a group number with no row, more groups than rows, a group of 4,097 rows: each its tag and exit code, none a trap.
+* **Mutants** (`scripts/mutants_rank.py`, RK11): **19 killed, 0 survive.** The first run left one: the control for a group number with no row also tripped the earlier check "more groups than rows", so the empty-group check was never what refused it; the control now has enough rows for that check to pass, and the case "more groups than rows" is its own control.
+
+**Not measured at this stage:** the speed of the metrics (they sort each group once; no speed is claimed); the group file reader and the flags (R2); the pair loop and its limits (R3).
