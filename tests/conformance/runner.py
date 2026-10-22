@@ -91,6 +91,9 @@ def judge(c, sb, r):
                 problems.append("expected success, got %r" % doc.get("error"))
             if ex.get("data") is not None:
                 problems += subset(ex["data"], doc.get("data"), "data")
+            d = doc.get("data")
+            if isinstance(d, dict) and isinstance(d.get("rows"), list) and isinstance(d.get("row_count"), int) and len(d["rows"]) != d["row_count"]:
+                problems.append("row_count %d but %d rows are written" % (d["row_count"], len(d["rows"])))
             if ex.get("dry_run") and doc.get("dry_run") is not True:
                 problems.append("dry_run is not true")
             if ex.get("repair_retry"):
