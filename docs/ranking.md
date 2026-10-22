@@ -56,7 +56,13 @@ These are the first and the second derivative of the pair's loss with respect to
 
 **The cost.** The loop is over the pairs, `(g^2 - sum c_r^2) / 2` per group, no more than `2^28` per round. **[estimate]** it is the dominant cost of a ranking fit and R3 measures it before the limit above is fixed.
 
-**LambdaRank (stage R4).** The pair's `w_ij` is multiplied by `|delta NDCG_ij|`, the absolute change of the group's NDCG@`k` when the rows `i` and `j` swap places in the **current ranking** (with the tie rule of section 3), divided by the group's `IDCG`; a group with `IDCG = 0` has no pair. The ranks come from one sort of the group per round (ties by file order). This is a second objective of the same task (`--rank-objective lambdarank`, the pairwise one the default until R4's gates say which is better **[open]**); it changes only `w_ij`, so R3 builds the loop to take it.
+**LambdaRank (stage R4a).** `--task lambdarank` is the pairwise loop of this section with the pair's weight multiplied by `|delta NDCG_ij|`: the absolute change of the group's NDCG when the rows `i` and `j` swap places in the **current ranking** (the rows of the group sorted by `F` descending, ties by file order, as in section 3), that is
+
+* `delta_ij = |(2^rel_i - 2^rel_j) * (D(r_i) - D(r_j))| / IDCG`, with `D(r) = 1 / (log(r + 1) / log 2)` the discount of section 3 (`std.math.log`, one table of `D` for ranks 1 to `G_max` built per round), `r_i` and `r_j` the 1-based ranks of the two rows, `IDCG` the group's ideal DCG over **all** its rows;
+* the NDCG is **not truncated** (`k` is the group size) **[choice: a cutoff would be a new hyperparameter, and the plan text of every boost file would change; the metric `eval --rank-k` still reports any `k`]**;
+* a pair weight is `w_i * w_j * delta_ij`, in the same fixed order of the sums; a group with `IDCG = 0` (every relevance 0) has no pair, as in section 4.
+
+This is **not** the gradient of a loss, so the finite-difference gate (RK3) does not apply to it; it is judged by the oracle (LR1), by control cases whose `delta` is known by hand (LR2), and by NDCG on held-out groups against the pairwise objective (LR3), measured, not assumed. **A choice forced by the bytes of existing files (as in 10.2):** the task is the fourth value of `task` (printed in the plan only when chosen), and the **payload** of the file says task 2, as a pairwise ranking file does, because nothing after the fit (`predict`, `eval`, the reader) depends on which weights made the trees. The plan text in the file says `lambdarank`. `--rank-objective` is dropped from the design.
 
 ## 5. Weights
 
@@ -95,12 +101,15 @@ New rule tags **[choice]**: `ml.rank.bad-relevance`, `ml.rank.group-missing`, `m
 | RK9 | **Weights**: unit weights give the bytes of the unweighted fit exactly (`1.0 * 1.0`); integer weights `w_i` equal the file with the rows repeated for the rows' **pairs** (`w_i * w_j` pairs of copies), within a bound fixed in the test | tests | the pair weight `w_i + w_j` |
 | RK10 | **Another library's `rank:pairwise`** only if installed here, with the bound fixed in advance in the script; nothing is claimed against any library that was not measured | `scripts/gate_wire_sklearn_*`-style, on request | not applicable |
 | RK11 | **Mutants** of the code of every stage: all killed, or each survivor explained | `scripts/mutants_rank.py` | itself |
+| LR1 | **LambdaRank against the oracle, byte for byte**: the Python oracle (`oracle_rank.py`, the sort, the discount table and `IDCG` written from section 4 with no cancho code) in the boost oracle writes the file `ml fit --task lambdarank` writes, on the generated groups of RK4 with and without weights; `predict` and the `eval` metrics equal its doubles | `oracle_wire_boost.py --ranking --lambda`, `test_wire_rank_oracle.py` | the discount `log2(r)`; the gain `2^rel`; `IDCG` of the predicted order; the ranks sorted ascending; the tie broken by the later row; the weight without `delta` |
+| LR2 | **Controls with `delta` known by hand**: a group of two rows (the rank flips with `F`), a group of three rows and relevances 2, 1, 0 with the scores in each of the six orders, equal scores | a test of `rankgrad` through a check driver | the swap of the ranks of `i` and `j` |
+| LR3 | **NDCG against the pairwise objective**: the held-out `ndcg` of `ranking` and `lambdarank` on the seeded files of RK4, both reported with the seeds, whichever is better | `scripts/` + section 10.3 | not applicable |
 | RK12 | **`ml-serve` byte equality**, `describe`, the tool schemas of `ml-mcp`, the tables regenerated and checked | existing checks | |
 
 ## 9. Open questions
 
 * **[open]** The two limits of section 2 (4,096 rows and `2^28` pairs) are guesses; R3 measures the pair loop on one core (rows per second at several group sizes) and fixes them from the numbers, correcting this document.
-* **[open]** Whether the pairwise or the LambdaRank objective is the default after R4 is decided by the gates, not assumed.
+* **[open]** Whether LambdaRank beats the pairwise objective is a measurement of LR3 and is reported there; `--task ranking` stays the pairwise one either way (its bytes are already released).
 * **[open]** A weighted mean of the per-group metrics (by group size, or by a group weight) is not built; the mean is over groups.
 * **[open]** `MAP` uses `rel > 0` as relevant; a threshold flag (`--relevant-from R`) is a small addition if a graded file needs it.
 
