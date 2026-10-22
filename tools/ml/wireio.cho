@@ -1146,8 +1146,10 @@ pub fn predict_loaded[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte]
         go = false;
     }
     // --rank --group COLUMN on a ranking model add the rank of each row inside its group; they go together, and only with a ranking model (docs/ranking.md section 7)
-    let want_rank = argv.has(src, "rank");
-    if go && (want_rank || argv.has(src, "group")) {
+    // ml-serve: the rows of a batch are one group (docs/ranking.md section 7), so a ranking model adds the rank column and no --group is read
+    let serve_rank = o.one_group && stored.rank;
+    let want_rank = argv.has(src, "rank") || serve_rank;
+    if go && !serve_rank && (want_rank || argv.has(src, "group")) {
         if !stored.rank {
             e = rankcol.unsupported(heap, e);
             go = false;
@@ -1178,12 +1180,19 @@ pub fn predict_loaded[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte]
         borrow inp as &ir0 in {
             nr0 = matrix.rows(ir0.x);
         }
-        let (g2, n2, ok2, e2) = rankcol.read(heap, argv.text(src, "group"), fs, root, file, o, nr0, e);
-        unbox_slice(heap, gall);
-        gall = g2;
-        ngall = n2;
-        e = e2;
-        go = ok2;
+        if serve_rank {
+            // every row is group 0
+            unbox_slice(heap, gall);
+            gall = box_slice(heap, nr0 + 1, 0);
+            ngall = 1;
+        } else {
+            let (g2, n2, ok2, e2) = rankcol.read(heap, argv.text(src, "group"), fs, root, file, o, nr0, e);
+            unbox_slice(heap, gall);
+            gall = g2;
+            ngall = n2;
+            e = e2;
+            go = ok2;
+        }
     }
     if go {
         let none = box_slice(heap, 1, 0);

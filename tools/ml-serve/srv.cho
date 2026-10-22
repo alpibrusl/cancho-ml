@@ -321,13 +321,13 @@ fn is_json_type[&c](value: &c [byte]) -> [] bool {
 }
 
 // the options the predictor is called with: the rows of a request, as many cells as the model's columns allow, the answer's columns the model has
-fn options(columns: int, rows: int, max_bytes: int, proba: bool, distance: bool, body_cap: int, limit: int, max_oor: int, max_oor_given: bool) -> [] verbs.Opts {
-    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, plan_given: false, step_given: false, positive_given: false, split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cat_given: false, max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128, max_oor: max_oor, max_oor_given: max_oor_given, drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: 0, split_num: 0, split_den: 0, track_given: false, absent_empty: false };
+fn options(columns: int, rows: int, max_bytes: int, proba: bool, distance: bool, body_cap: int, limit: int, max_oor: int, max_oor_given: bool, one_group: bool) -> [] verbs.Opts {
+    return verbs.Opts { cap: 2 * body_cap + 1024, max_rows: rows, max_cols: 8192, max_cells: rows * 8192, max_bytes: max_bytes, limit: limit, from: 0, overwrite: false, dry: false, drop_given: false, task: 1, plan_given: false, step_given: false, positive_given: false, split_given: false, seed: 0, threads: 1, threads_given: false, proba: proba, distance: distance, target_given: false, task_given: false, cat_given: false, max_cats: 64, max_str: 255, max_pool: 1048576, max_catcols: 128, max_oor: max_oor, max_oor_given: max_oor_given, drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: 0, split_num: 0, split_den: 0, track_given: false, absent_empty: false, one_group: one_group };
 }
 
 // the options `describe` is called with: the most category strings listed per column, and the largest model file
 pub fn describe_opts(limit: int, max_bytes: int) -> [] verbs.Opts {
-    return options(1, 1, max_bytes, false, false, 0, limit, 0, false);
+    return options(1, 1, max_bytes, false, false, 0, limit, 0, false, false);
 }
 
 // The CSV of the records and the predictor on it. `first` is the tape node of the first record, `n` how many, `batch` whether a pointer names the row.
@@ -382,7 +382,7 @@ fn run_rows[&h, &s, &f, &r, &b, &t, &cl](heap: &!h Heap, sv: &s Served, src: &cl
     } else {
         model = paths.of_mem(heap, buffer.bytes(sv.model), "model");
     }
-    let o = options(cols.count(cs), n, sv.max_model, api.with_proba(sv.built), api.with_distance(sv.built), sv.max_body, n, sv.max_oor, sv.max_oor_given);
+    let o = options(cols.count(cs), n, sv.max_model, api.with_proba(sv.built), api.with_distance(sv.built), sv.max_body, n, sv.max_oor, sv.max_oor_given, batch);
     var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
     borrow data as &dr in {
         borrow model as &mr in {
