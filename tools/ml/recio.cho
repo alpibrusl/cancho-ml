@@ -1,0 +1,221 @@
+edition 6;
+
+module ml.recio;
+
+// A recommender's model file, read (docs/wiring-recommend.md sections 3 and 5): the checks of the file and of the payload, `describe`, and the lists of `predict`. The matrix verbs of
+// ml.wireio never see such a file: it has no feature matrix, so they hand it to this module as soon as its kind is known.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.argv;
+import ml.est;
+import ml.fsio;
+import ml.paths;
+import ml.recload;
+import ml.recwire;
+import ml.refuse;
+import ml.verbs;
+import ml.wiredata;
+import metrics.rank;
+import metrics.recommend;
+import pipeline.file;
+import pipeline.plan;
+import pipeline.schema;
+import recommend.als;
+import recommend.log;
+import recommend.model;
+import toolbox.fail;
+import toolbox.text;
+import transforms.codes;
+
+// The checks of a file of kind 10: the sections (pipeline.file), the plan against the payload, the schema against the plan, and the payload (recommend.model.read). (model, schema, ok, errors).
+// The model is empty when `ok` is false.
+pub fn load[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], errs: fail.Errors) -> [heap] (model.Model, schema.Schema, bool, fail.Errors) {
+    var e = errs;
+    let (lo, f) = file.decode(heap, data);
+    if f.code != 0 {
+        file.drop(heap, lo);
+        return (model.read(heap, ""), schema.empty(heap), false, wiredata.file_fault(heap, e, f, shown));
+    }
+    let bad4 = codes.fault(codes.malformed(), 4, 0, 0);
+    let bad2 = codes.fault(codes.malformed(), 2, 0, 0);
+    let bad1 = codes.fault(codes.malformed(), 1, 0, 0);
+    let bad5 = codes.fault(codes.malformed(), 5, 0, 0);
+    var kind = 0;
+    var rows = 0;
+    borrow lo as &lr in {
+        kind = file.model_kind(lr);
+        rows = file.rows(lr);
+    }
+    if kind != est.kind_named("recommend") {
+        file.drop(heap, lo);
+        return (model.read(heap, ""), schema.empty(heap), false, wiredata.file_fault(heap, e, bad4, shown));
+    }
+    var mo = model.read(heap, "");
+    var mcode = 0;
+    var tcode = 0;
+    borrow lo as &lr in {
+        model.drop(heap, mo);
+        mo = model.read(heap, file.model_bytes(lr));
+    }
+    borrow mo as &mr in {
+        mcode = mr.code;
+    }
+    if mcode == 2 {
+        tcode = 1;
+    }
+    if mcode != 0 {
+        file.drop(heap, lo);
+        if tcode == 1 {
+            return (mo, schema.empty(heap), false, wiredata.file_fault(heap, e, codes.fault(codes.truncated(), 0, 0, 0), shown));
+        }
+        return (mo, schema.empty(heap), false, wiredata.file_fault(heap, e, bad4, shown));
+    }
+    // the plan: its model line agrees with the payload (the feedback, the factors, the passes)
+    var agree = true;
+    borrow lo as &lr in {
+        let (pl, pf) = plan.parse(heap, file.plan_bytes(lr));
+        if pf.code != 0 {
+            agree = false;
+        } else {
+            let ip = box_slice(heap, 8, 0);
+            let fp = box_slice(heap, 8, 0.0);
+            var bad = 1;
+            borrow pl as &pr in {
+                borrow mut ip as &!iw in {
+                    borrow mut fp as &!fw in {
+                        bad = est.hparams(kind, plan.model_line(pr), contents(iw), contents(fw));
+                    }
+                }
+            }
+            borrow ip as &ir in {
+                borrow mo as &mr in {
+                    var method = 0;
+                    if mr.implicit {
+                        method = 1;
+                    }
+                    if bad != 0 || contents(ir)[0] != mr.f || contents(ir)[1] != mr.iterations || contents(ir)[2] != method {
+                        agree = false;
+                    }
+                }
+            }
+            unbox_slice(heap, ip);
+            unbox_slice(heap, fp);
+        }
+        plan.drop(heap, pl);
+    }
+    if !agree {
+        file.drop(heap, lo);
+        return (mo, schema.empty(heap), false, wiredata.file_fault(heap, e, bad1, shown));
+    }
+    // the schema: the user and item columns and, for the explicit form, the rating
+    var sc = schema.empty(heap);
+    var scode = 0;
+    borrow lo as &lr in {
+        let (s2, c2) = schema.decode(heap, file.schema_bytes(lr));
+        schema.drop(heap, sc);
+        sc = s2;
+        scode = c2;
+    }
+    var shape_ok = scode == 0;
+    if shape_ok {
+        borrow sc as &sr in {
+            borrow mo as &mr in {
+                let cols = schema.columns(sr);
+                if schema.has_target(sr) || cols < 2 || cols > 3 || !mr.implicit && cols != 3 {
+                    shape_ok = false;
+                }
+            }
+        }
+    }
+    if !shape_ok {
+        file.drop(heap, lo);
+        return (mo, sc, false, wiredata.file_fault(heap, e, bad2, shown));
+    }
+    var nnz = 0;
+    borrow mo as &mr in {
+        nnz = mr.nnz;
+    }
+    file.drop(heap, lo);
+    if rows != nnz {
+        return (mo, sc, false, wiredata.file_fault(heap, e, bad5, shown));
+    }
+    return (mo, sc, true, e);
+}
+
+// ---------------------------------------------------------------- describe
+
+fn put_ids[&h, &n](heap: &!h Heap, w0: json.Writer, key: &static [byte], name: &n [byte]) -> [heap] json.Writer {
+    return verbs.put_name(heap, w0, key, name);
+}
+
+// `describe` of a recommender's file (the bytes are read already): what a caller needs to know to use it
+pub fn describe[&h, &d, &p](heap: &!h Heap, data: &d [byte], shown: &p [byte], o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap] verbs.Out {
+    let (mo, sc, ok, e) = load(heap, data, shown, errs);
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if ok {
+        borrow mo as &mr in {
+            borrow sc as &sr in {
+                var w = json.writer(heap, 768);
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "model");
+                w = json.put_string(heap, w, "recommend");
+                w = json.put_key(heap, w, "task");
+                w = json.put_string(heap, w, "recommendation");
+                w = json.put_key(heap, w, "method");
+                w = json.put_string(heap, w, "als");
+                w = json.put_key(heap, w, "feedback");
+                if mr.implicit {
+                    w = json.put_string(heap, w, "implicit");
+                } else {
+                    w = json.put_string(heap, w, "explicit");
+                }
+                w = json.put_key(heap, w, "columns");
+                w = json.begin_object(heap, w);
+                w = put_ids(heap, w, "user", schema.name(sr, 0));
+                w = put_ids(heap, w, "item", schema.name(sr, 1));
+                if schema.columns(sr) == 3 {
+                    w = put_ids(heap, w, "rating", schema.name(sr, 2));
+                } else {
+                    w = json.put_key(heap, w, "rating");
+                    w = json.put_null(heap, w);
+                }
+                w = json.end_object(heap, w);
+                w = json.put_key(heap, w, "users");
+                w = json.put_int(heap, w, mr.nusers);
+                w = json.put_key(heap, w, "items");
+                w = json.put_int(heap, w, mr.nitems);
+                w = json.put_key(heap, w, "interactions");
+                w = json.put_int(heap, w, mr.nnz);
+                w = json.put_key(heap, w, "density");
+                w = verbs.put_double(heap, w, bits_of(float_of(mr.nnz) / (float_of(mr.nusers) * float_of(mr.nitems))));
+                w = json.put_key(heap, w, "factors");
+                w = json.put_int(heap, w, mr.f);
+                w = json.put_key(heap, w, "iterations");
+                w = json.put_int(heap, w, mr.iterations);
+                w = json.put_key(heap, w, "lambda");
+                w = verbs.put_double(heap, w, bits_of(mr.lambda));
+                w = json.put_key(heap, w, "alpha");
+                w = verbs.put_double(heap, w, bits_of(mr.alpha));
+                w = json.put_key(heap, w, "seed");
+                w = json.put_int(heap, w, mr.seed);
+                w = json.put_key(heap, w, "holds_log");
+                w = json.put_bool(heap, w, true);
+                w = json.put_key(heap, w, "cold_start");
+                w = json.put_string(heap, w, "refused");
+                w = json.end_object(heap, w);
+                buffer.drop(heap, payload);
+                payload = json.finish(w);
+                plain = verbs.line_int(heap, plain, "model: recommend, users ", mr.nusers);
+                plain = verbs.line_int(heap, plain, "items ", mr.nitems);
+                plain = verbs.line_int(heap, plain, "interactions ", mr.nnz);
+                plain = verbs.line_int(heap, plain, "factors ", mr.f);
+            }
+        }
+    }
+    model.drop(heap, mo);
+    schema.drop(heap, sc);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+}

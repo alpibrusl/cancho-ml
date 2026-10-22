@@ -1,0 +1,499 @@
+edition 6;
+
+module ml.recload;
+
+// The log of a recommender, read from a CSV (docs/wiring-recommend.md section 3): the columns named by --user, --item, --rating and --time are cut out of the file (ml.splitcol), the ids are
+// numbered by the bytewise rank of the distinct cells (so a shuffled file gives the same numbers), the ratings are read as numbers and the times as order keys. Nothing is sized by the
+// data before its bound is checked: the rows are capped by --max-rows and the interactions limit, the ids by the limits of recommend.log.
+
+import std.buffer;
+import std.bytes;
+import ml.csvcell;
+import ml.fsio;
+import ml.paths;
+import ml.spec;
+import ml.splitcol;
+import ml.splitspec;
+import ml.verbs;
+import ml.wiredata;
+import recommend.log;
+import toolbox.fail;
+
+// the rows of the file and the id tables. n rows; user numbers uid and item numbers iid (n each); the values (1.0 for a log with no rating column); the order key of the time of every row
+// (a dense rank, equal times equal), or an empty array when there is no time column; the id tables as (bytes, offsets) of nu + 1 and ni + 1 offsets.
+pub struct Rows {
+    ok: bool,
+    n: int,
+    nu: int,
+    ni: int,
+    uid: Box[[int]],
+    iid: Box[[int]],
+    vals: Box[[float]],
+    tkey: Box[[int]],
+    ubytes: Box[[byte]],
+    uoffs: Box[[int]],
+    ibytes: Box[[byte]],
+    ioffs: Box[[int]],
+}
+
+pub fn drop[&h](heap: &!h Heap, r: Rows) -> [heap] int {
+    let Rows { ok, n, nu, ni, uid, iid, vals, tkey, ubytes, uoffs, ibytes, ioffs } = r;
+    unbox_slice(heap, uid);
+    unbox_slice(heap, iid);
+    unbox_slice(heap, vals);
+    unbox_slice(heap, tkey);
+    unbox_slice(heap, ubytes);
+    unbox_slice(heap, uoffs);
+    unbox_slice(heap, ibytes);
+    unbox_slice(heap, ioffs);
+    return n;
+}
+
+fn nothing[&h](heap: &!h Heap) -> [heap] Rows {
+    return Rows { ok: false, n: 0, nu: 0, ni: 0, uid: box_slice(heap, 1, 0), iid: box_slice(heap, 1, 0), vals: box_slice(heap, 1, 0.0), tkey: box_slice(heap, 1, 0), ubytes: box_slice(heap, 1, byte_of(0)), uoffs: box_slice(heap, 1, 0), ibytes: box_slice(heap, 1, byte_of(0)), ioffs: box_slice(heap, 1, 0) };
+}
+
+fn min_of(a: int, b: int) -> [] int {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// one column of the file: (text, offsets, rows, ok, errors)
+fn column[&h, &d, &n](heap: &!h Heap, data: &d [byte], flag: &static [byte], name: &n [byte], o: verbs.Opts, errs: fail.Errors) -> [heap] (buffer.Buffer, Box[[int]], int, bool, fail.Errors) {
+    var e = errs;
+    let cap = min_of(o.max_rows, log.max_interactions());
+    let (text, off, rows, xs) = splitcol.extract(heap, data, name, cap);
+    if xs == 0 {
+        return (text, off, rows, true, e);
+    }
+    if xs == 1 {
+        var w = wiredata.open_tag(heap, "ml.input.unknown-column");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_str(heap, w, "flag", flag);
+        w = fail.detail_text(heap, w, "name", name);
+        e = fail.add(heap, e, w);
+    } else if xs == 2 && o.max_rows >= log.max_interactions() {
+        var w = wiredata.open_tag(heap, "ml.limit.interactions");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "max", log.max_interactions());
+        e = fail.add(heap, e, w);
+    } else if xs == 2 {
+        var w = wiredata.open_tag(heap, "ml.input.too-many-rows");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "max", o.max_rows);
+        e = fail.add(heap, e, w);
+    } else {
+        var w = wiredata.open_tag(heap, "parse.csv-ragged-row");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "rows", rows);
+        e = fail.add(heap, e, w);
+    }
+    return (text, off, rows, false, e);
+}
+
+// the id table of a column whose cells were numbered `rank` (count distinct): the bytes of the distinct cells in rank order and the offsets. Each id is 1 to 255 bytes (checked by the caller).
+fn id_table[&h, &t, &o, &k](heap: &!h Heap, text: &t [byte], off: &o [int], rank: &k [int], n: int, count: int) -> [heap] (Box[[byte]], Box[[int]]) {
+    let first = box_slice(heap, count + 1, 0 - 1);
+    let offs = box_slice(heap, count + 2, 0);
+    var total = 0;
+    borrow mut first as &!fw in {
+        borrow mut offs as &!ow in {
+            var r = 0;
+            while r < n {
+                if contents(fw)[rank[r]] < 0 {
+                    contents(fw)[rank[r]] = r;
+                    total = total + (off[r + 1] - off[r]);
+                }
+                r = r + 1;
+            }
+            var j = 0;
+            var at = 0;
+            while j < count {
+                let row = contents(fw)[j];
+                at = at + (off[row + 1] - off[row]);
+                contents(ow)[j + 1] = at;
+                j = j + 1;
+            }
+        }
+    }
+    let table = box_slice(heap, total + 1, byte_of(0));
+    borrow first as &fr in {
+        borrow offs as &or in {
+            borrow mut table as &!tw in {
+                var j = 0;
+                while j < count {
+                    let row = contents(fr)[j];
+                    var c = off[row];
+                    var at = contents(or)[j];
+                    while c < off[row + 1] {
+                        contents(tw)[at] = text[c];
+                        at = at + 1;
+                        c = c + 1;
+                    }
+                    j = j + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, first);
+    return (table, offs);
+}
+
+// the first cell of a column that is longer than a stored id may be, as its 1-based row, or 0
+fn first_long[&o](off: &o [int], n: int) -> [] int {
+    var r = 0;
+    while r < n {
+        if off[r + 1] - off[r] > 255 {
+            return r + 1;
+        }
+        r = r + 1;
+    }
+    return 0;
+}
+
+fn id_error[&h, &n](heap: &!h Heap, errs: fail.Errors, tag: &static [byte], flag: &static [byte], name: &n [byte], row: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, tag);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    w = fail.detail_text(heap, w, "name", name);
+    w = fail.detail_int(heap, w, "row", row);
+    return fail.add(heap, errs, w);
+}
+
+fn limit_error[&h](heap: &!h Heap, errs: fail.Errors, tag: &static [byte], size: int, max: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, tag);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "size", size);
+    w = fail.detail_int(heap, w, "max", max);
+    return fail.add(heap, errs, w);
+}
+
+// The numbers of one id column: (numbers, count, id bytes, id offsets, ok, errors). `flag` is "user" or "item"; a cell of 0 or more than 255 bytes is a refusal, and so are more ids than `ceiling`.
+fn number_ids[&h, &t, &o, &n](heap: &!h Heap, text: &t [byte], off: &o [int], rows: int, flag: &static [byte], name: &n [byte], ceiling: int, tag: &static [byte], errs: fail.Errors) -> [heap] (Box[[int]], int, Box[[byte]], Box[[int]], bool, fail.Errors) {
+    let long = first_long(off, rows);
+    if long > 0 {
+        return (box_slice(heap, 1, 0), 0, box_slice(heap, 1, byte_of(0)), box_slice(heap, 1, 0), false, id_error(heap, errs, "ml.recommend.id-too-long", flag, name, long));
+    }
+    let (rank, count, miss) = splitcol.group_ranks(heap, text, off, rows);
+    if miss > 0 {
+        unbox_slice(heap, rank);
+        return (box_slice(heap, 1, 0), 0, box_slice(heap, 1, byte_of(0)), box_slice(heap, 1, 0), false, id_error(heap, errs, "ml.recommend.missing-id", flag, name, miss));
+    }
+    if count > ceiling {
+        unbox_slice(heap, rank);
+        return (box_slice(heap, 1, 0), 0, box_slice(heap, 1, byte_of(0)), box_slice(heap, 1, 0), false, limit_error(heap, errs, tag, count, ceiling));
+    }
+    var table = box_slice(heap, 1, byte_of(0));
+    var offs = box_slice(heap, 1, 0);
+    borrow rank as &rr in {
+        let (t2, o2) = id_table(heap, text, off, contents(rr), rows, count);
+        unbox_slice(heap, table);
+        unbox_slice(heap, offs);
+        table = t2;
+        offs = o2;
+    }
+    return (rank, count, table, offs, true, errs);
+}
+
+// The values of a rating column: (values, ok, errors). A cell that is not a finite number is ml.recommend.bad-rating at its 1-based row; the range is judged by recommend.log.build.
+fn read_values[&h, &t, &o, &n](heap: &!h Heap, text: &t [byte], off: &o [int], rows: int, name: &n [byte], errs: fail.Errors) -> [heap] (Box[[float]], bool, fail.Errors) {
+    let vals = box_slice(heap, rows + 1, 0.0);
+    var bad = 0;
+    borrow mut vals as &!vw in {
+        var r = 0;
+        while r < rows && bad == 0 {
+            let (st, kind, m, frac, idig, key) = csvcell.read(text[off[r]..off[r + 1]]);
+            if st != 0 {
+                bad = r + 1;
+            } else {
+                contents(vw)[r] = csvcell.double(kind, m, frac, key);
+            }
+            r = r + 1;
+        }
+    }
+    if bad > 0 {
+        var w = wiredata.open_tag(heap, "ml.recommend.bad-rating");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "row", bad);
+        w = fail.detail_text(heap, w, "name", name);
+        return (vals, false, fail.add(heap, errs, w));
+    }
+    return (vals, true, errs);
+}
+
+// The order keys of a time column: a dense rank of the time of every row, equal times equal ranks. (keys, ok, errors)
+fn time_ranks[&h, &t, &o, &n](heap: &!h Heap, text: &t [byte], off: &o [int], rows: int, name: &n [byte], errs: fail.Errors) -> [heap] (Box[[int]], bool, fail.Errors) {
+    let (k1, k2, st, row, reason) = splitcol.time_keys(heap, text, off, rows);
+    let keys = box_slice(heap, rows + 1, 0);
+    var e = errs;
+    var ok = true;
+    if st == 1 {
+        e = splitspec.missing_cell(heap, e, name, row);
+        ok = false;
+    } else if st == 2 {
+        e = splitspec.time_format(heap, e, name, row, splitcol.reason_word(reason));
+        ok = false;
+    } else {
+        borrow k1 as &a in {
+            borrow k2 as &b in {
+                let order = splitcol.time_order(heap, contents(a), contents(b), rows);
+                borrow order as &ordr in {
+                    borrow mut keys as &!kw in {
+                        var rank = 0 - 1;
+                        var k = 0;
+                        while k < rows {
+                            let row_k = contents(ordr)[k];
+                            if k == 0 || contents(a)[row_k] != contents(a)[contents(ordr)[k - 1]] || contents(b)[row_k] != contents(b)[contents(ordr)[k - 1]] {
+                                rank = rank + 1;
+                            }
+                            contents(kw)[row_k] = rank;
+                            k = k + 1;
+                        }
+                    }
+                }
+                unbox_slice(heap, order);
+            }
+        }
+    }
+    unbox_slice(heap, k1);
+    unbox_slice(heap, k2);
+    return (keys, ok, e);
+}
+
+fn read_data[&h, &d, &u, &i, &g, &t](heap: &!h Heap, data: &d [byte], user: &u [byte], item: &i [byte], rating: &g [byte], time: &t [byte], o: verbs.Opts, errs: fail.Errors) -> [heap] (Rows, fail.Errors) {
+    var e = errs;
+    var go = true;
+    let (ut, uo, urows, uok, e1) = column(heap, data, "user", user, o, e);
+    e = e1;
+    go = uok;
+    var it = buffer.empty(heap, 1);
+    var io = box_slice(heap, 2, 0);
+    var irows = 0;
+    var rt = buffer.empty(heap, 1);
+    var ro = box_slice(heap, 2, 0);
+    var rrows = 0;
+    var tt = buffer.empty(heap, 1);
+    var to = box_slice(heap, 2, 0);
+    var trows = 0;
+    if go {
+        let (a, b, c, ok, e2) = column(heap, data, "item", item, o, e);
+        buffer.drop(heap, it);
+        unbox_slice(heap, io);
+        it = a;
+        io = b;
+        irows = c;
+        e = e2;
+        go = ok;
+    }
+    if go && len(rating) > 0 {
+        let (a, b, c, ok, e2) = column(heap, data, "rating", rating, o, e);
+        buffer.drop(heap, rt);
+        unbox_slice(heap, ro);
+        rt = a;
+        ro = b;
+        rrows = c;
+        e = e2;
+        go = ok;
+    }
+    if go && len(time) > 0 {
+        let (a, b, c, ok, e2) = column(heap, data, "time", time, o, e);
+        buffer.drop(heap, tt);
+        unbox_slice(heap, to);
+        tt = a;
+        to = b;
+        trows = c;
+        e = e2;
+        go = ok;
+    }
+    let n = urows;
+    if go && (irows != n || len(rating) > 0 && rrows != n || len(time) > 0 && trows != n) {
+        var w = wiredata.open_tag(heap, "parse.csv-ragged-row");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "rows", n);
+        e = fail.add(heap, e, w);
+        go = false;
+    }
+    if go && n < 1 {
+        e = verbs.problem(heap, e, "ml.input.empty", "the file has a header and no data rows", "give a file with at least one data row", "", "");
+        go = false;
+    }
+    var out = nothing(heap);
+    if go {
+        var uid = box_slice(heap, 1, 0);
+        var nu = 0;
+        var ub = box_slice(heap, 1, byte_of(0));
+        var uf = box_slice(heap, 1, 0);
+        borrow ut as &utr in {
+            borrow uo as &uor in {
+                let (a, b, c, d2, ok, e3) = number_ids(heap, buffer.bytes(utr), contents(uor), n, "user", user, log.max_users(), "ml.limit.users", e);
+                unbox_slice(heap, uid);
+                unbox_slice(heap, ub);
+                unbox_slice(heap, uf);
+                uid = a;
+                nu = b;
+                ub = c;
+                uf = d2;
+                e = e3;
+                go = ok;
+            }
+        }
+        var iid = box_slice(heap, 1, 0);
+        var ni = 0;
+        var ib = box_slice(heap, 1, byte_of(0));
+        var iff = box_slice(heap, 1, 0);
+        if go {
+            borrow it as &itr in {
+                borrow io as &ior in {
+                    let (a, b, c, d2, ok, e3) = number_ids(heap, buffer.bytes(itr), contents(ior), n, "item", item, log.max_items(), "ml.limit.items", e);
+                    unbox_slice(heap, iid);
+                    unbox_slice(heap, ib);
+                    unbox_slice(heap, iff);
+                    iid = a;
+                    ni = b;
+                    ib = c;
+                    iff = d2;
+                    e = e3;
+                    go = ok;
+                }
+            }
+        }
+        var vals = box_slice(heap, n + 1, 1.0);
+        if go && len(rating) > 0 {
+            borrow rt as &rtr in {
+                borrow ro as &ror in {
+                    let (a, ok, e3) = read_values(heap, buffer.bytes(rtr), contents(ror), n, rating, e);
+                    unbox_slice(heap, vals);
+                    vals = a;
+                    e = e3;
+                    go = ok;
+                }
+            }
+        }
+        var tkey = box_slice(heap, 1, 0);
+        if go && len(time) > 0 {
+            borrow tt as &ttr in {
+                borrow to as &tor in {
+                    let (a, ok, e3) = time_ranks(heap, buffer.bytes(ttr), contents(tor), n, time, e);
+                    unbox_slice(heap, tkey);
+                    tkey = a;
+                    e = e3;
+                    go = ok;
+                }
+            }
+        }
+        if go {
+            drop(heap, out);
+            out = Rows { ok: true, n: n, nu: nu, ni: ni, uid: uid, iid: iid, vals: vals, tkey: tkey, ubytes: ub, uoffs: uf, ibytes: ib, ioffs: iff };
+        } else {
+            unbox_slice(heap, uid);
+            unbox_slice(heap, ub);
+            unbox_slice(heap, uf);
+            unbox_slice(heap, iid);
+            unbox_slice(heap, ib);
+            unbox_slice(heap, iff);
+            unbox_slice(heap, vals);
+            unbox_slice(heap, tkey);
+        }
+    }
+    buffer.drop(heap, ut);
+    unbox_slice(heap, uo);
+    buffer.drop(heap, it);
+    unbox_slice(heap, io);
+    buffer.drop(heap, rt);
+    unbox_slice(heap, ro);
+    buffer.drop(heap, tt);
+    unbox_slice(heap, to);
+    return (out, e);
+}
+
+// Read the log from `file`. The columns are `user` and `item`, and when non-empty `rating` and `time`. On a refusal `ok` is false and the errors say why.
+pub fn read[&h, &f, &r, &pf, &u, &i, &g, &t](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, user: &u [byte], item: &i [byte], rating: &g [byte], time: &t [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Rows, fail.Errors) {
+    let (data, st, aux) = fsio.read_input(heap, fs, root, file, o.max_bytes);
+    if st == 1 || st == 2 {
+        buffer.drop(heap, data);
+        return (nothing(heap), fail.io_error(heap, errs, aux, false, paths.shown(file)));
+    }
+    if st == 3 {
+        buffer.drop(heap, data);
+        var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "the file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", aux);
+        w = fail.detail_int(heap, w, "max", o.max_bytes);
+        return (nothing(heap), fail.add(heap, errs, w));
+    }
+    var out = nothing(heap);
+    var oe = errs;
+    borrow data as &dr in {
+        let (r2, e2) = read_data(heap, buffer.bytes(dr), user, item, rating, time, o, oe);
+        drop(heap, out);
+        out = r2;
+        oe = e2;
+    }
+    buffer.drop(heap, data);
+    return (out, oe);
+}
+
+// Two columns of a file whose first row is the header: (text a, offsets a, text b, offsets b, rows, ok, errors). `name_b` empty reads no second column (its text and offsets are empty).
+pub fn read_columns[&h, &f, &r, &pf, &a, &b](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, flag_a: &static [byte], name_a: &a [byte], flag_b: &static [byte], name_b: &b [byte], o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, Box[[int]], buffer.Buffer, Box[[int]], int, bool, fail.Errors) {
+    let (data, st, aux) = fsio.read_input(heap, fs, root, file, o.max_bytes);
+    if st == 1 || st == 2 {
+        buffer.drop(heap, data);
+        return (buffer.empty(heap, 1), box_slice(heap, 2, 0), buffer.empty(heap, 1), box_slice(heap, 2, 0), 0, false, fail.io_error(heap, errs, aux, false, paths.shown(file)));
+    }
+    if st == 3 {
+        buffer.drop(heap, data);
+        var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "the file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", aux);
+        w = fail.detail_int(heap, w, "max", o.max_bytes);
+        return (buffer.empty(heap, 1), box_slice(heap, 2, 0), buffer.empty(heap, 1), box_slice(heap, 2, 0), 0, false, fail.add(heap, errs, w));
+    }
+    var ta = buffer.empty(heap, 1);
+    var oa = box_slice(heap, 2, 0);
+    var tb = buffer.empty(heap, 1);
+    var ob = box_slice(heap, 2, 0);
+    var rows = 0;
+    var ok = true;
+    var e = errs;
+    borrow data as &dr in {
+        let (t1, o1, r1, k1, e1) = column(heap, buffer.bytes(dr), flag_a, name_a, o, e);
+        buffer.drop(heap, ta);
+        unbox_slice(heap, oa);
+        ta = t1;
+        oa = o1;
+        rows = r1;
+        ok = k1;
+        e = e1;
+        if ok && len(name_b) > 0 {
+            let (t2, o2, r2, k2, e2) = column(heap, buffer.bytes(dr), flag_b, name_b, o, e);
+            buffer.drop(heap, tb);
+            unbox_slice(heap, ob);
+            tb = t2;
+            ob = o2;
+            ok = k2;
+            e = e2;
+            if ok && r2 != rows {
+                ok = false;
+                var w = wiredata.open_tag(heap, "parse.csv-ragged-row");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_int(heap, w, "rows", rows);
+                e = fail.add(heap, e, w);
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    return (ta, oa, tb, ob, rows, ok, e);
+}

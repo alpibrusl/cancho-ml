@@ -13,6 +13,7 @@ import std.json;
 import ml.argv;
 import ml.est;
 import ml.paths;
+import ml.recflags;
 import ml.spec;
 import ml.splitspec;
 import ml.verbs;
@@ -123,7 +124,7 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
     }
     if verb == 1 || verb == 5 {
         // every model but k-means needs a target; with --plan the model is the plan's and the fit checks the target once the plan is read (wire.fit)
-        if !argv.has(src, "target") && !argv.has(src, "plan") && est.task(est.kind_named(argv.text(src, "model"))) != 4 {
+        if !argv.has(src, "target") && !argv.has(src, "plan") && est.task(est.kind_named(argv.text(src, "model"))) != 4 && est.task(est.kind_named(argv.text(src, "model"))) != 5 {
             e = flag_problem(heap, e, "args.required-flag", "fit needs --target, the column to predict", "ml fit --target NAME --output MODEL FILE", "flag", "--target");
         }
         if verb == 1 && !argv.has(src, "output") {
@@ -143,6 +144,9 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
     }
     if tool == 1 && verb == 7 {
         e = importance_flags(heap, src, e, table);
+    }
+    if tool == 1 && verb == 1 {
+        e = recflags.check_fit(heap, src, e);
     }
     if tool == 2 {
         // `ml-predict` has no fit flag to check (wire.check_flags judges the flags of fit and eval)

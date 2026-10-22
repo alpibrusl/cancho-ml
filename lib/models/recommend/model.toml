@@ -1,0 +1,76 @@
+# Alternating least squares for a recommender (docs/recommend.md section 4), wired into the verbs by docs/wiring-recommend.md. Its input is a log of user, item[, rating][, time]
+# rows, not a matrix: the shape `log` has no adapter of the vector or blob interface, the verbs read the log themselves (tools/ml/recwire.cho).
+name = "recommend"
+kind = 10
+kind_fn = "model_recommend"
+task = "recommendation"
+tier = "experimental"
+wired = true
+shape = "log"
+payload_version = 1
+doc = "docs/recommend.md"
+files = ["lib/models/recommend/als.cho", "lib/models/recommend/log.cho", "lib/models/recommend/model.cho", "lib/metrics/recommend.cho"]
+plan_order = 8
+
+[limits]
+max_factors = 256
+max_iterations = 1000
+max_users = 1048576
+max_items = 1048576
+max_interactions = 33554432
+
+[tags]
+emits = [
+  "ml.input.empty", "ml.input.too-many-rows", "ml.input.unknown-column", "ml.param.out-of-range", "ml.param.threads", "ml.linalg.not-positive-definite",
+  "ml.model.truncated", "ml.model.malformed", "ml.schema.mismatch", "ml.recommend.missing-id", "ml.recommend.bad-rating", "ml.recommend.duplicate-pair",
+  "ml.recommend.unknown-user", "ml.recommend.unknown-item", "ml.limit.users", "ml.limit.items", "ml.limit.interactions", "ml.limit.eval-work",
+]
+
+[authority]
+adds = []
+reason = ""
+
+[sums]
+sequential = ["lib/models/recommend/als.cho", "lib/metrics/recommend.cho"]
+
+[oracle]
+script = "scripts/oracle_wire_recommend.py"
+args = "recommend"
+tolerance = "bits"
+
+[[hyperparameter]]
+name = "factors"
+type = "int"
+min = 1
+max = 256
+default = "32"
+doc = "the number of latent factors of a recommend fit: 1 to 256"
+
+[[hyperparameter]]
+name = "l2"
+type = "float"
+nonneg = true
+default = "0.1"
+doc = "the ridge penalty of every solve, a finite number above 0 for a recommend fit"
+
+[[hyperparameter]]
+name = "iterations"
+type = "int"
+min = 1
+max = 1000
+default = "10"
+doc = "the passes of ALS, a fixed number: 1 to 1000"
+
+[[hyperparameter]]
+name = "alpha"
+type = "float"
+nonneg = true
+default = "40.0"
+doc = "the confidence scale of the implicit form, c = 1 + alpha r: a finite number above 0, read for feedback implicit only"
+
+[[hyperparameter]]
+name = "feedback"
+type = "enum"
+values = ["explicit", "implicit"]
+default = "explicit"
+doc = "explicit fits the ratings by a plain ridge regression, implicit reads the values as strengths of events and fits the confidence-weighted form of Hu, Koren and Volinsky. Without --rating the feedback is implicit"

@@ -1,0 +1,236 @@
+edition 6;
+
+module ml.recsplit;
+
+// The held-out part of a recommender's log (docs/wiring-recommend.md section 3, docs/recommend.md section 7): the training rows as a log of their own, with the items renumbered to those that
+// still have a row, and for every user the held-out items the model can be asked about. A held-out row whose item has no training row cannot be scored (the model has no number for it) and is
+// counted, not scored; a held-out row whose pair the user also has in training (an implicit event repeated) is in the history and is not a test item; both are counted per row.
+
+import ml.recload;
+import recommend.log;
+
+// the number of 1 entries of a mask of n
+pub fn count_set[&m](mask: &m [int], n: int) -> [] int {
+    var c = 0;
+    var r = 0;
+    while r < n {
+        if mask[r] == 1 {
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return c;
+}
+
+// The new number of every item that has a training row (in the order of the old numbers, so the bytewise order of the ids is kept) and -1 for one that has none; the count of the kept items.
+pub fn item_map[&h, &i, &m](heap: &!h Heap, iid: &i [int], mask: &m [int], n: int, ni: int) -> [heap] (Box[[int]], int) {
+    let map = box_slice(heap, ni + 1, 0 - 1);
+    var kept = 0;
+    borrow mut map as &!mw in {
+        var r = 0;
+        while r < n {
+            if mask[r] == 0 {
+                contents(mw)[iid[r]] = 0;
+            }
+            r = r + 1;
+        }
+        var j = 0;
+        while j < ni {
+            if contents(mw)[j] == 0 {
+                contents(mw)[j] = kept;
+                kept = kept + 1;
+            }
+            j = j + 1;
+        }
+    }
+    return (map, kept);
+}
+
+// The training rows of `rows` (mask 0) as rows of their own: users as they were (each keeps a row), items renumbered by `map` (`kept` of them), the id table of the items cut to the kept ones.
+pub fn train_rows[&h, &r, &m, &p](heap: &!h Heap, rows: &r recload.Rows, mask: &m [int], map: &p [int], kept: int, ntrain: int) -> [heap] recload.Rows {
+    let uid = box_slice(heap, ntrain + 1, 0);
+    let iid = box_slice(heap, ntrain + 1, 0);
+    let vals = box_slice(heap, ntrain + 1, 0.0);
+    borrow mut uid as &!uw in {
+        borrow mut iid as &!iw in {
+            borrow mut vals as &!vw in {
+                var at = 0;
+                var k = 0;
+                while k < rows.n {
+                    if mask[k] == 0 {
+                        contents(uw)[at] = contents(rows.uid)[k];
+                        contents(iw)[at] = map[contents(rows.iid)[k]];
+                        contents(vw)[at] = contents(rows.vals)[k];
+                        at = at + 1;
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    // the users' id table is copied; the items' is cut
+    let ub = box_slice(heap, contents(rows.uoffs)[rows.nu] + 1, byte_of(0));
+    let uo = box_slice(heap, rows.nu + 2, 0);
+    borrow mut ub as &!ubw in {
+        borrow mut uo as &!uow in {
+            var b = 0;
+            while b < contents(rows.uoffs)[rows.nu] {
+                contents(ubw)[b] = contents(rows.ubytes)[b];
+                b = b + 1;
+            }
+            var u = 0;
+            while u <= rows.nu {
+                contents(uow)[u] = contents(rows.uoffs)[u];
+                u = u + 1;
+            }
+        }
+    }
+    var total = 0;
+    var j = 0;
+    while j < rows.ni {
+        if map[j] >= 0 {
+            total = total + (contents(rows.ioffs)[j + 1] - contents(rows.ioffs)[j]);
+        }
+        j = j + 1;
+    }
+    let ib = box_slice(heap, total + 1, byte_of(0));
+    let io = box_slice(heap, kept + 2, 0);
+    borrow mut ib as &!ibw in {
+        borrow mut io as &!iow in {
+            var at = 0;
+            j = 0;
+            while j < rows.ni {
+                if map[j] >= 0 {
+                    var c = contents(rows.ioffs)[j];
+                    while c < contents(rows.ioffs)[j + 1] {
+                        contents(ibw)[at] = contents(rows.ibytes)[c];
+                        at = at + 1;
+                        c = c + 1;
+                    }
+                    contents(iow)[map[j] + 1] = at;
+                }
+                j = j + 1;
+            }
+        }
+    }
+    return recload.Rows { ok: true, n: ntrain, nu: rows.nu, ni: kept, uid: uid, iid: iid, vals: vals, tkey: box_slice(heap, 1, 0), ubytes: ub, uoffs: uo, ibytes: ib, ioffs: io };
+}
+
+// whether `item` is in the strictly ascending list list[from .. to]
+fn has_item[&l](list: &l [int], from: int, to: int, item: int) -> [] bool {
+    var lo = from;
+    var hi = to;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if list[mid] == item {
+            return true;
+        }
+        if list[mid] < item {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return false;
+}
+
+// What the held-out rows give: (offsets of nu + 1 entries, the test items of each user strictly ascending, the held-out rows whose item has no training row, the held-out pairs already in the
+// training history, the count of test items). `hoff` and `hitem` are the history of the training log.
+pub fn test_lists[&h, &r, &m, &p, &ho, &hi](heap: &!h Heap, rows: &r recload.Rows, mask: &m [int], map: &p [int], hoff: &ho [int], hitem: &hi [int]) -> [heap] (Box[[int]], Box[[int]], int, int, int) {
+    let nu = rows.nu;
+    // the held-out rows by user: a counting sort
+    let cnt = box_slice(heap, nu + 2, 0);
+    var held = 0;
+    borrow mut cnt as &!cw in {
+        var k = 0;
+        while k < rows.n {
+            if mask[k] == 1 {
+                contents(cw)[contents(rows.uid)[k] + 1] = contents(cw)[contents(rows.uid)[k] + 1] + 1;
+                held = held + 1;
+            }
+            k = k + 1;
+        }
+        var u = 0;
+        while u < nu {
+            contents(cw)[u + 1] = contents(cw)[u + 1] + contents(cw)[u];
+            u = u + 1;
+        }
+    }
+    // the held-out rows by user, in file order within a user
+    let ord = box_slice(heap, held + 1, 0);
+    let cur = box_slice(heap, nu + 2, 0);
+    borrow cnt as &cr0 in {
+        borrow mut cur as &!cuw in {
+            borrow mut ord as &!orw in {
+                var u = 0;
+                while u < nu {
+                    contents(cuw)[u] = contents(cr0)[u];
+                    u = u + 1;
+                }
+                var k = 0;
+                while k < rows.n {
+                    if mask[k] == 1 {
+                        let who = contents(rows.uid)[k];
+                        contents(orw)[contents(cuw)[who]] = k;
+                        contents(cuw)[who] = contents(cuw)[who] + 1;
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, cur);
+    let toff = box_slice(heap, nu + 2, 0);
+    let test = box_slice(heap, held + 1, 0);
+    var unseen = 0;
+    var inhist = 0;
+    var total = 0;
+    borrow cnt as &cr in {
+        borrow ord as &orr in {
+            borrow mut toff as &!tow in {
+                borrow mut test as &!tw in {
+                    var u = 0;
+                    while u < nu {
+                        let start = total;
+                        var j = contents(cr)[u];
+                        while j < contents(cr)[u + 1] {
+                            let k = contents(orr)[j];
+                            let m2 = map[contents(rows.iid)[k]];
+                            if m2 < 0 {
+                                unseen = unseen + 1;
+                            } else if has_item(hitem, hoff[u], hoff[u + 1], m2) {
+                                // a pair of the history is not a test item
+                                inhist = inhist + 1;
+                            } else {
+                                // insertion into the sorted segment, a repeated item once
+                                var at = total;
+                                var dup = false;
+                                while at > start && contents(tw)[at - 1] >= m2 {
+                                    if contents(tw)[at - 1] == m2 {
+                                        dup = true;
+                                    }
+                                    at = at - 1;
+                                }
+                                if !dup {
+                                    var s2 = total;
+                                    while s2 > at {
+                                        contents(tw)[s2] = contents(tw)[s2 - 1];
+                                        s2 = s2 - 1;
+                                    }
+                                    contents(tw)[at] = m2;
+                                    total = total + 1;
+                                }
+                            }
+                            j = j + 1;
+                        }
+                        contents(tow)[u + 1] = total;
+                        u = u + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, cnt);
+    unbox_slice(heap, ord);
+    return (toff, test, unseen, inhist, total);
+}

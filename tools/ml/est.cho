@@ -21,7 +21,7 @@ import models.record;
 
 // whether a file whose model section opens with this kind is one `ml` builds
 pub fn wired(kind: int) -> [] bool {
-    return kind == 4 || kind == 5 || kind == 6 || kind == 7 || kind == 8 || kind == 9;
+    return kind == 4 || kind == 5 || kind == 6 || kind == 7 || kind == 8 || kind == 9 || kind == 10;
 }
 
 // the kind a file has for the dispatch key of a model (0 if there is none)
@@ -46,6 +46,9 @@ pub fn kind_of(kind: int) -> [] int {
     }
     if kind == 9 {
         return 9;
+    }
+    if kind == 10 {
+        return 10;
     }
     return 0;
 }
@@ -73,6 +76,9 @@ pub fn kind_named[&n](name: &n [byte]) -> [] int {
     if bytes.equal(name, "softmax") {
         return 9;
     }
+    if bytes.equal(name, "recommend") {
+        return 10;
+    }
     return 0;
 }
 
@@ -97,6 +103,9 @@ pub fn name(kind: int) -> [] &static [byte] {
     }
     if kind == 9 {
         return "softmax";
+    }
+    if kind == 10 {
+        return "recommend";
     }
     return "";
 }
@@ -123,10 +132,13 @@ pub fn tier(kind: int) -> [] &static [byte] {
     if kind == 9 {
         return "experimental";
     }
+    if kind == 10 {
+        return "experimental";
+    }
     return "";
 }
 
-// 1 regression, 2 classification, 3 either (the `task` of the model line, task_of), 4 clustering (no target), 0 not a wired model
+// 1 regression, 2 classification, 3 either (the `task` of the model line, task_of), 4 clustering (no target), 5 recommendation (a log, no matrix), 0 not a wired model
 pub fn task(kind: int) -> [] int {
     if kind == 4 {
         return 1;
@@ -148,6 +160,9 @@ pub fn task(kind: int) -> [] int {
     }
     if kind == 9 {
         return 2;
+    }
+    if kind == 10 {
+        return 5;
     }
     return 0;
 }
@@ -174,6 +189,9 @@ pub fn nints(kind: int) -> [] int {
     if kind == 9 {
         return 1;
     }
+    if kind == 10 {
+        return 3;
+    }
     return 0;
 }
 
@@ -198,6 +216,9 @@ pub fn nfloats(kind: int) -> [] int {
     }
     if kind == 9 {
         return 1;
+    }
+    if kind == 10 {
+        return 2;
     }
     return 0;
 }
@@ -325,11 +346,31 @@ pub fn takes[&f](kind: int, flag: &f [byte]) -> [] bool {
             return true;
         }
     }
+    if kind == 10 {
+        if bytes.equal(flag, "factors") {
+            return true;
+        }
+        if bytes.equal(flag, "l2") {
+            return true;
+        }
+        if bytes.equal(flag, "iterations") {
+            return true;
+        }
+        if bytes.equal(flag, "alpha") {
+            return true;
+        }
+        if bytes.equal(flag, "feedback") {
+            return true;
+        }
+    }
     return false;
 }
 
 // whether `flag` is a hyperparameter of some wired model (its flag is then a flag of fit)
 pub fn hparam_flag[&f](flag: &f [byte]) -> [] bool {
+    if bytes.equal(flag, "alpha") {
+        return true;
+    }
     if bytes.equal(flag, "bins") {
         return true;
     }
@@ -337,6 +378,12 @@ pub fn hparam_flag[&f](flag: &f [byte]) -> [] bool {
         return true;
     }
     if bytes.equal(flag, "early-stopping") {
+        return true;
+    }
+    if bytes.equal(flag, "factors") {
+        return true;
+    }
+    if bytes.equal(flag, "feedback") {
         return true;
     }
     if bytes.equal(flag, "init") {
@@ -509,6 +556,17 @@ pub fn hparam_ok[&n, &v](name: &n [byte], value: &v [byte]) -> [] bool {
     }
     if bytes.equal(name, "early-stopping") {
         // the range of an integer is checked by the nat check of the command line (ml.param.out-of-range)
+        return true;
+    }
+    if bytes.equal(name, "factors") {
+        // the range of an integer is checked by the nat check of the command line (ml.param.out-of-range)
+        return true;
+    }
+    if bytes.equal(name, "alpha") {
+        return float_value(value) >= 0.0;
+    }
+    if bytes.equal(name, "feedback") {
+        // a value of an enum is checked by the choice kind of its flag (args.bad-value)
         return true;
     }
     return false;
@@ -903,6 +961,32 @@ pub fn hparams[&l, &i, &f](kind: int, line: &l [byte], ip: &!i [int], fp: &!f [f
         fp[0] = float_value(value_of(bytes.field(line, ' ', 4)));
         if fp[0] < 0.0 {
             return 2;
+        }
+        return 0;
+    }
+    if kind == 10 {
+        ip[0] = int_value(value_of(bytes.field(line, ' ', 3)));
+        if ip[0] < 0 {
+            return 1;
+        }
+        fp[0] = float_value(value_of(bytes.field(line, ' ', 4)));
+        if fp[0] < 0.0 {
+            return 2;
+        }
+        ip[1] = int_value(value_of(bytes.field(line, ' ', 5)));
+        if ip[1] < 0 {
+            return 3;
+        }
+        fp[1] = float_value(value_of(bytes.field(line, ' ', 6)));
+        if fp[1] < 0.0 {
+            return 4;
+        }
+        if bytes.equal(value_of(bytes.field(line, ' ', 7)), "explicit") {
+            ip[2] = 0;
+        } else if bytes.equal(value_of(bytes.field(line, ' ', 7)), "implicit") {
+            ip[2] = 1;
+        } else {
+            return 5;
         }
         return 0;
     }

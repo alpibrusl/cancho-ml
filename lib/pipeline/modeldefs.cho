@@ -8,7 +8,7 @@ import std.bytes;
 // strings (`name:type:rule`). The order is the manifests' plan_order; the keys of a model are in the order of its [[hyperparameter]] tables.
 
 pub fn count() -> [] int {
-    return 8;
+    return 9;
 }
 
 // the model names, in plan order
@@ -34,12 +34,15 @@ pub fn name(i: int) -> [] &static [byte] {
     if i == 6 {
         return "boost";
     }
-    return "softmax";
+    if i == 7 {
+        return "softmax";
+    }
+    return "recommend";
 }
 
 pub fn defs[&s](verb: &s [byte]) -> [] &static [byte] {
     if bytes.equal(verb, "model") {
-        return "kind:enum=constant,linear,logistic,kmeans,tree,forest,boost,softmax:req";
+        return "kind:enum=constant,linear,logistic,kmeans,tree,forest,boost,softmax,recommend:req";
     }
     if bytes.equal(verb, "model:constant") {
         return "task:enum=regression,classification:req";
@@ -64,6 +67,9 @@ pub fn defs[&s](verb: &s [byte]) -> [] &static [byte] {
     }
     if bytes.equal(verb, "model:softmax") {
         return "iterations:int=1,1000:=100 l2:fnn:=0.0";
+    }
+    if bytes.equal(verb, "model:recommend") {
+        return "factors:int=1,256:=32 l2:fnn:=0.1 iterations:int=1,1000:=10 alpha:fnn:=40.0 feedback:enum=explicit,implicit:=explicit";
     }
     return "";
 }
@@ -93,6 +99,9 @@ pub fn model_defs[&s](name: &s [byte]) -> [] &static [byte] {
     }
     if bytes.equal(name, "softmax") {
         return "iterations:int=1,1000:=100 l2:fnn:=0.0";
+    }
+    if bytes.equal(name, "recommend") {
+        return "factors:int=1,256:=32 l2:fnn:=0.1 iterations:int=1,1000:=10 alpha:fnn:=40.0 feedback:enum=explicit,implicit:=explicit";
     }
     return "";
 }

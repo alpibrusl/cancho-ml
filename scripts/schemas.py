@@ -223,10 +223,33 @@ def data_defs():
                 "summary": obj({"count": NAT, "std": {"const": "sample"}, "metrics": {"type": "object", "additionalProperties": agg}}),
                 "assignment": obj({"repeats": NAT, "rows": NAT, "folds": {"type": "array", "items": {"type": "array", "items": {"type": "integer", "minimum": -1}}}})},
                ["model", "task", "target", "rows", "columns", "plan", "split", "strategy", "folds", "repeats", "results", "summary"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_mc_p, eval_rank_p, eval_clu_p, cv_p, describe_data(), importance_data()] + dump_data() + runs_data()}
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_mc_p, eval_rank_p, eval_clu_p, cv_p, describe_data(), importance_data()] + dump_data() + runs_data() + recommend_data()}
 
 
 RANK = {"type": "integer", "minimum": 1}
+
+
+def recommend_data():
+    """The answers of a recommender's fit, describe, predict and eval (docs/wiring-recommend.md sections 2 and 5): a log, not a matrix, so a shape of their own"""
+    val = {"oneOf": [FLT, {"type": "null"}]}
+    model = {"const": "recommend"}
+    task = {"const": "recommendation"}
+    holdout = obj({"k": NAT, "users": NAT, "users_scored": NAT, "hit": val, "recall": val, "ndcg": val, "mrr": val, "rows_item_unseen": NAT, "rows_in_history": NAT})
+    split = obj({"user_last": NAT, "train": NAT, "test": NAT})
+    keys = {"method": {"const": "als"}, "feedback": {"enum": ["explicit", "implicit"]}, "users": NAT, "items": NAT, "interactions": NAT, "rows_read": NAT, "factors": NAT, "iterations": NAT,
+            "lambda": FLT, "alpha": FLT, "loss": FLT, "holds_log": {"const": True}}
+    summary = obj({**keys, "split": split, "holdout": holdout}, list(keys))
+    fit = obj({"model": model, "task": task, "rows": NAT, "columns": {"enum": [2, 3]}, "target": {"type": "null"}, "path": TB, "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"},
+               "summary": summary, "run": RUN}, ["model", "task", "rows", "columns", "target", "path", "bytes", "sha256", "written", "summary"])
+    cols = obj({"user": TB, "item": TB, "rating": {"oneOf": [TB, {"type": "null"}]}})
+    describe = obj({"model": model, "task": task, "method": {"const": "als"}, "feedback": {"enum": ["explicit", "implicit"]}, "columns": cols, "users": NAT, "items": NAT, "interactions": NAT,
+                    "density": FLT, "factors": NAT, "iterations": NAT, "lambda": FLT, "alpha": FLT, "seed": NAT, "holds_log": {"const": True}, "cold_start": {"const": "refused"}})
+    predict = obj({"model": model, "task": task, "columns": {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 4},
+                   "rows": {"type": "array", "items": {"type": "array", "prefixItems": [TB, {"type": "integer", "minimum": 1}, TB, FLT], "minItems": 4, "maxItems": 4}},
+                   "row_count": NAT, "total_rows": NAT, "truncated": {"type": "boolean"}, "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]}})
+    eval_ = obj({"model": model, "task": task, "rows": NAT, "k": NAT, "users": NAT, "users_scored": NAT, "users_cold": NAT, "rows_user_unknown": NAT, "rows_item_unknown": NAT,
+                 "rows_in_history": NAT, "test_items": NAT, "hit": val, "recall": val, "ndcg": val, "mrr": val})
+    return [fit, describe, predict, eval_]
 
 
 def importance_object():
