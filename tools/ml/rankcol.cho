@@ -1,0 +1,478 @@
+edition 6;
+
+module ml.rankcol;
+
+// The group column of a ranking fit (docs/ranking.md section 2). The column is dropped from the matrix by the reader (argv.drop_list appends its name), so it is neither a feature
+// nor in the schema of the model; its cells are read from the file again, as the weight column and the group column of --split-group are, and turned into the rank of each row's
+// group (the distinct cells sorted bytewise). The relevance is the target, read as a float; its checks and the limits on a group are made here, with their own tags, before the
+// library sees anything (the library has its own second line, which answers ml.param.out-of-range).
+
+import std.buffer;
+import std.json;
+import std.bytes;
+import linalg.tensor;
+import metrics.ranking;
+import metrics.rules;
+import ml.argv;
+import ml.est;
+import ml.fbits;
+import ml.weightcol;
+import ml.fsio;
+import ml.matrix;
+import ml.paths;
+import ml.spec;
+import ml.splitcol;
+import ml.splitspec;
+import ml.verbs;
+import ml.wiredata;
+import toolbox.fail;
+
+fn list_has[&t, &n](text: &t [byte], name: &n [byte]) -> [] bool {
+    var k = 1;
+    while k <= argv.names_in(text) {
+        if bytes.equal(bytes.field(text, ',', k), name) {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// args.conflict for a group column that is also the target, the weight column, or listed in --drop or --cat. The checks that need no file.
+pub fn check_columns[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = errs;
+    if !argv.has(src, "group") {
+        return e;
+    }
+    let g = argv.text(src, "group");
+    if argv.has(src, "target") && bytes.equal(g, argv.text(src, "target")) {
+        e = wiredata.conflict(heap, e, "group", "the group column is the target: a column cannot be both the relevance and the query it belongs to");
+    }
+    if argv.has(src, "weight") && bytes.equal(g, argv.text(src, "weight")) {
+        e = wiredata.conflict(heap, e, "group", "the group column is the weight column: a column cannot be both");
+    }
+    if argv.has(src, "drop") && list_has(argv.text(src, "drop"), g) {
+        e = wiredata.conflict(heap, e, "group", "the group column is in --drop: it is read for the groups and left out of the features already, so do not drop it");
+    }
+    if argv.has(src, "cat") && list_has(argv.text(src, "cat"), g) {
+        e = wiredata.conflict(heap, e, "group", "the group column is in --cat: a group is a name, not a feature");
+    }
+    // a ranking task splits by its groups and by nothing else
+    if argv.has(src, "stratify") || argv.has(src, "split-by") || argv.has(src, "split-group") && !bytes.equal(argv.text(src, "split-group"), g) {
+        e = group_required(heap, e, src);
+    }
+    return e;
+}
+
+// ml.split.group-required: a split strategy that would put a group on both sides. The repair drops the flag that does it.
+pub fn group_required[&h, &cl](heap: &!h Heap, errs: fail.Errors, src: &cl [byte]) -> [heap] fail.Errors {
+    var flag: &static [byte] = "--stratify";
+    if argv.has(src, "split-by") {
+        flag = "--split-by";
+    } else if argv.has(src, "split-group") {
+        flag = "--split-group";
+    }
+    var w = wiredata.open_tag(heap, "ml.split.group-required");
+    w = splitspec.retry_edit(heap, w, src, flag, argv.has(src, "split-by") || argv.has(src, "split-group"), false, "");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    return fail.add(heap, errs, w);
+}
+
+// --task ranking without --group
+pub fn needs_group[&h](heap: &!h Heap, errs: fail.Errors) -> [heap] fail.Errors {
+    return wiredata.conflict(heap, errs, "group", "--task ranking needs --group COLUMN, the column that says which rows are ranked together (docs/ranking.md section 2)");
+}
+
+// --group with a model that is not fitted for ranking
+pub fn unsupported[&h](heap: &!h Heap, errs: fail.Errors) -> [heap] fail.Errors {
+    return wiredata.conflict(heap, errs, "group", "--group is for --model boost with --task ranking (docs/ranking.md)");
+}
+
+// the groups of the n rows of the file, read again: (the group number of every row, the number of groups, ok, errors). A missing cell is ml.rank.group-missing.
+pub fn read[&h, &f, &r, &pf, &cl](heap: &!h Heap, name: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, n: int, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (Box[[int]], int, bool, fail.Errors) {
+    var e = errs;
+    var go = true;
+    var gid = box_slice(heap, n + 1, 0);
+    var ng = 0;
+    let (data, st, aux) = fsio.read_input(heap, fs, root, file, o.max_bytes);
+    if st == 1 || st == 2 {
+        e = fail.io_error(heap, e, aux, false, paths.shown(file));
+        go = false;
+    } else if st == 3 {
+        var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "the file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", aux);
+        w = fail.detail_int(heap, w, "max", o.max_bytes);
+        e = fail.add(heap, e, w);
+        go = false;
+    }
+    if go {
+        borrow data as &dr in {
+            let (text, off, rows, xs) = splitcol.extract(heap, buffer.bytes(dr), name, n);
+            if xs == 1 {
+                var w = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--group names a column that is not in the header", "names are compared exactly, byte for byte");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_str(heap, w, "flag", "--group");
+                w = fail.detail_text(heap, w, "name", name);
+                e = fail.add(heap, e, w);
+                go = false;
+            } else if xs != 0 || rows != n {
+                var w = fail.open_in(heap, spec.extra(), "parse.csv-ragged-row", "a data row has a different number of fields from the header", "fix the row");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = fail.detail_int(heap, w, "rows", rows);
+                e = fail.add(heap, e, w);
+                go = false;
+            }
+            if go {
+                borrow text as &tr in {
+                    borrow off as &ofr in {
+                        let (g2, count, miss) = splitcol.group_ranks(heap, buffer.bytes(tr), contents(ofr), n);
+                        unbox_slice(heap, gid);
+                        gid = g2;
+                        ng = count;
+                        if miss > 0 {
+                            var w = wiredata.open_tag(heap, "ml.rank.group-missing");
+                            w = fail.no_repair(heap, w);
+                            w = fail.detail_open(heap, w);
+                            w = fail.detail_str(heap, w, "flag", "--group");
+                            w = fail.detail_int(heap, w, "row", miss);
+                            w = fail.detail_text(heap, w, "name", name);
+                            e = fail.add(heap, e, w);
+                            go = false;
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, text);
+            unbox_slice(heap, off);
+        }
+    }
+    buffer.drop(heap, data);
+    return (gid, ng, go, e);
+}
+
+// ml.rank.bad-relevance for the first target cell that is not an integer from 0 to 30: (ok, errors). The row is the 1-based position among the rows read.
+pub fn check_relevance[&h, &y, &n](heap: &!h Heap, yall: &y [float], rows: int, target: &n [byte], errs: fail.Errors) -> [heap] (bool, fail.Errors) {
+    var i = 0;
+    while i < rows {
+        let v = yall[i];
+        if !(v >= 0.0 && v <= 30.0) || float_of(truncate(v)) != v {
+            var w = wiredata.open_tag(heap, "ml.rank.bad-relevance");
+            w = fail.no_repair(heap, w);
+            w = fail.detail_open(heap, w);
+            w = fail.detail_str(heap, w, "flag", "--target");
+            w = fail.detail_int(heap, w, "row", i + 1);
+            w = fail.detail_text(heap, w, "name", target);
+            return (false, fail.add(heap, errs, w));
+        }
+        i = i + 1;
+    }
+    return (true, errs);
+}
+
+// The rows r with sel[r] == want (all rows when want < 0), their groups renumbered 0 .. k-1 in ascending order of the old number (so that every group has a row), and
+// k: (the group number of each such row, k)
+pub fn gather[&h, &g, &s](heap: &!h Heap, gall: &g [int], ngall: int, sel: &s [int], want: int, n: int) -> [heap] (Box[[int]], int) {
+    if ngall < 1 {
+        return (box_slice(heap, 1, 0), 0);
+    }
+    var cnt = 0;
+    let used = box_slice(heap, ngall + 2, 0);
+    var r = 0;
+    var k = 0;
+    borrow mut used as &!uw in {
+        while r < n {
+            if want < 0 || sel[r] == want {
+                cnt = cnt + 1;
+                contents(uw)[gall[r]] = 1;
+            }
+            r = r + 1;
+        }
+        var q = 0;
+        while q < ngall {
+            if contents(uw)[q] == 1 {
+                contents(uw)[q] = 1 + k;
+                k = k + 1;
+            }
+            q = q + 1;
+        }
+    }
+    var out = box_slice(heap, cnt + 1, 0);
+    borrow used as &ur in {
+        borrow mut out as &!ow in {
+            var at = 0;
+            r = 0;
+            while r < n {
+                if want < 0 || sel[r] == want {
+                    contents(ow)[at] = contents(ur)[gall[r]] - 1;
+                    at = at + 1;
+                }
+                r = r + 1;
+            }
+        }
+    }
+    unbox_slice(heap, used);
+    return (out, k);
+}
+
+// The size of the largest group and the pairs of one round of the rows (gid: their groups 0 .. ng - 1; rel: their relevances as floats, integers 0 to 30): (largest group,
+// pairs). The pairs of a group are (g^2 - sum over relevances of c^2) / 2. Memory is a few arrays of n ints, never a table of groups by relevances.
+pub fn sizes[&h, &g, &y](heap: &!h Heap, gid: &g [int], rel: &y [float], ng: int, n: int) -> [heap] (int, int) {
+    let gs = box_slice(heap, ng + 2, 0);
+    let go = box_slice(heap, n + 1, 0);
+    let cur = box_slice(heap, ng + 2, 0);
+    let cnt = box_slice(heap, 32, 0);
+    var biggest = 0;
+    var pairs = 0;
+    borrow mut gs as &!sw in {
+        borrow mut go as &!ow in {
+            borrow mut cur as &!cw in {
+                borrow mut cnt as &!nw in {
+                    let st = contents(sw);
+                    let od = contents(ow);
+                    let cu = contents(cw);
+                    let cn = contents(nw);
+                    var i = 0;
+                    while i < n {
+                        st[gid[i] + 1] = st[gid[i] + 1] + 1;
+                        i = i + 1;
+                    }
+                    var k = 0;
+                    while k < ng {
+                        st[k + 1] = st[k + 1] + st[k];
+                        cu[k] = st[k];
+                        k = k + 1;
+                    }
+                    i = 0;
+                    while i < n {
+                        od[cu[gid[i]]] = i;
+                        cu[gid[i]] = cu[gid[i]] + 1;
+                        i = i + 1;
+                    }
+                    k = 0;
+                    while k < ng {
+                        let s = st[k + 1] - st[k];
+                        if s > biggest {
+                            biggest = s;
+                        }
+                        var v = 0;
+                        while v < 31 {
+                            cn[v] = 0;
+                            v = v + 1;
+                        }
+                        var a = st[k];
+                        while a < st[k + 1] {
+                            cn[truncate(rel[od[a]])] = cn[truncate(rel[od[a]])] + 1;
+                            a = a + 1;
+                        }
+                        var sq = 0;
+                        v = 0;
+                        while v < 31 {
+                            sq = sq + cn[v] * cn[v];
+                            v = v + 1;
+                        }
+                        pairs = pairs + (s * s - sq) / 2;
+                        k = k + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, gs);
+    unbox_slice(heap, go);
+    unbox_slice(heap, cur);
+    unbox_slice(heap, cnt);
+    return (biggest, pairs);
+}
+
+pub fn max_group() -> [] int {
+    return 4096;
+}
+
+pub fn max_pairs() -> [] int {
+    return 268435456;
+}
+
+// ml.limit.group-size or ml.limit.pairs when the rows' groups are over a ceiling: (ok, errors). The numbers are in detail.
+pub fn check_limits[&h, &g, &y](heap: &!h Heap, gid: &g [int], rel: &y [float], ng: int, n: int, errs: fail.Errors) -> [heap] (bool, fail.Errors) {
+    let (biggest, pairs) = sizes(heap, gid, rel, ng, n);
+    if biggest > max_group() {
+        var w = wiredata.open_tag(heap, "ml.limit.group-size");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "rows", biggest);
+        w = fail.detail_int(heap, w, "max", max_group());
+        return (false, fail.add(heap, errs, w));
+    }
+    if pairs > max_pairs() {
+        var w = wiredata.open_tag(heap, "ml.limit.pairs");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "pairs", pairs);
+        w = fail.detail_int(heap, w, "max", max_pairs());
+        return (false, fail.add(heap, errs, w));
+    }
+    return (true, errs);
+}
+
+// The ranking fit of one training side (docs/ranking.md section 4): the rows with sel[r] == want (all rows when want < 0), their relevances `yd` (as many as those rows), their
+// groups renumbered, and their weights when `wall` holds one per row of the file (a weight column was given). Checks the limits on a group first. (payload, ok, errors)
+pub fn fit_blob[&h, &x, &m, &y, &wl, &gl, &s, &i, &f](heap: &!h Heap, kind: int, threads: int, shape: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wall: &wl [float], gall: &gl [int], ngall: int, sel: &s [int], want: int, nrows: int, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int, errs: fail.Errors) -> [heap, conc] (Box[[byte]], bool, fail.Errors) {
+    var e = errs;
+    var go = true;
+    var blob = box_slice(heap, 1, byte_of(0));
+    let (gid, ng) = gather(heap, gall, ngall, sel, want, nrows);
+    borrow gid as &gr in {
+        let (ok, e2) = check_limits(heap, contents(gr), yd, ng, len(yd), e);
+        e = e2;
+        go = ok;
+    }
+    var weighted = false;
+    var wtr = box_slice(heap, 1, 0.0);
+    if go && len(wall) > 1 {
+        unbox_slice(heap, wtr);
+        let (w2, any) = weightcol.gather(heap, wall, sel, want, nrows);
+        wtr = w2;
+        weighted = true;
+        if !any {
+            var side: &static [byte] = "train";
+            if want < 0 {
+                side = "all";
+            }
+            e = weightcol.zero_total(heap, e, side);
+            go = false;
+        }
+    }
+    var wn = 0;
+    if weighted {
+        wn = len(yd);
+    }
+    if go {
+        borrow gid as &gr2 in {
+            borrow wtr as &wr in {
+                let (b2, code) = est.fit_blob_rank(heap, kind, threads, shape, xd, miss, wpc, yd, contents(wr)[0..wn], weighted, contents(gr2)[0..len(yd)], ng, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+                unbox_slice(heap, blob);
+                blob = b2;
+                if code != 0 {
+                    e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                    go = false;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, gid);
+    unbox_slice(heap, wtr);
+    return (blob, go, e);
+}
+
+// The ranking metrics of the rows `xs` (a matrix the stored steps produced) against their relevances `yv` and their groups `gid` (0 .. ng - 1, every group with a row): the members
+// of docs/ranking.md section 3 as a JSON object, the lines of the text format, the names of the undefined metrics, and the refusal if any. k is the cut-off (0 the whole group).
+pub fn metrics_block[&h, &x, &b, &y, &g](heap: &!h Heap, kind: int, xs: &x matrix.Matrix, blob: &b [byte], yv: &y [float], gid: &g [int], ng: int, k: int, linear: bool, cap: int) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, wiredata.Failed) {
+    let n = matrix.rows(xs);
+    var score = box_slice(heap, n + 1, 0.0);
+    let none = box_slice(heap, 1, 0.0);
+    var code = 0;
+    borrow none as &nr in {
+        borrow mut score as &!sw in {
+            code = wiredata.predict_into(heap, kind, xs, contents(nr)[0..0], blob, contents(sw));
+        }
+    }
+    unbox_slice(heap, none);
+    var obj = json.writer(heap, 256);
+    obj = json.begin_object(heap, obj);
+    var plain = buffer.empty(heap, 64);
+    var und = buffer.empty(heap, 16);
+    var fl = wiredata.fine();
+    if code != 0 {
+        fl = wiredata.Failed { code: code, name: "predict", row: 0 };
+    } else {
+        var rel = box_slice(heap, n + 1, 0);
+        borrow mut rel as &!rw in {
+            var i = 0;
+            while i < n {
+                contents(rw)[i] = truncate(yv[i]);
+                i = i + 1;
+            }
+        }
+        borrow rel as &rr in {
+            borrow score as &sr in {
+                let r = ranking.evaluate(heap, gid[0..n], contents(rr)[0..n], contents(sr)[0..n], ng, k, linear, cap);
+                if r.code != 0 {
+                    fl = wiredata.Failed { code: r.code, name: "ranking", row: 0 };
+                } else {
+                    var s1 = rules.fail(rules.undefined());
+                    var s2 = s1;
+                    var s3 = s1;
+                    var s5 = s1;
+                    if r.scored > 0 {
+                        s1 = rules.ok(r.ndcg);
+                        s2 = rules.ok(r.map);
+                        s3 = rules.ok(r.mrr);
+                        s5 = rules.ok(r.recall);
+                    }
+                    let (o1, t1, u1, c1) = wiredata.member(heap, obj, plain, "ndcg", "ndcg ", s1, und);
+                    let (o2, t2, u2, c2) = wiredata.member(heap, o1, t1, "map", "map ", s2, u1);
+                    let (o3, t3, u3, c3) = wiredata.member(heap, o2, t2, "mrr", "mrr ", s3, u2);
+                    let (o4, t4, u4, c4) = wiredata.member(heap, o3, t3, "precision", "precision ", rules.ok(r.prec), u3);
+                    let (o5, t5, u5, c5) = wiredata.member(heap, o4, t4, "recall", "recall ", s5, u4);
+                    obj = o5;
+                    plain = t5;
+                    und = u5;
+                    obj = json.put_key(heap, obj, "groups");
+                    obj = json.put_int(heap, obj, r.groups);
+                    plain = verbs.line_int(heap, plain, "groups ", r.groups);
+                    obj = json.put_key(heap, obj, "groups_scored");
+                    obj = json.put_int(heap, obj, r.scored);
+                    plain = verbs.line_int(heap, plain, "groups_scored ", r.scored);
+                    obj = json.put_key(heap, obj, "k");
+                    obj = json.put_int(heap, obj, k);
+                    obj = json.put_key(heap, obj, "gain");
+                    if linear {
+                        obj = json.put_string(heap, obj, "linear");
+                    } else {
+                        obj = json.put_string(heap, obj, "exp");
+                    }
+                    obj = json.put_key(heap, obj, "ties");
+                    obj = json.put_string(heap, obj, "file order");
+                }
+            }
+        }
+        unbox_slice(heap, rel);
+    }
+    unbox_slice(heap, score);
+    obj = json.end_object(heap, obj);
+    return (json.finish(obj), plain, und, fl);
+}
+
+// The metrics block of a held-out part: the ranking metrics for a ranking model (`is_rank`), else the metrics of wiredata for the task of the model.
+pub fn block[&h, &x, &y, &w, &b, &g](heap: &!h Heap, is_rank: bool, kind: int, task: int, xs: &x matrix.Matrix, yv: &y [float], wv: &w [float], blob: &b [byte], c0: int, c1: int, pos: int, cap: int, strict: bool, gid: &g [int], ng: int, k: int, linear: bool) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, wiredata.Failed) {
+    if is_rank {
+        return metrics_block(heap, kind, xs, blob, yv, gid, ng, k, linear, cap);
+    }
+    return wiredata.metrics_block(heap, kind, task, xs, yv, wv, blob, c0, c1, pos, cap, strict);
+}
+
+// whether the model section of a file of kind `kind` is the payload of a ranking boost (docs/ranking.md section 4): kind 8 and the task field of its header 2
+pub fn payload_ranking[&b](kind: int, src: &b [byte]) -> [] bool {
+    if kind != 8 || len(src) < 28 {
+        return false;
+    }
+    return fbits.get64(src, 20) == 2;
+}
+
+// the word of the task in an answer: ranking for a ranking model, else the word of wiredata
+pub fn word(task: int, rank: bool) -> [] &static [byte] {
+    if rank {
+        return "ranking";
+    }
+    return wiredata.task_word(task);
+}
+
+// eval of a ranking model without --group
+pub fn eval_needs_group[&h](heap: &!h Heap, errs: fail.Errors) -> [heap] fail.Errors {
+    return wiredata.conflict(heap, errs, "group", "a ranking model is scored by group: give --group COLUMN, the column of the file that says which rows are ranked together");
+}

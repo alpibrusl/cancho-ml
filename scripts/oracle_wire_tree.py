@@ -57,12 +57,17 @@ class TCase:
         self.model, self.task, self.names, self.rows, self.target = model, task, names, rows, target
         self.steps, self.step_text, self.hp = steps, step_text, hp
         self.split, self.seed, self.positive = split, seed, positive
+        self.groups = None      # one group label (text) per row, written as the column `qid` (docs/ranking.md section 2), None without a ranking task
         self.weights = None     # one weight per row, written as the column `wt` before the others (docs/weights.md section 2.5), None for an unweighted fit
 
     def csv(self):
+        extra = []
         if self.weights is not None:
-            return ",".join(["wt"] + self.names) + "\n" + "".join(",".join([ow_cell(w)] + r) + "\n" for w, r in zip(self.weights, self.rows))
-        return ",".join(self.names) + "\n" + "".join(",".join(r) + "\n" for r in self.rows)
+            extra.append(("wt", [ow_cell(w) for w in self.weights]))
+        if self.groups is not None:
+            extra.append(("qid", list(self.groups)))
+        head = [h for h, _ in extra] + self.names
+        return ",".join(head) + "\n" + "".join(",".join([c[i] for _, c in extra] + r) + "\n" for i, r in enumerate(self.rows))
 
     def model_line(self):
         keys = ["max-depth", "min-leaf", "bins", "max-nodes"] if self.model == "tree" else ["trees", "max-depth", "min-leaf", "bins", "mtry", "bootstrap", "max-nodes"]
@@ -431,7 +436,7 @@ def run_case(case, tmp, threads=1, all_threads=False):
 
 def compare_predict(case, doc, want, what):
     cells = doc["data"]["rows"]
-    if case.task == "regression":
+    if case.task != "classification":
         if [float(c[0]) for c in cells] != want:
             return ["%s: the values differ from the oracle's" % what]
         return []

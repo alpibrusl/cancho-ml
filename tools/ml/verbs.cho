@@ -332,8 +332,17 @@ pub fn explain[&h, &s, &p, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Erro
         q = fail.detail_str(heap, q, "reason", reason);
         return fail.add(heap, e, q);
     }
+    if st == 12 && argv.has(src, "group") && rep.aux > argv.names_in(argv.text(src, "drop")) + argv.count_of(src, "weight") {
+        // the group column is the last name the reader was given (argv.drop_list)
+        var q = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--group names a column that is not in the header", "names are compared exactly, byte for byte");
+        q = fail.no_repair(heap, q);
+        q = fail.detail_open(heap, q);
+        q = fail.detail_str(heap, q, "flag", "--group");
+        q = fail.detail_text(heap, q, "name", argv.text(src, "group"));
+        return fail.add(heap, e, q);
+    }
     if st == 12 && argv.has(src, "weight") && rep.aux > argv.names_in(argv.text(src, "drop")) {
-        // the weight column is the last name the reader was given (argv.drop_list)
+        // the weight column is the name after those of --drop (argv.drop_list)
         var q = fail.open_in(heap, spec.extra(), "ml.input.unknown-column", "--weight names a column that is not in the header", "names are compared exactly, byte for byte");
         q = fail.no_repair(heap, q);
         q = fail.detail_open(heap, q);

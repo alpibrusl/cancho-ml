@@ -37,6 +37,7 @@ import ml.wiredata;
 import ml.refuse;
 import ml.splitspec;
 import ml.splitwire;
+import ml.rankcol;
 import ml.weightcol;
 import metrics.rules;
 import metrics.splits;
@@ -156,6 +157,20 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
     }
     if verb == 1 || verb == 5 {
         e = weightcol.check_columns(heap, src, e);
+    }
+    if verb == 1 || verb == 3 || verb == 5 {
+        e = rankcol.check_columns(heap, src, e);
+    }
+    // --task ranking and --group go together (docs/ranking.md section 2); a plan names its task on its model line, checked where the plan is read
+    if (verb == 1 || verb == 5) && !argv.has(src, "plan") {
+        let ranks = bytes.equal(argv.text(src, "task"), "ranking");
+        if ranks && !est.has_ranking(est.kind_named(argv.text(src, "model"))) {
+            e = wiredata.conflict(heap, e, "task", "only --model boost has a ranking task");
+        } else if ranks && !argv.has(src, "group") {
+            e = rankcol.needs_group(heap, e);
+        } else if !ranks && argv.has(src, "group") {
+            e = rankcol.unsupported(heap, e);
+        }
     }
     if verb == 1 || verb == 3 || verb == 5 || verb == 7 {
         if argv.has(src, "threads") {
@@ -331,26 +346,30 @@ pub res struct Data {
     yall: Box[[float]],
     // the weight of every row (docs/weights.md section 2.4), empty without --weight; the column itself is dropped from the matrix
     wall: Box[[float]],
+    // the group number of every row (docs/ranking.md section 2) and the number of groups, empty without --group; the column itself is dropped from the matrix
+    gall: Box[[int]],
+    ngroups: int,
     // whether the file was read with the categorical columns of --cat (docs/categorical-encoders.md): x and sc then hold the NUMERIC columns only, and the ids and
     // the vocabulary they refer to travel beside the Data (load_data answers them; a field cannot be borrowed by itself)
     cat: bool,
 }
 
 pub fn drop_data[&h](heap: &!h Heap, d: Data) -> [heap] int {
-    let Data { x, sh, sc, tj, nrows, ncols, c0, c1, ncls, yall, wall, cat } = d;
+    let Data { x, sh, sc, tj, nrows, ncols, c0, c1, ncls, yall, wall, gall, ngroups, cat } = d;
     matrix.drop(heap, x);
     csv.drop_shape(heap, sh);
     schema.drop(heap, sc);
     unbox_slice(heap, yall);
     unbox_slice(heap, wall);
+    unbox_slice(heap, gall);
     return nrows;
 }
 
 pub fn empty_data[&h](heap: &!h Heap) -> [heap] Data {
-    return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, ncls: 0, yall: box_slice(heap, 2, 0.0), wall: box_slice(heap, 1, 0.0), cat: false };
+    return Data { x: matrix.empty(heap), sh: csv.empty_shape(heap), sc: schema.empty(heap), tj: 0, nrows: 0, ncols: 0, c0: 0, c1: 0, ncls: 0, yall: box_slice(heap, 2, 0.0), wall: box_slice(heap, 1, 0.0), gall: box_slice(heap, 1, 0), ngroups: 0, cat: false };
 }
 
-pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &wp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], wn: &wp [byte], mixed_plan: bool, task: int, kind: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
+pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &wp, &gq, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, tg: &tn [byte], na: &nn [byte], wn: &wp [byte], gn: &gq [byte], mixed_plan: bool, task: int, kind: int, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] (Data, catmat.Ids, dict.Vocab, bool, fail.Errors, buffer.Buffer) {
     var e = errs;
     var lg = log;
     var go = true;
@@ -566,7 +585,28 @@ pub fn load_data[&h, &f, &r, &pf, &tn, &nn, &wp, &cl](heap: &!h Heap, src: &cl [
         e = e2;
         go = ok2;
     }
-    return (Data { x: x, sh: sh, sc: sc, tj: tj, nrows: nrows, ncols: ncols, c0: c0, c1: c1, ncls: ncls, yall: yall, wall: wall, cat: o.cat_given || mixed_plan }, ids, voc, go, e, lg);
+    // the groups of --group, read from the file again (the column is not in the matrix), and the relevance (the target) checked (docs/ranking.md section 2)
+    var gall = box_slice(heap, 1, 0);
+    var ngroups = 0;
+    if go && len(gn) > 0 {
+        var rel_ok = true;
+        borrow yall as &yq3 in {
+            let (ok3, e3) = rankcol.check_relevance(heap, contents(yq3), nrows, tg, e);
+            rel_ok = ok3;
+            e = e3;
+        }
+        if !rel_ok {
+            go = false;
+        } else {
+            unbox_slice(heap, gall);
+            let (g2, ng2, ok4, e4) = rankcol.read(heap, gn, fs, root, file, o, nrows, e);
+            gall = g2;
+            ngroups = ng2;
+            e = e4;
+            go = ok4;
+        }
+    }
+    return (Data { x: x, sh: sh, sc: sc, tj: tj, nrows: nrows, ncols: ncols, c0: c0, c1: c1, ncls: ncls, yall: yall, wall: wall, gall: gall, ngroups: ngroups, cat: o.cat_given || mixed_plan }, ids, voc, go, e, lg);
 }
 
 fn distinct_labels[&y](yv: &y [float], n: int) -> [] (int, int, int) {
@@ -818,7 +858,16 @@ pub fn train[&h, &dd, &ci, &cv, &pp, &s, &cl](heap: &!h Heap, src: &cl [byte], d
                     }
                 }
             }
-            if go && len(contents(ds.wall)) > 1 {
+            if go && est.ranking(pls.kind, contents(pls.ip)) {
+                // the pairwise ranking fit of the groups of the training rows (docs/ranking.md section 4)
+                borrow yfit as &yfr in {
+                    let (b2, ok2, e2) = rankcol.fit_blob(heap, pls.kind, o.threads, matrix.shape(xq), contents(xq.data), contents(xq.miss), matrix.wpc(xq), contents(yfr)[0..rows], contents(ds.wall), contents(ds.gall), ds.ngroups, sel, want, ds.nrows, contents(pls.ip), contents(pls.fp), o.seed, ds.c0, ds.c1, o.max_rows, o.max_cols, o.max_cells, e);
+                    unbox_slice(heap, blob);
+                    blob = b2;
+                    e = e2;
+                    go = ok2;
+                }
+            } else if go && len(contents(ds.wall)) > 1 {
                 // a weight per training row (docs/weights.md section 2.5): the same rows as the labels
                 let (wtr, any) = weightcol.gather(heap, contents(ds.wall), sel, want, ds.nrows);
                 if !any {
@@ -1320,20 +1369,25 @@ pub fn holdout[&h, &dd, &ci, &cv, &pp, &tt, &s, &cl](heap: &!h Heap, src: &cl [b
                         } else {
                             hc0 = contents(pls.ip)[0];
                         }
+                        // a ranking model is scored by group (docs/ranking.md section 3): the groups of the held-out rows, renumbered
+                        let (gte, gk) = rankcol.gather(heap, contents(ds.gall), ds.ngroups, sel, which, ds.nrows);
                         borrow yte as &yr in {
                             borrow xs as &xq2 in {
-                                let (mo, mplain, mund, fl) = wiredata.metrics_block(heap, pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, ds.c1, o.max_rows, false);
-                                buffer.drop(heap, mobj);
-                                mobj = mo;
-                                buffer.drop(heap, mplain);
-                                buffer.drop(heap, mund);
-                                if fl.code != 0 {
-                                    e = wiredata.bad_metric(heap, e, fl);
-                                    go = false;
+                                borrow gte as &gtr in {
+                                    let (mo, mplain, mund, fl) = rankcol.block(heap, ds.ngroups > 0 && est.ranking(pls.kind, contents(pls.ip)), pls.kind, est.task_of(pls.kind, contents(pls.ip)), xq2, contents(yr), contents(tr.wv), contents(tr.blob), hc0, ds.c1, ds.c1, o.max_rows, false, contents(gtr), gk, argv.nat(src, "rank-k"), bytes.equal(argv.text(src, "gain"), "linear"));
+                                    buffer.drop(heap, mobj);
+                                    mobj = mo;
+                                    buffer.drop(heap, mplain);
+                                    buffer.drop(heap, mund);
+                                    if fl.code != 0 {
+                                        e = wiredata.bad_metric(heap, e, fl);
+                                        go = false;
+                                    }
                                 }
                             }
                         }
                         unbox_slice(heap, yte);
+                        unbox_slice(heap, gte);
                     }
                     matrix.drop(heap, xs);
                 }
@@ -1522,7 +1576,7 @@ fn failed_made[&h](heap: &!h Heap, errs: fail.Errors, log: buffer.Buffer) -> [he
 
 // Fit the model of the plan text `ptxt` (consumed; `ok` false when the text could not be had) on the file `file`, as `fit` does, and make its file. `tg` is the target's name and `na` the
 // missing-value markers: they come from the command line, or from a record (a runtime text cannot be a field of Opts). `want_rec`: also score the rows for the run record.
-pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], wn: &wp [byte], o: verbs.Opts, sp: splitspec.SplitOpts, spcol: &sk [byte], want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] Made {
+pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &gq, &sk, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, ptxt: buffer.Buffer, ok0: bool, tg: &tn [byte], na: &nn [byte], wn: &wp [byte], gn: &gq [byte], o: verbs.Opts, sp: splitspec.SplitOpts, spcol: &sk [byte], want_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read, conc] Made {
     var e = errs;
     var lg = log;
     let (pls, ok1, e1) = build_plan(heap, ptxt, ok0, o, e);
@@ -1548,6 +1602,20 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [
             go = false;
         } else if task != 4 && !o.target_given {
             e = verbs.problem(heap, e, "args.required-flag", "fit needs --target, the column to predict", "ml fit --target NAME --output MODEL FILE", "flag", "--target");
+            go = false;
+        }
+    }
+    // a ranking task and --group go together, with a plan as with flags (docs/ranking.md section 2)
+    if go {
+        var rk = false;
+        borrow pls as &rkq in {
+            rk = est.ranking(kind, contents(rkq.ip));
+        }
+        if rk && len(gn) == 0 {
+            e = rankcol.needs_group(heap, e);
+            go = false;
+        } else if !rk && len(gn) > 0 {
+            e = rankcol.unsupported(heap, e);
             go = false;
         }
     }
@@ -1588,7 +1656,7 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [
         hashed = st1 == 0;
     }
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, wn, mixed_plan, task, kind, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = load_data(heap, src, fs, root, file, o, tg, na, wn, gn, mixed_plan, task, kind, e, lg);
         drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -1815,7 +1883,7 @@ pub fn make[&h, &f, &r, &pf, &tn, &nn, &wp, &sk, &cl](heap: &!h Heap, src: &cl [
 
 pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, planp: &pp paths.Rp, trackp: &pt paths.Rp, tokens: &t [byte], o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, conc] verbs.Out {
     let (ptxt, ok0, e0) = plan_source(heap, src, fs, root, planp, o, tokens, errs);
-    let m = make(heap, src, fs, root, file, ptxt, ok0, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), o, sp, splitspec.column(src, sp), o.track_given, e0, log);
+    let m = make(heap, src, fs, root, file, ptxt, ok0, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), argv.text(src, "group"), o, sp, splitspec.column(src, sp), o.track_given, e0, log);
     var made_ok = false;
     var kind = 0;
     var task = 0;
@@ -1852,7 +1920,7 @@ pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [by
             if est.kind_of(mq.kind) >= kinds.first_ordered_model() {
                 sum_order = kinds.sum_order_for(est.kind_of(mq.kind));
             }
-            let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(mq.fbytes), buffer.bytes(mq.sha), mq.file_bytes, mq.file_rows, mq.trows, mq.ntest, mq.features, mq.steps, argv.text(src, "target"), mq.task != 4, wiredata.task_word(mq.task), buffer.bytes(mq.ptext), buffer.bytes(mq.splt), buffer.bytes(mq.rec), sum_order, argv.text(src, "na-values"), src, o, fail.empty_in(heap, spec.extra()));
+            let (rb, ib, wr, te) = track.plan(heap, fs, root, trackp, paths.shown(file), paths.shown(out), buffer.bytes(mq.fbytes), buffer.bytes(mq.sha), mq.file_bytes, mq.file_rows, mq.trows, mq.ntest, mq.features, mq.steps, argv.text(src, "target"), mq.task != 4, rankcol.word(mq.task, len(argv.text(src, "group")) > 0), buffer.bytes(mq.ptext), buffer.bytes(mq.splt), buffer.bytes(mq.rec), sum_order, argv.text(src, "na-values"), src, o, fail.empty_in(heap, spec.extra()));
             buffer.drop(heap, recbuf);
             buffer.drop(heap, idbuf);
             recbuf = rb;
@@ -1901,7 +1969,7 @@ pub fn fit[&h, &f, &r, &pf, &po, &pp, &t, &pt, &cl](heap: &!h Heap, src: &cl [by
                 borrow action as &acr in {
                     borrow rname as &rnr in {
                         borrow recbuf as &rcr in {
-                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), wiredata.task_word(task), trows, cols, argv.text(src, "target"), buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
+                            result = answer_fit(heap, fs, root, out, trackp, o, est.name(kind), rankcol.word(task, len(argv.text(src, "group")) > 0), trows, cols, argv.text(src, "target"), buffer.bytes(fb), summary, buffer.bytes(rjr), buffer.bytes(acr), buffer.bytes(rnr), buffer.bytes(rcr), write_rec, e, log);
                         }
                     }
                 }

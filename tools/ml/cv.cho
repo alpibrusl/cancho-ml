@@ -29,6 +29,7 @@ import flt;
 import models.common;
 import pipeline.plan;
 import pipeline.schema;
+import ml.rankcol;
 import ml.weightcol;
 import tree.params;
 import toolbox.cli;
@@ -132,7 +133,7 @@ pub fn run[&h, &f, &r, &pf, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &
     var cids = catmat.empty(heap);
     var cvoc = dict.empty_vocab(heap);
     if go {
-        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, src, fs, root, file, o, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), mixed_plan, task, kind, e, lg);
+        let (d2, ids2, voc2, ok2, e2, lg2) = wire.load_data(heap, src, fs, root, file, o, argv.text(src, "target"), argv.text(src, "na-values"), argv.text(src, "weight"), argv.text(src, "group"), mixed_plan, task, kind, e, lg);
         wire.drop_data(heap, ds);
         catmat.drop(heap, cids);
         dict.drop_vocab(heap, cvoc);
@@ -327,7 +328,7 @@ pub fn run[&h, &f, &r, &pf, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &
                         borrow sizes as &zr in {
                             borrow assign as &ar2 in {
                                 borrow pls as &pr3 in {
-                                    let (p2, t2) = answer(heap, kind, task, argv.text(src, "target"), o, sp, dn, cols, plan.text(pr3.pl), buffer.bytes(sbr), strategy, folds, reps, buffer.bytes(rr), buffer.bytes(fr2), contents(er2), contents(zr), done, contents(ar2));
+                                    let (p2, t2) = answer(heap, kind, task, argv.has(src, "group"), argv.text(src, "target"), o, sp, dn, cols, plan.text(pr3.pl), buffer.bytes(sbr), strategy, folds, reps, buffer.bytes(rr), buffer.bytes(fr2), contents(er2), contents(zr), done, contents(ar2));
                                     buffer.drop(heap, payload);
                                     buffer.drop(heap, plain);
                                     payload = p2;
@@ -359,14 +360,14 @@ pub fn run[&h, &f, &r, &pf, &pp, &t, &cl](heap: &!h Heap, src: &cl [byte], fs: &
 }
 
 // the document and the plain text of a finished cross-validation
-fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa, &tg](heap: &!h Heap, kind: int, task: int, tg: &tg [byte], o: verbs.Opts, sp: splitspec.SplitOpts, rows: int, cols: int, plan_text: &pt [byte], spec_text: &sx [byte], strategy: int, folds: int, reps: int, results: &rr [byte], frags: &fr [byte], ends: &ee [int], sizes: &zz [int], count: int, assign: &aa [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
+fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa, &tg](heap: &!h Heap, kind: int, task: int, rank: bool, tg: &tg [byte], o: verbs.Opts, sp: splitspec.SplitOpts, rows: int, cols: int, plan_text: &pt [byte], spec_text: &sx [byte], strategy: int, folds: int, reps: int, results: &rr [byte], frags: &fr [byte], ends: &ee [int], sizes: &zz [int], count: int, assign: &aa [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
     var w = json.writer(heap, 1024);
     var plain = buffer.empty(heap, 256);
     w = json.begin_object(heap, w);
     w = json.put_key(heap, w, "model");
     w = json.put_string(heap, w, est.name(kind));
     w = json.put_key(heap, w, "task");
-    w = json.put_string(heap, w, wiredata.task_word(task));
+    w = json.put_string(heap, w, rankcol.word(task, rank));
     if len(tg) == 0 {
         w = json.put_key(heap, w, "target");
         w = json.put_null(heap, w);
@@ -392,7 +393,7 @@ fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa, &tg](heap: &!h Heap, kind: int,
     plain = buffer.append(heap, plain, "cv: ");
     plain = buffer.append(heap, plain, est.name(kind));
     plain = buffer.push(heap, plain, byte_of(' '));
-    plain = buffer.append(heap, plain, wiredata.task_word(task));
+    plain = buffer.append(heap, plain, rankcol.word(task, rank));
     plain = buffer.append(heap, plain, ", ");
     plain = buffer.push_nat(heap, plain, rows);
     plain = buffer.append(heap, plain, " rows, ");
@@ -451,7 +452,7 @@ fn answer[&h, &pt, &sx, &rr, &fr, &ee, &zz, &aa, &tg](heap: &!h Heap, kind: int,
         pos = next;
         if !found {
             going = false;
-        } else if cvagg.is_scalar(first, vs, ve) {
+        } else if cvagg.is_scalar(first, vs, ve) && !bytes.equal(first[ks..ke], "k") {
             let name = first[ks..ke];
             var have = 0;
             var k = 0;

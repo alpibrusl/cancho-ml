@@ -18,6 +18,7 @@ import ml.interp;
 import ml.kinds;
 import ml.mcwire;
 import ml.mfile;
+import ml.rankcol;
 import ml.paths;
 import ml.prov;
 import ml.spec;
@@ -181,6 +182,12 @@ fn put_categorical[&h, &s](heap: &!h Heap, w0: json.Writer, payload: &s [byte], 
 fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static [byte], kind: int, task: int, c0: int, c1: int, sc: &c schema.Schema, steps: &s [byte], tbl: &t [byte], has_table: bool, takes_missing: bool, imp: &m [byte], o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer) {
     let (pat, plen) = section_at(data, 1);
     let (mat, mlen) = section_at(data, 5);
+    // a ranking model is described as one: its payload says task 2 (docs/ranking.md section 7)
+    let (mdt, mdl) = section_at(data, 4);
+    var rank = false;
+    if mdl > 0 {
+        rank = rankcol.payload_ranking(kind, data[mdt..mdt + mdl]);
+    }
     var plan_bytes = data[0..0];
     if plen > 0 {
         plan_bytes = data[pat..pat + plen];
@@ -211,7 +218,7 @@ fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static 
     w = json.put_key(heap, w, "model");
     w = json.put_string(heap, w, model);
     w = json.put_key(heap, w, "task");
-    w = json.put_string(heap, w, wiredata.task_word(task));
+    w = json.put_string(heap, w, rankcol.word(task, rank));
     w = json.put_key(heap, w, "kind");
     w = json.put_int(heap, w, kind);
     w = put_key_text(heap, w, "plan", plan_bytes);
@@ -509,7 +516,7 @@ fn emit[&h, &d, &s, &t, &c, &m](heap: &!h Heap, data: &d [byte], model: &static 
     head = buffer.append(heap, head, "model ");
     head = buffer.append(heap, head, model);
     head = buffer.append(heap, head, ", ");
-    head = buffer.append(heap, head, wiredata.task_word(task));
+    head = buffer.append(heap, head, rankcol.word(task, rank));
     head = buffer.append(heap, head, ", ");
     head = buffer.push_nat(heap, head, rows);
     head = buffer.append(heap, head, " training rows\n");

@@ -343,6 +343,11 @@ that `ml` reaches (`ml.input.*`, `ml.label.*`, `ml.schema.mismatch`, `ml.model.t
 | `ml.weight.negative` | 8 | a weight is below 0 | none |
 | `ml.weight.too-large` | 8 | a weight is above 1e12 | none |
 | `ml.weight.zero-total` | 8 | no row of the training side has a weight above 0 (`side`) | none |
+| `ml.rank.bad-relevance` | 8 | a cell of the target of a ranking fit is not an integer from 0 to 30 (`flag`, `row`, `name`) *(`docs/ranking.md` section 2)* | none |
+| `ml.rank.group-missing` | 8 | a cell of the `--group` column is empty (`flag`, `row`, `name`) | none |
+| `ml.limit.group-size` | 8 | a group has more rows than 4096 (`rows`, `max`) | none |
+| `ml.limit.pairs` | 8 | the pairs of different relevance inside the groups are more than 268435456 for one round (`pairs`, `max`) | none |
+| `ml.split.group-required` | 2 | a ranking task with `--stratify`, `--split-by` or `--split-group` on another column: a query would be on both sides (`flag`) | retry without the flag |
 
 *Registered by the transforms and the pipeline stage (library only: `lib/transforms/codes.cho`, `docs/transforms.md` section 1 X7, `docs/pipeline.md` section 2.1; `tools/ml/spec.cho` `pending()`; none is reachable from `ml` yet):*
 

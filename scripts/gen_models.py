@@ -25,7 +25,7 @@ DEFAULT_ROOT = HERE.parent
 TOP_KEYS = {
     "name": str, "kind": int, "extra_kinds": list, "kind_fn": str, "shares_kind_with": str, "task": str, "tier": str, "wired": bool,
     "adapter": str, "shape": str, "payload_version": int, "doc": str, "files": list, "plan_order": int, "limits": dict, "hyperparameter": list,
-    "tags": dict, "authority": dict, "sums": dict, "oracle": dict, "target_classes": int, "weighted": bool,
+    "tags": dict, "authority": dict, "sums": dict, "oracle": dict, "target_classes": int, "weighted": bool, "ranking": bool,
 }
 REQUIRED = {"name", "kind", "kind_fn", "task", "tier", "wired", "payload_version", "doc", "files", "plan_order", "tags", "authority", "sums"}
 HP_KEYS = {"name": str, "type": str, "min": int, "max": int, "values": list, "default": str, "required": bool, "doc": str, "nonneg": bool}
@@ -424,13 +424,14 @@ def render_est(models):
     o += simple("task", "int", lambda m: {"regression": "1", "classification": "2", "both": "3", "clustering": "4"}.get(m["task"], "0"), "0")
     o += simple("nints", "int", lambda m: str(len(int_like(m))), "0")
     o += simple("nfloats", "int", lambda m: str(sum(1 for h in m["hyperparameter"] if h["type"] == "float")), "0")
-    o += ["// 1 regression or 2 classification: the task of the model whose integer hyperparameters are `ip` (a model of both tasks has it in `task`)",
+    o += ["// 1 regression or 2 classification (a ranking model is read as a regression: it answers a score per row; est.ranking tells them apart): the task of the model whose integer hyperparameters are `ip` (a model of both tasks has it in `task`)",
           "pub fn task_of[&i](kind: int, ip: &i [int]) -> [] int {"]
     for m in ws:
         if m["task"] == "both":
             idx = [h["name"] for h in int_like(m)].index("task")
             vals = next(h for h in m["hyperparameter"] if h["name"] == "task")["values"]
-            o += ["    if kind == %d {" % keys[m["name"]], "        if ip[%d] == %d {" % (idx, vals.index("classification")), "            return 2;", "        }", "        return 1;", "    }"]
+            o += ["    if kind == %d {" % keys[m["name"]], "        if ip[%d] == %d {" % (idx, vals.index("classification")), "            return 2;", "        }"]
+            o += ["        return 1;", "    }"]
     o += ["    return task(kind);", "}", ""]
     o += ["// whether the model has a hyperparameter called `flag` (the `task` of a model of both tasks is the --task flag, not a hyperparameter flag)",
           "pub fn takes[&f](kind: int, flag: &f [byte]) -> [] bool {"]
@@ -580,6 +581,20 @@ def render_est(models):
           "pub fn fit_blob_weighted[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {"]
     o += _chain(wblob, lambda m: ["return %s.fit_blob_weighted(heap, threads, xt, xd, miss, wpc, yd, wd, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);" % ad(m)], keys)
     o += ["    return (box_slice(heap, 1, byte_of(0)), 8);", "}", ""]
+    rblob = [m for m in blob if m.get("ranking")]
+    o += ["// the pairwise ranking fit (docs/ranking.md section 4): as fit_blob with the group number of every row; ng groups; wtd says whether wd holds the weights",
+          "pub fn fit_blob_rank[&h, &x, &m, &y, &w, &u, &i, &f](heap: &!h Heap, kind: int, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], wtd: bool, gid: &u [int], ng: int, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {"]
+    o += _chain(rblob, lambda m: ["return %s.fit_blob_rank(heap, threads, xt, xd, miss, wpc, yd, wd, wtd, gid, ng, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);" % ad(m)], keys)
+    o += ["    return (box_slice(heap, 1, byte_of(0)), 8);", "}", ""]
+    o += ["// whether the kind has a ranking objective (--task ranking)", "pub fn has_ranking(kind: int) -> [] bool {"]
+    o += _chain(rblob, lambda m: ["return true;"], keys)
+    o += ["    return false;", "}", ""]
+    o += ["// whether the model whose integer hyperparameters are `ip` is a ranking model (its `task` is the value ranking)", "pub fn ranking[&i](kind: int, ip: &i [int]) -> [] bool {"]
+    for m in rblob:
+        idx = [h["name"] for h in int_like(m)].index("task")
+        vals = next(h for h in m["hyperparameter"] if h["name"] == "task")["values"]
+        o += ["    if kind == %d {" % keys[m["name"]], "        return ip[%d] == %d;" % (idx, vals.index("ranking")), "    }"]
+    o += ["    return false;", "}", ""]
     for fn in ("predict", "proba"):
         o += ["pub fn %s_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!q [float]) -> [heap] int {" % fn]
         o += _chain(blob, lambda m, fn=fn: ["return %s.%s_blob(heap, blob, xt, xd, miss, wpc, out);" % (ad(m), fn)], keys)

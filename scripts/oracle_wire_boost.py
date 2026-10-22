@@ -84,12 +84,17 @@ def fit_oracle(case):
             return r.tag, None
     Xn, Mn = owt.matrix_of(cur)
     d = Xn.shape[1]
-    task = 0 if case.task == "classification" else 1
+    task = {"classification": 0, "regression": 1, "ranking": 2}[case.task]
     hp = {k: case.hp.get(k, DEFAULTS[k]) for k in ORDER}
     stats = {}
     yv = np.array(yfit, dtype=np.float64)
     if task == 0 and (yv.sum() == 0 or yv.sum() == len(yv)):
         return "ml.label.single-class", None
+    groups = None
+    if task == 2:
+        # the groups of the training rows: the distinct cells sorted bytewise, the rows of a group in file order (docs/ranking.md section 2)
+        gl = [case.groups[i] for i in tr]
+        groups = [[i for i, g in enumerate(gl) if g == lab] for lab in sorted(set(gl), key=lambda s_: s_.encode())]
     wts = None
     if case.weights is not None:
         # the first row of a class with no weight above 0 on the training side gets weight 1 (the refusal of such a side is judged by the tests of the command line)
@@ -102,7 +107,7 @@ def fit_oracle(case):
         wts = np.array([w[i] for i in tr], dtype=np.float64)
     try:
         res = ob.fit(Xn, Mn, yv, task, int(hp["rounds"]), float(hp["learning-rate"]), int(hp["max-depth"]), int(hp["min-leaf"]), int(hp["bins"]), float(hp["l2"]),
-                     float(hp["subsample"]), int(hp["early-stopping"]), int(hp["max-nodes"]), case.seed, stats, wts)
+                     float(hp["subsample"]), int(hp["early-stopping"]), int(hp["max-nodes"]), case.seed, stats, wts, groups)
     except ob.LimitNodes:
         return "ml.limit.nodes", None
     except AssertionError:
@@ -137,7 +142,7 @@ def scores_oracle(ctx, X_rows):
 
 def predict_oracle(case, ctx, X_rows):
     s = scores_oracle(ctx, X_rows)
-    if case.task == "regression":
+    if case.task != "classification":
         return s
     c0, c1 = ctx["labels"]
     p = [float(v) for v in ob.sigmoid(np.array(s))]
@@ -239,6 +244,8 @@ def fit_args(case, out, sparse=True):
     a = ["fit", "--model", "boost", "--task", case.task, "--target", case.target, "--output", out]
     if case.weights is not None:
         a += ["--weight", "wt"]
+    if case.groups is not None:
+        a += ["--group", "qid"]
     for k, v in case.hp.items():
         if str(v) != str(DEFAULTS[k]) or not sparse:
             a += ["--" + k, str(v)]
@@ -286,7 +293,8 @@ def run_case(case, tmp, threads=1, all_threads=False):
                 problems.append("the file at --threads %d differs from the oracle's" % t)
     proba = case.task == "classification"
     base = ["--root", tmp, "predict", "--model-file", "m.cml", "--limit", "1000000"] + (["--proba"] if proba else [])
-    rc, out = ow.ml(*base, *(["--drop", "wt"] if case.weights is not None else []), "d.csv")
+    extra_cols = (["wt"] if case.weights is not None else []) + (["qid"] if case.groups is not None else [])
+    rc, out = ow.ml(*base, *(["--drop", ",".join(extra_cols)] if extra_cols else []), "d.csv")
     doc = json.loads(out)
     if not doc.get("ok"):
         return problems + ["predict refused: %s" % out[:300]]
@@ -308,7 +316,8 @@ def run_case(case, tmp, threads=1, all_threads=False):
     if case.split:
         mask = ow.split_masks(len(rows), case.split, case.seed)
         idx = [i for i in idx if mask[i] == 1]
-    problems += check_eval(case, ctx, idx, tmp, threads)
+    if case.task != "ranking":
+        problems += check_eval(case, ctx, idx, tmp, threads)
     if case.task == "classification":
         other = copy.copy(case)
         c0, c1 = ctx["labels"]

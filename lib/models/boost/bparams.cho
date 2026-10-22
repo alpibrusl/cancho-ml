@@ -96,7 +96,11 @@ pub fn check(p: Params, n: int, d: int, rows_cap: int, cols_cap: int, cells_cap:
     if d > 4096 {
         return refuse.too_many_columns();
     }
-    if p.task != 0 && p.task != 1 {
+    if p.task < 0 || p.task > 2 {
+        return refuse.param_out_of_range();
+    }
+    // a ranking task has no early stopping: its validation rows would split groups (docs/ranking.md section 6)
+    if p.task == 2 && p.early != 0 {
         return refuse.param_out_of_range();
     }
     if p.rounds < 1 || p.rounds > rounds_max() {

@@ -450,7 +450,7 @@ pub fn fine() -> [] Failed {
 // One metric: its value as the member `key` of the object and a line of the text, or null and `undefined` when the library says it has no value
 // (metrics.rules.undefined: a zero denominator, a constant target for R-squared, a non-finite result). Any other refusal stops the eval.
 // (writer, text, the names of the undefined metrics so far, the refusal code or 0)
-fn member[&h, &u](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, key: &static [byte], label: &static [byte], sc: rules.Scored, undefined: buffer.Buffer) -> [heap] (json.Writer, buffer.Buffer, buffer.Buffer, int) {
+pub fn member[&h, &u](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, key: &static [byte], label: &static [byte], sc: rules.Scored, undefined: buffer.Buffer) -> [heap] (json.Writer, buffer.Buffer, buffer.Buffer, int) {
     var o = w;
     var t = plain;
     var u = undefined;

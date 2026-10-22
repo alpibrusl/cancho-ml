@@ -191,6 +191,10 @@
         "--split-by",
         "--split-group",
         "--weight",
+        "--group",
+        "--rank-k",
+        "--gain",
+        "--rank",
         "--folds",
         "--repeats",
         "--emit-folds",
@@ -358,7 +362,12 @@
         "ml.weight.missing",
         "ml.weight.negative",
         "ml.weight.too-large",
-        "ml.weight.zero-total"
+        "ml.weight.zero-total",
+        "ml.rank.bad-relevance",
+        "ml.rank.group-missing",
+        "ml.limit.group-size",
+        "ml.limit.pairs",
+        "ml.split.group-required"
       ]
     },
     "repair": {
@@ -825,7 +834,8 @@
               "enum": [
                 "regression",
                 "classification",
-                "clustering"
+                "clustering",
+                "ranking"
               ]
             },
             "rows": {
@@ -2053,66 +2063,175 @@
                       "additionalProperties": false
                     },
                     "holdout": {
-                      "type": "object",
-                      "properties": {
-                        "rows": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "on": {
-                          "const": "held-out"
-                        },
-                        "metrics": {
+                      "oneOf": [
+                        {
                           "type": "object",
                           "properties": {
-                            "rmse": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
+                            "rows": {
+                              "type": "integer",
+                              "minimum": 0
                             },
-                            "mae": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
+                            "on": {
+                              "const": "held-out"
                             },
-                            "r2": {
-                              "oneOf": [
-                                {
-                                  "type": "string",
-                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                            "metrics": {
+                              "type": "object",
+                              "properties": {
+                                "rmse": {
+                                  "oneOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
                                 },
-                                {
-                                  "type": "null"
+                                "mae": {
+                                  "oneOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "r2": {
+                                  "oneOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
                                 }
-                              ]
+                              },
+                              "required": [
+                                "rmse",
+                                "mae",
+                                "r2"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
-                            "rmse",
-                            "mae",
-                            "r2"
+                            "rows",
+                            "on",
+                            "metrics"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "rows": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "on": {
+                              "const": "held-out"
+                            },
+                            "metrics": {
+                              "type": "object",
+                              "properties": {
+                                "ndcg": {
+                                  "oneOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "map": {
+                                  "oneOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "mrr": {
+                                  "oneOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "precision": {
+                                  "type": "string",
+                                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                },
+                                "recall": {
+                                  "oneOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "groups": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "groups_scored": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "k": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "gain": {
+                                  "enum": [
+                                    "exp",
+                                    "linear"
+                                  ]
+                                },
+                                "ties": {
+                                  "const": "file order"
+                                }
+                              },
+                              "required": [
+                                "ndcg",
+                                "map",
+                                "mrr",
+                                "precision",
+                                "recall",
+                                "groups",
+                                "groups_scored",
+                                "k",
+                                "gain",
+                                "ties"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "rows",
+                            "on",
+                            "metrics"
                           ],
                           "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "rows",
-                        "on",
-                        "metrics"
-                      ],
-                      "additionalProperties": false
+                      ]
                     }
                   },
                   "required": [
@@ -3195,7 +3314,8 @@
               "enum": [
                 "regression",
                 "classification",
-                "clustering"
+                "clustering",
+                "ranking"
               ]
             },
             "columns": {
@@ -4075,6 +4195,219 @@
               ]
             },
             "task": {
+              "const": "ranking"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "on": {
+              "enum": [
+                "train",
+                "other",
+                "unknown"
+              ]
+            },
+            "metrics": {
+              "type": "object",
+              "properties": {
+                "ndcg": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "map": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mrr": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "precision": {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                "recall": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "groups": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "groups_scored": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "k": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "gain": {
+                  "enum": [
+                    "exp",
+                    "linear"
+                  ]
+                },
+                "ties": {
+                  "const": "file order"
+                }
+              },
+              "required": [
+                "ndcg",
+                "map",
+                "mrr",
+                "precision",
+                "recall",
+                "groups",
+                "groups_scored",
+                "k",
+                "gain",
+                "ties"
+              ],
+              "additionalProperties": false
+            },
+            "unknown_categories": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "out_of_range": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cells": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "cells",
+                    "rows",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "split": {
+              "type": "object",
+              "properties": {
+                "train": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "test": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "seed": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "spec": {
+                  "type": "string"
+                },
+                "assignment": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      0,
+                      1
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "train",
+                "test",
+                "seed",
+                "spec"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "rows",
+            "on",
+            "metrics",
+            "unknown_categories",
+            "out_of_range"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "enum": [
+                "linear",
+                "logistic",
+                "kmeans",
+                "tree",
+                "forest",
+                "boost",
+                "softmax"
+              ]
+            },
+            "task": {
               "const": "clustering"
             },
             "rows": {
@@ -4252,7 +4585,8 @@
               "enum": [
                 "regression",
                 "classification",
-                "clustering"
+                "clustering",
+                "ranking"
               ]
             },
             "target": {
@@ -4484,6 +4818,93 @@
                           "mean_distance"
                         ],
                         "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "ndcg": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "map": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "mrr": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "precision": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                          },
+                          "recall": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "groups": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "groups_scored": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "k": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "gain": {
+                            "enum": [
+                              "exp",
+                              "linear"
+                            ]
+                          },
+                          "ties": {
+                            "const": "file order"
+                          }
+                        },
+                        "required": [
+                          "ndcg",
+                          "map",
+                          "mrr",
+                          "precision",
+                          "recall",
+                          "groups",
+                          "groups_scored",
+                          "k",
+                          "gain",
+                          "ties"
+                        ],
+                        "additionalProperties": false
                       }
                     ]
                   }
@@ -4622,7 +5043,8 @@
               "enum": [
                 "regression",
                 "classification",
-                "clustering"
+                "clustering",
+                "ranking"
               ]
             },
             "kind": {
@@ -6023,7 +6445,8 @@
                     "enum": [
                       "regression",
                       "classification",
-                      "clustering"
+                      "clustering",
+                      "ranking"
                     ]
                   },
                   "data_sha256": {

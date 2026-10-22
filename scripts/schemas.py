@@ -88,6 +88,12 @@ def multiclass_metrics_def():
                 "left_out": obj({"precision": NAT, "recall": NAT, "f1": NAT, "roc_auc_ovr": NAT})})
 
 
+def ranking_metrics_def():
+    """the metrics of a ranking model, per group and averaged (docs/ranking.md section 3): a metric with no scored group is null; the counts and the cut-off say what was averaged"""
+    val = {"oneOf": [FLT, {"type": "null"}]}
+    return obj({"ndcg": val, "map": val, "mrr": val, "precision": FLT, "recall": val, "groups": NAT, "groups_scored": NAT, "k": NAT, "gain": {"enum": ["exp", "linear"]}, "ties": {"const": "file order"}})
+
+
 def cluster_metrics_def():
     """the metrics of a clustering: the inertia, the rows of each cluster and the mean distance of each (null for an empty cluster): docs/wiring-kmeans.md section 3"""
     val = {"oneOf": [FLT, {"type": "null"}]}
@@ -103,7 +109,7 @@ OOR = {"oneOf": [{"type": "null"}, obj({"cells": NAT, "rows": NAT, "columns": {"
 
 def runs_data():
     """The answers of ml runs list, show, compare and verify (docs/tracking.md section 5.4)."""
-    entry = obj({"id": SHA, "model": {"type": "string"}, "task": {"enum": ["regression", "classification", "clustering"]}, "data_sha256": SHA, "model_sha256": SHA,
+    entry = obj({"id": SHA, "model": {"type": "string"}, "task": {"enum": ["regression", "classification", "clustering", "ranking"]}, "data_sha256": SHA, "model_sha256": SHA,
                  "train_rows": NAT, "metrics_on": {"oneOf": [{"enum": ["train", "held-out"]}, {"type": "null"}]}, "evals": NAT})
     lst = obj({"dir": TB, "count": NAT, "truncated": {"type": "boolean"}, "runs": {"type": "array", "items": entry}})
     show = obj({"record": {"type": "object"}})
@@ -169,8 +175,12 @@ def data_defs():
     summary_cls = obj({**summary_keys, **cat_keys, **classes, "split": split, "holdout": holdout_cls}, list(summary_keys) + ["classes", "positive"])
     summary_forest_reg = obj({**forest_keys, **cat_keys, "split": split, "holdout": holdout_reg}, list(forest_keys))
     summary_forest_cls = obj({**forest_keys, **cat_keys, **classes, "split": split, "holdout": holdout_cls}, list(forest_keys) + ["classes", "positive"])
-    summary_boost_reg = obj({**boost_keys, **cat_keys, "split": split, "holdout": holdout_reg}, list(boost_keys))
+    mrank = ranking_metrics_def()
+    # a ranking boost has the summary of a boosted regression, with the ranking metrics in its held-out part
+    holdout_boost = {"oneOf": [holdout_reg, obj({"rows": NAT, "on": {"const": "held-out"}, "metrics": mrank})]}
+    summary_boost_reg = obj({**boost_keys, **cat_keys, "split": split, "holdout": holdout_boost}, list(boost_keys))
     summary_boost_cls = obj({**boost_keys, **cat_keys, **classes, "split": split, "holdout": holdout_cls}, list(boost_keys) + ["classes", "positive"])
+
     # a model of three or more classes (softmax): the coefficients per class but the reference, the intercepts, the classes and the reference class; no positive label
     mmc = multiclass_metrics_def()
     mc_keys = {"plan": {"type": "string"}, "steps": NAT, "features": NAT,
@@ -184,11 +194,11 @@ def data_defs():
                     "clusters": obj({"k": NAT, "iterations": NAT, "init": {"enum": ["random", "kmeans++"]}, "rows": NAT, "metrics": mclu})}
     summary_clu = obj({**cluster_keys, **cat_keys, "split": split, "holdout": obj({"rows": NAT, "on": {"const": "held-out"}, "metrics": mclu})}, list(cluster_keys))
     fit_p = obj({
-        "model": names, "task": {"enum": ["regression", "classification", "clustering"]}, "rows": NAT, "columns": NAT, "target": {"oneOf": [TB, {"type": "null"}]}, "path": TB,
+        "model": names, "task": {"enum": ["regression", "classification", "clustering", "ranking"]}, "rows": NAT, "columns": NAT, "target": {"oneOf": [TB, {"type": "null"}]}, "path": TB,
         "bytes": NAT, "sha256": SHA, "written": {"type": "boolean"}, "summary": {"oneOf": [summary_reg, summary_cls, summary_forest_reg, summary_forest_cls, summary_boost_reg, summary_boost_cls, summary_clu, summary_mc]}, "run": RUN,
     }, ["model", "task", "rows", "columns", "target", "path", "bytes", "sha256", "written", "summary"])
     predict_p = obj({
-        "model": names, "task": {"enum": ["regression", "classification", "clustering"]},
+        "model": names, "task": {"enum": ["regression", "classification", "clustering", "ranking"]},
         "columns": {"type": "array", "items": {"type": "string"}},
         "rows": {"type": "array", "items": {"type": "array", "items": {"oneOf": [{"type": "string"}, {"type": "object", "additionalProperties": {"type": "string"}}]}}},
         "row_count": NAT, "total_rows": NAT, "truncated": {"type": "boolean"},
@@ -200,18 +210,20 @@ def data_defs():
                       "unknown_categories": NAT, "out_of_range": OOR, "split": split}, ["model", "task", "rows", "on", "positive", "metrics", "unknown_categories", "out_of_range"])
     eval_mc_p = obj({"model": names, "task": {"const": "classification"}, "rows": NAT, "on": ON, "metrics": mmc, "unknown_categories": NAT, "out_of_range": OOR, "split": split},
                     ["model", "task", "rows", "on", "metrics", "unknown_categories", "out_of_range"])
+    eval_rank_p = obj({"model": names, "task": {"const": "ranking"}, "rows": NAT, "on": ON, "metrics": mrank, "unknown_categories": NAT, "out_of_range": OOR, "split": split},
+                      ["model", "task", "rows", "on", "metrics", "unknown_categories", "out_of_range"])
     eval_clu_p = obj({"model": names, "task": {"const": "clustering"}, "rows": NAT, "on": ON, "clusters": NAT, "metrics": mclu, "unknown_categories": NAT, "out_of_range": OOR, "split": split},
                      ["model", "task", "rows", "on", "clusters", "metrics", "unknown_categories", "out_of_range"])
     # `ml cv` (docs/splits.md section 6)
     agg = obj({"mean": {"oneOf": [FLT, {"type": "null"}]}, "std": {"oneOf": [FLT, {"type": "null"}]}, "n": NAT})
-    result = obj({"repeat": NAT, "fold": NAT, "train": NAT, "test": NAT, "metrics": {"oneOf": [mreg, mcls, mclu]}})
-    cv_p = obj({"model": names, "task": {"enum": ["regression", "classification", "clustering"]}, "target": {"oneOf": [TB, {"type": "null"}]}, "rows": NAT, "columns": NAT,
+    result = obj({"repeat": NAT, "fold": NAT, "train": NAT, "test": NAT, "metrics": {"oneOf": [mreg, mcls, mclu, mrank]}})
+    cv_p = obj({"model": names, "task": {"enum": ["regression", "classification", "clustering", "ranking"]}, "target": {"oneOf": [TB, {"type": "null"}]}, "rows": NAT, "columns": NAT,
                 "plan": {"type": "string"}, "split": {"type": "string"}, "strategy": {"enum": ["kfold", "stratified", "group", "time"]}, "folds": NAT, "repeats": NAT,
                 "results": {"type": "array", "items": result, "minItems": 2},
                 "summary": obj({"count": NAT, "std": {"const": "sample"}, "metrics": {"type": "object", "additionalProperties": agg}}),
                 "assignment": obj({"repeats": NAT, "rows": NAT, "folds": {"type": "array", "items": {"type": "array", "items": {"type": "integer", "minimum": -1}}}})},
                ["model", "task", "target", "rows", "columns", "plan", "split", "strategy", "folds", "repeats", "results", "summary"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_mc_p, eval_clu_p, cv_p, describe_data(), importance_data()] + dump_data() + runs_data()}
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_mc_p, eval_rank_p, eval_clu_p, cv_p, describe_data(), importance_data()] + dump_data() + runs_data()}
 
 
 RANK = {"type": "integer", "minimum": 1}
@@ -278,7 +290,7 @@ def describe_data():
     feature = obj({"name": TB, "count": NAT, "min": FLT, "max": FLT, "mean": FLT, "std": FLT})
     provenance = obj({"file_sha256": SHA, "file_bytes": NAT, "file_rows": NAT, "rows": NAT, "features": {"type": "array", "items": feature}})
     return obj({
-        "model": {"enum": ["constant"] + wired_models()}, "task": {"enum": ["regression", "classification", "clustering"]},
+        "model": {"enum": ["constant"] + wired_models()}, "task": {"enum": ["regression", "classification", "clustering", "ranking"]},
         "kind": {"type": "integer", "minimum": 1, "maximum": 9}, "plan": TB, "rows": NAT, "provenance": opt(provenance), "file": file_, "ensemble": obj({"trees": NAT, "nodes": NAT, "rounds_requested": NAT}), "target": opt(target),
         "columns": {"type": "array", "items": column, "minItems": 1}, "request": request,
         "categorical": {"type": "array", "items": cat}, "na_values": {"type": "array", "items": TB}, "reader": opt(reader),

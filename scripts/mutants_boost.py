@@ -32,9 +32,17 @@ PR = "lib/models/boost/predict.cho"
 BP = "lib/models/boost/bparams.cho"
 AD = "lib/models/boost/adapter.cho"
 K = "lib/core/kinds.cho"
+RG = "lib/models/boost/rankgrad.cho"
+RC = "tools/ml/rankcol.cho"
+RKM = "lib/metrics/ranking.cho"
+WI = "tools/ml/wireio.cho"
+SS = "tools/ml/splitspec.cho"
+TK = "tools/ml/track.cho"
+RU = "tools/ml/runs.cho"
 
 ORACLE = ["test_wire_boost_oracle"]
 WORACLE = ["test_wire_boost_oracle", "test_weights"]
+RANK = ["test_rank", "test_wire_rank_oracle"]
 BOOST = ["test_wire_boost"]
 F = "test_wire_boost_file.BoostFile."
 RULES = ["test_rules"]
@@ -45,6 +53,37 @@ def M(id, gate, what, edits, tests, **opt):
 
 
 MUTANTS = [
+    # ------------------------------------------------------------------ the ranking objective (docs/ranking.md sections 4 to 7)
+    M("br-pair-direction", "RK4", "the pairs are the rows of lower relevance over higher", [(RG, "if yv[i] > yv[j] {", "if yv[i] < yv[j] {")], RANK),
+    M("br-rho-argument", "RK4", "rho is the sigmoid of F_i - F_j", [(RG, "logreg.proba_of(fv[j] - fv[i])", "logreg.proba_of(fv[i] - fv[j])")], RANK),
+    M("br-hessian-is-rho", "RK4", "the hessian of an unweighted pair is rho", [(RG, "var th = rho * (1.0 - rho);", "var th = rho;")], RANK),
+    M("br-hessian-weighted-is-rho", "RK4", "the hessian of a weighted pair is w rho", [(RG, "th = w * (rho * (1.0 - rho));", "th = w * rho;")], RANK),
+    M("br-gradient-i-sign", "RK4", "the better row's gradient has the wrong sign", [(RG, "gv[i] = gv[i] + (0.0 - tg);", "gv[i] = gv[i] + tg;")], RANK),
+    M("br-gradient-j-sign", "RK4", "the worse row's gradient has the wrong sign", [(RG, "gv[j] = gv[j] + tg;", "gv[j] = gv[j] - tg;")], RANK),
+    M("br-hessian-i-dropped", "RK4", "the better row gets no hessian", [(RG, "hv[i] = hv[i] + th;", "hv[i] = hv[i];")], RANK),
+    M("br-hessian-j-dropped", "RK4", "the worse row gets no hessian", [(RG, "hv[j] = hv[j] + th;", "hv[j] = hv[j];")], RANK),
+    M("br-pair-weight-is-a-sum", "RK9", "the weight of a pair is w_i + w_j", [(RG, "let w = wv[i] * wv[j];", "let w = wv[i] + wv[j];")], RANK),
+    M("br-weights-applied-twice", "RK9", "the weights multiply the gradients of a ranking fit again", [(FI, "if wtd && p.task != 2 {", "if wtd {")], RANK),
+    M("br-gradients-not-zeroed", "RK4", "the gradients of a round add to those of the last", [(RG, "        gv[r] = 0.0;\n        hv[r] = 0.0;", "        hv[r] = 0.0;")], RANK),
+    M("br-groups-not-renumbered", "RK6", "the groups of a side keep their numbers in the whole file", [(RC, "contents(uw)[q] = 1 + k;", "contents(uw)[q] = 1 + q;")], RANK),
+    M("br-group-limit-of-the-tool", "RK7", "a group over 4096 rows is left to the library", [(RC, "    if biggest > max_group() {", "    if biggest > 100000 {")], RANK),
+    M("br-pair-limit-of-the-tool", "RK7", "the pairs over the ceiling are left to the library", [(RC, "    if pairs > max_pairs() {", "    if pairs > 100 * max_pairs() {")], RANK),
+    M("br-relevance-fraction", "RK7", "a relevance of 1.5 is not refused by the tool", [(RC, "if !(v >= 0.0 && v <= 30.0) || float_of(truncate(v)) != v {", "if !(v >= 0.0 && v <= 30.0) {")], RANK),
+    M("br-metrics-recall-for-precision", "RK1", "eval reports the recall as the precision", [(RC, 'rules.ok(r.prec), u3);', 'rules.ok(r.recall), u3);')], RANK),
+    M("br-eval-k-ignored", "RK1", "eval takes k from a constant", [(WI, 'contents(gtr), gk, argv.nat(src, "rank-k"),', 'contents(gtr), gk, 10,')], RANK),
+    M("br-eval-gain-ignored", "RK1", "eval takes the exponential gain always", [(WI, 'bytes.equal(argv.text(src, "gain"), "linear"));', 'false);')], RANK),
+    M("br-rank-column-from-zero", "RK4", "the rank of the best row is 0", [(RKM, "rk[od[r2]] = r2 - lo + 1;", "rk[od[r2]] = r2 - lo;")], RANK),
+    M("br-reader-base-score", "RK8", "a ranking file with a base score above 0 is read", [(MO, "    if task == 2 && bits_of(base) != 0 {", "    if false {")], RANK),
+    M("br-reader-early-stopping", "RK8", "a ranking file with early stopping is read", [(MO, "    if task == 2 && early != 0 {", "    if false {")], RANK),
+    M("br-reader-task-bound", "RK8", "a task 3 file is read", [(MO, "if task < 0 || task > 2 || rounds < 1", "if task < 0 || task > 3 || rounds < 1")], RANK,
+      why="the adapter's lib_size applies the same bound on the task to the header before model.read is called, so a file with a task of 3 never reaches the reader's own check: the bound is written twice, each the other's second line of defence (the test of the damaged file sets the task to 3 and sees the adapter's refusal; b-adapter-size-ceiling removes the adapter's twin of the ceilings the same way)"),
+    M("br-payload-not-ranking", "RK8", "a ranking payload is not recognised", [(RC, "    return fbits.get64(src, 20) == 2;", "    return fbits.get64(src, 20) == 1;")], RANK),
+    M("br-plan-and-payload-agree", "RK8", "a plan that says ranking over a payload that does not is read", [(WI, "    if dcode == 0 && plan_rank != rk {", "    if false {")], RANK),
+    M("br-group-split-implied", "RK6", "--group does not imply the group split", [(SS, '        return argv.text(src, "group");', '        return "";')], RANK),
+    M("br-group-required", "RK6", "--stratify with a ranking task is not refused", [(RC, '    if argv.has(src, "stratify") || argv.has(src, "split-by")', '    if false && argv.has(src, "stratify") || argv.has(src, "split-by")')], RANK),
+    M("br-record-without-group", "RK10", "the run record does not keep the group column", [(TK, "    if len(group) > 0 {", "    if false {")], RANK),
+    M("br-replay-group-not-dropped", "RK10", "the replay reads the group column as a feature", [(RU, "                        drops = buffer.append(heap, drops, buffer.bytes(gn0));", "                        drops = drops;")], RANK),
+    M("br-eval-group-unsupported", "RK6", "eval of a model that does not rank takes --group", [(WI, '            } else if !sqz.rank && argv.has(src, "group") {', '            } else if false {')], RANK),
     # ------------------------------------------------------------------ the weights (docs/weights.md section 2.6)
     M("bw-gradient-not-weighted", "WG3", "the gradient of a weighted fit is not multiplied by the weight", [(FI, "gv[r2] = wv[r2] * gv[r2];", "gv[r2] = gv[r2];")], WORACLE),
     M("bw-hessian-not-weighted", "WG3", "the hessian of a weighted fit is not multiplied by the weight", [(FI, "hv[r2] = wv[r2] * hv[r2];", "hv[r2] = hv[r2];")], WORACLE),
@@ -250,7 +289,7 @@ MUTANTS = [
     M("b-adapter-labels-length", "GB6", "the decoder accepts bytes after the payload", [(AD, "    if len(src) != want {", "    if len(src) < want {")], [F + "test_the_length_of_the_payload"]),
     M("b-adapter-labels-record-unchecked", "GB6", "the labels record of a classification is read without its checks", [(AD, "    if lab.code != 0 || lab.end != len(src) {", "    if false {")], [F + "test_the_labels_record_of_a_classification"]),
     M("b-adapter-width-not-compared", "GB6", "the payload's number of columns is not compared with the schema's", [(AD, "    if code != 0 || fd != d {", "    if code != 0 {")], BOOST + [F + "test_the_header_of_the_payload"]),
-    M("b-adapter-size-ceiling", "GB6", "the size computed from the header is used with a node count above the ceiling", [(AD, "task < 0 || task > 1 || rounds < 1 || rounds > bparams.rounds_max() || total < rounds || total > bparams.nodes_total_max() {", "task < 0 || task > 1 || rounds < 1 || rounds > bparams.rounds_max() || total < rounds {")], [F + "test_the_header_of_the_payload"],
+    M("b-adapter-size-ceiling", "GB6", "the size computed from the header is used with a node count above the ceiling", [(AD, "task < 0 || task > 2 || rounds < 1 || rounds > bparams.rounds_max() || total < rounds || total > bparams.nodes_total_max() {", "task < 0 || task > 2 || rounds < 1 || rounds > bparams.rounds_max() || total < rounds {")], [F + "test_the_header_of_the_payload"],
       why="a total above the ceiling gives a size the file cannot have (the length comparison that follows is malformed first) or, when the size equation holds, the library reader refuses the total again: two checks of one bound"),
     # ------------------------------------------------------------------ the registry
     M("b-kind-number", "GB11", "the kind of a boosted model is 9", [(K, "pub fn model_boost() -> [] int {\n    return 8;", "pub fn model_boost() -> [] int {\n    return 9;")], BOOST + ORACLE),

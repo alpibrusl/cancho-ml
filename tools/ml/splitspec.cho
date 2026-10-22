@@ -27,7 +27,7 @@ pub struct SplitOpts {
 }
 
 pub fn from_cli[&cl](src: &cl [byte], table: &static [byte]) -> [] SplitOpts {
-    return SplitOpts { stratify: argv.has(src, "stratify"), by_given: argv.has(src, "split-by"), group_given: argv.has(src, "split-group"), folds: argv.nat(src, "folds"), repeats: argv.nat(src, "repeats"), repeats_given: argv.has(src, "repeats"), emit: argv.has(src, "emit-folds") };
+    return SplitOpts { stratify: argv.has(src, "stratify"), by_given: argv.has(src, "split-by"), group_given: argv.has(src, "split-group") || argv.has(src, "group"), folds: argv.nat(src, "folds"), repeats: argv.nat(src, "repeats"), repeats_given: argv.has(src, "repeats"), emit: argv.has(src, "emit-folds") };
 }
 
 // 0 the library's plain split, 1 stratified, 2 by group, 3 by time
@@ -66,7 +66,11 @@ pub fn strategy_word(strategy: int, cv: bool) -> [] &static [byte] {
 // the column of --split-group, or the part of --split-by after `time:` (empty for the plain and the stratified strategies)
 pub fn column[&cl](src: &cl [byte], sp: SplitOpts) -> [] &cl [byte] {
     if sp.group_given {
-        return argv.text(src, "split-group");
+        // --group (a ranking task) implies the split by the same column (docs/ranking.md section 6)
+        if argv.has(src, "split-group") {
+            return argv.text(src, "split-group");
+        }
+        return argv.text(src, "group");
     }
     if sp.by_given && len(argv.text(src, "split-by")) > 5 {
         return argv.text(src, "split-by")[5..len(argv.text(src, "split-by"))];
@@ -280,7 +284,7 @@ pub fn parse[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] (bool, bool, int
 // ---------------------------------------------------------------- the checks that need no file
 
 // the arguments of the invocation with the flag `name` removed (and its value, when it takes one), or its value replaced
-fn retry_edit[&h, &cl](heap: &!h Heap, w: json.Writer, src: &cl [byte], name: &static [byte], takes_value: bool, replace: bool, value: &static [byte]) -> [heap] json.Writer {
+pub fn retry_edit[&h, &cl](heap: &!h Heap, w: json.Writer, src: &cl [byte], name: &static [byte], takes_value: bool, replace: bool, value: &static [byte]) -> [heap] json.Writer {
     var o = fail.retry_open(heap, w);
     var i = 0;
     while i < argv.argc(src) {
@@ -383,6 +387,8 @@ pub fn emit_max() -> [] int {
 pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, verb: int, table: &static [byte]) -> [heap] fail.Errors {
     var e = errs;
     let sp = from_cli(src, table);
+    // --group (a ranking task) implies a group split, but only an explicit --split-group is judged here (docs/ranking.md section 6)
+    let sg = argv.has(src, "split-group");
     var n = 0;
     if sp.stratify {
         n = n + 1;
@@ -390,13 +396,13 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
     if sp.by_given {
         n = n + 1;
     }
-    if sp.group_given {
+    if sg {
         n = n + 1;
     }
     if n > 1 {
         var a: &static [byte] = "--stratify";
         var b: &static [byte] = "--split-by";
-        if sp.stratify && sp.group_given {
+        if sp.stratify && sg {
             b = "--split-group";
         } else if !sp.stratify {
             a = "--split-by";
@@ -407,7 +413,7 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
     if sp.by_given && !by_ok(argv.text(src, "split-by")) {
         e = wiredata.bad_value(heap, e, "split-by", argv.text(src, "split-by"), "time:COLUMN, for example time:order_date");
     }
-    if sp.group_given && len(argv.text(src, "split-group")) == 0 {
+    if sg && len(argv.text(src, "split-group")) == 0 {
         e = wiredata.bad_value(heap, e, "split-group", argv.text(src, "split-group"), "the name of a column");
     }
     if verb == 5 {
@@ -428,7 +434,7 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
             flag = "stratify";
         } else if sp.by_given {
             flag = "split-by";
-        } else if sp.group_given {
+        } else if sg {
             flag = "split-group";
         }
         e = wiredata.conflict(heap, e, flag, "this flag chooses how the --split rows are held out: it needs --split train=F");

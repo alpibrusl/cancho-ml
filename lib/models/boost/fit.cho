@@ -15,6 +15,7 @@ import tree.bins;
 import tree.pbins;
 import boost.bparams;
 import boost.grow;
+import boost.rankgrad;
 
 // The boosted ensemble and its fit (docs/models-boost.md section 2). `fit` validates everything before it allocates anything sized by the input, bins the columns once
 // (tree.bins, or tree.pbins with several threads), then runs the rounds one after the other on one thread and packs the kept trees, in round order, into the arrays of
@@ -60,6 +61,8 @@ res struct Work {
     gv: Box[[float]],
     hv: Box[[float]],
     wv: Box[[float]],
+    gs: Box[[int]],
+    go: Box[[int]],
     bins: Box[[byte]],
     ed: Box[[float]],
     idx: Box[[int]],
@@ -144,12 +147,14 @@ fn row_loss(task: int, f: float, y: float) -> [] float {
 }
 
 // the rounds. Answers 0, or the refusal code; the rounds kept are in pr[1]. m fit rows (frows), nv validation rows (vrows), the cap of nodes of a tree, the base score.
-fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: int, cap: int, f0: float, wtd: bool) -> [] int {
+fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: int, cap: int, f0: float, wtd: bool, ng: int) -> [] int {
     let yv = contents(w.yv);
     let fv = contents(w.fv);
     let gv = contents(w.gv);
     let hv = contents(w.hv);
     let wv = contents(w.wv);
+    let gs = contents(w.gs);
+    let go = contents(w.go);
     let bins = contents(w.bins);
     let ed = contents(w.ed);
     let idx = contents(w.idx);
@@ -178,6 +183,11 @@ fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: i
     while round < p.rounds && !stop {
         // the gradients and hessians of the fit rows, in row order
         var k = 0;
+        if p.task == 2 {
+            // the pairs of the groups (docs/ranking.md section 4); a ranking fit has no validation rows, so the fit rows are every row
+            rankgrad.compute(fv, yv, gs, go, ng, wv, wtd, gv, hv);
+            k = m;
+        }
         while k < m {
             let r2 = frows[k];
             if p.task == 1 {
@@ -190,7 +200,7 @@ fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: i
             }
             k = k + 1;
         }
-        if wtd {
+        if wtd && p.task != 2 {
             // a weight is that many copies of the row (docs/weights.md section 2.6): the gradient and the hessian of the fit rows, each multiplied once
             k = 0;
             while k < m {
@@ -294,15 +304,19 @@ fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: i
 // the model is then empty). The caps are those of ml.limits (the caller's flags).
 pub fn fit[&h, &x, &b, &y](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Boost, int) {
     let none = box_slice(heap, 1, 0.0);
+    let noni = box_slice(heap, 1, 0);
     var f = empty(heap);
     var code = 0;
     borrow none as &nr in {
-        let (f2, c2) = fit_with(heap, p, n, d, xs, bm, ys, contents(nr)[0..0], false, rows_cap, cols_cap, cells_cap);
-        drop(heap, f);
-        f = f2;
-        code = c2;
+        borrow noni as &ni2 in {
+            let (f2, c2) = fit_with(heap, p, n, d, xs, bm, ys, contents(nr)[0..0], false, contents(ni2)[0..0], 0, rows_cap, cols_cap, cells_cap);
+            drop(heap, f);
+            f = f2;
+            code = c2;
+        }
     }
     unbox_slice(heap, none);
+    unbox_slice(heap, noni);
     return (f, code);
 }
 
@@ -312,15 +326,37 @@ pub fn fit_weighted[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: in
     if len(wd) != n {
         return (empty(heap), refuse.param_out_of_range());
     }
-    return fit_with(heap, p, n, d, xs, bm, ys, wd, true, rows_cap, cols_cap, cells_cap);
+    let noni = box_slice(heap, 1, 0);
+    var f = empty(heap);
+    var code = 0;
+    borrow noni as &ni2 in {
+        let (f2, c2) = fit_with(heap, p, n, d, xs, bm, ys, wd, true, contents(ni2)[0..0], 0, rows_cap, cols_cap, cells_cap);
+        drop(heap, f);
+        f = f2;
+        code = c2;
+    }
+    unbox_slice(heap, noni);
+    return (f, code);
 }
 
-fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], wd: &q [float], wtd: bool, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Boost, int) {
+// Fit the pairwise ranking objective (docs/ranking.md section 4): p.task is 2, ys are the relevances (integers 0 to 30), gid the group number of every row (0 .. ng - 1, every group
+// with a row, at most 4096 rows a group, at most 2^28 pairs a round), wd the weights when `wtd`. The base score is 0.0 and there is no early stopping. Answers as `fit`.
+pub fn fit_rank[&h, &x, &b, &y, &u, &q](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], gid: &u [int], ng: int, wd: &q [float], wtd: bool, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Boost, int) {
+    if p.task != 2 || len(gid) != n || wtd && len(wd) != n {
+        return (empty(heap), refuse.param_out_of_range());
+    }
+    return fit_with(heap, p, n, d, xs, bm, ys, wd, wtd, gid, ng, rows_cap, cols_cap, cells_cap);
+}
+
+fn fit_with[&h, &x, &b, &y, &q, &u](heap: &!h Heap, p: bparams.Params, n: int, d: int, xs: &x [float], bm: &b [byte], ys: &y [float], wd: &q [float], wtd: bool, gid: &u [int], ng: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Boost, int) {
     var code = bparams.check(p, n, d, rows_cap, cols_cap, cells_cap);
     if code != 0 {
         return (empty(heap), code);
     }
     if len(xs) != n * d || len(ys) != n {
+        return (empty(heap), refuse.param_out_of_range());
+    }
+    if p.task == 2 != (len(gid) == n) || p.task != 2 && len(gid) != 0 {
         return (empty(heap), refuse.param_out_of_range());
     }
     if wtd {
@@ -343,6 +379,46 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
     if code != 0 {
         unbox_slice(heap, yv);
         return (empty(heap), code);
+    }
+    // a ranking task: the rows of each group in file order, and the checks of the groups, of the relevances and of the pairs of a round, before anything else is allocated
+    var gsn = 1;
+    var gon = 1;
+    if p.task == 2 {
+        gsn = ng + 2;
+        gon = n + 1;
+    }
+    let gs = box_slice(heap, gsn, 0);
+    let go = box_slice(heap, gon, 0);
+    if p.task == 2 {
+        let cur = box_slice(heap, ng + 2, 0);
+        let cnt = box_slice(heap, 32, 0);
+        code = rankgrad.check_ids(gid, ng);
+        if code == 0 {
+            borrow mut gs as &!gsw in {
+                borrow mut go as &!gow in {
+                    borrow mut cur as &!curw in {
+                        rankgrad.order(gid, ng, contents(gsw), contents(gow), contents(curw));
+                    }
+                }
+            }
+            borrow gs as &gsr in {
+                borrow go as &gor in {
+                    borrow yv as &yr in {
+                        borrow mut cnt as &!cntw in {
+                            code = rankgrad.check(gid, contents(yr)[0..n], ng, contents(gsr), contents(gor), contents(cntw));
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, cur);
+        unbox_slice(heap, cnt);
+        if code != 0 {
+            unbox_slice(heap, gs);
+            unbox_slice(heap, go);
+            unbox_slice(heap, yv);
+            return (empty(heap), code);
+        }
     }
     // the validation rows (section 2.7) and the fit rows
     let nv = bparams.validation_rows(p, n);
@@ -426,7 +502,7 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
                 if sw > 0.0 {
                     f0 = sy / sw;
                 }
-            } else if wtd {
+            } else if wtd && p.task == 0 {
                 while k < m {
                     if ysv[fs[k]] == 1.0 {
                         w1 = w1 + wd[fs[k]];
@@ -442,7 +518,7 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
                     k = k + 1;
                 }
                 f0 = sy / float_of(m);
-            } else {
+            } else if p.task == 0 {
                 while k < m {
                     if ysv[fs[k]] == 1.0 {
                         n1 = n1 + 1;
@@ -456,6 +532,8 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
         unbox_slice(heap, yv);
         unbox_slice(heap, frows);
         unbox_slice(heap, vrows);
+        unbox_slice(heap, gs);
+        unbox_slice(heap, go);
         return (empty(heap), refuse.param_out_of_range());
     }
     if p.task == 0 {
@@ -464,6 +542,8 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
                 unbox_slice(heap, yv);
                 unbox_slice(heap, frows);
                 unbox_slice(heap, vrows);
+                unbox_slice(heap, gs);
+                unbox_slice(heap, go);
                 return (empty(heap), deny.single_class());
             }
             f0 = math.log(w1 / w0);
@@ -472,6 +552,8 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
                 unbox_slice(heap, yv);
                 unbox_slice(heap, frows);
                 unbox_slice(heap, vrows);
+                unbox_slice(heap, gs);
+                unbox_slice(heap, go);
                 return (empty(heap), deny.single_class());
             }
             f0 = math.log(float_of(n1) / float_of(m - n1));
@@ -514,7 +596,7 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
         }
         unbox_slice(heap, ep);
     }
-    var w = Work { yv: yv, fv: box_slice(heap, n + 1, 0.0), gv: box_slice(heap, n + 1, 0.0), hv: box_slice(heap, n + 1, 0.0), wv: box_slice(heap, n + 1, 0.0), bins: binm, ed: ed, idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), frows: frows, vrows: vrows, wk: box_slice(heap, grow.work_ints(p.bins) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), si: box_slice(heap, p.rounds * 5 * cap + 1, 0), sv: box_slice(heap, p.rounds * cap + 1, 0.0), counts: box_slice(heap, p.rounds + 1, 0), pr: box_slice(heap, 4, 0) };
+    var w = Work { yv: yv, fv: box_slice(heap, n + 1, 0.0), gv: box_slice(heap, n + 1, 0.0), hv: box_slice(heap, n + 1, 0.0), wv: box_slice(heap, n + 1, 0.0), gs: gs, go: go, bins: binm, ed: ed, idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), frows: frows, vrows: vrows, wk: box_slice(heap, grow.work_ints(p.bins) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), si: box_slice(heap, p.rounds * 5 * cap + 1, 0), sv: box_slice(heap, p.rounds * cap + 1, 0.0), counts: box_slice(heap, p.rounds + 1, 0), pr: box_slice(heap, 4, 0) };
     if wtd {
         borrow mut w as &!wk3 in {
             let wcopy = contents(wk3.wv);
@@ -527,7 +609,7 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
     }
     var rc = 0;
     borrow mut w as &!wk2 in {
-        rc = rounds_loop(wk2, p, n, d, m, nv, cap, f0, wtd);
+        rc = rounds_loop(wk2, p, n, d, m, nv, cap, f0, wtd, ng);
     }
     var kept = 0;
     borrow w as &wr in {
@@ -579,12 +661,14 @@ fn fit_with[&h, &x, &b, &y, &q](heap: &!h Heap, p: bparams.Params, n: int, d: in
             }
         }
     }
-    let Work { yv, fv, gv, hv, wv, bins, ed, idx, tmp, frows, vrows, wk, wf, si, sv, counts, pr } = w;
+    let Work { yv, fv, gv, hv, wv, gs, go, bins, ed, idx, tmp, frows, vrows, wk, wf, si, sv, counts, pr } = w;
     unbox_slice(heap, yv);
     unbox_slice(heap, fv);
     unbox_slice(heap, gv);
     unbox_slice(heap, hv);
     unbox_slice(heap, wv);
+    unbox_slice(heap, gs);
+    unbox_slice(heap, go);
     unbox_slice(heap, bins);
     unbox_slice(heap, ed);
     unbox_slice(heap, idx);

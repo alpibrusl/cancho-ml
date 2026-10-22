@@ -1,0 +1,150 @@
+edition 5;
+
+module boost.rankgrad;
+
+import ml.refuse;
+import models.logreg;
+
+// The gradient and the hessian of the pairwise ranking loss of one boosting round (docs/ranking.md section 4). The rows of the fit are grouped: `gs[g] .. gs[g + 1]` are the
+// slots, in `go`, of the rows of group g in file order. For every ordered pair (i, j) of one group with rel_i > rel_j, i by slot ascending, then j by slot ascending,
+//     rho = sigmoid(F_j - F_i),  tg = w * rho,  th = w * (rho * (1 - rho)),  w = wv_i * wv_j (or 1 with no weights)
+//     g_i = g_i + (0 - tg),  g_j = g_j + tg,  h_i = h_i + th,  h_j = h_j + th
+// Every accumulator is a sequential sum in the order the loops reach its terms, from +0.0 (the caller zeroes gv and hv).
+
+pub fn max_group() -> [] int {
+    return 4096;
+}
+
+pub fn max_relevance() -> [] int {
+    return 30;
+}
+
+// the pairs of one round, at most this many
+pub fn max_pairs() -> [] int {
+    return 268435456;
+}
+
+// the rows of each group in file order: gs[g] is the first slot of group g (gs has ng + 1 entries), go[slot] the row; cur is scratch of ng entries. Every group number must be in
+// 0 .. ng - 1 (checked by `check`).
+pub fn order[&g, &s, &o, &c](gid: &g [int], ng: int, gs: &!s [int], go: &!o [int], cur: &!c [int]) -> [] int {
+    let n = len(gid);
+    var k = 0;
+    while k <= ng {
+        gs[k] = 0;
+        k = k + 1;
+    }
+    var i = 0;
+    while i < n {
+        gs[gid[i] + 1] = gs[gid[i] + 1] + 1;
+        i = i + 1;
+    }
+    k = 0;
+    while k < ng {
+        gs[k + 1] = gs[k + 1] + gs[k];
+        cur[k] = gs[k];
+        k = k + 1;
+    }
+    i = 0;
+    while i < n {
+        go[cur[gid[i]]] = i;
+        cur[gid[i]] = cur[gid[i]] + 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// 0, or ml.param.out-of-range: the group numbers are in 0 .. ng - 1, every group has a row and at most max_group() rows, the relevances are integers in 0 .. 30 (as floats), and the
+// pairs of one round are at most max_pairs(). `gs` and `go` are the result of `order`; cnt is scratch of 31 entries.
+pub fn check[&g, &y, &s, &o, &c](gid: &g [int], ys: &y [float], ng: int, gs: &s [int], go: &o [int], cnt: &!c [int]) -> [] int {
+    let n = len(gid);
+    if len(ys) != n || ng < 1 || ng > n {
+        return refuse.param_out_of_range();
+    }
+    var pairs = 0;
+    var k = 0;
+    while k < ng {
+        let size = gs[k + 1] - gs[k];
+        if size < 1 || size > max_group() {
+            return refuse.param_out_of_range();
+        }
+        var v = 0;
+        while v <= max_relevance() {
+            cnt[v] = 0;
+            v = v + 1;
+        }
+        var a = gs[k];
+        while a < gs[k + 1] {
+            let rl = ys[go[a]];
+            if !(rl >= 0.0 && rl <= 30.0) || float_of(truncate(rl)) != rl {
+                return refuse.param_out_of_range();
+            }
+            cnt[truncate(rl)] = cnt[truncate(rl)] + 1;
+            a = a + 1;
+        }
+        var same = 0;
+        v = 0;
+        while v <= max_relevance() {
+            same = same + cnt[v] * cnt[v];
+            v = v + 1;
+        }
+        pairs = pairs + (size * size - same) / 2;
+        if pairs > max_pairs() {
+            return refuse.param_out_of_range();
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// the group numbers alone: every one in 0 .. ng - 1 (so that `order` may run)
+pub fn check_ids[&g](gid: &g [int], ng: int) -> [] int {
+    var i = 0;
+    while i < len(gid) {
+        if gid[i] < 0 || gid[i] >= ng {
+            return refuse.param_out_of_range();
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// zero gv and hv over the n rows, then the sums above. yv: the relevances as floats; wv: the weights (read only when `wtd`)
+pub fn compute[&f, &y, &s, &o, &w, &g, &h](fv: &f [float], yv: &y [float], gs: &s [int], go: &o [int], ng: int, wv: &w [float], wtd: bool, gv: &!g [float], hv: &!h [float]) -> [] int {
+    var r = 0;
+    while r < len(gv) {
+        gv[r] = 0.0;
+        hv[r] = 0.0;
+        r = r + 1;
+    }
+    var k = 0;
+    while k < ng {
+        let lo = gs[k];
+        let hi = gs[k + 1];
+        var a = lo;
+        while a < hi {
+            let i = go[a];
+            var b = lo;
+            while b < hi {
+                let j = go[b];
+                if yv[i] > yv[j] {
+                    let rho = logreg.proba_of(fv[j] - fv[i]);
+                    var tg = rho;
+                    var th = rho * (1.0 - rho);
+                    if wtd {
+                        let w = wv[i] * wv[j];
+                        tg = w * rho;
+                        th = w * (rho * (1.0 - rho));
+                    }
+                    gv[i] = gv[i] + (0.0 - tg);
+                    gv[j] = gv[j] + tg;
+                    hv[i] = hv[i] + th;
+                    hv[j] = hv[j] + th;
+                }
+                b = b + 1;
+            }
+            a = a + 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}

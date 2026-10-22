@@ -22,31 +22,53 @@ import boost.predict;
 
 pub fn fit_blob[&h, &x, &m, &y, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
     let none = box_slice(heap, 1, 0.0);
+    let noni = box_slice(heap, 1, 0);
     var out = box_slice(heap, 1, byte_of(0));
     var code = 0;
     borrow none as &nr in {
-        let (o2, c2) = blob_with(heap, threads, xt, xd, miss, wpc, yd, contents(nr)[0..0], false, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
-        unbox_slice(heap, out);
-        out = o2;
-        code = c2;
+        borrow noni as &ni in {
+            let (o2, c2) = blob_with(heap, threads, xt, xd, miss, wpc, yd, contents(nr)[0..0], false, contents(ni)[0..0], 0, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+            unbox_slice(heap, out);
+            out = o2;
+            code = c2;
+        }
     }
     unbox_slice(heap, none);
+    unbox_slice(heap, noni);
     return (out, code);
 }
 
 // as fit_blob with a weight per row, wd (docs/weights.md section 2.6)
 pub fn fit_blob_weighted[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
-    return blob_with(heap, threads, xt, xd, miss, wpc, yd, wd, true, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+    let noni = box_slice(heap, 1, 0);
+    var out = box_slice(heap, 1, byte_of(0));
+    var code = 0;
+    borrow noni as &ni in {
+        let (o2, c2) = blob_with(heap, threads, xt, xd, miss, wpc, yd, wd, true, contents(ni)[0..0], 0, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+        unbox_slice(heap, out);
+        out = o2;
+        code = c2;
+    }
+    unbox_slice(heap, noni);
+    return (out, code);
 }
 
-fn fit_lib[&h, &x, &b, &y, &w](heap: &!h Heap, p: bparams.Params, n: int, d: int, xd: &x [float], bm: &b [byte], yd: &y [float], wd: &w [float], wtd: bool, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (fit.Boost, int) {
+// the pairwise ranking objective (docs/ranking.md section 4): the task in ip is 2; yd the relevances, gid the group number of every row (0 .. ng - 1); wd the weights when `wtd`
+pub fn fit_blob_rank[&h, &x, &m, &y, &w, &u, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], wtd: bool, gid: &u [int], ng: int, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+    return blob_with(heap, threads, xt, xd, miss, wpc, yd, wd, wtd, gid, ng, ip, fp, seed, c0, c1, rows_cap, cols_cap, cells_cap);
+}
+
+fn fit_lib[&h, &x, &b, &y, &w, &u](heap: &!h Heap, p: bparams.Params, n: int, d: int, xd: &x [float], bm: &b [byte], yd: &y [float], wd: &w [float], wtd: bool, gid: &u [int], ng: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (fit.Boost, int) {
+    if p.task == 2 {
+        return fit.fit_rank(heap, p, n, d, xd, bm, yd, gid, ng, wd, wtd, rows_cap, cols_cap, cells_cap);
+    }
     if wtd {
         return fit.fit_weighted(heap, p, n, d, xd, bm, yd, wd, rows_cap, cols_cap, cells_cap);
     }
     return fit.fit(heap, p, n, d, xd, bm, yd, rows_cap, cols_cap, cells_cap);
 }
 
-fn blob_with[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], wtd: bool, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
+fn blob_with[&h, &x, &m, &y, &w, &u, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], wtd: bool, gid: &u [int], ng: int, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
     let p = bparams.Params { task: ip[0], rounds: ip[1], lr: fp[0], max_depth: ip[2], min_leaf: ip[3], bins: ip[4], l2: fp[1], subsample: fp[2], early: ip[5], max_nodes: ip[6], seed: seed, threads: threads };
     let n = xt.s0;
     let d = xt.s1;
@@ -56,12 +78,12 @@ fn blob_with[&h, &x, &m, &y, &w, &i, &f](heap: &!h Heap, threads: int, xt: tenso
     borrow bm as &br in {
         let st = (n + 7) / 8;
         if any {
-            let (b2, c2) = fit_lib(heap, p, n, d, xd, contents(br)[0..d * st], yd, wd, wtd, rows_cap, cols_cap, cells_cap);
+            let (b2, c2) = fit_lib(heap, p, n, d, xd, contents(br)[0..d * st], yd, wd, wtd, gid, ng, rows_cap, cols_cap, cells_cap);
             fit.drop(heap, f2);
             f2 = b2;
             code = c2;
         } else {
-            let (b2, c2) = fit_lib(heap, p, n, d, xd, contents(br)[0..0], yd, wd, wtd, rows_cap, cols_cap, cells_cap);
+            let (b2, c2) = fit_lib(heap, p, n, d, xd, contents(br)[0..0], yd, wd, wtd, gid, ng, rows_cap, cols_cap, cells_cap);
             fit.drop(heap, f2);
             f2 = b2;
             code = c2;
@@ -108,13 +130,13 @@ pub fn lib_size[&s](src: &s [byte]) -> [] int {
     let task = fbits.get64(src, 20);
     let rounds = fbits.get64(src, 28);
     let total = fbits.get64(src, 52);
-    if task < 0 || task > 1 || rounds < 1 || rounds > bparams.rounds_max() || total < rounds || total > bparams.nodes_total_max() {
+    if task < 0 || task > 2 || rounds < 1 || rounds > bparams.rounds_max() || total < rounds || total > bparams.nodes_total_max() {
         return 0 - 1;
     }
     return model.size_of(rounds, total);
 }
 
-// code 0 or 1 (malformed), the two labels (0 for a regression), and in `end` the task as the wiring numbers it: 1 regression, 2 classification
+// code 0 or 1 (malformed), the two labels (0 for a regression or a ranking), and in `end` the task as the wiring numbers it: 1 regression or a ranking (read as a regression: a score per row), 2 classification
 pub fn decode_blob[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] record.Decoded {
     let ls = lib_size(src);
     if ls < 0 {
@@ -138,6 +160,9 @@ pub fn decode_blob[&h, &s](heap: &!h Heap, src: &s [byte], d: int) -> [heap] rec
         return record.decoded(1, 0, 0, 0);
     }
     if task == 1 {
+        return record.decoded(0, 0, 0, 1);
+    }
+    if task == 2 {
         return record.decoded(0, 0, 0, 1);
     }
     let lab = record.decode_labels(src, ls);
