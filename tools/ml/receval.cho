@@ -30,7 +30,7 @@ fn matrix_flags() -> [] &static [byte] {
 }
 
 fn flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
-    var e = recflags.check_reader(heap, src, errs);
+    var e = recflags.check_distinct(heap, src, recflags.check_reader(heap, src, errs));
     if !argv.has(src, "user") {
         var w = wiredata.open_tag(heap, "args.required-flag");
         w = fail.no_repair(heap, w);

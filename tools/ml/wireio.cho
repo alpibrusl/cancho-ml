@@ -1099,7 +1099,11 @@ pub fn predict[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &
         buffer.drop(heap, data);
         return rec;
     }
-    let errs = recflags.check_stray(heap, src, errs0);
+    let done = predict_rest(heap, src, fs, root, file, model, o, errs0, log, data, mine);
+    return recflags.stray_after(heap, src, done);
+}
+
+fn predict_rest[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer, data: buffer.Buffer, mine: bool) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
     if !mine {
         buffer.drop(heap, data);
         let e0 = constant_conflict(heap, errs, o, 2);
@@ -1276,7 +1280,11 @@ pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs:
         buffer.drop(heap, data);
         return rec;
     }
-    let errs = recflags.check_stray(heap, src, errs0);
+    let done = eval_rest(heap, src, fs, root, file, model, trackp, o, sp, errs0, log, data, mine);
+    return recflags.stray_after(heap, src, done);
+}
+
+fn eval_rest[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer, data: buffer.Buffer, mine: bool) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
     if !mine {
         buffer.drop(heap, data);
         let e0 = constant_conflict(heap, errs, o, 3);

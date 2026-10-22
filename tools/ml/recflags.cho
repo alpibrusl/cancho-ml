@@ -6,9 +6,11 @@ module ml.recflags;
 // the flags that name columns of a matrix, a target, a step or a stratified split mean nothing to it and are args.conflict, not ignored; the flags of the recommender mean nothing to a
 // model with a matrix and are args.conflict there.
 
+import std.buffer;
 import std.bytes;
 import ml.argv;
 import ml.spec;
+import ml.verbs;
 import ml.wiredata;
 import toolbox.fail;
 
@@ -66,6 +68,21 @@ pub fn check_reader[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors)
     return e;
 }
 
+// the columns of the log have one role each: a name given for two roles is args.conflict at the second
+pub fn check_distinct[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = errs;
+    if argv.has(src, "user") && argv.has(src, "item") && bytes.equal(argv.text(src, "user"), argv.text(src, "item")) {
+        e = wiredata.conflict(heap, e, "item", "--user and --item name the same column: a log has a column for the users and another for the items");
+    }
+    if argv.has(src, "rating") && (argv.has(src, "user") && bytes.equal(argv.text(src, "rating"), argv.text(src, "user")) || argv.has(src, "item") && bytes.equal(argv.text(src, "rating"), argv.text(src, "item"))) {
+        e = wiredata.conflict(heap, e, "rating", "--rating names the column of the users or of the items");
+    }
+    if argv.has(src, "time") && (argv.has(src, "user") && bytes.equal(argv.text(src, "time"), argv.text(src, "user")) || argv.has(src, "item") && bytes.equal(argv.text(src, "time"), argv.text(src, "item")) || argv.has(src, "rating") && bytes.equal(argv.text(src, "time"), argv.text(src, "rating"))) {
+        e = wiredata.conflict(heap, e, "time", "--time names the column of the users, of the items or of the ratings");
+    }
+    return e;
+}
+
 // `fit`: the flags given with --model recommend
 pub fn check_fit[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
     var e = errs;
@@ -95,6 +112,7 @@ pub fn check_fit[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) ->
         k = k + 1;
     }
     e = check_reader(heap, src, e);
+    e = check_distinct(heap, src, e);
     if argv.has(src, "track") {
         e = wiredata.conflict(heap, e, "track", "the run record of a recommender is not built yet (docs/wiring-recommend.md section 1, gate WR12)");
     }
@@ -137,4 +155,29 @@ pub fn check_stray[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) 
         k = k + 1;
     }
     return e;
+}
+
+// The answer of a verb on a model that is not a recommender, with the flags of the recommender checked after it: a file that is damaged is judged as damaged first, and the flags are a conflict only
+// with a model that was read. An answer with errors is left as it is.
+pub fn stray_after[&h, &cl](heap: &!h Heap, src: &cl [byte], out: verbs.Out) -> [heap] verbs.Out {
+    let (payload, plain, extra, e, lg, dry) = verbs.parts(out);
+    var clean = true;
+    borrow e as &er in {
+        clean = fail.count(er) == 0;
+    }
+    if !clean {
+        return wiredata.out_of(payload, plain, extra, e, lg, dry);
+    }
+    let e2 = check_stray(heap, src, e);
+    var still = true;
+    borrow e2 as &er2 in {
+        still = fail.count(er2) == 0;
+    }
+    if still {
+        return wiredata.out_of(payload, plain, extra, e2, lg, dry);
+    }
+    buffer.drop(heap, payload);
+    buffer.drop(heap, plain);
+    buffer.drop(heap, extra);
+    return verbs.nothing(heap, e2, lg);
 }

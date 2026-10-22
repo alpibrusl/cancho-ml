@@ -217,6 +217,19 @@ def q1(c):
     m = c.model
     if not m["wired"] or m.get("adapter") == "builtin":
         return "PASS", "manifest parses, generated files current (%s has no adapter to compare)" % m["name"]
+    if gen_models.is_log(m):
+        # a log model has no adapter: the verbs read its log (docs/wiring-recommend.md section 9). The generated glue is current, est.cho has no branch of the vector or blob chains for it, and the
+        # modules that serve its verbs exist
+        est = c.read("tools/ml/est.cho")
+        key = gen_models.keys_of(gen_models.wired(c.models))[m["name"]]
+        for op in EST_OPS[6:]:
+            mm = re.search(r"pub fn %s\b.*?\n\}" % op, est, re.S)
+            if mm and "kind == %d {" % key in mm.group(0):
+                return "FAIL", "est.%s has a branch for the log model %s, which has no adapter" % (op, m["name"])
+        missing = [f for f in ("recwire", "recpred", "receval", "recio", "recload") if not (c.root / "tools" / "ml" / (f + ".cho")).exists()]
+        if missing:
+            return "FAIL", "the modules that serve the verbs of the log model %s are missing: %s" % (m["name"], ", ".join(missing))
+        return "PASS", "manifest parses, generated files current, no adapter and no branch in the vector or blob chains of est.cho; the verbs are served by recwire, recpred, receval and recio"
     est = c.read("tools/ml/est.cho")
     blob = gen_models.is_blob(m)
     key = gen_models.keys_of(gen_models.wired(c.models))[m["name"]]
@@ -284,7 +297,7 @@ def q3(c):
         return "FAIL", "emits tags no table registers: %s" % ", ".join(bad)
     emits = set(m["tags"]["emits"])
     by = refuse_tags(c)
-    fixtures = c.read("tests/conformance/fixtures.py") if (c.root / "tests/conformance/fixtures.py").exists() else ""
+    fixtures = "".join(p.read_text() for p in sorted((c.root / "tests" / "conformance").glob("fixtures*.py")))
     for t in sorted(emits):
         if t not in pending and 'bad("%s"' % t not in fixtures and t not in ("ml.model.malformed", "ml.label.single-class", "ml.label.not-binary", "ml.label.not-integer", "ml.metric.undefined"):
             return "FAIL", "%s is emitted, is not in pending() and no fixture reaches it" % t
@@ -377,6 +390,16 @@ def sample_csv(task, n=1500, missing=False, classes=2):
     return head + "\n" + "\n".join(rows) + "\n"
 
 
+def sample_log(n_users=60, n_items=40):
+    """a seeded log of user, item and rating rows (a recommender's input): each user rates 6 to 12 items"""
+    rng = random.Random(1234)
+    rows = []
+    for u in range(n_users):
+        for i in rng.sample(range(n_items), rng.randint(6, 12)):
+            rows.append("u%03d,i%03d,%d" % (u, i, rng.randint(1, 5)))
+    return "user,item,rating\n" + "\n".join(rows) + "\n"
+
+
 def needs_binary(c):
     if not c.bin.exists():
         return "SKIP", "no binary at %s (build it, or pass --build)" % c.bin
@@ -395,6 +418,8 @@ def takes_missing(c):
 
 def fit_args(c, out, extra=(), task=None):
     task = task or tasks_of(c)[0]
+    if gen_models.is_log(c.model):
+        return ["fit", "--model", c.name, "--user", "user", "--item", "item", "--rating", "rating", "--factors", "3", "--iterations", "3", "--output", out, *extra, "d.csv"]
     if c.model["task"] == "clustering":
         # no target and no task: the required hyperparameters of the manifest (k) are given a small value
         req = [x for h in c.model["hyperparameter"] if h.get("required") for x in ("--" + h["name"], "4")]
@@ -413,7 +438,7 @@ def q6(c):
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for task in tasks_of(c):
-            (tmp / "d.csv").write_text(sample_csv(task, missing=takes_missing(c), classes=c.model.get("target_classes", 2)))
+            (tmp / "d.csv").write_text(sample_log() if gen_models.is_log(c.model) else sample_csv(task, missing=takes_missing(c), classes=c.model.get("target_classes", 2)))
             files, stdouts = {}, {}
             for t in c.contract["limits"]["thread_counts"]:
                 rc, out, err = c.ml("--root", tmp, *fit_args(c, "m%d.cml" % t, ["--threads", t, "--overwrite"], task))
@@ -461,7 +486,7 @@ def q7(c):
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for task in tasks_of(c):
-            (tmp / "d.csv").write_text(sample_csv(task, 200, missing=takes_missing(c), classes=c.model.get("target_classes", 2)))
+            (tmp / "d.csv").write_text(sample_log(12, 15) if gen_models.is_log(c.model) else sample_csv(task, 200, missing=takes_missing(c), classes=c.model.get("target_classes", 2)))
             rc, out, err = c.ml("--root", tmp, *fit_args(c, "m.cml", small_model_flags(c) + ["--overwrite"], task))
             if rc != 0:
                 return "FAIL", "fit exited %d: %s" % (rc, out[:200].decode(errors="replace"))
@@ -479,7 +504,7 @@ def q7(c):
                 cases.append((seal(b), True))
             for i, (blob, repaired) in enumerate(cases):
                 (tmp / "x.cml").write_bytes(blob)
-                rc, out, err = c.ml("--root", tmp, "predict", "--model-file", "x.cml", "--limit", "2", "d.csv")
+                rc, out, err = c.ml("--root", tmp, "predict", "--model-file", "x.cml", *(["--for", "user", "--top", "2"] if gen_models.is_log(c.model) else []), "--limit", "2", "d.csv")
                 if rc in TRAPS or rc < 0:
                     return "FAIL", "a damaged model file trapped (status %d, %s case %d)" % (rc, task, i)
                 try:
@@ -554,6 +579,8 @@ def q10(c):
 
 
 def q11(c):
+    if gen_models.is_log(c.model):
+        return "SKIP", "scikit-learn has no alternating least squares recommender; %s is compared with the Python oracle that writes the whole file (Q9) and with the dense closed form (docs/recommend.md section 10.3)" % c.name
     if c.model.get("adapter") == "builtin":
         return "SKIP", "%s is exact integer arithmetic, compared with fractions.Fraction (Q9); scikit-learn's DummyRegressor would add nothing with a stated tolerance" % c.name
     s = needs_binary(c)
