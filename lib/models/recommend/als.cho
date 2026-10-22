@@ -1,0 +1,311 @@
+module recommend.als;
+
+import ml.refuse;
+import ml.rng;
+import linalg.chol;
+import models.common;
+import recommend.log;
+
+// Alternating least squares for a recommender (docs/recommend.md section 4, wiring in docs/wiring-recommend.md). The factors are row-major: P is users x f, Q is items x f. One pass is
+// a user half-pass then an item half-pass; every normal-equation sum runs over the interactions of the user (or item) in ascending order of the other side's number, from +0.0, and the
+// system is solved with the Cholesky of lib/linalg. The number of passes is fixed. All the arithmetic below is the specification the oracle (scripts/oracle_recommend.py) reproduces.
+
+pub fn max_factors() -> [] int {
+    return 256;
+}
+
+pub fn max_iterations() -> [] int {
+    return 1000;
+}
+
+// the stream kind of the initial item factors (docs/rng.md)
+pub fn stream_kind() -> [] int {
+    return 12;
+}
+
+pub struct Als {
+    code: int,
+    nloss: int,
+    losses: Box[[float]],
+    p: Box[[float]],
+    q: Box[[float]],
+}
+
+pub fn drop[&h](heap: &!h Heap, a: Als) -> [heap] int {
+    let Als { code, nloss, losses, p, q } = a;
+    unbox_slice(heap, losses);
+    unbox_slice(heap, p);
+    unbox_slice(heap, q);
+    return 0;
+}
+
+fn refused[&h](heap: &!h Heap, code: int) -> [heap] Als {
+    return Als { code: code, nloss: 0, losses: box_slice(heap, 1, 0.0), p: box_slice(heap, 1, 0.0), q: box_slice(heap, 1, 0.0) };
+}
+
+fn is_finite_pos(x: float) -> [] bool {
+    return x - x == 0.0 && x > 0.0;
+}
+
+// G = sum over the n rows of `fac` (f wide) of y y^T, the lower triangle, the rows in order, from +0.0
+fn gram[&y, &g](fac: &y [float], n: int, f: int, gm: &!g [float]) -> [] int {
+    var z = 0;
+    while z < f * f {
+        gm[z] = 0.0;
+        z = z + 1;
+    }
+    var i = 0;
+    while i < n {
+        var a = 0;
+        while a < f {
+            let ya = fac[i * f + a];
+            var b = 0;
+            while b <= a {
+                gm[a * f + b] = gm[a * f + b] + ya * fac[i * f + b];
+                b = b + 1;
+            }
+            a = a + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// One half-pass: for each of the n rows of this side, solve for its factors from the interactions off[r] .. off[r+1] (the other side's numbers in idx, the values in vals) and the factors
+// `other` of the other side. Scratch: am (f x f, the system), lm (f x f, its Cholesky factor), bv, zv, xv (f each). `gm` is the Gram matrix of `other` when `implicit`.
+fn half_pass[&o, &i, &v, &y, &g, &t, &a, &l, &b, &z, &x](off: &o [int], idx: &i [int], vals: &v [float], other: &y [float], gm: &g [float], out: &!t [float], n: int, f: int, lambda: float, alpha: float, implicit: bool, am: &!a [float], lm: &!l [float], bv: &!b [float], zv: &!z [float], xv: &!x [float]) -> [] int {
+    var r = 0;
+    while r < n {
+        var s = 0;
+        while s < f * f {
+            if implicit {
+                am[s] = gm[s];
+            } else {
+                am[s] = 0.0;
+            }
+            s = s + 1;
+        }
+        s = 0;
+        while s < f {
+            bv[s] = 0.0;
+            s = s + 1;
+        }
+        var k = off[r];
+        while k < off[r + 1] {
+            let base = idx[k] * f;
+            var coef = 1.0;
+            var w = vals[k];
+            if implicit {
+                coef = alpha * vals[k];
+                w = 1.0 + coef;
+            }
+            var p = 0;
+            while p < f {
+                let yp = other[base + p];
+                var q = 0;
+                while q <= p {
+                    if implicit {
+                        am[p * f + q] = am[p * f + q] + coef * (yp * other[base + q]);
+                    } else {
+                        am[p * f + q] = am[p * f + q] + yp * other[base + q];
+                    }
+                    q = q + 1;
+                }
+                bv[p] = bv[p] + w * yp;
+                p = p + 1;
+            }
+            k = k + 1;
+        }
+        s = 0;
+        while s < f {
+            am[s * f + s] = am[s * f + s] + lambda;
+            s = s + 1;
+        }
+        var code = chol.cholesky(common.mat(f, f), am, common.mat(f, f), lm);
+        if code == 0 {
+            code = chol.solve(0, common.mat(f, f), lm, common.vec(f), bv, common.vec(f), zv);
+        }
+        if code == 0 {
+            code = chol.solve(1, common.mat(f, f), lm, common.vec(f), zv, common.vec(f), xv);
+        }
+        if code != 0 {
+            return code;
+        }
+        s = 0;
+        while s < f {
+            out[r * f + s] = xv[s];
+            s = s + 1;
+        }
+        r = r + 1;
+    }
+    return 0;
+}
+
+// the regularised loss of the current factors (docs/recommend.md section 4). Explicit: the sum over the interactions of (r - p.q)^2, then lambda times the sum of the squares of every entry
+// of P then of Q. Implicit: sum over users of x^T G x (G the Gram matrix of Q, in gm) plus, over the events, c (1 - s)^2 - s^2 with s = x.y and c = 1 + alpha r, then the same penalty. Every
+// sum is sequential from +0.0; a dot product runs over the factor index ascending.
+fn loss_of[&o, &i, &v, &p, &q, &g](uoff: &o [int], uitem: &i [int], uval: &v [float], pf: &p [float], qf: &q [float], gm: &g [float], nusers: int, nitems: int, f: int, lambda: float, alpha: float, implicit: bool) -> [] float {
+    var data = 0.0;
+    var u = 0;
+    while u < nusers {
+        if implicit {
+            // x^T G x with G symmetric, read from the lower triangle
+            var quad = 0.0;
+            var a = 0;
+            while a < f {
+                var t = 0.0;
+                var b = 0;
+                while b < f {
+                    var gab = gm[a * f + b];
+                    if b > a {
+                        gab = gm[b * f + a];
+                    }
+                    t = t + gab * pf[u * f + b];
+                    b = b + 1;
+                }
+                quad = quad + pf[u * f + a] * t;
+                a = a + 1;
+            }
+            data = data + quad;
+        }
+        var k = uoff[u];
+        while k < uoff[u + 1] {
+            var s = 0.0;
+            var c = 0;
+            while c < f {
+                s = s + pf[u * f + c] * qf[uitem[k] * f + c];
+                c = c + 1;
+            }
+            if implicit {
+                let cc = 1.0 + alpha * uval[k];
+                data = data + (cc * ((1.0 - s) * (1.0 - s)) - s * s);
+            } else {
+                data = data + (uval[k] - s) * (uval[k] - s);
+            }
+            k = k + 1;
+        }
+        u = u + 1;
+    }
+    var sp = 0.0;
+    var e = 0;
+    while e < nusers * f {
+        sp = sp + pf[e] * pf[e];
+        e = e + 1;
+    }
+    var sq = 0.0;
+    e = 0;
+    while e < nitems * f {
+        sq = sq + qf[e] * qf[e];
+        e = e + 1;
+    }
+    return data + lambda * (sp + sq);
+}
+
+// Fit. `lg` is the log of recommend.log (by user and by item). Answers the factors P (users x f) and Q (items x f) and, when `trace`, the loss after each half-pass (2 * iterations values:
+// user half-pass then item half-pass of each pass), else the loss after the last half-pass only. Refusals: ml.param.out-of-range for f, iterations, lambda or alpha out of range
+// (alpha is read only for the implicit form); the Cholesky's ml.linalg.not-positive-definite.
+pub fn fit[&h, &l](heap: &!h Heap, lg: &l log.Log, f: int, lambda: float, alpha: float, implicit: bool, iterations: int, seed: int, trace: bool) -> [heap] Als {
+    if f < 1 || f > max_factors() || iterations < 1 || iterations > max_iterations() || !is_finite_pos(lambda) || implicit && !is_finite_pos(alpha) {
+        return refused(heap, refuse.param_out_of_range());
+    }
+    let nu = lg.nusers;
+    let ni = lg.nitems;
+    if nu < 1 || ni < 1 {
+        return refused(heap, refuse.param_out_of_range());
+    }
+    let pm = box_slice(heap, nu * f + 1, 0.0);
+    let qm = box_slice(heap, ni * f + 1, 0.0);
+    let gm = box_slice(heap, f * f + 1, 0.0);
+    let am = box_slice(heap, f * f + 1, 0.0);
+    let lm = box_slice(heap, f * f + 1, 0.0);
+    let bv = box_slice(heap, f + 1, 0.0);
+    let zv = box_slice(heap, f + 1, 0.0);
+    let xv = box_slice(heap, f + 1, 0.0);
+    var nl = 1;
+    if trace {
+        nl = 2 * iterations;
+    }
+    let losses = box_slice(heap, nl + 1, 0.0);
+    var code = 0;
+    var nloss = 0;
+    borrow mut pm as &!pw in {
+        borrow mut qm as &!qw in {
+            borrow mut gm as &!gw in {
+                borrow mut am as &!aw in {
+                    borrow mut lm as &!lw in {
+                        borrow mut bv as &!bw in {
+                            borrow mut zv as &!zw in {
+                                borrow mut xv as &!xw in {
+                                    borrow mut losses as &!sw in {
+                                        let pf = contents(pw);
+                                        let qf = contents(qw);
+                                        let g = contents(gw);
+                                        // the initial item factors: draw c of item i is the c-th output of the stream derive(derive(seed, 12), i)
+                                        var i = 0;
+                                        while i < ni {
+                                            var st = rng.derive(rng.derive(seed, stream_kind()), i);
+                                            var c = 0;
+                                            while c < f {
+                                                st = rng.advance(st);
+                                                qf[i * f + c] = rng.unit(rng.output(st)) / sqrt(float_of(f));
+                                                c = c + 1;
+                                            }
+                                            i = i + 1;
+                                        }
+                                        var pass = 0;
+                                        while pass < iterations && code == 0 {
+                                            if implicit {
+                                                gram(qf, ni, f, g);
+                                            }
+                                            code = half_pass(contents(lg.uoff), contents(lg.uitem), contents(lg.uval), qf, g, pf, nu, f, lambda, alpha, implicit, contents(aw), contents(lw), contents(bw), contents(zw), contents(xw));
+                                            if code == 0 && trace {
+                                                if implicit {
+                                                    gram(qf, ni, f, g);
+                                                }
+                                                contents(sw)[nloss] = loss_of(contents(lg.uoff), contents(lg.uitem), contents(lg.uval), pf, qf, g, nu, ni, f, lambda, alpha, implicit);
+                                                nloss = nloss + 1;
+                                            }
+                                            if code == 0 {
+                                                if implicit {
+                                                    gram(pf, nu, f, g);
+                                                }
+                                                code = half_pass(contents(lg.ioff), contents(lg.iuser), contents(lg.ival), pf, g, qf, ni, f, lambda, alpha, implicit, contents(aw), contents(lw), contents(bw), contents(zw), contents(xw));
+                                            }
+                                            if code == 0 && (trace || pass == iterations - 1) {
+                                                if implicit {
+                                                    gram(qf, ni, f, g);
+                                                }
+                                                let ls = loss_of(contents(lg.uoff), contents(lg.uitem), contents(lg.uval), pf, qf, g, nu, ni, f, lambda, alpha, implicit);
+                                                if trace {
+                                                    contents(sw)[nloss] = ls;
+                                                    nloss = nloss + 1;
+                                                } else {
+                                                    contents(sw)[0] = ls;
+                                                    nloss = 1;
+                                                }
+                                            }
+                                            pass = pass + 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, gm);
+    unbox_slice(heap, am);
+    unbox_slice(heap, lm);
+    unbox_slice(heap, bv);
+    unbox_slice(heap, zv);
+    unbox_slice(heap, xv);
+    if code != 0 {
+        unbox_slice(heap, pm);
+        unbox_slice(heap, qm);
+        unbox_slice(heap, losses);
+        return refused(heap, code);
+    }
+    return Als { code: 0, nloss: nloss, losses: losses, p: pm, q: qm };
+}
