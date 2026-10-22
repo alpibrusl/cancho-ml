@@ -35,7 +35,7 @@ fn fail(code: int) -> [] Ranked {
 }
 
 // 1 / log2(r + 1) as 1.0 / (log(float(r + 1)) / log(2.0)): three roundings, the log being std.math's
-fn discount(r: int, ln2: float) -> [] float {
+pub fn discount(r: int, ln2: float) -> [] float {
     return 1.0 / (math.log(float_of(r + 1)) / ln2);
 }
 
@@ -48,7 +48,7 @@ fn gain_of(rel: int, linear: bool) -> [] float {
 }
 
 // sort idx[0, m) so that keys[idx[i]] is descending, stably (equal keys keep their order in idx); t is scratch of the same length. Bottom-up merge sort.
-fn sort_desc[&k, &i, &t](keys: &k [int], idx: &!i [int], t: &!t [int], m: int) -> [] int {
+pub fn sort_desc[&k, &i, &t](keys: &k [int], idx: &!i [int], t: &!t [int], m: int) -> [] int {
     var width = 1;
     var src_is_idx = true;
     while width < m {

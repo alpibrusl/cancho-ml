@@ -1,0 +1,259 @@
+module metrics.recommend;
+
+import std.math;
+import metrics.rules;
+import metrics.rank;
+import metrics.ranking;
+import metrics.regress;
+
+// The recommendation metrics (docs/recommend.md section 3). Users 0 .. U-1 and items 0 .. I-1 are numbers (the rank of the id among the distinct ids, bytewise). The model scores
+// every item for every user; the ranking of a user is its items by score descending, ties by item number ascending, **without the items of its history**. The test items of a user
+// are a set disjoint from its history. For each user with a test item: hit rate@k (a test item among the first k), recall@k (the test items found over all of them), NDCG@k (binary
+// gain, the discount of metrics.ranking, the ideal DCG over the first min(k, |T|) ranks) and the reciprocal rank of the best test item over the whole ranking. The means are over
+// the users with a test item, each a sequential sum in user order from +0.0 and one division.
+
+pub fn max_users() -> [] int {
+    return 1048576;
+}
+
+pub fn max_items() -> [] int {
+    return 1048576;
+}
+
+pub struct Recs {
+    code: int,
+    users: int,
+    scored: int,
+    hit: float,
+    recall: float,
+    ndcg: float,
+    mrr: float,
+}
+
+fn fail(code: int) -> [] Recs {
+    return Recs { code: code, users: 0, scored: 0, hit: 0.0, recall: 0.0, ndcg: 0.0, mrr: 0.0 };
+}
+
+// 0, or the refusal for a list of strictly ascending item numbers in 0 .. nitems - 1: `off` has nusers + 1 entries from 0 to len(list), never decreasing
+fn check_lists[&o, &l](off: &o [int], list: &l [int], nusers: int, nitems: int) -> [] int {
+    if len(off) != nusers + 1 || off[0] != 0 || off[nusers] != len(list) {
+        return rules.length_mismatch();
+    }
+    var u = 0;
+    while u < nusers {
+        if off[u + 1] < off[u] || off[u + 1] > len(list) {
+            return rules.out_of_range();
+        }
+        var j = off[u];
+        while j < off[u + 1] {
+            if list[j] < 0 || list[j] >= nitems || j > off[u] && list[j] <= list[j - 1] {
+                return rules.out_of_range();
+            }
+            j = j + 1;
+        }
+        u = u + 1;
+    }
+    return 0;
+}
+
+// the test items of a user must not be in its history (both ascending): a merge
+fn disjoint[&a, &b](ho: int, hn: int, h: &a [int], to: int, tn: int, t: &b [int]) -> [] bool {
+    var i = ho;
+    var j = to;
+    while i < hn && j < tn {
+        if h[i] == t[j] {
+            return false;
+        }
+        if h[i] < t[j] {
+            i = i + 1;
+        } else {
+            j = j + 1;
+        }
+    }
+    return true;
+}
+
+// 0, or the refusal for the inputs
+fn check[&s, &ho, &hl, &to, &tl](scores: &s [float], hoff: &ho [int], hist: &hl [int], toff: &to [int], test: &tl [int], nusers: int, nitems: int, k: int, cap: int) -> [] int {
+    if nusers < 1 || nitems < 1 {
+        return rules.input_empty();
+    }
+    if nusers > max_users() || nitems > max_items() || nusers * nitems > cap {
+        return rules.too_many_rows();
+    }
+    if len(scores) != nusers * nitems {
+        return rules.length_mismatch();
+    }
+    if k < 1 || k > nitems {
+        return rules.out_of_range();
+    }
+    if regress.all_finite(scores) == false {
+        return rules.non_finite();
+    }
+    var c = check_lists(hoff, hist, nusers, nitems);
+    if c != 0 {
+        return c;
+    }
+    c = check_lists(toff, test, nusers, nitems);
+    if c != 0 {
+        return c;
+    }
+    var u = 0;
+    while u < nusers {
+        if disjoint(hoff[u], hoff[u + 1], hist, toff[u], toff[u + 1], test) == false {
+            return rules.out_of_range();
+        }
+        u = u + 1;
+    }
+    return 0;
+}
+
+// The ranking of one user: idx[0 .. m) are the items not in `hist` (ascending item numbers, a merge with the history) sorted by key descending, stably, so ties stay in item order.
+// keys: the order keys of the user's scores, one per item; tmp: scratch of the same length as idx. Answers m.
+pub fn rank_user[&k, &h, &i, &t](keys: &k [int], hist: &h [int], idx: &!i [int], tmp: &!t [int], nitems: int) -> [] int {
+    var m = 0;
+    var p = 0;
+    var it = 0;
+    while it < nitems {
+        if p < len(hist) && hist[p] == it {
+            p = p + 1;
+        } else {
+            idx[m] = it;
+            m = m + 1;
+        }
+        it = it + 1;
+    }
+    ranking.sort_desc(keys, idx, tmp, m);
+    return m;
+}
+
+pub struct UserM {
+    hit: float,
+    recall: float,
+    ndcg: float,
+    mrr: float,
+}
+
+// The metrics of one user with a non-empty test set: ranked = idx[0 .. m), test ascending, mark scratch of nitems entries (all 0 on entry and on exit), disc[r] the discount of rank r
+pub fn user_metrics[&i, &t, &mk, &d](idx: &i [int], m: int, test: &t [int], mark: &!mk [int], disc: &d [float], k: int) -> [] UserM {
+    var j = 0;
+    while j < len(test) {
+        mark[test[j]] = 1;
+        j = j + 1;
+    }
+    var kk = m;
+    if k < m {
+        kk = k;
+    }
+    var dcg = 0.0;
+    var found = 0;
+    var first = 0;
+    var r = 0;
+    while r < m {
+        if mark[idx[r]] == 1 {
+            if first == 0 {
+                first = r + 1;
+            }
+            if r < kk {
+                dcg = dcg + disc[r + 1];
+                found = found + 1;
+            }
+        }
+        r = r + 1;
+    }
+    j = 0;
+    while j < len(test) {
+        mark[test[j]] = 0;
+        j = j + 1;
+    }
+    var ideal = len(test);
+    if k < ideal {
+        ideal = k;
+    }
+    var idcg = 0.0;
+    r = 1;
+    while r <= ideal {
+        idcg = idcg + disc[r];
+        r = r + 1;
+    }
+    var hit = 0.0;
+    if found > 0 {
+        hit = 1.0;
+    }
+    var rr = 0.0;
+    if first > 0 {
+        rr = 1.0 / float_of(first);
+    }
+    return UserM { hit: hit, recall: float_of(found) / float_of(len(test)), ndcg: dcg / idcg, mrr: rr };
+}
+
+// The metrics at k of nusers users over nitems items. scores: nusers * nitems finite floats, row u at u * nitems; hoff/hist and toff/test: the history and the test items of every
+// user, as offsets (nusers + 1) into lists of strictly ascending item numbers, a test item never in the history of its user. nusers * nitems is at most `cap`. A user without a test
+// item is counted in `users` and not in `scored`; with no user scored the means are 0.0.
+pub fn evaluate[&h, &s, &ho, &hl, &to, &tl](heap: &!h Heap, scores: &s [float], hoff: &ho [int], hist: &hl [int], toff: &to [int], test: &tl [int], nusers: int, nitems: int, k: int, cap: int) -> [heap] Recs {
+    let c = check(scores, hoff, hist, toff, test, nusers, nitems, k, cap);
+    if c != 0 {
+        return fail(c);
+    }
+    let keys = box_slice(heap, nitems + 1, 0);
+    let idx = box_slice(heap, nitems + 1, 0);
+    let tmp = box_slice(heap, nitems + 1, 0);
+    let mark = box_slice(heap, nitems + 1, 0);
+    let disc = box_slice(heap, nitems + 2, 0.0);
+    var sum_hit = 0.0;
+    var sum_rec = 0.0;
+    var sum_ndcg = 0.0;
+    var sum_mrr = 0.0;
+    var scored = 0;
+    borrow mut keys as &!kw in {
+        borrow mut idx as &!iw in {
+            borrow mut tmp as &!tw in {
+                borrow mut mark as &!mw in {
+                    borrow mut disc as &!dw in {
+                        let ks = contents(kw);
+                        let ix = contents(iw);
+                        let tm = contents(tw);
+                        let mk = contents(mw);
+                        let ds = contents(dw);
+                        let ln2 = math.log(2.0);
+                        var q = 1;
+                        while q <= nitems {
+                            ds[q] = ranking.discount(q, ln2);
+                            q = q + 1;
+                        }
+                        var u = 0;
+                        while u < nusers {
+                            if toff[u + 1] > toff[u] {
+                                var it = 0;
+                                while it < nitems {
+                                    ks[it] = rank.key_of(scores[u * nitems + it]);
+                                    it = it + 1;
+                                }
+                                let m = rank_user(ks, hist[hoff[u]..hoff[u + 1]], ix, tm, nitems);
+                                let um = user_metrics(ix, m, test[toff[u]..toff[u + 1]], mk, ds, k);
+                                sum_hit = sum_hit + um.hit;
+                                sum_rec = sum_rec + um.recall;
+                                sum_ndcg = sum_ndcg + um.ndcg;
+                                sum_mrr = sum_mrr + um.mrr;
+                                scored = scored + 1;
+                            }
+                            u = u + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, keys);
+    unbox_slice(heap, idx);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, mark);
+    unbox_slice(heap, disc);
+    var out = fail(0);
+    out = Recs { code: 0, users: nusers, scored: scored, hit: 0.0, recall: 0.0, ndcg: 0.0, mrr: 0.0 };
+    if scored > 0 {
+        let n = float_of(scored);
+        out = Recs { code: 0, users: nusers, scored: scored, hit: sum_hit / n, recall: sum_rec / n, ndcg: sum_ndcg / n, mrr: sum_mrr / n };
+    }
+    return out;
+}

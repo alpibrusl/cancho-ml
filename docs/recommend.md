@@ -131,7 +131,17 @@ No claim of quality against another library is made unless a script here measure
 
 ## 10. Results
 
-Empty: filled by each stage, from what its scripts printed.
+Machine: Linux x86-64, 4 cores, the compiler at `0207556`, one run of each script. Nothing is said here about speed.
+
+### 10.1 Stage C1a: the recommendation metrics
+
+* **Where.** `lib/metrics/recommend.cho` (`recommend.evaluate`, `rank_user`, `user_metrics`): scores of every item for every user, the history and the test items of every user as offsets into lists of strictly ascending item numbers; the driver `tools/metrics-check` has a `recommend` mode; the oracle, written from the definitions of section 3 with no cancho code, is `scripts/oracle_recommend.py`. The sort and the discount table are those of `lib/metrics/ranking.cho` (`sort_desc`, `discount`, made `pub`); nothing is copied. Nothing of it is reachable from `ml` yet (the reader, the splits and the model are C1b and C2).
+* **RC1, the oracle, bit for bit.** `oracle_recommend.py --metrics 300`: 300 seeded cases (1 to 60 users, 1 to 100 items, scores random, with ties, all equal with both zeros, and dense histories; users with no test item in about one case in five; `k` of 1, 2, 3, 5, 10 and 100 cut at the number of items): every per-run count and every mean equals the oracle's bits.
+* **Controls** (`--controls`, `--driver`): the test item first (everything 1); second at `k = 1` (no hit, MRR over the whole ranking 1/2); second at `k = 2` (NDCG `1 / log2(3)`); the history excluded; the tie rule (equal scores rank the smaller item first); `-0.0` and `0.0` one score; two test items at ranks 1 and 3 (the DCG and the ideal DCG); recall of one of two; a user without a test item counted and not scored; no user scored (every mean `undefined`, not a refusal). The refusals through the driver, each with its tag and exit code: a length mismatch, no users, no items, a non-finite score, `k` of 0 and above the items, more scores than the cap, an item out of range, a list that is not strictly ascending, a test item in the history, a decreasing offset (with the end of the offsets right and with it past the list), offsets that do not end at the list.
+* **A bug the controls found before the mutants did.** The first `check_lists` read `list[j]` for `j` up to `off[u + 1]` before checking that the offset is inside the list, so an offset past the end was an out-of-range read (exit -4 in the driver). The offset is now judged against `len(list)` first.
+* **Mutants** (`scripts/mutants_recommend.py`, RC13): **25 built, 25 killed.** The first run left one: the control for a decreasing offset also had an offset past the list, which the other check refused first; a control with a decreasing offset inside the list was added.
+
+**Not measured at this stage:** the cost of `evaluate` (it sorts the items of every scored user once; no speed is claimed), the reader of the log, the ids, the limits of section 2 and the splits (C1b).
 
 ## 11. Open questions
 
