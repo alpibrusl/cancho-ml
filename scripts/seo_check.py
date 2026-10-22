@@ -3,7 +3,7 @@
 
     python3 scripts/seo_check.py
 
-For docs/index.html, docs/guide.html, docs/examples.html, docs/board.html, docs/evidence.html and docs/benchmarks.html: exactly one <title> of 50 to 60
+For docs/index.html, docs/guide.html, docs/examples.html, docs/gallery.html, docs/board.html, docs/evidence.html and docs/benchmarks.html: exactly one <title> of 50 to 60
 characters, unique across the pages, one meta description of at most 160, one canonical link on the
 site's base address, a lang attribute, a viewport, Open Graph and Twitter card tags (there is no
 image, so no image tags), one <h1>, headings that never skip a level, every <img> with an alt
@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = re.search(r'SITE_BASE = "([^"]+)"', (ROOT / "scripts" / "site.py").read_text()).group(1)
-PAGES = {"index.html": BASE, "guide.html": BASE + "guide.html", "examples.html": BASE + "examples.html", "board.html": BASE + "board.html", "evidence.html": BASE + "evidence.html", "benchmarks.html": BASE + "benchmarks.html"}
+PAGES = {"index.html": BASE, "guide.html": BASE + "guide.html", "examples.html": BASE + "examples.html", "gallery.html": BASE + "gallery.html", "board.html": BASE + "board.html", "evidence.html": BASE + "evidence.html", "benchmarks.html": BASE + "benchmarks.html"}
 
 
 class P(HTMLParser):
@@ -47,7 +47,7 @@ class P(HTMLParser):
         if tag == "img":
             self.imgs.append(a)
         if tag == "script":
-            if a.get("src") and a["src"] != "assets/home.js":      # the landing page's own script file (scripts/check_landing.py judges it)
+            if a.get("src") and a["src"] not in ("assets/home.js", "assets/gallery.js"):      # the landing page's own script file (scripts/check_landing.py judges it)
                 self.scripts_src += 1
             if a.get("type") == "application/ld+json":
                 self._in = "ld"

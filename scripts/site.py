@@ -1228,7 +1228,7 @@ def fill_values(text, ctx):
 # --- the header and the footer of every page, one source ----------------------------------------------------------------------------
 
 REPO_URL = "https://github.com/alpibrusl/cancho-ml"
-NAV = [("How it works", "index.html#how", "opt", "index.html"), ("Guide", "guide.html", "", "guide.html"), ("Examples", "examples.html", "opt", "examples.html"),
+NAV = [("How it works", "index.html#how", "opt", "index.html"), ("Guide", "guide.html", "", "guide.html"), ("Examples", "examples.html", "opt", "examples.html"), ("Gallery", "gallery.html", "opt", "gallery.html"),
        ("Board", "board.html", "opt", "board.html"), ("Evidence", "evidence.html", "", "evidence.html"), ("Benchmarks", "benchmarks.html", "opt", "benchmarks.html"), ("GitHub", REPO_URL, "", None)]
 FOOT = [("Repository", REPO_URL), ("Status", REPO_URL + "/blob/main/docs/status.md"), ("Command line", REPO_URL + "/blob/main/docs/cli.md"),
         ("Design", REPO_URL + "/blob/main/docs/design.md")]
@@ -1330,7 +1330,7 @@ def models_html(ctx):
 
 REGIONS["docs/index.html"] = {"replay": replay_html, "models": models_html}
 REGIONS["docs/board.html"] = {"sample": lambda c: board_sample(c)}
-for _rel in ("docs/index.html", "docs/guide.html", "docs/examples.html", "docs/evidence.html", "docs/benchmarks.html", "docs/board.html"):
+for _rel in ("docs/index.html", "docs/guide.html", "docs/examples.html", "docs/gallery.html", "docs/evidence.html", "docs/benchmarks.html", "docs/board.html"):
     REGIONS.setdefault(_rel, {})
     REGIONS[_rel]["nav"] = lambda c, r=_rel: nav_html(r)
     REGIONS[_rel]["foot"] = lambda c, r=_rel: foot_html(r)
@@ -1343,7 +1343,7 @@ REGIONS["README.md"]["ex-summary"] = lambda c: sx.summary_md(c["examples"], c["r
 
 SITE_BASE = "https://alpibrusl.github.io/cancho-ml/"
 # the pages that are meant to be found
-PAGES = ["", "guide.html", "examples.html", "board.html", "evidence.html", "benchmarks.html"]
+PAGES = ["", "guide.html", "examples.html", "gallery.html", "board.html", "evidence.html", "benchmarks.html"]
 
 
 def sitemap(_ctx=None):
@@ -1457,7 +1457,7 @@ def main():
             path = ROOT / rel
             old = path.read_text()
             for name in regions_in(old):
-                if name not in regions:
+                if name not in regions and not (rel == "docs/gallery.html" and name == "cards"):  # the cards are scripts/gallery.py's
                     raise Drift("%s has a region gen:%s that nothing generates" % (rel, name))
             new = old
             for name, fn in regions.items():

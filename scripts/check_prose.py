@@ -21,7 +21,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FILES = ["README.md", "docs/index.html", "docs/guide.html", "docs/evidence.html", "docs/benchmarks.html", "docs/examples.html", "docs/board.html", "docs/status.md"]
+FILES = ["README.md", "docs/index.html", "docs/guide.html", "docs/evidence.html", "docs/benchmarks.html", "docs/examples.html", "docs/gallery.html", "docs/board.html", "docs/status.md"]
 
 # (regex, what it catches, an injected sentence for the mutants: it must be refused)
 PHRASES = [
