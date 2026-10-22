@@ -1109,3 +1109,8 @@ def _interp_cases():
 
 
 CASES += _interp_cases()
+
+
+from fixtures_recommend import cases as _recommend_cases  # noqa: E402
+
+CASES += _recommend_cases(ok, bad, case)

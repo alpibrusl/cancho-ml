@@ -1,0 +1,391 @@
+edition 6;
+
+module ml.recpred;
+
+// `predict` of a recommender (docs/wiring-recommend.md section 2): for each id of a column of the input file, its --top items not in its history (--for), or the --top items nearest to it by the cosine
+// of the factor vectors (--like). The ids are looked up in the sorted tables of the model file; an id the model has not seen is a refusal (cold start is not built). The score of an item for a
+// user is the sum over the factor index, ascending, of p_u * q_i from +0.0; ties are broken by the smaller item number; the rank counts from 1.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.argv;
+import ml.paths;
+import ml.recflags;
+import ml.recio;
+import ml.recload;
+import ml.recwire;
+import ml.verbs;
+import ml.wiredata;
+import metrics.rank;
+import metrics.recommend;
+import recommend.model;
+import toolbox.fail;
+import toolbox.text;
+import pipeline.schema;
+
+// the flags of predict that mean something to a matrix model only
+fn matrix_flags() -> [] &static [byte] {
+    return "proba,distance,rank,group,drop,max-out-of-range";
+}
+
+// the checks of the command line of a predict of a recommender
+fn flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = recflags.check_reader(heap, src, errs);
+    if !argv.has(src, "for") && !argv.has(src, "like") {
+        var w = wiredata.open_tag(heap, "args.required-flag");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_str(heap, w, "flag", "--for");
+        e = fail.add(heap, e, w);
+    } else if argv.has(src, "for") && argv.has(src, "like") {
+        e = wiredata.conflict(heap, e, "like", "--for asks for the items of users and --like for the items nearest to items: give one");
+    }
+    if argv.has(src, "like") && argv.has(src, "keep-seen") {
+        e = wiredata.conflict(heap, e, "keep-seen", "--keep-seen is for --for: the neighbours of an item have no history");
+    }
+    var k = 1;
+    while k <= bytes.count_byte(matrix_flags(), ',') + 1 {
+        let f = bytes.field(matrix_flags(), ',', k);
+        if argv.has(src, f) {
+            e = wiredata.conflict(heap, e, f, "a recommender has no feature matrix: this flag means nothing to its predict");
+        }
+        k = k + 1;
+    }
+    return e;
+}
+
+fn unknown_id[&h, &n](heap: &!h Heap, errs: fail.Errors, tag: &static [byte], flag: &static [byte], id: &n [byte], row: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, tag);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    w = fail.detail_int(heap, w, "row", row);
+    w = fail.detail_text(heap, w, "id", id);
+    return fail.add(heap, errs, w);
+}
+
+// the score of item `it` for user `u`: the dot product of their factors over the factor index ascending from +0.0
+fn dot[&p, &q](pf: &p [float], qf: &q [float], u: int, it: int, f: int) -> [] float {
+    var s = 0.0;
+    var c = 0;
+    while c < f {
+        s = s + pf[u * f + c] * qf[it * f + c];
+        c = c + 1;
+    }
+    return s;
+}
+
+// the Euclidean norm of every item's factors, sequential from +0.0
+fn norms[&h, &q](heap: &!h Heap, qf: &q [float], ni: int, f: int) -> [heap] Box[[float]] {
+    let nr = box_slice(heap, ni + 1, 0.0);
+    borrow mut nr as &!nw in {
+        var it = 0;
+        while it < ni {
+            contents(nw)[it] = math_sqrt(dot(qf, qf, it, it, f));
+            it = it + 1;
+        }
+    }
+    return nr;
+}
+
+fn math_sqrt(x: float) -> [] float {
+    return sqrt(x);
+}
+
+fn put_id_cell[&h, &i](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, id: &i [byte]) -> [heap] (json.Writer, buffer.Buffer) {
+    var o = text.put(heap, w, id);
+    return (o, buffer.append(heap, plain, id));
+}
+
+pub fn predict[&h, &f, &r, &pf, &cl, &d, &p](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, data: &d [byte], shown: &p [byte], o: verbs.Opts, errs: fail.Errors, lg: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = flags(heap, src, errs);
+    let (mo, sc, ok, e1) = recio.load(heap, data, shown, e);
+    e = e1;
+    var go = ok;
+    var clean = true;
+    borrow e as &er in {
+        clean = fail.count(er) == 0;
+    }
+    if !clean {
+        go = false;
+    }
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if go {
+        var by_user = argv.has(src, "for");
+        var colname = argv.text(src, "like");
+        var flag: &static [byte] = "like";
+        if by_user {
+            colname = argv.text(src, "for");
+            flag = "for";
+        }
+        let (col, off, unused, uoff2, rows, rok0, e2) = recload.read_columns(heap, fs, root, file, flag, colname, "", "", o, e);
+        e = e2;
+        var rok = rok0;
+        if rok {
+            borrow mo as &mr in {
+                var top = argv.nat(src, "top");
+                var avail = mr.nitems;
+                if !by_user {
+                    avail = mr.nitems - 1;
+                }
+                if !argv.has(src, "top") && top > avail {
+                    top = avail;
+                }
+                if top > avail {
+                    e = recwire.range_error(heap, e, "top", argv.text(src, "top"), "at most the number of items the model holds (one less for --like)");
+                    rok = false;
+                }
+                // the ids looked up: the number of the user (or item) of every row, or the first row that is not in the model
+                let who = box_slice(heap, rows + 1, 0);
+                borrow col as &tr in {
+                    borrow off as &ofr in {
+                        borrow mut who as &!ww in {
+                            var k = 0;
+                            while k < rows && rok {
+                                let cell = buffer.bytes(tr)[contents(ofr)[k]..contents(ofr)[k + 1]];
+                                var found = 0 - 1;
+                                if by_user {
+                                    found = model.find(contents(mr.ubytes), contents(mr.uoffs), mr.nusers, cell);
+                                } else {
+                                    found = model.find(contents(mr.ibytes), contents(mr.ioffs), mr.nitems, cell);
+                                }
+                                if found < 0 {
+                                    if by_user {
+                                        e = unknown_id(heap, e, "ml.recommend.unknown-user", "for", cell, k + 1);
+                                    } else {
+                                        e = unknown_id(heap, e, "ml.recommend.unknown-item", "like", cell, k + 1);
+                                    }
+                                    rok = false;
+                                } else {
+                                    contents(ww)[k] = found;
+                                }
+                                k = k + 1;
+                            }
+                        }
+                    }
+                }
+                if rok {
+                    borrow col as &cr in {
+                        borrow off as &offr in {
+                            borrow who as &whor in {
+                                let (p2, t2, bad) = page(heap, src, mr, cr, offr, whor, rows, by_user, top, o);
+                                buffer.drop(heap, payload);
+                                buffer.drop(heap, plain);
+                                payload = p2;
+                                plain = t2;
+                                if bad > 0 {
+                                    e = wiredata.non_finite_prediction(heap, e, bad, "score");
+                                }
+                            }
+                        }
+                    }
+                }
+                unbox_slice(heap, who);
+            }
+        }
+        buffer.drop(heap, col);
+        unbox_slice(heap, off);
+        buffer.drop(heap, unused);
+        unbox_slice(heap, uoff2);
+    }
+    model.drop(heap, mo);
+    schema.drop(heap, sc);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
+}
+
+// the number of rows one input id gives: --top, or fewer when the user has not that many items left
+fn rows_of(by_user: bool, keep: bool, top: int, nitems: int, seen: int) -> [] int {
+    var avail = nitems - 1;
+    if by_user {
+        avail = nitems;
+        if !keep {
+            avail = nitems - seen;
+        }
+    }
+    if top < avail {
+        return top;
+    }
+    return avail;
+}
+
+// the page of the answer: the rows [from, from + limit) of the rows of all the ids in file order. (data object, text)
+fn page[&h, &cl, &m, &t, &o2, &w2](heap: &!h Heap, src: &cl [byte], mr: &m model.Model, text0: &t buffer.Buffer, off: &o2 Box[[int]], who: &w2 Box[[int]], rows: int, by_user: bool, top: int, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+    let keep = argv.has(src, "keep-seen");
+    let ni = mr.nitems;
+    let f = mr.f;
+    // the rows of every id, counted before anything is scored
+    var total = 0;
+    var k = 0;
+    while k < rows {
+        var seen = 0;
+        if by_user {
+            seen = contents(mr.hoff)[contents(who)[k] + 1] - contents(mr.hoff)[contents(who)[k]];
+        }
+        total = total + rows_of(by_user, keep, top, ni, seen);
+        k = k + 1;
+    }
+    var start = o.from;
+    if start > total {
+        start = total;
+    }
+    var end = total;
+    if start + o.limit < end {
+        end = start + o.limit;
+    }
+    var bad = 0;
+    let keys = box_slice(heap, ni + 1, 0);
+    let idx = box_slice(heap, ni + 1, 0);
+    let tmp = box_slice(heap, ni + 1, 0);
+    let ex = box_slice(heap, 2, 0);
+    var nr = box_slice(heap, 2, 0.0);
+    if !by_user {
+        unbox_slice(heap, nr);
+        nr = norms(heap, contents(mr.q), ni, f);
+    }
+    var w = json.writer(heap, 1024);
+    var plain = buffer.empty(heap, 64);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "model");
+    w = json.put_string(heap, w, "recommend");
+    w = json.put_key(heap, w, "task");
+    w = json.put_string(heap, w, "recommendation");
+    w = json.put_key(heap, w, "columns");
+    w = json.begin_array(heap, w);
+    if by_user {
+        w = json.put_string(heap, w, "user");
+    } else {
+        w = json.put_string(heap, w, "item");
+    }
+    w = json.put_string(heap, w, "rank");
+    if by_user {
+        w = json.put_string(heap, w, "item");
+    } else {
+        w = json.put_string(heap, w, "neighbour");
+    }
+    w = json.put_string(heap, w, "score");
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "rows");
+    w = json.begin_array(heap, w);
+    borrow nr as &nrr in {
+        borrow mut keys as &!kw in {
+            borrow mut idx as &!iw in {
+                borrow mut tmp as &!tw in {
+                    borrow mut ex as &!exw in {
+                        var at = 0;
+                        var q = 0;
+                        while q < rows && at < end {
+                            let who_q = contents(who)[q];
+                            var seen = 0;
+                            if by_user {
+                                seen = contents(mr.hoff)[who_q + 1] - contents(mr.hoff)[who_q];
+                            }
+                            let count = rows_of(by_user, keep, top, ni, seen);
+                            if at + count > start {
+                                // score this id against every item and rank them
+                                var it = 0;
+                                while it < ni {
+                                    if by_user {
+                                        contents(kw)[it] = rank.key_of(dot(contents(mr.p), contents(mr.q), who_q, it, f));
+                                    } else {
+                                        var cs = 0.0;
+                                        let den = contents(nrr)[who_q] * contents(nrr)[it];
+                                        if den > 0.0 {
+                                            cs = dot(contents(mr.q), contents(mr.q), who_q, it, f) / den;
+                                        }
+                                        contents(kw)[it] = rank.key_of(cs);
+                                    }
+                                    it = it + 1;
+                                }
+                                var m = 0;
+                                if by_user && !keep {
+                                    m = recommend.rank_user(contents(kw), contents(mr.hitem)[contents(mr.hoff)[who_q]..contents(mr.hoff)[who_q + 1]], contents(iw), contents(tw), ni);
+                                } else if by_user {
+                                    m = recommend.rank_user(contents(kw), contents(mr.hitem)[0..0], contents(iw), contents(tw), ni);
+                                } else {
+                                    contents(exw)[0] = who_q;
+                                    m = recommend.rank_user(contents(kw), contents(exw)[0..1], contents(iw), contents(tw), ni);
+                                }
+                                var r = 0;
+                                while r < count {
+                                    if at + r >= start && at + r < end {
+                                        let item = contents(iw)[r];
+                                        var score = 0.0;
+                                        if by_user {
+                                            score = dot(contents(mr.p), contents(mr.q), who_q, item, f);
+                                        } else {
+                                            let den = contents(nrr)[who_q] * contents(nrr)[item];
+                                            if den > 0.0 {
+                                                score = dot(contents(mr.q), contents(mr.q), who_q, item, f) / den;
+                                            }
+                                        }
+                                        w = json.begin_array(heap, w);
+                                        // the id of the input row, as it was spelt in the file
+                                        let first = contents(off)[q];
+                                        let cell = buffer.bytes(text0)[first..contents(off)[q + 1]];
+                                        let (w3, p3) = put_id_cell(heap, w, plain, cell);
+                                        w = w3;
+                                        plain = p3;
+                                        plain = buffer.push(heap, plain, byte_of(9));
+                                        w = json.put_int(heap, w, r + 1);
+                                        plain = buffer.push_nat(heap, plain, r + 1);
+                                        plain = buffer.push(heap, plain, byte_of(9));
+                                        let ib = contents(mr.ibytes)[contents(mr.ioffs)[item]..contents(mr.ioffs)[item + 1]];
+                                        let (w4, p4) = put_id_cell(heap, w, plain, ib);
+                                        w = w4;
+                                        plain = p4;
+                                        plain = buffer.push(heap, plain, byte_of(9));
+                                        let (sb, fin) = verbs.put_float_text(heap, buffer.empty(heap, 32), bits_of(score));
+                                        if !fin && bad == 0 {
+                                            bad = at + r + 1;
+                                        }
+                                        borrow sb as &sbr in {
+                                            w = json.put_string(heap, w, buffer.bytes(sbr));
+                                            plain = buffer.append(heap, plain, buffer.bytes(sbr));
+                                        }
+                                        buffer.drop(heap, sb);
+                                        plain = buffer.push(heap, plain, byte_of(10));
+                                        w = json.end_array(heap, w);
+                                    }
+                                    r = r + 1;
+                                }
+                            }
+                            at = at + count;
+                            q = q + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    w = json.end_array(heap, w);
+    w = json.put_key(heap, w, "row_count");
+    w = json.put_int(heap, w, end - start);
+    w = json.put_key(heap, w, "total_rows");
+    w = json.put_int(heap, w, total);
+    w = json.put_key(heap, w, "truncated");
+    w = json.put_bool(heap, w, end < total);
+    w = json.put_key(heap, w, "next");
+    if end < total {
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "from");
+        w = json.put_int(heap, w, end);
+        w = json.end_object(heap, w);
+    } else {
+        w = json.put_null(heap, w);
+    }
+    w = json.end_object(heap, w);
+    unbox_slice(heap, keys);
+    unbox_slice(heap, idx);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, ex);
+    unbox_slice(heap, nr);
+    if bad > 0 {
+        let doc = json.finish(w);
+        buffer.drop(heap, doc);
+        buffer.drop(heap, plain);
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), bad);
+    }
+    return (json.finish(w), plain, 0);
+}

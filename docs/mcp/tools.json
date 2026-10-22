@@ -5,7 +5,7 @@
   {
    "name": "fit",
    "title": "fit",
-   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost|softmax] [--plan PLAN | --step STEPS] [--bins N] [--bootstrap N] [--early-stopping N] [--init NAME] [--iterations N] [--k N] [--l2 X] [--learning-rate X] [--max-depth N] [--max-nodes N] [--min-leaf N] [--mtry N] [--rounds N] [--subsample X] [--trees N] [--positive LABEL] [--split train=F] [--seed N] [--threads N] [--task regression|classification|ranking] [--group COLUMN] [--target NAME] --output MODEL [--drop NAMES] [--float NAMES] [--overwrite] [--dry-run] [--max-rows N] [--max-columns N] [--max-cells N] [--max-line-bytes N] [--max-bytes N] [--track DIR] [--log FILE] [--format json|text] fit FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
+   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost|softmax|recommend] [--plan PLAN | --step STEPS] [--alpha X] [--bins N] [--bootstrap N] [--early-stopping N] [--factors N] [--feedback NAME] [--init NAME] [--iterations N] [--k N] [--l2 X] [--learning-rate X] [--max-depth N] [--max-nodes N] [--min-leaf N] [--mtry N] [--rounds N] [--subsample X] [--trees N] [--positive LABEL] [--split train=F] [--seed N] [--threads N] [--task regression|classification|ranking] [--group COLUMN] [--target NAME] --output MODEL [--drop NAMES] [--float NAMES] [--overwrite] [--dry-run] [--max-rows N] [--max-columns N] [--max-cells N] [--max-line-bytes N] [--max-bytes N] [--track DIR] [--log FILE] [--format json|text] fit FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -19,10 +19,11 @@
        "tree",
        "forest",
        "boost",
-       "softmax"
+       "softmax",
+       "recommend"
       ],
       "default": "constant",
-      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported), softmax (experimental). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
+      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported), softmax (experimental), recommend (experimental). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed) and recommend factorises a log of user, item and optional rating rows by alternating least squares and answers a ranked list of items per user (--user, --item, --rating, --time, --factors, --l2, --iterations, --alpha, --feedback), and has no matrix, no target and no steps. All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
      },
      "task": {
       "type": "string",
@@ -111,6 +112,12 @@
       "minLength": 1,
       "description": "fit: the steps of the pipeline of a model other than constant, written verb key=value as in a plan, several separated by semicolons (ASCII 59), for example impute column=* strategy=mean then scale column=a,b kind=standard. The flag may be given once. The model line is built from --model and the hyperparameter flags"
      },
+     "alpha": {
+      "type": "string",
+      "minLength": 1,
+      "default": "40.0",
+      "description": "the confidence scale of the implicit form, c = 1 + alpha r: a finite number above 0, read for feedback implicit only"
+     },
      "bins": {
       "type": "integer",
       "minimum": 0,
@@ -132,6 +139,22 @@
       "default": 0,
       "description": "0 is off, N stops after N rounds without a better loss on a tenth of the training rows kept for it (needs --split)"
      },
+     "factors": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 256,
+      "default": 32,
+      "description": "the number of latent factors of a recommend fit: 1 to 256"
+     },
+     "feedback": {
+      "type": "string",
+      "enum": [
+       "explicit",
+       "implicit"
+      ],
+      "default": "explicit",
+      "description": "explicit fits the ratings by a plain ridge regression, implicit reads the values as strengths of events and fits the confidence-weighted form of Hu, Koren and Volinsky. Without --rating the feedback is implicit"
+     },
      "init": {
       "type": "string",
       "enum": [
@@ -145,7 +168,7 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 1000,
-      "description": "logistic: the Newton iterations, a fixed number: 1 to 1000 (default 100). kmeans: the Lloyd iterations, a fixed number: 1 to 1000 (default 10). softmax: the Newton iterations, a fixed number: 1 to 1000 (default 100)"
+      "description": "logistic: the Newton iterations, a fixed number: 1 to 1000 (default 100). kmeans: the Lloyd iterations, a fixed number: 1 to 1000 (default 10). softmax: the Newton iterations, a fixed number: 1 to 1000 (default 100). recommend: the passes of ALS, a fixed number: 1 to 1000 (default 10)"
      },
      "k": {
       "type": "integer",
@@ -156,7 +179,7 @@
      "l2": {
       "type": "string",
       "minLength": 1,
-      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0). softmax: the ridge penalty, a finite number, 0 or more. The intercepts are not penalised (default 0.0)"
+      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0). softmax: the ridge penalty, a finite number, 0 or more. The intercepts are not penalised (default 0.0). recommend: the ridge penalty of every solve, a finite number above 0 for a recommend fit (default 0.1)"
      },
      "learning-rate": {
       "type": "string",
@@ -345,6 +368,39 @@
       "type": "string",
       "minLength": 1,
       "description": "fit, eval: write a run record into this directory, beneath --root (docs/tracking.md). The directory must exist. fit writes DIR/RUNID.json, a canonical JSON record of the inputs that determine the model (the training file's SHA-256 and size, the plan, the seed, the split, the compiler pin, never the thread count), the model file's name, size and SHA-256 and the metrics, with no timestamp, no host name and no payload. The run id is the SHA-256 of the inputs, so the same inputs write the same record and an existing record that differs is ml.runs.conflict. eval writes DIR/RUNID.eval-SCOREDSHA.json beside the run of the model file. At most 1000 records of at most 262144 bytes"
+     },
+     "user": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit, eval, with --model recommend: the name of the column of the log that holds the user id, as the header spells it. Ids are text, compared byte for byte and numbered by their bytewise order (docs/wiring-recommend.md section 2)"
+     },
+     "item": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit, eval, with --model recommend: the name of the column of the log that holds the item id, read as --user is"
+     },
+     "rating": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit, eval, with --model recommend: the name of the column that holds the rating (feedback explicit) or the strength of the event (feedback implicit). Without it every row is an event of value 1 and the feedback is implicit"
+     },
+     "time": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit, with --model recommend: the name of the column that orders the interactions of a user, a number or an ISO-8601 date or date-time as for --split-by time:. Needed by --split-user-last, and refused without it"
+     },
+     "split-user-last": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "description": "fit, with --model recommend and --time: hold out the N latest interactions of each user (ties at the cut go to the earlier row of the file), fit on the rest and report the metrics of the held-out part at --top. A user with N interactions or fewer keeps them all in training"
+     },
+     "top": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 10,
+      "description": "|predict, eval, fit --split-user-last, with --model recommend: how many items a recommendation holds and the cut-off k of the metrics, 1 to 1000 and at most the number of items"
      },
      "file": {
       "type": "string",
@@ -648,7 +704,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -3116,6 +3173,259 @@
          "summary"
         ],
         "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "model": {
+          "const": "recommend"
+         },
+         "task": {
+          "const": "recommendation"
+         },
+         "rows": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "columns": {
+          "enum": [
+           2,
+           3
+          ]
+         },
+         "target": {
+          "type": "null"
+         },
+         "path": {
+          "$ref": "#/$defs/text_or_bytes"
+         },
+         "bytes": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+         },
+         "written": {
+          "type": "boolean"
+         },
+         "summary": {
+          "type": "object",
+          "properties": {
+           "method": {
+            "const": "als"
+           },
+           "feedback": {
+            "enum": [
+             "explicit",
+             "implicit"
+            ]
+           },
+           "users": {
+            "type": "integer",
+            "minimum": 0
+           },
+           "items": {
+            "type": "integer",
+            "minimum": 0
+           },
+           "interactions": {
+            "type": "integer",
+            "minimum": 0
+           },
+           "rows_read": {
+            "type": "integer",
+            "minimum": 0
+           },
+           "factors": {
+            "type": "integer",
+            "minimum": 0
+           },
+           "iterations": {
+            "type": "integer",
+            "minimum": 0
+           },
+           "lambda": {
+            "type": "string",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+           },
+           "alpha": {
+            "type": "string",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+           },
+           "loss": {
+            "type": "string",
+            "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+           },
+           "holds_log": {
+            "const": true
+           },
+           "split": {
+            "type": "object",
+            "properties": {
+             "user_last": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "train": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "test": {
+              "type": "integer",
+              "minimum": 0
+             }
+            },
+            "required": [
+             "user_last",
+             "train",
+             "test"
+            ],
+            "additionalProperties": false
+           },
+           "holdout": {
+            "type": "object",
+            "properties": {
+             "k": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "users": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "users_scored": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "hit": {
+              "oneOf": [
+               {
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "recall": {
+              "oneOf": [
+               {
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "ndcg": {
+              "oneOf": [
+               {
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "mrr": {
+              "oneOf": [
+               {
+                "type": "string",
+                "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "rows_item_unseen": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "rows_in_history": {
+              "type": "integer",
+              "minimum": 0
+             }
+            },
+            "required": [
+             "k",
+             "users",
+             "users_scored",
+             "hit",
+             "recall",
+             "ndcg",
+             "mrr",
+             "rows_item_unseen",
+             "rows_in_history"
+            ],
+            "additionalProperties": false
+           }
+          },
+          "required": [
+           "method",
+           "feedback",
+           "users",
+           "items",
+           "interactions",
+           "rows_read",
+           "factors",
+           "iterations",
+           "lambda",
+           "alpha",
+           "loss",
+           "holds_log"
+          ],
+          "additionalProperties": false
+         },
+         "run": {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+           },
+           "dir": {
+            "$ref": "#/$defs/text_or_bytes"
+           },
+           "file": {
+            "$ref": "#/$defs/text_or_bytes"
+           },
+           "written": {
+            "type": "boolean"
+           },
+           "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+           }
+          },
+          "required": [
+           "id",
+           "dir",
+           "file",
+           "written",
+           "sha256"
+          ],
+          "additionalProperties": false
+         }
+        },
+        "required": [
+         "model",
+         "task",
+         "rows",
+         "columns",
+         "target",
+         "path",
+         "bytes",
+         "sha256",
+         "written",
+         "summary"
+        ],
+        "additionalProperties": false
        }
       ]
      },
@@ -3378,6 +3688,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -3461,6 +3781,27 @@
       "type": "string",
       "minLength": 1,
       "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+     },
+     "for": {
+      "type": "string",
+      "minLength": 1,
+      "description": "predict, with --model recommend: the name of the column of the input file that holds the users to recommend for. The answer has, for each, its --top items"
+     },
+     "like": {
+      "type": "string",
+      "minLength": 1,
+      "description": "predict, with --model recommend: the name of the column of the input file that holds the items whose nearest items (the cosine of the factor vectors) are wanted. Not with --for"
+     },
+     "top": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 10,
+      "description": "|predict, eval, fit --split-user-last, with --model recommend: how many items a recommendation holds and the cut-off k of the metrics, 1 to 1000 and at most the number of items"
+     },
+     "keep-seen": {
+      "type": "boolean",
+      "description": "predict --for, with --model recommend: keep the items of the history of the user in the list (by default they are left out)"
      },
      "max-rows": {
       "type": "integer",
@@ -3787,7 +4128,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -3923,6 +4265,91 @@
          "unknown_categories",
          "out_of_range",
          "ignored_columns"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "model": {
+          "const": "recommend"
+         },
+         "task": {
+          "const": "recommendation"
+         },
+         "columns": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          },
+          "minItems": 4,
+          "maxItems": 4
+         },
+         "rows": {
+          "type": "array",
+          "items": {
+           "type": "array",
+           "prefixItems": [
+            {
+             "$ref": "#/$defs/text_or_bytes"
+            },
+            {
+             "type": "integer",
+             "minimum": 1
+            },
+            {
+             "$ref": "#/$defs/text_or_bytes"
+            },
+            {
+             "type": "string",
+             "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+            }
+           ],
+           "minItems": 4,
+           "maxItems": 4
+          }
+         },
+         "row_count": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "total_rows": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "truncated": {
+          "type": "boolean"
+         },
+         "next": {
+          "oneOf": [
+           {
+            "type": "null"
+           },
+           {
+            "type": "object",
+            "properties": {
+             "from": {
+              "type": "integer",
+              "minimum": 0
+             }
+            },
+            "required": [
+             "from"
+            ],
+            "additionalProperties": false
+           }
+          ]
+         }
+        },
+        "required": [
+         "model",
+         "task",
+         "columns",
+         "rows",
+         "row_count",
+         "total_rows",
+         "truncated",
+         "next"
         ],
         "additionalProperties": false
        }
@@ -4187,6 +4614,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -4299,6 +4736,23 @@
      "emit-folds": {
       "type": "boolean",
       "description": "fit, eval, cv: put the assignment of the rows in the answer: for each row (in file order) the fold, or 0 for a train row and 1 for a held-out row of --split. At most 1048576 entries (ml.split.emit-too-large)"
+     },
+     "user": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit, eval, with --model recommend: the name of the column of the log that holds the user id, as the header spells it. Ids are text, compared byte for byte and numbered by their bytewise order (docs/wiring-recommend.md section 2)"
+     },
+     "item": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit, eval, with --model recommend: the name of the column of the log that holds the item id, read as --user is"
+     },
+     "top": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 10,
+      "description": "|predict, eval, fit --split-user-last, with --model recommend: how many items a recommendation holds and the cut-off k of the metrics, 1 to 1000 and at most the number of items"
      },
      "max-rows": {
       "type": "integer",
@@ -4649,7 +5103,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -4819,7 +5274,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -5029,7 +5485,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -5383,7 +5840,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -5596,7 +6054,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -6020,6 +6479,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -6059,7 +6528,7 @@
   {
    "name": "cv",
    "title": "cv",
-   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost|softmax] [--plan PLAN | --step STEPS] [--target NAME] [--folds K] [--repeats R] [--stratify | --split-group COLUMN | --split-by time:COLUMN] [--group COLUMN] [--rank-k K] [--gain exp|linear] [--emit-folds] [--seed N] [--threads N] [--drop NAMES] [--format json|text] cv FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
+   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost|softmax|recommend] [--plan PLAN | --step STEPS] [--target NAME] [--folds K] [--repeats R] [--stratify | --split-group COLUMN | --split-by time:COLUMN] [--group COLUMN] [--rank-k K] [--gain exp|linear] [--emit-folds] [--seed N] [--threads N] [--drop NAMES] [--format json|text] cv FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -6073,10 +6542,11 @@
        "tree",
        "forest",
        "boost",
-       "softmax"
+       "softmax",
+       "recommend"
       ],
       "default": "constant",
-      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported), softmax (experimental). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
+      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported), softmax (experimental), recommend (experimental). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed) and recommend factorises a log of user, item and optional rating rows by alternating least squares and answers a ranked list of items per user (--user, --item, --rating, --time, --factors, --l2, --iterations, --alpha, --feedback), and has no matrix, no target and no steps. All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
      },
      "task": {
       "type": "string",
@@ -6152,6 +6622,12 @@
       "minLength": 1,
       "description": "fit: the steps of the pipeline of a model other than constant, written verb key=value as in a plan, several separated by semicolons (ASCII 59), for example impute column=* strategy=mean then scale column=a,b kind=standard. The flag may be given once. The model line is built from --model and the hyperparameter flags"
      },
+     "alpha": {
+      "type": "string",
+      "minLength": 1,
+      "default": "40.0",
+      "description": "the confidence scale of the implicit form, c = 1 + alpha r: a finite number above 0, read for feedback implicit only"
+     },
      "bins": {
       "type": "integer",
       "minimum": 0,
@@ -6173,6 +6649,22 @@
       "default": 0,
       "description": "0 is off, N stops after N rounds without a better loss on a tenth of the training rows kept for it (needs --split)"
      },
+     "factors": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 256,
+      "default": 32,
+      "description": "the number of latent factors of a recommend fit: 1 to 256"
+     },
+     "feedback": {
+      "type": "string",
+      "enum": [
+       "explicit",
+       "implicit"
+      ],
+      "default": "explicit",
+      "description": "explicit fits the ratings by a plain ridge regression, implicit reads the values as strengths of events and fits the confidence-weighted form of Hu, Koren and Volinsky. Without --rating the feedback is implicit"
+     },
      "init": {
       "type": "string",
       "enum": [
@@ -6186,7 +6678,7 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 1000,
-      "description": "logistic: the Newton iterations, a fixed number: 1 to 1000 (default 100). kmeans: the Lloyd iterations, a fixed number: 1 to 1000 (default 10). softmax: the Newton iterations, a fixed number: 1 to 1000 (default 100)"
+      "description": "logistic: the Newton iterations, a fixed number: 1 to 1000 (default 100). kmeans: the Lloyd iterations, a fixed number: 1 to 1000 (default 10). softmax: the Newton iterations, a fixed number: 1 to 1000 (default 100). recommend: the passes of ALS, a fixed number: 1 to 1000 (default 10)"
      },
      "k": {
       "type": "integer",
@@ -6197,7 +6689,7 @@
      "l2": {
       "type": "string",
       "minLength": 1,
-      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0). softmax: the ridge penalty, a finite number, 0 or more. The intercepts are not penalised (default 0.0)"
+      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0). softmax: the ridge penalty, a finite number, 0 or more. The intercepts are not penalised (default 0.0). recommend: the ridge penalty of every solve, a finite number above 0 for a recommend fit (default 0.1)"
      },
      "learning-rate": {
       "type": "string",
@@ -6558,7 +7050,8 @@
          "tree",
          "forest",
          "boost",
-         "softmax"
+         "softmax",
+         "recommend"
         ]
        },
        "task": {
@@ -7263,6 +7756,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -7485,7 +7988,8 @@
          "tree",
          "forest",
          "boost",
-         "softmax"
+         "softmax",
+         "recommend"
         ]
        },
        "task": {
@@ -8482,6 +8986,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -9342,6 +9856,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -10133,6 +10657,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -10716,6 +11250,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -11196,6 +11740,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -11736,6 +12290,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -12246,6 +12810,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -12331,6 +12905,27 @@
       "type": "string",
       "minLength": 1,
       "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+     },
+     "for": {
+      "type": "string",
+      "minLength": 1,
+      "description": "predict, with --model recommend: the name of the column of the input file that holds the users to recommend for. The answer has, for each, its --top items"
+     },
+     "like": {
+      "type": "string",
+      "minLength": 1,
+      "description": "predict, with --model recommend: the name of the column of the input file that holds the items whose nearest items (the cosine of the factor vectors) are wanted. Not with --for"
+     },
+     "top": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 10,
+      "description": "|predict, eval, fit --split-user-last, with --model recommend: how many items a recommendation holds and the cut-off k of the metrics, 1 to 1000 and at most the number of items"
+     },
+     "keep-seen": {
+      "type": "boolean",
+      "description": "predict --for, with --model recommend: keep the items of the history of the user in the list (by default they are left out)"
      },
      "max-rows": {
       "type": "integer",
@@ -12657,7 +13252,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -12793,6 +13389,91 @@
          "unknown_categories",
          "out_of_range",
          "ignored_columns"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "model": {
+          "const": "recommend"
+         },
+         "task": {
+          "const": "recommendation"
+         },
+         "columns": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          },
+          "minItems": 4,
+          "maxItems": 4
+         },
+         "rows": {
+          "type": "array",
+          "items": {
+           "type": "array",
+           "prefixItems": [
+            {
+             "$ref": "#/$defs/text_or_bytes"
+            },
+            {
+             "type": "integer",
+             "minimum": 1
+            },
+            {
+             "$ref": "#/$defs/text_or_bytes"
+            },
+            {
+             "type": "string",
+             "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+            }
+           ],
+           "minItems": 4,
+           "maxItems": 4
+          }
+         },
+         "row_count": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "total_rows": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "truncated": {
+          "type": "boolean"
+         },
+         "next": {
+          "oneOf": [
+           {
+            "type": "null"
+           },
+           {
+            "type": "object",
+            "properties": {
+             "from": {
+              "type": "integer",
+              "minimum": 0
+             }
+            },
+            "required": [
+             "from"
+            ],
+            "additionalProperties": false
+           }
+          ]
+         }
+        },
+        "required": [
+         "model",
+         "task",
+         "columns",
+         "rows",
+         "row_count",
+         "total_rows",
+         "truncated",
+         "next"
         ],
         "additionalProperties": false
        }
@@ -13057,6 +13738,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -13169,6 +13860,23 @@
      "emit-folds": {
       "type": "boolean",
       "description": "fit, eval, cv: put the assignment of the rows in the answer: for each row (in file order) the fold, or 0 for a train row and 1 for a held-out row of --split. At most 1048576 entries (ml.split.emit-too-large)"
+     },
+     "user": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit, eval, with --model recommend: the name of the column of the log that holds the user id, as the header spells it. Ids are text, compared byte for byte and numbered by their bytewise order (docs/wiring-recommend.md section 2)"
+     },
+     "item": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit, eval, with --model recommend: the name of the column of the log that holds the item id, read as --user is"
+     },
+     "top": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 10,
+      "description": "|predict, eval, fit --split-user-last, with --model recommend: how many items a recommendation holds and the cut-off k of the metrics, 1 to 1000 and at most the number of items"
      },
      "max-rows": {
       "type": "integer",
@@ -13514,7 +14222,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -13684,7 +14393,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -13894,7 +14604,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -14248,7 +14959,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -14461,7 +15173,8 @@
            "tree",
            "forest",
            "boost",
-           "softmax"
+           "softmax",
+           "recommend"
           ]
          },
          "task": {
@@ -14885,6 +15598,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -14924,7 +15647,7 @@
   {
    "name": "cv",
    "title": "cv",
-   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost|softmax] [--plan PLAN | --step STEPS] [--target NAME] [--folds K] [--repeats R] [--stratify | --split-group COLUMN | --split-by time:COLUMN] [--group COLUMN] [--rank-k K] [--gain exp|linear] [--emit-folds] [--seed N] [--threads N] [--drop NAMES] [--format json|text] cv FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
+   "description": "Fit, apply and score a model on a CSV file, with the refusals of a tool an agent can read. Usage of the command line this tool is: `ml [--root DIR] [--model constant|linear|logistic|kmeans|tree|forest|boost|softmax|recommend] [--plan PLAN | --step STEPS] [--target NAME] [--folds K] [--repeats R] [--stratify | --split-group COLUMN | --split-by time:COLUMN] [--group COLUMN] [--rank-k K] [--gain exp|linear] [--emit-folds] [--seed N] [--threads N] [--drop NAMES] [--format json|text] cv FILE`. Values the library refuses (ranges, conflicts between flags, unknown columns) come back as a tool error with the rule, the exit code and the repair.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -14938,10 +15661,11 @@
        "tree",
        "forest",
        "boost",
-       "softmax"
+       "softmax",
+       "recommend"
       ],
       "default": "constant",
-      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported), softmax (experimental). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed). All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
+      "description": "the model fit builds: constant (supported), linear (supported), logistic (supported), kmeans (supported), tree (supported), forest (supported), boost (supported), softmax (experimental), recommend (experimental). constant (the default) is the training mean for a regression and the majority class with its probability for a classification. linear fits by least squares and logistic by Newton's method and kmeans clusters the rows around k centres by a fixed number of Lloyd iterations and needs no target (--k, --iterations, --init, --seed) and tree is a CART decision tree with histogram splits (--task chooses classification or regression) and forest is a bagged random forest of such trees, parallel over trees (--task, --trees, --seed) and boost is a gradient-boosted ensemble of such trees, fitted round by round to the gradients of the squared-error or the logistic loss (--task, --rounds, --learning-rate, --subsample, --early-stopping, --seed) and recommend factorises a log of user, item and optional rating rows by alternating least squares and answers a ranked list of items per user (--user, --item, --rating, --time, --factors, --l2, --iterations, --alpha, --feedback), and has no matrix, no target and no steps. All but constant are fitted through the pipeline of --plan or --step. A name outside this list is args.bad-value"
      },
      "task": {
       "type": "string",
@@ -15017,6 +15741,12 @@
       "minLength": 1,
       "description": "fit: the steps of the pipeline of a model other than constant, written verb key=value as in a plan, several separated by semicolons (ASCII 59), for example impute column=* strategy=mean then scale column=a,b kind=standard. The flag may be given once. The model line is built from --model and the hyperparameter flags"
      },
+     "alpha": {
+      "type": "string",
+      "minLength": 1,
+      "default": "40.0",
+      "description": "the confidence scale of the implicit form, c = 1 + alpha r: a finite number above 0, read for feedback implicit only"
+     },
      "bins": {
       "type": "integer",
       "minimum": 0,
@@ -15038,6 +15768,22 @@
       "default": 0,
       "description": "0 is off, N stops after N rounds without a better loss on a tenth of the training rows kept for it (needs --split)"
      },
+     "factors": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 256,
+      "default": 32,
+      "description": "the number of latent factors of a recommend fit: 1 to 256"
+     },
+     "feedback": {
+      "type": "string",
+      "enum": [
+       "explicit",
+       "implicit"
+      ],
+      "default": "explicit",
+      "description": "explicit fits the ratings by a plain ridge regression, implicit reads the values as strengths of events and fits the confidence-weighted form of Hu, Koren and Volinsky. Without --rating the feedback is implicit"
+     },
      "init": {
       "type": "string",
       "enum": [
@@ -15051,7 +15797,7 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 1000,
-      "description": "logistic: the Newton iterations, a fixed number: 1 to 1000 (default 100). kmeans: the Lloyd iterations, a fixed number: 1 to 1000 (default 10). softmax: the Newton iterations, a fixed number: 1 to 1000 (default 100)"
+      "description": "logistic: the Newton iterations, a fixed number: 1 to 1000 (default 100). kmeans: the Lloyd iterations, a fixed number: 1 to 1000 (default 10). softmax: the Newton iterations, a fixed number: 1 to 1000 (default 100). recommend: the passes of ALS, a fixed number: 1 to 1000 (default 10)"
      },
      "k": {
       "type": "integer",
@@ -15062,7 +15808,7 @@
      "l2": {
       "type": "string",
       "minLength": 1,
-      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0). softmax: the ridge penalty, a finite number, 0 or more. The intercepts are not penalised (default 0.0)"
+      "description": "linear: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). logistic: the ridge penalty, a finite number, 0 or more. The intercept is not penalised (default 0.0). boost: the ridge penalty of the leaf values and of the split gain, a finite number, 0 or more (default 1.0). softmax: the ridge penalty, a finite number, 0 or more. The intercepts are not penalised (default 0.0). recommend: the ridge penalty of every solve, a finite number above 0 for a recommend fit (default 0.1)"
      },
      "learning-rate": {
       "type": "string",
@@ -15423,7 +16169,8 @@
          "tree",
          "forest",
          "boost",
-         "softmax"
+         "softmax",
+         "recommend"
         ]
        },
        "task": {
@@ -16128,6 +16875,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -16350,7 +17107,8 @@
          "tree",
          "forest",
          "boost",
-         "softmax"
+         "softmax",
+         "recommend"
         ]
        },
        "task": {
@@ -17347,6 +18105,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -18207,6 +18975,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -18998,6 +19776,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -19581,6 +20369,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -20061,6 +20859,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -20601,6 +21409,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -21111,6 +21929,16 @@
        "ml.limit.group-size",
        "ml.limit.pairs",
        "ml.split.group-required",
+       "ml.recommend.missing-id",
+       "ml.recommend.id-too-long",
+       "ml.recommend.bad-rating",
+       "ml.recommend.duplicate-pair",
+       "ml.recommend.unknown-user",
+       "ml.recommend.unknown-item",
+       "ml.limit.users",
+       "ml.limit.items",
+       "ml.limit.interactions",
+       "ml.limit.eval-work",
        "mcp.read-only",
        "mcp.record-column",
        "serve.number-not-exact",
@@ -21158,7 +21986,7 @@
    "props": [
     {
      "name": "model",
-     "kind": "choice:constant/linear/logistic/kmeans/tree/forest/boost/softmax",
+     "kind": "choice:constant/linear/logistic/kmeans/tree/forest/boost/softmax/recommend",
      "role": "none"
     },
     {
@@ -21237,6 +22065,11 @@
      "role": "none"
     },
     {
+     "name": "alpha",
+     "kind": "text",
+     "role": "none"
+    },
+    {
      "name": "bins",
      "kind": "nat",
      "role": "none"
@@ -21249,6 +22082,16 @@
     {
      "name": "early-stopping",
      "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "factors",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "feedback",
+     "kind": "choice:explicit/implicit",
      "role": "none"
     },
     {
@@ -21420,6 +22263,36 @@
      "name": "track",
      "kind": "path",
      "role": "path-write"
+    },
+    {
+     "name": "user",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "item",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "rating",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "time",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "split-user-last",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "top",
+     "kind": "nat",
+     "role": "none"
     }
    ],
    "writes": [
@@ -21475,6 +22348,26 @@
     {
      "name": "group",
      "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "for",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "like",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "top",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "keep-seen",
+     "kind": "bool",
      "role": "none"
     },
     {
@@ -21599,6 +22492,21 @@
      "role": "none"
     },
     {
+     "name": "user",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "item",
+     "kind": "text",
+     "role": "none"
+    },
+    {
+     "name": "top",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
      "name": "max-rows",
      "kind": "nat",
      "role": "none"
@@ -21663,7 +22571,7 @@
    "props": [
     {
      "name": "model",
-     "kind": "choice:constant/linear/logistic/kmeans/tree/forest/boost/softmax",
+     "kind": "choice:constant/linear/logistic/kmeans/tree/forest/boost/softmax/recommend",
      "role": "none"
     },
     {
@@ -21727,6 +22635,11 @@
      "role": "none"
     },
     {
+     "name": "alpha",
+     "kind": "text",
+     "role": "none"
+    },
+    {
      "name": "bins",
      "kind": "nat",
      "role": "none"
@@ -21739,6 +22652,16 @@
     {
      "name": "early-stopping",
      "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "factors",
+     "kind": "nat",
+     "role": "none"
+    },
+    {
+     "name": "feedback",
+     "kind": "choice:explicit/implicit",
      "role": "none"
     },
     {

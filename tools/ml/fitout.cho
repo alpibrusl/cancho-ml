@@ -1,0 +1,140 @@
+edition 6;
+
+module ml.fitout;
+
+// The answer of a fit that wrote (or planned) its model file, shared by the matrix models (ml.wire) and the recommender (ml.recwire): the file is written atomically, the payload names it and
+// its digest, the plain text says it in a line, and a dry run carries the planned action.
+
+import std.buffer;
+import std.json;
+import ml.fsio;
+import ml.logrec;
+import ml.mfile;
+import ml.paths;
+import ml.track;
+import ml.verbs;
+import ml.wiredata;
+import toolbox.fail;
+
+// the answer of a fit that wrote (or planned) the file `data`
+pub fn answer[&h, &f, &r, &po, &pt, &d, &s, &rj, &ac, &rn, &rt](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, name: &static [byte], task: &static [byte], rows: int, cols: int, tname: &s [byte], data: &d [byte], summary: buffer.Buffer, runjson: &rj [byte], action: &ac [byte], rec_name: &rn [byte], rec_text: &rt [byte], write_rec: bool, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] verbs.Out {
+    var e = errs;
+    var lg = log;
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    var extra = buffer.empty(heap, 1);
+    let hex = mfile.sha256_hex(heap, data);
+    let big = len(data) > o.max_bytes;
+    var ws = 0;
+    var wa = 0;
+    if big {
+        e = verbs.model_too_large(heap, e, len(data), o.max_bytes);
+    } else {
+        let (ws2, wa2) = fsio.write_atomic(heap, fs, root, paths.shown(out), paths.full(out), data, o.overwrite, o.dry);
+        ws = ws2;
+        wa = wa2;
+    }
+    if big {
+        ws = 0;
+    } else if ws != 0 {
+        e = verbs.write_failure(heap, e, ws, wa, paths.shown(out));
+    } else {
+        borrow hex as &hr in {
+            let digest = buffer.bytes(hr);
+            var w = json.writer(heap, 512);
+            w = json.begin_object(heap, w);
+            w = json.put_key(heap, w, "model");
+            w = json.put_string(heap, w, name);
+            w = json.put_key(heap, w, "task");
+            w = json.put_string(heap, w, task);
+            w = json.put_key(heap, w, "rows");
+            w = json.put_int(heap, w, rows);
+            w = json.put_key(heap, w, "columns");
+            w = json.put_int(heap, w, cols);
+            if len(tname) == 0 {
+                // a clustering has no target
+                w = json.put_key(heap, w, "target");
+                w = json.put_null(heap, w);
+            } else {
+                w = verbs.put_name(heap, w, "target", tname);
+            }
+            w = verbs.put_name(heap, w, "path", paths.shown(out));
+            w = json.put_key(heap, w, "bytes");
+            w = json.put_int(heap, w, len(data));
+            w = json.put_key(heap, w, "sha256");
+            w = json.put_string(heap, w, digest);
+            w = json.put_key(heap, w, "written");
+            w = json.put_bool(heap, w, !o.dry);
+            w = json.put_key(heap, w, "summary");
+            borrow summary as &sr in {
+                w = json.put_fragment(heap, w, buffer.bytes(sr));
+            }
+            if len(runjson) > 0 {
+                w = json.put_key(heap, w, "run");
+                w = json.put_fragment(heap, w, runjson);
+            }
+            w = json.end_object(heap, w);
+            buffer.drop(heap, payload);
+            payload = json.finish(w);
+            if o.dry {
+                var a = json.writer(heap, 256);
+                a = json.begin_array(heap, a);
+                a = json.begin_object(heap, a);
+                a = json.put_key(heap, a, "op");
+                if wa == 1 {
+                    a = json.put_string(heap, a, "replace");
+                } else {
+                    a = json.put_string(heap, a, "create");
+                }
+                a = verbs.put_name(heap, a, "path", paths.shown(out));
+                a = json.put_key(heap, a, "bytes");
+                a = json.put_int(heap, a, len(data));
+                a = json.put_key(heap, a, "sha256");
+                a = json.put_string(heap, a, digest);
+                a = json.end_object(heap, a);
+                if len(action) > 0 {
+                    a = json.put_fragment(heap, a, action);
+                }
+                a = json.end_array(heap, a);
+                let arr = json.finish(a);
+                buffer.drop(heap, extra);
+                extra = buffer.append(heap, buffer.empty(heap, 64), ",\"dry_run\":true,\"planned_actions\":");
+                borrow arr as &ar in {
+                    extra = buffer.append(heap, extra, buffer.bytes(ar));
+                }
+                buffer.drop(heap, arr);
+            }
+            plain = buffer.append(heap, plain, "fit: ");
+            plain = buffer.append(heap, plain, name);
+            plain = buffer.push(heap, plain, byte_of(' '));
+            plain = buffer.append(heap, plain, task);
+            plain = buffer.append(heap, plain, ", ");
+            plain = buffer.push_nat(heap, plain, rows);
+            plain = buffer.append(heap, plain, " rows, ");
+            if o.dry {
+                plain = buffer.append(heap, plain, "would write ");
+            } else {
+                plain = buffer.append(heap, plain, "wrote ");
+            }
+            plain = buffer.append(heap, plain, paths.shown(out));
+            plain = buffer.append(heap, plain, " (");
+            plain = buffer.push_nat(heap, plain, len(data));
+            plain = buffer.append(heap, plain, " bytes, sha256 ");
+            plain = buffer.append(heap, plain, digest);
+            plain = buffer.append(heap, plain, ")\n");
+            if !o.dry {
+                lg = logrec.write(heap, lg, len(data), digest);
+                // the model is written: now the run record (nothing in the directory is replaced)
+                if write_rec {
+                    let (rs, ra) = track.write_in(heap, fs, root, trackp, rec_name, rec_text, false);
+                    if rs != 0 {
+                        e = verbs.write_failure(heap, e, rs, ra, paths.shown(trackp));
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, hex);
+    buffer.drop(heap, summary);
+    return wiredata.out_of(payload, plain, extra, e, lg, o.dry);
+}

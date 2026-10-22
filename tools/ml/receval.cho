@@ -1,0 +1,406 @@
+edition 6;
+
+module ml.receval;
+
+// `eval` of a recommender (docs/wiring-recommend.md section 2, docs/recommend.md section 3): every row of the test log is a held-out interaction of its user. The model ranks, for each user that has
+// one, all its items except the ones of its history, and the metrics of lib/metrics/recommend are the means over those users. A user or an item the model has never seen cannot be scored (cold
+// start is not built): its rows are counted in the answer, not scored and not refused. A test pair that is in the user's history is not a test item and is counted too.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.argv;
+import ml.paths;
+import ml.recflags;
+import ml.recio;
+import ml.recload;
+import ml.recsplit;
+import ml.recwire;
+import ml.verbs;
+import ml.wiredata;
+import ml.splitcol;
+import metrics.recommend;
+import pipeline.schema;
+import recommend.model;
+import toolbox.fail;
+
+// the flags of eval that mean something to a matrix model only
+fn matrix_flags() -> [] &static [byte] {
+    return "positive,split,stratify,split-by,split-group,group,rank-k,gain,emit-folds,drop,max-out-of-range,seed,track";
+}
+
+fn flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = recflags.check_distinct(heap, src, recflags.check_reader(heap, src, errs));
+    if !argv.has(src, "user") {
+        var w = wiredata.open_tag(heap, "args.required-flag");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_str(heap, w, "flag", "--user");
+        e = fail.add(heap, e, w);
+    }
+    if !argv.has(src, "item") {
+        var w = wiredata.open_tag(heap, "args.required-flag");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_str(heap, w, "flag", "--item");
+        e = fail.add(heap, e, w);
+    }
+    var k = 1;
+    while k <= bytes.count_byte(matrix_flags(), ',') + 1 {
+        let f = bytes.field(matrix_flags(), ',', k);
+        if argv.has(src, f) {
+            e = wiredata.conflict(heap, e, f, "this flag means nothing to the eval of a recommender: every row of the test log is a held-out interaction, and nothing is drawn");
+        }
+        k = k + 1;
+    }
+    return e;
+}
+
+// the number of the model user (or item) of each distinct id of the test column: -1 for one the model does not hold. `rank` numbers the cells; first[d] is the first row of the id d
+fn lookup[&h, &t, &o, &r, &b, &s](heap: &!h Heap, col: &t [byte], off: &o [int], rank: &r [int], nd: int, rows: int, ids: &b [byte], offs: &s [int], n: int) -> [heap] Box[[int]] {
+    let out = box_slice(heap, nd + 1, 0 - 2);
+    borrow mut out as &!ow in {
+        var k = 0;
+        while k < rows {
+            if contents(ow)[rank[k]] == 0 - 2 {
+                contents(ow)[rank[k]] = model.find(ids, offs, n, col[off[k]..off[k + 1]]);
+            }
+            k = k + 1;
+        }
+    }
+    return out;
+}
+
+fn missing[&h, &n](heap: &!h Heap, errs: fail.Errors, flag: &static [byte], name: &n [byte], row: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.recommend.missing-id");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    w = fail.detail_text(heap, w, "name", name);
+    w = fail.detail_int(heap, w, "row", row);
+    return fail.add(heap, errs, w);
+}
+
+pub fn eval[&h, &f, &r, &pf, &cl, &d, &p](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, data: &d [byte], shown: &p [byte], o: verbs.Opts, errs: fail.Errors, lg: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = flags(heap, src, errs);
+    let (mo, sc, ok, e1) = recio.load(heap, data, shown, e);
+    e = e1;
+    var clean = true;
+    borrow e as &er in {
+        clean = fail.count(er) == 0;
+    }
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    if ok && clean {
+        let ktext = argv.text(src, "top");
+        let (ucol, uoff, icol, ioff, rows, rok, e2) = recload.read_columns(heap, fs, root, file, "user", argv.text(src, "user"), "item", argv.text(src, "item"), o, e);
+        e = e2;
+        borrow mo as &mr in {
+            var topk = argv.nat(src, "top");
+            if !argv.has(src, "top") && topk > mr.nitems {
+                topk = mr.nitems;
+            }
+            var go = rok;
+            if go && topk > mr.nitems {
+                e = recwire.range_error(heap, e, "top", ktext, "at most the number of items the model holds");
+                go = false;
+            }
+            if go {
+                borrow ucol as &ur in {
+                    borrow uoff as &uor in {
+                        borrow icol as &ir in {
+                            borrow ioff as &ior in {
+                                let (urank, nd, umiss) = splitcol.group_ranks(heap, buffer.bytes(ur), contents(uor), rows);
+                                let (irank, ni2, imiss) = splitcol.group_ranks(heap, buffer.bytes(ir), contents(ior), rows);
+                                if umiss > 0 {
+                                    e = missing(heap, e, "user", argv.text(src, "user"), umiss);
+                                    go = false;
+                                } else if imiss > 0 {
+                                    e = missing(heap, e, "item", argv.text(src, "item"), imiss);
+                                    go = false;
+                                }
+                                if go {
+                                    borrow urank as &urr in {
+                                        borrow irank as &irr in {
+                                            let um = lookup(heap, buffer.bytes(ur), contents(uor), contents(urr), nd, rows, contents(mr.ubytes), contents(mr.uoffs), mr.nusers);
+                                            let im = lookup(heap, buffer.bytes(ir), contents(ior), contents(irr), ni2, rows, contents(mr.ibytes), contents(mr.ioffs), mr.nitems);
+                                            borrow um as &umr in {
+                                                borrow im as &imr in {
+                                                    let (p2, t2, code, neu) = score(heap, mr, contents(urr), contents(irr), contents(umr), contents(imr), nd, rows, topk, o);
+                                                    buffer.drop(heap, payload);
+                                                    buffer.drop(heap, plain);
+                                                    payload = p2;
+                                                    plain = t2;
+                                                    if code == 0 - 1 {
+                                                        e = recwire.eval_work_error(heap, e, neu, mr.nitems, mr.f);
+                                                    } else if code != 0 {
+                                                        e = wiredata.code_error(heap, e, code, 0, 0, 0);
+                                                    }
+                                                }
+                                            }
+                                            unbox_slice(heap, um);
+                                            unbox_slice(heap, im);
+                                        }
+                                    }
+                                }
+                                unbox_slice(heap, urank);
+                                unbox_slice(heap, irank);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, ucol);
+        unbox_slice(heap, uoff);
+        buffer.drop(heap, icol);
+        unbox_slice(heap, ioff);
+    }
+    model.drop(heap, mo);
+    schema.drop(heap, sc);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, lg, false);
+}
+
+// The metrics of the test rows. urank/irank: the number of the id of every row among the distinct ids of its column; umap/imap: the model's number of each distinct id (-1 when it has none).
+// (data object, text, 0), or an empty answer and 1 for ml.limit.eval-work or a library code.
+fn score[&h, &m, &a, &b, &c, &d2](heap: &!h Heap, mr: &m model.Model, urank: &a [int], irank: &b [int], umap: &c [int], imap: &d2 [int], nd: int, rows: int, k: int, o: verbs.Opts) -> [heap] (buffer.Buffer, buffer.Buffer, int, int) {
+    var cold = 0;
+    var d = 0;
+    while d < nd {
+        if umap[d] < 0 {
+            cold = cold + 1;
+        }
+        d = d + 1;
+    }
+    // the rows the model can score: a known user and a known item
+    var usable = 0;
+    var r = 0;
+    var nuser = 0;
+    var nitem = 0;
+    while r < rows {
+        if umap[urank[r]] < 0 {
+            nuser = nuser + 1;
+        } else if imap[irank[r]] < 0 {
+            nitem = nitem + 1;
+        } else {
+            usable = usable + 1;
+        }
+        r = r + 1;
+    }
+    let uid = box_slice(heap, usable + 1, 0);
+    let iid = box_slice(heap, usable + 1, 0);
+    let mask = box_slice(heap, usable + 1, 1);
+    let ident = box_slice(heap, mr.nitems + 1, 0);
+    borrow mut uid as &!uw in {
+        borrow mut iid as &!iw in {
+            borrow mut ident as &!nw in {
+                var at = 0;
+                r = 0;
+                while r < rows {
+                    if umap[urank[r]] >= 0 && imap[irank[r]] >= 0 {
+                        contents(uw)[at] = umap[urank[r]];
+                        contents(iw)[at] = imap[irank[r]];
+                        at = at + 1;
+                    }
+                    r = r + 1;
+                }
+                var j = 0;
+                while j < mr.nitems {
+                    contents(nw)[j] = j;
+                    j = j + 1;
+                }
+            }
+        }
+    }
+    let tr = recload.Rows { ok: true, n: usable, nu: mr.nusers, ni: mr.nitems, uid: uid, iid: iid, vals: box_slice(heap, 1, 0.0), tkey: box_slice(heap, 1, 0), ubytes: box_slice(heap, 1, byte_of(0)), uoffs: box_slice(heap, 1, 0), ibytes: box_slice(heap, 1, byte_of(0)), ioffs: box_slice(heap, 1, 0) };
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    var code = 0;
+    var inhist = 0;
+    var ntest = 0;
+    var scored = 0;
+    var hit = 0.0;
+    var recall = 0.0;
+    var ndcg = 0.0;
+    var mrr = 0.0;
+    var evaluated = 0;
+    borrow tr as &trr in {
+        borrow mask as &mkr in {
+            borrow ident as &idr in {
+                let (toff, test, unseen, ih, nt) = recsplit.test_lists(heap, trr, contents(mkr)[0..usable], contents(idr)[0..mr.nitems], contents(mr.hoff), contents(mr.hitem));
+                inhist = ih;
+                ntest = nt;
+                // the users that have a test item, in user order: their histories, test items and scores
+                var neu = 0;
+                borrow toff as &tor in {
+                    var u = 0;
+                    while u < mr.nusers {
+                        if contents(tor)[u + 1] > contents(tor)[u] {
+                            neu = neu + 1;
+                        }
+                        u = u + 1;
+                    }
+                    evaluated = neu;
+                    if neu > 0 && !recwire.eval_work_ok(neu, mr.nitems, mr.f) {
+                        code = 0 - 1;
+                    } else if neu > 0 {
+                        let hoff2 = box_slice(heap, neu + 2, 0);
+                        let toff2 = box_slice(heap, neu + 2, 0);
+                        var hn = 0;
+                        u = 0;
+                        var q = 0;
+                        while u < mr.nusers {
+                            if contents(tor)[u + 1] > contents(tor)[u] {
+                                hn = hn + (contents(mr.hoff)[u + 1] - contents(mr.hoff)[u]);
+                            }
+                            u = u + 1;
+                        }
+                        let hist2 = box_slice(heap, hn + 1, 0);
+                        let test2 = box_slice(heap, ntest + 1, 0);
+                        let sc2 = box_slice(heap, neu * mr.nitems + 1, 0.0);
+                        borrow mut hoff2 as &!h2 in {
+                            borrow mut toff2 as &!t2 in {
+                                borrow mut hist2 as &!hi2 in {
+                                    borrow mut test2 as &!te2 in {
+                                        borrow mut sc2 as &!s2 in {
+                                            var hat = 0;
+                                            var tat = 0;
+                                            u = 0;
+                                            q = 0;
+                                            while u < mr.nusers {
+                                                if contents(tor)[u + 1] > contents(tor)[u] {
+                                                    var j = contents(mr.hoff)[u];
+                                                    while j < contents(mr.hoff)[u + 1] {
+                                                        contents(hi2)[hat] = contents(mr.hitem)[j];
+                                                        hat = hat + 1;
+                                                        j = j + 1;
+                                                    }
+                                                    contents(h2)[q + 1] = hat;
+                                                    borrow test as &ter in {
+                                                        j = contents(tor)[u];
+                                                        while j < contents(tor)[u + 1] {
+                                                            contents(te2)[tat] = contents(ter)[j];
+                                                            tat = tat + 1;
+                                                            j = j + 1;
+                                                        }
+                                                    }
+                                                    contents(t2)[q + 1] = tat;
+                                                    var it = 0;
+                                                    while it < mr.nitems {
+                                                        var s = 0.0;
+                                                        var cc = 0;
+                                                        while cc < mr.f {
+                                                            s = s + contents(mr.p)[u * mr.f + cc] * contents(mr.q)[it * mr.f + cc];
+                                                            cc = cc + 1;
+                                                        }
+                                                        contents(s2)[q * mr.nitems + it] = s;
+                                                        it = it + 1;
+                                                    }
+                                                    q = q + 1;
+                                                }
+                                                u = u + 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        borrow hoff2 as &h3 in {
+                            borrow toff2 as &t3 in {
+                                borrow hist2 as &hi3 in {
+                                    borrow test2 as &te3 in {
+                                        borrow sc2 as &s3 in {
+                                            let rc = recommend.evaluate(heap, contents(s3)[0..neu * mr.nitems], contents(h3)[0..neu + 1], contents(hi3)[0..hn], contents(t3)[0..neu + 1], contents(te3)[0..ntest], neu, mr.nitems, k, recwire.max_score_cells());
+                                            if rc.code != 0 {
+                                                code = rc.code;
+                                            } else {
+                                                scored = rc.scored;
+                                                hit = rc.hit;
+                                                recall = rc.recall;
+                                                ndcg = rc.ndcg;
+                                                mrr = rc.mrr;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        unbox_slice(heap, hoff2);
+                        unbox_slice(heap, toff2);
+                        unbox_slice(heap, hist2);
+                        unbox_slice(heap, test2);
+                        unbox_slice(heap, sc2);
+                    }
+                }
+                unbox_slice(heap, toff);
+                unbox_slice(heap, test);
+                var w = json.writer(heap, 768);
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "model");
+                w = json.put_string(heap, w, "recommend");
+                w = json.put_key(heap, w, "task");
+                w = json.put_string(heap, w, "recommendation");
+                w = json.put_key(heap, w, "rows");
+                w = json.put_int(heap, w, rows);
+                w = json.put_key(heap, w, "k");
+                w = json.put_int(heap, w, k);
+                w = json.put_key(heap, w, "users");
+                w = json.put_int(heap, w, nd);
+                w = json.put_key(heap, w, "users_scored");
+                w = json.put_int(heap, w, scored);
+                w = json.put_key(heap, w, "users_cold");
+                w = json.put_int(heap, w, cold);
+                w = json.put_key(heap, w, "rows_user_unknown");
+                w = json.put_int(heap, w, nuser);
+                w = json.put_key(heap, w, "rows_item_unknown");
+                w = json.put_int(heap, w, nitem);
+                w = json.put_key(heap, w, "rows_in_history");
+                w = json.put_int(heap, w, inhist);
+                w = json.put_key(heap, w, "test_items");
+                w = json.put_int(heap, w, ntest);
+                w = json.put_key(heap, w, "hit");
+                if scored > 0 {
+                    w = verbs.put_double(heap, w, bits_of(hit));
+                } else {
+                    w = json.put_null(heap, w);
+                }
+                w = json.put_key(heap, w, "recall");
+                if scored > 0 {
+                    w = verbs.put_double(heap, w, bits_of(recall));
+                } else {
+                    w = json.put_null(heap, w);
+                }
+                w = json.put_key(heap, w, "ndcg");
+                if scored > 0 {
+                    w = verbs.put_double(heap, w, bits_of(ndcg));
+                } else {
+                    w = json.put_null(heap, w);
+                }
+                w = json.put_key(heap, w, "mrr");
+                if scored > 0 {
+                    w = verbs.put_double(heap, w, bits_of(mrr));
+                } else {
+                    w = json.put_null(heap, w);
+                }
+                w = json.end_object(heap, w);
+                buffer.drop(heap, payload);
+                payload = json.finish(w);
+                plain = verbs.line_int(heap, plain, "eval: recommend, test rows ", rows);
+                plain = verbs.line_int(heap, plain, "users scored ", scored);
+                plain = verbs.line_double(heap, plain, "hit ", bits_of(hit));
+                plain = verbs.line_double(heap, plain, "recall ", bits_of(recall));
+                plain = verbs.line_double(heap, plain, "ndcg ", bits_of(ndcg));
+                plain = verbs.line_double(heap, plain, "mrr ", bits_of(mrr));
+            }
+        }
+    }
+    recload.drop(heap, tr);
+    unbox_slice(heap, mask);
+    unbox_slice(heap, ident);
+    if code != 0 {
+        buffer.drop(heap, payload);
+        buffer.drop(heap, plain);
+        return (buffer.empty(heap, 1), buffer.empty(heap, 1), code, evaluated);
+    }
+    return (payload, plain, 0, evaluated);
+}

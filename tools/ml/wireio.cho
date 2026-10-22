@@ -29,6 +29,9 @@ import ml.mfile;
 import ml.paths;
 import ml.prov;
 import ml.rankcol;
+import ml.recflags;
+import ml.receval;
+import ml.recpred;
 import metrics.ranking;
 import ml.refuse;
 import ml.spec;
@@ -1081,8 +1084,26 @@ fn peek_model[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], m
     return (data, mine);
 }
 
-pub fn predict[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+pub fn predict[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: verbs.Opts, errs0: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
     let (data, mine) = peek_model(heap, fs, root, model, o);
+    var is_rec = false;
+    borrow data as &dk0 in {
+        is_rec = peek_kind(buffer.bytes(dk0)) == est.kind_named("recommend");
+    }
+    if is_rec {
+        var rec = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+        borrow data as &dk1 in {
+            verbs.drop_out(heap, rec);
+            rec = recpred.predict(heap, src, fs, root, file, buffer.bytes(dk1), paths.shown(model), o, errs0, log);
+        }
+        buffer.drop(heap, data);
+        return rec;
+    }
+    let done = predict_rest(heap, src, fs, root, file, model, o, errs0, log, data, mine);
+    return recflags.stray_after(heap, src, done);
+}
+
+fn predict_rest[&h, &f, &r, &pf, &pm, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer, data: buffer.Buffer, mine: bool) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
     if !mine {
         buffer.drop(heap, data);
         let e0 = constant_conflict(heap, errs, o, 2);
@@ -1244,8 +1265,26 @@ pub fn predict_loaded[&h, &f, &r, &pf, &ss, &cl](heap: &!h Heap, src: &cl [byte]
 
 // ---------------------------------------------------------------- eval
 
-pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
+pub fn eval[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, sp: splitspec.SplitOpts, errs0: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
     let (data, mine) = peek_model(heap, fs, root, model, o);
+    var is_rec = false;
+    borrow data as &dk0 in {
+        is_rec = peek_kind(buffer.bytes(dk0)) == est.kind_named("recommend");
+    }
+    if is_rec {
+        var rec = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+        borrow data as &dk1 in {
+            verbs.drop_out(heap, rec);
+            rec = receval.eval(heap, src, fs, root, file, buffer.bytes(dk1), paths.shown(model), o, errs0, log);
+        }
+        buffer.drop(heap, data);
+        return rec;
+    }
+    let done = eval_rest(heap, src, fs, root, file, model, trackp, o, sp, errs0, log, data, mine);
+    return recflags.stray_after(heap, src, done);
+}
+
+fn eval_rest[&h, &f, &r, &pf, &pm, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, model: &pm paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, sp: splitspec.SplitOpts, errs: fail.Errors, log: buffer.Buffer, data: buffer.Buffer, mine: bool) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
     if !mine {
         buffer.drop(heap, data);
         let e0 = constant_conflict(heap, errs, o, 3);

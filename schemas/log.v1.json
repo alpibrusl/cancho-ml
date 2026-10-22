@@ -257,7 +257,17 @@
         "ml.rank.group-missing",
         "ml.limit.group-size",
         "ml.limit.pairs",
-        "ml.split.group-required"
+        "ml.split.group-required",
+        "ml.recommend.missing-id",
+        "ml.recommend.id-too-long",
+        "ml.recommend.bad-rating",
+        "ml.recommend.duplicate-pair",
+        "ml.recommend.unknown-user",
+        "ml.recommend.unknown-item",
+        "ml.limit.users",
+        "ml.limit.items",
+        "ml.limit.interactions",
+        "ml.limit.eval-work"
       ]
     }
   }

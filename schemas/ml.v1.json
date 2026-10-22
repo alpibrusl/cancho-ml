@@ -169,9 +169,12 @@
         "--model",
         "--plan",
         "--step",
+        "--alpha",
         "--bins",
         "--bootstrap",
         "--early-stopping",
+        "--factors",
+        "--feedback",
         "--init",
         "--iterations",
         "--k",
@@ -192,6 +195,15 @@
         "--split-group",
         "--weight",
         "--group",
+        "--user",
+        "--item",
+        "--rating",
+        "--time",
+        "--split-user-last",
+        "--for",
+        "--like",
+        "--top",
+        "--keep-seen",
         "--rank-k",
         "--gain",
         "--rank",
@@ -367,7 +379,17 @@
         "ml.rank.group-missing",
         "ml.limit.group-size",
         "ml.limit.pairs",
-        "ml.split.group-required"
+        "ml.split.group-required",
+        "ml.recommend.missing-id",
+        "ml.recommend.id-too-long",
+        "ml.recommend.bad-rating",
+        "ml.recommend.duplicate-pair",
+        "ml.recommend.unknown-user",
+        "ml.recommend.unknown-item",
+        "ml.limit.users",
+        "ml.limit.items",
+        "ml.limit.interactions",
+        "ml.limit.eval-work"
       ]
     },
     "repair": {
@@ -827,7 +849,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -3307,7 +3330,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -3457,7 +3481,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -3627,7 +3652,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -3837,7 +3863,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -4191,7 +4218,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -4404,7 +4432,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -4578,7 +4607,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -5036,7 +5066,8 @@
                 "tree",
                 "forest",
                 "boost",
-                "softmax"
+                "softmax",
+                "recommend"
               ]
             },
             "task": {
@@ -6612,6 +6643,561 @@
             "data_sha256",
             "threads",
             "compiler"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "const": "recommend"
+            },
+            "task": {
+              "const": "recommendation"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "columns": {
+              "enum": [
+                2,
+                3
+              ]
+            },
+            "target": {
+              "type": "null"
+            },
+            "path": {
+              "$ref": "#/$defs/text_or_bytes"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "written": {
+              "type": "boolean"
+            },
+            "summary": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "const": "als"
+                },
+                "feedback": {
+                  "enum": [
+                    "explicit",
+                    "implicit"
+                  ]
+                },
+                "users": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "interactions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rows_read": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "factors": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "iterations": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "lambda": {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                "alpha": {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                "loss": {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                "holds_log": {
+                  "const": true
+                },
+                "split": {
+                  "type": "object",
+                  "properties": {
+                    "user_last": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "train": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "test": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "user_last",
+                    "train",
+                    "test"
+                  ],
+                  "additionalProperties": false
+                },
+                "holdout": {
+                  "type": "object",
+                  "properties": {
+                    "k": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "users": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "users_scored": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "hit": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "recall": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "ndcg": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "mrr": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "rows_item_unseen": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows_in_history": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "k",
+                    "users",
+                    "users_scored",
+                    "hit",
+                    "recall",
+                    "ndcg",
+                    "mrr",
+                    "rows_item_unseen",
+                    "rows_in_history"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "method",
+                "feedback",
+                "users",
+                "items",
+                "interactions",
+                "rows_read",
+                "factors",
+                "iterations",
+                "lambda",
+                "alpha",
+                "loss",
+                "holds_log"
+              ],
+              "additionalProperties": false
+            },
+            "run": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "dir": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "file": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "written": {
+                  "type": "boolean"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "id",
+                "dir",
+                "file",
+                "written",
+                "sha256"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "rows",
+            "columns",
+            "target",
+            "path",
+            "bytes",
+            "sha256",
+            "written",
+            "summary"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "const": "recommend"
+            },
+            "task": {
+              "const": "recommendation"
+            },
+            "method": {
+              "const": "als"
+            },
+            "feedback": {
+              "enum": [
+                "explicit",
+                "implicit"
+              ]
+            },
+            "columns": {
+              "type": "object",
+              "properties": {
+                "user": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "item": {
+                  "$ref": "#/$defs/text_or_bytes"
+                },
+                "rating": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/text_or_bytes"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "user",
+                "item",
+                "rating"
+              ],
+              "additionalProperties": false
+            },
+            "users": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "interactions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "density": {
+              "type": "string",
+              "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+            },
+            "factors": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "iterations": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lambda": {
+              "type": "string",
+              "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+            },
+            "alpha": {
+              "type": "string",
+              "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+            },
+            "seed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "holds_log": {
+              "const": true
+            },
+            "cold_start": {
+              "const": "refused"
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "method",
+            "feedback",
+            "columns",
+            "users",
+            "items",
+            "interactions",
+            "density",
+            "factors",
+            "iterations",
+            "lambda",
+            "alpha",
+            "seed",
+            "holds_log",
+            "cold_start"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "const": "recommend"
+            },
+            "task": {
+              "const": "recommendation"
+            },
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "$ref": "#/$defs/text_or_bytes"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "$ref": "#/$defs/text_or_bytes"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  }
+                ],
+                "minItems": 4,
+                "maxItems": 4
+              }
+            },
+            "row_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "next": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "from"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "columns",
+            "rows",
+            "row_count",
+            "total_rows",
+            "truncated",
+            "next"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "model": {
+              "const": "recommend"
+            },
+            "task": {
+              "const": "recommendation"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "users": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "users_scored": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "users_cold": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rows_user_unknown": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rows_item_unknown": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rows_in_history": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "test_items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "hit": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "recall": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ndcg": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mrr": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "task",
+            "rows",
+            "k",
+            "users",
+            "users_scored",
+            "users_cold",
+            "rows_user_unknown",
+            "rows_item_unknown",
+            "rows_in_history",
+            "test_items",
+            "hit",
+            "recall",
+            "ndcg",
+            "mrr"
           ],
           "additionalProperties": false
         }

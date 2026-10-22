@@ -1,0 +1,183 @@
+edition 5;
+
+module ml.recflags;
+
+// The checks of the command line that belong to the recommender (docs/wiring-recommend.md sections 2 and 3), judged before any file is opened. A recommender has a log, not a matrix:
+// the flags that name columns of a matrix, a target, a step or a stratified split mean nothing to it and are args.conflict, not ignored; the flags of the recommender mean nothing to a
+// model with a matrix and are args.conflict there.
+
+import std.buffer;
+import std.bytes;
+import ml.argv;
+import ml.spec;
+import ml.verbs;
+import ml.wiredata;
+import toolbox.fail;
+
+// a flag that is required and was not given
+fn required[&h, &m](heap: &!h Heap, e: fail.Errors, message: &m [byte], flag: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), "args.required-flag", message, "ml fit --model recommend --user NAME --item NAME --output MODEL LOG");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    return fail.add(heap, e, w);
+}
+
+// whether `--model` names the recommender
+pub fn is_recommend[&cl](src: &cl [byte]) -> [] bool {
+    return bytes.equal(argv.text(src, "model"), "recommend");
+}
+
+// the flags of a matrix that the recommender does not have
+fn matrix_flags() -> [] &static [byte] {
+    return "target,drop,cat,float,positive,stratify,split-by,split-group,na-values,step,weight,group,task,rank-k,gain,emit-folds,split,plan,fields";
+}
+
+// the flags of the readers of other inputs: the log of a recommender is a CSV read by its named columns, with the limits --max-rows and --max-bytes
+fn reader_flags() -> [] &static [byte] {
+    return "max-columns,max-cells,max-line-bytes,absent,max-json-nodes";
+}
+
+// the flags of the recommender that no other model has: given to one that is not the recommender they are args.conflict
+fn log_flags() -> [] &static [byte] {
+    return "user,item,rating,time,split-user-last,top,for,like,keep-seen";
+}
+
+// whether the feedback of this fit is implicit: asked for, or implied by a log with no rating
+pub fn implicit_feedback[&cl](src: &cl [byte]) -> [] bool {
+    if argv.has(src, "feedback") {
+        return bytes.equal(argv.text(src, "feedback"), "implicit");
+    }
+    return !argv.has(src, "rating");
+}
+
+// the flags of the readers that a recommender does not have, and a format other than CSV
+pub fn check_reader[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = errs;
+    var k = 1;
+    while k <= bytes.count_byte(reader_flags(), ',') + 1 {
+        let f = bytes.field(reader_flags(), ',', k);
+        if argv.has(src, f) {
+            e = wiredata.conflict(heap, e, f, "the log of a recommender is a CSV read by its named columns: only --max-rows and --max-bytes limit it");
+        }
+        k = k + 1;
+    }
+    if argv.has(src, "input-format") && !bytes.equal(argv.text(src, "input-format"), "csv") {
+        e = wiredata.conflict(heap, e, "input-format", "the log of a recommender is read as CSV only");
+    }
+    return e;
+}
+
+// the columns of the log have one role each: a name given for two roles is args.conflict at the second
+pub fn check_distinct[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = errs;
+    if argv.has(src, "user") && argv.has(src, "item") && bytes.equal(argv.text(src, "user"), argv.text(src, "item")) {
+        e = wiredata.conflict(heap, e, "item", "--user and --item name the same column: a log has a column for the users and another for the items");
+    }
+    if argv.has(src, "rating") && (argv.has(src, "user") && bytes.equal(argv.text(src, "rating"), argv.text(src, "user")) || argv.has(src, "item") && bytes.equal(argv.text(src, "rating"), argv.text(src, "item"))) {
+        e = wiredata.conflict(heap, e, "rating", "--rating names the column of the users or of the items");
+    }
+    if argv.has(src, "time") && (argv.has(src, "user") && bytes.equal(argv.text(src, "time"), argv.text(src, "user")) || argv.has(src, "item") && bytes.equal(argv.text(src, "time"), argv.text(src, "item")) || argv.has(src, "rating") && bytes.equal(argv.text(src, "time"), argv.text(src, "rating"))) {
+        e = wiredata.conflict(heap, e, "time", "--time names the column of the users, of the items or of the ratings");
+    }
+    return e;
+}
+
+// `fit`: the flags given with --model recommend
+pub fn check_fit[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = errs;
+    if !is_recommend(src) {
+        var k = 1;
+        while k <= bytes.count_byte(log_flags(), ',') + 1 {
+            let f = bytes.field(log_flags(), ',', k);
+            if argv.has(src, f) {
+                e = wiredata.conflict(heap, e, f, "this flag is for --model recommend, the model of a log of user, item and rating rows");
+            }
+            k = k + 1;
+        }
+        return e;
+    }
+    if !argv.has(src, "user") {
+        e = required(heap, e, "fit of a recommender needs --user, the column of the log that holds the user id", "--user");
+    }
+    if !argv.has(src, "item") {
+        e = required(heap, e, "fit of a recommender needs --item, the column of the log that holds the item id", "--item");
+    }
+    var k = 1;
+    while k <= bytes.count_byte(matrix_flags(), ',') + 1 {
+        let f = bytes.field(matrix_flags(), ',', k);
+        if argv.has(src, f) {
+            e = wiredata.conflict(heap, e, f, "a recommender has a log, not a matrix: this flag means nothing to it (docs/wiring-recommend.md section 2)");
+        }
+        k = k + 1;
+    }
+    e = check_reader(heap, src, e);
+    e = check_distinct(heap, src, e);
+    if argv.has(src, "track") {
+        e = wiredata.conflict(heap, e, "track", "the run record of a recommender is not built yet (docs/wiring-recommend.md section 1, gate WR12)");
+    }
+    if argv.has(src, "split-user-last") && !argv.has(src, "time") {
+        e = required(heap, e, "--split-user-last orders each user's interactions by --time", "--time");
+    } else if argv.has(src, "time") && !argv.has(src, "split-user-last") {
+        e = wiredata.conflict(heap, e, "time", "the fit uses no time: --time is for --split-user-last");
+    }
+    if argv.has(src, "for") || argv.has(src, "like") || argv.has(src, "keep-seen") {
+        var f: &static [byte] = "for";
+        if argv.has(src, "like") {
+            f = "like";
+        } else if argv.has(src, "keep-seen") {
+            f = "keep-seen";
+        }
+        e = wiredata.conflict(heap, e, f, "this flag is for predict");
+    }
+    if argv.has(src, "top") && !argv.has(src, "split-user-last") {
+        e = wiredata.conflict(heap, e, "top", "fit uses --top as the cut-off of the metrics of --split-user-last only");
+    }
+    let implicit = implicit_feedback(src);
+    if argv.has(src, "feedback") && !implicit && !argv.has(src, "rating") {
+        e = wiredata.conflict(heap, e, "feedback", "explicit feedback needs --rating, the column of the ratings");
+    }
+    if argv.has(src, "alpha") && !implicit {
+        e = wiredata.conflict(heap, e, "alpha", "alpha is the confidence scale of the implicit form: this fit is explicit");
+    }
+    return e;
+}
+
+// `predict` and `eval` of a model that is not a recommender: the flags of the recommender mean nothing to it
+pub fn check_stray[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
+    var e = errs;
+    var k = 1;
+    while k <= bytes.count_byte(log_flags(), ',') + 1 {
+        let f = bytes.field(log_flags(), ',', k);
+        if argv.has(src, f) {
+            e = wiredata.conflict(heap, e, f, "this flag is for a model fitted with --model recommend");
+        }
+        k = k + 1;
+    }
+    return e;
+}
+
+// The answer of a verb on a model that is not a recommender, with the flags of the recommender checked after it: a file that is damaged is judged as damaged first, and the flags are a conflict only
+// with a model that was read. An answer with errors is left as it is.
+pub fn stray_after[&h, &cl](heap: &!h Heap, src: &cl [byte], out: verbs.Out) -> [heap] verbs.Out {
+    let (payload, plain, extra, e, lg, dry) = verbs.parts(out);
+    var clean = true;
+    borrow e as &er in {
+        clean = fail.count(er) == 0;
+    }
+    if !clean {
+        return wiredata.out_of(payload, plain, extra, e, lg, dry);
+    }
+    let e2 = check_stray(heap, src, e);
+    var still = true;
+    borrow e2 as &er2 in {
+        still = fail.count(er2) == 0;
+    }
+    if still {
+        return wiredata.out_of(payload, plain, extra, e2, lg, dry);
+    }
+    buffer.drop(heap, payload);
+    buffer.drop(heap, plain);
+    buffer.drop(heap, extra);
+    return verbs.nothing(heap, e2, lg);
+}

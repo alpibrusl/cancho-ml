@@ -17,6 +17,8 @@ import ml.idump;
 import ml.logrec;
 import ml.mdesc;
 import ml.paths;
+import ml.recflags;
+import ml.recwire;
 import ml.perm;
 import ml.runs;
 import ml.spec;
@@ -72,6 +74,9 @@ pub fn execute[&h, &f, &r, &pp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(
         }
         buffer.drop(heap, tokens);
         return (answer, log_ok);
+    }
+    if verb == 1 && recflags.is_recommend(src) {
+        return (recwire.fit(heap, src, fs, root, ps.file, ps.out, ps.trackp, o, e3, lg), log_ok);
     }
     if verb == 1 {
         if o.cat_given && !wire.planned(o.plan_given, argv.text(src, "model")) {

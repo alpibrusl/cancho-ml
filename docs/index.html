@@ -161,7 +161,7 @@
 
 <section class="alt" id="commands"><div class="wrap">
   <h2>One command, one model file, one server</h2>
-  <p class="lead">One verb, <span data-n="models">eight</span> models: constant, linear, logistic, softmax, k-means, tree, forest and boost. The file the fit writes is all a later command needs, and a server needs nothing else.</p>
+  <p class="lead">One verb, <span data-n="models">eight</span> models: constant, linear, logistic, softmax, k-means, tree, forest, boost and recommend (a recommender fitted on a log of users and items). The file the fit writes is all a later command needs, and a server needs nothing else.</p>
 <!-- gen:cmds -->
 <pre class="code" tabindex="0"><span class="c"># any of the eight models, one verb; --track keeps a run record</span>
 <span class="c">$</span> ml fit --model logistic --target virginica --step "scale column=* kind=standard" --l2 0.1 --split train=0.8 --seed 3 --track runs --output iris.ml iris_train.csv

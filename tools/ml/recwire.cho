@@ -1,0 +1,513 @@
+edition 6;
+
+module ml.recwire;
+
+// `fit` of the recommender (docs/wiring-recommend.md section 3): the log is read (ml.recload), the plan is the model line the flags give, the factors are fitted by ALS (recommend.als), the file is
+// the five sections of docs/wiring.md section 4 with the payload of recommend.model, and the answer is the one of every fit (ml.fitout). With --split-user-last the latest interactions of each user
+// are held out, the model is fitted on the rest and the answer holds the metrics of the held-out part (docs/recommend.md section 3).
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import ml.argv;
+import ml.est;
+import ml.fitout;
+import ml.logrec;
+import ml.paths;
+import ml.recflags;
+import ml.recload;
+import ml.recsplit;
+import ml.refuse;
+import ml.spec;
+import ml.verbs;
+import ml.wire;
+import ml.wiredata;
+import metrics.recommend;
+import pipeline.file;
+import pipeline.names;
+import pipeline.plan;
+import pipeline.schema;
+import recommend.als;
+import recommend.log;
+import recommend.model;
+import transforms.codes;
+import toolbox.built;
+import toolbox.fail;
+
+// the most multiply-adds of scoring every item for every user, and the most cells of the table of scores (docs/recommend.md section 3)
+pub fn max_eval_work() -> [] int {
+    return 17179869184;
+}
+
+pub fn max_score_cells() -> [] int {
+    return 67108864;
+}
+
+// ml.param.out-of-range for a flag whose value is a number outside its range (the value and the range as text)
+pub fn range_error[&h, &n, &v](heap: &!h Heap, errs: fail.Errors, flag: &n [byte], value: &v [byte], expected: &static [byte]) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.param.out-of-range");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "flag", flag);
+    w = fail.detail_text(heap, w, "value", value);
+    w = fail.detail_str(heap, w, "expected", expected);
+    return fail.add(heap, errs, w);
+}
+
+// the rule of a refusal of recommend.log.build, with the rows (1-based) that caused it
+fn log_error[&h, &l](heap: &!h Heap, errs: fail.Errors, lg: &l log.Log) -> [heap] fail.Errors {
+    if lg.why == log.why_bad_rating() {
+        var w = wiredata.open_tag(heap, "ml.recommend.bad-rating");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "row", lg.row + 1);
+        return fail.add(heap, errs, w);
+    }
+    if lg.why == log.why_duplicate() {
+        var w = wiredata.open_tag(heap, "ml.recommend.duplicate-pair");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "row", lg.row + 1);
+        w = fail.detail_int(heap, w, "row2", lg.row2 + 1);
+        return fail.add(heap, errs, w);
+    }
+    return wiredata.code_error(heap, errs, lg.code, 0, 0, 0);
+}
+
+// the held-out part of a fit: what the answer says about it
+pub struct Hold {
+    has: bool,
+    last: int,
+    train: int,
+    test: int,
+    k: int,
+    users: int,
+    scored: int,
+    hit: float,
+    recall: float,
+    ndcg: float,
+    mrr: float,
+    unseen: int,
+    inhist: int,
+}
+
+pub fn no_hold() -> [] Hold {
+    return Hold { has: false, last: 0, train: 0, test: 0, k: 0, users: 0, scored: 0, hit: 0.0, recall: 0.0, ndcg: 0.0, mrr: 0.0, unseen: 0, inhist: 0 };
+}
+
+// the scores p_u . q_i of every user and item, row u at u * ni; each a sequential sum over the factor index ascending from +0.0 (the specification of docs/recommend.md section 3)
+pub fn scores[&h, &p, &q](heap: &!h Heap, pf: &p [float], qf: &q [float], nu: int, ni: int, f: int) -> [heap] Box[[float]] {
+    let sc = box_slice(heap, nu * ni + 1, 0.0);
+    borrow mut sc as &!sw in {
+        var u = 0;
+        while u < nu {
+            var i = 0;
+            while i < ni {
+                var s = 0.0;
+                var c = 0;
+                while c < f {
+                    s = s + pf[u * f + c] * qf[i * f + c];
+                    c = c + 1;
+                }
+                contents(sw)[u * ni + i] = s;
+                i = i + 1;
+            }
+            u = u + 1;
+        }
+    }
+    return sc;
+}
+
+// ml.limit.eval-work when scoring nu users over ni items at f factors is over the ceilings
+pub fn eval_work_error[&h](heap: &!h Heap, errs: fail.Errors, nu: int, ni: int, f: int) -> [heap] fail.Errors {
+    var w = wiredata.open_tag(heap, "ml.limit.eval-work");
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "users", nu);
+    w = fail.detail_int(heap, w, "items", ni);
+    w = fail.detail_int(heap, w, "factors", f);
+    w = fail.detail_int(heap, w, "max_work", max_eval_work());
+    w = fail.detail_int(heap, w, "max_cells", max_score_cells());
+    return fail.add(heap, errs, w);
+}
+
+// whether scoring is within the ceilings (checked before the table is allocated; the products cannot overflow: users and items are at most 2^20, factors at most 256)
+pub fn eval_work_ok(nu: int, ni: int, f: int) -> [] bool {
+    return nu * ni <= max_score_cells() && nu * ni * f <= max_eval_work();
+}
+
+fn put_summary[&h, &m](heap: &!h Heap, implicit: bool, mo: &m model.Model, nrows: int, nusers: int, nitems: int, loss: float, hd: Hold) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 768);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "method");
+    w = json.put_string(heap, w, "als");
+    w = json.put_key(heap, w, "feedback");
+    if implicit {
+        w = json.put_string(heap, w, "implicit");
+    } else {
+        w = json.put_string(heap, w, "explicit");
+    }
+    w = json.put_key(heap, w, "users");
+    w = json.put_int(heap, w, nusers);
+    w = json.put_key(heap, w, "items");
+    w = json.put_int(heap, w, nitems);
+    w = json.put_key(heap, w, "interactions");
+    w = json.put_int(heap, w, mo.nnz);
+    w = json.put_key(heap, w, "rows_read");
+    w = json.put_int(heap, w, nrows);
+    w = json.put_key(heap, w, "factors");
+    w = json.put_int(heap, w, mo.f);
+    w = json.put_key(heap, w, "iterations");
+    w = json.put_int(heap, w, mo.iterations);
+    w = json.put_key(heap, w, "lambda");
+    w = verbs.put_double(heap, w, bits_of(mo.lambda));
+    w = json.put_key(heap, w, "alpha");
+    w = verbs.put_double(heap, w, bits_of(mo.alpha));
+    w = json.put_key(heap, w, "loss");
+    w = verbs.put_double(heap, w, bits_of(loss));
+    w = json.put_key(heap, w, "holds_log");
+    w = json.put_bool(heap, w, true);
+    if hd.has {
+        w = json.put_key(heap, w, "split");
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "user_last");
+        w = json.put_int(heap, w, hd.last);
+        w = json.put_key(heap, w, "train");
+        w = json.put_int(heap, w, hd.train);
+        w = json.put_key(heap, w, "test");
+        w = json.put_int(heap, w, hd.test);
+        w = json.end_object(heap, w);
+        w = json.put_key(heap, w, "holdout");
+        w = json.begin_object(heap, w);
+        w = json.put_key(heap, w, "k");
+        w = json.put_int(heap, w, hd.k);
+        w = json.put_key(heap, w, "users");
+        w = json.put_int(heap, w, hd.users);
+        w = json.put_key(heap, w, "users_scored");
+        w = json.put_int(heap, w, hd.scored);
+        w = json.put_key(heap, w, "hit");
+        w = verbs.put_double(heap, w, bits_of(hd.hit));
+        w = json.put_key(heap, w, "recall");
+        w = verbs.put_double(heap, w, bits_of(hd.recall));
+        w = json.put_key(heap, w, "ndcg");
+        w = verbs.put_double(heap, w, bits_of(hd.ndcg));
+        w = json.put_key(heap, w, "mrr");
+        w = verbs.put_double(heap, w, bits_of(hd.mrr));
+        w = json.put_key(heap, w, "rows_item_unseen");
+        w = json.put_int(heap, w, hd.unseen);
+        w = json.put_key(heap, w, "rows_in_history");
+        w = json.put_int(heap, w, hd.inhist);
+        w = json.end_object(heap, w);
+    }
+    w = json.end_object(heap, w);
+    return json.finish(w);
+}
+
+// the parameters of the plan, from its canonical model line
+pub struct Params {
+    ok: bool,
+    f: int,
+    iterations: int,
+    implicit: bool,
+    lambda: float,
+    alpha: float,
+}
+
+// The plan the flags give: `model kind=recommend` and the hyperparameters given, parsed into its canonical form (defaults printed, in the order of the manifest). Without --rating the feedback is
+// implicit unless --feedback says otherwise (recflags rejects explicit without a rating). (plan, parameters, errors)
+fn make_plan[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] (plan.Plan, Params, fail.Errors) {
+    var e = errs;
+    let kind = est.kind_named("recommend");
+    let tokens = wire.model_tokens(heap, src, kind);
+    var line = buffer.append(heap, buffer.empty(heap, 96), "model kind=recommend");
+    borrow tokens as &tk in {
+        line = buffer.append(heap, line, buffer.bytes(tk));
+    }
+    buffer.drop(heap, tokens);
+    if !argv.has(src, "feedback") && !argv.has(src, "rating") {
+        line = buffer.append(heap, line, " feedback=implicit");
+    }
+    line = buffer.push(heap, line, byte_of(10));
+    var pl = plan.empty(heap);
+    var pa = Params { ok: false, f: 0, iterations: 0, implicit: false, lambda: 0.0, alpha: 0.0 };
+    var go = true;
+    borrow line as &lr in {
+        let (p2, pf2) = plan.parse(heap, buffer.bytes(lr));
+        plan.drop(heap, pl);
+        pl = p2;
+        if pf2.code != 0 {
+            e = wiredata.code_error(heap, e, pf2.code, pf2.a, pf2.b, pf2.c);
+            go = false;
+        }
+    }
+    buffer.drop(heap, line);
+    if go {
+        let ip = box_slice(heap, 8, 0);
+        let fp = box_slice(heap, 8, 0.0);
+        var bad = 0;
+        borrow pl as &pr in {
+            borrow mut ip as &!iw in {
+                borrow mut fp as &!fw in {
+                    bad = est.hparams(kind, plan.model_line(pr), contents(iw), contents(fw));
+                }
+            }
+        }
+        if bad != 0 {
+            e = wiredata.code_error(heap, e, codes.plan_bad_value(), 0, 0, 0);
+        } else {
+            borrow ip as &ir in {
+                borrow fp as &fr in {
+                    pa = Params { ok: true, f: contents(ir)[0], iterations: contents(ir)[1], implicit: contents(ir)[2] == 1, lambda: contents(fr)[0], alpha: contents(fr)[1] };
+                }
+            }
+        }
+        unbox_slice(heap, ip);
+        unbox_slice(heap, fp);
+    }
+    // the ridge penalty and the confidence scale are positive and finite
+    if pa.ok && !(pa.lambda > 0.0 && pa.lambda - pa.lambda == 0.0) {
+        e = range_error(heap, e, "l2", argv.text(src, "l2"), "a finite number above 0");
+        pa = Params { ok: false, f: pa.f, iterations: pa.iterations, implicit: pa.implicit, lambda: pa.lambda, alpha: pa.alpha };
+    }
+    if pa.ok && pa.implicit && !(pa.alpha > 0.0 && pa.alpha - pa.alpha == 0.0) {
+        e = range_error(heap, e, "alpha", argv.text(src, "alpha"), "a finite number above 0");
+        pa = Params { ok: false, f: pa.f, iterations: pa.iterations, implicit: pa.implicit, lambda: pa.lambda, alpha: pa.alpha };
+    }
+    return (pl, pa, e);
+}
+
+// the schema of the log: the columns user, item and (explicit) rating, none of them the target (docs/wiring-recommend.md section 5)
+fn schema_bytes[&h, &u, &i, &g](heap: &!h Heap, user: &u [byte], item: &i [byte], rating: &g [byte]) -> [heap] buffer.Buffer {
+    var nm = names.add(heap, names.empty(heap), user);
+    nm = names.add(heap, nm, item);
+    var cols = 2;
+    if len(rating) > 0 {
+        nm = names.add(heap, nm, rating);
+        cols = 3;
+    }
+    let types = box_slice(heap, 2 * cols + 1, 0);
+    if cols == 3 {
+        borrow mut types as &!tw in {
+            contents(tw)[4] = 2;
+        }
+    }
+    let sc = schema.make(nm, types, cols);
+    var out = buffer.empty(heap, 1);
+    borrow sc as &sr in {
+        buffer.drop(heap, out);
+        out = schema.encode(heap, sr);
+    }
+    schema.drop(heap, sc);
+    return out;
+}
+
+// the fit on the rows `tr` (the training rows; `full`, `mask` and `map` are the rows of the file, the held-out mask and the item map when `hd0.has`) and the answer
+fn train_and_write[&h, &f, &r, &po, &pt, &cl, &tp, &fu, &mk, &mp, &pp](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, ptext: &pp [byte], pa: Params, tr: &tp recload.Rows, full: &fu recload.Rows, mask: &mk [int], map: &mp [int], hd0: Hold, nrows: int, errs: fail.Errors, lg: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] verbs.Out {
+    var e = errs;
+    var k = argv.nat(src, "top");
+    if !argv.has(src, "top") && k > tr.ni {
+        k = tr.ni;
+    }
+    if hd0.has && k > tr.ni {
+        e = range_error(heap, e, "top", argv.text(src, "top"), "at most the number of items the training rows hold");
+        return verbs.nothing(heap, e, lg);
+    }
+    if hd0.has && !eval_work_ok(tr.nu, tr.ni, pa.f) {
+        return verbs.nothing(heap, eval_work_error(heap, e, tr.nu, tr.ni, pa.f), lg);
+    }
+    let lgx = log.build(heap, contents(tr.uid)[0..tr.n], contents(tr.iid)[0..tr.n], contents(tr.vals)[0..tr.n], tr.nu, tr.ni, pa.implicit, tr.n);
+    var bad = false;
+    borrow lgx as &lr in {
+        if lr.code != 0 {
+            e = log_error(heap, e, lr);
+            bad = true;
+        }
+    }
+    if bad {
+        log.drop(heap, lgx);
+        return verbs.nothing(heap, e, lg);
+    }
+    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    borrow lgx as &lr in {
+        verbs.drop_out(heap, result);
+        result = with_log(heap, src, fs, root, out, trackp, o, ptext, pa, tr, full, mask, map, hd0, nrows, k, lr, e, lg);
+    }
+    log.drop(heap, lgx);
+    return result;
+}
+
+// the part of the fit that reads the built log `lx`: ALS, the held-out metrics, the payload, the file and the answer
+fn with_log[&h, &f, &r, &po, &pt, &cl, &tp, &fu, &mk, &mp, &pp, &lq](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], out: &po paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, ptext: &pp [byte], pa: Params, tr: &tp recload.Rows, full: &fu recload.Rows, mask: &mk [int], map: &mp [int], hd0: Hold, nrows: int, k: int, lx: &lq log.Log, errs: fail.Errors, lg: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_write] verbs.Out {
+    var e = errs;
+    let fitted = als.fit(heap, lx, pa.f, pa.lambda, pa.alpha, pa.implicit, pa.iterations, o.seed, false);
+    var fcode = 0;
+    borrow fitted as &fr0 in {
+        fcode = fr0.code;
+    }
+    if fcode != 0 {
+        e = wiredata.code_error(heap, e, fcode, 0, 0, 0);
+        als.drop(heap, fitted);
+        return verbs.nothing(heap, e, lg);
+    }
+    var hd = hd0;
+    var go = true;
+    if hd0.has {
+        borrow fitted as &fr in {
+            let sc = scores(heap, contents(fr.p), contents(fr.q), tr.nu, tr.ni, pa.f);
+            let (toff, test, unseen, inhist, ntest) = recsplit.test_lists(heap, full, mask, map, contents(lx.uoff), contents(lx.uitem));
+            borrow sc as &scr in {
+                borrow toff as &tor in {
+                    borrow test as &ter in {
+                        let rc = recommend.evaluate(heap, contents(scr)[0..tr.nu * tr.ni], contents(lx.uoff)[0..tr.nu + 1], contents(lx.uitem)[0..lx.nnz], contents(tor)[0..tr.nu + 1], contents(ter)[0..ntest], tr.nu, tr.ni, k, max_score_cells());
+                        if rc.code != 0 {
+                            e = wiredata.code_error(heap, e, rc.code, 0, 0, 0);
+                            go = false;
+                        } else {
+                            hd = Hold { has: true, last: hd0.last, train: lx.nnz, test: ntest, k: k, users: rc.users, scored: rc.scored, hit: rc.hit, recall: rc.recall, ndcg: rc.ndcg, mrr: rc.mrr, unseen: unseen, inhist: inhist };
+                        }
+                    }
+                }
+            }
+            unbox_slice(heap, sc);
+            unbox_slice(heap, toff);
+            unbox_slice(heap, test);
+        }
+    }
+    if !go {
+        als.drop(heap, fitted);
+        return verbs.nothing(heap, e, lg);
+    }
+    // the payload
+    var alpha = 0.0;
+    if pa.implicit {
+        alpha = pa.alpha;
+    }
+    var payload = buffer.empty(heap, 1);
+    var code = 0;
+    var loss = 0.0;
+    borrow fitted as &fr in {
+        let (b2, c2) = model.write(heap, pa.implicit, pa.f, pa.iterations, pa.lambda, alpha, o.seed, contents(tr.ubytes)[0..contents(tr.uoffs)[tr.nu]], contents(tr.uoffs)[0..tr.nu + 1], contents(tr.ibytes)[0..contents(tr.ioffs)[tr.ni]], contents(tr.ioffs)[0..tr.ni + 1], tr.nu, tr.ni, lx.nnz, contents(lx.uoff)[0..tr.nu + 1], contents(lx.uitem)[0..lx.nnz], contents(lx.uval)[0..lx.nnz], contents(fr.p)[0..tr.nu * pa.f], contents(fr.q)[0..tr.ni * pa.f]);
+        buffer.drop(heap, payload);
+        payload = b2;
+        code = c2;
+        if fr.nloss > 0 {
+            loss = contents(fr.losses)[fr.nloss - 1];
+        }
+    }
+    als.drop(heap, fitted);
+    if code != 0 {
+        buffer.drop(heap, payload);
+        return verbs.nothing(heap, wiredata.code_error(heap, e, code, 0, 0, 0), lg);
+    }
+    let rating = ratingname(src);
+    let sb = schema_bytes(heap, argv.text(src, "user"), argv.text(src, "item"), rating);
+    var steps = buffer.empty(heap, 4);
+    steps = buffer.push(heap, steps, byte_of(0));
+    steps = buffer.push(heap, steps, byte_of(0));
+    steps = buffer.push(heap, steps, byte_of(0));
+    steps = buffer.push(heap, steps, byte_of(0));
+    var cols = 2;
+    if len(rating) > 0 {
+        cols = 3;
+    }
+    var fbytes = buffer.empty(heap, 1);
+    var summary = buffer.empty(heap, 1);
+    borrow sb as &sr in {
+        borrow steps as &str in {
+            borrow payload as &pr in {
+                buffer.drop(heap, fbytes);
+                fbytes = file.encode(heap, ptext, buffer.bytes(sr), buffer.bytes(str), buffer.bytes(pr), lx.nnz, cols, o.seed, built.compiler());
+                // the summary reads the fields back from the payload with the reader every other verb uses
+                let mo = model.read(heap, buffer.bytes(pr));
+                borrow mo as &mr in {
+                    buffer.drop(heap, summary);
+                    summary = put_summary(heap, pa.implicit, mr, nrows, tr.nu, tr.ni, loss, hd);
+                }
+                model.drop(heap, mo);
+            }
+        }
+    }
+    buffer.drop(heap, sb);
+    buffer.drop(heap, steps);
+    buffer.drop(heap, payload);
+    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    borrow fbytes as &fb in {
+        verbs.drop_out(heap, result);
+        result = fitout.answer(heap, fs, root, out, trackp, o, "recommend", "recommendation", lx.nnz, cols, "", buffer.bytes(fb), summary, "", "", "", "", false, e, lg);
+    }
+    buffer.drop(heap, fbytes);
+    return result;
+}
+
+fn ratingname[&cl](src: &cl [byte]) -> [] &cl [byte] {
+    if argv.has(src, "rating") {
+        return argv.text(src, "rating");
+    }
+    return "";
+}
+
+fn timename[&cl](src: &cl [byte]) -> [] &cl [byte] {
+    if argv.has(src, "time") {
+        return argv.text(src, "time");
+    }
+    return "";
+}
+
+// `fit --model recommend`
+pub fn fit[&h, &f, &r, &pf, &po, &pt, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, out: &po paths.Rp, trackp: &pt paths.Rp, o: verbs.Opts, errs: fail.Errors, lg: buffer.Buffer) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write] verbs.Out {
+    let (pl, pa, e0) = make_plan(heap, src, errs);
+    if !pa.ok {
+        plan.drop(heap, pl);
+        return verbs.nothing(heap, e0, lg);
+    }
+    let (rows, e1) = recload.read(heap, fs, root, file, argv.text(src, "user"), argv.text(src, "item"), ratingname(src), timename(src), o, e0);
+    var rows_ok = false;
+    borrow rows as &rq in {
+        rows_ok = rq.ok;
+    }
+    if !rows_ok {
+        plan.drop(heap, pl);
+        recload.drop(heap, rows);
+        return verbs.nothing(heap, e1, lg);
+    }
+    var result = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+    borrow pl as &pr in {
+        borrow rows as &rr in {
+            if !argv.has(src, "split-user-last") {
+                let dummy = box_slice(heap, 2, 0);
+                borrow dummy as &dr in {
+                    verbs.drop_out(heap, result);
+                    result = train_and_write(heap, src, fs, root, out, trackp, o, plan.text(pr), pa, rr, rr, contents(dr), contents(dr), no_hold(), rr.n, e1, lg);
+                }
+                unbox_slice(heap, dummy);
+            } else {
+                let last = argv.nat(src, "split-user-last");
+                let (mask, scode) = log.split_user_last(heap, contents(rr.uid)[0..rr.n], contents(rr.tkey)[0..rr.n], rr.nu, last);
+                if scode != 0 {
+                    verbs.drop_out(heap, result);
+                    result = verbs.nothing(heap, wiredata.code_error(heap, e1, scode, 0, 0, 0), lg);
+                } else {
+                    borrow mask as &mr in {
+                        let ntest = recsplit.count_set(contents(mr)[0..rr.n], rr.n);
+                        let ntrain = rr.n - ntest;
+                        let (map, kept) = recsplit.item_map(heap, contents(rr.iid)[0..rr.n], contents(mr)[0..rr.n], rr.n, rr.ni);
+                        borrow map as &mpr in {
+                            let tr = recsplit.train_rows(heap, rr, contents(mr)[0..rr.n], contents(mpr)[0..rr.ni], kept, ntrain);
+                            borrow tr as &trr in {
+                                let hd = Hold { has: true, last: last, train: 0, test: 0, k: 0, users: 0, scored: 0, hit: 0.0, recall: 0.0, ndcg: 0.0, mrr: 0.0, unseen: 0, inhist: 0 };
+                                verbs.drop_out(heap, result);
+                                result = train_and_write(heap, src, fs, root, out, trackp, o, plan.text(pr), pa, trr, rr, contents(mr)[0..rr.n], contents(mpr)[0..rr.ni], hd, rr.n, e1, lg);
+                            }
+                            recload.drop(heap, tr);
+                        }
+                        unbox_slice(heap, map);
+                    }
+                }
+                unbox_slice(heap, mask);
+            }
+        }
+    }
+    plan.drop(heap, pl);
+    recload.drop(heap, rows);
+    return result;
+}

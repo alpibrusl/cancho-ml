@@ -19,6 +19,7 @@ import ml.kinds;
 import ml.mcwire;
 import ml.mfile;
 import ml.rankcol;
+import ml.recio;
 import ml.paths;
 import ml.prov;
 import ml.spec;
@@ -549,6 +550,21 @@ pub fn describe[&h, &f, &r, &pm](heap: &!h Heap, fs: &f Fs(""), root: &r [byte],
         e = read_problem(heap, e, st, aux, o.max_bytes, paths.shown(model));
         buffer.drop(heap, data);
         return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+    }
+    var is_rec = false;
+    borrow data as &dk0 in {
+        is_rec = wireio.peek_kind(buffer.bytes(dk0)) == est.kind_named("recommend");
+    }
+    if is_rec {
+        var rec = verbs.nothing(heap, fail.empty_in(heap, spec.extra()), buffer.empty(heap, 1));
+        borrow data as &dk1 in {
+            verbs.drop_out(heap, rec);
+            rec = recio.describe(heap, buffer.bytes(dk1), paths.shown(model), o, e, log);
+        }
+        buffer.drop(heap, data);
+        buffer.drop(heap, payload);
+        buffer.drop(heap, plain);
+        return rec;
     }
     borrow data as &dr in {
         let bytes_of = buffer.bytes(dr);

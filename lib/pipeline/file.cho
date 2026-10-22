@@ -370,6 +370,9 @@ fn model_family_ok(pk: int, mk: int) -> [] bool {
     if pk == 7 {
         return mk == kinds.model_softmax();
     }
+    if pk == 8 {
+        return mk == kinds.model_recommend();
+    }
     return mk == kinds.model_tree();
 }
 
@@ -558,8 +561,8 @@ fn content[&h, &d, &p](heap: &!h Heap, data: &d [byte], places: &p [int]) -> [he
     if mk < 1 || mk > kinds.model_count() || !model_family_ok(pkind, mk) {
         return (mal(4, 0), 0, 0, 0, 0, 0, 0);
     }
-    // a clustering has no target and every other model has one: the schema and the model must agree
-    if mk == kinds.model_kmeans() == has_target {
+    // a clustering and a recommender have no target and every other model has one: the schema and the model must agree
+    if (mk == kinds.model_kmeans() || mk == kinds.model_recommend()) == has_target {
         return (mal(2, 0), 0, 0, 0, 0, 0, 0);
     }
     // 5 meta
@@ -668,7 +671,7 @@ pub fn decode[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] (Loaded, codes.
     }
     // the columns of the schema: the features and the target, if the model has one
     var ncolumns = feats + 1;
-    if mk == kinds.model_kmeans() {
+    if mk == kinds.model_kmeans() || mk == kinds.model_recommend() {
         ncolumns = feats;
     }
     return (Loaded { data: keep, places: pw, nsteps: nsteps, features: feats, width: width, columns: ncolumns, rows: rows, seed: seed, model_kind: mk, ncat: ncat, full: full }, codes.none());

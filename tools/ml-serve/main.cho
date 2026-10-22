@@ -13,6 +13,7 @@ import http.server;
 import web;
 import ml.app;
 import ml.argv;
+import ml.est;
 import ml.fsio;
 import ml.mdesc;
 import ml.paths;
@@ -195,6 +196,15 @@ fn prepare[&h, &f, &r, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root
             model = data;
             buffer.drop(heap, shown);
             shown = buffer.append(heap, buffer.empty(heap, 16), paths.shown(mpr));
+        }
+    }
+    // a recommender answers a list of items for a user, not a row for a row: its server is a later stage (docs/wiring-recommend.md, C5)
+    if go {
+        borrow model as &mk in {
+            if wireio.peek_kind(buffer.bytes(mk)) == est.kind_named("recommend") {
+                e = refusal(heap, e, "args.conflict", "ml-serve answers one row for each row of a request, and a recommender answers a list of items for a user: its server is a later stage (docs/wiring-recommend.md, C5)", "use ml predict --for", "flag", "--model-file");
+                go = false;
+            }
         }
     }
     // the answer of `describe` with every category the file lists: the request schema is built from it
