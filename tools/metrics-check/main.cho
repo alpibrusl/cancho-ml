@@ -10,6 +10,8 @@
 //   metrics-check terms YTRUE PROB POS                     the log-loss terms, bits, space separated
 //   metrics-check rank GID REL SCORE K GAIN CAP            the ranking metrics (docs/ranking.md section 3). GID, REL: `L:` ints; SCORE: `H:` float bits; K: 0 = the whole group; GAIN: exp | linear
 //       stdout: `groups N`, `scored N`, `ndcg HEX|undefined`, `map`, `mrr`, `prec`, `recall`, or `refused TAG`
+//   metrics-check recommend NUSERS NITEMS SCORE HOFF HIST TOFF TEST K CAP   the recommendation metrics (docs/recommend.md section 3). SCORE: `H:` float bits, NUSERS * NITEMS of them; HOFF, HIST, TOFF, TEST: `L:` ints
+//       stdout: `users N`, `scored N`, `hit HEX|undefined`, `recall`, `ndcg`, `mrr`, or `refused TAG`
 //   metrics-check testcount N NUM DEN
 //   metrics-check mc NAME YTRUE SECOND CLASSES CAP         the multiclass metrics (docs/multiclass.md section 4). CLASSES is `L:` ints, strictly ascending. NAME and SECOND:
 //       confusion accuracy precision recall f1 macro_precision macro_recall macro_f1 weighted_precision weighted_recall weighted_f1   SECOND = the predicted labels
@@ -30,6 +32,7 @@ import metrics.splits;
 import metrics.classify;
 import metrics.rank;
 import metrics.ranking;
+import metrics.recommend;
 import metrics.regress;
 import metrics.logloss;
 import metrics.multiclass;
@@ -893,6 +896,58 @@ fn run_rank[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_wri
     return status;
 }
 
+fn run_recommend[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (sa, sn) = make_floats(heap, operand(g, 4));
+    let (ha, hn) = make_ints(heap, operand(g, 5));
+    let (la, ln) = make_ints(heap, operand(g, 6));
+    let (ta, tn) = make_ints(heap, operand(g, 7));
+    let (ea, en) = make_ints(heap, operand(g, 8));
+    var sb = sa;
+    var hb = ha;
+    var lb = la;
+    var tb = ta;
+    var eb = ea;
+    var status = 2;
+    if sn >= 0 && hn >= 0 && ln >= 0 && tn >= 0 && en >= 0 {
+        borrow sb as &sr in {
+            borrow hb as &hr in {
+                borrow lb as &lr in {
+                    borrow tb as &tr in {
+                        borrow eb as &er in {
+                            let r = recommend.evaluate(heap, contents(sr)[0..sn], contents(hr)[0..hn], contents(lr)[0..ln], contents(tr)[0..tn], contents(er)[0..en], num(g, 2), num(g, 3), num(g, 9), num(g, 10));
+                            if r.code != 0 {
+                                refuse_line(io, r.code);
+                                status = rules.exit_code(r.code);
+                            } else {
+                                io.write_all(io, "users ");
+                                io.print_int(io, r.users);
+                                io.newline(io);
+                                io.write_all(io, "scored ");
+                                io.print_int(io, r.scored);
+                                io.newline(io);
+                                print_opt(io, "hit", r.scored > 0, r.hit);
+                                print_opt(io, "recall", r.scored > 0, r.recall);
+                                print_opt(io, "ndcg", r.scored > 0, r.ndcg);
+                                print_opt(io, "mrr", r.scored > 0, r.mrr);
+                                status = 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, sb);
+    unbox_slice(heap, hb);
+    unbox_slice(heap, lb);
+    unbox_slice(heap, tb);
+    unbox_slice(heap, eb);
+    return status;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(ffi);
@@ -915,6 +970,8 @@ fn main(world: World) -> [] int {
                         code = run_mc(hp, ip, g);
                     } else if same(arg(g, 1), "rank") {
                         code = run_rank(hp, ip, g);
+                    } else if same(arg(g, 1), "recommend") {
+                        code = run_recommend(hp, ip, g);
                     } else if same(arg(g, 1), "ratio") {
                         let (oa, a) = parse_int(operand(g, 2));
                         let (ob, b) = parse_int(operand(g, 3));
