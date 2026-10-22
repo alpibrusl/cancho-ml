@@ -23,7 +23,7 @@ A row is `group, features..., relevance`. **Relevance** is the target column: an
 
 `--group COL` names the **group column** (a query id: any text, read as `--split-group` reads it, `splits.md` section 4). It is not a feature and not the target (`args.conflict`, as the weight column); a missing cell is `ml.rank.group-missing` (exit 8, row in `detail`), never a group of its own. The groups are the distinct cells sorted bytewise, numbered `0 .. G-1`; **the rows of a group are in file order**, and they need not be next to each other in the file. This order is the tie order of section 3 and the pair order of section 4, so every result is a function of the file.
 
-Limits **[choice, to be measured at R3]**: a group has at most `G_max = 4096` rows (`ml.limit.group-size`), and the pairs of one round (section 4) at most `2^28` (`ml.limit.pairs`); both are refused **before** anything sized by them is allocated, with the number in the limits table of `introspect`. The number of pairs of a group with `c_r` rows of relevance `r` is `(g^2 - sum c_r^2) / 2`, computed from the counts alone. A group of one row, or whose rows all have one relevance, has no pair: it is allowed, and it contributes nothing to the gradient.
+Limits **[choice; what they cost is measured in section 10.4]**: a group has at most `G_max = 4096` rows (`ml.limit.group-size`), and the pairs of one round (section 4) at most `2^28` (`ml.limit.pairs`); both are refused **before** anything sized by them is allocated, with the number in the limits table of `introspect`. The number of pairs of a group with `c_r` rows of relevance `r` is `(g^2 - sum c_r^2) / 2`, computed from the counts alone. A group of one row, or whose rows all have one relevance, has no pair: it is allowed, and it contributes nothing to the gradient.
 
 ## 3. The metrics (stage R1)
 
@@ -54,7 +54,7 @@ All metrics are computed **per group**, then averaged. For a group of `g` rows, 
 
 These are the first and the second derivative of the pair's loss with respect to each score, so a gate can check them by finite differences (section 7). `w_ij` is the weight of the pair (section 5). The rows' sums are accumulated in the **fixed order** `i` ascending in file order within the group, then `j` ascending, the two updates of a pair made in that order; every sum is sequential from +0.0, as in `models-boost.md` 3.1. Groups are independent, so they may be computed on several threads only if each group's sums are made by one thread in that order (the result is then the same at every thread count); R3 starts single-threaded and measures before it does anything else.
 
-**The cost.** The loop is over the pairs, `(g^2 - sum c_r^2) / 2` per group, no more than `2^28` per round. **[estimate]** it is the dominant cost of a ranking fit and R3 measures it before the limit above is fixed.
+**The cost.** The loop is over the pairs, `(g^2 - sum c_r^2) / 2` per group, no more than `2^28` per round. Measured (section 10.4): the time of a fit is linear in the pairs of a round, 25 to 31 million pairs a second for the pairwise objective and 15 to 18 million for LambdaRank on one core; the ceiling of `2^28` pairs is therefore about 11 seconds a round (pairwise) or 17 (LambdaRank) at one thread.
 
 **LambdaRank (stage R4a).** `--task lambdarank` is the pairwise loop of this section with the pair's weight multiplied by `|delta NDCG_ij|`: the absolute change of the group's NDCG when the rows `i` and `j` swap places in the **current ranking** (the rows of the group sorted by `F` descending, ties by file order, as in section 3), that is
 
@@ -108,7 +108,7 @@ New rule tags **[choice]**: `ml.rank.bad-relevance`, `ml.rank.group-missing`, `m
 
 ## 9. Open questions
 
-* **[open]** The two limits of section 2 (4,096 rows and `2^28` pairs) are guesses; R3 measures the pair loop on one core (rows per second at several group sizes) and fixes them from the numbers, correcting this document.
+* **[closed at R4a, section 10.4]** The two limits of section 2 (4,096 rows and `2^28` pairs) were guesses. The pair loop was measured on one core; both ceilings are kept as choices and what they cost is stated in section 10.4. They are not raised: a fit of 100 rounds at the pair ceiling would take about 18 minutes (pairwise) or 29 (LambdaRank) on one thread.
 * **[open]** Whether LambdaRank beats the pairwise objective is a measurement of LR3 and is reported there; `--task ranking` stays the pairwise one either way (its bytes are already released).
 * **[open]** A weighted mean of the per-group metrics (by group size, or by a group weight) is not built; the mean is over groups.
 * **[open]** `MAP` uses `rel > 0` as relevant; a threshold flag (`--relevant-from R`) is a small addition if a graded file needs it.
@@ -152,4 +152,24 @@ Machine: Linux x86-64, 4 cores, the compiler at `0207556`, one run of each scrip
 * **Tests** (`test_rank.py`, 5 added): a LambdaRank file is a ranking model with different trees from the pairwise file, the same bytes at 1, 2, 4 and 8 threads, unit weights give the unweighted bytes, `--task lambdarank` without `--group` or with another model is `args.conflict`, a tracked fit is replayed. The tables, the schemas, `tools.json` and the manifests were regenerated; `test_rules`, `test_describe`, `test_mcp`, `test_authority`, `test_wire_boost`, `test_serving`, `test_tables`, `test_wire_rank_oracle` pass (147 tests).
 * **Mutants** (`mutants_boost.py`, ids `bl-`): **14 built, 12 killed, 2 survive and are explained** (an ideal DCG of 0 means no pair exists, so its guard changes no result; the library's check that `lam` goes with task 2 guards a caller that does not exist yet). The four earlier adapter mutants that matched the old text of the constructor were updated to the new text.
 
-**Not measured at this stage:** the speed of the pair loop and so the two ceilings of section 2 (4,096 rows a group, 2^28 pairs a round), which stay guesses; the full conformance run of the branch (left to the continuous integration); `ml-serve` and `ml-mcp` answers for a ranking model and LambdaRank (R4); a ranking model through `importance` and `dump` (they refuse a boosted model as before).
+
+### 10.4 The cost of the pair loop
+
+Machine: Linux 6.18 (a 4-vCPU virtual machine), the compiler at `0207556`, load average 0.09 before the run, `--threads 1`, the minimum of 2 runs per cell, wall-clock seconds, `scripts/bench_rank.py`. Files of 20,000 rows (6 features, relevance 0 to 4) in groups of g rows, 20 rounds, depth 4, min-leaf 10; "regress" is the regression fit of the same rows (everything but the pairs).
+
+| g | pairs a round | regress s | ranking s | lambdarank s |
+|---:|---:|---:|---:|---:|
+| 10 | 66,610 | 0.31 | 0.37 | 0.37 |
+| 50 | 362,888 | 0.22 | 0.51 | 0.62 |
+| 100 | 732,976 | 0.21 | 0.67 | 0.91 |
+| 250 | 1,842,735 | 0.20 | 1.62 | 1.96 |
+| 500 | 3,691,342 | 0.22 | 2.67 | 4.28 |
+| 1,000 | 7,389,337 | 0.20 | 4.95 | 8.71 |
+| 2,000 | 14,785,851 | 0.21 | 10.36 | 17.65 |
+| 4,096 | 29,657,534 | 0.22 | 24.18 | 38.81 |
+
+* **Close to linear in the pairs.** The time above the regression fit, divided into the pairs of the 20 rounds, gives 26 to 31 million pairs a second for the pairwise objective (31 at g = 1,000, 25 at g = 4,096, the slowest) and 15 to 18 million for LambdaRank (18 at g = 500, 15 at g = 4,096); the rate falls a little as the group grows.
+* **The ceilings.** `2^28` pairs a round is, at the slowest rates (25 and 15 million), 11 seconds a round (pairwise) and 17 (LambdaRank) on one core, so 100 rounds take about 18 and 29 minutes. A group of 4,096 rows is 8.4 million pairs at most, a third of a second a round. Both ceilings stay as they are: they are choices that bound a fit to minutes, not limits the memory needs (the loop allocates nothing per pair). LambdaRank costs about 1.6 times the pairwise objective at the largest group (38.81 s against 24.18 s; the extra is the count of the ranks, `O(g^2)` a group, and the work per pair).
+* **Not measured:** several threads (the pair loop is single-threaded, as section 4 says), other machines, real data with real relevance distributions (the share of pairs with different relevance is 0.4 to 0.5 in these files).
+
+**Not measured at this stage:** (the speed of the pair loop and the two ceilings were measured at R4a, section 10.4); the full conformance run of the branch (left to the continuous integration); `ml-serve` and `ml-mcp` answers for a ranking model and LambdaRank (R4); a ranking model through `importance` and `dump` (they refuse a boosted model as before).
