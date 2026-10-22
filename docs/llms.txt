@@ -1,0 +1,8 @@
+# cancho-ml
+
+> Fit, apply, score and serve classical machine-learning models on a CSV, with refusals an agent can read: a rule tag, an exit code and a repair.
+
+- [agents.md](agents.md): this tool as an agent reads it: ask `ml skill` and `ml introspect`, the shape of an answer and a refusal, the verbs, what holds and what is not claimed
+- [guide.html](guide.html): every flow with its real output
+- [evidence.html](evidence.html): the gates, the oracles and the mutants
+- [docs/cli.md](https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md): the reference
