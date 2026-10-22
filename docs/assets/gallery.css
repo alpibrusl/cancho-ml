@@ -33,3 +33,6 @@
 @keyframes gbar { from { transform: scaleX(0); } }
 @keyframes gpop { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .viz .bar, .viz .p, .gcard { animation: none; transition: none; } .gcard:hover { transform: none; } }
+.gcard[data-kind="soon"] { border-style: dashed; }
+.gcard[data-kind="soon"] .viz { background: var(--surface); }
+.gcard[data-kind="soon"] .tag { color: var(--muted); }

@@ -196,7 +196,8 @@ def tree_svg(nodes, title, desc, w=320, h=190):
 
 
 class Card:
-    def __init__(self, kind, key, title, blurb, cmds, svg_, facts, note=""):
+    def __init__(self, kind, key, title, blurb, cmds, svg_, facts, note="", status=""):
+        self.status = status
         self.kind, self.key, self.title, self.blurb, self.cmds, self.svg, self.facts, self.note = kind, key, title, blurb, cmds, svg_, facts, note
 
     def html(self):
@@ -205,7 +206,7 @@ class Card:
         note = '<p class="note">%s</p>' % esc(self.note) if self.note else ""
         return ('<article class="gcard" data-kind="%s" id="%s"><div class="viz">%s</div><div class="tx"><span class="tag">%s</span><h3>%s</h3><p>%s</p>%s<ul class="facts">%s</ul>'
                 '<pre class="code" tabindex="0">%s</pre></div></article>'
-                % (self.kind, self.key, self.svg, "model" if self.kind == "model" else "option", esc(self.title), self.blurb, note, facts, cmd))
+                % (self.kind, self.key, self.svg, self.status or ("model" if self.kind == "model" else "option"), esc(self.title), self.blurb, note, facts, cmd))
 
 
 def models_available(lab):
@@ -388,10 +389,65 @@ def make_cards(lab):
     return cards
 
 
+# What is asked for and not built. Each entry is run for real: the answer it gets today is printed on the card, and a command that starts to work is a Drift
+# (the card then becomes a real one). `status` is the tag: "soon" has an open issue and a design; "spike" and "not planned" are said as they are.
+SOON = [
+    ("knn", "k-nearest neighbours", "soon", 39, "Exact, bounded search with a stated tie rule; the model file holds the training rows, so its size is a limit.",
+     "ml fit --model knn --target progression --output k.ml diabetes_train.csv", "the neighbours: three of the training rows closest to a new one"),
+    ("nb", "naive Bayes", "soon", 38, "Gaussian, multinomial and categorical, counted exactly before the last logarithm.",
+     "ml fit --model nb --target virginica --output k.ml iris_train.csv", "class bars"),
+    ("lasso", "lasso and elastic net", "soon", 40, "<code>--l1</code> by coordinate descent in a fixed cyclic order; coefficients driven to exactly zero.",
+     "ml fit --model linear --target progression --l1 0.1 --output k.ml diabetes_train.csv", "coefficient bars with zeros"),
+    ("pca", "PCA, polynomial features, robust scaling", "soon", 41, "More pipeline steps, fitted on the training rows and stored in the model file like every step.",
+     'ml fit --model linear --target progression --step "pca components=2" --output k.ml diabetes_train.csv', "axes"),
+    ("forecast", "forecasting", "soon", 58, "Lag and rolling features, naive baselines to beat, multi-step forecasts with intervals. Today <code>--split-by time</code> and <code>ml cv</code> judge a forecast made elsewhere honestly.",
+     "ml forecast --horizon 7 sales.csv", "a line with an interval band"),
+    ("bandit", "bandits and off-policy evaluation", "soon", 59, "Sample weights, <code>ml ope</code> (the value of a policy from a log of decisions) and policies learned by reduction. Online learning in the server is out of scope.",
+     "ml ope --model-file k.ml iris_test.csv", "arms"),
+    ("recommend", "recommender", "soon", 70, "Matrix factorisation from a log of user, item, rating, with top-n answers per user. In review, not yet released.",
+     "ml fit --model recommend --target rating --output k.ml iris_train.csv", "grid"),
+    ("gpu", "GPU kernels", "spike", 47, "Only a measured spike, and a separate numerical tier if it comes: single precision cannot give the CPU's bytes. No promise is made.",
+     "ml fit --model linear --target progression --device gpu --output k.ml diabetes_train.csv", "chip"),
+    ("deep", "neural networks", "not planned", 13, "A deep-learning framework is not the aim: no GPU path, no autodiff. The classical models are what is built.",
+     "ml fit --model mlp --target progression --output k.ml diabetes_train.csv", "layers"),
+]
+
+SKETCH = {
+    "knn": '<circle class="p c0" cx="70" cy="70" r="6"/><circle class="p c0" cx="95" cy="95" r="6"/><circle class="p c1" cx="190" cy="60" r="6"/><circle class="p c1" cx="215" cy="100" r="6"/><circle class="p c0" cx="120" cy="60" r="6"/><circle class="rg" cx="140" cy="85" r="9"/><circle class="dg" cx="140" cy="85" r="48"/>',
+    "nb": '<rect class="bar" x="60" y="40" width="150" height="16" rx="3"/><rect class="bar" x="60" y="70" width="90" height="16" rx="3"/><rect class="bar" x="60" y="100" width="40" height="16" rx="3"/>',
+    "lasso": '<line class="ax" x1="40" y1="85" x2="280" y2="85"/>' + "".join('<rect class="cell" x="%d" y="%d" width="22" height="%d"/>' % (50 + 34 * i, 85 - h if h > 0 else 85, abs(h)) for i, h in enumerate([50, -30, 0, 38, 0, -22, 0])),
+    "pca": '<line class="ax" x1="40" y1="130" x2="280" y2="130"/><line class="ax" x1="40" y1="130" x2="40" y2="20"/><line class="dg" x1="50" y1="120" x2="260" y2="40"/><circle class="p c0" cx="90" cy="105" r="5"/><circle class="p c0" cx="150" cy="85" r="5"/><circle class="p c0" cx="200" cy="62" r="5"/><circle class="p c0" cx="120" cy="90" r="5"/>',
+    "forecast": '<path class="dg" d="M40 110 L80 90 L120 100 L160 70 L200 80" fill="none"/><path d="M200 80 L280 50 L280 100 Z" class="cell" opacity=".25"/><line class="rg" x1="200" y1="80" x2="280" y2="75"/>',
+    "bandit": ''.join('<circle class="p c%d" cx="%d" cy="85" r="%d"/>' % (i, 70 + 70 * i, r) for i, r in enumerate([18, 28, 12])),
+    "recommend": ''.join('<rect class="cell" opacity="%s" x="%d" y="%d" width="28" height="22" rx="3"/>' % (o, 70 + 34 * c, 40 + 28 * r_) for r_, row in enumerate([[.9, .2, .5, .2], [.3, .8, .2, .6], [.6, .3, .9, .3]]) for c, o in enumerate(row)),
+    "gpu": '<rect class="nd" x="100" y="45" width="120" height="80" rx="10"/><text class="lb big" x="160" y="92" text-anchor="middle">f32</text>',
+    "deep": ''.join('<circle class="p c3" cx="%d" cy="%d" r="7"/>' % (70 + 60 * l, 45 + 40 * k) for l in range(4) for k in range(3)),
+}
+
+
+def soon_cards(lab, have):
+    out = []
+    for key, title, status, issue, blurb, cmd, _ in SOON:
+        if key == "recommend" and "recommend" in have:
+            continue
+        st, doc, raw = lab.run(cmd)
+        if st == 0 or not doc or doc.get("ok"):
+            raise Drift("%s now works (exit %d): turn its card into a real one: %s" % (title, st, cmd))
+        rule = doc["error"]["rule"]
+        label = {"soon": "coming soon", "spike": "spike, not promised", "not planned": "not planned"}[status]
+        viz = svg("%s: not built yet" % title, "A sketch of %s with the words %s." % (title, label),
+                  '<g opacity=".8">%s</g><text class="lb big" x="160" y="156" text-anchor="middle">%s</text>' % (SKETCH[key], label), 320, 170)
+        out.append(Card("soon", key, title, blurb, [cmd], viz,
+                        ["today: refused, exit <b>%d</b>, rule <code>%s</code>" % (st, esc(rule)),
+                         'tracked in <a href="https://github.com/alpibrusl/cancho-ml/issues/%d">#%d</a>' % (issue, issue)], status=status))
+    return out
+
+
 def render(binary):
     with tempfile.TemporaryDirectory() as tmp:
         lab = Lab(binary, tmp)
         cards = make_cards(lab)
+        cards += soon_cards(lab, models_available(lab))
     return "\n".join(c.html() for c in cards)
 
 
