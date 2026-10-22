@@ -145,8 +145,8 @@ class RecommendFile(unittest.TestCase):
         data = self.files["e"]
         schema = self.files["i"][sections(self.files["i"])[1][1]:][:sections(self.files["i"])[1][2]]
         # the column count of the meta section is set to two as well, or the check of the meta (mc != scols) refuses the file before the check of the shape is reached
-        meta_at = sections(data)[4][1] + 8
-        two = fix_checksum(set_bytes(self.with_section(data, 1, schema), meta_at, struct.pack("<Q", 2)))
+        swapped = self.with_section(data, 1, schema)
+        two = fix_checksum(set_bytes(swapped, sections(swapped)[4][1] + 8, struct.pack("<Q", 2)))
         self.refused(two, "explicit with two columns", rules={"ml.model.malformed"}, verb="describe")
         self.refused(two, "explicit with two columns", rules={"ml.model.malformed"})
 
