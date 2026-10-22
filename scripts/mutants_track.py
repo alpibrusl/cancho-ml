@@ -146,7 +146,7 @@ base.MUTANTS = MUTANTS
 def build_ml(tree):
     g = lambda pat: sorted(glob.glob(str(tree / pat)))
     libs = (g("lib/core/*.cho") + g("lib/linalg/*.cho") + g("lib/metrics/*.cho") + g("lib/models/*.cho") + g("lib/models/kmeans/*.cho") + g("lib/models/linear/*.cho") +
-            g("lib/models/logistic/*.cho") + g("lib/models/softmax/*.cho") + g("lib/models/tree/*.cho") + g("lib/models/treewire/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho"))
+            g("lib/models/logistic/*.cho") + g("lib/models/recommend/*.cho") + g("lib/models/softmax/*.cho") + g("lib/models/tree/*.cho") + g("lib/models/treewire/*.cho") + g("lib/transforms/*.cho") + g("lib/pipeline/*.cho") + g("build/deps/*.cho"))
     target = tree / "build" / "ml"
     p = subprocess.run([base.compiler(), "build", "--std", *(libs + [str(tree / "generated/ml/built.cho")] + g("tools/ml/*.cho")), "-o", str(target)], capture_output=True, text=True, cwd=tree)
     return (target if p.returncode == 0 else None), p.stdout + p.stderr
