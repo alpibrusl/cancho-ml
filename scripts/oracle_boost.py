@@ -12,6 +12,7 @@ import struct
 import sys
 import pathlib
 
+import functools
 import numpy as np
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -85,6 +86,47 @@ def rank_grad(F, rel, groups, wts=None):
             g[js] = g[js] + tg
             h[js] = h[js] + th
     return g, h
+
+
+@functools.lru_cache(maxsize=None)
+def _disc(r):
+    """1 / log2(r + 1) as the metrics compute it: 1.0 / (log(float(r + 1)) / log(2.0)), std.math's log"""
+    return 1.0 / (float(log_c(np.array([float(r + 1)]))[0]) / float(log_c(np.array([2.0]))[0]))
+
+
+def lambda_grad(F, rel, groups, wts=None):
+    """the LambdaRank weights (docs/ranking.md section 4): the pairwise gradient with the pair weight multiplied by delta = (|gain_i - gain_j| * |D(r_i) - D(r_j)|) / IDCG,
+    gain = 2^rel - 1, D the discount, r the 1-based rank of a row in its group by score descending (ties: the earlier row first), IDCG the ideal DCG over all the rows of
+    the group; a group with IDCG 0 has no pair. Scalar loops, the pairs in the order i ascending then j ascending, every accumulator a sequential sum from +0.0."""
+    n = len(F)
+    g = [0.0] * n
+    h = [0.0] * n
+    for rows in groups:
+        rows = [int(i) for i in rows]
+        order = sorted(range(len(rows)), key=lambda a: (-float(F[rows[a]]), a))
+        rank = {}
+        for pos, a in enumerate(order):
+            rank[rows[a]] = pos + 1
+        idcg = 0.0
+        for pos, v in enumerate(sorted((int(rel[i]) for i in rows), reverse=True)):
+            idcg = idcg + float((1 << v) - 1) * _disc(pos + 1)
+        if not idcg > 0.0:
+            continue
+        for i in rows:
+            for j in rows:
+                if rel[i] > rel[j]:
+                    rho = float(sigmoid(np.array([float(F[j]) - float(F[i])]))[0])
+                    gd = float((1 << int(rel[i])) - 1) - float((1 << int(rel[j])) - 1)
+                    dd = abs(_disc(rank[i]) - _disc(rank[j]))
+                    delta = (gd * dd) / idcg
+                    w = delta if wts is None else (float(wts[i]) * float(wts[j])) * delta
+                    tg = w * rho
+                    th = w * (rho * (1.0 - rho))
+                    g[i] = g[i] + (0.0 - tg)
+                    g[j] = g[j] + tg
+                    h[i] = h[i] + th
+                    h[j] = h[j] + th
+    return np.array(g), np.array(h)
 
 
 def leaf_value(eta, L, G, H):
@@ -193,7 +235,7 @@ def node_cap(maxnodes, m, maxd):
     return min(maxnodes, 2 * m - 1, (1 << (maxd + 1)) - 1)
 
 
-def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed, stats=None, wts=None, groups=None):
+def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed, stats=None, wts=None, groups=None, lam=False):
     """-> dict(base, trees, kept, requested, subk, edges); task 0 classification (y in {0.0, 1.0}), 1 regression. Raises LimitNodes.
     wts: None, or the weight of every row (docs/weights.md section 2.6): the base score and the gradients of the fit rows are weighted, the validation loss is not.
     task 2 is the pairwise ranking objective (docs/ranking.md section 4): y the relevances, groups the row numbers of each group in file order; the base score is 0.0, there is no early stopping."""
@@ -244,7 +286,7 @@ def fit(X, M, y, task, R, eta, maxd, ML, B, L, subsample, early, maxnodes, seed,
         g = np.zeros(n)
         h = np.zeros(n)
         if task == 2:
-            g, h = rank_grad(F, yf, groups, wf)
+            g, h = (lambda_grad if lam else rank_grad)(F, yf, groups, wf)
         elif task == 1:
             g[frows] = F[frows] - yf[frows]
             h[frows] = 1.0

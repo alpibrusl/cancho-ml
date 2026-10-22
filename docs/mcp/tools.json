@@ -29,7 +29,8 @@
       "enum": [
        "regression",
        "classification",
-       "ranking"
+       "ranking",
+       "lambdarank"
       ],
       "default": "regression",
       "description": "what the target column is: a number to predict (regression), a label with exactly two values (classification) or a graded relevance 0 to 30 whose order inside a group is learned (ranking, boost only, needs --group, docs/ranking.md). It is also the task of a tree or forest, which serve both and never guess it from the target. kmeans is a clustering and takes no task"
@@ -253,7 +254,7 @@
      "group": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking, as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
      },
      "rank-k": {
       "type": "integer",
@@ -3459,7 +3460,7 @@
      "group": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking, as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
      },
      "max-rows": {
       "type": "integer",
@@ -4278,7 +4279,7 @@
      "group": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking, as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
      },
      "rank-k": {
       "type": "integer",
@@ -6082,7 +6083,8 @@
       "enum": [
        "regression",
        "classification",
-       "ranking"
+       "ranking",
+       "lambdarank"
       ],
       "default": "regression",
       "description": "what the target column is: a number to predict (regression), a label with exactly two values (classification) or a graded relevance 0 to 30 whose order inside a group is learned (ranking, boost only, needs --group, docs/ranking.md). It is also the task of a tree or forest, which serve both and never guess it from the target. kmeans is a clustering and takes no task"
@@ -6293,7 +6295,7 @@
      "group": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking, as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
      },
      "rank-k": {
       "type": "integer",
@@ -12328,7 +12330,7 @@
      "group": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking, as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
      },
      "max-rows": {
       "type": "integer",
@@ -13147,7 +13149,7 @@
      "group": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking, as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
      },
      "rank-k": {
       "type": "integer",
@@ -14946,7 +14948,8 @@
       "enum": [
        "regression",
        "classification",
-       "ranking"
+       "ranking",
+       "lambdarank"
       ],
       "default": "regression",
       "description": "what the target column is: a number to predict (regression), a label with exactly two values (classification) or a graded relevance 0 to 30 whose order inside a group is learned (ranking, boost only, needs --group, docs/ranking.md). It is also the task of a tree or forest, which serve both and never guess it from the target. kmeans is a clustering and takes no task"
@@ -15157,7 +15160,7 @@
      "group": {
       "type": "string",
       "minLength": 1,
-      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking, as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
+      "description": "fit, eval, cv, predict (with --rank): the name of the column that holds the group of each row (a query id: any text or integer) for --task ranking or lambdarank (the pairs weighted by the change in NDCG), as the header spells it. The rows of a group are ranked together, in file order. The column is not a feature and is not stored in the schema of the model file. The group split is implied: fit --split and cv put every group wholly on one side. Not the target, not in --drop or --cat. docs/ranking.md"
      },
      "rank-k": {
       "type": "integer",
@@ -21160,7 +21163,7 @@
     },
     {
      "name": "task",
-     "kind": "choice:regression/classification/ranking",
+     "kind": "choice:regression/classification/ranking/lambdarank",
      "role": "none"
     },
     {
@@ -21665,7 +21668,7 @@
     },
     {
      "name": "task",
-     "kind": "choice:regression/classification/ranking",
+     "kind": "choice:regression/classification/ranking/lambdarank",
      "role": "none"
     },
     {

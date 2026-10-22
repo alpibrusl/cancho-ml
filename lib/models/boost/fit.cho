@@ -63,6 +63,9 @@ res struct Work {
     wv: Box[[float]],
     gs: Box[[int]],
     go: Box[[int]],
+    // LambdaRank scratch (docs/ranking.md section 4): the ranks of the rows and 31 counts, the discount table; one entry each without it
+    lk: Box[[int]],
+    ld: Box[[float]],
     bins: Box[[byte]],
     ed: Box[[float]],
     idx: Box[[int]],
@@ -155,6 +158,8 @@ fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: i
     let wv = contents(w.wv);
     let gs = contents(w.gs);
     let go = contents(w.go);
+    let lk = contents(w.lk);
+    let ld = contents(w.ld);
     let bins = contents(w.bins);
     let ed = contents(w.ed);
     let idx = contents(w.idx);
@@ -185,7 +190,11 @@ fn rounds_loop[&r](w: &!r Work, p: bparams.Params, n: int, d: int, m: int, nv: i
         var k = 0;
         if p.task == 2 {
             // the pairs of the groups (docs/ranking.md section 4); a ranking fit has no validation rows, so the fit rows are every row
-            rankgrad.compute(fv, yv, gs, go, ng, wv, wtd, gv, hv);
+            if p.lam {
+                rankgrad.compute_lambda(fv, yv, gs, go, ng, n, wv, wtd, ld, lk, gv, hv);
+            } else {
+                rankgrad.compute(fv, yv, gs, go, ng, wv, wtd, gv, hv);
+            }
             k = m;
         }
         while k < m {
@@ -354,6 +363,9 @@ fn fit_with[&h, &x, &b, &y, &q, &u](heap: &!h Heap, p: bparams.Params, n: int, d
         return (empty(heap), code);
     }
     if len(xs) != n * d || len(ys) != n {
+        return (empty(heap), refuse.param_out_of_range());
+    }
+    if p.lam && p.task != 2 {
         return (empty(heap), refuse.param_out_of_range());
     }
     if p.task == 2 != (len(gid) == n) || p.task != 2 && len(gid) != 0 {
@@ -596,7 +608,13 @@ fn fit_with[&h, &x, &b, &y, &q, &u](heap: &!h Heap, p: bparams.Params, n: int, d
         }
         unbox_slice(heap, ep);
     }
-    var w = Work { yv: yv, fv: box_slice(heap, n + 1, 0.0), gv: box_slice(heap, n + 1, 0.0), hv: box_slice(heap, n + 1, 0.0), wv: box_slice(heap, n + 1, 0.0), gs: gs, go: go, bins: binm, ed: ed, idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), frows: frows, vrows: vrows, wk: box_slice(heap, grow.work_ints(p.bins) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), si: box_slice(heap, p.rounds * 5 * cap + 1, 0), sv: box_slice(heap, p.rounds * cap + 1, 0.0), counts: box_slice(heap, p.rounds + 1, 0), pr: box_slice(heap, 4, 0) };
+    var lam_ints = 1;
+    var lam_floats = 1;
+    if p.lam {
+        lam_ints = n + 33;
+        lam_floats = rankgrad.max_group() + 2;
+    }
+    var w = Work { yv: yv, fv: box_slice(heap, n + 1, 0.0), gv: box_slice(heap, n + 1, 0.0), hv: box_slice(heap, n + 1, 0.0), wv: box_slice(heap, n + 1, 0.0), gs: gs, go: go, lk: box_slice(heap, lam_ints, 0), ld: box_slice(heap, lam_floats, 0.0), bins: binm, ed: ed, idx: box_slice(heap, n + 1, 0), tmp: box_slice(heap, n + 1, 0), frows: frows, vrows: vrows, wk: box_slice(heap, grow.work_ints(p.bins) + 1, 0), wf: box_slice(heap, grow.work_floats(p.bins) + 1, 0.0), si: box_slice(heap, p.rounds * 5 * cap + 1, 0), sv: box_slice(heap, p.rounds * cap + 1, 0.0), counts: box_slice(heap, p.rounds + 1, 0), pr: box_slice(heap, 4, 0) };
     if wtd {
         borrow mut w as &!wk3 in {
             let wcopy = contents(wk3.wv);
@@ -605,6 +623,11 @@ fn fit_with[&h, &x, &b, &y, &q, &u](heap: &!h Heap, p: bparams.Params, n: int, d
                 wcopy[q] = wd[q];
                 q = q + 1;
             }
+        }
+    }
+    if p.lam {
+        borrow mut w as &!wk4 in {
+            rankgrad.discounts(contents(wk4.ld));
         }
     }
     var rc = 0;
@@ -661,7 +684,7 @@ fn fit_with[&h, &x, &b, &y, &q, &u](heap: &!h Heap, p: bparams.Params, n: int, d
             }
         }
     }
-    let Work { yv, fv, gv, hv, wv, gs, go, bins, ed, idx, tmp, frows, vrows, wk, wf, si, sv, counts, pr } = w;
+    let Work { yv, fv, gv, hv, wv, gs, go, lk, ld, bins, ed, idx, tmp, frows, vrows, wk, wf, si, sv, counts, pr } = w;
     unbox_slice(heap, yv);
     unbox_slice(heap, fv);
     unbox_slice(heap, gv);
@@ -669,6 +692,8 @@ fn fit_with[&h, &x, &b, &y, &q, &u](heap: &!h Heap, p: bparams.Params, n: int, d
     unbox_slice(heap, wv);
     unbox_slice(heap, gs);
     unbox_slice(heap, go);
+    unbox_slice(heap, lk);
+    unbox_slice(heap, ld);
     unbox_slice(heap, bins);
     unbox_slice(heap, ed);
     unbox_slice(heap, idx);

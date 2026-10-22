@@ -84,7 +84,7 @@ def fit_oracle(case):
             return r.tag, None
     Xn, Mn = owt.matrix_of(cur)
     d = Xn.shape[1]
-    task = {"classification": 0, "regression": 1, "ranking": 2}[case.task]
+    task = {"classification": 0, "regression": 1, "ranking": 2, "lambdarank": 2}[case.task]
     hp = {k: case.hp.get(k, DEFAULTS[k]) for k in ORDER}
     stats = {}
     yv = np.array(yfit, dtype=np.float64)
@@ -107,7 +107,7 @@ def fit_oracle(case):
         wts = np.array([w[i] for i in tr], dtype=np.float64)
     try:
         res = ob.fit(Xn, Mn, yv, task, int(hp["rounds"]), float(hp["learning-rate"]), int(hp["max-depth"]), int(hp["min-leaf"]), int(hp["bins"]), float(hp["l2"]),
-                     float(hp["subsample"]), int(hp["early-stopping"]), int(hp["max-nodes"]), case.seed, stats, wts, groups)
+                     float(hp["subsample"]), int(hp["early-stopping"]), int(hp["max-nodes"]), case.seed, stats, wts, groups, lam=case.task == "lambdarank")
     except ob.LimitNodes:
         return "ml.limit.nodes", None
     except AssertionError:
@@ -316,7 +316,7 @@ def run_case(case, tmp, threads=1, all_threads=False):
     if case.split:
         mask = ow.split_masks(len(rows), case.split, case.seed)
         idx = [i for i in idx if mask[i] == 1]
-    if case.task != "ranking":
+    if case.task not in ("ranking", "lambdarank"):
         problems += check_eval(case, ctx, idx, tmp, threads)
     if case.task == "classification":
         other = copy.copy(case)

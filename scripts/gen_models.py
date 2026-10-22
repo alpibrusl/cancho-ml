@@ -593,7 +593,7 @@ def render_est(models):
     for m in rblob:
         idx = [h["name"] for h in int_like(m)].index("task")
         vals = next(h for h in m["hyperparameter"] if h["name"] == "task")["values"]
-        o += ["    if kind == %d {" % keys[m["name"]], "        return ip[%d] == %d;" % (idx, vals.index("ranking")), "    }"]
+        o += ["    if kind == %d {" % keys[m["name"]], "        return ip[%d] == %d || ip[%d] == %d;" % (idx, vals.index("ranking"), idx, vals.index("lambdarank")), "    }"]
     o += ["    return false;", "}", ""]
     for fn in ("predict", "proba"):
         o += ["pub fn %s_blob[&h, &b, &x, &m, &q](heap: &!h Heap, kind: int, blob: &b [byte], xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, out: &!q [float]) -> [heap] int {" % fn]

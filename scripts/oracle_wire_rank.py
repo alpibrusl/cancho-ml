@@ -2,7 +2,7 @@
 """The oracle of the wiring of the ranking objective (docs/ranking.md gate RK4): the cases of oracle_wire_boost.py turned into ranking files (a group column, a relevance target of
 integers) and compared with `ml fit --model boost --task ranking --group qid` byte for byte, and `ml predict` against the oracle's scores.
 
-    python3 scripts/oracle_wire_rank.py --suite [N] [--weighted]     N seeded cases (default 24) against build/ml, 30 to 700 rows
+    python3 scripts/oracle_wire_rank.py --suite [N] [--weighted] [--lambda]     N seeded cases (default 24) against build/ml, 30 to 700 rows
 Exit 1 on any mismatch. ML_BIN names the binary."""
 
 import pathlib
@@ -19,6 +19,7 @@ import oracle_wire_tree as owt  # noqa: E402
 import json  # noqa: E402
 
 COVER = {"cases": 0, "groups": 0, "rows": 0}
+LAMBDA = "--lambda" in sys.argv
 
 
 def gen_case(seed, rows=None, weighted=False):
@@ -54,7 +55,7 @@ def gen_case(seed, rows=None, weighted=False):
     if weighted and case.weights is not None:
         case.weights = [case.weights[i] for i in perm]
     case.groups = [labels[i] for i in perm]
-    case.task = "ranking"
+    case.task = "lambdarank" if LAMBDA else "ranking"
     case.split = None
     case.positive = None
     case.hp.pop("early-stopping", None)

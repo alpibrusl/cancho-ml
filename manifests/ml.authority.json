@@ -1051,6 +1051,7 @@
     "task_name",
     "task_of",
     "task_of",
+    "task_of",
     "task_word",
     "tcol",
     "tensor_bounds",
@@ -1148,5 +1149,5 @@
   ],
   "folded_operators": 269,
   "folded_calls": 2,
-  "functions": 1987
+  "functions": 1990
 }

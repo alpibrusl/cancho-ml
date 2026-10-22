@@ -4,6 +4,7 @@ module boost.rankgrad;
 
 import ml.refuse;
 import models.logreg;
+import std.math;
 
 // The gradient and the hessian of the pairwise ranking loss of one boosting round (docs/ranking.md section 4). The rows of the fit are grouped: `gs[g] .. gs[g + 1]` are the
 // slots, in `go`, of the rows of group g in file order. For every ordered pair (i, j) of one group with rel_i > rel_j, i by slot ascending, then j by slot ascending,
@@ -143,6 +144,104 @@ pub fn compute[&f, &y, &s, &o, &w, &g, &h](fv: &f [float], yv: &y [float], gs: &
                 b = b + 1;
             }
             a = a + 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The LambdaRank weights (docs/ranking.md section 4): 1 / log2(r + 1) for r = 1 .. max_group(), in dt[r], as metrics.ranking computes it: 1.0 / (log(float(r + 1)) / log(2.0)).
+pub fn discounts[&d](dt: &!d [float]) -> [] int {
+    let ln2 = math.log(2.0);
+    var q = 1;
+    while q <= max_group() {
+        dt[q] = 1.0 / (math.log(float_of(q + 1)) / ln2);
+        q = q + 1;
+    }
+    return 0;
+}
+
+// as `compute`, the pair weight multiplied by delta = (|gain_i - gain_j| * |dt[r_i] - dt[r_j]|) / IDCG, gain = 2^rel - 1, r the 1-based rank of a row in its group by score descending, ties by
+// slot (file order), IDCG the ideal DCG of the group over all its rows (a group with IDCG 0 has no pair). rk is scratch of n + 32 entries (ranks of the rows, then 31 counts).
+pub fn compute_lambda[&f, &y, &s, &o, &w, &t, &k, &g, &h](fv: &f [float], yv: &y [float], gs: &s [int], go: &o [int], ng: int, n: int, wv: &w [float], wtd: bool, dt: &t [float], rk: &!k [int], gv: &!g [float], hv: &!h [float]) -> [] int {
+    var r = 0;
+    while r < len(gv) {
+        gv[r] = 0.0;
+        hv[r] = 0.0;
+        r = r + 1;
+    }
+    var k = 0;
+    while k < ng {
+        let lo = gs[k];
+        let hi = gs[k + 1];
+        var a = lo;
+        while a < hi {
+            let i = go[a];
+            var rank = 1;
+            var b = lo;
+            while b < hi {
+                let j = go[b];
+                if fv[j] > fv[i] || fv[j] == fv[i] && b < a {
+                    rank = rank + 1;
+                }
+                b = b + 1;
+            }
+            rk[i] = rank;
+            a = a + 1;
+        }
+        var v = 0;
+        while v <= max_relevance() {
+            rk[n + v] = 0;
+            v = v + 1;
+        }
+        a = lo;
+        while a < hi {
+            let q = truncate(yv[go[a]]);
+            rk[n + q] = rk[n + q] + 1;
+            a = a + 1;
+        }
+        var idcg = 0.0;
+        var taken = 0;
+        v = max_relevance();
+        while v >= 0 {
+            var c2 = rk[n + v];
+            while c2 > 0 {
+                idcg = idcg + float_of((1 << v) - 1) * dt[taken + 1];
+                taken = taken + 1;
+                c2 = c2 - 1;
+            }
+            v = v - 1;
+        }
+        if idcg > 0.0 {
+            a = lo;
+            while a < hi {
+                let i = go[a];
+                var b = lo;
+                while b < hi {
+                    let j = go[b];
+                    if yv[i] > yv[j] {
+                        let rho = logreg.proba_of(fv[j] - fv[i]);
+                        let gd = float_of((1 << truncate(yv[i])) - 1) - float_of((1 << truncate(yv[j])) - 1);
+                        var dd = dt[rk[i]] - dt[rk[j]];
+                        if dd < 0.0 {
+                            dd = 0.0 - dd;
+                        }
+                        let delta = gd * dd / idcg;
+                        var w = delta;
+                        if wtd {
+                            w = wv[i] * wv[j] * delta;
+                        }
+                        let tg = w * rho;
+                        let th = w * (rho * (1.0 - rho));
+                        gv[i] = gv[i] + (0.0 - tg);
+                        gv[j] = gv[j] + tg;
+                        hv[i] = hv[i] + th;
+                        hv[j] = hv[j] + th;
+                    }
+                    b = b + 1;
+                }
+                a = a + 1;
+            }
         }
         k = k + 1;
     }

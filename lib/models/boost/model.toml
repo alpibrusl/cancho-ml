@@ -45,9 +45,9 @@ tolerance = "bits"
 [[hyperparameter]]
 name = "task"
 type = "enum"
-values = ["classification", "regression", "ranking"]
+values = ["classification", "regression", "ranking", "lambdarank"]
 required = true
-doc = "classification, regression or ranking: set with --task, default regression. ranking needs --group COL (docs/ranking.md)"
+doc = "classification, regression, ranking or lambdarank: set with --task, default regression. ranking and lambdarank need --group COL (docs/ranking.md)"
 
 [[hyperparameter]]
 name = "rounds"

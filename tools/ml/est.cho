@@ -679,7 +679,7 @@ pub fn has_ranking(kind: int) -> [] bool {
 // whether the model whose integer hyperparameters are `ip` is a ranking model (its `task` is the value ranking)
 pub fn ranking[&i](kind: int, ip: &i [int]) -> [] bool {
     if kind == 8 {
-        return ip[0] == 2;
+        return ip[0] == 2 || ip[0] == 3;
     }
     return false;
 }
@@ -852,6 +852,8 @@ pub fn hparams[&l, &i, &f](kind: int, line: &l [byte], ip: &!i [int], fp: &!f [f
             ip[0] = 1;
         } else if bytes.equal(value_of(bytes.field(line, ' ', 3)), "ranking") {
             ip[0] = 2;
+        } else if bytes.equal(value_of(bytes.field(line, ' ', 3)), "lambdarank") {
+            ip[0] = 3;
         } else {
             return 1;
         }

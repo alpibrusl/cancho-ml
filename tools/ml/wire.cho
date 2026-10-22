@@ -163,7 +163,7 @@ pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, 
     }
     // --task ranking and --group go together (docs/ranking.md section 2); a plan names its task on its model line, checked where the plan is read
     if (verb == 1 || verb == 5) && !argv.has(src, "plan") {
-        let ranks = bytes.equal(argv.text(src, "task"), "ranking");
+        let ranks = bytes.equal(argv.text(src, "task"), "ranking") || bytes.equal(argv.text(src, "task"), "lambdarank");
         if ranks && !est.has_ranking(est.kind_named(argv.text(src, "model"))) {
             e = wiredata.conflict(heap, e, "task", "only --model boost has a ranking task");
         } else if ranks && !argv.has(src, "group") {

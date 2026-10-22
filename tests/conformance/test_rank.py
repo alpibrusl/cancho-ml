@@ -304,5 +304,48 @@ class Rank(unittest.TestCase):
         self.assertEqual(v.status, 0, v)
 
 
+    # ------------------------------------------------------------------ LambdaRank (docs/ranking.md section 4)
+    def lfit(self, out, csv="rk.csv", *extra):
+        args = [a if a != "ranking" else "lambdarank" for a in FIT]
+        return self.ml("fit", *args, "--output", out, "--overwrite", *extra, csv)
+
+    def test_lambdarank_is_a_ranking_model_with_other_trees(self):
+        d = self.ok(self.lfit("l.cml"))
+        self.assertEqual(d["task"], "ranking")
+        self.assertIn("task=lambdarank", d["summary"]["plan"])
+        self.ok(self.fit("p.cml"))
+        self.assertNotEqual(self.sb.read("l.cml"), self.sb.read("p.cml"))
+        self.assertEqual(self.ok(self.ml("describe", "--model-file", "l.cml"))["task"], "ranking")
+        self.assertEqual(len(self.scores("l.cml", "rk.csv", "--drop", "qid,rel")), len(self.scores("p.cml", "rk.csv", "--drop", "qid,rel")))
+        e = self.ok(self.ml("eval", "--model-file", "l.cml", "--group", "qid", "rk.csv"))
+        self.assertEqual(e["task"], "ranking")
+        r = self.ok(self.ml("predict", "--model-file", "l.cml", "--rank", "--group", "qid", "--drop", "rel", "rk.csv"))
+        self.assertEqual(r["columns"][-1], "rank")
+
+    def test_lambdarank_is_the_same_bytes_at_any_thread_count(self):
+        self.sb.write("big.csv", rank_csv(groups=150, seed=9))
+        seen = set()
+        for t in (1, 2, 4, 8):
+            self.ok(self.lfit("lt%d.cml" % t, "big.csv", "--threads", str(t)))
+            seen.add(self.sb.read("lt%d.cml" % t))
+        self.assertEqual(len(seen), 1)
+
+    def test_lambdarank_with_unit_weights_is_the_unweighted_fit_as_bytes(self):
+        self.sb.write("w1.csv", rank_csv(weights=lambda i: 1, header="qid,w,a,b,rel"))
+        self.ok(self.lfit("a.cml", "w1.csv", "--weight", "w"))
+        self.ok(self.lfit("b.cml", "w1.csv", "--drop", "w"))
+        self.assertEqual(self.sb.read("a.cml"), self.sb.read("b.cml"))
+
+    def test_lambdarank_needs_a_group_and_a_boost(self):
+        self.rule(self.ml("fit", "--model", "boost", "--task", "lambdarank", "--target", "rel", "--output", "x.cml", "--overwrite", "rk.csv"), "args.conflict", 2)
+        self.rule(self.ml("fit", "--model", "linear", "--task", "lambdarank", "--group", "qid", "--target", "rel", "--output", "x.cml", "--overwrite", "rk.csv"), "args.conflict", 2)
+
+    def test_a_tracked_lambdarank_fit_is_replayed(self):
+        (self.sb.dir / "runs").mkdir(exist_ok=True)
+        d = self.ok(self.lfit("ltr.cml", "rk.csv", "--track", "runs"))
+        v = self.ml("runs", "verify", "runs", d["run"]["id"])
+        self.assertEqual(v.status, 0, v)
+
+
 if __name__ == "__main__":
     unittest.main()

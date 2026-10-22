@@ -23,6 +23,8 @@ pub struct Params {
     max_nodes: int,
     seed: int,
     threads: int,
+    // the LambdaRank weights of a ranking task (docs/ranking.md section 4): the wiring's task value 3, which the payload records as task 2
+    lam: bool,
 }
 
 pub fn rounds_max() -> [] int {

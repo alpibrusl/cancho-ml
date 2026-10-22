@@ -68,8 +68,16 @@ fn fit_lib[&h, &x, &b, &y, &w, &u](heap: &!h Heap, p: bparams.Params, n: int, d:
     return fit.fit(heap, p, n, d, xd, bm, yd, rows_cap, cols_cap, cells_cap);
 }
 
+// the wiring's task 3 (lambdarank) is a ranking task of the payload (task 2)
+fn task_of(t: int) -> [] int {
+    if t == 3 {
+        return 2;
+    }
+    return t;
+}
+
 fn blob_with[&h, &x, &m, &y, &w, &u, &i, &f](heap: &!h Heap, threads: int, xt: tensor.Tensor, xd: &x [float], miss: &m [int], wpc: int, yd: &y [float], wd: &w [float], wtd: bool, gid: &u [int], ng: int, ip: &i [int], fp: &f [float], seed: int, c0: int, c1: int, rows_cap: int, cols_cap: int, cells_cap: int) -> [heap, conc] (Box[[byte]], int) {
-    let p = bparams.Params { task: ip[0], rounds: ip[1], lr: fp[0], max_depth: ip[2], min_leaf: ip[3], bins: ip[4], l2: fp[1], subsample: fp[2], early: ip[5], max_nodes: ip[6], seed: seed, threads: threads };
+    let p = bparams.Params { task: task_of(ip[0]), rounds: ip[1], lr: fp[0], max_depth: ip[2], min_leaf: ip[3], bins: ip[4], l2: fp[1], subsample: fp[2], early: ip[5], max_nodes: ip[6], seed: seed, threads: threads, lam: ip[0] == 3 };
     let n = xt.s0;
     let d = xt.s1;
     let (bm, any) = adapt_trees.miss_bytes(heap, miss, wpc, n, d);
