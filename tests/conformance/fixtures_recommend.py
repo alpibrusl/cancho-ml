@@ -84,7 +84,7 @@ def cases(ok, bad, case):
         case("args-conflict-recommend-cv", ["cv", "--model", "recommend", "--user", "user", "--item", "item", "rec.csv"], bad("args.conflict"), setup=RBASE),
         case("args-conflict-predict-for-with-like", ["predict", "--model-file", "r.cml", "--for", "who", "--like", "who", "who.csv"], bad("args.conflict"), setup=WITH_REC + [("write", "who.csv", "who\nann\n")]),
         case("args-conflict-predict-proba-on-recommend", ["predict", "--model-file", "r.cml", "--for", "who", "--proba", "who.csv"], bad("args.conflict"), setup=WITH_REC + [("write", "who.csv", "who\nann\n")]),
-        case("args-conflict-recommend-flag-on-a-linear-model", ["predict", "--model-file", "m.cml", "--for", "x", "reg.csv"], bad("args.conflict"), setup=None),
+        case("args-conflict-recommend-flag-on-a-linear-model", ["predict", "--model-file", "m.cml", "--for", "x", "reg.csv"], bad("args.conflict"), setup=[("write", "reg.csv", "id,x,y\n1,2.5,10\n2,3.5,20\n3,1.0,30\n4,0.25,41\n"), ("fit", "--target", "y", "--output", "m.cml", "reg.csv")]),
         case("ml-param-out-of-range-recommend-top", ["predict", "--model-file", "r.cml", "--for", "who", "--top", "99", "who.csv"], bad("ml.param.out-of-range"), setup=WITH_REC + [("write", "who.csv", "who\nann\n")]),
         case("ml-param-out-of-range-recommend-l2", FIT_REC[:-1] + ["--l2", "0", "rec.csv"], bad("ml.param.out-of-range"), setup=RBASE),
         case("ml-input-unknown-column-recommend", ["fit", "--model", "recommend", "--user", "who", "--item", "item", "--output", "r.cml", "rec.csv"], bad("ml.input.unknown-column"), setup=RBASE),

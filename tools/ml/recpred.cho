@@ -33,11 +33,7 @@ fn matrix_flags() -> [] &static [byte] {
 fn flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
     var e = recflags.check_reader(heap, src, errs);
     if !argv.has(src, "for") && !argv.has(src, "like") {
-        var w = wiredata.open_tag(heap, "args.required-flag");
-        w = fail.no_repair(heap, w);
-        w = fail.detail_open(heap, w);
-        w = fail.detail_str(heap, w, "flag", "--for");
-        e = fail.add(heap, e, w);
+        e = recflags.required(heap, e, "predict of a recommender needs --for COLUMN (the users to recommend for) or --like COLUMN (the items whose neighbours are wanted)", "--for");
     } else if argv.has(src, "for") && argv.has(src, "like") {
         e = wiredata.conflict(heap, e, "like", "--for asks for the items of users and --like for the items nearest to items: give one");
     }
@@ -99,9 +95,12 @@ fn put_id_cell[&h, &i](heap: &!h Heap, w: json.Writer, plain: buffer.Buffer, id:
 }
 
 pub fn predict[&h, &f, &r, &pf, &cl, &d, &p](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, data: &d [byte], shown: &p [byte], o: verbs.Opts, errs: fail.Errors, lg: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
-    var e = flags(heap, src, errs);
-    let (mo, sc, ok, e1) = recio.load(heap, data, shown, e);
-    e = e1;
+    // the file is judged first: a damaged file is damaged whatever flags it was asked with
+    let (mo, sc, ok, e1) = recio.load(heap, data, shown, errs);
+    var e = e1;
+    if ok {
+        e = flags(heap, src, e);
+    }
     var go = ok;
     var clean = true;
     borrow e as &er in {

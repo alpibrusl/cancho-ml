@@ -15,7 +15,7 @@ import ml.wiredata;
 import toolbox.fail;
 
 // a flag that is required and was not given
-fn required[&h, &m](heap: &!h Heap, e: fail.Errors, message: &m [byte], flag: &static [byte]) -> [heap] fail.Errors {
+pub fn required[&h, &m](heap: &!h Heap, e: fail.Errors, message: &m [byte], flag: &static [byte]) -> [heap] fail.Errors {
     var w = fail.open_in(heap, spec.extra(), "args.required-flag", message, "ml fit --model recommend --user NAME --item NAME --output MODEL LOG");
     w = fail.no_repair(heap, w);
     w = fail.detail_open(heap, w);

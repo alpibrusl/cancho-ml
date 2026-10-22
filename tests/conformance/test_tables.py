@@ -129,7 +129,7 @@ class Tables(unittest.TestCase):
         import gen_models
         built = [m["name"] for m in gen_models.load_manifests(ROOT) if m["wired"]]
         self.assertEqual(by["model"]["kind"], "choice:" + "/".join(built))
-        self.assertEqual(built, ["constant", "linear", "logistic", "kmeans", "tree", "forest", "boost", "softmax"])
+        self.assertEqual(built, ["constant", "linear", "logistic", "kmeans", "tree", "forest", "boost", "softmax", "recommend"])
 
 
 if __name__ == "__main__":

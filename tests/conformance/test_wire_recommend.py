@@ -20,7 +20,7 @@ class RecommendLog(unittest.TestCase):
 
     def fit(self, name, text, *extra):
         self.sb.write(name + ".csv", text)
-        r = self.sb.run("fit", "--model", "recommend", "--user", "user", "--item", "item", "--rating", "rating", "--factors", "3", "--iterations", "3", "--output", name + ".cml", *extra, name + ".csv")
+        r = self.sb.run("fit", "--model", "recommend", "--user", "user", "--item", "item", "--rating", "rating", "--factors", "3", "--iterations", "3", "--output", name + ".cml", "--overwrite", *extra, name + ".csv")
         self.assertEqual(r.status, 0, r)
         return self.sb.read(name + ".cml")
 

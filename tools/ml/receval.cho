@@ -32,18 +32,10 @@ fn matrix_flags() -> [] &static [byte] {
 fn flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors) -> [heap] fail.Errors {
     var e = recflags.check_distinct(heap, src, recflags.check_reader(heap, src, errs));
     if !argv.has(src, "user") {
-        var w = wiredata.open_tag(heap, "args.required-flag");
-        w = fail.no_repair(heap, w);
-        w = fail.detail_open(heap, w);
-        w = fail.detail_str(heap, w, "flag", "--user");
-        e = fail.add(heap, e, w);
+        e = recflags.required(heap, e, "eval of a recommender needs --user, the column of the test log that holds the user ids", "--user");
     }
     if !argv.has(src, "item") {
-        var w = wiredata.open_tag(heap, "args.required-flag");
-        w = fail.no_repair(heap, w);
-        w = fail.detail_open(heap, w);
-        w = fail.detail_str(heap, w, "flag", "--item");
-        e = fail.add(heap, e, w);
+        e = recflags.required(heap, e, "eval of a recommender needs --item, the column of the test log that holds the item ids", "--item");
     }
     var k = 1;
     while k <= bytes.count_byte(matrix_flags(), ',') + 1 {
@@ -82,9 +74,12 @@ fn missing[&h, &n](heap: &!h Heap, errs: fail.Errors, flag: &static [byte], name
 }
 
 pub fn eval[&h, &f, &r, &pf, &cl, &d, &p](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, data: &d [byte], shown: &p [byte], o: verbs.Opts, errs: fail.Errors, lg: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
-    var e = flags(heap, src, errs);
-    let (mo, sc, ok, e1) = recio.load(heap, data, shown, e);
-    e = e1;
+    // the file is judged first: a damaged file is damaged whatever flags it was asked with
+    let (mo, sc, ok, e1) = recio.load(heap, data, shown, errs);
+    var e = e1;
+    if ok {
+        e = flags(heap, src, e);
+    }
     var clean = true;
     borrow e as &er in {
         clean = fail.count(er) == 0;
