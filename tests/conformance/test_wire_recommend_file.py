@@ -135,6 +135,24 @@ class RecommendFile(unittest.TestCase):
         for at, new in ((0, struct.pack("<I", 2)), (0, struct.pack("<I", 4)), (4, struct.pack("<I", 0)), (4, struct.pack("<I", 2))):
             self.refused(fix_checksum(set_bytes(data, start + at, new)), "schema %d" % at, rules=MODEL_RULES, verb="describe")
 
+    def with_section(self, data, index, body):
+        tag, start, n = sections(data)[index]
+        head = data[:start - 8] + struct.pack("<Q", len(body))
+        return fix_checksum(head + body + data[start + n:])
+
+    def test_an_explicit_file_with_the_two_column_schema_of_an_implicit_one_is_malformed(self):
+        # the plan and the payload say explicit; the schema (a whole, valid one) names two columns: only the check of the column count can refuse it
+        data = self.files["e"]
+        schema = self.files["i"][sections(self.files["i"])[1][1]:][:sections(self.files["i"])[1][2]]
+        self.refused(self.with_section(data, 1, schema), "explicit with two columns", rules={"ml.model.malformed"}, verb="describe")
+        self.refused(self.with_section(data, 1, schema), "explicit with two columns", rules={"ml.model.malformed"})
+
+    def test_a_plan_of_the_recommender_over_the_payload_of_another_kind_is_malformed(self):
+        data = self.files["e"]
+        tag, start, n = sections(data)[3]
+        for kind in (1, 2, 7, 9, 11):
+            self.refused(fix_checksum(set_bytes(data, start, kind.to_bytes(4, "little"))), "model kind %d" % kind, rules={"ml.model.malformed", "ml.model.version"}, verb="describe")
+
 
 if __name__ == "__main__":
     unittest.main()
