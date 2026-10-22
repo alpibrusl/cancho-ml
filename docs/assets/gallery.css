@@ -1,0 +1,38 @@
+/* The gallery page only (body.gallery): the cards that scripts/gallery.py writes. Colours are the tokens of site.css, so scripts/check_contrast.py still judges every pair. Hand-written. */
+.gallery .pagehead { padding-bottom: .4rem; }
+.filters { display: inline-flex; gap: .3rem; padding: 3px; margin-top: 1rem; border: 1px solid var(--line); border-radius: 999px; background: var(--soft); }
+.filters button { font: 600 .82rem var(--mono); color: var(--muted); background: none; border: 0; border-radius: 999px; padding: .32rem .9rem; min-height: 2rem; cursor: pointer; }
+.filters button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.gallery-grid { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); margin: 1.4rem 0 3rem; }
+.gcard { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; transition: transform .25s ease, box-shadow .25s ease; }
+.gcard:hover { transform: translateY(-3px); box-shadow: 0 16px 36px -24px rgba(10, 30, 50, .55); }
+.gcard[hidden] { display: none; }
+.gcard .viz { background: var(--soft); border-bottom: 1px solid var(--line); padding: .6rem; }
+.gcard .viz svg { width: 100%; height: auto; display: block; }
+.gcard .tx { padding: .9rem 1.1rem 1.1rem; display: flex; flex-direction: column; gap: .5rem; flex: 1; }
+.gcard h3 { margin: 0; font-size: 1.08rem; }
+.gcard p { margin: 0; font-size: .93rem; }
+.gcard .note { color: var(--muted); font-size: .85rem; }
+.gcard .tag { align-self: flex-start; font: 600 .7rem var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+.gcard .facts { margin: 0; padding-left: 1.1rem; font-size: .88rem; }
+.gcard pre.code { margin: auto 0 0; padding: .6rem .7rem; font-size: .76rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gcard .c { color: var(--muted); user-select: none; }
+/* the pictures, drawn by gallery.py */
+.viz .ax { stroke: var(--line); stroke-width: 1.2; fill: none; }
+.viz .dg { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; fill: none; }
+.viz .p { stroke: var(--surface); stroke-width: 1; opacity: .92; animation: gpop .5s ease both; }
+.viz .p.c0 { fill: var(--accent); } .viz .p.c1 { fill: var(--good); } .viz .p.c2 { fill: var(--bad); } .viz .p.c3 { fill: var(--muted); }
+.viz .rg { fill: none; stroke: var(--fg); stroke-width: 1.6; }
+.viz .bar { fill: var(--accent); transform-origin: left center; transform-box: fill-box; animation: gbar .8s ease both; }
+.viz .cell { fill: var(--accent); }
+.viz .nd { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.viz .lb { fill: var(--fg); font: 10px var(--mono); }
+.viz .lb.mid { font-size: 8.5px; }
+.viz .big { fill: var(--fg); font: 700 15px var(--mono); }
+.viz .good { fill: var(--good); }
+@keyframes gbar { from { transform: scaleX(0); } }
+@keyframes gpop { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .viz .bar, .viz .p, .gcard { animation: none; transition: none; } .gcard:hover { transform: none; } }
+.gcard[data-kind="soon"] { border-style: dashed; }
+.gcard[data-kind="soon"] .viz { background: var(--surface); }
+.gcard[data-kind="soon"] .tag { color: var(--muted); }
