@@ -21,7 +21,7 @@ max_interactions = 33554432
 
 [tags]
 emits = [
-  "ml.input.empty", "ml.input.too-many-rows", "ml.input.unknown-column", "ml.param.out-of-range", "ml.param.threads", "ml.linalg.not-positive-definite",
+  "ml.input.empty", "ml.input.non-finite", "ml.input.too-many-rows", "ml.input.unknown-column", "ml.param.out-of-range", "ml.param.threads", "ml.linalg.not-positive-definite",
   "ml.model.truncated", "ml.model.malformed", "ml.schema.mismatch", "ml.recommend.missing-id", "ml.recommend.bad-rating", "ml.recommend.duplicate-pair",
   "ml.recommend.unknown-user", "ml.recommend.unknown-item", "ml.limit.users", "ml.limit.items", "ml.limit.interactions", "ml.limit.eval-work",
 ]

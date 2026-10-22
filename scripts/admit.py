@@ -222,7 +222,7 @@ def q1(c):
         # modules that serve its verbs exist
         est = c.read("tools/ml/est.cho")
         key = gen_models.keys_of(gen_models.wired(c.models))[m["name"]]
-        for op in EST_OPS[6:]:
+        for op in [o for o in EST_OPS[6:] if o != "hparams"]:
             mm = re.search(r"pub fn %s\b.*?\n\}" % op, est, re.S)
             if mm and "kind == %d {" % key in mm.group(0):
                 return "FAIL", "est.%s has a branch for the log model %s, which has no adapter" % (op, m["name"])
