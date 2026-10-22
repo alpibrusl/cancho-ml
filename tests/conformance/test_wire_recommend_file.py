@@ -144,14 +144,17 @@ class RecommendFile(unittest.TestCase):
         # the plan and the payload say explicit; the schema (a whole, valid one) names two columns: only the check of the column count can refuse it
         data = self.files["e"]
         schema = self.files["i"][sections(self.files["i"])[1][1]:][:sections(self.files["i"])[1][2]]
-        self.refused(self.with_section(data, 1, schema), "explicit with two columns", rules={"ml.model.malformed"}, verb="describe")
-        self.refused(self.with_section(data, 1, schema), "explicit with two columns", rules={"ml.model.malformed"})
+        # the column count of the meta section is set to two as well, or the check of the meta (mc != scols) refuses the file before the check of the shape is reached
+        meta_at = sections(data)[4][1] + 8
+        two = fix_checksum(set_bytes(self.with_section(data, 1, schema), meta_at, struct.pack("<Q", 2)))
+        self.refused(two, "explicit with two columns", rules={"ml.model.malformed"}, verb="describe")
+        self.refused(two, "explicit with two columns", rules={"ml.model.malformed"})
 
     def test_a_plan_of_the_recommender_over_the_payload_of_another_kind_is_malformed(self):
         data = self.files["e"]
         tag, start, n = sections(data)[3]
-        for kind in (1, 2, 7, 9, 11):
-            self.refused(fix_checksum(set_bytes(data, start, kind.to_bytes(4, "little"))), "model kind %d" % kind, rules={"ml.model.malformed", "ml.model.version"}, verb="describe")
+        for kind in (1, 2, 3, 8, 11):
+            self.refused(fix_checksum(set_bytes(data, start, kind.to_bytes(4, "little"))), "model kind %d" % kind, rules={"ml.model.malformed"}, verb="describe")
 
 
 if __name__ == "__main__":

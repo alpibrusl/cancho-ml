@@ -78,7 +78,8 @@ MUTANTS = [
     M("wr-plan-and-payload-not-compared", "WR9", "a plan that disagrees with the payload is accepted", [(IO, "if bad != 0 || contents(ir)[0] != mr.f || contents(ir)[1] != mr.iterations || contents(ir)[2] != method {", "if bad != 0 {")], FILE),
     M("wr-rows-and-interactions-not-compared", "WR9", "a file whose meta counts other rows than its history is accepted", [(IO, "    if rows != nnz {", "    if false {")], FILE),
     M("wr-explicit-file-without-rating-accepted", "WR9", "an explicit file with two columns is accepted", [(IO, "|| !mr.implicit && cols != 3 {", " {")], FILE),
-    M("wr-kind-10-family-not-checked", "WR9", "a plan of the recommender over a payload of another kind is accepted", [(FI, "    if pk == 8 {\n        return mk == kinds.model_recommend();\n    }\n", "    if pk == 8 {\n        return true;\n    }\n")], FILE),
+    M("wr-kind-10-family-not-checked", "WR9", "a plan of the recommender over a payload of another kind is accepted", [(FI, "    if pk == 8 {\n        return mk == kinds.model_recommend();\n    }\n", "    if pk == 8 {\n        return true;\n    }\n")], FILE,
+      why="the reader of the payload (lib/models/recommend/model.cho, read) refuses a payload whose first word is not the recommender's kind with the same rule and section (ml.model.malformed, 4): the family check of the file is a second guard that no input can reach alone"),
     # ------------------------------------------------------------------ the command line
     M("wr-user-not-required", "WR1", "fit --model recommend runs without --user", [(FLAGS, "    if !argv.has(src, \"user\") {", "    if false {")], RULES + LOG),
     M("wr-time-without-split-accepted", "WR10", "--time without --split-user-last is accepted", [(FLAGS, "    } else if argv.has(src, \"time\") && !argv.has(src, \"split-user-last\") {", "    } else if false {")], RULES),
