@@ -47,7 +47,7 @@ class P(HTMLParser):
         if tag == "img":
             self.imgs.append(a)
         if tag == "script":
-            if a.get("src"):
+            if a.get("src") and a["src"] != "assets/home.js":      # the landing page's own script file (scripts/check_landing.py judges it)
                 self.scripts_src += 1
             if a.get("type") == "application/ld+json":
                 self._in = "ld"
