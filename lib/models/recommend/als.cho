@@ -1,5 +1,6 @@
 module recommend.als;
 
+import ml.kinds;
 import ml.refuse;
 import ml.rng;
 import linalg.chol;
@@ -18,9 +19,9 @@ pub fn max_iterations() -> [] int {
     return 1000;
 }
 
-// the stream kind of the initial item factors (docs/rng.md)
+// the stream kind of the initial item factors (docs/rng.md, the registry of lib/core/kinds.cho)
 pub fn stream_kind() -> [] int {
-    return 12;
+    return kinds.stream_als_init();
 }
 
 pub struct Als {

@@ -11,6 +11,8 @@ code). `log` is the port of std/math.cho that oracle_models.py holds; every sum 
     python3 scripts/oracle_recommend.py --als [N]       N seeded fits (default 120) against build/recommend-check ("als" mode): P, Q and the loss after every half-pass equal the oracle's bits; the loss
                                                         does not rise from one half-pass to the next; with one pass the factors equal the dense closed form (gates RC3 to RC5)
     python3 scripts/oracle_recommend.py --als-controls  a one-user one-item fit worked by hand, and the refusals of the parameters
+    python3 scripts/oracle_recommend.py --payload [N]   N seeded model payloads (default 40): the bytes equal the oracle's writer; the reader gives them back byte for byte; every truncation, an
+                                                        extra byte, thirty named corruptions and every byte flipped (stride 1 on the first five, 7 on the rest) are refused or read back canonical
 Exit 1 on any mismatch. METRICS_CHECK names the metrics driver, RECOMMEND_CHECK the log driver."""
 
 import math
@@ -23,6 +25,7 @@ import sys
 
 import numpy as np
 import oracle_linalg as ol
+import struct as _st
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -798,9 +801,225 @@ def als_controls():
     return bad
 
 
+# ---------------------------------------------------------------- the model payload (docs/wiring-recommend.md section 5, gate WR9)
+def w64(v):
+    return _st.pack("<Q", v & MASK64)
+
+
+def wf(x):
+    return _st.pack("<d", x)
+
+
+def payload_oracle(w, nu, ni, implicit, f, lam, alpha, iters, seed, uids, iids, pf, qf):
+    """the bytes of the payload, from the definitions of the document (no cancho code)"""
+    out = b""
+    for v in (10, 1 if implicit else 0, f, iters, nu, ni, w["nnz"]):
+        out += w64(v)
+    out += wf(lam) + wf(alpha if implicit else 0.0) + w64(seed)
+    for ids in (uids, iids):
+        out += w64(sum(len(x) for x in ids))
+        off = 0
+        out += w64(0)
+        for x in ids:
+            off += len(x)
+            out += w64(off)
+        out += b"".join(ids)
+    out += b"".join(w64(v) for v in w["uoff"])
+    out += b"".join(w64(v) for v in w["uitem"])
+    out += b"".join(wf(v) for v in w["uval"])
+    out += b"".join(wf(v) for row in pf for v in row)
+    out += b"".join(wf(v) for row in qf for v in row)
+    return out
+
+
+def gen_ids(rng, n):
+    """n distinct non-empty byte strings of 1 to 12 bytes, sorted bytewise: prefixes of one another, high bytes, zero bytes"""
+    seen = set()
+    while len(seen) < n:
+        ln = rng.choice([1, 1, 2, 3, 5, 12])
+        seen.add(bytes(rng.choice([0, 1, 48, 49, 97, 98, 127, 128, 255]) for _ in range(ln)))
+    return sorted(seen)
+
+
+def run_payload_driver(uid, iid, vals, nu, ni, implicit, f, lam, alpha, iters, seed, uids, iids):
+    spec_u = "X:" + ",".join(x.hex() for x in uids)
+    spec_i = "X:" + ",".join(x.hex() for x in iids)
+    return run_log_driver(["payload", nu, ni, 1 if implicit else 0, spec_ints(uid), spec_ints(iid), spec_floats(vals), 10 ** 9, f, spec_floats([lam]), spec_floats([alpha]), iters, seed, spec_u, spec_i])
+
+
+def read_driver(data):
+    r = subprocess.run([LOG_BIN, "read", data.hex()], capture_output=True, text=True, timeout=60)
+    return r.returncode, r.stdout.strip()
+
+
+def payload_layout(nu, ni, nnz, f, ub, ib):
+    o = {}
+    o["hdr"] = 0
+    o["ub"] = 80
+    o["uoffs"] = 88
+    o["ubytes"] = 88 + 8 * (nu + 1)
+    o["ib"] = o["ubytes"] + ub
+    o["ioffs"] = o["ib"] + 8
+    o["ibytes"] = o["ioffs"] + 8 * (ni + 1)
+    o["hoff"] = o["ibytes"] + ib
+    o["hitem"] = o["hoff"] + 8 * (nu + 1)
+    o["hval"] = o["hitem"] + 8 * nnz
+    o["p"] = o["hval"] + 8 * nnz
+    o["q"] = o["p"] + 8 * nu * f
+    o["end"] = o["q"] + 8 * ni * f
+    return o
+
+
+def set64(b, at, v):
+    return b[:at] + w64(v) + b[at + 8:]
+
+
+def setf(b, at, x):
+    return b[:at] + wf(x) + b[at + 8:]
+
+
+def check_payload(seed, stride_all):
+    g = gen_als(seed * 3 + 1)
+    tries = 0
+    while g is None and tries < 50:
+        tries += 1
+        g = gen_als(seed * 3 + 1 + tries * 1000)
+    uid, iid, vals, nu, ni, implicit, w, f, lam, alpha, iters, rseed, trace = g
+    rng = random.Random(seed)
+    uids = gen_ids(rng, nu)
+    iids = gen_ids(rng, ni)
+    want = als_oracle(w, nu, ni, f, lam, alpha, implicit, iters, rseed, False)
+    if want[0] != "ok":
+        return None
+    data = payload_oracle(w, nu, ni, implicit, f, lam, alpha, iters, rseed, uids, iids, want[1], want[2])
+    rc, got, text = run_payload_driver(uid, iid, vals, nu, ni, implicit, f, lam, alpha, iters, rseed, uids, iids)
+    if rc != 0 or got.get("payload") != data.hex():
+        return "seed %d: the payload differs from the oracle's (exit %d)" % (seed, rc)
+    rc, text = read_driver(data)
+    if rc != 0 or not text.startswith("ok users %d items %d nnz %d f %d" % (nu, ni, w["nnz"], f)) or not text.endswith("roundtrip same"):
+        return "seed %d: reading the payload back: %r" % (seed, text[:100])
+    lay = payload_layout(nu, ni, w["nnz"], f, sum(len(x) for x in uids), sum(len(x) for x in iids))
+    bad = []
+
+    def expect(name, blob, code):
+        rc, t = read_driver(blob)
+        if code == 0:
+            if rc != 0 or not t.endswith("roundtrip same"):
+                bad.append("%s: expected a canonical read, got %r" % (name, t[:80]))
+        elif rc != 8 or t != "refused %d" % code:
+            bad.append("%s: expected refused %d, got %r (exit %d)" % (name, code, t[:80], rc))
+
+    # every truncation is truncated, and one byte too many is malformed (a stride on the long payloads keeps the run short)
+    step = 1 if len(data) < 600 else 5
+    for ln in list(range(0, len(data), step)) + [len(data) - 1]:
+        expect("truncated at %d" % ln, data[:ln], 2)
+    expect("one byte too many", data + b"\0", 1)
+    named = [
+        ("kind", set64(data, 0, 9), 1), ("method 2", set64(data, 8, 2), 1), ("f 0", set64(data, 16, 0), 1), ("f 257", set64(data, 16, 257), 1),
+        ("iterations 0", set64(data, 24, 0), 1), ("iterations 1001", set64(data, 24, 1001), 1), ("users 0", set64(data, 32, 0), 1),
+        ("items 0", set64(data, 40, 0), 1), ("nnz 0", set64(data, 48, 0), 1), ("nnz over the limit", set64(data, 48, 1 << 40), 1),
+        ("lambda NaN", set64(data, 56, 0x7ff8000000000000), 1), ("lambda 0", setf(data, 56, 0.0), 1), ("lambda negative", setf(data, 56, -1.0), 1),
+        ("alpha NaN", set64(data, 64, 0x7ff8000000000000), 1),
+        ("user bytes too few", set64(data, 80, nu - 1), 1), ("user bytes too many", set64(data, 80, nu * 255 + 1), 1),
+        ("item bytes too few", set64(data, lay["ib"], ni - 1), 1), ("item bytes too many", set64(data, lay["ib"], ni * 255 + 1), 1),
+        ("first user offset", set64(data, lay["uoffs"], 1), 1),
+        ("item offset not ending at the bytes", set64(data, lay["ioffs"] + 8 * ni, sum(len(x) for x in iids) - 1), 1),
+        ("history offset end", set64(data, lay["hoff"] + 8 * nu, w["nnz"] - 1), 1),
+        ("history offset start", set64(data, lay["hoff"], 1), 1),
+        ("an item number out of range", set64(data, lay["hitem"], ni), 1), ("a negative item number", set64(data, lay["hitem"], -1), 1),
+        ("a value NaN", set64(data, lay["hval"], 0x7ff8000000000000), 1), ("a value above the bound", setf(data, lay["hval"], 2.0e6), 1),
+        ("P with an infinity", set64(data, lay["p"], 0x7ff0000000000000), 1), ("Q with a NaN", set64(data, lay["q"], 0x7ff8000000000000), 1),
+    ]
+    if implicit:
+        named.append(("an implicit zero value", setf(data, lay["hval"], 0.0), 1))
+        named.append(("alpha 0", setf(data, 64, 0.0), 1))
+    else:
+        named.append(("an explicit alpha", setf(data, 64, 1.0), 1))
+    if nu >= 2:
+        # two user ids swapped (not ascending) and an id made equal to its neighbour
+        a, b = lay["ubytes"], lay["ubytes"]
+        ids = list(uids)
+        ids[0], ids[1] = ids[1], ids[0]
+        if len(ids[0]) == len(uids[0]):
+            named.append(("user ids not ascending", data[:lay["ubytes"]] + b"".join(ids) + data[lay["ubytes"] + len(b"".join(ids)):], 1))
+    if nu >= 2 and len(uids[0]) == len(uids[1]):
+        dup = list(uids)
+        dup[1] = dup[0]
+        named.append(("equal user ids", data[:lay["ubytes"]] + b"".join(dup) + data[lay["ubytes"] + len(b"".join(dup)):], 1))
+        sw = list(uids)
+        sw[0], sw[1] = sw[1], sw[0]
+        named.append(("user ids swapped", data[:lay["ubytes"]] + b"".join(sw) + data[lay["ubytes"] + len(b"".join(sw)):], 1))
+    named.append(("an empty user id", set64(data, lay["uoffs"] + 8, 0), 1))
+    named.append(("a value below the bound", setf(data, lay["hval"], -2.0e6), 1))
+    # an id of 256 bytes: a payload the writer of the oracle makes with a 256-byte first user id (everything else valid)
+    if nu >= 1:
+        big = [bytes([1]) * 256] + [bytes([2 + i]) * 2 for i in range(nu - 1)]
+        big = sorted(big)
+        named.append(("a user id of 256 bytes", payload_oracle(w, nu, ni, implicit, f, lam, alpha, iters, rseed, big, iids, want[1], want[2]), 1))
+    # a user with an empty history range: the second offset made the first
+    if nu >= 2:
+        named.append(("a user with no history", set64(data, lay["hoff"] + 8, 0), 1))
+    # two items of one user swapped (not ascending)
+    for u in range(nu):
+        lo, hi = w["uoff"][u], w["uoff"][u + 1]
+        if hi - lo >= 2:
+            blob = set64(set64(data, lay["hitem"] + 8 * lo, w["uitem"][lo + 1]), lay["hitem"] + 8 * (lo + 1), w["uitem"][lo])
+            named.append(("history items swapped", blob, 1))
+            break
+    # an item that no history holds: replace one entry by another number that keeps the user's list ascending and leaves some item uncovered
+    done = False
+    for u in range(nu):
+        lo, hi = w["uoff"][u], w["uoff"][u + 1]
+        for j in range(lo, hi):
+            for v in range(ni):
+                prev = w["uitem"][j - 1] if j > lo else -1
+                nxt = w["uitem"][j + 1] if j + 1 < hi else ni
+                if prev < v < nxt and v != w["uitem"][j]:
+                    items = list(w["uitem"])
+                    items[j] = v
+                    if set(items) != set(range(ni)):
+                        named.append(("an item in no history", set64(data, lay["hitem"] + 8 * j, v), 1))
+                        done = True
+                        break
+            if done:
+                break
+        if done:
+            break
+    # a positive finite lambda of any bit pattern is read back as it was written (the decoder reproduces every finite pattern): the smallest and largest subnormals, the smallest normal,
+    # the largest finite, and random patterns of every exponent
+    pr = random.Random(seed + 77)
+    for pat in [1, 0x000FFFFFFFFFFFFF, 0x0010000000000000, 0x7FEFFFFFFFFFFFFF] + [pr.randrange(1 << 52) | (pr.randrange(1, 2047) << 52) for _ in range(12)]:
+        named.append(("lambda bits %016x" % pat, set64(data, 56, pat), 0))
+    for name, blob, code in named:
+        expect(name, blob, code)
+    # every byte flipped: the result is refused cleanly or read back canonical (a flipped value of P, say, is another valid model)
+    flips = 1 if stride_all else 7
+    for at in range(0, len(data), flips):
+        blob = data[:at] + bytes([data[at] ^ 0xFF]) + data[at + 1:]
+        rc, t = read_driver(blob)
+        if not ((rc == 8 and t in ("refused 1", "refused 2")) or (rc == 0 and t.endswith("roundtrip same"))):
+            bad.append("flip at %d: %r (exit %d)" % (at, t[:80], rc))
+            break
+    return "; ".join(bad[:4]) if bad else None
+
+
+def check_find(seed):
+    rng = random.Random(seed * 13 + 1)
+    n = rng.randint(1, 30)
+    ids = gen_ids(rng, n)
+    spec = "X:" + ",".join(x.hex() for x in ids)
+    keys = [rng.choice(ids) for _ in range(3)] + [ids[0][:1] + b"\x7e", ids[-1] + b"\0", b"\0", b"\xff" * 3, ids[0][:-1] if len(ids[0]) > 1 else b"\x01\x02"]
+    for key in keys:
+        r = subprocess.run([LOG_BIN, "find", spec, key.hex()], capture_output=True, text=True, timeout=60)
+        want = ids.index(key) if key in ids else -1
+        if r.stdout.strip() != "index %d" % want:
+            return "find seed %d: key %s expected %d, got %r" % (seed, key.hex(), want, r.stdout.strip())
+    return None
+
+
 def main():
     argv = sys.argv[1:]
-    if not any(a in argv for a in ("--controls", "--driver", "--metrics", "--log", "--log-controls", "--als", "--als-controls")):
+    if not any(a in argv for a in ("--controls", "--driver", "--metrics", "--log", "--log-controls", "--als", "--als-controls", "--payload")):
         print(__doc__)
         return 2
     rc = 0
@@ -868,6 +1087,17 @@ def main():
             if bad > 10:
                 break
         print("oracle_recommend als: %d fits, %s" % (ran, "all agree bit for bit; the loss never rises; each step equals the dense closed form" if not bad else "%d mismatches" % bad))
+        rc |= 1 if bad else 0
+    if "--payload" in argv:
+        at = argv.index("--payload") + 1
+        n = int(argv[at]) if len(argv) > at and argv[at].isdigit() else 40
+        bad = 0
+        for seed in range(1, n + 1):
+            msg = check_payload(seed, seed <= 5) or check_find(seed)
+            if msg:
+                bad += 1
+                print("MISMATCH", msg)
+        print("oracle_recommend payload: %d payloads, %s" % (n, "bytes equal the oracle's; every truncation, corruption and flip is refused or read back canonical" if not bad else "%d mismatches" % bad))
         rc |= 1 if bad else 0
     return rc
 

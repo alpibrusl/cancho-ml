@@ -14,6 +14,8 @@ export RECOMMEND_CHECK=$D/recommend-check
 python3 scripts/oracle_recommend.py --controls --driver --metrics 300
 python3 scripts/oracle_recommend.py --log-controls --log 300
 python3 scripts/oracle_recommend.py --als-controls --als 300
+python3 scripts/oracle_recommend.py --payload 20
 python3 scripts/mutants_recommend.py --check
 python3 scripts/mutants_recommend_log.py --check
 python3 scripts/mutants_recommend_als.py --check
+python3 scripts/mutants_recommend_model.py --check

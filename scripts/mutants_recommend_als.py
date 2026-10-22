@@ -24,7 +24,7 @@ RK = "lib/models/recommend/als.cho"
 # (id, what, old, new, count, why)
 MUTANTS = [
     ("initial-factors-unscaled", "the initial item factors are not divided by sqrt(f)", "rng.unit(rng.output(st)) / sqrt(float_of(f));", "rng.unit(rng.output(st));", 1, None),
-    ("initial-stream-kind", "the initial factors use stream kind 13", "    return 12;", "    return 13;", 1, None),
+    ("initial-stream-kind", "the initial factors use stream kind 13", "    return kinds.stream_als_init();", "    return 13;", 1, None),
     ("initial-draw-not-advanced", "the first draw is the seed state, not its successor", "                                                st = rng.advance(st);", "                                                st = st;", 1, None),
     ("lambda-doubled", "the ridge term is added twice", "am[s * f + s] = am[s * f + s] + lambda;", "am[s * f + s] = am[s * f + s] + 2.0 * lambda;", 1, None),
     ("diagonal-of-the-sum-dropped", "the product of a factor with itself is left out of the system", "while q <= p {", "while q < p {", 1, None),

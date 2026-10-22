@@ -5,6 +5,10 @@
 //       stdout: `nnz N`, `uoff L`, `uitem L`, `uval H`, `ioff L`, `iuser L`, `ival H` (L: comma separated ints, H: comma separated float bits), or `refused TAG why N row R row2 R2`
 //   recommend-check als NUSERS NITEMS IMPLICIT UID IID VAL CAP F LAMBDA ALPHA ITERS SEED TRACE   the ALS factors of a log (lib/models/recommend/als.cho). LAMBDA, ALPHA: `H:` one float; TRACE: 0 or 1
 //       stdout: `p H`, `q H`, `nloss N`, `loss H` (the factors and the losses as float bits), or `refused TAG`
+//   recommend-check payload NUSERS NITEMS IMPLICIT UID IID VAL CAP F LAMBDA ALPHA ITERS SEED UIDS IIDS   the model payload of a fit (lib/models/recommend/model.cho). UIDS, IIDS: `X:` comma separated
+//       ids as hex, in ascending order. stdout: `payload HEX`, or `refused TAG`
+//   recommend-check find IDS KEY                                   the number of the id KEY (hex) in the sorted id table IDS (`X:` list), or -1: `index N`
+//   recommend-check read HEX                                       read a payload and write it again: `ok users U items I nnz N f F roundtrip same|differs`, or `refused 1|2` (1 malformed, 2 truncated)
 //   recommend-check split UID TKEY NUSERS LAST                      the rows held out by --split-user-last: `mask L` (1 = test), or `refused TAG`
 //
 // stdout, one `key value` per line; the exit code is the toolbox exit code of the tag.
@@ -12,9 +16,11 @@ edition 5;
 
 import std.io;
 import ml.fbits;
+import std.buffer;
 import ml.refuse;
 import recommend.log;
 import recommend.als;
+import recommend.model;
 
 fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
     if len(x) != len(y) {
@@ -396,6 +402,293 @@ fn run_als[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_writ
     return status;
 }
 
+fn hexnib(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10;
+    }
+    if c >= 'A' && c <= 'F' {
+        return c - 'A' + 10;
+    }
+    return 0 - 1;
+}
+
+// a hex string as bytes: (box, n), n = -1 when it is not an even number of hex digits
+fn make_bytes[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[byte]], int) {
+    if len(t) % 2 != 0 {
+        return (box_slice(heap, 1, byte_of(0)), 0 - 1);
+    }
+    let n = len(t) / 2;
+    let b = box_slice(heap, n + 1, byte_of(0));
+    var o = b;
+    var ok = true;
+    borrow mut o as &!w in {
+        let a = contents(w);
+        var k = 0;
+        while k < n {
+            let hi = hexnib(int_of(t[2 * k]));
+            let lo = hexnib(int_of(t[2 * k + 1]));
+            if hi < 0 || lo < 0 {
+                ok = false;
+            } else {
+                a[k] = byte_of(hi * 16 + lo);
+            }
+            k = k + 1;
+        }
+    }
+    if ok == false {
+        return (o, 0 - 1);
+    }
+    return (o, n);
+}
+
+// ids: `X:` then comma separated hex strings. (bytes, byte count, offsets, id count); the count is -1 for a bad spec
+fn make_ids[&h, &s](heap: &!h Heap, t: &s [byte]) -> [heap] (Box[[byte]], int, Box[[int]], int) {
+    if len(t) < 2 || int_of(t[0]) != 'X' || int_of(t[1]) != ':' {
+        return (box_slice(heap, 1, byte_of(0)), 0, box_slice(heap, 1, 0), 0 - 1);
+    }
+    let body = t[2..len(t)];
+    let n = items(body);
+    let offs = box_slice(heap, n + 2, 0);
+    let bytes = box_slice(heap, len(body) + 2, byte_of(0));
+    var ob = offs;
+    var bb = bytes;
+    var total = 0;
+    var bad = false;
+    borrow mut ob as &!ow in {
+        borrow mut bb as &!bw in {
+            let oa = contents(ow);
+            let ba = contents(bw);
+            var k = 0;
+            var at = 0;
+            while k < n {
+                var e = at;
+                while e < len(body) && int_of(body[e]) != ',' {
+                    e = e + 1;
+                }
+                let piece = body[at..e];
+                if len(piece) % 2 != 0 {
+                    bad = true;
+                } else {
+                    var j = 0;
+                    while j < len(piece) / 2 {
+                        let hi = hexnib(int_of(piece[2 * j]));
+                        let lo = hexnib(int_of(piece[2 * j + 1]));
+                        if hi < 0 || lo < 0 {
+                            bad = true;
+                        } else {
+                            ba[total] = byte_of(hi * 16 + lo);
+                        }
+                        total = total + 1;
+                        j = j + 1;
+                    }
+                }
+                oa[k + 1] = total;
+                at = e + 1;
+                k = k + 1;
+            }
+        }
+    }
+    if bad {
+        return (bb, 0, ob, 0 - 1);
+    }
+    return (bb, total, ob, n);
+}
+
+fn put_hex[&i, &a](io: &!i Io, a: &a [byte], n: int) -> [io_write] int {
+    var k = 0;
+    while k < n {
+        let v = int_of(a[k]);
+        let hi = v >> 4 & 15;
+        let lo = v & 15;
+        if hi < 10 {
+            putchar(io, '0' + hi);
+        } else {
+            putchar(io, 'a' + hi - 10);
+        }
+        if lo < 10 {
+            putchar(io, '0' + lo);
+        } else {
+            putchar(io, 'a' + lo - 10);
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn run_payload[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (ua, un) = make_ints(heap, operand(g, 5));
+    let (ia, inn) = make_ints(heap, operand(g, 6));
+    let (va, vn) = make_floats(heap, operand(g, 7));
+    let (la, ln) = make_floats(heap, operand(g, 10));
+    let (aa, an) = make_floats(heap, operand(g, 11));
+    let (ub1, ubn, uo1, un1) = make_ids(heap, operand(g, 14));
+    let (ib1, ibn, io1, in1) = make_ids(heap, operand(g, 15));
+    var ub = ua;
+    var ib = ia;
+    var vb = va;
+    var lb = la;
+    var ab = aa;
+    var status = 2;
+    if un >= 0 && inn >= 0 && vn >= 0 && ln == 1 && an == 1 && un1 >= 0 && in1 >= 0 {
+        borrow ub as &ur in {
+            borrow ib as &ir in {
+                borrow vb as &vr in {
+                    borrow lb as &lr2 in {
+                        borrow ab as &ar in {
+                            borrow ub1 as &uby in {
+                                borrow uo1 as &uoy in {
+                                    borrow ib1 as &iby in {
+                                        borrow io1 as &ioy in {
+                                            let l = log.build(heap, contents(ur)[0..un], contents(ir)[0..inn], contents(vr)[0..vn], num(g, 2), num(g, 3), num(g, 4) == 1, num(g, 8));
+                                            borrow l as &lr in {
+                                                if lr.code != 0 {
+                                                    status = refuse_line(io, lr.code, lr.why, lr.row, lr.row2);
+                                                } else {
+                                                    let r = als.fit(heap, lr, num(g, 9), contents(lr2)[0], contents(ar)[0], num(g, 4) == 1, num(g, 12), num(g, 13), false);
+                                                    borrow r as &rr in {
+                                                        if rr.code != 0 {
+                                                            io.write_all(io, "refused ");
+                                                            io.write_all(io, refuse.tag(rr.code));
+                                                            io.newline(io);
+                                                            status = refuse.exit_code(rr.code);
+                                                        } else {
+                                                            var alpha = 0.0;
+                                                            if num(g, 4) == 1 {
+                                                                alpha = contents(ar)[0];
+                                                            }
+                                                            let (buf, code) = model.write(heap, num(g, 4) == 1, num(g, 9), num(g, 12), contents(lr2)[0], alpha, num(g, 13), contents(uby)[0..ubn], contents(uoy)[0..un1 + 1], contents(iby)[0..ibn], contents(ioy)[0..in1 + 1], lr.nusers, lr.nitems, lr.nnz, contents(lr.uoff)[0..lr.nusers + 1], contents(lr.uitem)[0..lr.nnz], contents(lr.uval)[0..lr.nnz], contents(rr.p), contents(rr.q));
+                                                            if code != 0 {
+                                                                io.write_all(io, "refused ");
+                                                                io.write_all(io, refuse.tag(code));
+                                                                io.newline(io);
+                                                                status = refuse.exit_code(code);
+                                                            } else {
+                                                                io.write_all(io, "payload ");
+                                                                borrow buf as &bf in {
+                                                                    put_hex(io, buffer.bytes(bf), len(buffer.bytes(bf)));
+                                                                }
+                                                                io.newline(io);
+                                                                status = 0;
+                                                            }
+                                                            buffer.drop(heap, buf);
+                                                        }
+                                                    }
+                                                    als.drop(heap, r);
+                                                }
+                                            }
+                                            log.drop(heap, l);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, ub);
+    unbox_slice(heap, ib);
+    unbox_slice(heap, vb);
+    unbox_slice(heap, lb);
+    unbox_slice(heap, ab);
+    unbox_slice(heap, ub1);
+    unbox_slice(heap, uo1);
+    unbox_slice(heap, ib1);
+    unbox_slice(heap, io1);
+    return status;
+}
+
+fn run_read[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (ba, bn) = make_bytes(heap, operand(g, 2));
+    var bb = ba;
+    var status = 2;
+    if bn >= 0 {
+        borrow bb as &br in {
+            let m = model.read(heap, contents(br)[0..bn]);
+            borrow m as &mr in {
+                if mr.code != 0 {
+                    io.write_all(io, "refused ");
+                    io.print_int(io, mr.code);
+                    io.newline(io);
+                    status = 8;
+                } else {
+                    let (buf, code) = model.write(heap, mr.implicit, mr.f, mr.iterations, mr.lambda, mr.alpha, mr.seed, contents(mr.ubytes)[0..len(contents(mr.ubytes)) - 1], contents(mr.uoffs)[0..mr.nusers + 1], contents(mr.ibytes)[0..len(contents(mr.ibytes)) - 1], contents(mr.ioffs)[0..mr.nitems + 1], mr.nusers, mr.nitems, mr.nnz, contents(mr.hoff)[0..mr.nusers + 1], contents(mr.hitem)[0..mr.nnz], contents(mr.hval)[0..mr.nnz], contents(mr.p)[0..mr.nusers * mr.f], contents(mr.q)[0..mr.nitems * mr.f]);
+                    io.write_all(io, "ok users ");
+                    io.print_int(io, mr.nusers);
+                    io.write_all(io, " items ");
+                    io.print_int(io, mr.nitems);
+                    io.write_all(io, " nnz ");
+                    io.print_int(io, mr.nnz);
+                    io.write_all(io, " f ");
+                    io.print_int(io, mr.f);
+                    io.write_all(io, " roundtrip ");
+                    var same = code == 0;
+                    borrow buf as &bf in {
+                        same = same && len(buffer.bytes(bf)) == bn;
+                        if same {
+                            let nb = buffer.bytes(bf);
+                            var k = 0;
+                            while k < bn {
+                                if int_of(nb[k]) != int_of(contents(br)[k]) {
+                                    same = false;
+                                }
+                                k = k + 1;
+                            }
+                        }
+                    }
+                    if same {
+                        io.write_all(io, "same");
+                    } else {
+                        io.write_all(io, "differs");
+                    }
+                    io.newline(io);
+                    buffer.drop(heap, buf);
+                    status = 0;
+                }
+            }
+            model.drop(heap, m);
+        }
+    } else {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, bb);
+    return status;
+}
+
+fn run_find[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (bb, bn, oo, on) = make_ids(heap, operand(g, 2));
+    let (ka, kn) = make_bytes(heap, operand(g, 3));
+    var kb = ka;
+    var status = 2;
+    if on >= 0 && kn >= 0 {
+        borrow bb as &br in {
+            borrow oo as &or in {
+                borrow kb as &kr in {
+                    io.write_all(io, "index ");
+                    io.print_int(io, model.find(contents(br)[0..bn], contents(or)[0..on + 1], on, contents(kr)[0..kn]));
+                    io.newline(io);
+                    status = 0;
+                }
+            }
+        }
+    } else {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, bb);
+    unbox_slice(heap, oo);
+    unbox_slice(heap, kb);
+    return status;
+}
+
 fn run_split[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
     let (ua, un) = make_ints(heap, operand(g, 2));
     let (ta, tn) = make_ints(heap, operand(g, 3));
@@ -442,6 +735,12 @@ fn main(world: World) -> [] int {
                     code = run_log(hp, ip, g);
                 } else if same(arg(g, 1), "als") {
                     code = run_als(hp, ip, g);
+                } else if same(arg(g, 1), "payload") {
+                    code = run_payload(hp, ip, g);
+                } else if same(arg(g, 1), "find") {
+                    code = run_find(hp, ip, g);
+                } else if same(arg(g, 1), "read") {
+                    code = run_read(hp, ip, g);
                 } else if same(arg(g, 1), "split") {
                     code = run_split(hp, ip, g);
                 } else {
