@@ -1,0 +1,416 @@
+module recommend.model;
+
+import std.buffer;
+import ml.fbits;
+import ml.kinds;
+import ml.refuse;
+import recommend.log;
+import recommend.als;
+
+// The payload of a recommender's model file (docs/wiring-recommend.md section 5): everything is little-endian, 8 bytes a word.
+//
+//     0   kind (kinds.model_recommend())     8   method (0 explicit, 1 implicit)    16  f      24  iterations
+//     32  U (users)                          40  I (items)                           48  nnz    56  lambda (bits)
+//     64  alpha (bits; 0.0 when explicit)    72  seed
+//     80  the user ids:  total bytes B, then U + 1 offsets (0 .. B, each id 1 to 255 bytes), then the B bytes   (ids strictly ascending bytewise)
+//         the item ids:  the same
+//         the history:   U + 1 offsets (0 .. nnz, strictly increasing), nnz item numbers (strictly ascending in a user, below I), nnz values (bits)
+//         P: U * f doubles, then Q: I * f doubles
+//
+// `read` computes the size the payload must have BEFORE it allocates anything sized by it, and answers 1 (malformed) for a field out of its range or a table out of order, 2 (truncated) for
+// a payload shorter than its fields say, 1 for one that is longer.
+
+pub fn header_bytes() -> [] int {
+    return 80;
+}
+
+pub fn max_id_bytes() -> [] int {
+    return 255;
+}
+
+pub res struct Model {
+    code: int,
+    implicit: bool,
+    f: int,
+    iterations: int,
+    nusers: int,
+    nitems: int,
+    nnz: int,
+    lambda: float,
+    alpha: float,
+    seed: int,
+    ubytes: Box[[byte]],
+    uoffs: Box[[int]],
+    ibytes: Box[[byte]],
+    ioffs: Box[[int]],
+    hoff: Box[[int]],
+    hitem: Box[[int]],
+    hval: Box[[float]],
+    p: Box[[float]],
+    q: Box[[float]],
+}
+
+fn empty_model[&h](heap: &!h Heap, code: int) -> [heap] Model {
+    return Model { code: code, implicit: false, f: 0, iterations: 0, nusers: 0, nitems: 0, nnz: 0, lambda: 0.0, alpha: 0.0, seed: 0, ubytes: box_slice(heap, 1, byte_of(0)), uoffs: box_slice(heap, 1, 0), ibytes: box_slice(heap, 1, byte_of(0)), ioffs: box_slice(heap, 1, 0), hoff: box_slice(heap, 1, 0), hitem: box_slice(heap, 1, 0), hval: box_slice(heap, 1, 0.0), p: box_slice(heap, 1, 0.0), q: box_slice(heap, 1, 0.0) };
+}
+
+pub fn drop[&h](heap: &!h Heap, m: Model) -> [heap] int {
+    let Model { code, implicit, f, iterations, nusers, nitems, nnz, lambda, alpha, seed, ubytes, uoffs, ibytes, ioffs, hoff, hitem, hval, p, q } = m;
+    unbox_slice(heap, ubytes);
+    unbox_slice(heap, uoffs);
+    unbox_slice(heap, ibytes);
+    unbox_slice(heap, ioffs);
+    unbox_slice(heap, hoff);
+    unbox_slice(heap, hitem);
+    unbox_slice(heap, hval);
+    unbox_slice(heap, p);
+    unbox_slice(heap, q);
+    return 0;
+}
+
+// the size of a payload: the header, two id tables, the history and the two factor matrices (the caller has bounded every argument by the limits, so no product overflows)
+pub fn size_of(nusers: int, nitems: int, nnz: int, f: int, ub: int, ib: int) -> [] int {
+    return header_bytes() + 8 + 8 * (nusers + 1) + ub + 8 + 8 * (nitems + 1) + ib + 8 * (nusers + 1) + 16 * nnz + 8 * nusers * f + 8 * nitems * f;
+}
+
+// 0, or 1: an id table is U (or I) ids of 1 to 255 bytes, offsets from 0 to `total`, the ids strictly ascending bytewise. `offs` has n + 1 entries, `bytes` total.
+pub fn table_ok[&o, &b](offs: &o [int], bytes: &b [byte], n: int, total: int) -> [] int {
+    if offs[0] != 0 || offs[n] != total {
+        return 1;
+    }
+    var i = 0;
+    while i < n {
+        let width = offs[i + 1] - offs[i];
+        if width < 1 || width > max_id_bytes() || offs[i + 1] > total {
+            return 1;
+        }
+        if i > 0 {
+            // id i - 1 < id i, bytewise
+            let a = bytes[offs[i - 1]..offs[i]];
+            let c = bytes[offs[i]..offs[i + 1]];
+            var k = 0;
+            var order = 0;
+            while order == 0 && k < len(a) && k < len(c) {
+                if int_of(a[k]) < int_of(c[k]) {
+                    order = 0 - 1;
+                } else if int_of(a[k]) > int_of(c[k]) {
+                    order = 1;
+                }
+                k = k + 1;
+            }
+            if order == 0 {
+                if len(a) < len(c) {
+                    order = 0 - 1;
+                } else {
+                    order = 1;
+                }
+            }
+            if order > 0 {
+                return 1;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The payload of a fit: `implicit` and the parameters, the id tables as (bytes, offsets), the history (offsets, item numbers and values, nnz of them) and the two factor matrices.
+// Answers (the bytes, 0), or (an empty buffer, ml.param.out-of-range) when the arguments disagree with one another (a table of the wrong length, a matrix of the wrong size).
+pub fn write[&h, &ub, &uo, &ib, &io, &ho, &hi, &hv, &p, &q](heap: &!h Heap, implicit: bool, f: int, iterations: int, lambda: float, alpha: float, seed: int, ubytes: &ub [byte], uoffs: &uo [int], ibytes: &ib [byte], ioffs: &io [int], nu: int, ni: int, nnz: int, hoff: &ho [int], hitem: &hi [int], hval: &hv [float], pf: &p [float], qf: &q [float]) -> [heap] (buffer.Buffer, int) {
+    if f < 1 || nu < 1 || ni < 1 || nnz < 1 || len(uoffs) != nu + 1 || len(ioffs) != ni + 1 || len(hoff) != nu + 1 || len(hitem) < nnz || len(hval) < nnz || len(pf) < nu * f || len(qf) < ni * f {
+        return (buffer.empty(heap, 1), refuse.param_out_of_range());
+    }
+    if uoffs[nu] != len(ubytes) || ioffs[ni] != len(ibytes) {
+        return (buffer.empty(heap, 1), refuse.param_out_of_range());
+    }
+    let size = size_of(nu, ni, nnz, f, len(ubytes), len(ibytes));
+    var out = buffer.empty(heap, size);
+    borrow mut out as &!cw in {
+        let b = buffer.room(cw);
+        fbits.put64(b, 0, kinds.model_recommend());
+        var method = 0;
+        if implicit {
+            method = 1;
+        }
+        fbits.put64(b, 8, method);
+        fbits.put64(b, 16, f);
+        fbits.put64(b, 24, iterations);
+        fbits.put64(b, 32, nu);
+        fbits.put64(b, 40, ni);
+        fbits.put64(b, 48, nnz);
+        fbits.put64(b, 56, bits_of(lambda));
+        fbits.put64(b, 64, bits_of(alpha));
+        fbits.put64(b, 72, seed);
+        var at = header_bytes();
+        fbits.put64(b, at, len(ubytes));
+        at = at + 8;
+        var k = 0;
+        while k <= nu {
+            fbits.put64(b, at + 8 * k, uoffs[k]);
+            k = k + 1;
+        }
+        at = at + 8 * (nu + 1);
+        k = 0;
+        while k < len(ubytes) {
+            b[at + k] = ubytes[k];
+            k = k + 1;
+        }
+        at = at + len(ubytes);
+        fbits.put64(b, at, len(ibytes));
+        at = at + 8;
+        k = 0;
+        while k <= ni {
+            fbits.put64(b, at + 8 * k, ioffs[k]);
+            k = k + 1;
+        }
+        at = at + 8 * (ni + 1);
+        k = 0;
+        while k < len(ibytes) {
+            b[at + k] = ibytes[k];
+            k = k + 1;
+        }
+        at = at + len(ibytes);
+        k = 0;
+        while k <= nu {
+            fbits.put64(b, at + 8 * k, hoff[k]);
+            k = k + 1;
+        }
+        at = at + 8 * (nu + 1);
+        k = 0;
+        while k < nnz {
+            fbits.put64(b, at + 8 * k, hitem[k]);
+            k = k + 1;
+        }
+        at = at + 8 * nnz;
+        fbits.store(hval, b, at, nnz);
+        at = at + 8 * nnz;
+        fbits.store(pf, b, at, nu * f);
+        at = at + 8 * nu * f;
+        fbits.store(qf, b, at, ni * f);
+        buffer.filled(cw, size);
+    }
+    return (out, 0);
+}
+
+fn bad[&h](heap: &!h Heap, code: int) -> [heap] Model {
+    return empty_model(heap, code);
+}
+
+// Read and check a payload. The checks that need no allocation come first (the header, the sizes of the tables from the lengths they state, the total); the tables and the arrays
+// follow, and each is checked as it is copied. Answers the model, with `code` 0, or an empty model with code 1 (malformed) or 2 (truncated).
+pub fn read[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] Model {
+    if len(src) < header_bytes() + 8 {
+        return bad(heap, 2);
+    }
+    if fbits.get64(src, 0) != kinds.model_recommend() {
+        return bad(heap, 1);
+    }
+    let method = fbits.get64(src, 8);
+    let f = fbits.get64(src, 16);
+    let iterations = fbits.get64(src, 24);
+    let nu = fbits.get64(src, 32);
+    let ni = fbits.get64(src, 40);
+    let nnz = fbits.get64(src, 48);
+    let lambda = fbits.decode(fbits.get64(src, 56));
+    let alpha = fbits.decode(fbits.get64(src, 64));
+    let seed = fbits.get64(src, 72);
+    if method < 0 || method > 1 || f < 1 || f > als.max_factors() || iterations < 1 || iterations > als.max_iterations() {
+        return bad(heap, 1);
+    }
+    if nu < 1 || nu > log.max_users() || ni < 1 || ni > log.max_items() || nnz < 1 || nnz > log.max_interactions() || nu > nnz || ni > nnz {
+        return bad(heap, 1);
+    }
+    if !(lambda - lambda == 0.0 && lambda > 0.0) || bits_of(lambda) != fbits.get64(src, 56) || bits_of(alpha) != fbits.get64(src, 64) {
+        return bad(heap, 1);
+    }
+    if method == 1 && !(alpha - alpha == 0.0 && alpha > 0.0) || method == 0 && bits_of(alpha) != 0 {
+        return bad(heap, 1);
+    }
+    // the user table: its byte count, then the item table's, found by walking over the first
+    let ub = fbits.get64(src, header_bytes());
+    if ub < nu || ub > nu * max_id_bytes() {
+        return bad(heap, 1);
+    }
+    let at_i = header_bytes() + 8 + 8 * (nu + 1) + ub;
+    if len(src) < at_i + 8 {
+        return bad(heap, 2);
+    }
+    let ib = fbits.get64(src, at_i);
+    if ib < ni || ib > ni * max_id_bytes() {
+        return bad(heap, 1);
+    }
+    let size = size_of(nu, ni, nnz, f, ub, ib);
+    if len(src) < size {
+        return bad(heap, 2);
+    }
+    if len(src) > size {
+        return bad(heap, 1);
+    }
+    // everything is sized: copy and check
+    let ubytes = box_slice(heap, ub + 1, byte_of(0));
+    let uoffs = box_slice(heap, nu + 2, 0);
+    let ibytes = box_slice(heap, ib + 1, byte_of(0));
+    let ioffs = box_slice(heap, ni + 2, 0);
+    let hoff = box_slice(heap, nu + 2, 0);
+    let hitem = box_slice(heap, nnz + 1, 0);
+    let hval = box_slice(heap, nnz + 1, 0.0);
+    let pm = box_slice(heap, nu * f + 1, 0.0);
+    let qm = box_slice(heap, ni * f + 1, 0.0);
+    var code = 0;
+    borrow mut ubytes as &!ubw in {
+        borrow mut uoffs as &!uow in {
+            borrow mut ibytes as &!ibw in {
+                borrow mut ioffs as &!iow in {
+                    borrow mut hoff as &!how in {
+                        borrow mut hitem as &!hiw in {
+                            borrow mut hval as &!hvw in {
+                                borrow mut pm as &!pw in {
+                                    borrow mut qm as &!qw in {
+                                        var at = header_bytes() + 8;
+                                        var k = 0;
+                                        while k <= nu {
+                                            contents(uow)[k] = fbits.get64(src, at + 8 * k);
+                                            k = k + 1;
+                                        }
+                                        at = at + 8 * (nu + 1);
+                                        k = 0;
+                                        while k < ub {
+                                            contents(ubw)[k] = src[at + k];
+                                            k = k + 1;
+                                        }
+                                        at = at + ub + 8;
+                                        k = 0;
+                                        while k <= ni {
+                                            contents(iow)[k] = fbits.get64(src, at + 8 * k);
+                                            k = k + 1;
+                                        }
+                                        at = at + 8 * (ni + 1);
+                                        k = 0;
+                                        while k < ib {
+                                            contents(ibw)[k] = src[at + k];
+                                            k = k + 1;
+                                        }
+                                        at = at + ib;
+                                        k = 0;
+                                        while k <= nu {
+                                            contents(how)[k] = fbits.get64(src, at + 8 * k);
+                                            k = k + 1;
+                                        }
+                                        at = at + 8 * (nu + 1);
+                                        k = 0;
+                                        while k < nnz {
+                                            contents(hiw)[k] = fbits.get64(src, at + 8 * k);
+                                            k = k + 1;
+                                        }
+                                        at = at + 8 * nnz;
+                                        if fbits.load(src, at, contents(hvw), nnz) != 0 {
+                                            code = 1;
+                                        }
+                                        at = at + 8 * nnz;
+                                        if fbits.load(src, at, contents(pw), nu * f) != 0 {
+                                            code = 1;
+                                        }
+                                        at = at + 8 * nu * f;
+                                        if fbits.load(src, at, contents(qw), ni * f) != 0 {
+                                            code = 1;
+                                        }
+                                        if code == 0 && (table_ok(contents(uow), contents(ubw), nu, ub) != 0 || table_ok(contents(iow), contents(ibw), ni, ib) != 0) {
+                                            code = 1;
+                                        }
+                                        // the history: offsets from 0 to nnz, every user at least one item, items ascending within a user and below I, every item somewhere, values in range
+                                        if code == 0 && (contents(how)[0] != 0 || contents(how)[nu] != nnz) {
+                                            code = 1;
+                                        }
+                                        let seen = box_slice(heap, ni + 1, 0);
+                                        borrow mut seen as &!sw in {
+                                            var u = 0;
+                                            while code == 0 && u < nu {
+                                                let lo = contents(how)[u];
+                                                let hi = contents(how)[u + 1];
+                                                if hi <= lo || hi > nnz {
+                                                    code = 1;
+                                                }
+                                                var j = lo;
+                                                while code == 0 && j < hi {
+                                                    let it = contents(hiw)[j];
+                                                    if it < 0 || it >= ni || j > lo && it <= contents(hiw)[j - 1] {
+                                                        code = 1;
+                                                    } else {
+                                                        contents(sw)[it] = 1;
+                                                        let v = contents(hvw)[j];
+                                                        if v > log.max_value() || v < 0.0 - log.max_value() || method == 1 && !(v > 0.0) {
+                                                            code = 1;
+                                                        }
+                                                    }
+                                                    j = j + 1;
+                                                }
+                                                u = u + 1;
+                                            }
+                                            var it2 = 0;
+                                            while code == 0 && it2 < ni {
+                                                if contents(sw)[it2] != 1 {
+                                                    code = 1;
+                                                }
+                                                it2 = it2 + 1;
+                                            }
+                                        }
+                                        unbox_slice(heap, seen);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if code != 0 {
+        unbox_slice(heap, ubytes);
+        unbox_slice(heap, uoffs);
+        unbox_slice(heap, ibytes);
+        unbox_slice(heap, ioffs);
+        unbox_slice(heap, hoff);
+        unbox_slice(heap, hitem);
+        unbox_slice(heap, hval);
+        unbox_slice(heap, pm);
+        unbox_slice(heap, qm);
+        return bad(heap, code);
+    }
+    return Model { code: 0, implicit: method == 1, f: f, iterations: iterations, nusers: nu, nitems: ni, nnz: nnz, lambda: lambda, alpha: alpha, seed: seed, ubytes: ubytes, uoffs: uoffs, ibytes: ibytes, ioffs: ioffs, hoff: hoff, hitem: hitem, hval: hval, p: pm, q: qm };
+}
+
+// The number of the id `key` in a table of n sorted ids (bytes + offsets), by binary search on the bytewise order; -1 when it is not there.
+pub fn find[&b, &o, &k](bytes: &b [byte], offs: &o [int], n: int, key: &k [byte]) -> [] int {
+    var lo = 0;
+    var hi = n - 1;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let id = bytes[offs[mid]..offs[mid + 1]];
+        var k2 = 0;
+        var order = 0;
+        while order == 0 && k2 < len(id) && k2 < len(key) {
+            if int_of(id[k2]) < int_of(key[k2]) {
+                order = 0 - 1;
+            } else if int_of(id[k2]) > int_of(key[k2]) {
+                order = 1;
+            }
+            k2 = k2 + 1;
+        }
+        if order == 0 {
+            if len(id) < len(key) {
+                order = 0 - 1;
+            } else if len(id) > len(key) {
+                order = 1;
+            }
+        }
+        if order == 0 {
+            return mid;
+        }
+        if order < 0 {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return 0 - 1;
+}

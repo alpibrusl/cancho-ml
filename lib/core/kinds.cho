@@ -46,8 +46,13 @@ pub fn model_softmax() -> [] int {
     return 9;
 }
 
+// a recommender (docs/recommend.md, docs/wiring-recommend.md section 5): ALS factors, the id tables and the history of the log
+pub fn model_recommend() -> [] int {
+    return 10;
+}
+
 pub fn model_count() -> [] int {
-    return 9;
+    return 10;
 }
 
 // ---- the sum order recorded in `meta` (docs/design.md section 4.1, `v1-post`): a model of a kind from first_ordered_model() on has a `u32 sum_order` as the
@@ -72,6 +77,9 @@ pub fn sum_order_for(kind: int) -> [] int {
         return sum_order_sequential();
     }
     if kind == model_boost() {
+        return sum_order_sequential();
+    }
+    if kind == model_recommend() {
         return sum_order_sequential();
     }
     return sum_order();
@@ -127,8 +135,13 @@ pub fn stream_permutation() -> [] int {
     return 11;
 }
 
+// the initial item factors of an ALS fit (docs/recommend.md section 4.1), derive(derive(seed, 12), item)
+pub fn stream_als_init() -> [] int {
+    return 12;
+}
+
 pub fn stream_count() -> [] int {
-    return 11;
+    return 12;
 }
 
 // ---- section tags of the CML1 file (docs/design.md section 4.1; only tools/ml/mfile.cho and lib/pipeline/file.cho write them)
@@ -296,6 +309,9 @@ pub fn model_at(i: int) -> [] int {
     if i == 9 {
         return model_softmax();
     }
+    if i == 10 {
+        return model_recommend();
+    }
     return 0;
 }
 
@@ -332,6 +348,9 @@ pub fn stream_at(i: int) -> [] int {
     }
     if i == 11 {
         return stream_permutation();
+    }
+    if i == 12 {
+        return stream_als_init();
     }
     return 0;
 }

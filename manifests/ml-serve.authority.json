@@ -659,6 +659,7 @@
     "model_logistic",
     "model_malformed",
     "model_name",
+    "model_recommend",
     "model_softmax",
     "model_tree",
     "model_truncated",
@@ -1038,5 +1039,5 @@
   ],
   "folded_operators": 328,
   "folded_calls": 0,
-  "functions": 1554
+  "functions": 1555
 }

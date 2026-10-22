@@ -746,6 +746,7 @@
     "model_malformed",
     "model_name",
     "model_name",
+    "model_recommend",
     "model_softmax",
     "model_tree",
     "model_truncated",
@@ -1200,5 +1201,5 @@
   ],
   "folded_operators": 285,
   "folded_calls": 2,
-  "functions": 2073
+  "functions": 2074
 }
