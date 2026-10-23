@@ -1,0 +1,28 @@
+KILLED    discount-of-the-next-rank          MISMATCH seed 1 (users=2, items=12, k=10): ndcg 3fe9e6d84242b906, expected 3fe6550c10493797
+KILLED    ranking-ascending                  FAIL driver: history excluded: {'users': '1', 'scored': '1', 'hit': '0000000000000000', 'recall': '0000000000000000', 'n
+KILLED    ranking-not-sorted                 MISMATCH seed 1 (users=2, items=12, k=10): ndcg 3fe1484c2a5ee218, expected 3fe6550c10493797
+KILLED    ties-by-the-later-item             FAIL driver: tie rule: {'users': '1', 'scored': '1', 'hit': '0000000000000000', 'recall': '0000000000000000', 'ndcg': '0
+KILLED    history-not-excluded               FAIL driver: history excluded: {'users': '1', 'scored': '1', 'hit': '0000000000000000', 'recall': '0000000000000000', 'n
+KILLED    mrr-cut-at-k                       FAIL driver: tie rule: {'users': '1', 'scored': '1', 'hit': '3ff0000000000000', 'recall': '3ff0000000000000', 'ndcg': '3
+KILLED    ndcg-divides-by-dcg                MISMATCH seed 1 (users=2, items=12, k=10): ndcg 3ff0000000000000, expected 3fe6550c10493797
+KILLED    ideal-dcg-not-cut-at-k             MISMATCH seed 5 (users=20, items=3, k=2): ndcg 3fe537706cf6b472, expected 3fe5a881faa8909d
+KILLED    recall-divides-by-k                MISMATCH seed 1 (users=2, items=12, k=10): recall 3fdb6db6db6db6db, expected 3ff0000000000000
+KILLED    hit-is-the-count                   MISMATCH seed 1 (users=2, items=12, k=10): hit 4008000000000000, expected 3ff0000000000000
+KILLED    metrics-past-k                     FAIL driver: tie rule: {'users': '1', 'scored': '1', 'hit': '3ff0000000000000', 'recall': '3ff0000000000000', 'ndcg': '3
+KILLED    marks-not-cleared                  MISMATCH seed 3 (users=2, items=12, k=10): recall 3ff2aaaaaaaaaaaa, expected 3ff0000000000000
+KILLED    user-without-test-scored           FAIL driver: no user scored: {'users': '1', 'scored': '1', 'hit': '0000000000000000', 'recall': '7ff8000000000000', 'ndc
+KILLED    mean-over-all-users                MISMATCH seed 1 (users=2, items=12, k=10): ndcg 3fd6550c10493797, expected 3fe6550c10493797
+KILLED    non-finite-score-accepted          FAIL driver: non-finite: expected ml.input.non-finite exit 8, got 'users 1\nscored 1\nhit 3ff0000000000000\nrecall 3ff00
+KILLED    k-zero-accepted                    FAIL driver: k zero: expected ml.param.out-of-range exit 2, got 'users 1\nscored 1\nhit 0000000000000000\nrecall 0000000
+KILLED    k-above-items-accepted             FAIL driver: k above the items: expected ml.param.out-of-range exit 2, got 'users 1\nscored 1\nhit 3ff0000000000000\nrec
+KILLED    cap-ignored                        FAIL driver: more scores than the cap: expected ml.input.too-many-rows exit 8, got 'users 1\nscored 1\nhit 3ff0000000000
+KILLED    score-length-accepted              FAIL driver: length: expected ml.metric.length-mismatch exit 8, got '' exit -4
+KILLED    test-in-history-accepted           FAIL driver: a test item in the history: expected ml.param.out-of-range exit 2, got 'users 1\nscored 1\nhit 000000000000
+KILLED    list-not-ascending-accepted        FAIL driver: a test list not ascending: expected ml.param.out-of-range exit 2, got 'users 1\nscored 1\nhit 0000000000000
+KILLED    offset-past-the-list-accepted      FAIL driver: a decreasing offset: expected ml.param.out-of-range exit 2, got '' exit -4
+KILLED    decreasing-offset-accepted         FAIL driver: a decreasing offset inside the list: expected ml.param.out-of-range exit 2, got 'users 3\nscored 0\nhit und
+KILLED    offset-end-accepted                FAIL driver: offsets that do not end at the list: expected ml.metric.length-mismatch exit 8, got 'refused ml.param.out-o
+KILLED    item-out-of-range-accepted         FAIL driver: an item out of range: expected ml.param.out-of-range exit 2, got 'users 1\nscored 1\nhit 0000000000000000\n
+baseline  (the unchanged tree)               passes
+
+25 mutants: 25 killed, 0 survived, 0 invalid

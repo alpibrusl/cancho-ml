@@ -1,0 +1,27 @@
+KILLED    initial-factors-unscaled           MISMATCH seed 1 (users=2 items=15 f=4 lam=0.01 alpha=40 iters=4 implicit=False trace=False): P differs
+KILLED    initial-stream-kind                FAIL als control: hand-worked 1 x 1 fit: 'p 3fd22ba40ab05109\nq 3fe0d0a7d8813414\nnloss 1\nloss 400e4202016f5560\n'
+KILLED    initial-draw-not-advanced          FAIL als control: hand-worked 1 x 1 fit: 'p 3fed309864733c77\nq 3fefdd84301a73bf\nnloss 1\nloss 40081f8597777b7c\n'
+KILLED    lambda-doubled                     FAIL als control: hand-worked 1 x 1 fit: 'p bfdca9bae6caac1b\nq bfda0ce9449376d4\nnloss 1\nloss 400d5cc9a2b82d54\n'
+KILLED    diagonal-of-the-sum-dropped        FAIL als control: hand-worked 1 x 1 fit: 'p bff0289cd5b754b8\nq c000289cd5b754b8\nnloss 1\nloss 401467a963fb2f7d\n'
+KILLED    right-hand-side-without-values     FAIL als control: hand-worked 1 x 1 fit: 'p bfd9c04e14c1d174\nq bfd629c01fa675d6\nnloss 1\nloss 400df3791a150b38\n'
+KILLED    implicit-confidence-without-one    MISMATCH seed 2 (users=1 items=1 f=6 lam=1 alpha=40 iters=2 implicit=True trace=True): P differs
+KILLED    implicit-alpha-dropped             MISMATCH seed 2 (users=1 items=1 f=6 lam=1 alpha=40 iters=2 implicit=True trace=True): P differs
+KILLED    implicit-gram-not-used             MISMATCH seed 2 (users=1 items=1 f=6 lam=1 alpha=40 iters=2 implicit=True trace=True): P differs
+KILLED    implicit-term-rounded-differently  MISMATCH seed 2 (users=1 items=1 f=6 lam=1 alpha=40 iters=2 implicit=True trace=True): P differs
+KILLED    item-step-uses-the-item-gram       MISMATCH seed 2 (users=1 items=1 f=6 lam=1 alpha=40 iters=2 implicit=True trace=True): P differs
+KILLED    backward-solve-forward             MISMATCH seed 1 (users=2 items=15 f=4 lam=0.01 alpha=40 iters=4 implicit=False trace=False): P differs
+KILLED    one-pass-fewer                     FAIL als control: hand-worked 1 x 1 fit: 'p 0000000000000000\nq bfe0289cd5b754b8\nnloss 0\nloss \n'
+KILLED    no-mid-pass-loss                   MISMATCH seed 2 (users=1 items=1 f=6 lam=1 alpha=40 iters=2 implicit=True trace=True): losses differ
+KILLED    last-loss-after-the-first-pass     MISMATCH seed 1 (users=2 items=15 f=4 lam=0.01 alpha=40 iters=4 implicit=False trace=False): losses differ
+KILLED    loss-without-q-penalty             MISMATCH seed 1 (users=2 items=15 f=4 lam=0.01 alpha=40 iters=4 implicit=False trace=False): losses differ
+KILLED    implicit-loss-without-quadratic    MISMATCH seed 2 (users=1 items=1 f=6 lam=1 alpha=40 iters=2 implicit=True trace=True): losses differ
+KILLED    implicit-loss-confidence-without-one MISMATCH seed 2 (users=1 items=1 f=6 lam=1 alpha=40 iters=2 implicit=True trace=True): losses differ
+KILLED    factors-over-the-limit             FAIL als control: f above the limit: expected ml.param.out-of-range exit 2, got 'p bf961f6ecf0a31ef,3fb594c774534222,bfb
+KILLED    iterations-over-the-limit          FAIL als control: iterations above the limit: expected ml.param.out-of-range exit 2, got 'p bff0000000000000\nq bfefffff
+KILLED    infinite-lambda-accepted           FAIL als control: lambda infinite: expected ml.param.out-of-range exit 2, got 'refused ml.linalg.not-positive-definite' 
+KILLED    alpha-read-by-the-explicit-form    FAIL als control: alpha 0 refused by the explicit form: 'refused ml.param.out-of-range\n'
+KILLED    alpha-not-checked                  FAIL als control: alpha 0 accepted by the implicit form: 'p bfcc4ae1b5b719dc\nq bfcaf980a7ad6460\nnloss 1\nloss 3ff00952
+KILLED    pivot-code-swallowed               FAIL als control: a singular system: expected ml.linalg.not-positive-definite exit 8, got 'p 0000000000000000,0000000000
+baseline  (the unchanged tree)               passes
+
+24 mutants: 24 killed, 0 survived, 0 invalid
