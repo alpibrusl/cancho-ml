@@ -50,8 +50,8 @@ MUTANTS = [
 
 
 def build(tree):
-    lib = [str(p) for p in sorted((tree / "lib" / "core").glob("*.cho"))] + [str(tree / "lib/linalg/tensor.cho"), str(tree / "lib/linalg/order.cho")] + [str(p) for p in sorted((tree / "lib" / "metrics").glob("*.cho"))]
-    lib += [str(p) for p in sorted((tree / "lib" / "models" / "recommend").glob("*.cho"))]
+    lib = [str(p) for p in sorted((tree / "lib" / "core").glob("*.cho"))] + [str(p) for p in sorted((tree / "lib" / "linalg").glob("*.cho"))] + [str(p) for p in sorted((tree / "lib" / "metrics").glob("*.cho"))]
+    lib += [str(tree / "lib/models/common.cho")] + [str(p) for p in sorted((tree / "lib" / "models" / "recommend").glob("*.cho"))]
     out = tree / "recommend-check"
     r = subprocess.run([CANCHO, "build", "--std", *lib, *[str(p) for p in sorted((tree / "tools" / "recommend-check").glob("*.cho"))], "-o", str(out)], capture_output=True, text=True, cwd=tree)
     return out if r.returncode == 0 else None, r.stdout + r.stderr
@@ -70,6 +70,7 @@ def make_tree(td):
     tree = pathlib.Path(td) / "tree"
     for d in ("lib/core", "lib/linalg", "lib/metrics", "lib/models/recommend", "tools/recommend-check"):
         shutil.copytree(ROOT / d, tree / d)
+    shutil.copy(ROOT / "lib/models/common.cho", tree / "lib/models/common.cho")
     return tree
 
 
