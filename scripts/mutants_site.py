@@ -110,7 +110,7 @@ MUTANTS = [
     ("platforms-figure-typed", IDX, '<span data-n="runners">4</span>', '<span data-n="runners">3</span>', {"landing", "site"}),
     ("platforms-matrix-grows", ".github/workflows/ci.yml", "          - {os: macos-26, label: darwin-arm64}\n",
      "          - {os: macos-26, label: darwin-arm64}\n          - {os: windows-2025, label: windows-x86_64}\n", {"landing", "site"}),
-    ("platforms-pin-moves", "cancho.toml", 'cancho = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"', 'cancho = "1234567b4029a3ee73196cdfdb48e8efa7e9c519"', {"landing"}),
+    ("platforms-pin-moves", "cancho.toml", 'cancho = "f4ead824f33b291a0ad7620a34a0c1346a7abe4f"', 'cancho = "1234567b4029a3ee73196cdfdb48e8efa7e9c519"', {"landing"}),
     ("lang-removed", IDX, '<html lang="en">', "<html>", {"landing", "seo"}),
     # the experiments board (docs/board.html): its card on the landing page, its link in the header of every page, its place in the sitemap and in the SEO checks
     ("board-card-removed", IDX, '<h3><a href="board.html">Experiments board</a></h3>', "<h3>Experiments board</h3>", {"landing"}),
