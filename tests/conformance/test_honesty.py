@@ -63,7 +63,7 @@ class Honesty(unittest.TestCase):
         # the file now ends with the provenance section; without it the bytes are those of the commit before the float reader, except the compiler pin text the file holds (the digest moves with the pin)
         old = without_provenance(self.sb.read("sales.cml"))
         self.assertEqual(len(old), 316)
-        self.assertEqual(hashlib.sha256(old).hexdigest(), "984932d114dfaf9d025e295a757717b0e818e01ba17caa0ba45be46b4f1616b2")
+        self.assertEqual(hashlib.sha256(old).hexdigest(), "6eefeca687a666c2b2891abafdd4d5797d0919e594181c719a885af55fc719a8")
         self.assertEqual(r.data()["bytes"], 316 + 76)
 
     def test_the_unsupported_type_rule_is_gone(self):

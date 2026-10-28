@@ -152,7 +152,7 @@ class ModelFile(unittest.TestCase):
         self.assertEqual((n, scale), (4, 0))
         self.assertEqual(sq * 10**9 + sr, 101)
         self.assertEqual((m["rows"], m["cols"], m["seed"]), (4, 3, 0))
-        self.assertTrue(m["compiler"].startswith("0207556"))
+        self.assertTrue(m["compiler"].startswith("f4ead824"))
 
     def test_layout_classification(self):
         m = parse(self.cls)

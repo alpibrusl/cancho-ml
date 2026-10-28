@@ -1,6 +1,8 @@
 {
-  "bounded": true,
-  "unbounded_by": [],
+  "bounded": false,
+  "unbounded_by": [
+    "net_in(\"\")"
+  ],
   "effects": [
     "args",
     "clock",
@@ -75,7 +77,7 @@
     {
       "name": "net_in",
       "argument": "",
-      "bounded": true
+      "bounded": false
     },
     {
       "name": "poll",
@@ -321,6 +323,7 @@
     "extra",
     "extra",
     "extra_len",
+    "extra_open",
     "fabs",
     "fail",
     "failed",
@@ -1038,5 +1041,5 @@
   ],
   "folded_operators": 328,
   "folded_calls": 0,
-  "functions": 1554
+  "functions": 1556
 }
