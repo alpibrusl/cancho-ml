@@ -1,0 +1,28 @@
+KILLED    duplicate-implicit-keeps-the-last  FAIL log control: implicit sum: 'nnz 1\nuoff 0,1\nuitem 0\nuval 3fd3333333333333\nioff 0,1\niuser 0\nival 3fd33333333333
+KILLED    duplicate-explicit-accepted        FAIL log control: explicit duplicate: 'nnz 2\nuoff 0,1,2\nuitem 0,0\nuval 4000000000000000,4000000000000000\nioff 0,2\ni
+KILLED    duplicate-rows-swapped             FAIL log control: explicit duplicate: 'refused ml.param.out-of-range why 2 row 3 row2 1' exit 2
+KILLED    duplicate-of-the-last-pair         FAIL log control: explicit duplicate: 'refused ml.param.out-of-range why 2 row 0 row2 2' exit 2
+KILLED    implicit-zero-accepted             FAIL log control: an implicit zero: expected 'refused ml.param.out-of-range why 1 row 1 row2 0' exit 2, got 'nnz 2\nuoff
+KILLED    rating-bound-one-sided             FAIL log control: a rating below the bound: expected 'refused ml.param.out-of-range why 1 row 0 row2 0' exit 2, got 'nnz
+KILLED    non-finite-rating-accepted         FAIL log control: a NaN rating: expected 'refused ml.input.non-finite why 1 row 0 row2 0' exit 8, got 'nnz 2\nuoff 0,2\n
+KILLED    user-range-not-checked             FAIL log control: a user number out of range: expected 'refused ml.param.out-of-range why 6 row 1 row2 0' exit 2, got 'n
+KILLED    item-range-not-checked             FAIL log control: a negative item: expected 'refused ml.param.out-of-range why 6 row 1 row2 0' exit 2, got '' exit -4
+KILLED    empty-id-accepted                  FAIL log control: an item with no row: expected 'refused ml.param.out-of-range why 6 row 0 row2 0' exit 2, got 'refused 
+KILLED    users-over-the-limit               FAIL log control: users over the limit: expected 'refused ml.param.out-of-range why 3 row 0 row2 0' exit 2, got 'refused
+KILLED    items-over-the-limit               FAIL log control: items over the limit: expected 'refused ml.param.out-of-range why 4 row 0 row2 0' exit 2, got 'refused
+KILLED    rows-over-the-cap                  FAIL log control: rows over the cap: expected 'refused ml.input.too-many-rows why 5 row 0 row2 0' exit 8, got 'nnz 1\nuo
+SURVIVED  rows-over-the-limit                
+SURVIVED  ids-over-the-rows                  
+KILLED    items-not-ascending-in-a-user      FAIL log control: 2 x 2 log: 'nnz 4\nuoff 0,2,4\nuitem 1,0,1,0\nuval 4008000000000000,3ff0000000000000,4010000000000000,
+KILLED    users-of-an-item-wrong             FAIL log control: 2 x 2 log: 'nnz 4\nuoff 0,2,4\nuitem 0,1,0,1\nuval 3ff0000000000000,4008000000000000,4000000000000000,
+KILLED    values-of-an-item-wrong            FAIL log control: 2 x 2 log: 'nnz 4\nuoff 0,2,4\nuitem 0,1,0,1\nuval 3ff0000000000000,4008000000000000,4000000000000000,
+KILLED    split-ties-cut-the-other-way       FAIL log control: ties cut in file order: 'mask 1,1,0,0\n'
+KILLED    split-user-with-exactly-last       FAIL log control: user with last rows: 'mask 1,1,0\n'
+KILLED    split-one-too-many                 FAIL log control: last 1: 'mask 1,0,1,0\n'
+KILLED    split-user-range-not-checked       FAIL log control: split a user out of range: 'mask 0,0' exit 0
+KILLED    split-last-zero-accepted           FAIL log control: split last 0: 'mask 0,0' exit 0
+baseline  (the unchanged tree)               passes
+
+23 mutants: 21 killed, 2 survived, 0 invalid
+SURVIVOR rows-over-the-limit: the tool passes `cap` (its own bound, never above the limit), so the library's constant is a second line of defence for a caller that passes more; reaching it needs more than 2^25 rows in an argument vector, which no control here builds
+SURVIVOR ids-over-the-rows: with more ids than rows some id has no row, and the check for an id with no row refuses with the same code and reason; the early check only avoids allocating the work arrays for a log that is going to be refused (the allocation is bounded by the limits of the line above)
