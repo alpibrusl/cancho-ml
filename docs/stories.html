@@ -141,7 +141,7 @@ details.dd .menu a.gh { font-weight: 700; margin-top: .35rem; color: var(--accen
   &quot;rows&quot;: 180,
   &quot;columns&quot;: 5,
   &quot;target&quot;: &quot;rentals&quot;,
-  &quot;sha256&quot;: &quot;57008c9388baa886b106a43586680dd8c783315474d7a5640c68d7242eb39de0&quot;,
+  &quot;sha256&quot;: &quot;3bc98b43afdaa1aa04a6ca143f9f54732cd0801467b93947c094d70e5b3bd608&quot;,
   &quot;written&quot;: true,
   &quot;summary&quot;: {&quot;mean&quot;: &quot;90.455556&quot;}
 }</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file base.ml rent_test.csv</span>
@@ -873,32 +873,32 @@ exit 8
     --target inside --track runs --output run.ml ring_train.csv</span>
 {
   &quot;model&quot;: &quot;forest&quot;,
-  &quot;sha256&quot;: &quot;9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec6b2dc9dd8d1d6b34&quot;,
+  &quot;sha256&quot;: &quot;1a49b107c5c6ed9539cc583f409d66b8e01897045699b1cba7d40ea811147fed&quot;,
   &quot;run&quot;: {
-    &quot;id&quot;: &quot;f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36&quot;,
+    &quot;id&quot;: &quot;6e18cc1629da08f11677e1016ad56e542fafad3987e7a8b37a112805e42a4f11&quot;,
     &quot;dir&quot;: &quot;runs&quot;
   }
-}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml runs verify runs f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36</span>
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml runs verify runs 6e18cc1629da08f11677e1016ad56e542fafad3987e7a8b37a112805e42a4f11</span>
 {
-  &quot;id&quot;: &quot;f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36&quot;,
+  &quot;id&quot;: &quot;6e18cc1629da08f11677e1016ad56e542fafad3987e7a8b37a112805e42a4f11&quot;,
   &quot;verified&quot;: true,
-  &quot;model_sha256&quot;: &quot;9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec6b2dc9dd8d1d6b34&quot;,
+  &quot;model_sha256&quot;: &quot;1a49b107c5c6ed9539cc583f409d66b8e01897045699b1cba7d40ea811147fed&quot;,
   &quot;data_sha256&quot;: &quot;006db4681b9841dadbb407afcf345d97665039322e493824517dd5e9fe3f3ae9&quot;,
   &quot;threads&quot;: 1,
-  &quot;compiler&quot;: &quot;0207556b4029a3ee73196cdfdb48e8efa7e9c519&quot;
+  &quot;compiler&quot;: &quot;f4ead824f33b291a0ad7620a34a0c1346a7abe4f&quot;
 }</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml runs verify --threads 8 runs \
-    f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36</span>
+    6e18cc1629da08f11677e1016ad56e542fafad3987e7a8b37a112805e42a4f11</span>
 {
-  &quot;id&quot;: &quot;f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36&quot;,
+  &quot;id&quot;: &quot;6e18cc1629da08f11677e1016ad56e542fafad3987e7a8b37a112805e42a4f11&quot;,
   &quot;verified&quot;: true,
-  &quot;model_sha256&quot;: &quot;9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec6b2dc9dd8d1d6b34&quot;,
+  &quot;model_sha256&quot;: &quot;1a49b107c5c6ed9539cc583f409d66b8e01897045699b1cba7d40ea811147fed&quot;,
   &quot;data_sha256&quot;: &quot;006db4681b9841dadbb407afcf345d97665039322e493824517dd5e9fe3f3ae9&quot;,
   &quot;threads&quot;: 8,
-  &quot;compiler&quot;: &quot;0207556b4029a3ee73196cdfdb48e8efa7e9c519&quot;
-}</pre></div><p>The same forest, fitted on one, two, four and eight threads; the SHA-256 of each model file:</p><figure class="fig"><svg viewBox="0 0 640 174" role="img" aria-label="The digests of the answers of the same question asked with the rows in different orders"><text class="nm" x="205" y="33" text-anchor="end">--threads 1: model file</text><rect class="hash" x="215" y="18" width="395" height="22" rx="4"/><text class="hx" x="225" y="33">9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec</text>
-<text class="nm" x="205" y="67" text-anchor="end">--threads 2: model file</text><rect class="hash" x="215" y="52" width="395" height="22" rx="4"/><text class="hx" x="225" y="67">9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec</text>
-<text class="nm" x="205" y="101" text-anchor="end">--threads 4: model file</text><rect class="hash" x="215" y="86" width="395" height="22" rx="4"/><text class="hx" x="225" y="101">9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec</text>
-<text class="nm" x="205" y="135" text-anchor="end">--threads 8: model file</text><rect class="hash" x="215" y="120" width="395" height="22" rx="4"/><text class="hx" x="225" y="135">9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec</text></svg></figure><div class="read"><b>Reading it.</b> The run record verifies on one thread and on eight, with the model hash 9500bfe8b377&hellip;. The four model files are the same bytes. That is the claim a result has to make before anyone else can rely on it, and it is the claim the project&#8217;s CI checks across Linux and macOS.</div></div></section>
+  &quot;compiler&quot;: &quot;f4ead824f33b291a0ad7620a34a0c1346a7abe4f&quot;
+}</pre></div><p>The same forest, fitted on one, two, four and eight threads; the SHA-256 of each model file:</p><figure class="fig"><svg viewBox="0 0 640 174" role="img" aria-label="The digests of the answers of the same question asked with the rows in different orders"><text class="nm" x="205" y="33" text-anchor="end">--threads 1: model file</text><rect class="hash" x="215" y="18" width="395" height="22" rx="4"/><text class="hx" x="225" y="33">1a49b107c5c6ed9539cc583f409d66b8e01897045699b1cb</text>
+<text class="nm" x="205" y="67" text-anchor="end">--threads 2: model file</text><rect class="hash" x="215" y="52" width="395" height="22" rx="4"/><text class="hx" x="225" y="67">1a49b107c5c6ed9539cc583f409d66b8e01897045699b1cb</text>
+<text class="nm" x="205" y="101" text-anchor="end">--threads 4: model file</text><rect class="hash" x="215" y="86" width="395" height="22" rx="4"/><text class="hx" x="225" y="101">1a49b107c5c6ed9539cc583f409d66b8e01897045699b1cb</text>
+<text class="nm" x="205" y="135" text-anchor="end">--threads 8: model file</text><rect class="hash" x="215" y="120" width="395" height="22" rx="4"/><text class="hx" x="225" y="135">1a49b107c5c6ed9539cc583f409d66b8e01897045699b1cb</text></svg></figure><div class="read"><b>Reading it.</b> The run record verifies on one thread and on eight, with the model hash 1a49b107c5c6&hellip;. The four model files are the same bytes. That is the claim a result has to make before anyone else can rely on it, and it is the claim the project&#8217;s CI checks across Linux and macOS.</div></div></section>
 <section class="grp" id="g-medicine"><div class="wrap"><h2>Medicine and biology</h2><p class="lead">Which genes matter, and a hospital risk score with a threshold that someone else has to choose.</p></div></section>
 <section class="alt story" id="s8"><div class="wrap"><h2>8 &middot; Tumour or normal?</h2><div class="badge"><span class="lvl">biology: which features matter</span><span>fit --model logistic</span><span>importance</span></div><p class="said">&#8220;Four genes measured in 120 tissue samples. Can they tell tumour from normal? And which ones are doing the telling?&#8221; &#8212; a bioinformatician</p><p>The columns are standardised (a <code>scale</code> step stored in the model), a logistic regression is fitted, and then <code>ml importance</code> says which columns the model relies on: for a linear model, the stored coefficient times the standard deviation of the column the model sees, as a share of the total.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file tum.ml expression_test.csv</span>
 {
