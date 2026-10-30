@@ -19,7 +19,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from storylib import W, STORY_CSS, base_css, claim, pretty, num, esc, axis, svg, wrap_cmd, term, story, fig_hashes  # noqa: E402
+from storylib import W, STORY_CSS, arrange, base_css, claim, pretty, num, esc, axis, svg, wrap_cmd, term, story, fig_hashes  # noqa: E402
 
 DOCS = ROOT / "docs"
 
@@ -134,6 +134,36 @@ def make_uplift(seed, n):
         z = -3.6 + 0.28 * orders - 0.004 * rec + ((0.3 + 0.004 * (rec - 180) - 0.06 * (orders - 4)) if arm else 0)
         rows.append((rec, orders, "ads" if arm else "holdout", 1 if r.random() < sig(z) else 0))
     return rows
+
+
+def make_readmit():
+    """1800 hospital discharges: age, admissions in the last year, days in hospital, creatinine (mg/dl), and whether the patient came back within 30 days (about one in six)"""
+    r = random.Random(52)
+    sig = lambda z: 1 / (1 + math.exp(-z))
+    rows = []
+    for _ in range(1800):
+        age = r.randint(30, 92)
+        prior = min(8, int(r.expovariate(1 / 1.2)))
+        days = 1 + int(r.expovariate(1 / 4))
+        creat = round(max(0.5, r.gauss(1.1, 0.35) + 0.01 * (age - 60)), 2)
+        z = -4.3 + 0.035 * (age - 30) + 0.6 * prior + 0.08 * days + 1.2 * (creat - 1.0)
+        rows.append((age, prior, days, creat, 1 if r.random() < sig(z) else 0))
+    return rows[:1200], rows[1200:]
+
+
+def make_loans():
+    """2400 loan applications: income (thousand euros), debt to income (percent), late payments in the last two years, years in the job, and whether the loan defaulted (about one in eight)"""
+    r = random.Random(61)
+    sig = lambda z: 1 / (1 + math.exp(-z))
+    rows = []
+    for _ in range(2400):
+        inc = round(max(12.0, r.gauss(38, 14)), 1)
+        dti = round(max(2.0, min(80.0, r.gauss(32, 12))), 1)
+        late = min(6, int(r.expovariate(1 / 0.7)))
+        yrs = min(30, int(r.expovariate(1 / 6)))
+        z = -2.5 + 0.05 * (dti - 30) + 0.6 * late - 0.025 * (inc - 38) - 0.06 * yrs
+        rows.append((inc, dti, late, yrs, 1 if r.random() < sig(z) else 0))
+    return rows[:1600], rows[1600:]
 
 
 BIG = {}  # data files above the 2,000-line limit of a committed file: regenerated on demand (`--data-out DIR`), never committed
@@ -681,7 +711,7 @@ def build(binary):
         ate = 100 * (sum(te_t) / len(te_t) - sum(te_c) / len(te_c))
         S.append(story(12, "Who does the ad actually move?", "marketing: uplift, two models and a randomized test", ["fit --model logistic", "predict --proba"],
             "&#8220;The ad lifts sales by about one point overall. Is it one point for everybody, or a lot for some and nothing &#8212; or worse &#8212; for others?&#8221; &#8212; the same head of growth, a month later",
-            ["<p>Because the ad was shown to a random half of the customers (the stories of cancho-stats showed why that matters), the customers who saw it and those who did not are comparable <em>in every respect</em>, and so is a model fitted to each. The simplest way to ask who is moved is to fit two models, one on the customers shown the ad and one on the held-out customers, and to subtract: for a new customer, the predicted chance of buying <em>with</em> the ad minus the predicted chance <em>without</em>. That difference is the predicted uplift. Two fits, one per file:</p>",
+            ["<p>Because the ad was shown to a random half of the customers (the marketing stories of cancho-stats showed why that matters), the customers who saw it and those who did not are comparable <em>in every respect</em>, and so is a model fitted to each. The simplest way to ask who is moved is to fit two models, one on the customers shown the ad and one on the held-out customers, and to subtract: for a new customer, the predicted chance of buying <em>with</em> the ad minus the predicted chance <em>without</em>. That difference is the predicted uplift. Two fits, one per file:</p>",
              term(shown(u1), pretty({"model": du1["model"], "rows": du1["rows"], "coefficients": du1["summary"].get("coefficients")})),
              term(shown(u2), pretty({"model": du2["model"], "rows": du2["rows"], "coefficients": du2["summary"].get("coefficients")})),
              "<p>Then <code>predict --proba</code> with each model on a second, later group of %d customers, who were also randomly split, and the uplift of each is the difference of the two probabilities. A prediction is only a claim until it is checked, and here it can be checked against the truth: sort the new customers from the highest predicted uplift (the top fifth) to the lowest (the bottom fifth), cut them into five equal groups, and in each group compare the buyers among those who were shown the ad with those who were not.</p>" % len(up_te),
@@ -714,22 +744,109 @@ def build(binary):
             ["<p>There are two natural rankings. <em>Most likely to buy</em> uses the model of the customers shown the ad, and puts the loyal first. <em>Most movable</em> uses the uplift of the previous story. The test group was randomized, so a ranking can be scored honestly: contact the top q percent by that ranking, and the buyers the contact adds are the difference in conversion between those shown the ad and those not, times the size of the group. This is a <em>gain curve</em>: how many extra buyers each plan buys as the contacted share grows from zero to everyone.</p>",
              fig_gain([("ranked by uplift", "la", gu), ("ranked by chance to buy", "lg", gr), ("random order", "lm", rnd)], "share of customers contacted, %", "extra buyers"),
              '<div class="read"><b>Reading it.</b> Contacting everybody buys %.0f extra buyers in the %d customers of the test. Contacting the top 30%% by chance to buy gets %.0f: not much more than the %.0f that contacting 30%% at random would. The same 30%% chosen by uplift gets %.0f, and the uplift curve peaks at %.0f extra buyers when %d%% are contacted, <em>above</em> the total of contacting everyone: the last customers on the list lose the shop sales when they are contacted, and a plan that leaves them out does better than a plan that does not. The curves are estimates on one random split (the stats stories explain how wide such estimates are, and a bootstrap of the gain is one way to put an interval on them), so the ordering is clear and the exact peak is not. <code>ml</code> fitted the models and made the predictions; the arithmetic of the curve is the page&#8217;s, from the printed probabilities and the arm and outcome of each test customer.</div>' % (full, len(up_te), at30(gr), at30(rnd), at30(gu), best[1], best[0])]))
+        # 14 medicine: readmission ------------------------------------------------------------------------------
+        rd_tr, rd_te = make_readmit()
+        rdh = ["age", "prior_admissions", "days_in_hospital", "creatinine", "readmitted"]
+        files["readmit_train.csv"] = csv_of(rdh, rd_tr)
+        files["readmit_test.csv"] = csv_of(rdh, rd_te)
+        for nm in ("readmit_train.csv", "readmit_test.csv"):
+            (folder / nm).write_text(files[nm])
+        r1 = ["fit", "--model", "logistic", "--target", "readmitted", "--step", "scale column=* kind=standard", "--output", "readmit.ml", "readmit_train.csv"]
+        r2 = ["eval", "--model-file", "readmit.ml", "readmit_test.csv"]
+        dr1, dr2 = R.doc(r1), R.doc(r2)
+        prr = R.predictions("readmit.ml", "readmit_test.csv", proba=True, limit=1000)
+        yr = [r_[4] for r_ in rd_te]
+        pr_ = [float(r_[1]) for r_ in prr]
+        claim(len(pr_) == len(yr) == 600, "story 14: one probability per held-out discharge")
+
+        def at(th):
+            tp = sum(1 for p, y in zip(pr_, yr) if p >= th and y == 1)
+            fp = sum(1 for p, y in zip(pr_, yr) if p >= th and y == 0)
+            fn = sum(1 for p, y in zip(pr_, yr) if p < th and y == 1)
+            return tp, fp, fn
+        t5, t2_, t1 = at(0.5), at(0.2), at(0.12)
+        rec = lambda t: t[0] / (t[0] + t[2])
+        prec = lambda t: t[0] / (t[0] + t[1]) if t[0] + t[1] else 0.0
+        auc_r = metric(dr2, "roc_auc")
+        claim(auc_r > 0.7 and rec(t1) > rec(t2_) > rec(t5) and prec(t1) < prec(t2_) < prec(t5) + 1e-9 and rec(t5) < 0.35, "story 14: the model ranks (AUC above 0.7); at 0.5 it finds under a third of the readmissions; lowering the threshold buys recall and costs precision")
+        S.append(story(14, "Who will come back within 30 days?", "medicine: a risk score and where to put the threshold", ["fit --model logistic", "predict --proba", "eval"],
+            "&#8220;We can phone patients after discharge, but only some of them. Who should we call?&#8221; &#8212; a hospital quality officer",
+            ["<p>A logistic model on four numbers from the discharge record (<code>--step scale</code> puts them on one scale first) gives each patient a probability of coming back. The first question is whether the ranking is any good, and <code>eval</code> answers it with the area under the ROC curve:</p>",
+             term(shown(r1), pretty({"model": dr1["model"], "rows": dr1["rows"], "coefficients": dr1["summary"].get("coefficients")})),
+             term(shown(r2), pretty(short(dr2, ("path",)))),
+             "<p>The second question is the one the officer asked, and no metric answers it: where to put the threshold. About one patient in six comes back, so a threshold of 0.5 calls almost no one. Counting on the %d held-out patients with the probabilities that <code>predict</code> printed, for three thresholds:</p>" % len(yr),
+             fig_hbars([("call above 0.5: found", rec(t5) * 100, "pa"), ("call above 0.2: found", rec(t2_) * 100, "pa"), ("call above 0.12: found", rec(t1) * 100, "pa"),
+                        ("call above 0.5: right", prec(t5) * 100, "pb"), ("call above 0.2: right", prec(t2_) * 100, "pb"), ("call above 0.12: right", prec(t1) * 100, "pb")], fmt="%.0f", label_w=180, unit=" %"),
+             '<div class="read"><b>Reading it.</b> The ranking is useful (AUC %s) and the default threshold is not: at 0.5 the call list finds %.0f%% of the patients who come back, at 0.2 it finds %.0f%% (and %.0f%% of the calls reach someone who would have come back), at 0.12 it finds %.0f%% (and %.0f%% of the calls are well aimed). The model cannot say which threshold is right: that depends on what a call costs and what a readmission costs, and the officer, not the model, knows. What the model gives is the curve to choose from; <code>ml</code> never picks a threshold for you.</div>' % (num(auc_r, 3), rec(t5) * 100, rec(t2_) * 100, prec(t2_) * 100, rec(t1) * 100, prec(t1) * 100)]))
+        # 15 finance: credit --------------------------------------------------------------------------------------
+        ln_tr, ln_te = make_loans()
+        lnh = ["income_k", "debt_to_income", "late_payments", "years_employed", "defaulted"]
+        files["loans_train.csv"] = csv_of(lnh, ln_tr)
+        files["loans_test.csv"] = csv_of(lnh, ln_te)
+        for nm in ("loans_train.csv", "loans_test.csv"):
+            (folder / nm).write_text(files[nm])
+        c1 = ["fit", "--model", "logistic", "--target", "defaulted", "--step", "scale column=* kind=standard", "--output", "loans.ml", "loans_train.csv"]
+        c2 = ["eval", "--model-file", "loans.ml", "loans_test.csv"]
+        dc1, dc2 = R.doc(c1), R.doc(c2)
+        pl = [float(r_[1]) for r_ in R.predictions("loans.ml", "loans_test.csv", proba=True, limit=1000)]
+        yl = [r_[4] for r_ in ln_te]
+        claim(len(pl) == len(yl) == 800, "story 15: one probability per held-out application")
+        # a decile table of predicted against observed default rates
+        order = sorted(range(len(yl)), key=lambda i: pl[i])
+        fifth = len(yl) // 5
+        calib = []
+        for k in range(5):
+            idx = order[k * fifth:(k + 1) * fifth]
+            calib.append((sum(pl[i] for i in idx) / len(idx), sum(yl[i] for i in idx) / len(idx)))
+        claim(all(abs(a - b) < 0.05 for a, b in calib) and calib[4][1] > 3 * calib[0][1], "story 15: predicted and observed default rates agree within five points in every fifth, and the riskiest fifth defaults over three times as often as the safest")
+        GAIN, LOSS = 200, 1500
+
+        def profit(cut):
+            return sum((-LOSS if y else GAIN) for p, y in zip(pl, yl) if p < cut)
+        cuts = [c / 100 for c in range(0, 101, 2)]
+        curve = [(c * 100, profit(c)) for c in cuts]
+        best = max(curve, key=lambda t: t[1])
+        everyone = profit(1.01)
+        claim(best[1] > everyone and best[1] > 0 and 0 < best[0] < 60, "story 15: the best cutoff earns more than approving everyone")
+        S.append(story(15, "Whom should the bank lend to?", "finance: a default score, calibration and a cutoff with a price", ["fit --model logistic", "predict --proba", "eval"],
+            "&#8220;Each good loan earns us 200 euros. Each default costs 1,500. Where do we draw the line?&#8221; &#8212; a credit risk manager",
+            ["<p>The same tool, a different decision. A logistic model of default on four fields of the application, fitted on 1,600 past loans and scored on 800 it has not seen:</p>",
+             term(shown(c1), pretty({"model": dc1["model"], "rows": dc1["rows"], "coefficients": dc1["summary"].get("coefficients")})),
+             term(shown(c2), pretty(short(dc2, ("path",)))),
+             "<p>Before the decision, a check that matters more in finance than elsewhere: are the probabilities <em>probabilities</em>? Sorting the 800 applications by predicted risk and cutting them into five equal groups, the mean predicted default rate of each group against the default rate that was observed:</p>",
+             fig_hbars([("%s fifth: predicted" % nm, a * 100, "pa") for nm, (a, _) in zip(("safest", "second", "third", "fourth", "riskiest"), calib)] + [("%s fifth: observed" % nm, b * 100, "pb") for nm, (_, b) in zip(("safest", "second", "third", "fourth", "riskiest"), calib)], fmt="%.1f", label_w=190, unit=" %"),
+             "<p>Then the price. Approving a loan whose predicted risk is below a cutoff earns 200 euros if it is repaid and loses 1,500 if it defaults (the page&#8217;s invented figures, applied to the test outcomes). The total profit over the 800 applications, as the cutoff moves from approving nobody to approving everybody:</p>",
+             fig_gain([("profit, euros", "la", curve)], "approve applications with predicted default risk below, %", "profit, euros"),
+             '<div class="read"><b>Reading it.</b> The groups are calibrated: the riskiest fifth was predicted at %.1f%% and defaulted at %.1f%%, the safest predicted %.1f%% and defaulted %.1f%%, so a predicted probability here means what it says. Approving everybody earns %s euros on these 800 applications; the best cutoff, about %.0f%%, earns %s. The gain comes from refusing the applications whose risk makes a loan lose money at these prices: a loan pays on average only when 200 &times; (1 &minus; p) is above 1,500 &times; p, that is, when its default probability p is below 200 / 1,700, about 11.8%%, which is where the best cutoff sits. Change the 1,500 and the best cutoff moves, which is why the model gives the probability and the lender decides the line. The profit figures are the page&#8217;s arithmetic on the printed probabilities and the test outcomes; they are an illustration, with invented prices.</div>' % (calib[4][0] * 100, calib[4][1] * 100, calib[0][0] * 100, calib[0][1] * 100, format(everyone, ","), best[0], format(best[1], ","))]))
     return S, files
+
+GROUPS = [
+    ("Foundations", "g-basics", "Bicycle hire: the number to beat, a line, plans and refusals, a yes/no question, non-linear models, cross-validation and the same model on any machine.",
+     [(1, "Baseline"), (2, "A line"), (3, "Plans"), (4, "Yes or no"), (5, "Non-linear"), (6, "Cross-validation"), (7, "Same model")]),
+    ("Medicine and biology", "g-medicine", "Which genes matter, and a hospital risk score with a threshold that someone else has to choose.",
+     [(8, "Tumour"), (14, "Readmission")]),
+    ("Chemistry and physics", "g-physics", "A calibration curve and clusters in a detector.",
+     [(9, "Calibration"), (10, "Pulses")]),
+    ("Social science", "g-social", "A model to read, not to use.",
+     [(11, "Survey")]),
+    ("Marketing", "g-marketing", "Uplift: who an ad moves, and whom to spend on, scored on a randomized test.",
+     [(12, "Uplift"), (13, "Targeting")]),
+    ("Finance", "g-finance", "A default score, its calibration, and a cutoff with a price.",
+     [(15, "Credit")]),
+]
 
 
 def page(sections):
     css = base_css("#6d3fc0", "#b79bf5", "#ffffff", "#150b2b") + STORY_CSS + EXTRA_CSS
-    nav = " ".join('<a class="opt" href="#s%d">%d</a>' % (i, i) for i in range(1, 14))
-    names = ("Baseline", "A line", "Plans", "Yes or no", "Non-linear", "Cross-validation", "Same model", "Tumour", "Calibration", "Pulses", "Survey", "Uplift", "Targeting")
-    toc = "".join('<a href="#s%d">%d &middot; %s</a>' % (i, i, esc(nm)) for i, nm in enumerate(names, 1))
+    body, nav, toc = arrange(sections, GROUPS)
     data = ", ".join('<a href="stories/%s">%s</a>' % (n, n) for n in sorted(FILES_LIST))
     return """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ml: thirteen stories, from a baseline to the lab</title>
-<meta name="description" content="Thirteen end-to-end examples of the ml command, in increasing complexity: bicycle hire, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
+<title>ml: fifteen stories, from a baseline to the lab</title>
+<meta name="description" content="Fifteen end-to-end examples of the ml command, in increasing complexity: bicycle hire, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
 <meta name="color-scheme" content="light dark">
 <style>%s</style>
 </head>
@@ -739,8 +856,8 @@ def page(sections):
   <nav>%s<a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a></nav>
 </div></header>
 <div class="wrap hero small">
-  <h1>Thirteen stories, from a baseline to the lab.</h1>
-  <p class="sub">Pilar rents bicycles and wants to know what a model can tell her; each story asks a little more of <code>ml</code> than the last. Then four short ones from the sciences and two from marketing (who does an ad move, and whom to spend on). Every number and every figure is drawn from a real run of <code>ml</code> on the data you can download (small files, one CPU, each fit well under a second). The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
+  <h1>Fifteen stories, from a baseline to the lab.</h1>
+  <p class="sub">Pilar rents bicycles and wants to know what a model can tell her; each story asks a little more of <code>ml</code> than the last. Then the same tool on other fields, grouped by topic (use the <b>Stories</b> menu): medicine and biology, chemistry and physics, a social survey, marketing and finance. Every number and every figure is drawn from a real run of <code>ml</code> on the data you can download (small files, one CPU, each fit well under a second). The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
   <div class="toc">%s</div>
   <p class="data">Data: %s. The four files of stories 12 and 13 (<code>uplift_*.csv</code>, 14,000 customers a file at most) are not committed: <code>python3 scripts/gen_stories.py --data-out DIR</code> writes them, from the same seeds. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
 </div>
@@ -748,7 +865,7 @@ def page(sections):
 <footer><div class="wrap">ml &middot; EUPL-1.2 &middot; the data are invented; the runs, the digits and the figures are real &middot; <a href=".">overview</a></div></footer>
 </body>
 </html>
-""" % (css, nav, toc, data, "\n".join(sections))
+""" % (css, nav, toc, data, body)
 
 
 FILES_LIST = []
