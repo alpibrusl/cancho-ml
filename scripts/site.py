@@ -1230,7 +1230,7 @@ def fill_values(text, ctx):
 
 REPO_URL = "https://github.com/alpibrusl/cancho-ml"
 NAV = [("How it works", "index.html#how", "opt", "index.html"), ("Guide", "guide.html", "", "guide.html"), ("Examples", "examples.html", "opt", "examples.html"), ("Gallery", "gallery.html", "opt", "gallery.html"),
-       ("Board", "board.html", "opt", "board.html"), ("Evidence", "evidence.html", "", "evidence.html"), ("Benchmarks", "benchmarks.html", "opt", "benchmarks.html"), ("GitHub", REPO_URL, "", None)]
+       ("Stories", "stories.html", "opt", None), ("Board", "board.html", "opt", "board.html"), ("Evidence", "evidence.html", "", "evidence.html"), ("Benchmarks", "benchmarks.html", "opt", "benchmarks.html"), ("GitHub", REPO_URL, "", None)]
 FOOT = [("Repository", REPO_URL), ("Status", REPO_URL + "/blob/main/docs/status.md"), ("Command line", REPO_URL + "/blob/main/docs/cli.md"),
         ("Design", REPO_URL + "/blob/main/docs/design.md")]
 FOOT_EXTRA = {"docs/examples.html": [("Examples: the gate", REPO_URL + "/blob/main/docs/examples.md")],

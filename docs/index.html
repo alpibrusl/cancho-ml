@@ -47,7 +47,7 @@
 <header class="top"><div class="wrap">
   <a class="brand" href="./">cancho-ml</a>
   <nav aria-label="Site">
-    <a href="#how" class="opt">How it works</a><a href="guide.html">Guide</a><a href="examples.html" class="opt">Examples</a><a href="gallery.html" class="opt">Gallery</a><a href="board.html" class="opt">Board</a><a href="evidence.html">Evidence</a><a href="benchmarks.html" class="opt">Benchmarks</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
+    <a href="#how" class="opt">How it works</a><a href="guide.html">Guide</a><a href="examples.html" class="opt">Examples</a><a href="gallery.html" class="opt">Gallery</a><a href="stories.html" class="opt">Stories</a><a href="board.html" class="opt">Board</a><a href="evidence.html">Evidence</a><a href="benchmarks.html" class="opt">Benchmarks</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a>
   </nav>
 </div></header>
 <!-- /gen:nav -->
@@ -59,7 +59,7 @@
     <p class="eyebrow">classical models · one command line</p>
     <h1>Machine learning on a CSV that says no clearly and repeats exactly.</h1>
     <p class="sub">cancho-ml fits, scores and serves models. When it cannot do what you asked, it names the rule and prints the command that fixes it.</p>
-    <div class="cta"><a class="btn primary" href="#try">Try it</a><a class="btn" href="#see">Watch it run</a></div>
+    <div class="cta"><a class="btn primary" href="#try">Try it</a><a class="btn" href="#watch">Watch it run</a></div>
   </div>
   <div class="machine reveal" aria-hidden="false">
 <svg viewBox="0 0 560 330" role="img" aria-labelledby="mc-t mc-d">
@@ -88,7 +88,7 @@
 </div>
 </div>
 
-<section class="sec" id="see"><div class="wrap">
+<section class="sec" id="watch"><div class="wrap">
   <h2>Watch it run</h2>
   <p class="lead">Three recorded sessions of the real binaries. Nothing is invented: the video is drawn from the log below it.</p>
 <div class="vids">
@@ -155,6 +155,12 @@
   <p class="fine">Recorded from real runs, not a live session.</p>
 </div></section>
 
+<section class="sec" id="stories"><div class="wrap">
+  <h2>Stories, from a first look to real questions</h2>
+  <p class="lead">A bicycle shop, then medicine, physics, a survey, marketing and finance: each story asks a little more of <code>ml</code>, and every number and figure is drawn from a real run.</p>
+  <p class="cta"><a class="btn primary" href="stories.html">Read the stories</a></p>
+</div></section>
+
 <section class="sec" id="how"><div class="wrap">
   <h2>How it works</h2>
   <p class="lead">A CSV becomes a plan, a fit with sums in a fixed order, and one model file. Anything it cannot accept comes back to you with its repair.</p>
@@ -194,7 +200,7 @@
 <!-- /gen:models -->
 </div></section>
 
-<section class="sec" id="numbers"><div class="wrap">
+<section class="sec" id="results"><div class="wrap">
   <h2>Measured, not promised</h2>
   <div class="nums">
     <div class="n reveal"><b><span data-n="fp_lines">112</span></b><span>lines of hashes equal a golden on <span data-n="platforms">3</span> platforms</span></div>
@@ -216,13 +222,13 @@ cancho install &amp;&amp; cancho build --bin ml                                 
   <p class="fine">Then run the commands above on the CSVs in <code>docs/examples/data</code>. The <a href="guide.html#start">guide</a> has the full quick start.</p>
 </div></section>
 
-<section class="sec" id="deeper"><div class="wrap">
+<section class="sec" id="docs"><div class="wrap">
   <h2>Go deeper</h2>
   <ul class="chips pills"><li><a href="gallery.html">Gallery</a></li><li><a href="guide.html">Guide</a></li><li><a href="examples.html">Examples</a></li><li><a href="board.html">Experiments board</a></li><li><a href="evidence.html">Evidence</a></li><li><a href="benchmarks.html">Benchmarks</a></li><li><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/cli.md">Reference</a></li><li><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/design.md">Design</a></li></ul>
 
   <details class="print" id="print"><summary>The small print: what is checked, what is not, and what is missing</summary>
   <div class="cards">
-    <div class="card"><h3><a href="stories.html">Eleven stories</a></h3><p>From the baseline every model must beat to a run anyone can replay, then tumour or normal, a calibration curve, two kinds of pulse and a survey; every figure drawn from a real run.</p></div>
+    <div class="card"><h3><a href="stories.html">Stories, by topic</a></h3><p>From the baseline every model must beat to medicine, physics, marketing and finance; every figure is drawn from a real run.</p></div>
     <div class="card"><h3><a href="guide.html">Guide</a></h3><p>Every flow with its real output: <span data-n="models">eight</span> models, text columns, serving and the agent view.</p></div>
     <div class="card"><h3><a href="examples.html">Examples</a></h3><p>Four classic datasets solved by <code>ml</code> and compared with scikit-learn on the same files.</p></div>
     <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/tracking.md">Experiments</a></h3><p>Run records, <code>ml runs</code>, the <code>on</code> marker and the range check: the document and its results.</p></div>
