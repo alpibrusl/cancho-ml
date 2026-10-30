@@ -101,6 +101,7 @@
     "categories",
     "category_total",
     "catplace",
+    "ceil_int",
     "ceiling",
     "ceiling_categories",
     "ceiling_cells",
@@ -282,6 +283,7 @@
     "get32",
     "get64",
     "gini_decrease",
+    "grisu",
     "guarantee_keys",
     "guarantees_has",
     "has",
@@ -416,6 +418,7 @@
     "low_mask64",
     "lower",
     "lshr64",
+    "lsr",
     "majority_of",
     "make",
     "mal",
@@ -499,6 +502,7 @@
     "model_truncated",
     "most_fields",
     "mul128",
+    "mul_f",
     "na_of",
     "name",
     "name",
@@ -763,6 +767,7 @@
     "type_of",
     "type_of",
     "type_word",
+    "ult",
     "under",
     "uneven_neighbours",
     "unknown_category",
@@ -799,5 +804,5 @@
     "word_is",
     "wpc"
   ],
-  "functions": 1208
+  "functions": 1215
 }

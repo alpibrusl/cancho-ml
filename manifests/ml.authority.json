@@ -149,6 +149,7 @@
     "categories",
     "category_total",
     "catplace",
+    "ceil_int",
     "ceiling",
     "ceiling_categories",
     "ceiling_cells",
@@ -407,6 +408,7 @@
     "get64",
     "gini_decrease",
     "gold",
+    "grisu",
     "group_start",
     "group_start",
     "gt",
@@ -607,6 +609,7 @@
     "low_mask64",
     "lower",
     "lshr64",
+    "lsr",
     "majority_of",
     "make",
     "make",
@@ -723,6 +726,7 @@
     "most_fields",
     "mtry_of",
     "mul128",
+    "mul_f",
     "mul_hi_lo",
     "n_test_for",
     "na_of",
@@ -1093,6 +1097,7 @@
     "type_of",
     "type_word",
     "u01",
+    "ult",
     "undefined",
     "under",
     "uneven_neighbours",
@@ -1147,5 +1152,5 @@
     "writable",
     "y_max"
   ],
-  "functions": 1990
+  "functions": 1997
 }
