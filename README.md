@@ -744,7 +744,7 @@ The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`);
 ```console
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
-tool        ml 0.1.0   (compiler dcf67519)
+tool        ml 0.1.0   (compiler 2bd251f7)
 flags       70, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
