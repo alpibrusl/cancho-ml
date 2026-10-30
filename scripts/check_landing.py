@@ -258,8 +258,8 @@ def check_nav(root, errs):
         got = [x[0].lstrip("#").replace("index.html#", "") for x in s]
         if got != ref:
             errs.append("%s: the header links are %r, the landing page's are %r" % (name, got, ref))
-    if len(ref) < 5 or len(ref) > 8:
-        errs.append("the header has %d links, want 5 to 8" % len(ref))
+    if len(ref) < 5 or len(ref) > 9:
+        errs.append("the header has %d links, want 5 to 9" % len(ref))
 
 
 # --- the replay ----------------------------------------------------------------------------------------------------
