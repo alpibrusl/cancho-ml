@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ml: eleven stories, from a baseline to the lab</title>
-<meta name="description" content="Eleven end-to-end examples of the ml command, in increasing complexity: bicycle hire, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
+<title>ml: thirteen stories, from a baseline to the lab</title>
+<meta name="description" content="Thirteen end-to-end examples of the ml command, in increasing complexity: bicycle hire, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
 <meta name="color-scheme" content="light dark">
 <style>
 :root {
@@ -99,7 +99,7 @@ figure.fig svg { width: 100%; height: auto; display: block; background: var(--su
 .fig .pbar.pa { fill: var(--accent); } .fig .pbar.pb { fill: var(--good); } .fig .pbar.bad { fill: var(--bad); }
 .fig .fbox { fill: var(--surface); stroke-width: 2; } .fig .fbox.q { stroke: var(--accent); } .fig .fbox.r { stroke: var(--bad); } .fig .fbox.ok { stroke: var(--good); }
 .fig .arrow { stroke: var(--muted); stroke-width: 1.8; marker-end: url(#ar); }
-.fig .ln { fill: none; stroke-width: 2.5; } .fig .ln.la { stroke: var(--accent); }
+.fig .ln { fill: none; stroke-width: 2.5; } .fig .ln.la { stroke: var(--accent); } .fig .ln.lg { stroke: var(--good); } .fig .ln.lm { stroke: var(--muted); stroke-dasharray: 5 4; }
 .fig .cm.neg { fill: var(--good); } .fig .cm.pos { fill: var(--good); } .fig .cm.bad { fill: var(--bad); }
 .fig .digits { fill: var(--fg); font: 600 22px var(--mono); }
 .fig .mn { fill: var(--warn); } .fig .md { stroke: var(--fg); stroke-width: 3; }
@@ -110,13 +110,13 @@ figure.fig svg { width: 100%; height: auto; display: block; background: var(--su
 <body>
 <header class="top"><div class="wrap">
   <a class="brand" href=".">ml</a>
-  <nav><a class="opt" href="#s1">1</a> <a class="opt" href="#s2">2</a> <a class="opt" href="#s3">3</a> <a class="opt" href="#s4">4</a> <a class="opt" href="#s5">5</a> <a class="opt" href="#s6">6</a> <a class="opt" href="#s7">7</a> <a class="opt" href="#s8">8</a> <a class="opt" href="#s9">9</a> <a class="opt" href="#s10">10</a> <a class="opt" href="#s11">11</a><a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a></nav>
+  <nav><a class="opt" href="#s1">1</a> <a class="opt" href="#s2">2</a> <a class="opt" href="#s3">3</a> <a class="opt" href="#s4">4</a> <a class="opt" href="#s5">5</a> <a class="opt" href="#s6">6</a> <a class="opt" href="#s7">7</a> <a class="opt" href="#s8">8</a> <a class="opt" href="#s9">9</a> <a class="opt" href="#s10">10</a> <a class="opt" href="#s11">11</a> <a class="opt" href="#s12">12</a> <a class="opt" href="#s13">13</a><a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a></nav>
 </div></header>
 <div class="wrap hero small">
-  <h1>Eleven stories, from a baseline to the lab.</h1>
-  <p class="sub">Pilar rents bicycles and wants to know what a model can tell her; each story asks a little more of <code>ml</code> than the last. Then four short ones from the sciences. Every number and every figure is drawn from a real run of <code>ml</code> on the data you can download (small files, one CPU, each fit well under a second). The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
-  <div class="toc"><a href="#s1">1 &middot; Baseline</a><a href="#s2">2 &middot; A line</a><a href="#s3">3 &middot; Plans</a><a href="#s4">4 &middot; Yes or no</a><a href="#s5">5 &middot; Non-linear</a><a href="#s6">6 &middot; Cross-validation</a><a href="#s7">7 &middot; Same model</a><a href="#s8">8 &middot; Tumour</a><a href="#s9">9 &middot; Calibration</a><a href="#s10">10 &middot; Pulses</a><a href="#s11">11 &middot; Survey</a></div>
-  <p class="data">Data: <a href="stories/expression_test.csv">expression_test.csv</a>, <a href="stories/expression_train.csv">expression_train.csv</a>, <a href="stories/pulses.csv">pulses.csv</a>, <a href="stories/rent_gaps.csv">rent_gaps.csv</a>, <a href="stories/rent_test.csv">rent_test.csv</a>, <a href="stories/rent_train.csv">rent_train.csv</a>, <a href="stories/ring_test.csv">ring_test.csv</a>, <a href="stories/ring_train.csv">ring_train.csv</a>, <a href="stories/standards.csv">standards.csv</a>, <a href="stories/town_test.csv">town_test.csv</a>, <a href="stories/town_train.csv">town_train.csv</a>, <a href="stories/unknowns.csv">unknowns.csv</a>, <a href="stories/visits_test.csv">visits_test.csv</a>, <a href="stories/visits_train.csv">visits_train.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
+  <h1>Thirteen stories, from a baseline to the lab.</h1>
+  <p class="sub">Pilar rents bicycles and wants to know what a model can tell her; each story asks a little more of <code>ml</code> than the last. Then four short ones from the sciences and two from marketing (who does an ad move, and whom to spend on). Every number and every figure is drawn from a real run of <code>ml</code> on the data you can download (small files, one CPU, each fit well under a second). The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
+  <div class="toc"><a href="#s1">1 &middot; Baseline</a><a href="#s2">2 &middot; A line</a><a href="#s3">3 &middot; Plans</a><a href="#s4">4 &middot; Yes or no</a><a href="#s5">5 &middot; Non-linear</a><a href="#s6">6 &middot; Cross-validation</a><a href="#s7">7 &middot; Same model</a><a href="#s8">8 &middot; Tumour</a><a href="#s9">9 &middot; Calibration</a><a href="#s10">10 &middot; Pulses</a><a href="#s11">11 &middot; Survey</a><a href="#s12">12 &middot; Uplift</a><a href="#s13">13 &middot; Targeting</a></div>
+  <p class="data">Data: <a href="stories/expression_test.csv">expression_test.csv</a>, <a href="stories/expression_train.csv">expression_train.csv</a>, <a href="stories/pulses.csv">pulses.csv</a>, <a href="stories/rent_gaps.csv">rent_gaps.csv</a>, <a href="stories/rent_test.csv">rent_test.csv</a>, <a href="stories/rent_train.csv">rent_train.csv</a>, <a href="stories/ring_test.csv">ring_test.csv</a>, <a href="stories/ring_train.csv">ring_train.csv</a>, <a href="stories/standards.csv">standards.csv</a>, <a href="stories/town_test.csv">town_test.csv</a>, <a href="stories/town_train.csv">town_train.csv</a>, <a href="stories/unknowns.csv">unknowns.csv</a>, <a href="stories/uplift_ads_train.csv">uplift_ads_train.csv</a>, <a href="stories/uplift_holdout_train.csv">uplift_holdout_train.csv</a>, <a href="stories/uplift_test.csv">uplift_test.csv</a>, <a href="stories/uplift_test_x.csv">uplift_test_x.csv</a>, <a href="stories/visits_test.csv">visits_test.csv</a>, <a href="stories/visits_train.csv">visits_train.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
 </div>
 <section class=" story" id="s1"><div class="wrap"><h2>1 &middot; The number to beat</h2><div class="badge"><span class="lvl">start here</span><span>fit --model constant</span><span>eval</span></div><p class="said">&#8220;I rent bicycles. Can a model predict how many I will rent tomorrow? Before I believe one, what does <em>not</em> knowing anything score?&#8221; &#8212; Pilar</p><p>Every model is judged against the dumbest one: always answer the average of the training days. <code>ml fit --model constant</code> is exactly that, and <code>ml eval</code> scores it on days it has never seen (the last 60 of 240; the first 180 train). The model is a file; the score is a document.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model constant --target rentals --output base.ml rent_train.csv</span>
 {
@@ -1317,6 +1317,57 @@ exit 8
 <text class="lb" x="14" y="140" transform="rotate(-90 14 140)" text-anchor="middle">predicted probability of support</text>
 <line class="zero" x1="70" y1="130" x2="600" y2="130"/>
 <polyline class="ln la" points="70,41.8672 105.333,45.8291 140.667,50.9664 176,57.5217 211.333,65.7177 246.667,75.7077 282,87.5137 317.333,100.966 352.667,115.674 388,131.042 423.333,146.362 458.667,160.931 494,174.18 529.333,185.746 564.667,195.489 600,203.453"/></svg></figure><div class="read"><b>Reading it.</b> Held-out accuracy 0.733; the model is not the point. The ranking is: <code>age</code> carries 0.639 of the importance, income 0.285, schooling 0.0755. The curve is what the model says for a resident of median income (31.4 thousand) and schooling (13 years): support falls from 0.94 at 18 to 0.13 at 80, crossing one half in between. It describes this sample; it does not say that growing older causes anything.</div></div></section>
+<section class="alt story" id="s12"><div class="wrap"><h2>12 &middot; Who does the ad actually move?</h2><div class="badge"><span class="lvl">marketing: uplift, two models and a randomized test</span><span>fit --model logistic</span><span>predict --proba</span></div><p class="said">&#8220;The ad lifts sales by about one point overall. Is it one point for everybody, or a lot for some and nothing &#8212; or worse &#8212; for others?&#8221; &#8212; the same head of growth, a month later</p><p>Because the ad was shown to a random half of the customers (the stories of cancho-stats showed why that matters), the customers who saw it and those who did not are comparable <em>in every respect</em>, and so is a model fitted to each. The simplest way to ask who is moved is to fit two models, one on the customers shown the ad and one on the held-out customers, and to subtract: for a new customer, the predicted chance of buying <em>with</em> the ad minus the predicted chance <em>without</em>. That difference is the predicted uplift. Two fits, one per file:</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model logistic --target bought --output u_holdout.ml \
+    uplift_holdout_train.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;rows&quot;: 7019,
+  &quot;coefficients&quot;: [
+    {&quot;name&quot;: &quot;recency_days&quot;, &quot;value&quot;: &quot;-0.003622167772505198&quot;},
+    {&quot;name&quot;: &quot;orders_12m&quot;, &quot;value&quot;: &quot;0.27040238679337175&quot;}
+  ]
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model logistic --target bought --output u_ads.ml uplift_ads_train.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;rows&quot;: 6981,
+  &quot;coefficients&quot;: [
+    {&quot;name&quot;: &quot;recency_days&quot;, &quot;value&quot;: &quot;-0.0007877475094626317&quot;},
+    {&quot;name&quot;: &quot;orders_12m&quot;, &quot;value&quot;: &quot;0.21614628475463352&quot;}
+  ]
+}</pre></div><p>Then <code>predict --proba</code> with each model on a second, later group of 14000 customers, who were also randomly split, and the uplift of each is the difference of the two probabilities. A prediction is only a claim until it is checked, and here it can be checked against the truth: sort the new customers from the highest predicted uplift (the top fifth) to the lowest (the bottom fifth), cut them into five equal groups, and in each group compare the buyers among those who were shown the ad with those who were not.</p><figure class="fig"><svg viewBox="0 0 640 240" role="img" aria-label="Realized lift of each fifth of the customers"><line class="ax" x1="150" y1="200" x2="600" y2="200"/>
+<line class="ax" x1="137.721" y1="200" x2="137.721" y2="205"/><text class="tk" x="137.721" y="219" text-anchor="middle">-2</text>
+<line class="ax" x1="231.07" y1="200" x2="231.07" y2="205"/><text class="tk" x="231.07" y="219" text-anchor="middle">-1</text>
+<line class="ax" x1="324.42" y1="200" x2="324.42" y2="205"/><text class="tk" x="324.42" y="219" text-anchor="middle">0</text>
+<line class="ax" x1="417.769" y1="200" x2="417.769" y2="205"/><text class="tk" x="417.769" y="219" text-anchor="middle">1</text>
+<line class="ax" x1="511.118" y1="200" x2="511.118" y2="205"/><text class="tk" x="511.118" y="219" text-anchor="middle">2</text>
+<line class="ax" x1="604.467" y1="200" x2="604.467" y2="205"/><text class="tk" x="604.467" y="219" text-anchor="middle">3</text>
+<text class="lb" x="375" y="238" text-anchor="middle">realized lift in each fifth, points of conversion (measured on the held-out test)</text>
+<line class="zero" x1="324.42" y1="10" x2="324.42" y2="196"/>
+<text class="nm" x="142" y="31" text-anchor="end">top fifth</text><rect class="pbar pa" x="324.42" y="16" width="200.901" height="20" rx="3"/><text class="tk" x="531.321" y="31" text-anchor="start">+2.2</text>
+<text class="nm" x="142" y="65" text-anchor="end">second</text><rect class="pbar pa" x="324.42" y="50" width="144.486" height="20" rx="3"/><text class="tk" x="474.905" y="65" text-anchor="start">+1.5</text>
+<text class="nm" x="142" y="99" text-anchor="end">third</text><rect class="pbar pa" x="324.42" y="84" width="125.819" height="20" rx="3"/><text class="tk" x="456.239" y="99" text-anchor="start">+1.3</text>
+<text class="nm" x="142" y="133" text-anchor="end">fourth</text><rect class="pbar pa" x="324.42" y="118" width="134.099" height="20" rx="3"/><text class="tk" x="464.519" y="133" text-anchor="start">+1.4</text>
+<text class="nm" x="142" y="167" text-anchor="end">bottom fifth</text><rect class="pbar bad" x="196.675" y="152" width="127.745" height="20" rx="3"/><text class="tk" x="190.675" y="167" text-anchor="end">-1.4</text></svg></figure><div class="read"><b>Reading it.</b> Over all 14000 test customers the ad lifts conversion by +1.1 points. But in the fifth of customers that the models picked as the most movable it lifts it by +2.2 points, and in the fifth picked as the least movable by -1.4: for them the ad does nothing, or slightly harms. The models learned that from one number per customer, how long ago they last bought and how often they buy. The groups hold 2800 customers each, so each bar carries a margin of about a point or two (the middle ones are not reliably ordered), and that is how a model like this is to be read: the ends, not the middle. The models are linear in the log odds; a forest per arm (<code>--model forest</code>) is the usual next step, and the same test on randomized data is how to know it helped.</div></div></section>
+<section class=" story" id="s13"><div class="wrap"><h2>13 &middot; Spend the budget on the right third</h2><div class="badge"><span class="lvl">marketing: targeting by response or by uplift</span><span>predict --proba</span><span>eval</span></div><p class="said">&#8220;We can only afford to contact a third of them. Take the customers most likely to buy, right?&#8221; &#8212; the finance partner, who wants a number</p><p>There are two natural rankings. <em>Most likely to buy</em> uses the model of the customers shown the ad, and puts the loyal first. <em>Most movable</em> uses the uplift of the previous story. The test group was randomized, so a ranking can be scored honestly: contact the top q percent by that ranking, and the buyers the contact adds are the difference in conversion between those shown the ad and those not, times the size of the group. This is a <em>gain curve</em>: how many extra buyers each plan buys as the contacted share grows from zero to everyone.</p><figure class="fig"><svg viewBox="0 0 640 290" role="img" aria-label="extra buyers"><line class="ax" x1="70" y1="250" x2="600" y2="250"/>
+<line class="ax" x1="70" y1="250" x2="70" y2="255"/><text class="tk" x="70" y="269" text-anchor="middle">0</text>
+<line class="ax" x1="176" y1="250" x2="176" y2="255"/><text class="tk" x="176" y="269" text-anchor="middle">20</text>
+<line class="ax" x1="282" y1="250" x2="282" y2="255"/><text class="tk" x="282" y="269" text-anchor="middle">40</text>
+<line class="ax" x1="388" y1="250" x2="388" y2="255"/><text class="tk" x="388" y="269" text-anchor="middle">60</text>
+<line class="ax" x1="494" y1="250" x2="494" y2="255"/><text class="tk" x="494" y="269" text-anchor="middle">80</text>
+<line class="ax" x1="600" y1="250" x2="600" y2="255"/><text class="tk" x="600" y="269" text-anchor="middle">100</text>
+<text class="lb" x="335" y="288" text-anchor="middle">share of customers contacted, %</text>
+<line class="ax" x1="70" y1="30" x2="70" y2="250"/>
+<line class="zero" x1="70" y1="211.849" x2="600" y2="211.849"/>
+<text class="lb" x="14" y="140" transform="rotate(-90 14 140)" text-anchor="middle">extra buyers</text>
+<text class="tk" x="62" y="215.849" text-anchor="end">0</text>
+<text class="tk" x="62" y="124.939" text-anchor="end">102</text>
+<text class="tk" x="62" y="34.0288" text-anchor="end">204</text>
+<polyline class="ln la" points="70,211.849 96.5,182.941 123,173.392 149.5,168.803 176,158.141 202.5,149.6 229,131.926 255.5,133.968 282,120.793 308.5,107.547 335,102.588 361.5,96.882 388,90.0548 414.5,77.6945 441,63.0785 467.5,60.3747 494,54.1822 520.5,43.8274 547,30 573.5,43.7509 600,80.6934"/>
+<text class="nm" x="84" y="44" style="fill:var(--accent)">ranked by uplift</text>
+<polyline class="ln lg" points="70,211.849 96.5,230 123,220.757 149.5,211.187 176,203.608 202.5,200.092 229,190.715 255.5,180.93 282,176.439 308.5,171.81 335,165.391 361.5,164.814 388,163.337 414.5,147.714 441,132.167 467.5,126.951 494,117.733 520.5,104.314 547,105.358 573.5,89.2895 600,80.6934"/>
+<text class="nm" x="84" y="62" style="fill:var(--good)">ranked by chance to buy</text>
+<polyline class="ln lm" points="70,211.849 96.5,205.291 123,198.733 149.5,192.176 176,185.618 202.5,179.06 229,172.502 255.5,165.945 282,159.387 308.5,152.829 335,146.271 361.5,139.713 388,133.156 414.5,126.598 441,120.04 467.5,113.482 494,106.925 520.5,100.367 547,93.809 573.5,87.2512 600,80.6934"/>
+<text class="nm" x="84" y="80" style="fill:var(--muted)">random order</text></svg></figure><div class="read"><b>Reading it.</b> Contacting everybody buys 147 extra buyers in the 14000 customers of the test. Contacting the top 30% by chance to buy gets 24: not much more than the 44 that contacting 30% at random would. The same 30% chosen by uplift gets 90, and the uplift curve peaks at 204 extra buyers when 90% are contacted, <em>above</em> the total of contacting everyone: the last customers on the list lose the shop sales when they are contacted, and a plan that leaves them out does better than a plan that does not. The curves are estimates on one random split (the stats stories explain how wide such estimates are, and a bootstrap of the gain is one way to put an interval on them), so the ordering is clear and the exact peak is not. <code>ml</code> fitted the models and made the predictions; the arithmetic of the curve is the page&#8217;s, from the printed probabilities and the arm and outcome of each test customer.</div></div></section>
 <footer><div class="wrap">ml &middot; EUPL-1.2 &middot; the data are invented; the runs, the digits and the figures are real &middot; <a href=".">overview</a></div></footer>
 </body>
 </html>

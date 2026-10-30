@@ -122,6 +122,20 @@ def make_town():
     return rows[:450], rows[450:]
 
 
+def make_uplift(seed, n):
+    """customers of a shop, half of them (a coin) shown an ad: days since the last order, orders in the last year, arm, bought. Buying depends on both; the ad helps the lapsed and does not help (here, slightly hurts) the loyal"""
+    r = random.Random(seed)
+    sig = lambda z: 1 / (1 + math.exp(-z))
+    rows = []
+    for _ in range(n):
+        rec = r.randint(1, 365)
+        orders = min(14, int(r.expovariate(1 / 3.5)))
+        arm = r.random() < 0.5
+        z = -3.6 + 0.28 * orders - 0.004 * rec + ((0.3 + 0.004 * (rec - 180) - 0.06 * (orders - 4)) if arm else 0)
+        rows.append((rec, orders, "ads" if arm else "holdout", 1 if r.random() < sig(z) else 0))
+    return rows
+
+
 # ------------------------------------------------------------------------------------------------ real runs
 class Runner:
     def __init__(self, binary, folder):
@@ -143,8 +157,8 @@ class Runner:
             raise SystemExit("gen_stories: `ml %s` was expected to be refused" % " ".join(args))
         return p.returncode, json.loads(p.stdout)["error"]
 
-    def predictions(self, model, file, proba=False):
-        d = self.doc(["predict", "--model-file", model, "--limit", "1000"] + (["--proba"] if proba else []) + [file])
+    def predictions(self, model, file, proba=False, limit=1000):
+        d = self.doc(["predict", "--model-file", model, "--limit", str(limit)] + (["--proba"] if proba else []) + [file])
         return d["rows"]
 
 
@@ -324,11 +338,39 @@ def fig_curve(xs, ys, xlabel, ylabel):
     return svg(290, "\n".join(body), ylabel)
 
 
+def fig_signed(items, unit):
+    """bars that may point left of zero: (label, value)"""
+    lo, hi = min(0, min(v for _, v in items)), max(0, max(v for _, v in items))
+    ax, sx = axis(150, 600, 26 + 34 * len(items) + 4, lo - 0.5, hi + 0.8, [t for t in range(int(math.floor(lo)), int(math.ceil(hi)) + 1)], unit, fmt=lambda v: "%d" % v)
+    body = [ax, '<line class="zero" x1="%g" y1="10" x2="%g" y2="%g"/>' % (sx(0), sx(0), 26 + 34 * len(items))]
+    for k, (name, v) in enumerate(items):
+        y = 26 + k * 34
+        x0, x1 = sorted((sx(0), sx(v)))
+        body.append('<text class="nm" x="142" y="%g" text-anchor="end">%s</text><rect class="pbar %s" x="%g" y="%g" width="%g" height="20" rx="3"/><text class="tk" x="%g" y="%g" text-anchor="%s">%+.1f</text>' % (y + 5, esc(name), "pa" if v >= 0 else "bad", x0, y - 10, max(x1 - x0, 1), (x1 + 6) if v >= 0 else (x0 - 6), y + 5, "start" if v >= 0 else "end", v))
+    return svg(26 + 34 * len(items) + 44, "\n".join(body), "Realized lift of each fifth of the customers")
+
+
+def fig_gain(curves, xlabel, ylabel):
+    """cumulative incremental buyers when contacting the top x% by each ranking; curves: (label, class, points) with points (x%, y)"""
+    ymax = max(y for _, _, pts in curves for _, y in pts)
+    ymin = min(0, min(y for _, _, pts in curves for _, y in pts))
+    ax, sx = axis(70, 600, 250, 0, 100, [0, 20, 40, 60, 80, 100], xlabel, fmt=lambda v: "%d" % v)
+    sy = lambda v: 230 - (v - ymin) / (ymax - ymin) * 200
+    body = [ax, '<line class="ax" x1="70" y1="30" x2="70" y2="250"/>', '<line class="zero" x1="70" y1="%g" x2="600" y2="%g"/>' % (sy(0), sy(0))]
+    body.append('<text class="lb" x="14" y="140" transform="rotate(-90 14 140)" text-anchor="middle">%s</text>' % esc(ylabel))
+    for t in sorted({0, round(ymax / 2), round(ymax)}):
+        body.append('<text class="tk" x="62" y="%g" text-anchor="end">%d</text>' % (sy(t) + 4, t))
+    for k, (label, cls, pts) in enumerate(curves):
+        body.append('<polyline class="ln %s" points="%s"/>' % (cls, " ".join("%g,%g" % (sx(x), sy(y)) for x, y in pts)))
+        body.append('<text class="nm" x="%g" y="%g" style="fill:var(--%s)">%s</text>' % (84, 44 + k * 18, "accent" if cls == "la" else ("good" if cls == "lg" else "muted"), esc(label)))
+    return svg(290, "\n".join(body), ylabel)
+
+
 EXTRA_CSS = """
 .fig .pbar.pa { fill: var(--accent); } .fig .pbar.pb { fill: var(--good); } .fig .pbar.bad { fill: var(--bad); }
 .fig .fbox { fill: var(--surface); stroke-width: 2; } .fig .fbox.q { stroke: var(--accent); } .fig .fbox.r { stroke: var(--bad); } .fig .fbox.ok { stroke: var(--good); }
 .fig .arrow { stroke: var(--muted); stroke-width: 1.8; marker-end: url(#ar); }
-.fig .ln { fill: none; stroke-width: 2.5; } .fig .ln.la { stroke: var(--accent); }
+.fig .ln { fill: none; stroke-width: 2.5; } .fig .ln.la { stroke: var(--accent); } .fig .ln.lg { stroke: var(--good); } .fig .ln.lm { stroke: var(--muted); stroke-dasharray: 5 4; }
 .fig .cm.neg { fill: var(--good); } .fig .cm.pos { fill: var(--good); } .fig .cm.bad { fill: var(--bad); }
 .fig .digits { fill: var(--fg); font: 600 22px var(--mono); }
 .fig .mn { fill: var(--warn); } .fig .md { stroke: var(--fg); stroke-width: 3; }
@@ -604,13 +646,78 @@ def build(binary):
              term(shown(a11c), pretty({"importance": {"columns": [{k: c[k] for k in ("column", "standardised", "importance", "rank")} for c in d11c["importance"]["columns"]]}})),
              fig_curve(grid_ages, curve, "age, years", "predicted probability of support"),
              '<div class="read"><b>Reading it.</b> Held-out accuracy %s; the model is not the point. The ranking is: <code>age</code> carries %s of the importance, income %s, schooling %s. The curve is what the model says for a resident of median income (%s thousand) and schooling (%s years): support falls from %s at 18 to %s at 80, crossing one half in between. It describes this sample; it does not say that growing older causes anything.</div>' % (num(metric(d11b, "accuracy"), 3), num(imp11["age"], 3), num(imp11["income_k"], 3), num(imp11["schooling"], 3), med_inc, med_edu, num(curve[0], 2), num(curve[-1], 2))]))
+        # 12 marketing: uplift --------------------------------------------------------------------------------
+        up_tr, up_te = make_uplift(61, 14000), make_uplift(62, 14000)
+        uh = ["recency_days", "orders_12m", "bought"]
+        for nm, text in (("uplift_holdout_train.csv", csv_of(uh, [(a, b, d) for a, b, c, d in up_tr if c == "holdout"])), ("uplift_ads_train.csv", csv_of(uh, [(a, b, d) for a, b, c, d in up_tr if c == "ads"])),
+                         ("uplift_test.csv", csv_of(["recency_days", "orders_12m", "arm", "bought"], up_te)), ("uplift_test_x.csv", csv_of(["recency_days", "orders_12m"], [(a, b) for a, b, c, d in up_te]))):
+            files[nm] = text
+            (folder / nm).write_text(text)
+        u1 = ["fit", "--model", "logistic", "--target", "bought", "--output", "u_holdout.ml", "uplift_holdout_train.csv"]
+        u2 = ["fit", "--model", "logistic", "--target", "bought", "--output", "u_ads.ml", "uplift_ads_train.csv"]
+        du1, du2 = R.doc(u1), R.doc(u2)
+        p0 = [float(r_[1]) for r_ in R.predictions("u_holdout.ml", "uplift_test_x.csv", proba=True, limit=20000)]
+        p1 = [float(r_[1]) for r_ in R.predictions("u_ads.ml", "uplift_test_x.csv", proba=True, limit=20000)]
+        claim(len(p0) == len(up_te) == len(p1), "story 12: one probability per test customer from each model")
+        upl = [b - a for a, b in zip(p0, p1)]
+
+        def fifths(score):
+            idx = sorted(range(len(up_te)), key=lambda i: -score[i])
+            out = []
+            for k in range(5):
+                grp = idx[k * len(idx) // 5:(k + 1) * len(idx) // 5]
+                t = [up_te[i][3] for i in grp if up_te[i][2] == "ads"]
+                c = [up_te[i][3] for i in grp if up_te[i][2] == "holdout"]
+                out.append(100 * (sum(t) / len(t) - sum(c) / len(c)))
+            return out
+        fu, fr = fifths(upl), fifths(p1)
+        claim(fu[0] > 1.5 and fu[0] > fu[2] and fu[4] < 0 and fu[4] < fu[0] - 3, "story 12: the fifth ranked highest by predicted uplift has a clearly positive realized lift and the lowest one a negative lift")
+        claim(max(fr) - min(fr) < 0.7 * (max(fu) - min(fu)), "story 12: ranking by the response model spreads the realized lift less than ranking by uplift")
+        te_t = [r_[3] for r_ in up_te if r_[2] == "ads"]
+        te_c = [r_[3] for r_ in up_te if r_[2] == "holdout"]
+        ate = 100 * (sum(te_t) / len(te_t) - sum(te_c) / len(te_c))
+        S.append(story(12, "Who does the ad actually move?", "marketing: uplift, two models and a randomized test", ["fit --model logistic", "predict --proba"],
+            "&#8220;The ad lifts sales by about one point overall. Is it one point for everybody, or a lot for some and nothing &#8212; or worse &#8212; for others?&#8221; &#8212; the same head of growth, a month later",
+            ["<p>Because the ad was shown to a random half of the customers (the stories of cancho-stats showed why that matters), the customers who saw it and those who did not are comparable <em>in every respect</em>, and so is a model fitted to each. The simplest way to ask who is moved is to fit two models, one on the customers shown the ad and one on the held-out customers, and to subtract: for a new customer, the predicted chance of buying <em>with</em> the ad minus the predicted chance <em>without</em>. That difference is the predicted uplift. Two fits, one per file:</p>",
+             term(shown(u1), pretty({"model": du1["model"], "rows": du1["rows"], "coefficients": du1["summary"].get("coefficients")})),
+             term(shown(u2), pretty({"model": du2["model"], "rows": du2["rows"], "coefficients": du2["summary"].get("coefficients")})),
+             "<p>Then <code>predict --proba</code> with each model on a second, later group of %d customers, who were also randomly split, and the uplift of each is the difference of the two probabilities. A prediction is only a claim until it is checked, and here it can be checked against the truth: sort the new customers from the highest predicted uplift (the top fifth) to the lowest (the bottom fifth), cut them into five equal groups, and in each group compare the buyers among those who were shown the ad with those who were not.</p>" % len(up_te),
+             fig_signed([("top fifth", fu[0]), ("second", fu[1]), ("third", fu[2]), ("fourth", fu[3]), ("bottom fifth", fu[4])], "realized lift in each fifth, points of conversion (measured on the held-out test)"),
+             '<div class="read"><b>Reading it.</b> Over all %d test customers the ad lifts conversion by %+.1f points. But in the fifth of customers that the models picked as the most movable it lifts it by %+.1f points, and in the fifth picked as the least movable by %+.1f: for them the ad does nothing, or slightly harms. The models learned that from one number per customer, how long ago they last bought and how often they buy. The groups hold %d customers each, so each bar carries a margin of about a point or two (the middle ones are not reliably ordered), and that is how a model like this is to be read: the ends, not the middle. The models are linear in the log odds; a forest per arm (<code>--model forest</code>) is the usual next step, and the same test on randomized data is how to know it helped.</div>' % (len(up_te), ate, fu[0], fu[4], len(up_te) // 5)]))
+        # 13 marketing: who to spend on ------------------------------------------------------------------------
+        def gain(score):
+            idx = sorted(range(len(up_te)), key=lambda i: -score[i])
+            pts = []
+            tt = [r_ for r_ in up_te]
+            nt = sum(1 for r_ in tt if r_[2] == "ads")
+            nc = len(tt) - nt
+            for q in range(0, 101, 5):
+                grp = idx[:q * len(idx) // 100]
+                bt = sum(up_te[i][3] for i in grp if up_te[i][2] == "ads")
+                bc = sum(up_te[i][3] for i in grp if up_te[i][2] == "holdout")
+                ng = len(grp)
+                at = sum(1 for i in grp if up_te[i][2] == "ads")
+                ac = ng - at
+                pts.append((q, (bt / at - bc / ac) * ng if at and ac else 0.0))
+            return pts
+        gu, gr = gain(upl), gain(p1)
+        full = gu[-1][1]
+        rnd = [(q, full * q / 100) for q in range(0, 101, 5)]
+        at30 = lambda pts: dict(pts)[30]
+        claim(abs(gu[-1][1] - gr[-1][1]) < 1e-9 and at30(gu) > at30(gr) and at30(gu) > at30(rnd) and max(y for _, y in gu) > full * 1.2, "story 13: both rankings end at the same total; at 30% the uplift ranking has more incremental buyers than the response ranking and than chance; the uplift curve rises above the total (some contacts lose sales)")
+        best = max(gu, key=lambda p: p[1])
+        S.append(story(13, "Spend the budget on the right third", "marketing: targeting by response or by uplift", ["predict --proba", "eval"],
+            "&#8220;We can only afford to contact a third of them. Take the customers most likely to buy, right?&#8221; &#8212; the finance partner, who wants a number",
+            ["<p>There are two natural rankings. <em>Most likely to buy</em> uses the model of the customers shown the ad, and puts the loyal first. <em>Most movable</em> uses the uplift of the previous story. The test group was randomized, so a ranking can be scored honestly: contact the top q percent by that ranking, and the buyers the contact adds are the difference in conversion between those shown the ad and those not, times the size of the group. This is a <em>gain curve</em>: how many extra buyers each plan buys as the contacted share grows from zero to everyone.</p>",
+             fig_gain([("ranked by uplift", "la", gu), ("ranked by chance to buy", "lg", gr), ("random order", "lm", rnd)], "share of customers contacted, %", "extra buyers"),
+             '<div class="read"><b>Reading it.</b> Contacting everybody buys %.0f extra buyers in the %d customers of the test. Contacting the top 30%% by chance to buy gets %.0f: not much more than the %.0f that contacting 30%% at random would. The same 30%% chosen by uplift gets %.0f, and the uplift curve peaks at %.0f extra buyers when %d%% are contacted, <em>above</em> the total of contacting everyone: the last customers on the list lose the shop sales when they are contacted, and a plan that leaves them out does better than a plan that does not. The curves are estimates on one random split (the stats stories explain how wide such estimates are, and a bootstrap of the gain is one way to put an interval on them), so the ordering is clear and the exact peak is not. <code>ml</code> fitted the models and made the predictions; the arithmetic of the curve is the page&#8217;s, from the printed probabilities and the arm and outcome of each test customer.</div>' % (full, len(up_te), at30(gr), at30(rnd), at30(gu), best[1], best[0])]))
     return S, files
 
 
 def page(sections):
     css = base_css("#6d3fc0", "#b79bf5", "#ffffff", "#150b2b") + STORY_CSS + EXTRA_CSS
-    nav = " ".join('<a class="opt" href="#s%d">%d</a>' % (i, i) for i in range(1, 12))
-    names = ("Baseline", "A line", "Plans", "Yes or no", "Non-linear", "Cross-validation", "Same model", "Tumour", "Calibration", "Pulses", "Survey")
+    nav = " ".join('<a class="opt" href="#s%d">%d</a>' % (i, i) for i in range(1, 14))
+    names = ("Baseline", "A line", "Plans", "Yes or no", "Non-linear", "Cross-validation", "Same model", "Tumour", "Calibration", "Pulses", "Survey", "Uplift", "Targeting")
     toc = "".join('<a href="#s%d">%d &middot; %s</a>' % (i, i, esc(nm)) for i, nm in enumerate(names, 1))
     data = ", ".join('<a href="stories/%s">%s</a>' % (n, n) for n in sorted(FILES_LIST))
     return """<!doctype html>
@@ -618,8 +725,8 @@ def page(sections):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ml: eleven stories, from a baseline to the lab</title>
-<meta name="description" content="Eleven end-to-end examples of the ml command, in increasing complexity: bicycle hire, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
+<title>ml: thirteen stories, from a baseline to the lab</title>
+<meta name="description" content="Thirteen end-to-end examples of the ml command, in increasing complexity: bicycle hire, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
 <meta name="color-scheme" content="light dark">
 <style>%s</style>
 </head>
@@ -629,8 +736,8 @@ def page(sections):
   <nav>%s<a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a></nav>
 </div></header>
 <div class="wrap hero small">
-  <h1>Eleven stories, from a baseline to the lab.</h1>
-  <p class="sub">Pilar rents bicycles and wants to know what a model can tell her; each story asks a little more of <code>ml</code> than the last. Then four short ones from the sciences. Every number and every figure is drawn from a real run of <code>ml</code> on the data you can download (small files, one CPU, each fit well under a second). The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
+  <h1>Thirteen stories, from a baseline to the lab.</h1>
+  <p class="sub">Pilar rents bicycles and wants to know what a model can tell her; each story asks a little more of <code>ml</code> than the last. Then four short ones from the sciences and two from marketing (who does an ad move, and whom to spend on). Every number and every figure is drawn from a real run of <code>ml</code> on the data you can download (small files, one CPU, each fit well under a second). The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
   <div class="toc">%s</div>
   <p class="data">Data: %s. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
 </div>
