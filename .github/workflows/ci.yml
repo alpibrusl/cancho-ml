@@ -125,6 +125,10 @@ jobs:
           time cancho build --bin serve-check
           time cancho build --bin jsonl-check
 
+      # docs/stories.html is generated from real runs of the built ml on the data of docs/stories/ (small files, one CPU); the answers are the same bytes everywhere, so a stale page is a wrong page.
+      - name: The stories page is what ml prints
+        run: python3 scripts/gen_stories.py --check
+
       - name: The four binaries are built from the same sources
         run: |
           python3 scripts/check_bins.py
