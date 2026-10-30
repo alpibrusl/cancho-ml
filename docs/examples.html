@@ -39,7 +39,7 @@
 <main id="main" class="wrap">
 <div class="pagehead">
   <h1>Worked examples</h1>
-  <p class="lead">Four classic datasets, solved by the real <code>ml</code> binary and checked against scikit-learn on the same two files.</p>
+  <p class="lead">Four classic datasets, solved by the real <code>ml</code> binary and checked against scikit-learn on the same two files. For thirteen stories on invented data instead, from a bicycle shop to a marketing campaign, see <a href="stories.html">the stories</a>.</p>
   <div class="notice">
     <p><b>What this is.</b> For each dataset the same <code>train.csv</code> and <code>test.csv</code> go to <code>ml</code> and to scikit-learn. The <code>ml</code> commands and what they print are on this page exactly as run, and the page is regenerated from the built binary by <code>scripts/check_docs.sh</code>, which fails if a character drifts. The scikit-learn column is <b>not computed by that check</b>: it is read from <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/examples/reference.json">docs/examples/reference.json</a>, which <code>scripts/examples_data.py</code> wrote once, and each table says with which version.</p>
     <p><b>What the comparison is worth.</b> What was compared, which scikit-learn parameters correspond to <code>--l2</code>, and the tolerances, with the reason for each, were written <b>before</b> any example was run: <a href="https://github.com/alpibrusl/cancho-ml/blob/main/docs/examples.md">docs/examples.md</a>. A row outside its tolerance says <b>differs</b> and the cause is written next to it. These are teaching datasets: nothing here says anything about medicine, botany or chemistry, and nothing about how fast <code>ml</code> is.</p>
