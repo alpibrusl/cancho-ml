@@ -1,0 +1,1373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ml: thirteen stories, from a baseline to the lab</title>
+<meta name="description" content="Thirteen end-to-end examples of the ml command, in increasing complexity: bicycle hire, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
+<meta name="color-scheme" content="light dark">
+<style>
+:root {
+  --bg: #fbfcfd; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4;
+  --accent: #6d3fc0; --accent-fg: #ffffff; --good: #0f7b5f; --bad: #b42d27; --warn: #92400e;
+  --term-bg: #0f1519; --term-fg: #d6e2e6; --term-dim: #7d8f96; --term-good: #5fd3a6; --term-bad: #ff8a80; --term-acc: #8ec0ff;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0b0f14; --fg: #e7ebec; --muted: #9aa8ae; --line: #212a2d; --surface: #131a1c; --soft: #172022;
+    --accent: #b79bf5; --accent-fg: #150b2b; --good: #4fd1a5; --bad: #ff7b73; --warn: #f3c77a; --term-bg: #0a1013; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--font); }
+a { color: var(--accent); text-underline-offset: .15em; }
+.wrap { width: 100%; max-width: 64rem; margin: 0 auto; padding: 0 16px; }
+header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
+.brand { font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; }
+nav { display: flex; gap: 1.2rem; margin-left: auto; }
+nav a { color: var(--muted); text-decoration: none; font-size: .93rem; }
+nav a:hover { color: var(--fg); }
+@media (max-width: 40rem) { nav a.opt { display: none; } }
+.hero { padding: 3.5rem 0 2rem; text-align: center; }
+.hero h1 { font-size: clamp(2rem, 6vw, 3.4rem); line-height: 1.1; margin: 0 auto 1rem; letter-spacing: -.03em; max-width: 18ch; }
+.hero .sub { font-size: 1.2rem; color: var(--muted); max-width: 36rem; margin: 0 auto 1.6rem; }
+.cta { display: flex; gap: .8rem; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-block; padding: .65rem 1.2rem; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--line); color: var(--fg); background: var(--surface); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+section { margin: 0; padding: 3rem 0; }
+section.alt { background: var(--soft); }
+h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); margin: 0 0 .6rem; letter-spacing: -.02em; text-align: center; }
+.lead { text-align: center; color: var(--muted); max-width: 38rem; margin: 0 auto 2rem; }
+.term { background: var(--term-bg); color: var(--term-fg); border-radius: 12px; border: 1px solid var(--line); max-width: 46rem; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,.18); overflow: hidden; }
+.term .bar { display: flex; align-items: center; gap: .4rem; padding: .55rem .8rem; border-bottom: 1px solid #1f2a30; font: .78rem var(--mono); color: var(--term-dim); }
+.term .bar i { width: .7rem; height: .7rem; border-radius: 50%; background: #2c3a41; display: inline-block; }
+.term .bar button { margin-left: auto; font: .78rem var(--mono); color: var(--term-fg); background: #1b262c; border: 1px solid #2c3a41; border-radius: 6px; padding: .2rem .6rem; cursor: pointer; }
+.term pre { margin: 0; padding: 1rem 1.1rem; min-height: 17.5rem; overflow-x: auto; font: .85rem/1.55 var(--mono); white-space: pre-wrap; word-break: break-all; }
+.term .g { color: var(--term-good); } .term .b { color: var(--term-bad); } .term .d { color: var(--term-dim); } .term .a { color: var(--term-acc); }
+code { font: .9em var(--mono); }
+footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(--muted); font-size: .9rem; text-align: center; }
+
+.hero.small { padding: 3rem 0 1rem; }
+.story { padding: 3rem 0; }
+.story .wrap { max-width: 50rem; }
+.story h2 { text-align: left; margin-bottom: .3rem; }
+.badge { display: inline-flex; gap: .4rem; flex-wrap: wrap; margin: 0 0 1rem; }
+.badge span { font: .78rem var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: .1rem .6rem; background: var(--surface); }
+.badge .lvl { color: var(--accent); border-color: var(--accent); }
+.said { border-left: 3px solid var(--accent); padding: .2rem 0 .2rem 1rem; margin: 1rem 0; color: var(--muted); font-style: italic; }
+.story .term { max-width: none; margin: 1rem 0; box-shadow: none; }
+.story .term pre { min-height: 0; white-space: pre; word-break: normal; font-size: .8rem; }
+.story pre .cm { color: var(--term-acc); }
+.read { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.2rem; margin: 1rem 0; }
+.read b { color: var(--accent); }
+figure.fig { margin: 1rem 0; }
+figure.fig svg { width: 100%; height: auto; display: block; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.fig .ax { stroke: var(--muted); stroke-width: 1; }
+.fig .tk { fill: var(--muted); font: 12px var(--font); }
+.fig .lb { fill: var(--muted); font: 13px var(--font); }
+.fig .nm { fill: var(--fg); font: 600 13px var(--font); }
+.fig .wh { stroke-width: 2; } .fig .wh.pa, .fig .bx.pa { stroke: var(--accent); } .fig .wh.pb, .fig .bx.pb { stroke: var(--good); }
+.fig .bx { fill: var(--soft); stroke-width: 2; }
+.fig .md { stroke: var(--fg); stroke-width: 3; }
+.fig .mn { fill: var(--warn); }
+.fig .zero { stroke: var(--bad); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.fig .ciline { stroke: var(--accent); stroke-width: 3; }
+.fig .pt { fill: var(--accent); }
+.fig .band { stroke: var(--line); stroke-width: 1; }
+.fig .dot.pa { fill: var(--accent); opacity: .8; } .fig .dot.pb { fill: var(--good); opacity: .8; }
+.fig .ring { fill: none; stroke: var(--bad); stroke-width: 2; }
+.fig .pbar.pa { fill: var(--accent); } .fig .pbar.pb { fill: var(--good); } .fig .pbar.warn { fill: var(--warn); }
+.fig .link { stroke: var(--muted); stroke-width: 1.5; }
+.fig .raw { fill: var(--surface); stroke: var(--accent); stroke-width: 2.5; } .fig .adj { fill: var(--accent); }
+.fig .cell { fill: var(--soft); stroke: var(--line); } .fig .cell.hit { fill: var(--bad); stroke: var(--bad); }
+.fig .seg { fill: var(--good); } .fig .seg.bad { fill: var(--bad); }
+.fig .hash { fill: var(--soft); stroke: var(--good); stroke-width: 1.5; }
+.fig .hx { fill: var(--fg); font: 12px var(--mono); }
+.fig .bandci { fill: var(--accent); opacity: .18; }
+.fig .ecdfa { fill: none; stroke: var(--accent); stroke-width: 2.5; } .fig .ecdfb { fill: none; stroke: var(--good); stroke-width: 2.5; }
+.fig .gap { stroke: var(--bad); stroke-width: 3; }
+.fig .lk1 { fill: #b42d27; } .fig .lk2 { fill: #d97a52; } .fig .lk3 { fill: #c9c9c9; } .fig .lk4 { fill: #5a9bd4; } .fig .lk5 { fill: #1f5fa6; }
+.fig .lk { fill: #fff; font: 600 12px var(--font); }
+.part { padding: 2.5rem 0 .5rem; text-align: center; border-top: 1px solid var(--line); }
+.part h2 { text-align: center; }
+.toc { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: center; margin-top: 1.2rem; }
+.toc a { text-decoration: none; border: 1px solid var(--line); border-radius: 99px; padding: .25rem .9rem; background: var(--surface); font-size: .9rem; }
+.data { color: var(--muted); font-size: .9rem; text-align: center; margin-top: 1rem; }
+
+.fig .pbar.pa { fill: var(--accent); } .fig .pbar.pb { fill: var(--good); } .fig .pbar.bad { fill: var(--bad); }
+.fig .fbox { fill: var(--surface); stroke-width: 2; } .fig .fbox.q { stroke: var(--accent); } .fig .fbox.r { stroke: var(--bad); } .fig .fbox.ok { stroke: var(--good); }
+.fig .arrow { stroke: var(--muted); stroke-width: 1.8; marker-end: url(#ar); }
+.fig .ln { fill: none; stroke-width: 2.5; } .fig .ln.la { stroke: var(--accent); } .fig .ln.lg { stroke: var(--good); } .fig .ln.lm { stroke: var(--muted); stroke-dasharray: 5 4; }
+.fig .cm.neg { fill: var(--good); } .fig .cm.pos { fill: var(--good); } .fig .cm.bad { fill: var(--bad); }
+.fig .digits { fill: var(--fg); font: 600 22px var(--mono); }
+.fig .mn { fill: var(--warn); } .fig .md { stroke: var(--fg); stroke-width: 3; }
+.fig .dot.pa { fill: var(--accent); opacity: .8; } .fig .dot.pb { fill: var(--bad); opacity: .8; } .fig .dot.pg { fill: var(--good); opacity: .8; }
+.fig .ciline { stroke: var(--accent); stroke-width: 3; }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href=".">ml</a>
+  <nav><a class="opt" href="#s1">1</a> <a class="opt" href="#s2">2</a> <a class="opt" href="#s3">3</a> <a class="opt" href="#s4">4</a> <a class="opt" href="#s5">5</a> <a class="opt" href="#s6">6</a> <a class="opt" href="#s7">7</a> <a class="opt" href="#s8">8</a> <a class="opt" href="#s9">9</a> <a class="opt" href="#s10">10</a> <a class="opt" href="#s11">11</a> <a class="opt" href="#s12">12</a> <a class="opt" href="#s13">13</a><a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-ml">GitHub</a></nav>
+</div></header>
+<div class="wrap hero small">
+  <h1>Thirteen stories, from a baseline to the lab.</h1>
+  <p class="sub">Pilar rents bicycles and wants to know what a model can tell her; each story asks a little more of <code>ml</code> than the last. Then four short ones from the sciences and two from marketing (who does an ad move, and whom to spend on). Every number and every figure is drawn from a real run of <code>ml</code> on the data you can download (small files, one CPU, each fit well under a second). The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
+  <div class="toc"><a href="#s1">1 &middot; Baseline</a><a href="#s2">2 &middot; A line</a><a href="#s3">3 &middot; Plans</a><a href="#s4">4 &middot; Yes or no</a><a href="#s5">5 &middot; Non-linear</a><a href="#s6">6 &middot; Cross-validation</a><a href="#s7">7 &middot; Same model</a><a href="#s8">8 &middot; Tumour</a><a href="#s9">9 &middot; Calibration</a><a href="#s10">10 &middot; Pulses</a><a href="#s11">11 &middot; Survey</a><a href="#s12">12 &middot; Uplift</a><a href="#s13">13 &middot; Targeting</a></div>
+  <p class="data">Data: <a href="stories/expression_test.csv">expression_test.csv</a>, <a href="stories/expression_train.csv">expression_train.csv</a>, <a href="stories/pulses.csv">pulses.csv</a>, <a href="stories/rent_gaps.csv">rent_gaps.csv</a>, <a href="stories/rent_test.csv">rent_test.csv</a>, <a href="stories/rent_train.csv">rent_train.csv</a>, <a href="stories/ring_test.csv">ring_test.csv</a>, <a href="stories/ring_train.csv">ring_train.csv</a>, <a href="stories/standards.csv">standards.csv</a>, <a href="stories/town_test.csv">town_test.csv</a>, <a href="stories/town_train.csv">town_train.csv</a>, <a href="stories/unknowns.csv">unknowns.csv</a>, <a href="stories/visits_test.csv">visits_test.csv</a>, <a href="stories/visits_train.csv">visits_train.csv</a>. The four files of stories 12 and 13 (<code>uplift_*.csv</code>, 14,000 customers a file at most) are not committed: <code>python3 scripts/gen_stories.py --data-out DIR</code> writes them, from the same seeds. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
+</div>
+<section class=" story" id="s1"><div class="wrap"><h2>1 &middot; The number to beat</h2><div class="badge"><span class="lvl">start here</span><span>fit --model constant</span><span>eval</span></div><p class="said">&#8220;I rent bicycles. Can a model predict how many I will rent tomorrow? Before I believe one, what does <em>not</em> knowing anything score?&#8221; &#8212; Pilar</p><p>Every model is judged against the dumbest one: always answer the average of the training days. <code>ml fit --model constant</code> is exactly that, and <code>ml eval</code> scores it on days it has never seen (the last 60 of 240; the first 180 train). The model is a file; the score is a document.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model constant --target rentals --output base.ml rent_train.csv</span>
+{
+  &quot;model&quot;: &quot;constant&quot;,
+  &quot;task&quot;: &quot;regression&quot;,
+  &quot;rows&quot;: 180,
+  &quot;columns&quot;: 5,
+  &quot;target&quot;: &quot;rentals&quot;,
+  &quot;sha256&quot;: &quot;57008c9388baa886b106a43586680dd8c783315474d7a5640c68d7242eb39de0&quot;,
+  &quot;written&quot;: true,
+  &quot;summary&quot;: {&quot;mean&quot;: &quot;90.455556&quot;}
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file base.ml rent_test.csv</span>
+{
+  &quot;model&quot;: &quot;constant&quot;,
+  &quot;task&quot;: &quot;regression&quot;,
+  &quot;rows&quot;: 60,
+  &quot;on&quot;: &quot;other&quot;,
+  &quot;metrics&quot;: {
+    &quot;rmse&quot;: &quot;31.883749&quot;,
+    &quot;sse&quot;: &quot;60994.407212148160&quot;,
+    &quot;prediction&quot;: &quot;90.455556&quot;
+  }
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 66" role="img" aria-label="Bars"><text class="nm" x="122" y="31" text-anchor="end">always the mean</text><rect class="pbar pa" x="130" y="16" width="390" height="20" rx="3"/><text class="tk" x="528" y="31">31.88 bicycles</text></svg></figure><div class="read"><b>Reading it.</b> The mean of the 180 training days is 90.455556 rentals, and answering it every day is wrong by 31.88 bicycles on a typical held-out day (the root-mean-square error). That is the line a real model has to get under, in the same units, on the same days.</div></div></section>
+<section class="alt story" id="s2"><div class="wrap"><h2>2 &middot; A line through the days</h2><div class="badge"><span class="lvl">a first real model</span><span>fit --model linear</span><span>predict</span><span>eval</span></div><p class="said">&#8220;Warm, dry weekdays are busy; wet holidays are not. Can it learn that?&#8221;</p><p>A linear model finds one weight per column. The fit prints them, with the intercept; <code>ml predict</code> applies the stored model to the held-out days and <code>ml eval</code> scores it. The arithmetic of the fit is a normal equation solved exactly where a sum decides the result, and the file records the SHA-256 of what it learnt.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model linear --target rentals --output lin.ml rent_train.csv</span>
+{
+  &quot;model&quot;: &quot;linear&quot;,
+  &quot;rows&quot;: 180,
+  &quot;summary&quot;: {
+    &quot;features&quot;: 4,
+    &quot;coefficients&quot;: [
+      {&quot;name&quot;: &quot;temp_c&quot;, &quot;value&quot;: &quot;1.7872824135846954&quot;},
+      {&quot;name&quot;: &quot;humidity&quot;, &quot;value&quot;: &quot;-0.476190526587975&quot;},
+      {&quot;name&quot;: &quot;weekday&quot;, &quot;value&quot;: &quot;24.28973156573539&quot;},
+      {&quot;name&quot;: &quot;holiday&quot;, &quot;value&quot;: &quot;-37.60735888330752&quot;}
+    ],
+    &quot;intercept&quot;: &quot;80.45186045933586&quot;
+  }
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file lin.ml rent_test.csv</span>
+{
+  &quot;model&quot;: &quot;linear&quot;,
+  &quot;task&quot;: &quot;regression&quot;,
+  &quot;rows&quot;: 60,
+  &quot;on&quot;: &quot;other&quot;,
+  &quot;metrics&quot;: {
+    &quot;rmse&quot;: &quot;19.929268329524373&quot;,
+    &quot;mae&quot;: &quot;16.67219959108621&quot;,
+    &quot;r2&quot;: &quot;0.6040792227357508&quot;
+  },
+  &quot;unknown_categories&quot;: 0,
+  &quot;out_of_range&quot;: {&quot;cells&quot;: 0, &quot;rows&quot;: 0, &quot;columns&quot;: []}
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 320" role="img" aria-label="Predicted against actual rentals for two models"><line class="ax" x1="40" y1="270" x2="300" y2="270"/>
+<line class="ax" x1="61.6667" y1="270" x2="61.6667" y2="275"/><text class="tk" x="61.6667" y="289" text-anchor="middle">0</text>
+<line class="ax" x1="115.833" y1="270" x2="115.833" y2="275"/><text class="tk" x="115.833" y="289" text-anchor="middle">50</text>
+<line class="ax" x1="170" y1="270" x2="170" y2="275"/><text class="tk" x="170" y="289" text-anchor="middle">100</text>
+<line class="ax" x1="224.167" y1="270" x2="224.167" y2="275"/><text class="tk" x="224.167" y="289" text-anchor="middle">150</text>
+<line class="ax" x1="278.333" y1="270" x2="278.333" y2="275"/><text class="tk" x="278.333" y="289" text-anchor="middle">200</text>
+<text class="lb" x="170" y="308" text-anchor="middle">the mean: every day the same</text>
+<line class="ax" x1="40" y1="20" x2="40" y2="270"/>
+<line class="zero" x1="40" y1="250" x2="300" y2="20"/>
+<circle class="dot pa" cx="159.66" cy="87.0833" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="118.708" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="127.333" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="117.75" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="161.833" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="103.375" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="127.333" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="137.875" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="132.125" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="119.667" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="130.208" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="118.708" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="165.667" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="135.958" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="75.5833" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="97.625" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="91.875" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="161.833" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="162.792" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="155.125" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="120.625" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="167.583" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="196.333" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="137.875" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="189.625" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="95.7083" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="177.167" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="147.458" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="194.417" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="165.667" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="160.875" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="164.708" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="119.667" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="151.292" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="171.417" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="173.333" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="146.5" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="145.542" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="162.792" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="160.875" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="162.792" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="151.292" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="212.625" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="113.917" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="113.917" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="119.667" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="100.5" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="128.292" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="195.375" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="146.5" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="144.583" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="122.542" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="123.5" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="79.4167" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="104.333" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="176.208" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="151.292" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="127.333" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="137.875" r="3.4"/>
+<circle class="dot pa" cx="159.66" cy="148.417" r="3.4"/>
+<line class="ax" x1="360" y1="270" x2="620" y2="270"/>
+<line class="ax" x1="381.667" y1="270" x2="381.667" y2="275"/><text class="tk" x="381.667" y="289" text-anchor="middle">0</text>
+<line class="ax" x1="435.833" y1="270" x2="435.833" y2="275"/><text class="tk" x="435.833" y="289" text-anchor="middle">50</text>
+<line class="ax" x1="490" y1="270" x2="490" y2="275"/><text class="tk" x="490" y="289" text-anchor="middle">100</text>
+<line class="ax" x1="544.167" y1="270" x2="544.167" y2="275"/><text class="tk" x="544.167" y="289" text-anchor="middle">150</text>
+<line class="ax" x1="598.333" y1="270" x2="598.333" y2="275"/><text class="tk" x="598.333" y="289" text-anchor="middle">200</text>
+<text class="lb" x="490" y="308" text-anchor="middle">a line through the days</text>
+<line class="ax" x1="360" y1="20" x2="360" y2="270"/>
+<line class="zero" x1="360" y1="250" x2="620" y2="20"/>
+<circle class="dot pg" cx="533.36" cy="87.0833" r="3.4"/>
+<circle class="dot pg" cx="504.581" cy="118.708" r="3.4"/>
+<circle class="dot pg" cx="490.896" cy="127.333" r="3.4"/>
+<circle class="dot pg" cx="506.906" cy="117.75" r="3.4"/>
+<circle class="dot pg" cx="493.751" cy="161.833" r="3.4"/>
+<circle class="dot pg" cx="512.71" cy="103.375" r="3.4"/>
+<circle class="dot pg" cx="474.843" cy="127.333" r="3.4"/>
+<circle class="dot pg" cx="487.945" cy="137.875" r="3.4"/>
+<circle class="dot pg" cx="480.778" cy="132.125" r="3.4"/>
+<circle class="dot pg" cx="538.91" cy="119.667" r="3.4"/>
+<circle class="dot pg" cx="463.362" cy="130.208" r="3.4"/>
+<circle class="dot pg" cx="481.683" cy="118.708" r="3.4"/>
+<circle class="dot pg" cx="448.199" cy="165.667" r="3.4"/>
+<circle class="dot pg" cx="468.021" cy="135.958" r="3.4"/>
+<circle class="dot pg" cx="517.29" cy="75.5833" r="3.4"/>
+<circle class="dot pg" cx="515.811" cy="97.625" r="3.4"/>
+<circle class="dot pg" cx="498.265" cy="91.875" r="3.4"/>
+<circle class="dot pg" cx="467.943" cy="161.833" r="3.4"/>
+<circle class="dot pg" cx="452.014" cy="162.792" r="3.4"/>
+<circle class="dot pg" cx="460.798" cy="155.125" r="3.4"/>
+<circle class="dot pg" cx="504.214" cy="120.625" r="3.4"/>
+<circle class="dot pg" cx="462.333" cy="167.583" r="3.4"/>
+<circle class="dot pg" cx="446.78" cy="196.333" r="3.4"/>
+<circle class="dot pg" cx="522.66" cy="137.875" r="3.4"/>
+<circle class="dot pg" cx="456.794" cy="189.625" r="3.4"/>
+<circle class="dot pg" cx="522.982" cy="95.7083" r="3.4"/>
+<circle class="dot pg" cx="443.238" cy="177.167" r="3.4"/>
+<circle class="dot pg" cx="471.952" cy="147.458" r="3.4"/>
+<circle class="dot pg" cx="450.196" cy="194.417" r="3.4"/>
+<circle class="dot pg" cx="483.579" cy="165.667" r="3.4"/>
+<circle class="dot pg" cx="475.64" cy="160.875" r="3.4"/>
+<circle class="dot pg" cx="421.983" cy="164.708" r="3.4"/>
+<circle class="dot pg" cx="534.392" cy="119.667" r="3.4"/>
+<circle class="dot pg" cx="474.537" cy="151.292" r="3.4"/>
+<circle class="dot pg" cx="451.752" cy="171.417" r="3.4"/>
+<circle class="dot pg" cx="454.066" cy="173.333" r="3.4"/>
+<circle class="dot pg" cx="514.527" cy="146.5" r="3.4"/>
+<circle class="dot pg" cx="505.374" cy="145.542" r="3.4"/>
+<circle class="dot pg" cx="471.027" cy="162.792" r="3.4"/>
+<circle class="dot pg" cx="464.337" cy="160.875" r="3.4"/>
+<circle class="dot pg" cx="476.849" cy="162.792" r="3.4"/>
+<circle class="dot pg" cx="447.983" cy="151.292" r="3.4"/>
+<circle class="dot pg" cx="425.171" cy="212.625" r="3.4"/>
+<circle class="dot pg" cx="498.72" cy="113.917" r="3.4"/>
+<circle class="dot pg" cx="492.851" cy="113.917" r="3.4"/>
+<circle class="dot pg" cx="529.554" cy="119.667" r="3.4"/>
+<circle class="dot pg" cx="513.165" cy="100.5" r="3.4"/>
+<circle class="dot pg" cx="465.809" cy="128.292" r="3.4"/>
+<circle class="dot pg" cx="459.16" cy="195.375" r="3.4"/>
+<circle class="dot pg" cx="485.488" cy="146.5" r="3.4"/>
+<circle class="dot pg" cx="464.405" cy="144.583" r="3.4"/>
+<circle class="dot pg" cx="507.684" cy="122.542" r="3.4"/>
+<circle class="dot pg" cx="498.925" cy="123.5" r="3.4"/>
+<circle class="dot pg" cx="511.997" cy="79.4167" r="3.4"/>
+<circle class="dot pg" cx="499.038" cy="104.333" r="3.4"/>
+<circle class="dot pg" cx="476.247" cy="176.208" r="3.4"/>
+<circle class="dot pg" cx="483.542" cy="151.292" r="3.4"/>
+<circle class="dot pg" cx="484.016" cy="127.333" r="3.4"/>
+<circle class="dot pg" cx="474.839" cy="137.875" r="3.4"/>
+<circle class="dot pg" cx="491.361" cy="148.417" r="3.4"/></svg></figure><div class="read"><b>Reading it.</b> The weights say what the model learnt: each degree adds 1.79 rentals, each point of humidity takes away 0.476, a weekday adds 24.3 and a holiday takes away 37.6. On the 60 days it had not seen, its error is 19.93 bicycles against 31.88 for the mean, and it explains 0.604 of the variance (<code>r2</code>). In the right panel the points hug the dashed line; on the left they are a horizontal column, the mean.</div></div></section>
+<section class=" story" id="s3"><div class="wrap"><h2>3 &middot; Empty cells are a decision</h2><div class="badge"><span class="lvl">a plan, a refusal, a repair</span><span>ml.input.missing-value</span><span>--step impute;scale</span></div><p class="said">&#8220;Eleven days the humidity sensor was down. The cells are empty.&#8221;</p><p>A model cannot guess a missing number, and neither does <code>ml</code>: the fit is refused with a rule, a hint and the command that repairs it. Then the plan says more: impute the humidity with the mean (<em>of the training rows, stored in the model file</em>, so that <code>predict</code> fills gaps with the same number) and standardise two columns. Every step is fitted on the training rows and stored with the estimator in one file; there is no way to predict with a different transformation.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model linear --target rentals --output gap.ml rent_gaps.csv</span>
+exit 8
+{
+  &quot;code&quot;: &quot;PRECONDITION_FAILED&quot;,
+  &quot;rule&quot;: &quot;ml.input.missing-value&quot;,
+  &quot;message&quot;: &quot;a feature cell is empty and no impute step of the plan covers its column (the columns are in detail).&quot;,
+  &quot;hint&quot;: &quot;add an impute step for the columns, for example impute column=a,b strategy=mean.&quot;,
+  &quot;detail&quot;: {&quot;columns&quot;: 1, &quot;names&quot;: &quot;humidity&quot;},
+  &quot;repair&quot;: {
+    &quot;kind&quot;: &quot;retry&quot;,
+    &quot;argv&quot;: [
+      &quot;ml&quot;,
+      &quot;fit&quot;,
+      &quot;--model&quot;,
+      &quot;linear&quot;,
+      &quot;--target&quot;,
+      &quot;rentals&quot;,
+      &quot;--output&quot;,
+      &quot;gap.ml&quot;,
+      &quot;rent_gaps.csv&quot;,
+      &quot;--step&quot;,
+      &quot;impute column=humidity strategy=mean&quot;
+    ]
+  }
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 132" role="img" aria-label="A request, its refusal, the repair and the answer"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect class="fbox q" x="20" y="20" width="124.5" height="92" rx="10"/><text class="nm" x="82.25" y="48" text-anchor="middle">fit</text>
+<text class="tk" x="82.25" y="70" text-anchor="middle">a column has</text>
+<text class="tk" x="82.25" y="86" text-anchor="middle">empty cells</text>
+<line class="arrow" x1="148.5" y1="66" x2="174.5" y2="66"/>
+<rect class="fbox r" x="178.5" y="20" width="124.5" height="92" rx="10"/><text class="nm" x="240.75" y="48" text-anchor="middle">refused</text>
+<text class="tk" x="240.75" y="70" text-anchor="middle">input.missing-value</text>
+<text class="tk" x="240.75" y="86" text-anchor="middle">exit 8</text>
+<line class="arrow" x1="307" y1="66" x2="333" y2="66"/>
+<rect class="fbox ok" x="337" y="20" width="124.5" height="92" rx="10"/><text class="nm" x="399.25" y="48" text-anchor="middle">repair</text>
+<text class="tk" x="399.25" y="70" text-anchor="middle">--step impute</text>
+<text class="tk" x="399.25" y="86" text-anchor="middle">column=humidity</text>
+<line class="arrow" x1="465.5" y1="66" x2="491.5" y2="66"/>
+<rect class="fbox ok" x="495.5" y="20" width="124.5" height="92" rx="10"/><text class="nm" x="557.75" y="48" text-anchor="middle">fitted</text>
+<text class="tk" x="557.75" y="70" text-anchor="middle">180 rows</text></svg></figure><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model linear --target rentals --output gap.ml rent_gaps.csv --step &#x27;impute \
+    column=humidity strategy=mean&#x27;</span>
+{
+  &quot;model&quot;: &quot;linear&quot;,
+  &quot;rows&quot;: 180,
+  &quot;plan&quot;: &quot;impute column=humidity strategy=mean\nmodel kind=linear l2=0.0\n&quot;
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model linear --target rentals --step &#x27;impute column=humidity \
+    strategy=mean;scale column=temp_c,humidity kind=standard&#x27; --output gap2.ml \
+    rent_gaps.csv</span>
+{
+  &quot;model&quot;: &quot;linear&quot;,
+  &quot;plan&quot;: &quot;impute column=humidity strategy=mean\nscale column=humidity,temp_c kind=standard ddof=0\nmodel kind=linear l2=0.0\n&quot;,
+  &quot;steps&quot;: 2
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file gap2.ml rent_test.csv</span>
+{
+  &quot;model&quot;: &quot;linear&quot;,
+  &quot;task&quot;: &quot;regression&quot;,
+  &quot;rows&quot;: 60,
+  &quot;on&quot;: &quot;other&quot;,
+  &quot;metrics&quot;: {
+    &quot;rmse&quot;: &quot;19.991901485502886&quot;,
+    &quot;mae&quot;: &quot;16.699526117986704&quot;,
+    &quot;r2&quot;: &quot;0.6015867343756253&quot;
+  },
+  &quot;unknown_categories&quot;: 0,
+  &quot;out_of_range&quot;: {&quot;cells&quot;: 0, &quot;rows&quot;: 0, &quot;columns&quot;: []}
+}</pre></div><div class="read"><b>Reading it.</b> The refusal named the column (<code>humidity</code>) and carried the repair as an argument vector; running it fitted the model. A plan with an impute and a scale step costs one flag, and its error on the held-out days is 19.99, still under the mean&#8217;s 31.88. The model file describes itself: <code>ml describe</code> lists the steps it will apply.</div></div></section>
+<section class="alt story" id="s4"><div class="wrap"><h2>4 &middot; Will they come back?</h2><div class="badge"><span class="lvl">a yes/no question</span><span>fit --model logistic</span><span>predict --proba</span><span>eval</span></div><p class="said">&#8220;I mailed a coupon to some of my customers. Who is likely to come back, and how sure can I be?&#8221;</p><p>Logistic regression answers yes or no with a probability. The fit is Newton&#8217;s method on the exact log-loss; <code>predict --proba</code> gives the label and its probability for each customer the model has not seen, and <code>eval</code> scores them: accuracy, precision, recall, F1, the area under the ROC curve and the log-loss.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model logistic --target returned --output ret.ml visits_train.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;rows&quot;: 300,
+  &quot;features&quot;: 3,
+  &quot;coefficients&quot;: [
+    {&quot;name&quot;: &quot;visits&quot;, &quot;value&quot;: &quot;1.2155475487994063&quot;},
+    {&quot;name&quot;: &quot;spend&quot;, &quot;value&quot;: &quot;0.04400010101481898&quot;},
+    {&quot;name&quot;: &quot;coupon&quot;, &quot;value&quot;: &quot;2.0737060040127835&quot;}
+  ]
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file ret.ml visits_test.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;task&quot;: &quot;classification&quot;,
+  &quot;rows&quot;: 100,
+  &quot;on&quot;: &quot;other&quot;,
+  &quot;positive&quot;: 1,
+  &quot;metrics&quot;: {
+    &quot;accuracy&quot;: &quot;0.84&quot;,
+    &quot;precision&quot;: &quot;0.8676470588235294&quot;,
+    &quot;recall&quot;: &quot;0.8939393939393939&quot;,
+    &quot;f1&quot;: &quot;0.8805970149253731&quot;,
+    &quot;roc_auc&quot;: &quot;0.9344919786096256&quot;,
+    &quot;log_loss&quot;: &quot;0.29898060121110537&quot;
+  },
+  &quot;unknown_categories&quot;: 0,
+  &quot;out_of_range&quot;: {&quot;cells&quot;: 2, &quot;rows&quot;: 2, &quot;columns&quot;: [{&quot;name&quot;: &quot;spend&quot;, &quot;count&quot;: 2}]}
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 210" role="img" aria-label="The counts of the four kinds of answer"><rect class="cm neg" x="200" y="40" width="124" height="74" rx="6" style="opacity:0.57"/><text class="digits" x="262" y="86" text-anchor="middle" style="fill:var(--fg)">25</text>
+<rect class="cm bad" x="330" y="40" width="124" height="74" rx="6" style="opacity:0.36"/><text class="digits" x="392" y="86" text-anchor="middle" style="fill:var(--fg)">9</text>
+<rect class="cm bad" x="200" y="120" width="124" height="74" rx="6" style="opacity:0.34"/><text class="digits" x="262" y="166" text-anchor="middle" style="fill:var(--fg)">7</text>
+<rect class="cm pos" x="330" y="120" width="124" height="74" rx="6" style="opacity:1.00"/><text class="digits" x="392" y="166" text-anchor="middle" style="fill:var(--fg)">59</text>
+<text class="tk" x="327" y="14" text-anchor="middle">what the model said</text><text class="nm" x="262" y="32" text-anchor="middle">away</text><text class="nm" x="392" y="32" text-anchor="middle">back</text>
+<text class="nm" x="190" y="82" text-anchor="end">stayed away</text><text class="nm" x="190" y="162" text-anchor="end">returned</text></svg></figure><figure class="fig"><svg viewBox="0 0 640 340" role="img" aria-label="The ROC curve of the held-out customers"><line class="ax" x1="60" y1="290" x2="340" y2="290"/>
+<line class="ax" x1="60" y1="290" x2="60" y2="295"/><text class="tk" x="60" y="309" text-anchor="middle">0</text>
+<line class="ax" x1="130" y1="290" x2="130" y2="295"/><text class="tk" x="130" y="309" text-anchor="middle">0.25</text>
+<line class="ax" x1="200" y1="290" x2="200" y2="295"/><text class="tk" x="200" y="309" text-anchor="middle">0.5</text>
+<line class="ax" x1="270" y1="290" x2="270" y2="295"/><text class="tk" x="270" y="309" text-anchor="middle">0.75</text>
+<line class="ax" x1="340" y1="290" x2="340" y2="295"/><text class="tk" x="340" y="309" text-anchor="middle">1</text>
+<text class="lb" x="200" y="328" text-anchor="middle">false positive rate</text>
+<line class="ax" x1="60" y1="20" x2="60" y2="290"/>
+<line class="zero" x1="60" y1="270" x2="340" y2="20"/>
+<text class="tk" x="52" y="274" text-anchor="end">0</text>
+<text class="tk" x="52" y="149" text-anchor="end">0.5</text>
+<text class="tk" x="52" y="24" text-anchor="end">1</text>
+<text class="lb" x="14" y="150" transform="rotate(-90 14 150)" text-anchor="middle">true positive rate</text>
+<polyline class="ln la" points="60,270 60,266.212 60,262.424 60,258.636 60,254.848 60,251.061 60,247.273 60,243.485 60,239.697 60,235.909 60,232.121 60,228.333 60,224.545 60,220.758 60,216.97 60,213.182 60,209.394 60,205.606 60,201.818 60,198.03 60,194.242 60,190.455 60,186.667 60,182.879 60,179.091 60,175.303 60,171.515 60,167.727 60,163.939 60,160.152 60,156.364 60,152.576 60,148.788 60,145 60,141.212 60,137.424 60,133.636 60,129.848 60,126.061 60,122.273 60,118.485 60,114.697 60,110.909 60,107.121 60,103.333 60,99.5455 60,95.7576 60,91.9697 68.2353,91.9697 68.2353,88.1818 68.2353,84.3939 76.4706,84.3939 76.4706,80.6061 76.4706,76.8182 76.4706,73.0303 76.4706,69.2424 76.4706,65.4545 84.7059,65.4545 92.9412,65.4545 101.176,65.4545 101.176,61.6667 109.412,61.6667 109.412,57.8788 109.412,54.0909 117.647,54.0909 125.882,54.0909 125.882,50.303 134.118,50.303 134.118,46.5152 142.353,46.5152 150.588,46.5152 158.824,46.5152 167.059,46.5152 175.294,46.5152 175.294,42.7273 175.294,38.9394 175.294,35.1515 175.294,31.3636 175.294,27.5758 183.529,27.5758 183.529,23.7879 191.765,23.7879 191.765,20 200,20 208.235,20 216.471,20 224.706,20 232.941,20 241.176,20 249.412,20 257.647,20 265.882,20 274.118,20 282.353,20 290.588,20 298.824,20 307.059,20 315.294,20 323.529,20 331.765,20 340,20"/>
+<text class="nm" x="370" y="60">area under the curve</text><text class="digits" x="370" y="96" style="fill:var(--accent)">0.9345</text><text class="tk" x="370" y="120">dashed: a coin toss</text></svg></figure><div class="read"><b>Reading it.</b> Of 100 held-out customers the model was right 84 times (accuracy 0.84). It said &#8220;returns&#8221; 68 times and was right on 59 of them (precision 0.868); it caught 59 of the 66 who really returned (recall 0.894). The curve is drawn from the probabilities that <code>predict</code> printed and its area, 0.9345, is the <code>roc_auc</code> printed by <code>eval</code>: a recomputation from the run, checked when this page is generated. <code>eval</code> also says that 2 of the held-out cells (in the column <code>spend</code>) lay outside the range the model was fitted on: a model is only as good as the new rows resemble the old ones, and the answer says when they do not.</div></div></section>
+<section class=" story" id="s5"><div class="wrap"><h2>5 &middot; When a line is not enough</h2><div class="badge"><span class="lvl">non-linear models</span><span>--model tree</span><span>--model forest</span></div><p class="said">&#8220;The points inside the circle are one class. Logistic regression gives me a straight line. What now?&#8221;</p><p>A logistic model draws a straight boundary; no straight line separates a disc from its surroundings. A decision tree (CART with histogram splits) and a forest of bagged trees (parallel over trees, seeded) can. The same data, the same held-out points, three models:</p><figure class="fig"><svg viewBox="0 0 640 330" role="img" aria-label="The training points, coloured by class"><line class="ax" x1="70" y1="290" x2="330" y2="290"/>
+<line class="ax" x1="70" y1="290" x2="70" y2="295"/><text class="tk" x="70" y="309" text-anchor="middle">-1</text>
+<line class="ax" x1="135" y1="290" x2="135" y2="295"/><text class="tk" x="135" y="309" text-anchor="middle">-0.5</text>
+<line class="ax" x1="200" y1="290" x2="200" y2="295"/><text class="tk" x="200" y="309" text-anchor="middle">0</text>
+<line class="ax" x1="265" y1="290" x2="265" y2="295"/><text class="tk" x="265" y="309" text-anchor="middle">0.5</text>
+<line class="ax" x1="330" y1="290" x2="330" y2="295"/><text class="tk" x="330" y="309" text-anchor="middle">1</text>
+<text class="lb" x="200" y="328" text-anchor="middle">x</text>
+<line class="ax" x1="70" y1="20" x2="70" y2="290"/>
+<circle class="dot pb" cx="231.98" cy="84.5" r="3.4"/>
+<circle class="dot pa" cx="276.7" cy="34.375" r="3.4"/>
+<circle class="dot pa" cx="262.4" cy="39.375" r="3.4"/>
+<circle class="dot pa" cx="77.54" cy="153.625" r="3.4"/>
+<circle class="dot pa" cx="315.31" cy="107.75" r="3.4"/>
+<circle class="dot pa" cx="304.26" cy="241.75" r="3.4"/>
+<circle class="dot pb" cx="191.94" cy="208.375" r="3.4"/>
+<circle class="dot pb" cx="211.44" cy="126.5" r="3.4"/>
+<circle class="dot pa" cx="73.38" cy="215.875" r="3.4"/>
+<circle class="dot pa" cx="142.67" cy="40.875" r="3.4"/>
+<circle class="dot pa" cx="269.03" cy="230.125" r="3.4"/>
+<circle class="dot pa" cx="277.22" cy="235.25" r="3.4"/>
+<circle class="dot pa" cx="230.55" cy="238.375" r="3.4"/>
+<circle class="dot pa" cx="70.52" cy="52.125" r="3.4"/>
+<circle class="dot pa" cx="124.47" cy="216.125" r="3.4"/>
+<circle class="dot pa" cx="325.45" cy="51.875" r="3.4"/>
+<circle class="dot pa" cx="145.27" cy="29.625" r="3.4"/>
+<circle class="dot pb" cx="210.14" cy="100.5" r="3.4"/>
+<circle class="dot pa" cx="123.3" cy="34.75" r="3.4"/>
+<circle class="dot pa" cx="249.53" cy="28.375" r="3.4"/>
+<circle class="dot pa" cx="302.31" cy="195.25" r="3.4"/>
+<circle class="dot pa" cx="163.86" cy="228.5" r="3.4"/>
+<circle class="dot pa" cx="107.83" cy="253.75" r="3.4"/>
+<circle class="dot pb" cx="148.39" cy="119.25" r="3.4"/>
+<circle class="dot pa" cx="70.91" cy="100.5" r="3.4"/>
+<circle class="dot pb" cx="157.88" cy="192.5" r="3.4"/>
+<circle class="dot pb" cx="282.81" cy="149.875" r="3.4"/>
+<circle class="dot pb" cx="152.16" cy="149.75" r="3.4"/>
+<circle class="dot pa" cx="253.17" cy="255.75" r="3.4"/>
+<circle class="dot pa" cx="323.5" cy="264.25" r="3.4"/>
+<circle class="dot pa" cx="265" cy="58.75" r="3.4"/>
+<circle class="dot pa" cx="74.68" cy="73.125" r="3.4"/>
+<circle class="dot pb" cx="165.16" cy="125.375" r="3.4"/>
+<circle class="dot pa" cx="72.34" cy="258.375" r="3.4"/>
+<circle class="dot pa" cx="117.06" cy="31.25" r="3.4"/>
+<circle class="dot pa" cx="121.09" cy="81.125" r="3.4"/>
+<circle class="dot pa" cx="311.67" cy="34.5" r="3.4"/>
+<circle class="dot pb" cx="159.57" cy="181.25" r="3.4"/>
+<circle class="dot pb" cx="206.37" cy="76.125" r="3.4"/>
+<circle class="dot pa" cx="98.08" cy="82.875" r="3.4"/>
+<circle class="dot pa" cx="277.22" cy="55.125" r="3.4"/>
+<circle class="dot pa" cx="79.49" cy="33.5" r="3.4"/>
+<circle class="dot pa" cx="93.66" cy="184.875" r="3.4"/>
+<circle class="dot pa" cx="228.86" cy="40.5" r="3.4"/>
+<circle class="dot pa" cx="158.4" cy="39" r="3.4"/>
+<circle class="dot pb" cx="211.7" cy="191.875" r="3.4"/>
+<circle class="dot pa" cx="152.42" cy="225.625" r="3.4"/>
+<circle class="dot pa" cx="90.28" cy="232.75" r="3.4"/>
+<circle class="dot pa" cx="249.14" cy="20.875" r="3.4"/>
+<circle class="dot pa" cx="111.99" cy="257.875" r="3.4"/>
+<circle class="dot pa" cx="326.49" cy="136.625" r="3.4"/>
+<circle class="dot pb" cx="175.56" cy="210.625" r="3.4"/>
+<circle class="dot pa" cx="224.44" cy="63.375" r="3.4"/>
+<circle class="dot pb" cx="188.43" cy="164.5" r="3.4"/>
+<circle class="dot pa" cx="84.43" cy="41" r="3.4"/>
+<circle class="dot pa" cx="78.45" cy="146.625" r="3.4"/>
+<circle class="dot pa" cx="288.01" cy="237.375" r="3.4"/>
+<circle class="dot pa" cx="260.19" cy="32.5" r="3.4"/>
+<circle class="dot pb" cx="233.93" cy="73" r="3.4"/>
+<circle class="dot pa" cx="97.69" cy="161.375" r="3.4"/>
+<circle class="dot pa" cx="108.74" cy="58.875" r="3.4"/>
+<circle class="dot pb" cx="146.7" cy="156.75" r="3.4"/>
+<circle class="dot pa" cx="329.87" cy="56.875" r="3.4"/>
+<circle class="dot pa" cx="323.76" cy="156.625" r="3.4"/>
+<circle class="dot pb" cx="196.88" cy="87.625" r="3.4"/>
+<circle class="dot pb" cx="194.54" cy="197.25" r="3.4"/>
+<circle class="dot pa" cx="175.04" cy="233.375" r="3.4"/>
+<circle class="dot pa" cx="168.02" cy="22.875" r="3.4"/>
+<circle class="dot pa" cx="319.6" cy="113.25" r="3.4"/>
+<circle class="dot pb" cx="199.87" cy="185.375" r="3.4"/>
+<circle class="dot pa" cx="93.14" cy="201.875" r="3.4"/>
+<circle class="dot pa" cx="273.32" cy="53.125" r="3.4"/>
+<circle class="dot pb" cx="163.99" cy="73.5" r="3.4"/>
+<circle class="dot pa" cx="271.5" cy="96.375" r="3.4"/>
+<circle class="dot pb" cx="242.64" cy="80.125" r="3.4"/>
+<circle class="dot pb" cx="164.51" cy="93.875" r="3.4"/>
+<circle class="dot pb" cx="143.06" cy="148.625" r="3.4"/>
+<circle class="dot pb" cx="270.07" cy="97.25" r="3.4"/>
+<circle class="dot pa" cx="146.44" cy="33.625" r="3.4"/>
+<circle class="dot pb" cx="238.87" cy="124.875" r="3.4"/>
+<circle class="dot pa" cx="72.99" cy="133.25" r="3.4"/>
+<circle class="dot pb" cx="135.13" cy="102.125" r="3.4"/>
+<circle class="dot pb" cx="190.38" cy="65.875" r="3.4"/>
+<circle class="dot pb" cx="238.35" cy="70.625" r="3.4"/>
+<circle class="dot pb" cx="160.48" cy="109" r="3.4"/>
+<circle class="dot pa" cx="261.88" cy="63" r="3.4"/>
+<circle class="dot pa" cx="161" cy="59.25" r="3.4"/>
+<circle class="dot pa" cx="296.2" cy="97.875" r="3.4"/>
+<circle class="dot pa" cx="323.76" cy="30.875" r="3.4"/>
+<circle class="dot pb" cx="204.68" cy="137.625" r="3.4"/>
+<circle class="dot pa" cx="113.16" cy="60.875" r="3.4"/>
+<circle class="dot pa" cx="313.75" cy="150.75" r="3.4"/>
+<circle class="dot pb" cx="249.79" cy="90.125" r="3.4"/>
+<circle class="dot pa" cx="259.93" cy="227" r="3.4"/>
+<circle class="dot pb" cx="272.93" cy="124.75" r="3.4"/>
+<circle class="dot pb" cx="243.03" cy="164.75" r="3.4"/>
+<circle class="dot pb" cx="232.11" cy="76.375" r="3.4"/>
+<circle class="dot pb" cx="235.62" cy="89.875" r="3.4"/>
+<circle class="dot pa" cx="77.15" cy="230" r="3.4"/>
+<circle class="dot pb" cx="184.66" cy="107.5" r="3.4"/>
+<circle class="dot pa" cx="126.94" cy="98.5" r="3.4"/>
+<circle class="dot pa" cx="234.06" cy="259.5" r="3.4"/>
+<circle class="dot pb" cx="192.59" cy="213.5" r="3.4"/>
+<circle class="dot pa" cx="84.04" cy="236.625" r="3.4"/>
+<circle class="dot pa" cx="152.55" cy="224.625" r="3.4"/>
+<circle class="dot pa" cx="120.31" cy="261.125" r="3.4"/>
+<circle class="dot pb" cx="191.03" cy="174.875" r="3.4"/>
+<circle class="dot pb" cx="229.12" cy="122.5" r="3.4"/>
+<circle class="dot pa" cx="131.88" cy="44.25" r="3.4"/>
+<circle class="dot pa" cx="70.13" cy="168.625" r="3.4"/>
+<circle class="dot pb" cx="142.41" cy="167.5" r="3.4"/>
+<circle class="dot pa" cx="99.9" cy="62.125" r="3.4"/>
+<circle class="dot pa" cx="167.24" cy="261" r="3.4"/>
+<circle class="dot pa" cx="229.51" cy="246.25" r="3.4"/>
+<circle class="dot pb" cx="211.7" cy="185.125" r="3.4"/>
+<circle class="dot pa" cx="221.06" cy="30.375" r="3.4"/>
+<circle class="dot pb" cx="282.81" cy="165.25" r="3.4"/>
+<circle class="dot pa" cx="281.38" cy="109.375" r="3.4"/>
+<circle class="dot pa" cx="166.07" cy="234.5" r="3.4"/>
+<circle class="dot pb" cx="224.96" cy="129" r="3.4"/>
+<circle class="dot pa" cx="318.82" cy="28" r="3.4"/>
+<circle class="dot pb" cx="228.21" cy="182.25" r="3.4"/>
+<circle class="dot pa" cx="302.31" cy="269.75" r="3.4"/>
+<circle class="dot pa" cx="98.08" cy="128.5" r="3.4"/>
+<circle class="dot pa" cx="229.9" cy="234.875" r="3.4"/>
+<circle class="dot pa" cx="233.67" cy="47.125" r="3.4"/>
+<circle class="dot pb" cx="167.76" cy="162.125" r="3.4"/>
+<circle class="dot pa" cx="128.89" cy="197.125" r="3.4"/>
+<circle class="dot pa" cx="322.85" cy="175" r="3.4"/>
+<circle class="dot pa" cx="319.86" cy="41.625" r="3.4"/>
+<circle class="dot pb" cx="224.96" cy="205" r="3.4"/>
+<circle class="dot pa" cx="325.06" cy="145.875" r="3.4"/>
+<circle class="dot pb" cx="178.03" cy="190.25" r="3.4"/>
+<circle class="dot pa" cx="325.97" cy="147" r="3.4"/>
+<circle class="dot pb" cx="144.49" cy="150.75" r="3.4"/>
+<circle class="dot pa" cx="101.72" cy="114.625" r="3.4"/>
+<circle class="dot pb" cx="185.31" cy="196.75" r="3.4"/>
+<circle class="dot pa" cx="273.19" cy="63.25" r="3.4"/>
+<circle class="dot pa" cx="73.38" cy="136.875" r="3.4"/>
+<circle class="dot pa" cx="141.24" cy="36.125" r="3.4"/>
+<circle class="dot pa" cx="273.32" cy="208.625" r="3.4"/>
+<circle class="dot pa" cx="139.55" cy="231.25" r="3.4"/>
+<circle class="dot pa" cx="327.14" cy="196.75" r="3.4"/>
+<circle class="dot pb" cx="228.08" cy="151.375" r="3.4"/>
+<circle class="dot pb" cx="237.7" cy="119" r="3.4"/>
+<circle class="dot pa" cx="263.31" cy="240.5" r="3.4"/>
+<circle class="dot pb" cx="267.73" cy="194.875" r="3.4"/>
+<circle class="dot pb" cx="208.71" cy="186" r="3.4"/>
+<circle class="dot pb" cx="147.22" cy="137.5" r="3.4"/>
+<circle class="dot pb" cx="190.77" cy="179.75" r="3.4"/>
+<circle class="dot pb" cx="263.7" cy="122.25" r="3.4"/>
+<circle class="dot pa" cx="79.49" cy="206.875" r="3.4"/>
+<circle class="dot pa" cx="188.43" cy="40.875" r="3.4"/>
+<circle class="dot pa" cx="300.88" cy="133.625" r="3.4"/>
+<circle class="dot pa" cx="73.77" cy="75.375" r="3.4"/>
+<circle class="dot pb" cx="181.15" cy="126.125" r="3.4"/>
+<circle class="dot pb" cx="254.08" cy="112" r="3.4"/>
+<circle class="dot pa" cx="195.32" cy="42.125" r="3.4"/>
+<circle class="dot pb" cx="170.23" cy="172" r="3.4"/>
+<circle class="dot pa" cx="291.52" cy="220.875" r="3.4"/>
+<circle class="dot pa" cx="147.09" cy="62.5" r="3.4"/>
+<circle class="dot pa" cx="87.16" cy="60.875" r="3.4"/>
+<circle class="dot pb" cx="250.57" cy="161.75" r="3.4"/>
+<circle class="dot pa" cx="144.49" cy="74.875" r="3.4"/>
+<circle class="dot pa" cx="306.73" cy="234.375" r="3.4"/>
+<circle class="dot pb" cx="194.41" cy="132.75" r="3.4"/>
+<circle class="dot pb" cx="199.35" cy="187.375" r="3.4"/>
+<circle class="dot pa" cx="109.91" cy="123.5" r="3.4"/>
+<circle class="dot pa" cx="281.12" cy="252.875" r="3.4"/>
+<circle class="dot pa" cx="129.8" cy="65.125" r="3.4"/>
+<circle class="dot pb" cx="275.92" cy="104.125" r="3.4"/>
+<circle class="dot pa" cx="76.63" cy="89.375" r="3.4"/>
+<circle class="dot pa" cx="324.41" cy="20.375" r="3.4"/>
+<circle class="dot pa" cx="252.26" cy="257.75" r="3.4"/>
+<circle class="dot pa" cx="288.92" cy="215.25" r="3.4"/>
+<circle class="dot pa" cx="237.83" cy="32" r="3.4"/>
+<circle class="dot pa" cx="255.25" cy="236.375" r="3.4"/>
+<circle class="dot pa" cx="146.05" cy="40.5" r="3.4"/>
+<circle class="dot pa" cx="108.87" cy="117.375" r="3.4"/>
+<circle class="dot pa" cx="177.64" cy="229.75" r="3.4"/>
+<circle class="dot pa" cx="231.85" cy="259.125" r="3.4"/>
+<circle class="dot pa" cx="98.08" cy="175.25" r="3.4"/>
+<circle class="dot pa" cx="88.72" cy="255.625" r="3.4"/>
+<circle class="dot pb" cx="219.63" cy="84.375" r="3.4"/>
+<circle class="dot pa" cx="298.41" cy="236.375" r="3.4"/>
+<circle class="dot pb" cx="182.19" cy="191.375" r="3.4"/>
+<circle class="dot pb" cx="226" cy="147.625" r="3.4"/>
+<circle class="dot pa" cx="314.01" cy="176.5" r="3.4"/>
+<circle class="dot pa" cx="84.56" cy="95.625" r="3.4"/>
+<circle class="dot pa" cx="109.26" cy="112.125" r="3.4"/>
+<circle class="dot pa" cx="201.56" cy="42.375" r="3.4"/>
+<circle class="dot pb" cx="214.3" cy="114.75" r="3.4"/>
+<circle class="dot pb" cx="138.38" cy="132.125" r="3.4"/>
+<circle class="dot pa" cx="136.04" cy="82.375" r="3.4"/>
+<circle class="dot pa" cx="204.42" cy="236.5" r="3.4"/>
+<circle class="dot pb" cx="130.97" cy="177.25" r="3.4"/>
+<circle class="dot pa" cx="261.62" cy="225.125" r="3.4"/>
+<circle class="dot pb" cx="255.51" cy="106.25" r="3.4"/>
+<circle class="dot pa" cx="92.1" cy="103" r="3.4"/>
+<circle class="dot pa" cx="93.66" cy="238.75" r="3.4"/>
+<circle class="dot pb" cx="224.44" cy="210.375" r="3.4"/>
+<circle class="dot pa" cx="298.02" cy="149.875" r="3.4"/>
+<circle class="dot pa" cx="154.11" cy="70.875" r="3.4"/>
+<circle class="dot pa" cx="77.67" cy="88.75" r="3.4"/>
+<circle class="dot pa" cx="83.91" cy="232.25" r="3.4"/>
+<circle class="dot pa" cx="317.52" cy="99.75" r="3.4"/>
+<circle class="dot pa" cx="127.98" cy="241" r="3.4"/>
+<circle class="dot pa" cx="322.85" cy="103.75" r="3.4"/>
+<circle class="dot pa" cx="283.33" cy="235" r="3.4"/>
+<circle class="dot pb" cx="232.5" cy="181.375" r="3.4"/>
+<circle class="dot pb" cx="131.1" cy="186.625" r="3.4"/>
+<circle class="dot pb" cx="229.64" cy="182.875" r="3.4"/>
+<circle class="dot pa" cx="170.23" cy="235.875" r="3.4"/>
+<circle class="dot pa" cx="286.06" cy="108" r="3.4"/>
+<circle class="dot pb" cx="279.17" cy="161.625" r="3.4"/>
+<circle class="dot pa" cx="291.39" cy="140.625" r="3.4"/>
+<circle class="dot pb" cx="224.05" cy="126.625" r="3.4"/>
+<circle class="dot pb" cx="262.4" cy="171.125" r="3.4"/>
+<circle class="dot pa" cx="95.22" cy="261.75" r="3.4"/>
+<circle class="dot pa" cx="122.65" cy="260.125" r="3.4"/>
+<circle class="dot pa" cx="301.27" cy="149.75" r="3.4"/>
+<circle class="dot pa" cx="267.73" cy="269.875" r="3.4"/>
+<circle class="dot pa" cx="192.2" cy="47.5" r="3.4"/>
+<circle class="dot pb" cx="231.07" cy="162.875" r="3.4"/>
+<circle class="dot pa" cx="191.03" cy="245.125" r="3.4"/>
+<circle class="dot pa" cx="110.17" cy="230.25" r="3.4"/>
+<circle class="dot pb" cx="167.37" cy="173.625" r="3.4"/>
+<circle class="dot pa" cx="298.93" cy="232" r="3.4"/>
+<circle class="dot pb" cx="136.04" cy="200.625" r="3.4"/>
+<circle class="dot pa" cx="111.99" cy="198.25" r="3.4"/>
+<circle class="dot pb" cx="131.1" cy="149.5" r="3.4"/>
+<circle class="dot pa" cx="78.32" cy="38.875" r="3.4"/>
+<circle class="dot pa" cx="165.94" cy="35.5" r="3.4"/>
+<circle class="dot pb" cx="248.75" cy="101.5" r="3.4"/>
+<circle class="dot pa" cx="192.59" cy="33.625" r="3.4"/>
+<circle class="dot pa" cx="100.68" cy="102.875" r="3.4"/>
+<circle class="dot pb" cx="145.66" cy="101.375" r="3.4"/>
+<circle class="dot pa" cx="259.67" cy="229.25" r="3.4"/>
+<circle class="dot pa" cx="122.26" cy="263.75" r="3.4"/>
+<circle class="dot pa" cx="129.93" cy="250.5" r="3.4"/>
+<circle class="dot pa" cx="174.26" cy="26.625" r="3.4"/>
+<circle class="dot pb" cx="164.77" cy="192" r="3.4"/>
+<circle class="dot pb" cx="191.68" cy="199.25" r="3.4"/>
+<circle class="dot pb" cx="260.45" cy="90.5" r="3.4"/>
+<circle class="dot pa" cx="112.51" cy="209.875" r="3.4"/>
+<circle class="dot pa" cx="244.72" cy="34.875" r="3.4"/>
+<circle class="dot pb" cx="237.96" cy="162.375" r="3.4"/>
+<circle class="dot pa" cx="323.63" cy="268.375" r="3.4"/>
+<circle class="dot pa" cx="85.86" cy="75.125" r="3.4"/>
+<circle class="dot pa" cx="176.6" cy="258.75" r="3.4"/>
+<circle class="dot pa" cx="212.61" cy="22.625" r="3.4"/>
+<circle class="dot pb" cx="204.94" cy="182.5" r="3.4"/>
+<circle class="dot pa" cx="94.44" cy="252.25" r="3.4"/>
+<circle class="dot pa" cx="303.74" cy="147.25" r="3.4"/>
+<circle class="dot pa" cx="313.23" cy="256.5" r="3.4"/>
+<circle class="dot pa" cx="133.31" cy="257.375" r="3.4"/>
+<circle class="dot pa" cx="173.35" cy="255" r="3.4"/>
+<circle class="dot pb" cx="136.43" cy="168.125" r="3.4"/>
+<circle class="dot pa" cx="149.56" cy="257.125" r="3.4"/>
+<circle class="dot pa" cx="79.75" cy="27.125" r="3.4"/>
+<circle class="dot pb" cx="116.67" cy="142.875" r="3.4"/>
+<circle class="dot pb" cx="174.65" cy="137.125" r="3.4"/>
+<circle class="dot pa" cx="91.97" cy="191.5" r="3.4"/>
+<circle class="dot pa" cx="98.08" cy="134.5" r="3.4"/>
+<circle class="dot pa" cx="309.59" cy="120.375" r="3.4"/>
+<circle class="dot pa" cx="292.82" cy="216.375" r="3.4"/>
+<circle class="dot pa" cx="74.55" cy="135.125" r="3.4"/>
+<circle class="dot pb" cx="196.49" cy="127.125" r="3.4"/>
+<circle class="dot pb" cx="167.89" cy="113.75" r="3.4"/>
+<circle class="dot pa" cx="258.63" cy="41.75" r="3.4"/>
+<circle class="dot pb" cx="149.95" cy="157.75" r="3.4"/>
+<circle class="dot pa" cx="284.89" cy="214" r="3.4"/>
+<circle class="dot pa" cx="100.03" cy="192.125" r="3.4"/>
+<circle class="dot pa" cx="92.75" cy="76.875" r="3.4"/>
+<circle class="dot pa" cx="283.07" cy="191.75" r="3.4"/>
+<circle class="dot pa" cx="103.8" cy="249.5" r="3.4"/>
+<circle class="dot pa" cx="133.7" cy="248.875" r="3.4"/>
+<circle class="dot pb" cx="181.41" cy="125.75" r="3.4"/>
+<circle class="dot pa" cx="133.83" cy="254.625" r="3.4"/>
+<circle class="dot pa" cx="252.13" cy="258" r="3.4"/>
+<circle class="dot pa" cx="122" cy="198.5" r="3.4"/>
+<circle class="dot pa" cx="167.24" cy="245.375" r="3.4"/>
+<circle class="dot pb" cx="179.33" cy="191.5" r="3.4"/>
+<circle class="dot pb" cx="265.65" cy="131" r="3.4"/>
+<circle class="dot pa" cx="302.96" cy="106.5" r="3.4"/>
+<circle class="dot pb" cx="267.47" cy="126.375" r="3.4"/>
+<circle class="dot pb" cx="184.92" cy="65.75" r="3.4"/>
+<circle class="dot pa" cx="240.43" cy="31.25" r="3.4"/>
+<circle class="dot pb" cx="259.28" cy="94.75" r="3.4"/>
+<circle class="dot pa" cx="139.55" cy="67" r="3.4"/>
+<circle class="dot pa" cx="169.45" cy="237.5" r="3.4"/>
+<circle class="dot pa" cx="87.16" cy="227.625" r="3.4"/>
+<circle class="dot pb" cx="138.25" cy="101" r="3.4"/>
+<circle class="dot pa" cx="144.23" cy="254.125" r="3.4"/>
+<circle class="dot pb" cx="268.64" cy="130.75" r="3.4"/>
+<circle class="dot pa" cx="77.15" cy="257.375" r="3.4"/>
+<circle class="dot pa" cx="103.8" cy="180.75" r="3.4"/>
+<circle class="dot pa" cx="293.6" cy="32.75" r="3.4"/>
+<circle class="dot pb" cx="229.12" cy="212.25" r="3.4"/>
+<circle class="dot pb" cx="181.54" cy="179.375" r="3.4"/>
+<text class="nm" x="360" y="50">the 300 training points</text><circle class="dot pa" cx="364" cy="74" r="4"/><text class="tk" x="374" y="78">outside the circle</text><circle class="dot pb" cx="364" cy="98" r="4"/><text class="tk" x="374" y="102">inside</text></svg></figure><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model logistic --target inside --output ring-0.ml ring_train.csv</span>
+...</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file ring-0.ml ring_test.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;metrics&quot;: {
+    &quot;accuracy&quot;: &quot;0.65&quot;,
+    &quot;precision&quot;: null,
+    &quot;recall&quot;: &quot;0.0&quot;,
+    &quot;f1&quot;: &quot;0.0&quot;,
+    &quot;roc_auc&quot;: &quot;0.4896703296703297&quot;,
+    &quot;log_loss&quot;: &quot;0.6483618017910502&quot;
+  }
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file ring-2.ml ring_test.csv</span>
+{
+  &quot;model&quot;: &quot;forest&quot;,
+  &quot;metrics&quot;: {
+    &quot;accuracy&quot;: &quot;0.9&quot;,
+    &quot;precision&quot;: &quot;0.8787878787878788&quot;,
+    &quot;recall&quot;: &quot;0.8285714285714286&quot;,
+    &quot;f1&quot;: &quot;0.8529411764705882&quot;,
+    &quot;roc_auc&quot;: &quot;0.9654945054945054&quot;,
+    &quot;log_loss&quot;: &quot;0.2379407440601423&quot;
+  }
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 134" role="img" aria-label="Bars"><text class="nm" x="122" y="31" text-anchor="end">logistic</text><rect class="pbar bad" x="130" y="16" width="281.667" height="20" rx="3"/><text class="tk" x="419.667" y="31">0.65</text>
+<text class="nm" x="122" y="65" text-anchor="end">tree, depth 4</text><rect class="pbar pb" x="130" y="50" width="385.667" height="20" rx="3"/><text class="tk" x="523.667" y="65">0.89</text>
+<text class="nm" x="122" y="99" text-anchor="end">forest, 50 trees</text><rect class="pbar pb" x="130" y="84" width="390" height="20" rx="3"/><text class="tk" x="528" y="99">0.90</text></svg></figure><div class="read"><b>Reading it.</b> 0.65 of the held-out points are outside the circle, so a model that always says &#8220;outside&#8221; scores 0.65: the logistic model gets 0.65 (its precision is <code>null</code> because it never said &#8220;inside&#8221;). The tree gets 0.89 and the forest 0.9. The model has to fit the shape of the problem; the evaluation was the same for all three.</div></div></section>
+<section class="alt story" id="s6"><div class="wrap"><h2>6 &middot; Do not trust one split</h2><div class="badge"><span class="lvl">cross-validation</span><span>cv --folds 5 --repeats 2</span></div><p class="said">&#8220;The tree scored well on my test points. Was I lucky with which points I held out? And how deep should it be?&#8221;</p><p><code>ml cv</code> fits the model on every training fold and scores it on the fold held out, <code>K</code> folds and <code>R</code> repeats, and writes no file. For each depth of the tree, five folds twice, with a seed: ten scores per depth.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml cv --model tree --task classification --max-depth 4 --target inside --folds 5 \
+    --repeats 2 --seed 3 ring_train.csv</span>
+{
+  &quot;strategy&quot;: &quot;kfold&quot;,
+  &quot;folds&quot;: 5,
+  &quot;repeats&quot;: 2,
+  &quot;results&quot;: [
+    {
+      &quot;repeat&quot;: 0,
+      &quot;fold&quot;: 0,
+      &quot;train&quot;: 240,
+      &quot;test&quot;: 60,
+      &quot;metrics&quot;: {
+        &quot;accuracy&quot;: &quot;0.8833333333333333&quot;,
+        &quot;precision&quot;: &quot;0.7407407407407407&quot;,
+        &quot;recall&quot;: &quot;1.0&quot;,
+        &quot;f1&quot;: &quot;0.851063829787234&quot;,
+        &quot;roc_auc&quot;: &quot;0.9125&quot;,
+        &quot;log_loss&quot;: &quot;0.30923418223921345&quot;
+      }
+    },
+    &quot;...&quot;
+  ]
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 290" role="img" aria-label="Accuracy of each held-out fold by the depth of the tree"><line class="ax" x1="70" y1="250" x2="600" y2="250"/>
+<line class="ax" x1="114.167" y1="250" x2="114.167" y2="255"/><text class="tk" x="114.167" y="269" text-anchor="middle">1</text>
+<line class="ax" x1="202.5" y1="250" x2="202.5" y2="255"/><text class="tk" x="202.5" y="269" text-anchor="middle">2</text>
+<line class="ax" x1="290.833" y1="250" x2="290.833" y2="255"/><text class="tk" x="290.833" y="269" text-anchor="middle">3</text>
+<line class="ax" x1="379.167" y1="250" x2="379.167" y2="255"/><text class="tk" x="379.167" y="269" text-anchor="middle">4</text>
+<line class="ax" x1="467.5" y1="250" x2="467.5" y2="255"/><text class="tk" x="467.5" y="269" text-anchor="middle">5</text>
+<line class="ax" x1="555.833" y1="250" x2="555.833" y2="255"/><text class="tk" x="555.833" y="269" text-anchor="middle">6</text>
+<text class="lb" x="335" y="288" text-anchor="middle">maximum depth of the tree</text>
+<line class="ax" x1="70" y1="30" x2="70" y2="250"/>
+<text class="tk" x="62" y="234" text-anchor="end">0.5</text>
+<text class="tk" x="62" y="134" text-anchor="end">0.75</text>
+<text class="tk" x="62" y="34" text-anchor="end">1</text>
+<text class="lb" x="16" y="140" transform="rotate(-90 16 140)" text-anchor="middle">accuracy on a held-out fold</text>
+<circle class="dot pa" cx="104.167" cy="163.333" r="3.4"/>
+<circle class="dot pa" cx="109.167" cy="196.667" r="3.4"/>
+<circle class="dot pa" cx="114.167" cy="143.333" r="3.4"/>
+<circle class="dot pa" cx="119.167" cy="176.667" r="3.4"/>
+<circle class="dot pa" cx="124.167" cy="163.333" r="3.4"/>
+<circle class="dot pa" cx="104.167" cy="203.333" r="3.4"/>
+<circle class="dot pa" cx="109.167" cy="163.333" r="3.4"/>
+<circle class="dot pa" cx="114.167" cy="156.667" r="3.4"/>
+<circle class="dot pa" cx="119.167" cy="163.333" r="3.4"/>
+<circle class="dot pa" cx="124.167" cy="156.667" r="3.4"/>
+<line class="md" x1="100.167" y1="168.667" x2="128.167" y2="168.667"/>
+<circle class="dot pa" cx="192.5" cy="176.667" r="3.4"/>
+<circle class="dot pa" cx="197.5" cy="123.333" r="3.4"/>
+<circle class="dot pa" cx="202.5" cy="156.667" r="3.4"/>
+<circle class="dot pa" cx="207.5" cy="123.333" r="3.4"/>
+<circle class="dot pa" cx="212.5" cy="130" r="3.4"/>
+<circle class="dot pa" cx="192.5" cy="130" r="3.4"/>
+<circle class="dot pa" cx="197.5" cy="103.333" r="3.4"/>
+<circle class="dot pa" cx="202.5" cy="163.333" r="3.4"/>
+<circle class="dot pa" cx="207.5" cy="123.333" r="3.4"/>
+<circle class="dot pa" cx="212.5" cy="176.667" r="3.4"/>
+<line class="md" x1="188.5" y1="140.667" x2="216.5" y2="140.667"/>
+<circle class="dot pa" cx="280.833" cy="116.667" r="3.4"/>
+<circle class="dot pa" cx="285.833" cy="50" r="3.4"/>
+<circle class="dot pa" cx="290.833" cy="76.6667" r="3.4"/>
+<circle class="dot pa" cx="295.833" cy="56.6667" r="3.4"/>
+<circle class="dot pa" cx="300.833" cy="90" r="3.4"/>
+<circle class="dot pa" cx="280.833" cy="63.3333" r="3.4"/>
+<circle class="dot pa" cx="285.833" cy="63.3333" r="3.4"/>
+<circle class="dot pa" cx="290.833" cy="70" r="3.4"/>
+<circle class="dot pa" cx="295.833" cy="70" r="3.4"/>
+<circle class="dot pa" cx="300.833" cy="130" r="3.4"/>
+<line class="md" x1="276.833" y1="78.6667" x2="304.833" y2="78.6667"/>
+<circle class="dot pa" cx="369.167" cy="76.6667" r="3.4"/>
+<circle class="dot pa" cx="374.167" cy="30" r="3.4"/>
+<circle class="dot pa" cx="379.167" cy="63.3333" r="3.4"/>
+<circle class="dot pa" cx="384.167" cy="43.3333" r="3.4"/>
+<circle class="dot pa" cx="389.167" cy="50" r="3.4"/>
+<circle class="dot pa" cx="369.167" cy="56.6667" r="3.4"/>
+<circle class="dot pa" cx="374.167" cy="56.6667" r="3.4"/>
+<circle class="dot pa" cx="379.167" cy="36.6667" r="3.4"/>
+<circle class="dot pa" cx="384.167" cy="36.6667" r="3.4"/>
+<circle class="dot pa" cx="389.167" cy="83.3333" r="3.4"/>
+<line class="md" x1="365.167" y1="53.3333" x2="393.167" y2="53.3333"/>
+<circle class="dot pa" cx="457.5" cy="63.3333" r="3.4"/>
+<circle class="dot pa" cx="462.5" cy="30" r="3.4"/>
+<circle class="dot pa" cx="467.5" cy="63.3333" r="3.4"/>
+<circle class="dot pa" cx="472.5" cy="50" r="3.4"/>
+<circle class="dot pa" cx="477.5" cy="56.6667" r="3.4"/>
+<circle class="dot pa" cx="457.5" cy="56.6667" r="3.4"/>
+<circle class="dot pa" cx="462.5" cy="56.6667" r="3.4"/>
+<circle class="dot pa" cx="467.5" cy="36.6667" r="3.4"/>
+<circle class="dot pa" cx="472.5" cy="36.6667" r="3.4"/>
+<circle class="dot pa" cx="477.5" cy="83.3333" r="3.4"/>
+<line class="md" x1="453.5" y1="53.3333" x2="481.5" y2="53.3333"/>
+<circle class="dot pa" cx="545.833" cy="76.6667" r="3.4"/>
+<circle class="dot pa" cx="550.833" cy="30" r="3.4"/>
+<circle class="dot pa" cx="555.833" cy="50" r="3.4"/>
+<circle class="dot pa" cx="560.833" cy="36.6667" r="3.4"/>
+<circle class="dot pa" cx="565.833" cy="50" r="3.4"/>
+<circle class="dot pa" cx="545.833" cy="56.6667" r="3.4"/>
+<circle class="dot pa" cx="550.833" cy="50" r="3.4"/>
+<circle class="dot pa" cx="555.833" cy="63.3333" r="3.4"/>
+<circle class="dot pa" cx="560.833" cy="36.6667" r="3.4"/>
+<circle class="dot pa" cx="565.833" cy="90" r="3.4"/>
+<line class="md" x1="541.833" y1="54" x2="569.833" y2="54"/></svg></figure><div class="read"><b>Reading it.</b> A tree of depth 1 scores 0.653 on average, depth 2 0.723, depth 4 the best, 0.942. The dots are the ten folds of each depth: the spread tells how much one held-out set can mislead. A single test split gives one dot; the cross-validation gives ten, and the same seed gives the same folds on any machine.</div></div></section>
+<section class=" story" id="s7"><div class="wrap"><h2>7 &middot; Same model, any machine</h2><div class="badge"><span class="lvl">reproducibility</span><span>fit --track</span><span>runs verify</span><span>--threads</span></div><p class="said">&#8220;My colleague refit it on the server with sixteen cores. Is it the same model?&#8221;</p><p>A forest is a bag of random trees, which is the usual way to get a result nobody can reproduce. Here every tree has its own random stream derived from the seed and the tree&#8217;s index, so the number of threads cannot change a tree. <code>fit --track DIR</code> writes a <em>run record</em>: canonical JSON, named by the hash of the inputs that determine the model, with no timestamp and no host name. <code>runs verify</code> refits from the record, in memory, and compares the SHA-256 of the model file.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model forest --task classification --trees 40 --max-depth 6 --seed 2 \
+    --target inside --track runs --output run.ml ring_train.csv</span>
+{
+  &quot;model&quot;: &quot;forest&quot;,
+  &quot;sha256&quot;: &quot;9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec6b2dc9dd8d1d6b34&quot;,
+  &quot;run&quot;: {
+    &quot;id&quot;: &quot;f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36&quot;,
+    &quot;dir&quot;: &quot;runs&quot;
+  }
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml runs verify runs f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36</span>
+{
+  &quot;id&quot;: &quot;f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36&quot;,
+  &quot;verified&quot;: true,
+  &quot;model_sha256&quot;: &quot;9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec6b2dc9dd8d1d6b34&quot;,
+  &quot;data_sha256&quot;: &quot;006db4681b9841dadbb407afcf345d97665039322e493824517dd5e9fe3f3ae9&quot;,
+  &quot;threads&quot;: 1,
+  &quot;compiler&quot;: &quot;0207556b4029a3ee73196cdfdb48e8efa7e9c519&quot;
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml runs verify --threads 8 runs \
+    f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36</span>
+{
+  &quot;id&quot;: &quot;f4361f5c0b69c6ae28701edb34052ade0f25b6b968571774ca00b0c2f4384d36&quot;,
+  &quot;verified&quot;: true,
+  &quot;model_sha256&quot;: &quot;9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec6b2dc9dd8d1d6b34&quot;,
+  &quot;data_sha256&quot;: &quot;006db4681b9841dadbb407afcf345d97665039322e493824517dd5e9fe3f3ae9&quot;,
+  &quot;threads&quot;: 8,
+  &quot;compiler&quot;: &quot;0207556b4029a3ee73196cdfdb48e8efa7e9c519&quot;
+}</pre></div><p>The same forest, fitted on one, two, four and eight threads; the SHA-256 of each model file:</p><figure class="fig"><svg viewBox="0 0 640 174" role="img" aria-label="The digests of the answers of the same question asked with the rows in different orders"><text class="nm" x="205" y="33" text-anchor="end">--threads 1: model file</text><rect class="hash" x="215" y="18" width="395" height="22" rx="4"/><text class="hx" x="225" y="33">9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec</text>
+<text class="nm" x="205" y="67" text-anchor="end">--threads 2: model file</text><rect class="hash" x="215" y="52" width="395" height="22" rx="4"/><text class="hx" x="225" y="67">9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec</text>
+<text class="nm" x="205" y="101" text-anchor="end">--threads 4: model file</text><rect class="hash" x="215" y="86" width="395" height="22" rx="4"/><text class="hx" x="225" y="101">9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec</text>
+<text class="nm" x="205" y="135" text-anchor="end">--threads 8: model file</text><rect class="hash" x="215" y="120" width="395" height="22" rx="4"/><text class="hx" x="225" y="135">9500bfe8b37744e414df5ec38ae7c2d7717aaf089bb2e5ec</text></svg></figure><div class="read"><b>Reading it.</b> The run record verifies on one thread and on eight, with the model hash 9500bfe8b377&hellip;. The four model files are the same bytes. That is the claim a result has to make before anyone else can rely on it, and it is the claim the project&#8217;s CI checks across Linux and macOS.</div></div></section>
+<section class="part" id="lab"><div class="wrap"><h2>Part II &middot; In the lab and in the field</h2><p class="lead">The same tool on four small datasets from the sciences: tumour or normal tissue from gene expression, a calibration curve, two kinds of particle in a detector, a town survey. The data are invented; the runs are real.</p></div></section>
+<section class="alt story" id="s8"><div class="wrap"><h2>8 &middot; Tumour or normal?</h2><div class="badge"><span class="lvl">biology: which features matter</span><span>fit --model logistic</span><span>importance</span></div><p class="said">&#8220;Four genes measured in 120 tissue samples. Can they tell tumour from normal? And which ones are doing the telling?&#8221; &#8212; a bioinformatician</p><p>The columns are standardised (a <code>scale</code> step stored in the model), a logistic regression is fitted, and then <code>ml importance</code> says which columns the model relies on: for a linear model, the stored coefficient times the standard deviation of the column the model sees, as a share of the total.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file tum.ml expression_test.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;task&quot;: &quot;classification&quot;,
+  &quot;rows&quot;: 40,
+  &quot;on&quot;: &quot;other&quot;,
+  &quot;positive&quot;: 1,
+  &quot;metrics&quot;: {
+    &quot;accuracy&quot;: &quot;0.875&quot;,
+    &quot;precision&quot;: &quot;0.95&quot;,
+    &quot;recall&quot;: &quot;0.8260869565217391&quot;,
+    &quot;f1&quot;: &quot;0.8837209302325582&quot;,
+    &quot;roc_auc&quot;: &quot;0.9616368286445013&quot;,
+    &quot;log_loss&quot;: &quot;0.30739903237642446&quot;
+  },
+  &quot;unknown_categories&quot;: 0,
+  &quot;out_of_range&quot;: {&quot;cells&quot;: 0, &quot;rows&quot;: 0, &quot;columns&quot;: []}
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml importance --model-file tum.ml</span>
+{
+  &quot;importance&quot;: {
+    &quot;method&quot;: &quot;standardised_coefficient&quot;,
+    &quot;columns&quot;: [
+      {
+        &quot;column&quot;: &quot;gene_a&quot;,
+        &quot;standardised&quot;: &quot;2.3166764661578663&quot;,
+        &quot;importance&quot;: &quot;0.6828871971087327&quot;,
+        &quot;rank&quot;: 1
+      },
+      {
+        &quot;column&quot;: &quot;gene_b&quot;,
+        &quot;standardised&quot;: &quot;-1.0581815968781279&quot;,
+        &quot;importance&quot;: &quot;0.3119204063580736&quot;,
+        &quot;rank&quot;: 2
+      },
+      {
+        &quot;column&quot;: &quot;gene_c&quot;,
+        &quot;standardised&quot;: &quot;0.012402887496139447&quot;,
+        &quot;importance&quot;: &quot;0.0036560016912246976&quot;,
+        &quot;rank&quot;: 3
+      },
+      {
+        &quot;column&quot;: &quot;gene_d&quot;,
+        &quot;standardised&quot;: &quot;0.005212178216527928&quot;,
+        &quot;importance&quot;: &quot;0.0015363948419690146&quot;,
+        &quot;rank&quot;: 4
+      }
+    ]
+  }
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 168" role="img" aria-label="Bars"><text class="nm" x="92" y="31" text-anchor="end">gene_a</text><rect class="pbar pa" x="100" y="16" width="420" height="20" rx="3"/><text class="tk" x="528" y="31">0.683</text>
+<text class="nm" x="92" y="65" text-anchor="end">gene_b</text><rect class="pbar pa" x="100" y="50" width="191.842" height="20" rx="3"/><text class="tk" x="299.842" y="65">0.312</text>
+<text class="nm" x="92" y="99" text-anchor="end">gene_c</text><rect class="pbar pa" x="100" y="84" width="2.24857" height="20" rx="3"/><text class="tk" x="110.249" y="99">0.004</text>
+<text class="nm" x="92" y="133" text-anchor="end">gene_d</text><rect class="pbar pa" x="100" y="118" width="0.944938" height="20" rx="3"/><text class="tk" x="108.945" y="133">0.002</text></svg></figure><div class="read"><b>Reading it.</b> On the 40 held-out samples the model is right 0.875 of the time (area under the curve 0.962). Genes <code>gene_a</code> and <code>gene_b</code> carry 0.995 of the importance together; the other two, which the generator made independent of the tissue, carry the rest. A score alone would not tell; the importance does, and it is computed from the stored model, not from a refit.</div></div></section>
+<section class=" story" id="s9"><div class="wrap"><h2>9 &middot; A calibration curve</h2><div class="badge"><span class="lvl">chemistry: fit once, apply to unknowns</span><span>fit --model linear</span><span>predict</span><span>eval</span></div><p class="said">&#8220;Twelve standards, four concentrations, three replicates each. Five unknowns. What are their concentrations?&#8221;</p><p>A calibration is a regression of concentration on absorbance, fitted on the standards and <em>applied</em> to the unknowns. <code>ml fit</code> stores the line in a model file; <code>ml predict</code> applies it to the file of unknowns, and the file cannot be applied with a different transformation than the one it learnt.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model linear --target conc_mM --output cal.ml standards.csv</span>
+{
+  &quot;rows&quot;: 12,
+  &quot;coefficients&quot;: [{&quot;name&quot;: &quot;absorbance&quot;, &quot;value&quot;: &quot;1.3458093875232646&quot;}],
+  &quot;intercept&quot;: &quot;-0.0032845886763309333&quot;
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file cal.ml standards.csv</span>
+{
+  &quot;model&quot;: &quot;linear&quot;,
+  &quot;task&quot;: &quot;regression&quot;,
+  &quot;rows&quot;: 12,
+  &quot;on&quot;: &quot;train&quot;,
+  &quot;metrics&quot;: {
+    &quot;rmse&quot;: &quot;0.004008554241462073&quot;,
+    &quot;mae&quot;: &quot;0.003317025559788757&quot;,
+    &quot;r2&quot;: &quot;0.9997764381619931&quot;
+  },
+  &quot;unknown_categories&quot;: 0,
+  &quot;out_of_range&quot;: {&quot;cells&quot;: 0, &quot;rows&quot;: 0, &quot;columns&quot;: []}
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml predict --model-file cal.ml unknowns.csv</span>
+{
+  &quot;columns&quot;: [&quot;prediction&quot;],
+  &quot;rows&quot;: [
+    [&quot;0.1520218146438538&quot;],
+    [&quot;0.29292805751753964&quot;],
+    [&quot;0.4953377894010386&quot;],
+    [&quot;0.5945239412615032&quot;],
+    [&quot;0.6894035030818934&quot;]
+  ]
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 330" role="img" aria-label="The calibration line, the standards and the unknown samples"><line class="ax" x1="70" y1="290" x2="330" y2="290"/>
+<line class="ax" x1="70" y1="290" x2="70" y2="295"/><text class="tk" x="70" y="309" text-anchor="middle">0</text>
+<line class="ax" x1="144.286" y1="290" x2="144.286" y2="295"/><text class="tk" x="144.286" y="309" text-anchor="middle">0.2</text>
+<line class="ax" x1="218.571" y1="290" x2="218.571" y2="295"/><text class="tk" x="218.571" y="309" text-anchor="middle">0.4</text>
+<line class="ax" x1="292.857" y1="290" x2="292.857" y2="295"/><text class="tk" x="292.857" y="309" text-anchor="middle">0.6</text>
+<text class="lb" x="200" y="328" text-anchor="middle">absorbance</text>
+<line class="ax" x1="70" y1="20" x2="70" y2="290"/>
+<text class="tk" x="62" y="274" text-anchor="end">0</text>
+<text class="tk" x="62" y="211.5" text-anchor="end">0.2</text>
+<text class="tk" x="62" y="149" text-anchor="end">0.4</text>
+<text class="tk" x="62" y="86.5" text-anchor="end">0.6</text>
+<text class="tk" x="62" y="24" text-anchor="end">0.8</text>
+<text class="lb" x="14" y="150" transform="rotate(-90 14 150)" text-anchor="middle">concentration, mM</text>
+<line class="ciline" x1="70" y1="271.026" x2="300.286" y2="10.2759"/>
+<circle class="dot pa" cx="98.3771" cy="238.75" r="4"/>
+<circle class="dot pa" cx="100.086" cy="238.75" r="4"/>
+<circle class="dot pa" cx="96.8543" cy="238.75" r="4"/>
+<circle class="dot pa" cx="127.2" cy="207.5" r="4"/>
+<circle class="dot pa" cx="125.343" cy="207.5" r="4"/>
+<circle class="dot pa" cx="125.343" cy="207.5" r="4"/>
+<circle class="dot pa" cx="183.509" cy="145" r="4"/>
+<circle class="dot pa" cx="180.909" cy="145" r="4"/>
+<circle class="dot pa" cx="180.611" cy="145" r="4"/>
+<circle class="dot pa" cx="291.706" cy="20" r="4"/>
+<circle class="dot pa" cx="292.3" cy="20" r="4"/>
+<circle class="dot pa" cx="290.591" cy="20" r="4"/>
+<path class="mn" d="M112.863 216.493 l6 6 l-6 6 l-6 -6 z"/>
+<path class="mn" d="M151.751 172.46 l6 6 l-6 6 l-6 -6 z"/>
+<path class="mn" d="M207.614 109.207 l6 6 l-6 6 l-6 -6 z"/>
+<path class="mn" d="M234.989 78.2113 l6 6 l-6 6 l-6 -6 z"/>
+<path class="mn" d="M261.174 48.5614 l6 6 l-6 6 l-6 -6 z"/>
+<text class="nm" x="360" y="50">standards</text><circle class="dot pa" cx="456" cy="46" r="4"/><text class="nm" x="360" y="74">unknowns</text><path class="mn" d="M456 68 l6 6 l-6 6 l-6 -6 z"/></svg></figure><div class="read"><b>Reading it.</b> The line explains 0.99978 of the variance of the standards (r2). The five unknowns come out at 0.152, 0.293, 0.495, 0.595, 0.689 mM; the generator knows their true concentrations (0.15, 0.3, 0.5, 0.6, 0.7), and the largest difference is 0.011 mM. In a real laboratory the truth is the one thing you do not have, which is why the standards are replicated; here the page can show the check.</div></div></section>
+<section class="alt story" id="s10"><div class="wrap"><h2>10 &middot; Two kinds of pulse</h2><div class="badge"><span class="lvl">physics: clusters with no labels</span><span>fit --model kmeans</span><span>predict</span><span>eval</span></div><p class="said">&#8220;The detector records the height and the rise time of every pulse. I think there are two kinds of particle. Without labels, can the data say so?&#8221;</p><p>k-means has no target: <code>fit</code> needs none and refuses one. The columns are standardised first (a pulse height in the tens and a rise time in the tens of nanoseconds have different units), <code>--k 2</code> asks for two centres, and the initial centres are drawn from <code>--seed</code>, so the clusters are the same on every run.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model kmeans --k 2 --seed 1 --step &#x27;scale column=* kind=standard&#x27; --output \
+    km.ml pulses.csv</span>
+{&quot;model&quot;: &quot;kmeans&quot;, &quot;rows&quot;: 240, &quot;target&quot;: null}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file km.ml pulses.csv</span>
+{
+  &quot;clusters&quot;: 2,
+  &quot;metrics&quot;: {
+    &quot;inertia&quot;: &quot;82.78133125890389&quot;,
+    &quot;sizes&quot;: [97, 143],
+    &quot;mean_distance&quot;: [&quot;0.602540773533933&quot;, &quot;0.4611493301696197&quot;]
+  }
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 330" role="img" aria-label="The pulses, coloured by the cluster k-means found"><line class="ax" x1="70" y1="290" x2="600" y2="290"/>
+<line class="ax" x1="118.182" y1="290" x2="118.182" y2="295"/><text class="tk" x="118.182" y="309" text-anchor="middle">20</text>
+<line class="ax" x1="214.545" y1="290" x2="214.545" y2="295"/><text class="tk" x="214.545" y="309" text-anchor="middle">30</text>
+<line class="ax" x1="310.909" y1="290" x2="310.909" y2="295"/><text class="tk" x="310.909" y="309" text-anchor="middle">40</text>
+<line class="ax" x1="407.273" y1="290" x2="407.273" y2="295"/><text class="tk" x="407.273" y="309" text-anchor="middle">50</text>
+<line class="ax" x1="503.636" y1="290" x2="503.636" y2="295"/><text class="tk" x="503.636" y="309" text-anchor="middle">60</text>
+<line class="ax" x1="600" y1="290" x2="600" y2="295"/><text class="tk" x="600" y="309" text-anchor="middle">70</text>
+<text class="lb" x="335" y="328" text-anchor="middle">pulse height</text>
+<line class="ax" x1="70" y1="20" x2="70" y2="290"/>
+<text class="tk" x="62" y="250.19" text-anchor="end">5</text>
+<text class="tk" x="62" y="190.667" text-anchor="end">10</text>
+<text class="tk" x="62" y="131.143" text-anchor="end">15</text>
+<text class="tk" x="62" y="71.619" text-anchor="end">20</text>
+<text class="lb" x="14" y="150" transform="rotate(-90 14 150)" text-anchor="middle">rise time, ns</text>
+<circle class="dot pb" cx="256.945" cy="243.81" r="3.4"/>
+<circle class="dot pa" cx="435.218" cy="128.333" r="3.4"/>
+<circle class="dot pb" cx="223.218" cy="196.19" r="3.4"/>
+<circle class="dot pa" cx="425.582" cy="109.286" r="3.4"/>
+<circle class="dot pb" cx="176" cy="165.238" r="3.4"/>
+<circle class="dot pb" cx="72.8909" cy="159.286" r="3.4"/>
+<circle class="dot pa" cx="471.836" cy="136.667" r="3.4"/>
+<circle class="dot pa" cx="406.309" cy="121.19" r="3.4"/>
+<circle class="dot pb" cx="229" cy="175.952" r="3.4"/>
+<circle class="dot pb" cx="187.564" cy="211.667" r="3.4"/>
+<circle class="dot pa" cx="487.255" cy="100.952" r="3.4"/>
+<circle class="dot pb" cx="270.436" cy="171.19" r="3.4"/>
+<circle class="dot pb" cx="222.255" cy="199.762" r="3.4"/>
+<circle class="dot pa" cx="518.091" cy="78.3333" r="3.4"/>
+<circle class="dot pa" cx="480.509" cy="97.381" r="3.4"/>
+<circle class="dot pb" cx="238.636" cy="209.286" r="3.4"/>
+<circle class="dot pb" cx="271.4" cy="204.524" r="3.4"/>
+<circle class="dot pa" cx="415.945" cy="49.7619" r="3.4"/>
+<circle class="dot pa" cx="367.764" cy="109.286" r="3.4"/>
+<circle class="dot pb" cx="262.727" cy="178.333" r="3.4"/>
+<circle class="dot pb" cx="196.236" cy="183.095" r="3.4"/>
+<circle class="dot pb" cx="180.818" cy="205.714" r="3.4"/>
+<circle class="dot pa" cx="427.509" cy="112.857" r="3.4"/>
+<circle class="dot pb" cx="204.909" cy="172.381" r="3.4"/>
+<circle class="dot pb" cx="207.8" cy="191.429" r="3.4"/>
+<circle class="dot pb" cx="223.218" cy="200.952" r="3.4"/>
+<circle class="dot pb" cx="195.273" cy="216.429" r="3.4"/>
+<circle class="dot pb" cx="277.182" cy="204.524" r="3.4"/>
+<circle class="dot pa" cx="441" cy="74.7619" r="3.4"/>
+<circle class="dot pa" cx="457.382" cy="80.7143" r="3.4"/>
+<circle class="dot pb" cx="129.745" cy="206.905" r="3.4"/>
+<circle class="dot pb" cx="220.327" cy="204.524" r="3.4"/>
+<circle class="dot pb" cx="283.927" cy="180.714" r="3.4"/>
+<circle class="dot pb" cx="187.564" cy="215.238" r="3.4"/>
+<circle class="dot pa" cx="496.891" cy="73.5714" r="3.4"/>
+<circle class="dot pa" cx="382.218" cy="95" r="3.4"/>
+<circle class="dot pa" cx="400.527" cy="54.5238" r="3.4"/>
+<circle class="dot pb" cx="171.182" cy="184.286" r="3.4"/>
+<circle class="dot pb" cx="162.509" cy="200.952" r="3.4"/>
+<circle class="dot pb" cx="214.545" cy="212.857" r="3.4"/>
+<circle class="dot pa" cx="446.782" cy="70" r="3.4"/>
+<circle class="dot pa" cx="423.655" cy="122.381" r="3.4"/>
+<circle class="dot pb" cx="248.273" cy="209.286" r="3.4"/>
+<circle class="dot pb" cx="270.436" cy="209.286" r="3.4"/>
+<circle class="dot pb" cx="99.8727" cy="148.571" r="3.4"/>
+<circle class="dot pb" cx="200.091" cy="181.905" r="3.4"/>
+<circle class="dot pb" cx="156.727" cy="200.952" r="3.4"/>
+<circle class="dot pa" cx="346.564" cy="108.095" r="3.4"/>
+<circle class="dot pb" cx="164.436" cy="192.619" r="3.4"/>
+<circle class="dot pb" cx="161.545" cy="203.333" r="3.4"/>
+<circle class="dot pa" cx="412.091" cy="21.1905" r="3.4"/>
+<circle class="dot pb" cx="135.527" cy="192.619" r="3.4"/>
+<circle class="dot pa" cx="418.836" cy="62.8571" r="3.4"/>
+<circle class="dot pb" cx="268.509" cy="195" r="3.4"/>
+<circle class="dot pb" cx="98.9091" cy="237.857" r="3.4"/>
+<circle class="dot pa" cx="519.055" cy="116.429" r="3.4"/>
+<circle class="dot pa" cx="331.145" cy="100.952" r="3.4"/>
+<circle class="dot pa" cx="360.055" cy="128.333" r="3.4"/>
+<circle class="dot pb" cx="199.127" cy="196.19" r="3.4"/>
+<circle class="dot pb" cx="237.673" cy="177.143" r="3.4"/>
+<circle class="dot pa" cx="385.109" cy="66.4286" r="3.4"/>
+<circle class="dot pb" cx="262.727" cy="202.143" r="3.4"/>
+<circle class="dot pa" cx="426.545" cy="112.857" r="3.4"/>
+<circle class="dot pb" cx="220.327" cy="203.333" r="3.4"/>
+<circle class="dot pb" cx="204.909" cy="181.905" r="3.4"/>
+<circle class="dot pa" cx="384.145" cy="96.1905" r="3.4"/>
+<circle class="dot pb" cx="209.727" cy="189.048" r="3.4"/>
+<circle class="dot pa" cx="405.345" cy="110.476" r="3.4"/>
+<circle class="dot pa" cx="399.564" cy="79.5238" r="3.4"/>
+<circle class="dot pb" cx="221.291" cy="209.286" r="3.4"/>
+<circle class="dot pa" cx="361.018" cy="79.5238" r="3.4"/>
+<circle class="dot pa" cx="330.182" cy="97.381" r="3.4"/>
+<circle class="dot pa" cx="393.782" cy="96.1905" r="3.4"/>
+<circle class="dot pb" cx="178.891" cy="167.619" r="3.4"/>
+<circle class="dot pb" cx="261.764" cy="203.333" r="3.4"/>
+<circle class="dot pb" cx="252.127" cy="172.381" r="3.4"/>
+<circle class="dot pb" cx="176" cy="191.429" r="3.4"/>
+<circle class="dot pb" cx="214.545" cy="233.095" r="3.4"/>
+<circle class="dot pa" cx="428.473" cy="73.5714" r="3.4"/>
+<circle class="dot pa" cx="456.418" cy="91.4286" r="3.4"/>
+<circle class="dot pb" cx="123" cy="181.905" r="3.4"/>
+<circle class="dot pa" cx="491.109" cy="42.619" r="3.4"/>
+<circle class="dot pa" cx="374.509" cy="56.9048" r="3.4"/>
+<circle class="dot pa" cx="519.055" cy="99.7619" r="3.4"/>
+<circle class="dot pa" cx="512.309" cy="131.905" r="3.4"/>
+<circle class="dot pb" cx="229" cy="191.429" r="3.4"/>
+<circle class="dot pb" cx="268.509" cy="216.429" r="3.4"/>
+<circle class="dot pb" cx="224.182" cy="211.667" r="3.4"/>
+<circle class="dot pa" cx="500.745" cy="124.762" r="3.4"/>
+<circle class="dot pb" cx="211.655" cy="191.429" r="3.4"/>
+<circle class="dot pb" cx="241.527" cy="205.714" r="3.4"/>
+<circle class="dot pa" cx="499.782" cy="84.2857" r="3.4"/>
+<circle class="dot pa" cx="395.709" cy="116.429" r="3.4"/>
+<circle class="dot pb" cx="212.618" cy="181.905" r="3.4"/>
+<circle class="dot pb" cx="289.709" cy="210.476" r="3.4"/>
+<circle class="dot pa" cx="441" cy="70" r="3.4"/>
+<circle class="dot pb" cx="247.309" cy="203.333" r="3.4"/>
+<circle class="dot pb" cx="176" cy="184.286" r="3.4"/>
+<circle class="dot pa" cx="408.236" cy="131.905" r="3.4"/>
+<circle class="dot pb" cx="162.509" cy="196.19" r="3.4"/>
+<circle class="dot pb" cx="282" cy="170" r="3.4"/>
+<circle class="dot pb" cx="221.291" cy="179.524" r="3.4"/>
+<circle class="dot pb" cx="258.873" cy="222.381" r="3.4"/>
+<circle class="dot pa" cx="553.745" cy="108.095" r="3.4"/>
+<circle class="dot pb" cx="159.618" cy="197.381" r="3.4"/>
+<circle class="dot pb" cx="269.473" cy="202.143" r="3.4"/>
+<circle class="dot pb" cx="219.364" cy="193.81" r="3.4"/>
+<circle class="dot pb" cx="226.109" cy="184.286" r="3.4"/>
+<circle class="dot pa" cx="470.873" cy="73.5714" r="3.4"/>
+<circle class="dot pa" cx="403.418" cy="60.4762" r="3.4"/>
+<circle class="dot pa" cx="405.345" cy="70" r="3.4"/>
+<circle class="dot pa" cx="334.036" cy="106.905" r="3.4"/>
+<circle class="dot pa" cx="357.164" cy="98.5714" r="3.4"/>
+<circle class="dot pb" cx="203.945" cy="212.857" r="3.4"/>
+<circle class="dot pb" cx="310.909" cy="225.952" r="3.4"/>
+<circle class="dot pb" cx="251.164" cy="186.667" r="3.4"/>
+<circle class="dot pb" cx="176" cy="170" r="3.4"/>
+<circle class="dot pb" cx="220.327" cy="198.571" r="3.4"/>
+<circle class="dot pb" cx="258.873" cy="183.095" r="3.4"/>
+<circle class="dot pa" cx="367.764" cy="68.8095" r="3.4"/>
+<circle class="dot pb" cx="260.8" cy="193.81" r="3.4"/>
+<circle class="dot pa" cx="425.582" cy="104.524" r="3.4"/>
+<circle class="dot pa" cx="433.291" cy="98.5714" r="3.4"/>
+<circle class="dot pb" cx="196.236" cy="135.476" r="3.4"/>
+<circle class="dot pa" cx="480.509" cy="75.9524" r="3.4"/>
+<circle class="dot pa" cx="396.673" cy="106.905" r="3.4"/>
+<circle class="dot pa" cx="451.6" cy="90.2381" r="3.4"/>
+<circle class="dot pa" cx="311.873" cy="79.5238" r="3.4"/>
+<circle class="dot pb" cx="190.455" cy="179.524" r="3.4"/>
+<circle class="dot pb" cx="229" cy="204.524" r="3.4"/>
+<circle class="dot pb" cx="182.745" cy="156.905" r="3.4"/>
+<circle class="dot pb" cx="153.836" cy="214.048" r="3.4"/>
+<circle class="dot pb" cx="253.091" cy="191.429" r="3.4"/>
+<circle class="dot pa" cx="501.709" cy="46.1905" r="3.4"/>
+<circle class="dot pb" cx="227.073" cy="183.095" r="3.4"/>
+<circle class="dot pb" cx="290.673" cy="180.714" r="3.4"/>
+<circle class="dot pa" cx="492.073" cy="81.9048" r="3.4"/>
+<circle class="dot pb" cx="217.436" cy="212.857" r="3.4"/>
+<circle class="dot pa" cx="367.764" cy="91.4286" r="3.4"/>
+<circle class="dot pa" cx="415.945" cy="139.048" r="3.4"/>
+<circle class="dot pb" cx="184.673" cy="216.429" r="3.4"/>
+<circle class="dot pb" cx="220.327" cy="190.238" r="3.4"/>
+<circle class="dot pa" cx="388" cy="95" r="3.4"/>
+<circle class="dot pb" cx="240.564" cy="222.381" r="3.4"/>
+<circle class="dot pa" cx="431.364" cy="90.2381" r="3.4"/>
+<circle class="dot pa" cx="419.8" cy="54.5238" r="3.4"/>
+<circle class="dot pb" cx="202.982" cy="195" r="3.4"/>
+<circle class="dot pb" cx="222.255" cy="199.762" r="3.4"/>
+<circle class="dot pb" cx="256.945" cy="198.571" r="3.4"/>
+<circle class="dot pb" cx="241.527" cy="224.762" r="3.4"/>
+<circle class="dot pa" cx="443.891" cy="122.381" r="3.4"/>
+<circle class="dot pb" cx="141.309" cy="218.81" r="3.4"/>
+<circle class="dot pb" cx="234.782" cy="203.333" r="3.4"/>
+<circle class="dot pa" cx="470.873" cy="70" r="3.4"/>
+<circle class="dot pb" cx="219.364" cy="199.762" r="3.4"/>
+<circle class="dot pa" cx="363.909" cy="67.619" r="3.4"/>
+<circle class="dot pa" cx="418.836" cy="75.9524" r="3.4"/>
+<circle class="dot pb" cx="121.073" cy="228.333" r="3.4"/>
+<circle class="dot pa" cx="280.073" cy="81.9048" r="3.4"/>
+<circle class="dot pb" cx="208.764" cy="167.619" r="3.4"/>
+<circle class="dot pb" cx="233.818" cy="193.81" r="3.4"/>
+<circle class="dot pb" cx="200.091" cy="185.476" r="3.4"/>
+<circle class="dot pb" cx="211.655" cy="177.143" r="3.4"/>
+<circle class="dot pb" cx="301.273" cy="197.381" r="3.4"/>
+<circle class="dot pa" cx="463.164" cy="67.619" r="3.4"/>
+<circle class="dot pa" cx="454.491" cy="89.0476" r="3.4"/>
+<circle class="dot pa" cx="394.745" cy="74.7619" r="3.4"/>
+<circle class="dot pa" cx="477.618" cy="50.9524" r="3.4"/>
+<circle class="dot pb" cx="209.727" cy="199.762" r="3.4"/>
+<circle class="dot pb" cx="294.527" cy="192.619" r="3.4"/>
+<circle class="dot pb" cx="177.927" cy="189.048" r="3.4"/>
+<circle class="dot pb" cx="133.6" cy="216.429" r="3.4"/>
+<circle class="dot pa" cx="494.964" cy="73.5714" r="3.4"/>
+<circle class="dot pa" cx="376.436" cy="102.143" r="3.4"/>
+<circle class="dot pa" cx="442.927" cy="105.714" r="3.4"/>
+<circle class="dot pa" cx="421.727" cy="143.81" r="3.4"/>
+<circle class="dot pb" cx="253.091" cy="205.714" r="3.4"/>
+<circle class="dot pa" cx="321.509" cy="79.5238" r="3.4"/>
+<circle class="dot pb" cx="161.545" cy="220" r="3.4"/>
+<circle class="dot pa" cx="370.655" cy="102.143" r="3.4"/>
+<circle class="dot pb" cx="192.382" cy="175.952" r="3.4"/>
+<circle class="dot pb" cx="191.418" cy="230.714" r="3.4"/>
+<circle class="dot pb" cx="298.382" cy="161.667" r="3.4"/>
+<circle class="dot pa" cx="420.764" cy="111.667" r="3.4"/>
+<circle class="dot pa" cx="408.236" cy="83.0952" r="3.4"/>
+<circle class="dot pa" cx="529.655" cy="100.952" r="3.4"/>
+<circle class="dot pa" cx="348.491" cy="90.2381" r="3.4"/>
+<circle class="dot pa" cx="467.982" cy="72.381" r="3.4"/>
+<circle class="dot pb" cx="278.145" cy="204.524" r="3.4"/>
+<circle class="dot pb" cx="140.345" cy="181.905" r="3.4"/>
+<circle class="dot pb" cx="240.564" cy="205.714" r="3.4"/>
+<circle class="dot pb" cx="271.4" cy="187.857" r="3.4"/>
+<circle class="dot pb" cx="164.436" cy="211.667" r="3.4"/>
+<circle class="dot pa" cx="458.345" cy="74.7619" r="3.4"/>
+<circle class="dot pb" cx="194.309" cy="149.762" r="3.4"/>
+<circle class="dot pb" cx="209.727" cy="178.333" r="3.4"/>
+<circle class="dot pb" cx="297.418" cy="196.19" r="3.4"/>
+<circle class="dot pb" cx="211.655" cy="200.952" r="3.4"/>
+<circle class="dot pb" cx="251.164" cy="192.619" r="3.4"/>
+<circle class="dot pb" cx="183.709" cy="211.667" r="3.4"/>
+<circle class="dot pa" cx="393.782" cy="75.9524" r="3.4"/>
+<circle class="dot pa" cx="427.509" cy="64.0476" r="3.4"/>
+<circle class="dot pb" cx="235.745" cy="215.238" r="3.4"/>
+<circle class="dot pb" cx="162.509" cy="168.81" r="3.4"/>
+<circle class="dot pb" cx="216.473" cy="240.238" r="3.4"/>
+<circle class="dot pb" cx="242.491" cy="209.286" r="3.4"/>
+<circle class="dot pb" cx="160.582" cy="208.095" r="3.4"/>
+<circle class="dot pa" cx="422.691" cy="58.0952" r="3.4"/>
+<circle class="dot pa" cx="398.6" cy="128.333" r="3.4"/>
+<circle class="dot pb" cx="250.2" cy="183.095" r="3.4"/>
+<circle class="dot pb" cx="205.873" cy="191.429" r="3.4"/>
+<circle class="dot pb" cx="193.345" cy="189.048" r="3.4"/>
+<circle class="dot pb" cx="267.545" cy="211.667" r="3.4"/>
+<circle class="dot pa" cx="487.255" cy="90.2381" r="3.4"/>
+<circle class="dot pa" cx="543.145" cy="102.143" r="3.4"/>
+<circle class="dot pb" cx="248.273" cy="206.905" r="3.4"/>
+<circle class="dot pb" cx="158.655" cy="205.714" r="3.4"/>
+<circle class="dot pb" cx="220.327" cy="187.857" r="3.4"/>
+<circle class="dot pa" cx="414.018" cy="104.524" r="3.4"/>
+<circle class="dot pb" cx="190.455" cy="211.667" r="3.4"/>
+<circle class="dot pb" cx="241.527" cy="191.429" r="3.4"/>
+<circle class="dot pb" cx="142.273" cy="168.81" r="3.4"/>
+<circle class="dot pb" cx="325.364" cy="198.571" r="3.4"/>
+<circle class="dot pb" cx="141.309" cy="189.048" r="3.4"/>
+<circle class="dot pb" cx="279.109" cy="179.524" r="3.4"/>
+<circle class="dot pb" cx="212.618" cy="199.762" r="3.4"/>
+<circle class="dot pb" cx="250.2" cy="156.905" r="3.4"/>
+<circle class="dot pa" cx="477.618" cy="87.8571" r="3.4"/>
+<circle class="dot pb" cx="240.564" cy="171.19" r="3.4"/>
+<circle class="dot pb" cx="175.036" cy="209.286" r="3.4"/>
+<circle class="dot pb" cx="242.491" cy="187.857" r="3.4"/>
+<circle class="dot pb" cx="222.255" cy="184.286" r="3.4"/>
+<circle class="dot pa" cx="296.455" cy="103.333" r="3.4"/>
+<circle class="dot pa" cx="304.164" cy="96.1905" r="3.4"/>
+<circle class="dot pa" cx="378.364" cy="89.0476" r="3.4"/>
+<circle class="dot pb" cx="320.545" cy="214.048" r="3.4"/>
+<circle class="dot pa" cx="446.782" cy="64.0476" r="3.4"/>
+<circle class="dot pb" cx="216.473" cy="183.095" r="3.4"/>
+<circle class="dot pa" cx="471.836" cy="98.5714" r="3.4"/>
+<circle class="dot pa" cx="367.764" cy="73.5714" r="3.4"/></svg></figure><div class="read"><b>Reading it.</b> Two clusters of 97 and 143 pulses. The generator kept the true kind of each pulse (the file does not have it): the clusters agree with it on 1 of the pulses. With real data there is no such check, and the honest statement is the one the tool prints: the inertia, the sizes and the mean distance of each cluster, not that these are two particles.</div></div></section>
+<section class=" story" id="s11"><div class="wrap"><h2>11 &middot; Who supports the tram line?</h2><div class="badge"><span class="lvl">social science: a model to read, not to use</span><span>fit --model logistic</span><span>importance</span><span>predict --proba</span></div><p class="said">&#8220;Six hundred residents were asked. I do not want to predict anyone. I want to know what the answers depend on.&#8221; &#8212; a council analyst</p><p>A model can be a way of describing a survey: which columns the answer depends on, and how. The logistic regression is fitted on 450 residents with standardised columns, scored on 150 it has not seen, and then asked two questions: which column matters (<code>importance</code>) and what the model says about a resident of the median income and schooling at each age (<code>predict --proba</code> on a grid of ages).</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml eval --model-file town.ml town_test.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;task&quot;: &quot;classification&quot;,
+  &quot;rows&quot;: 150,
+  &quot;on&quot;: &quot;other&quot;,
+  &quot;positive&quot;: 1,
+  &quot;metrics&quot;: {
+    &quot;accuracy&quot;: &quot;0.7333333333333333&quot;,
+    &quot;precision&quot;: &quot;0.7375&quot;,
+    &quot;recall&quot;: &quot;0.7564102564102564&quot;,
+    &quot;f1&quot;: &quot;0.7468354430379747&quot;,
+    &quot;roc_auc&quot;: &quot;0.8424145299145299&quot;,
+    &quot;log_loss&quot;: &quot;0.4891358382011911&quot;
+  },
+  &quot;unknown_categories&quot;: 0,
+  &quot;out_of_range&quot;: {&quot;cells&quot;: 0, &quot;rows&quot;: 0, &quot;columns&quot;: []}
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml importance --model-file town.ml</span>
+{
+  &quot;importance&quot;: {
+    &quot;columns&quot;: [
+      {
+        &quot;column&quot;: &quot;age&quot;,
+        &quot;standardised&quot;: &quot;-1.4437105510135642&quot;,
+        &quot;importance&quot;: &quot;0.6393579984824836&quot;,
+        &quot;rank&quot;: 1
+      },
+      {
+        &quot;column&quot;: &quot;income_k&quot;,
+        &quot;standardised&quot;: &quot;0.6437624045708435&quot;,
+        &quot;importance&quot;: &quot;0.2850949881856327&quot;,
+        &quot;rank&quot;: 2
+      },
+      {
+        &quot;column&quot;: &quot;schooling&quot;,
+        &quot;standardised&quot;: &quot;0.17058990503548208&quot;,
+        &quot;importance&quot;: &quot;0.07554701333188361&quot;,
+        &quot;rank&quot;: 3
+      }
+    ]
+  }
+}</pre></div><figure class="fig"><svg viewBox="0 0 640 290" role="img" aria-label="predicted probability of support"><line class="ax" x1="70" y1="250" x2="600" y2="250"/>
+<line class="ax" x1="87.6667" y1="250" x2="87.6667" y2="255"/><text class="tk" x="87.6667" y="269" text-anchor="middle">20</text>
+<line class="ax" x1="176" y1="250" x2="176" y2="255"/><text class="tk" x="176" y="269" text-anchor="middle">30</text>
+<line class="ax" x1="264.333" y1="250" x2="264.333" y2="255"/><text class="tk" x="264.333" y="269" text-anchor="middle">40</text>
+<line class="ax" x1="352.667" y1="250" x2="352.667" y2="255"/><text class="tk" x="352.667" y="269" text-anchor="middle">50</text>
+<line class="ax" x1="441" y1="250" x2="441" y2="255"/><text class="tk" x="441" y="269" text-anchor="middle">60</text>
+<line class="ax" x1="529.333" y1="250" x2="529.333" y2="255"/><text class="tk" x="529.333" y="269" text-anchor="middle">70</text>
+<line class="ax" x1="617.667" y1="250" x2="617.667" y2="255"/><text class="tk" x="617.667" y="269" text-anchor="middle">80</text>
+<text class="lb" x="335" y="288" text-anchor="middle">age, years</text>
+<line class="ax" x1="70" y1="30" x2="70" y2="250"/>
+<text class="tk" x="62" y="234" text-anchor="end">0</text>
+<text class="tk" x="62" y="134" text-anchor="end">0.5</text>
+<text class="tk" x="62" y="34" text-anchor="end">1</text>
+<text class="lb" x="14" y="140" transform="rotate(-90 14 140)" text-anchor="middle">predicted probability of support</text>
+<line class="zero" x1="70" y1="130" x2="600" y2="130"/>
+<polyline class="ln la" points="70,41.8672 105.333,45.8291 140.667,50.9664 176,57.5217 211.333,65.7177 246.667,75.7077 282,87.5137 317.333,100.966 352.667,115.674 388,131.042 423.333,146.362 458.667,160.931 494,174.18 529.333,185.746 564.667,195.489 600,203.453"/></svg></figure><div class="read"><b>Reading it.</b> Held-out accuracy 0.733; the model is not the point. The ranking is: <code>age</code> carries 0.639 of the importance, income 0.285, schooling 0.0755. The curve is what the model says for a resident of median income (31.4 thousand) and schooling (13 years): support falls from 0.94 at 18 to 0.13 at 80, crossing one half in between. It describes this sample; it does not say that growing older causes anything.</div></div></section>
+<section class="alt story" id="s12"><div class="wrap"><h2>12 &middot; Who does the ad actually move?</h2><div class="badge"><span class="lvl">marketing: uplift, two models and a randomized test</span><span>fit --model logistic</span><span>predict --proba</span></div><p class="said">&#8220;The ad lifts sales by about one point overall. Is it one point for everybody, or a lot for some and nothing &#8212; or worse &#8212; for others?&#8221; &#8212; the same head of growth, a month later</p><p>Because the ad was shown to a random half of the customers (the stories of cancho-stats showed why that matters), the customers who saw it and those who did not are comparable <em>in every respect</em>, and so is a model fitted to each. The simplest way to ask who is moved is to fit two models, one on the customers shown the ad and one on the held-out customers, and to subtract: for a new customer, the predicted chance of buying <em>with</em> the ad minus the predicted chance <em>without</em>. That difference is the predicted uplift. Two fits, one per file:</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model logistic --target bought --output u_holdout.ml \
+    uplift_holdout_train.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;rows&quot;: 7019,
+  &quot;coefficients&quot;: [
+    {&quot;name&quot;: &quot;recency_days&quot;, &quot;value&quot;: &quot;-0.003622167772505198&quot;},
+    {&quot;name&quot;: &quot;orders_12m&quot;, &quot;value&quot;: &quot;0.27040238679337175&quot;}
+  ]
+}</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ ml fit --model logistic --target bought --output u_ads.ml uplift_ads_train.csv</span>
+{
+  &quot;model&quot;: &quot;logistic&quot;,
+  &quot;rows&quot;: 6981,
+  &quot;coefficients&quot;: [
+    {&quot;name&quot;: &quot;recency_days&quot;, &quot;value&quot;: &quot;-0.0007877475094626317&quot;},
+    {&quot;name&quot;: &quot;orders_12m&quot;, &quot;value&quot;: &quot;0.21614628475463352&quot;}
+  ]
+}</pre></div><p>Then <code>predict --proba</code> with each model on a second, later group of 14000 customers, who were also randomly split, and the uplift of each is the difference of the two probabilities. A prediction is only a claim until it is checked, and here it can be checked against the truth: sort the new customers from the highest predicted uplift (the top fifth) to the lowest (the bottom fifth), cut them into five equal groups, and in each group compare the buyers among those who were shown the ad with those who were not.</p><figure class="fig"><svg viewBox="0 0 640 240" role="img" aria-label="Realized lift of each fifth of the customers"><line class="ax" x1="150" y1="200" x2="600" y2="200"/>
+<line class="ax" x1="137.721" y1="200" x2="137.721" y2="205"/><text class="tk" x="137.721" y="219" text-anchor="middle">-2</text>
+<line class="ax" x1="231.07" y1="200" x2="231.07" y2="205"/><text class="tk" x="231.07" y="219" text-anchor="middle">-1</text>
+<line class="ax" x1="324.42" y1="200" x2="324.42" y2="205"/><text class="tk" x="324.42" y="219" text-anchor="middle">0</text>
+<line class="ax" x1="417.769" y1="200" x2="417.769" y2="205"/><text class="tk" x="417.769" y="219" text-anchor="middle">1</text>
+<line class="ax" x1="511.118" y1="200" x2="511.118" y2="205"/><text class="tk" x="511.118" y="219" text-anchor="middle">2</text>
+<line class="ax" x1="604.467" y1="200" x2="604.467" y2="205"/><text class="tk" x="604.467" y="219" text-anchor="middle">3</text>
+<text class="lb" x="375" y="238" text-anchor="middle">realized lift in each fifth, points of conversion (measured on the held-out test)</text>
+<line class="zero" x1="324.42" y1="10" x2="324.42" y2="196"/>
+<text class="nm" x="142" y="31" text-anchor="end">top fifth</text><rect class="pbar pa" x="324.42" y="16" width="200.901" height="20" rx="3"/><text class="tk" x="531.321" y="31" text-anchor="start">+2.2</text>
+<text class="nm" x="142" y="65" text-anchor="end">second</text><rect class="pbar pa" x="324.42" y="50" width="144.486" height="20" rx="3"/><text class="tk" x="474.905" y="65" text-anchor="start">+1.5</text>
+<text class="nm" x="142" y="99" text-anchor="end">third</text><rect class="pbar pa" x="324.42" y="84" width="125.819" height="20" rx="3"/><text class="tk" x="456.239" y="99" text-anchor="start">+1.3</text>
+<text class="nm" x="142" y="133" text-anchor="end">fourth</text><rect class="pbar pa" x="324.42" y="118" width="134.099" height="20" rx="3"/><text class="tk" x="464.519" y="133" text-anchor="start">+1.4</text>
+<text class="nm" x="142" y="167" text-anchor="end">bottom fifth</text><rect class="pbar bad" x="196.675" y="152" width="127.745" height="20" rx="3"/><text class="tk" x="190.675" y="167" text-anchor="end">-1.4</text></svg></figure><div class="read"><b>Reading it.</b> Over all 14000 test customers the ad lifts conversion by +1.1 points. But in the fifth of customers that the models picked as the most movable it lifts it by +2.2 points, and in the fifth picked as the least movable by -1.4: for them the ad does nothing, or slightly harms. The models learned that from one number per customer, how long ago they last bought and how often they buy. The groups hold 2800 customers each, so each bar carries a margin of about a point or two (the middle ones are not reliably ordered), and that is how a model like this is to be read: the ends, not the middle. The models are linear in the log odds; a forest per arm (<code>--model forest</code>) is the usual next step, and the same test on randomized data is how to know it helped.</div></div></section>
+<section class=" story" id="s13"><div class="wrap"><h2>13 &middot; Spend the budget on the right third</h2><div class="badge"><span class="lvl">marketing: targeting by response or by uplift</span><span>predict --proba</span><span>eval</span></div><p class="said">&#8220;We can only afford to contact a third of them. Take the customers most likely to buy, right?&#8221; &#8212; the finance partner, who wants a number</p><p>There are two natural rankings. <em>Most likely to buy</em> uses the model of the customers shown the ad, and puts the loyal first. <em>Most movable</em> uses the uplift of the previous story. The test group was randomized, so a ranking can be scored honestly: contact the top q percent by that ranking, and the buyers the contact adds are the difference in conversion between those shown the ad and those not, times the size of the group. This is a <em>gain curve</em>: how many extra buyers each plan buys as the contacted share grows from zero to everyone.</p><figure class="fig"><svg viewBox="0 0 640 290" role="img" aria-label="extra buyers"><line class="ax" x1="70" y1="250" x2="600" y2="250"/>
+<line class="ax" x1="70" y1="250" x2="70" y2="255"/><text class="tk" x="70" y="269" text-anchor="middle">0</text>
+<line class="ax" x1="176" y1="250" x2="176" y2="255"/><text class="tk" x="176" y="269" text-anchor="middle">20</text>
+<line class="ax" x1="282" y1="250" x2="282" y2="255"/><text class="tk" x="282" y="269" text-anchor="middle">40</text>
+<line class="ax" x1="388" y1="250" x2="388" y2="255"/><text class="tk" x="388" y="269" text-anchor="middle">60</text>
+<line class="ax" x1="494" y1="250" x2="494" y2="255"/><text class="tk" x="494" y="269" text-anchor="middle">80</text>
+<line class="ax" x1="600" y1="250" x2="600" y2="255"/><text class="tk" x="600" y="269" text-anchor="middle">100</text>
+<text class="lb" x="335" y="288" text-anchor="middle">share of customers contacted, %</text>
+<line class="ax" x1="70" y1="30" x2="70" y2="250"/>
+<line class="zero" x1="70" y1="211.849" x2="600" y2="211.849"/>
+<text class="lb" x="14" y="140" transform="rotate(-90 14 140)" text-anchor="middle">extra buyers</text>
+<text class="tk" x="62" y="215.849" text-anchor="end">0</text>
+<text class="tk" x="62" y="124.939" text-anchor="end">102</text>
+<text class="tk" x="62" y="34.0288" text-anchor="end">204</text>
+<polyline class="ln la" points="70,211.849 96.5,182.941 123,173.392 149.5,168.803 176,158.141 202.5,149.6 229,131.926 255.5,133.968 282,120.793 308.5,107.547 335,102.588 361.5,96.882 388,90.0548 414.5,77.6945 441,63.0785 467.5,60.3747 494,54.1822 520.5,43.8274 547,30 573.5,43.7509 600,80.6934"/>
+<text class="nm" x="84" y="44" style="fill:var(--accent)">ranked by uplift</text>
+<polyline class="ln lg" points="70,211.849 96.5,230 123,220.757 149.5,211.187 176,203.608 202.5,200.092 229,190.715 255.5,180.93 282,176.439 308.5,171.81 335,165.391 361.5,164.814 388,163.337 414.5,147.714 441,132.167 467.5,126.951 494,117.733 520.5,104.314 547,105.358 573.5,89.2895 600,80.6934"/>
+<text class="nm" x="84" y="62" style="fill:var(--good)">ranked by chance to buy</text>
+<polyline class="ln lm" points="70,211.849 96.5,205.291 123,198.733 149.5,192.176 176,185.618 202.5,179.06 229,172.502 255.5,165.945 282,159.387 308.5,152.829 335,146.271 361.5,139.713 388,133.156 414.5,126.598 441,120.04 467.5,113.482 494,106.925 520.5,100.367 547,93.809 573.5,87.2512 600,80.6934"/>
+<text class="nm" x="84" y="80" style="fill:var(--muted)">random order</text></svg></figure><div class="read"><b>Reading it.</b> Contacting everybody buys 147 extra buyers in the 14000 customers of the test. Contacting the top 30% by chance to buy gets 24: not much more than the 44 that contacting 30% at random would. The same 30% chosen by uplift gets 90, and the uplift curve peaks at 204 extra buyers when 90% are contacted, <em>above</em> the total of contacting everyone: the last customers on the list lose the shop sales when they are contacted, and a plan that leaves them out does better than a plan that does not. The curves are estimates on one random split (the stats stories explain how wide such estimates are, and a bootstrap of the gain is one way to put an interval on them), so the ordering is clear and the exact peak is not. <code>ml</code> fitted the models and made the predictions; the arithmetic of the curve is the page&#8217;s, from the printed probabilities and the arm and outcome of each test customer.</div></div></section>
+<footer><div class="wrap">ml &middot; EUPL-1.2 &middot; the data are invented; the runs, the digits and the figures are real &middot; <a href=".">overview</a></div></footer>
+</body>
+</html>
