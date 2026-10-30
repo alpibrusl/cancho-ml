@@ -136,6 +136,9 @@ def make_uplift(seed, n):
     return rows
 
 
+BIG = {}  # data files above the 2,000-line limit of a committed file: regenerated on demand (`--data-out DIR`), never committed
+
+
 # ------------------------------------------------------------------------------------------------ real runs
 class Runner:
     def __init__(self, binary, folder):
@@ -651,7 +654,7 @@ def build(binary):
         uh = ["recency_days", "orders_12m", "bought"]
         for nm, text in (("uplift_holdout_train.csv", csv_of(uh, [(a, b, d) for a, b, c, d in up_tr if c == "holdout"])), ("uplift_ads_train.csv", csv_of(uh, [(a, b, d) for a, b, c, d in up_tr if c == "ads"])),
                          ("uplift_test.csv", csv_of(["recency_days", "orders_12m", "arm", "bought"], up_te)), ("uplift_test_x.csv", csv_of(["recency_days", "orders_12m"], [(a, b) for a, b, c, d in up_te]))):
-            files[nm] = text
+            BIG[nm] = text
             (folder / nm).write_text(text)
         u1 = ["fit", "--model", "logistic", "--target", "bought", "--output", "u_holdout.ml", "uplift_holdout_train.csv"]
         u2 = ["fit", "--model", "logistic", "--target", "bought", "--output", "u_ads.ml", "uplift_ads_train.csv"]
@@ -739,7 +742,7 @@ def page(sections):
   <h1>Thirteen stories, from a baseline to the lab.</h1>
   <p class="sub">Pilar rents bicycles and wants to know what a model can tell her; each story asks a little more of <code>ml</code> than the last. Then four short ones from the sciences and two from marketing (who does an ad move, and whom to spend on). Every number and every figure is drawn from a real run of <code>ml</code> on the data you can download (small files, one CPU, each fit well under a second). The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
   <div class="toc">%s</div>
-  <p class="data">Data: %s. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
+  <p class="data">Data: %s. The four files of stories 12 and 13 (<code>uplift_*.csv</code>, 14,000 customers a file at most) are not committed: <code>python3 scripts/gen_stories.py --data-out DIR</code> writes them, from the same seeds. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
 </div>
 %s
 <footer><div class="wrap">ml &middot; EUPL-1.2 &middot; the data are invented; the runs, the digits and the figures are real &middot; <a href=".">overview</a></div></footer>
@@ -755,8 +758,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin", default=str(ROOT / "build" / "ml"))
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--data-out", help="also write the data files too large to commit into this directory")
     a = ap.parse_args()
     sections, files = build(a.bin)
+    if a.data_out:
+        pathlib.Path(a.data_out).mkdir(parents=True, exist_ok=True)
+        for name, text in BIG.items():
+            (pathlib.Path(a.data_out) / name).write_text(text)
     FILES_LIST.extend(files)
     out = {DOCS / "stories.html": page(sections)}
     for name, text in files.items():
