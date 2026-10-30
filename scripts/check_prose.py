@@ -50,6 +50,7 @@ PHRASES = [
 # (file, exact text, reason). A line that holds the text is not read for the phrase that the text carries.
 ALLOW = [
     ("docs/evidence.html", "pending()", "the name of a function in tools/ml/spec.cho, not a pending item"),
+    ("README.md", "**Stage:** built", "the field of the package kit's kind line (cancho-kit), a label of what the project is now, not a stage of the work"),
 ]
 
 GEN = re.compile(r"<!-- gen:([A-Za-z0-9_-]+) -->\n.*?<!-- /gen:\1 -->", re.S)
