@@ -14,6 +14,7 @@
 set -e
 cd "$(dirname "$0")/.."
 python3 scripts/site.py --check
+python3 scripts/gallery.py --bin "${BIN:-build/ml}" --check
 python3 scripts/check_links.py
 python3 scripts/seo_check.py
 python3 scripts/check_prose.py

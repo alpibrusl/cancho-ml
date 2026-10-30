@@ -24,7 +24,7 @@ What fails it:
   * the basics: one <h1>, `lang`, a skip link to <main id="main">, a <title> and a description inside the SEO limits, the diagram has a <title> and a <desc> and the
     page a sentence that says it in words, the replay control is a <button>, a <noscript>-free fallback (the full log is in the HTML), no external request
     (no <script src>, no stylesheet or image from another host, no @import), an inline script of at most 3 KB;
-  * the size budget: docs/index.html is at most 28 KB (28,672 bytes) and, with docs/assets/site.css, at most 45 KB.
+  * the size budget: docs/index.html is at most 32 KB and, with docs/assets/site.css and home.css, at most 58 KB; assets/home.js (the only script file) at most 8 KB; the agent view (agents.md, llms.txt) and the three videos exist.
 
     python3 scripts/check_landing.py --budget     # print the sizes
     python3 scripts/check_landing.py --demo       # also run scripts/demo.sh (needs build/ml, build/ml-serve, curl) and compare the replay with it
@@ -38,10 +38,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
-PAGES = ["index.html", "guide.html", "examples.html", "board.html", "evidence.html", "benchmarks.html"]
-BUDGET_INDEX = 28 * 1024
-BUDGET_WITH_CSS = 45 * 1024
+PAGES = ["index.html", "guide.html", "examples.html", "gallery.html", "board.html", "evidence.html", "benchmarks.html"]
+BUDGET_INDEX = 32 * 1024
+BUDGET_WITH_CSS = 58 * 1024     # index.html, site.css and home.css: the human view has animations and a switch (docs/index.html), which were 45 KB without them
 BUDGET_SCRIPT = 3 * 1024
+BUDGET_HOME_JS = 8 * 1024       # assets/home.js, the one script file of the landing page: the view switch, the count-up, the videos (it is the only <script src> allowed)
+HOME_ASSETS = {"assets/home.js", "assets/home.css", "assets/site.css"}
 # the experiments board holds the logic of a page of its own: its script has its own budget, in scripts/check_board.py (G10)
 SCRIPT_CHECKED_ELSEWHERE = {"board.html"}
 
@@ -256,8 +258,8 @@ def check_nav(root, errs):
         got = [x[0].lstrip("#").replace("index.html#", "") for x in s]
         if got != ref:
             errs.append("%s: the header links are %r, the landing page's are %r" % (name, got, ref))
-    if len(ref) < 5 or len(ref) > 7:
-        errs.append("the header has %d links, want 5 to 7" % len(ref))
+    if len(ref) < 5 or len(ref) > 8:
+        errs.append("the header has %d links, want 5 to 8" % len(ref))
 
 
 # --- the replay ----------------------------------------------------------------------------------------------------
@@ -445,7 +447,7 @@ def check_basics(root, path, p, text, errs, landing=True):
     for tag, s in p.srcs:
         if re.match(r"(https?:)?//", s) or s.startswith("data:") and tag == "script":
             errs.append("%s: an external or data request: <%s> %s" % (n, tag, s))
-        if tag == "script":
+        if tag == "script" and not ((landing and s == "assets/home.js") or (n == "gallery.html" and s == "assets/gallery.js")):
             errs.append("%s: <script src> is not allowed" % n)
     if re.search(r"@import|url\(\s*['\"]?https?:", p.inline_styles + text):
         errs.append("%s: a CSS import or url() of another host" % n)
@@ -535,7 +537,18 @@ def check_landing_page(root, errs):
             errs.append("index.html: %s is missing (looked for %r)" % (what, needle))
     check_claims(root, text, errs)
     size = len(text.encode())
-    css = len((root / "docs" / "assets" / "site.css").read_bytes())
+    css = len((root / "docs" / "assets" / "site.css").read_bytes()) + len((root / "docs" / "assets" / "home.css").read_bytes())
+    home_js = len((root / "docs" / "assets" / "home.js").read_bytes())
+    if home_js > BUDGET_HOME_JS:
+        errs.append("assets/home.js is %d bytes, over %d" % (home_js, BUDGET_HOME_JS))
+    for need in ("assets/home.js", "assets/home.css", "agents.md"):
+        if need not in text:
+            errs.append("index.html does not link %s" % need)
+    for f in ("docs/agents.md", "docs/llms.txt", "docs/assets/media/run-fit.mp4", "docs/assets/media/run-serve.mp4", "docs/assets/media/run-fix.mp4"):
+        if not (root / f).is_file():
+            errs.append("%s is missing" % f)
+    if 'id="view-' not in (root / "docs" / "assets" / "home.js").read_text() or 'id="agent-view"' not in text:
+        errs.append("the human/agent switch (home.js) or the agent view (index.html) is missing")
     if size > BUDGET_INDEX:
         errs.append("index.html is %d bytes, over its budget of %d" % (size, BUDGET_INDEX))
     if size + css > BUDGET_WITH_CSS:
@@ -563,7 +576,7 @@ def main(argv):
         binary = Path(argv[argv.index("--bin") + 1]).resolve()
     if "--budget" in argv:
         t = (DOCS / "index.html").read_bytes()
-        c = (DOCS / "assets" / "site.css").read_bytes()
+        c = (DOCS / "assets" / "site.css").read_bytes() + (DOCS / "assets" / "home.css").read_bytes()
         print("index.html %d bytes (budget %d), site.css %d bytes, together %d (budget %d)" % (len(t), BUDGET_INDEX, len(c), len(t) + len(c), BUDGET_WITH_CSS))
         return 0
     check_landing_page(root, errs)
