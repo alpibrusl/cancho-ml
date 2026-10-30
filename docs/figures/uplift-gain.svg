@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 302" width="640" height="302" role="img" aria-label="extra buyers">
+<style>
+:root { --bg: #fbfcfd; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4; --accent: #6d3fc0; --good: #0f7b5f; --bad: #b42d27; --warn: #92400e; --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0b0f14; --fg: #e7ebec; --muted: #9aa8ae; --line: #212a2d; --surface: #131a1c; --soft: #172022; --accent: #b79bf5; --good: #4fd1a5; --bad: #ff7b73; --warn: #f3c77a; } }
+.fig .ax { stroke: var(--muted); stroke-width: 1; }
+.fig .tk { fill: var(--muted); font: 12px var(--font); }
+.fig .lb { fill: var(--muted); font: 13px var(--font); }
+.fig .nm { fill: var(--fg); font: 600 13px var(--font); }
+.fig .wh { stroke-width: 2; } .fig .wh.pa, .fig .bx.pa { stroke: var(--accent); } .fig .wh.pb, .fig .bx.pb { stroke: var(--good); }
+.fig .bx { fill: var(--soft); stroke-width: 2; }
+.fig .md { stroke: var(--fg); stroke-width: 3; }
+.fig .mn { fill: var(--warn); }
+.fig .zero { stroke: var(--bad); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.fig .ciline { stroke: var(--accent); stroke-width: 3; }
+.fig .pt { fill: var(--accent); }
+.fig .band { stroke: var(--line); stroke-width: 1; }
+.fig .dot.pa { fill: var(--accent); opacity: .8; } .fig .dot.pb { fill: var(--good); opacity: .8; }
+.fig .ring { fill: none; stroke: var(--bad); stroke-width: 2; }
+.fig .pbar.pa { fill: var(--accent); } .fig .pbar.pb { fill: var(--good); } .fig .pbar.warn { fill: var(--warn); }
+.fig .link { stroke: var(--muted); stroke-width: 1.5; }
+.fig .raw { fill: var(--surface); stroke: var(--accent); stroke-width: 2.5; } .fig .adj { fill: var(--accent); }
+.fig .cell { fill: var(--soft); stroke: var(--line); } .fig .cell.hit { fill: var(--bad); stroke: var(--bad); }
+.fig .seg { fill: var(--good); } .fig .seg.bad { fill: var(--bad); }
+.fig .hash { fill: var(--soft); stroke: var(--good); stroke-width: 1.5; }
+.fig .hx { fill: var(--fg); font: 12px var(--mono); }
+.fig .bandci { fill: var(--accent); opacity: .18; }
+.fig .ecdfa { fill: none; stroke: var(--accent); stroke-width: 2.5; } .fig .ecdfb { fill: none; stroke: var(--good); stroke-width: 2.5; }
+.fig .gap { stroke: var(--bad); stroke-width: 3; }
+.fig .lk1 { fill: #b42d27; } .fig .lk2 { fill: #d97a52; } .fig .lk3 { fill: #c9c9c9; } .fig .lk4 { fill: #5a9bd4; } .fig .lk5 { fill: #1f5fa6; }
+.fig .lk { fill: #fff; font: 600 12px var(--font); }
+.fig .pbar.pa { fill: var(--accent); } .fig .pbar.pb { fill: var(--good); } .fig .pbar.bad { fill: var(--bad); }
+.fig .fbox { fill: var(--surface); stroke-width: 2; } .fig .fbox.q { stroke: var(--accent); } .fig .fbox.r { stroke: var(--bad); } .fig .fbox.ok { stroke: var(--good); }
+.fig .arrow { stroke: var(--muted); stroke-width: 1.8; marker-end: url(#ar); }
+.fig .ln { fill: none; stroke-width: 2.5; } .fig .ln.la { stroke: var(--accent); } .fig .ln.lg { stroke: var(--good); } .fig .ln.lm { stroke: var(--muted); stroke-dasharray: 5 4; }
+.fig .cm.neg { fill: var(--good); } .fig .cm.pos { fill: var(--good); } .fig .cm.bad { fill: var(--bad); }
+.fig .digits { fill: var(--fg); font: 600 22px var(--mono); }
+.fig .mn { fill: var(--warn); } .fig .md { stroke: var(--fg); stroke-width: 3; }
+.fig .dot.pa { fill: var(--accent); opacity: .8; } .fig .dot.pb { fill: var(--bad); opacity: .8; } .fig .dot.pg { fill: var(--good); opacity: .8; }
+.fig .ciline { stroke: var(--accent); stroke-width: 3; }
+</style>
+<rect width="640" height="302" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+<g class="fig"><line class="ax" x1="70" y1="250" x2="600" y2="250"/>
+<line class="ax" x1="70" y1="250" x2="70" y2="255"/><text class="tk" x="70" y="269" text-anchor="middle">0</text>
+<line class="ax" x1="176" y1="250" x2="176" y2="255"/><text class="tk" x="176" y="269" text-anchor="middle">20</text>
+<line class="ax" x1="282" y1="250" x2="282" y2="255"/><text class="tk" x="282" y="269" text-anchor="middle">40</text>
+<line class="ax" x1="388" y1="250" x2="388" y2="255"/><text class="tk" x="388" y="269" text-anchor="middle">60</text>
+<line class="ax" x1="494" y1="250" x2="494" y2="255"/><text class="tk" x="494" y="269" text-anchor="middle">80</text>
+<line class="ax" x1="600" y1="250" x2="600" y2="255"/><text class="tk" x="600" y="269" text-anchor="middle">100</text>
+<text class="lb" x="335" y="288" text-anchor="middle">share of customers contacted, %</text>
+<line class="ax" x1="70" y1="30" x2="70" y2="250"/>
+<line class="zero" x1="70" y1="211.849" x2="600" y2="211.849"/>
+<text class="lb" x="14" y="140" transform="rotate(-90 14 140)" text-anchor="middle">extra buyers</text>
+<text class="tk" x="62" y="215.849" text-anchor="end">0</text>
+<text class="tk" x="62" y="124.939" text-anchor="end">102</text>
+<text class="tk" x="62" y="34.0288" text-anchor="end">204</text>
+<polyline class="ln la" points="70,211.849 96.5,182.941 123,173.392 149.5,168.803 176,158.141 202.5,149.6 229,131.926 255.5,133.968 282,120.793 308.5,107.547 335,102.588 361.5,96.882 388,90.0548 414.5,77.6945 441,63.0785 467.5,60.3747 494,54.1822 520.5,43.8274 547,30 573.5,43.7509 600,80.6934"/>
+<text class="nm" x="84" y="44" style="fill:var(--accent)">ranked by uplift</text>
+<polyline class="ln lg" points="70,211.849 96.5,230 123,220.757 149.5,211.187 176,203.608 202.5,200.092 229,190.715 255.5,180.93 282,176.439 308.5,171.81 335,165.391 361.5,164.814 388,163.337 414.5,147.714 441,132.167 467.5,126.951 494,117.733 520.5,104.314 547,105.358 573.5,89.2895 600,80.6934"/>
+<text class="nm" x="84" y="62" style="fill:var(--good)">ranked by chance to buy</text>
+<polyline class="ln lm" points="70,211.849 96.5,205.291 123,198.733 149.5,192.176 176,185.618 202.5,179.06 229,172.502 255.5,165.945 282,159.387 308.5,152.829 335,146.271 361.5,139.713 388,133.156 414.5,126.598 441,120.04 467.5,113.482 494,106.925 520.5,100.367 547,93.809 573.5,87.2512 600,80.6934"/>
+<text class="nm" x="84" y="80" style="fill:var(--muted)">random order</text></g>
+</svg>

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 352" width="640" height="352" role="img" aria-label="The ROC curve of the held-out customers">
+<style>
+:root { --bg: #fbfcfd; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4; --accent: #6d3fc0; --good: #0f7b5f; --bad: #b42d27; --warn: #92400e; --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0b0f14; --fg: #e7ebec; --muted: #9aa8ae; --line: #212a2d; --surface: #131a1c; --soft: #172022; --accent: #b79bf5; --good: #4fd1a5; --bad: #ff7b73; --warn: #f3c77a; } }
+.fig .ax { stroke: var(--muted); stroke-width: 1; }
+.fig .tk { fill: var(--muted); font: 12px var(--font); }
+.fig .lb { fill: var(--muted); font: 13px var(--font); }
+.fig .nm { fill: var(--fg); font: 600 13px var(--font); }
+.fig .wh { stroke-width: 2; } .fig .wh.pa, .fig .bx.pa { stroke: var(--accent); } .fig .wh.pb, .fig .bx.pb { stroke: var(--good); }
+.fig .bx { fill: var(--soft); stroke-width: 2; }
+.fig .md { stroke: var(--fg); stroke-width: 3; }
+.fig .mn { fill: var(--warn); }
+.fig .zero { stroke: var(--bad); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.fig .ciline { stroke: var(--accent); stroke-width: 3; }
+.fig .pt { fill: var(--accent); }
+.fig .band { stroke: var(--line); stroke-width: 1; }
+.fig .dot.pa { fill: var(--accent); opacity: .8; } .fig .dot.pb { fill: var(--good); opacity: .8; }
+.fig .ring { fill: none; stroke: var(--bad); stroke-width: 2; }
+.fig .pbar.pa { fill: var(--accent); } .fig .pbar.pb { fill: var(--good); } .fig .pbar.warn { fill: var(--warn); }
+.fig .link { stroke: var(--muted); stroke-width: 1.5; }
+.fig .raw { fill: var(--surface); stroke: var(--accent); stroke-width: 2.5; } .fig .adj { fill: var(--accent); }
+.fig .cell { fill: var(--soft); stroke: var(--line); } .fig .cell.hit { fill: var(--bad); stroke: var(--bad); }
+.fig .seg { fill: var(--good); } .fig .seg.bad { fill: var(--bad); }
+.fig .hash { fill: var(--soft); stroke: var(--good); stroke-width: 1.5; }
+.fig .hx { fill: var(--fg); font: 12px var(--mono); }
+.fig .bandci { fill: var(--accent); opacity: .18; }
+.fig .ecdfa { fill: none; stroke: var(--accent); stroke-width: 2.5; } .fig .ecdfb { fill: none; stroke: var(--good); stroke-width: 2.5; }
+.fig .gap { stroke: var(--bad); stroke-width: 3; }
+.fig .lk1 { fill: #b42d27; } .fig .lk2 { fill: #d97a52; } .fig .lk3 { fill: #c9c9c9; } .fig .lk4 { fill: #5a9bd4; } .fig .lk5 { fill: #1f5fa6; }
+.fig .lk { fill: #fff; font: 600 12px var(--font); }
+.fig .pbar.pa { fill: var(--accent); } .fig .pbar.pb { fill: var(--good); } .fig .pbar.bad { fill: var(--bad); }
+.fig .fbox { fill: var(--surface); stroke-width: 2; } .fig .fbox.q { stroke: var(--accent); } .fig .fbox.r { stroke: var(--bad); } .fig .fbox.ok { stroke: var(--good); }
+.fig .arrow { stroke: var(--muted); stroke-width: 1.8; marker-end: url(#ar); }
+.fig .ln { fill: none; stroke-width: 2.5; } .fig .ln.la { stroke: var(--accent); } .fig .ln.lg { stroke: var(--good); } .fig .ln.lm { stroke: var(--muted); stroke-dasharray: 5 4; }
+.fig .cm.neg { fill: var(--good); } .fig .cm.pos { fill: var(--good); } .fig .cm.bad { fill: var(--bad); }
+.fig .digits { fill: var(--fg); font: 600 22px var(--mono); }
+.fig .mn { fill: var(--warn); } .fig .md { stroke: var(--fg); stroke-width: 3; }
+.fig .dot.pa { fill: var(--accent); opacity: .8; } .fig .dot.pb { fill: var(--bad); opacity: .8; } .fig .dot.pg { fill: var(--good); opacity: .8; }
+.fig .ciline { stroke: var(--accent); stroke-width: 3; }
+</style>
+<rect width="640" height="352" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+<g class="fig"><line class="ax" x1="60" y1="290" x2="340" y2="290"/>
+<line class="ax" x1="60" y1="290" x2="60" y2="295"/><text class="tk" x="60" y="309" text-anchor="middle">0</text>
+<line class="ax" x1="130" y1="290" x2="130" y2="295"/><text class="tk" x="130" y="309" text-anchor="middle">0.25</text>
+<line class="ax" x1="200" y1="290" x2="200" y2="295"/><text class="tk" x="200" y="309" text-anchor="middle">0.5</text>
+<line class="ax" x1="270" y1="290" x2="270" y2="295"/><text class="tk" x="270" y="309" text-anchor="middle">0.75</text>
+<line class="ax" x1="340" y1="290" x2="340" y2="295"/><text class="tk" x="340" y="309" text-anchor="middle">1</text>
+<text class="lb" x="200" y="328" text-anchor="middle">false positive rate</text>
+<line class="ax" x1="60" y1="20" x2="60" y2="290"/>
+<line class="zero" x1="60" y1="270" x2="340" y2="20"/>
+<text class="tk" x="52" y="274" text-anchor="end">0</text>
+<text class="tk" x="52" y="149" text-anchor="end">0.5</text>
+<text class="tk" x="52" y="24" text-anchor="end">1</text>
+<text class="lb" x="14" y="150" transform="rotate(-90 14 150)" text-anchor="middle">true positive rate</text>
+<polyline class="ln la" points="60,270 60,266.212 60,262.424 60,258.636 60,254.848 60,251.061 60,247.273 60,243.485 60,239.697 60,235.909 60,232.121 60,228.333 60,224.545 60,220.758 60,216.97 60,213.182 60,209.394 60,205.606 60,201.818 60,198.03 60,194.242 60,190.455 60,186.667 60,182.879 60,179.091 60,175.303 60,171.515 60,167.727 60,163.939 60,160.152 60,156.364 60,152.576 60,148.788 60,145 60,141.212 60,137.424 60,133.636 60,129.848 60,126.061 60,122.273 60,118.485 60,114.697 60,110.909 60,107.121 60,103.333 60,99.5455 60,95.7576 60,91.9697 68.2353,91.9697 68.2353,88.1818 68.2353,84.3939 76.4706,84.3939 76.4706,80.6061 76.4706,76.8182 76.4706,73.0303 76.4706,69.2424 76.4706,65.4545 84.7059,65.4545 92.9412,65.4545 101.176,65.4545 101.176,61.6667 109.412,61.6667 109.412,57.8788 109.412,54.0909 117.647,54.0909 125.882,54.0909 125.882,50.303 134.118,50.303 134.118,46.5152 142.353,46.5152 150.588,46.5152 158.824,46.5152 167.059,46.5152 175.294,46.5152 175.294,42.7273 175.294,38.9394 175.294,35.1515 175.294,31.3636 175.294,27.5758 183.529,27.5758 183.529,23.7879 191.765,23.7879 191.765,20 200,20 208.235,20 216.471,20 224.706,20 232.941,20 241.176,20 249.412,20 257.647,20 265.882,20 274.118,20 282.353,20 290.588,20 298.824,20 307.059,20 315.294,20 323.529,20 331.765,20 340,20"/>
+<text class="nm" x="370" y="60">area under the curve</text><text class="digits" x="370" y="96" style="fill:var(--accent)">0.9345</text><text class="tk" x="370" y="120">dashed: a coin toss</text></g>
+</svg>
