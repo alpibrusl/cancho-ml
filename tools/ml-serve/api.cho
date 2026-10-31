@@ -212,7 +212,7 @@ fn type_code[&d, &t](desc: &d [byte], tape: &t [int], c: int) -> [] int {
 }
 
 // A member of an object that is the response of an operation: the fields are added in the order written.
-fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: bool, max_rows: int, guarded: bool) -> [heap] Built {
+fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: bool, max_rows: int, guarded: bool, lenient: bool) -> [heap] Built {
     let col_list = json.get(desc, tape, 0, "columns");
     let cat_list = json.get(desc, tape, 0, "categorical");
     let request = json.get(desc, tape, 0, "request");
@@ -229,7 +229,8 @@ fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: 
     let nullable = is_text(desc, tape, request, "missing_cells", "handled");
     var s = schema.empty(heap);
     var cs = cols.empty(heap);
-    let (s1, rec) = schema.new_object(heap, s, true);
+    // `lenient` (--ignore-unknown-fields): a member the model has no column for is skipped, not a 422. The members the model does have are still checked.
+    let (s1, rec) = schema.new_object(heap, s, !lenient);
     s = s1;
     var i = 0;
     while i < json.count(tape, col_list) {
@@ -455,7 +456,7 @@ fn assemble[&h, &d, &t](heap: &!h Heap, desc: &d [byte], tape: &t [int], enums: 
 
 // Build the schema, the API and the document from the answer of `describe` (the bytes `desc`). With `enums` the categories a file lists in full are the values
 // of their column (the document says so and the validator refuses the others). `guarded`: every operation but `GET /health` needs the bearer token.
-pub fn build[&h, &d](heap: &!h Heap, desc: &d [byte], enums: bool, max_rows: int, guarded: bool) -> [heap] Built {
+pub fn build[&h, &d](heap: &!h Heap, desc: &d [byte], enums: bool, max_rows: int, guarded: bool, lenient: bool) -> [heap] Built {
     let tape = box_slice(heap, json.tape_len(desc), 0);
     var result = nothing(heap, 2);
     borrow mut tape as &!tw in {
@@ -463,7 +464,7 @@ pub fn build[&h, &d](heap: &!h Heap, desc: &d [byte], enums: bool, max_rows: int
         let nodes = json.parse(desc, tp);
         if nodes > 0 {
             drop(heap, result);
-            result = assemble(heap, desc, tp, enums, max_rows, guarded);
+            result = assemble(heap, desc, tp, enums, max_rows, guarded, lenient);
         }
     }
     unbox_slice(heap, tape);

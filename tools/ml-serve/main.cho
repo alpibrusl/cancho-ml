@@ -175,6 +175,7 @@ fn describe_model[&h, &f, &r, &m, &s](heap: &!h Heap, fs: &f Fs(""), root: &r [b
 fn prepare[&h, &f, &r, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (srv.Served, fail.Errors) {
     let table = sspec.flag_table();
     let guarded = argv.has(src, "token-file");
+    let lenient = argv.has(src, "ignore-unknown-fields");
     let max_rows = argv.nat(src, "max-batch-rows");
     let max_body = argv.nat(src, "max-body-bytes");
     let max_model = argv.nat(src, "max-bytes");
@@ -236,19 +237,19 @@ fn prepare[&h, &f, &r, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root
     }
     paths.drop(heap, mp);
     paths.drop(heap, tp);
-    var built = api.build(heap, "{}", false, 1, false);
+    var built = api.build(heap, "{}", false, 1, false, false);
     var model_doc = buffer.empty(heap, 1);
     if go {
         api.drop(heap, built);
         borrow full as &fr in {
-            built = api.build(heap, buffer.bytes(fr), true, max_rows, guarded);
+            built = api.build(heap, buffer.bytes(fr), true, max_rows, guarded, lenient);
             var too_big = false;
             borrow built as &br in {
                 too_big = api.code(br) == 0 && len(api.doc_of(br)) > srv.answer_limit();
             }
             if too_big {
                 api.drop(heap, built);
-                built = api.build(heap, buffer.bytes(fr), false, max_rows, guarded);
+                built = api.build(heap, buffer.bytes(fr), false, max_rows, guarded, lenient);
             }
         }
         var bcode = 0;
@@ -427,7 +428,7 @@ fn serve[&h, &f, &i, &n, &k, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs("")
     }
     var status = 0;
     let (e2, clean) = app.clean(e);
-    var served = srv.make(heap, api.build(heap, "{}", false, 1, false), buffer.empty(heap, 1), buffer.empty(heap, 1), wireio.empty_stored(heap), false, web.tokens_empty(heap), false, 1, 1, 1, 0, false);
+    var served = srv.make(heap, api.build(heap, "{}", false, 1, false, false), buffer.empty(heap, 1), buffer.empty(heap, 1), wireio.empty_stored(heap), false, web.tokens_empty(heap), false, 1, 1, 1, 0, false);
     e = e2;
     if clean {
         borrow root as &rr in {
