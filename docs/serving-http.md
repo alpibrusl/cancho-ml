@@ -90,6 +90,7 @@ family is (`toolbox.path`: below `--root`, no `..`, no symbolic link followed).
 | `--bind` | `loopback` listens on 127.0.0.1, `all` on 0.0.0.0 (section 5.4) | `loopback` | |
 | `--token-file` | a file holding the bearer token (section 5.4); required with `--bind all` | none | |
 | `--no-token` | accepted with the loopback bind, where it changes nothing; refused with `--bind all` (section 5.4) | off | |
+| `--ignore-unknown-fields` | a record member the model has no column for (an identifier, a date or a constant dropped with `--drop` at fit time) is skipped instead of answered `422 ml.schema.mismatch`; the model's own columns are checked as ever (a misspelled one is `required`), a column sent twice is still `400 serve.duplicate-key`, and without the flag nothing changes ([cancho-ml#102](https://github.com/alpibrusl/cancho-ml/issues/102)) | off | |
 | `--max-body-bytes` | the largest request body | 1,048,576 | 4,194,304 |
 | `--max-batch-rows` | the most records in one batch | 100 | 1,000 |
 | `--idle-seconds` | a connection that makes no progress for this long is closed (the only deadline of a request) | 10 | 3,600 |

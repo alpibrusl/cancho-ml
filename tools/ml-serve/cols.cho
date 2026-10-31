@@ -240,17 +240,40 @@ pub fn render[&h, &c, &b, &t](heap: &!h Heap, csv: buffer.Buffer, cols: &c Cols,
     return (o, st, bad);
 }
 
-// whether the object at `obj`, which the schema accepted (every key is a column or an optional column, every column is there), has each key once: its pairs are the columns and the optional columns that are present
+// how many members of the object at `obj` are called `key`
+fn occurrences[&b, &t, &k](body: &b [byte], tape: &t [int], obj: int, key: &k [byte]) -> [] int {
+    var n = 0;
+    var at = obj + 1;
+    var left = json.count(tape, obj);
+    while left > 0 {
+        if json.string_equals(body, tape, at, key) {
+            n = n + 1;
+        }
+        at = json.skip(tape, at + 1);
+        left = left - 1;
+    }
+    return n;
+}
+
+// whether the object at `obj`, which the schema accepted (every column is there; a member that is no column is either refused by the schema or, with
+// --ignore-unknown-fields, skipped), has each column once and each optional column at most once. Members the model has no column for are not looked at, so
+// they may repeat.
 pub fn each_key_once[&c, &b, &t](cols: &c Cols, body: &b [byte], tape: &t [int], obj: int) -> [] bool {
-    var present = 0;
+    var j = 0;
+    while j < cols.count {
+        if occurrences(body, tape, obj, name(cols, j)) != 1 {
+            return false;
+        }
+        j = j + 1;
+    }
     var k = 0;
     while k < cols.ocount {
-        if json.get(body, tape, obj, optional_name(cols, k)) >= 0 {
-            present = present + 1;
+        if occurrences(body, tape, obj, optional_name(cols, k)) > 1 {
+            return false;
         }
         k = k + 1;
     }
-    return json.count(tape, obj) == cols.count + present;
+    return true;
 }
 
 // the JSON Pointer of the value of column `j` in the record of `row` (-1: the body is the record), as RFC 6901 writes it

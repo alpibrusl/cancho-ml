@@ -620,6 +620,54 @@ class Statuses(unittest.TestCase):
         self.assertGreater(sum(1 for v in out.values() if v == 500), 40)
 
 
+class IgnoreUnknownFields(unittest.TestCase):
+    """--ignore-unknown-fields (cancho-ml#102): a member the model has no column for (an identifier dropped at fit, say) is skipped, not a 422; the
+    columns the model has are checked as ever, and without the flag nothing changes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = Server(SB.dir, "linear.cml", "--ignore-unknown-fields", "--max-batch-rows", "5").start()
+        cls.strict = Server(SB.dir, "linear.cml").start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.stop()
+        cls.strict.stop()
+
+    def post(self, srv, path, body):
+        return srv.request("POST", path, body=json.dumps(body).encode(), headers=JSON)
+
+    def test_extra_members_are_skipped_in_a_record_and_in_a_batch(self):
+        base = self.post(self.srv, "/predict", RECORD)
+        self.assertEqual(base.status, 200, base)
+        extra = dict(RECORD, id=7, signup="2021-05-11", flag="v1")
+        r = self.post(self.srv, "/predict", extra)
+        self.assertEqual(r.status, 200, r)
+        self.assertEqual(loads_tokens(r.text())["rows"], loads_tokens(base.text())["rows"])
+        r = self.post(self.srv, "/predict/batch", {"rows": [extra, RECORD]})
+        self.assertEqual(r.status, 200, r)
+        rows = loads_tokens(r.text())["rows"]
+        self.assertEqual(rows[0], rows[1])
+
+    def test_a_missing_or_misspelled_column_is_still_refused(self):
+        r = self.post(self.srv, "/predict", {"a": 3, "bb": 2.5, "c": 0.5})
+        self.assertEqual(r.status, 422, r)
+        d = loads_tokens(r.text())
+        self.assertIn(("/b", "required"), {(e["pointer"], e["code"]) for e in d["errors"]})
+
+    def test_a_column_given_twice_is_still_refused(self):
+        body = b'{"a":3,"a":4,"b":2.5,"c":0.5,"id":1}'
+        r = self.srv.request("POST", "/predict", body=body, headers=JSON)
+        self.assertEqual(r.status, 400, r)
+        self.assertEqual(loads_tokens(r.text())["rule"], "serve.duplicate-key")
+
+    def test_without_the_flag_an_extra_member_is_unchanged(self):
+        r = self.post(self.strict, "/predict", dict(RECORD, id=7))
+        self.assertEqual(r.status, 422, r)
+        d = loads_tokens(r.text())
+        self.assertEqual({(e["pointer"], e["code"]) for e in d["errors"]}, {("/id", "unknown")})
+
+
 class Token(unittest.TestCase):
     TOKEN = "s3cret-Tok_en.value~1"
 
@@ -727,7 +775,7 @@ class Start(unittest.TestCase):
         p = subprocess.run([SERVE_BIN, "introspect"], capture_output=True)
         d = json.loads(p.stdout)
         self.assertEqual(d["tool"], "ml-serve")
-        self.assertEqual([f["name"] for f in d["flags"]], ["--root", "--model-file", "--port", "--bind", "--token-file", "--no-token", "--max-body-bytes", "--max-batch-rows", "--idle-seconds", "--max-bytes", "--max-out-of-range"])
+        self.assertEqual([f["name"] for f in d["flags"]], ["--root", "--model-file", "--port", "--bind", "--token-file", "--no-token", "--max-body-bytes", "--max-batch-rows", "--idle-seconds", "--max-bytes", "--ignore-unknown-fields", "--max-out-of-range"])
         self.assertIn("serve.no-token", [r["rule"] for r in d["rules"]])
         p = subprocess.run([SERVE_BIN, "skill"], capture_output=True)
         self.assertEqual(p.returncode, 0)
