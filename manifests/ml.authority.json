@@ -915,6 +915,7 @@
     "round_to_int",
     "rounds_max",
     "row1",
+    "row_limit",
     "row_loss",
     "row_terms",
     "rows",
@@ -1154,5 +1155,5 @@
   ],
   "folded_operators": 282,
   "folded_calls": 2,
-  "functions": 1997
+  "functions": 1998
 }

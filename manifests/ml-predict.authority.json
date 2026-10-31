@@ -638,6 +638,7 @@
     "rotr64",
     "round_to_int",
     "rounds_max",
+    "row_limit",
     "rows",
     "rows",
     "rows",
@@ -806,5 +807,5 @@
   ],
   "folded_operators": 175,
   "folded_calls": 0,
-  "functions": 1215
+  "functions": 1216
 }

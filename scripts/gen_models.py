@@ -275,7 +275,7 @@ def limit_entries(models):
 
 
 # the flags of `ml-predict` (docs/serving.md section 3.2): those of `predict` and `describe` that write nothing, taken by name from the table of `ml`
-PREDICT_DROPS = {"log", "log-max-bytes"}
+PREDICT_DROPS = {"log", "log-max-bytes", "output", "overwrite"}
 
 
 def predict_tables(spec_text):
