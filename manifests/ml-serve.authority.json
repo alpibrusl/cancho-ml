@@ -717,6 +717,7 @@
     "number",
     "number_at",
     "numeric_kept",
+    "occurrences",
     "ok",
     "ok",
     "op_at",
@@ -1038,5 +1039,5 @@
   ],
   "folded_operators": 328,
   "folded_calls": 0,
-  "functions": 1554
+  "functions": 1555
 }
