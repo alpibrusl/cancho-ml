@@ -75,6 +75,8 @@ class WireFile(unittest.TestCase):
         allowed = spec.tables()["allowed"]
         for verb in ("predict", "eval"):
             for flag in ("plan", "step", "model", "l2", "iterations", "task", "target", "output"):
+                if (verb, flag) == ("predict", "output"):
+                    continue  # `predict --output FILE` writes the rows to a file (cancho-ml#101); eval still has none
                 self.assertNotIn(flag, allowed[verb], (verb, flag))
 
     # ------------------------------------------------------------------ the stored parameters are what is applied

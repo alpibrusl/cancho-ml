@@ -161,6 +161,13 @@ $ ml --root . fit --target y --output g.cml flt2.csv                # flt2.csv: 
 
 `ml fit --model linear|logistic` (with or without `--step` and `--plan`) refuses two designs by name, after the steps ran, so the columns named are the columns of the fitted matrix (`age`, `species#0`, `(intercept)`): `ml.fit.collinear` (exit 8; the column, the dependency on the columns before it, the relative pivot and the tolerance `2^-40` in `detail`) and, for logistic regression with `--l2 0`, `ml.fit.separable` (exit 8; the pass, the reason, the summed loss and its bound, the norm of the coefficients in `detail`). The repair is an argv of the same command with `--l2 X` set (the value of an explicit `--l2` is replaced, not repeated), a `choose` between that and `--drop NAME` for a collinear design when the command line names no step, plan or `--drop`; with `--plan` it is `none`, because `l2` is a key of the plan's model line. `ml cv` fits every training fold the same way, so a fold can be refused when the whole data is not, and the `detail` then also holds `repeat` and `fold`; a refused `fit --track` writes no run record. `tree`, `forest`, `kmeans` and `constant` do not answer them. The decisions and measurements: [refusals-fit.md](refusals-fit.md).
 
+### 2.9 `predict --output FILE` (cancho-ml#101)
+
+`predict` answers with its rows, which for a few hundred rows is thousands of tokens an agent did not ask to read. With `--output FILE` the rows are written to the file, one per line exactly as `--format text` prints them
+(for a classification, `label<TAB>probability` with `--proba`), every row unless `--limit`/`--from` choose some, and the answer is the file: `{"path", "rows", "bytes", "sha256", "written": true}` (`wrote FILE` in text mode). The write is
+atomic (a temporary name beside the file, then a rename); an existing file is `conflict.exists` (exit 5) unless `--overwrite`; a directory that does not exist is `io.not-found`. A refused prediction writes nothing, and a refused write carries no rows.
+`ml-mcp`'s `predict` tool gains `output` and `overwrite`, so its annotation is no longer read-only. Tests: `tests/conformance/test_predict_output.py`.
+
 ## 3. The constant model and its arithmetic
 
 `--model constant` is the model this slice built, and it is a real one (stage W1 added `linear` and `logistic`: `docs/wiring.md`): it is the baseline every other model is compared with, and the

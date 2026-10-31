@@ -469,12 +469,20 @@ fn split_part[&cl](src: &cl [byte], table: &static [byte], part: int) -> [] int 
     return den;
 }
 
+// the most rows one `predict` answers with: --limit, or with --output (which writes the file) every row unless --limit was given
+fn row_limit[&cl](src: &cl [byte]) -> [] int {
+    if argv.has(src, "output") && !argv.has(src, "limit") {
+        return 1000000000;
+    }
+    return argv.nat(src, "limit");
+}
+
 pub fn options[&cl](src: &cl [byte], table: &static [byte]) -> [] verbs.Opts {
     var task = 1;
     if bytes.equal(argv.text(src, "task"), "classification") {
         task = 2;
     }
-    return verbs.Opts { cap: argv.nat(src, "max-line-bytes"), max_rows: argv.nat(src, "max-rows"), max_cols: argv.nat(src, "max-columns"), max_cells: argv.nat(src, "max-cells"), max_bytes: argv.nat(src, "max-bytes"), limit: argv.nat(src, "limit"), from: argv.nat(src, "from"), overwrite: argv.has(src, "overwrite"), dry: argv.has(src, "dry-run"), drop_given: argv.has(src, "drop"), task: task, plan_given: argv.has(src, "plan"), step_given: argv.has(src, "step"), positive_given: argv.has(src, "positive"), split_given: argv.has(src, "split"), seed: argv.nat(src, "seed"), threads: argv.nat(src, "threads"), threads_given: argv.has(src, "threads"), proba: argv.has(src, "proba"), distance: argv.has(src, "distance"), target_given: argv.has(src, "target"), task_given: argv.has(src, "task"), cat_given: argv.has(src, "cat"), max_cats: argv.nat(src, "max-categories"), max_str: argv.nat(src, "max-string-bytes"), max_pool: argv.nat(src, "max-pool-bytes"), max_catcols: argv.nat(src, "max-cat-columns"), max_oor: argv.nat(src, "max-out-of-range"), max_oor_given: argv.has(src, "max-out-of-range"), drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: positive_value(src, table), split_num: split_part(src, table, 0), split_den: split_part(src, table, 1), track_given: argv.has(src, "track"), absent_empty: bytes.equal(argv.text(src, "absent"), "empty"), one_group: false };
+    return verbs.Opts { cap: argv.nat(src, "max-line-bytes"), max_rows: argv.nat(src, "max-rows"), max_cols: argv.nat(src, "max-columns"), max_cells: argv.nat(src, "max-cells"), max_bytes: argv.nat(src, "max-bytes"), limit: row_limit(src), from: argv.nat(src, "from"), overwrite: argv.has(src, "overwrite"), dry: argv.has(src, "dry-run"), drop_given: argv.has(src, "drop"), task: task, plan_given: argv.has(src, "plan"), step_given: argv.has(src, "step"), positive_given: argv.has(src, "positive"), split_given: argv.has(src, "split"), seed: argv.nat(src, "seed"), threads: argv.nat(src, "threads"), threads_given: argv.has(src, "threads"), proba: argv.has(src, "proba"), distance: argv.has(src, "distance"), target_given: argv.has(src, "target"), task_given: argv.has(src, "task"), cat_given: argv.has(src, "cat"), max_cats: argv.nat(src, "max-categories"), max_str: argv.nat(src, "max-string-bytes"), max_pool: argv.nat(src, "max-pool-bytes"), max_catcols: argv.nat(src, "max-cat-columns"), max_oor: argv.nat(src, "max-out-of-range"), max_oor_given: argv.has(src, "max-out-of-range"), drop_mask: 0, float_mask: 0, cat_mask: 0, positive_v: positive_value(src, table), split_num: split_part(src, table, 0), split_den: split_part(src, table, 1), track_given: argv.has(src, "track"), absent_empty: bytes.equal(argv.text(src, "absent"), "empty"), one_group: false };
 }
 
 // the errors, and whether there are none

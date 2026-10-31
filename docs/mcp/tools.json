@@ -91,11 +91,11 @@
      "output": {
       "type": "string",
       "minLength": 1,
-      "description": "fit: where to write the model file. The directory must exist. An existing file is refused unless --overwrite"
+      "description": "fit: where to write the model file. predict: where to write the predictions, one row per line as --format text prints them (every row unless --limit is given), and the answer is then the path, the rows, the bytes and the SHA-256 of that file, so the rows never reach the caller's context. The directory must exist. An existing file is refused unless --overwrite"
      },
      "overwrite": {
       "type": "boolean",
-      "description": "fit: replace an existing --output. The new file is written beside it under a temporary name and renamed over it, so a reader never sees half a file"
+      "description": "fit or predict: replace an existing --output. The new file is written beside it under a temporary name and renamed over it, so a reader never sees half a file"
      },
      "dry-run": {
       "type": "boolean",
@@ -3430,6 +3430,15 @@
       "type": "string",
       "minLength": 1,
       "description": "columns to ignore, header names separated by commas (fit, predict, eval, importance). A dropped column is not part of the stored schema, and its cells are not read as numbers (it may hold text, quoted fields and line breaks)"
+     },
+     "output": {
+      "type": "string",
+      "minLength": 1,
+      "description": "fit: where to write the model file. predict: where to write the predictions, one row per line as --format text prints them (every row unless --limit is given), and the answer is then the path, the rows, the bytes and the SHA-256 of that file, so the rows never reach the caller's context. The directory must exist. An existing file is refused unless --overwrite"
+     },
+     "overwrite": {
+      "type": "boolean",
+      "description": "fit or predict: replace an existing --output. The new file is written beside it under a temporary name and renamed over it, so a reader never sees half a file"
      },
      "limit": {
       "type": "integer",
@@ -21448,6 +21457,16 @@
      "role": "none"
     },
     {
+     "name": "output",
+     "kind": "path",
+     "role": "path-write"
+    },
+    {
+     "name": "overwrite",
+     "kind": "bool",
+     "role": "guard"
+    },
+    {
      "name": "limit",
      "kind": "nat",
      "role": "none"
@@ -21523,7 +21542,10 @@
      "role": "none"
     }
    ],
-   "writes": [],
+   "writes": [
+    "output",
+    "overwrite"
+   ],
    "needs_write": false
   },
   "eval": {
