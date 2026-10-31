@@ -19,7 +19,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from storylib import W, STORY_CSS, arrange, base_css, claim, pretty, num, esc, axis, svg, wrap_cmd, term, story, fig_hashes  # noqa: E402
+from storylib import W, STORY_CSS, arrange, export, standalone_svg, EXPORTED, base_css, claim, pretty, num, esc, axis, svg, wrap_cmd, term, story, fig_hashes  # noqa: E402
 
 DOCS = ROOT / "docs"
 
@@ -539,7 +539,7 @@ def build(binary):
              term(shown(a4), pretty({"model": d4["model"], "rows": d4["rows"], "features": d4["summary"].get("features"), "coefficients": d4["summary"].get("coefficients")})),
              term(shown(a4b), pretty(short(d4b, ("path",)))),
              fig_confusion(tp, fp, fn, tn),
-             fig_roc(pts, auc),
+             export("roc", fig_roc(pts, auc)),
              '<div class="read"><b>Reading it.</b> Of %d held-out customers the model was right %d times (accuracy %s). It said &#8220;returns&#8221; %d times and was right on %d of them (precision %s); it caught %d of the %d who really returned (recall %s). The curve is drawn from the probabilities that <code>predict</code> printed and its area, %s, is the <code>roc_auc</code> printed by <code>eval</code>: a recomputation from the run, checked when this page is generated. <code>eval</code> also says that %d of the held-out cells (in the column <code>%s</code>) lay outside the range the model was fitted on: a model is only as good as the new rows resemble the old ones, and the answer says when they do not.</div>' % (len(y), tp + tn, num(acc, 3), tp + fp, tp, num(tp / (tp + fp), 3), tp, tp + fn, num(tp / (tp + fn), 3), num(auc, 4), d4b["out_of_range"]["cells"], ", ".join(c["name"] for c in d4b["out_of_range"]["columns"]))]))
         # 5 non-linear -------------------------------------------------------------------------------------
         accs = {}
@@ -742,7 +742,7 @@ def build(binary):
         S.append(story(13, "Spend the budget on the right third", "marketing: targeting by response or by uplift", ["predict --proba", "eval"],
             "&#8220;We can only afford to contact a third of them. Take the customers most likely to buy, right?&#8221; &#8212; the finance partner, who wants a number",
             ["<p>There are two natural rankings. <em>Most likely to buy</em> uses the model of the customers shown the ad, and puts the loyal first. <em>Most movable</em> uses the uplift of the previous story. The test group was randomized, so a ranking can be scored honestly: contact the top q percent by that ranking, and the buyers the contact adds are the difference in conversion between those shown the ad and those not, times the size of the group. This is a <em>gain curve</em>: how many extra buyers each plan buys as the contacted share grows from zero to everyone.</p>",
-             fig_gain([("ranked by uplift", "la", gu), ("ranked by chance to buy", "lg", gr), ("random order", "lm", rnd)], "share of customers contacted, %", "extra buyers"),
+             export("uplift-gain", fig_gain([("ranked by uplift", "la", gu), ("ranked by chance to buy", "lg", gr), ("random order", "lm", rnd)], "share of customers contacted, %", "extra buyers")),
              '<div class="read"><b>Reading it.</b> Contacting everybody buys %.0f extra buyers in the %d customers of the test. Contacting the top 30%% by chance to buy gets %.0f: not much more than the %.0f that contacting 30%% at random would. The same 30%% chosen by uplift gets %.0f, and the uplift curve peaks at %.0f extra buyers when %d%% are contacted, <em>above</em> the total of contacting everyone: the last customers on the list lose the shop sales when they are contacted, and a plan that leaves them out does better than a plan that does not. The curves are estimates on one random split (the stats stories explain how wide such estimates are, and a bootstrap of the gain is one way to put an interval on them), so the ordering is clear and the exact peak is not. <code>ml</code> fitted the models and made the predictions; the arithmetic of the curve is the page&#8217;s, from the printed probabilities and the arm and outcome of each test customer.</div>' % (full, len(up_te), at30(gr), at30(rnd), at30(gu), best[1], best[0])]))
         # 14 medicine: readmission ------------------------------------------------------------------------------
         rd_tr, rd_te = make_readmit()
@@ -886,6 +886,8 @@ def main():
     out = {DOCS / "stories.html": page(sections)}
     for name, text in files.items():
         out[DOCS / "stories" / name] = text
+    for name, fig in EXPORTED.items():
+        out[DOCS / "figures" / (name + ".svg")] = standalone_svg(fig, "#6d3fc0", "#b79bf5", EXTRA_CSS)
     if a.check:
         stale = [str(p.relative_to(ROOT)) for p, text in out.items() if not p.exists() or p.read_text() != text]
         if stale:
