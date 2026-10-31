@@ -1,6 +1,8 @@
 {
-  "bounded": true,
-  "unbounded_by": [],
+  "bounded": false,
+  "unbounded_by": [
+    "net_in(\"\")"
+  ],
   "effects": [
     "args",
     "clock",
@@ -75,7 +77,7 @@
     {
       "name": "net_in",
       "argument": "",
-      "bounded": true
+      "bounded": false
     },
     {
       "name": "poll",
@@ -143,6 +145,7 @@
     "category_entry",
     "category_total",
     "catplace",
+    "ceil_int",
     "ceiling",
     "ceiling_categories",
     "ceiling_cells",
@@ -321,6 +324,7 @@
     "extra",
     "extra",
     "extra_len",
+    "extra_open",
     "fabs",
     "fail",
     "failed",
@@ -386,6 +390,7 @@
     "get32",
     "get64",
     "gini_decrease",
+    "grisu",
     "guarantee_keys",
     "guarantees_has",
     "has",
@@ -573,6 +578,7 @@
     "lower",
     "lower_byte",
     "lshr64",
+    "lsr",
     "majority_of",
     "make",
     "make_nullable",
@@ -670,6 +676,7 @@
     "most_params",
     "most_reported",
     "mul128",
+    "mul_f",
     "na_of",
     "name",
     "name",
@@ -994,6 +1001,7 @@
     "type_of",
     "type_of",
     "type_word",
+    "ult",
     "undecided",
     "under",
     "uneven_neighbours",
@@ -1036,7 +1044,5 @@
     "words_of",
     "wpc"
   ],
-  "folded_operators": 328,
-  "folded_calls": 0,
-  "functions": 1554
+  "functions": 1563
 }

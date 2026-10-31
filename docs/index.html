@@ -108,10 +108,10 @@
 <div class="plabel">Fit and compare</div>
 <pre id="screen-fit" class="screen" role="tabpanel" aria-labelledby="tab-fit" tabindex="0"><span class="d"># fit on 80% of the rows, seed 3, and keep a run record of the fit (--track)</span>
 <span class="a">$ ml fit --model logistic --target virginica --step "scale column=* kind=standard" --l2 0.1 --split train=0.8 --seed 3 --track runs --output iris.ml iris_train.csv</span>
-<span>run d659c3217b4c…</span>
+<span>run 037abc440e9c…</span>
 <span class="d"># the same fit with a stronger penalty</span>
 <span class="a">$ ml fit ... --l2 1.0 --track runs --output iris_l2_1.ml iris_train.csv</span>
-<span>run 519af537b8b7…</span>
+<span>run d035360dbdb7…</span>
 <span class="d"># what differs between the two runs, and their metrics side by side (A and C stand for the two run ids)</span>
 <span class="a">$ ml runs compare runs A C</span>
 <span>differs: plan  'model kind=logistic iterations=100 l2=0.1' -&gt; 'model kind=logistic iterations=100 l2=1.0'</span>
@@ -123,10 +123,10 @@
 <span>log_loss   0.2832 -&gt; 0.5234</span>
 <span class="d"># re-fits from the record and compares the model SHA-256</span>
 <span class="a">$ ml runs verify runs A</span>
-<span class="g">verified: True  model 3d69715e3577…</span>
+<span class="g">verified: True  model 59b413d27a8c…</span>
 <span class="d"># the record names the model file by its SHA-256 too</span>
 <span class="a">$ ml runs show runs A</span>
-<span>record: model 3d69715e3577…</span>
+<span>record: model 59b413d27a8c…</span>
 <span class="d"># eval says whether it scored the file the model was fitted on, and counts cells outside the training range</span>
 <span class="a">$ ml eval --model-file iris.ml iris_train.csv   (and iris_test.csv)</span>
 <span>iris_train.csv  on: train  rows: 75  out_of_range cells: 0  accuracy: 0.92</span>
@@ -137,10 +137,10 @@
 <span>listening on 127.0.0.1:8080</span>
 <span class="d"># a prediction, with the hash of the model that made it</span>
 <span class="a">$ curl -s localhost:8080/predict -d '{"sepal_length_cm":5.6,"sepal_width_cm":2.8,"petal_length_cm":4.9,"petal_width_cm":2.0}'</span>
-<span class="g">{"model_sha256":"3d69715e3577…","model":"logistic","columns":["label","probability"],"rows":[[1,0.678121207688661]],"row_count":1,"out_of_range":{"cells":0}} …</span>
+<span class="g">{"model_sha256":"59b413d27a8c…","model":"logistic","columns":["label","probability"],"rows":[[1,0.678121207688661]],"row_count":1,"out_of_range":{"cells":0}} …</span>
 <span class="d"># a refusal is data too</span>
 <span class="a">$ curl -s localhost:8080/predict -d '{"sepal_length_cm":"abc"}'</span>
-<span class="b">{"rule":"ml.schema.mismatch","model_sha256":"3d69715e3577…","status":422,"errors":[{"pointer":"/sepal_length_cm","code":"type"}]} …</span></pre>
+<span class="b">{"rule":"ml.schema.mismatch","model_sha256":"59b413d27a8c…","status":422,"errors":[{"pointer":"/sepal_length_cm","code":"type"}]} …</span></pre>
 <div class="plabel">A refusal and its repair</div>
 <pre id="screen-fix" class="screen" role="tabpanel" aria-labelledby="tab-fix" tabindex="0"><span class="d"># one cell of the training file is empty and the plan does not say what to do with it</span>
 <span class="a">$ ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv</span>
@@ -148,7 +148,7 @@
 <span class="b"># exit status 8</span>
 <span class="d"># the repair is a command: run as offered</span>
 <span class="a">$ ml fit --model logistic --target virginica --output iris-gaps.ml iris_gaps.csv --step 'impute column=sepal_width_cm strategy=mean'</span>
-<span class="g">{"ok":true,"data":{"model":"logistic","rows":75,"bytes":832,"sha256":"22114053534c…"}} …</span></pre>
+<span class="g">{"ok":true,"data":{"model":"logistic","rows":75,"bytes":832,"sha256":"fdbfba7fefe4…"}} …</span></pre>
 <!-- /gen:replay -->
   </div>
   </details>
@@ -253,7 +253,7 @@ cancho install &amp;&amp; cancho build --bin ml                                 
     <div class="card"><h3>Read by a program</h3><p><code>ml introspect</code> prints every flag, limit and refusal rule (<span data-n="rules">128</span> rules) as one JSON document, and <code>ml skill</code> prints a guide for an agent. <code>ml-mcp</code> offers <span data-n="mcp_tools">12</span> tools over MCP, generated from the same table. <code>ml importance</code> says <a href="guide.html#explain">which columns a model relies on</a>, and <code>ml dump</code> prints a tree.</p></div>
   </div>
   <p class="fine"><code>ml-serve</code> answers one request at a time and has no TLS. It listens on 127.0.0.1 unless you pass <code>--bind all</code>, which needs a token file (<code>--token-file</code>). The guide shows <a href="guide.html#http">the requests</a>, <a href="guide.html#tracking">the run records</a> and <a href="guide.html#splits">the splits</a>, each with its real output.</p>
-  <p class="fine"><strong>Conditions.</strong> The hashes cover every model file and printed answer of <span data-n="fp_fits">28</span> fits (every model kind, 1 and 8 threads) on the bundled example data; they equal the golden on macOS arm64, Linux x86-64 and Linux aarch64: the workflow runs the gate on <span data-n="runners">4</span> GitHub runners (<code>ubuntu-24.04</code>, <code>ubuntu-26.04</code>, <code>ubuntu-24.04-arm</code>, <code>macos-26</code>), and a Mac, an Ubuntu workstation and a Raspberry Pi 5 ran it by hand. The last run of those runners (88 equal lines on each, 2026-10-15) was at the previous compiler pin; no run exists at <code>0207556</code>. Any other platform, input or compiler revision is untested. The tests passed in one run of <code>scripts/check.sh</code> on a Linux x86-64 machine; the mutant counts come from runs on several commits and two compilers (<a href="evidence.html#mutants">Evidence</a> says which suite ran where). <strong>Limits.</strong> One pre-registered gate is red: the regression forest differs from scikit-learn&rsquo;s by <span data-n="red_gap">8.1</span>% against a tolerance of <span data-n="red_tol">3</span>%. No speed is claimed: the command line is not timed, and the timings of its libraries come from a loaded machine (<a href="benchmarks.html">Benchmarks</a>).</p>
+  <p class="fine"><strong>Conditions.</strong> The hashes cover every model file and printed answer of <span data-n="fp_fits">28</span> fits (every model kind, 1 and 8 threads) on the bundled example data; they equal the golden on macOS arm64, Linux x86-64 and Linux aarch64: the workflow runs the gate on <span data-n="runners">4</span> GitHub runners (<code>ubuntu-24.04</code>, <code>ubuntu-26.04</code>, <code>ubuntu-24.04-arm</code>, <code>macos-26</code>), and a Mac, an Ubuntu workstation and a Raspberry Pi 5 ran it by hand. The last run of those runners (88 equal lines on each, 2026-10-15) was at the previous compiler pin; no run exists at <code>dcf6751</code>. Any other platform, input or compiler revision is untested. The tests passed in one run of <code>scripts/check.sh</code> on a Linux x86-64 machine; the mutant counts come from runs on several commits and two compilers (<a href="evidence.html#mutants">Evidence</a> says which suite ran where). <strong>Limits.</strong> One pre-registered gate is red: the regression forest differs from scikit-learn&rsquo;s by <span data-n="red_gap">8.1</span>% against a tolerance of <span data-n="red_tol">3</span>%. No speed is claimed: the command line is not timed, and the timings of its libraries come from a loaded machine (<a href="benchmarks.html">Benchmarks</a>).</p>
   <p class="lead" style="margin-bottom:0">Then run the commands above on the CSVs in <code>docs/examples/data</code>, or build the server (<code>cancho build --bin ml-serve</code>) and run <code>sh scripts/demo.sh</code>, which prints what the first two logs replay. The workflow builds <code>ml</code>, <code>ml-predict</code> and <code>ml-serve</code> for Linux x86-64, Linux aarch64 and macOS arm64 and attaches them with SHA-256 files to a release when a tag <code>v*</code> is pushed; no release is published today, so the source is the way in. The <a href="guide.html#start">guide</a> has the full quick start.</p>
   </details>
 </div></section>
