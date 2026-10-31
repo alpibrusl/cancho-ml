@@ -38,10 +38,10 @@ io_read = "predict reads the CSV from standard input for the operand - or no ope
 # ceiling here does not name them with a reason.
 [ml-serve]
 schema = "ml"
-allow = ["args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_write", "net_in(\"\")", "poll"]
+allow = ["args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_write", "net_in(\"0.0.0.0:\")", "poll"]
 
 [ml-serve.reasons]
-net_in = "the server listens on one TCP port: tcp_listen(net, port) is net_in(\"\") (the port is a run-time value). The pinned compiler binds every address of the host, so there is no narrower label (docs/serving-http.md section 5.4)."
+net_in = "the server listens on one TCP port (a run-time value) on 127.0.0.1 (the default) or, with --bind all (which needs a token), on every interface; main narrows the network to the wildcard bound, so the row is net_in(\"0.0.0.0:\") (a bound, which the compiler of 2026-10 requires; it covers loopback too). The pinned compiler once bound every address of the host, so there was no narrower label (docs/serving-http.md section 5.4)."
 conn_accept = "the loop of http.server accepts the connections of that port."
 conn_read = "the loop reads the requests of those connections."
 conn_write = "the loop writes the answers to those connections."

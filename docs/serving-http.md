@@ -16,7 +16,7 @@ here, **[open]** not decided.
 * **cancho-web publishes `web` as a store [read, measured].** `alpibrusl/cancho-web` at `5f404a7` has `.cancho-vcs` (the store of `src/web.cho`, published by `scripts/publish.sh`, whose `--check` CI runs);
   `web` imports `schema`, so its `requires/` records `cancho-schema` at `59a70285ff23af63a226bc56ff978feccb4cf8ca` (the `SCHEMA_REV` of its `ci.yml`).
 * **cancho-schema publishes `schema` as a store [read, measured].** `alpibrusl/cancho-schema` has `.cancho-vcs` at `59a7028` (the commit its store was last republished at; later commits do not change it).
-* **`http.server` is a store of the compiler's repository [read, measured].** `alpibrusl/cancho` at `0207556b4029a3ee73196cdfdb48e8efa7e9c519`, the compiler these sources are written for, has
+* **`http.server` is a store of the compiler's repository [read, measured].** `alpibrusl/cancho` at `de4e52fd81809e6400e2c8b2f485d0b75412449c`, the compiler these sources are written for, has
   `packages/http-server/.cancho-vcs`. Its content differs from the store at `a4572ea` (the module gained streaming request bodies, `Expect: 100-continue` and a byte-fed mode, `docs/http-server.md` sections 11 and 12 of the compiler repository); the functions `ml-serve` calls (`open`, `close`, `wait`, `next`, `head`, `parsed`, `body`, `respond`, `reply_with`, `reply_as`) keep their signatures.
 * **A project pins the three the way it pins `cancho-table` and `cancho-tools` [measured].** A scratch project outside this repository with the three `[dependencies.*]` blocks below ran `cancho install`
   (`installed schema (59a70285ff23): 1 file(s)`, `installed server (0207556b4029): 1 file(s)`, `installed web (5f404a777018): 2 file(s)`), imported `http.server`, `schema` and `web` and
@@ -37,7 +37,7 @@ path = ".cancho-vcs"
 
 [dependencies.server]
 git = "https://github.com/alpibrusl/cancho"
-rev = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"
+rev = "de4e52fd81809e6400e2c8b2f485d0b75412449c"
 path = "packages/http-server/.cancho-vcs"
 ```
 
@@ -50,7 +50,7 @@ cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f4`
 
 cancho-schema rev: `59a70285ff23af63a226bc56ff978feccb4cf8ca` (the `SCHEMA_REV` `5f404a7`'s `ci.yml` names: `SCHEMA_REV` `59a70285ff23af63a226bc56ff978feccb4cf8ca`)
 
-cancho http-server rev: `0207556b4029a3ee73196cdfdb48e8efa7e9c519`
+cancho http-server rev: `de4e52fd81809e6400e2c8b2f485d0b75412449c`
 
 Only `ml-serve` imports these modules; `cancho build --bin ml` and `--bin ml-predict` are not changed by them (gate W2 compares the bytes of the two binaries built before and after the three blocks
 are added; the other changes of this stage that reach their sources are listed in section 10).
@@ -270,8 +270,8 @@ The host cannot come from the command line: the compiler requires a literal, so 
 A server on every address is open to every host that can reach the port, so it requires a token (`serve.no-token`, with the repair in its hint: give `--token-file FILE`, or drop `--bind all`). `--token-file` together with `--no-token`
 is `args.conflict`. The start-up line on standard error names the address: `listening on 127.0.0.1:PORT` or `listening on 0.0.0.0:PORT`.
 
-**What the authority row proves, and what it does not [read, choice].** `main` keeps an unnarrowed `Net("")`, because one binary chooses between two literal calls, so the row stays `net_in("")` and `scripts/manifest.py`'s check passes.
-`net_in("")` does not say which address the server listens on: the row alone cannot prove loopback. The proof of the default is the socket test of gate S10 (`tests/conformance/test_serve_bind.py`): the default server accepts on 127.0.0.1
+**What the authority row proves, and what it does not [read, choice].** `main` narrows the network with `narrow(net, "0.0.0.0:")` (the wildcard, which `docs/native-sockets.md` section 12.3 of the compiler says covers loopback too), so the row is `net_in("0.0.0.0:")` (the compiler of 2026-10, `docs/net-bounds.md`, reports an unnarrowed `net_in("")` as unbounded) and `scripts/manifest.py`'s check passes.
+The row does not say whether the server listens on loopback or on every interface: the row alone cannot prove loopback. The proof of the default is the socket test of gate S10 (`tests/conformance/test_serve_bind.py`): the default server accepts on 127.0.0.1
 and is refused (`ConnectionRefusedError`) on the machine's non-loopback address.
 
 **A stronger alternative, described and not built [choice for the maintainer].** A second binary whose `main` narrows its network capability to `Net("127.0.0.1:")` (any port on 127.0.0.1, compiler `docs/native-sockets.md` section 12.3). The compiler would then refuse at compile
