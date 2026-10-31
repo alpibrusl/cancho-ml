@@ -4,6 +4,8 @@
 
 **Classical machine learning on tabular data, as a command line an agent can read.** `ml` fits, applies and scores a model on a CSV with explicit semantics, exact sums where a sum decides the result, bounded resources, structured refusals and a machine-verifiable authority. It is a command line, not a chat box: you (or an agent) give it flags, it gives back one JSON line, or a named refusal with a repair. One small binary, written in [cancho](https://github.com/alpibrusl/cancho), built the way [cancho-table](https://github.com/alpibrusl/cancho-table) is. The [project page](https://alpibrusl.github.io/cancho-ml/) has the same in pages.
 
+> **Kind:** cli · **Tier:** 1 · **Stage:** built
+
 **Status: early, alpha, not for production.** `ml` builds eight models. `--model constant` is the baseline: the training mean for a regression, the majority class for a classification. `--model linear` (least squares, ridge with `--l2`), `--model logistic` (binary, Newton's method), `--model softmax` (the multinomial logistic regression for a target of three to 64 classes, Newton's method with the full block Hessian: the classes are the distinct labels, `predict --proba` answers an object of probabilities keyed by the labels and `eval` a confusion matrix with a line per class), `--model tree` (a CART decision tree with histogram splits) and `--model forest` (bagged trees, threaded over trees; `--task`, `--trees`, `--max-depth`, `--min-leaf`, `--bins`, `--mtry`, `--bootstrap`, `--max-nodes`) `--model boost` (gradient-boosted trees: the squared-error or the logistic loss, `--task`, `--rounds`, `--learning-rate`, `--max-depth`, `--min-leaf`, `--bins`, `--l2`, `--subsample`, `--early-stopping`) and `--model kmeans` (a clustering with no target: `--k` centres, a fixed number of Lloyd `--iterations`, a seeded `--init`) go through a pipeline of steps (`impute`, `scale`, `encode`, `bucket`, and `freq` and `hash` for text) that `--step` or `--plan` describes and that is fitted on the training rows and stored, with the model, in **one** file: `predict` and `eval` apply the stored steps, and no flag can apply another transformation. `ml` reads integer, decimal and float CSV columns, takes an empty cell as a missing value that the plan must impute, holds rows out with a seeded `--split`, threads `fit` with `--threads`, gives probabilities with `predict --proba`, and scores with accuracy, precision, recall, F1, ROC-AUC, log-loss, RMSE, MAE and R2 (and, for k-means, the inertia). Text columns declared with `--cat` are read into a bounded dictionary, and the steps `encode` (one-hot, label), `freq` (the share of the training rows) and `hash` (SHA-256, a fixed number of buckets) turn them into numbers, with a rare-category bucket (`min-count`, the category `__other__`) and rules for an unseen string (`unknown`) and an empty cell (`missing`). The model file of such a fit holds a **string table**: the fitted vocabulary of every categorical step, with the training strings and their counts, so `predict` and `eval` read the text columns by name from the file alone, count a string the training rows never held, and hash it into its bucket under a `hash` step. A declared column that no step reads is refused (`ml.input.categorical-not-encoded`). A tree, forest or boosted model takes a missing cell itself and learns a side for it at each split, where linear and logistic refuse a missing cell that no `impute` step covers (`ml.input.missing-value`); a tree, forest or boosted fit takes at most 2^20 (1,048,576) training rows (`ml.input.too-many-rows`). A tree or forest file is model kind 7, and a boosted file is model kind 8, both with the summation order 3 (sequential sums: no lane sum reaches their bytes). k-means has no target: `fit` needs no `--target` and refuses one, the file's schema has no target column, `predict` prints the cluster of each row (and with `--distance` the squared distance to its centre) and `eval` the inertia, the rows of each cluster and the mean distance of each; a missing cell is refused as for linear and logistic. A k-means file is model kind 6, with the summation order 2, and a softmax file is model kind 9, with the summation order 2. A model is a module (a manifest, a fixed adapter, generated glue, an admission script) so that the next one cannot add a float order, a capability or an unregistered refusal: [docs/modules.md](docs/modules.md). One pre-registered gate is red (tree regression against scikit-learn, below). The whole list, with what each item was measured as: [docs/status.md](docs/status.md).
 
 A GitHub Actions workflow, `.github/workflows/ci.yml` ([docs/ci.md](docs/ci.md)), builds the pinned compiler and `ml`, `ml-predict`, `ml-serve` and `ml-mcp` on `ubuntu-24.04` and `ubuntu-26.04` (Linux x86-64), `ubuntu-24.04-arm` (Linux aarch64) and `macos-26` (macOS arm64) and runs the fast gates and a cross-platform determinism gate on each; the full gate runs on request and nightly, and a tag `v*` publishes the binaries. `scripts/check.sh` runs every gate, and `scripts/check_docs.sh` checks this README and the project pages (see Contributing).
@@ -33,7 +35,80 @@ $ ml predict --model-file houses.ml listings.csv --drop city
 ```
 <!-- /gen:flow -->
 
-## A model through the pipeline
+[![A real run of ml fit: the plan, the model file and its digest, about forty seconds of terminal, no sound.](docs/assets/media/run-fit.jpg)](https://alpibrusl.github.io/cancho-ml/#watch)
+
+[![A refusal with its repair: ml says which cell is missing, prints the command that fixes it, and the fit runs.](docs/assets/media/run-fix.jpg)](https://alpibrusl.github.io/cancho-ml/#watch)
+
+## Why cancho-ml?
+
+Most ML tools optimise for how many models they offer. `ml` is built to be predictable first, and offers seven models and a pipeline.
+
+* **Explicit types.** A column is an integer, a decimal (an exact mantissa and a scale) or a float (the nearest double, ties to even, read by cancho-table's exact reader). `nan`, `inf`, an empty cell and a cell that is not a number are refused, with the line and the column; `--drop` ignores a column. [docs/reader.md](docs/reader.md), [docs/cli.md](docs/cli.md)
+* **Exact where a sum decides.** The mean of an integer or decimal target and the sum of squared errors are exact integers, kept in limbs, not floats; a float target is summed exactly and rounded once. A test compares every digit with Python's `fractions.Fraction`. The one step that is not exact, the `rmse` (three IEEE operations after the exact sum), is said so in the document. [docs/cli.md](docs/cli.md) section 3
+* **The same bytes.** A model file holds no timestamp, host or path. The same data, plan and seed give the same model bytes whatever the working directory, the spelling of the path or the repetition, and at every `--threads` from 1 to 16 (tested on one Mac, for linear, logistic, k-means, tree, forest and boost); across machines it holds for 28 fits on macOS arm64 and Linux x86-64 and is **not tested** on any other platform (see the limits below). [docs/cli.md](docs/cli.md) section 6, [docs/linalg.md](docs/linalg.md) section 5.4
+* **Bounded resource use.** Rows, columns, cells, line length, model file size, log size and the categorical dictionary each have a flag, a default and a ceiling, checked before anything sized by the input is allocated. Peak memory is measured for one case, the reader's refusal of a 200 MB file (1.5 MB, `docs/reader.md` section 6); no gate measures the memory of a fit. `ml introspect` lists the limits. [docs/cli.md](docs/cli.md) section 2.2
+* **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, no standard input, and no write by path. `scripts/manifest.py --check` fails if the binary differs from the committed [`manifests/ml.authority.json`](manifests/ml.authority.json). [docs/cli.md](docs/cli.md) section 6
+* **Machine-readable errors.** One JSON line against a schema (`ml.v1`); a refusal is `{code, rule, message, hint, repair, detail}` with a stable `<area>.<name>` rule tag. [docs/design.md](docs/design.md) section 8
+* **Repair hints.** A refusal says how to fix the request, as an argv to run, or why there is none. [docs/cli.md](docs/cli.md)
+* **A model file that checks itself.** `CML1`: sections, tensor records and a SHA-256 trailer. Every truncation and every flipped byte of a small model is refused, and no damaged file is accepted. [docs/cli.md](docs/cli.md) section 4
+* **Capability introspection.** `ml introspect` prints the flags, limits, rules and authority; `ml skill` prints a guide for an agent. Both come from the tables the parser runs on.
+
+![ROC curve of a logistic model on 100 held-out customers, area 0.934.](docs/figures/roc.svg)
+
+## For humans, for agents
+
+| for humans | for agents |
+|---|---|
+| the [project page](https://alpibrusl.github.io/cancho-ml/), the [stories](docs/stories.html), the [gallery](https://alpibrusl.github.io/cancho-ml/gallery.html) of every model | `ml skill`, `ml introspect`, `ml-mcp` (12 tools), [docs/agents.md](docs/agents.md), [docs/llms.txt](docs/llms.txt) |
+
+## Two-minute quick start
+
+You need `git`, Rust, `clang` and `python3`, and the machine needs network access for the clones and for `cancho install`, which fetches the pinned modules into `build/deps`: the `cancho-tools` contract package and cancho-table's five numeric modules (`pow5`, `dec`, `flt`, `facc`, `reader`, the stores that [cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) committed), all `[dependencies.*]` of `cancho.toml`, each at one commit. The cancho-table rev is `202b214372a0`; nothing of cancho-table is cloned or copied, and `scripts/check_table_pin.sh` checks that the pin agrees with [docs/reader.md](docs/reader.md) section 1.3, which also says how to move it.
+
+```sh
+git clone https://github.com/alpibrusl/cancho                           # the compiler
+git clone https://github.com/alpibrusl/cancho-ml && cd cancho-ml
+REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
+(cd ../cancho && git fetch -q origin && git checkout "$REV" && cargo build --release -p cancho)
+sh scripts/check_table_pin.sh                                           # the pin agrees with docs/reader.md
+export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
+cancho install && cancho build --bin ml                                 # install fetches the pins (network); builds build/ml
+
+cat > houses.csv <<'EOF'
+id,rooms,area,price
+1,2,48.5,180000
+2,3,71.25,240000
+3,3,64,215000
+4,4,98.5,335000
+5,1,31,120000
+EOF
+printf 'id,rooms,area\n6,2,52.5\n7,3,80\n' > new.csv
+printf 'id,rooms,area,city\n6,2,52.5,Lyon\n7,3,80,Porto\n' > listings.csv
+```
+
+On a 16-core Mac at a load average of 3 to 5, with the compiler built, `cancho install` took 1.4 seconds (once, from GitHub) and `cancho build --bin ml` 5.0 seconds (once). The compiler build and the clones are extra.
+
+Fit, predict, score, and a refusal:
+
+<!-- gen:qs -->
+```console
+$ ml fit --target price --output houses.ml houses.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":416,"sha256":"df669ebf009e182d179668967f9c248bc3bfed3383141089bb8759e5c569c62a","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
+$ ml predict --model-file houses.ml new.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
+$ ml eval --model-file houses.ml houses.csv
+{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"on":"train","metrics":{"rmse":"71035.202541","sse":"25230000000.000000000000","prediction":"218000.000000"}},"meta":{"version":"0.1.0"}}
+$ ml predict --model-file houses.ml listings.csv
+{"rule": "ml.input.non-numeric", "hint": "drop the column with --drop, or fix the cell", "repair": {"kind": "retry", "argv": ["ml", "predict", "--model-file", "houses.ml", "listings.csv", "--drop", "city"]}}
+# exit status 8; the rule, hint, repair of the JSON line it prints
+```
+<!-- /gen:qs -->
+
+## Examples
+
+Three runs on committed files, each printed by the binary; the longer cases with data are the [stories](docs/stories.html) (a bicycle shop, medicine, marketing uplift, a credit score).
+
+### A model through the pipeline
 
 A float CSV with an empty cell. A plan has to say what to do with it, or the fit is refused with a repair. Then the plan, written out: impute, standardise, a logistic regression; predict with probabilities (the empty cell of the new rows is filled with the mean **stored in the model**); score. The output is what the built program prints, on the files in `scripts/site.py`.
 
@@ -55,7 +130,7 @@ $ ml eval --model-file shop2.ml shop2.csv
 ```
 <!-- /gen:pflow -->
 
-## k-means: clusters, and no target
+### k-means: clusters, and no target
 
 k-means has no target: `fit` needs no `--target` and refuses one, `--k` (1 to 1,024) is required, `--iterations` (default 10) is a fixed number of Lloyd iterations, `--init kmeans++|random` draws the first centres from `--seed`. A file with a label column is used without it (`--drop`), the features are standardised by a step, and a cell that is still missing after the steps is refused, as for linear and logistic. `fit` prints the inertia, the rows of each cluster and the mean distance of each; `predict` prints the cluster of each row (`--distance` adds the squared distance to its centre); `eval` prints the same three numbers for another file, or for the rows `--split` holds out. The inertia is a sum of squared distances in the package's lane order, so the same data, plan and seed give the same bytes at every `--threads`. On the committed `docs/examples/data/iris_train.csv` and `iris_test.csv` (copy them next to where you run it):
 
@@ -87,7 +162,7 @@ mean_distance 1.2398733702280837 1.0644974060896137 1.1737313271562995
 ```
 <!-- /gen:kmflow -->
 
-## Track runs and check for skew
+### Track runs and check for skew
 
 A model file remembers what it was fitted on. Every `fit` writes a **provenance section** (tag 7 of the file): the SHA-256 and size of the training file, its rows, and for each numeric feature the count, minimum, maximum, exact mean and population standard deviation of the training cells as the reader read them (exact sums, rounded once, so no order of rows and no thread count changes a byte). `eval` prints `"on":"train"` when the file it scores is the file the model was fitted on, `"other"` when it is not, `"unknown"` for a model file with no section; `predict`, `eval` and `ml-serve` count the non-missing cells strictly outside the stored range (`out_of_range`, with the columns that have any), `--max-out-of-range N` refuses above N rows (`ml.predict.out-of-range`, naming the first column and row), and `predict` lists the target column it ignored (`ignored_columns`). Files without a section are read and say so.
 
@@ -127,7 +202,7 @@ $ ml predict --model-file iris-lr.ml --max-out-of-range 0 iris_test.csv
 ```
 <!-- /gen:trackflow -->
 
-## Explain a model
+### Explain a model
 
 A model that cannot be explained can only be trusted by its score. `ml importance` says which columns a model relies on, and `ml dump` prints the model itself; neither fits or changes anything. The design and its gates are in [docs/interpret.md](docs/interpret.md).
 
@@ -186,7 +261,7 @@ $ ml importance --model-file houses.ml
 # exit status 8; the rule, hint of the JSON line it prints
 ```
 <!-- /gen:interpflow -->
-## JSON lines
+### JSON lines
 
 `--input-format jsonl` (or `ndjson`) reads one JSON object a line, for `fit`, `predict` and `eval`. `fit` declares the columns with `--fields` (the keys, in the order of the table); `predict` and `eval` take theirs from the model file, read each line by key in any order and ignore the keys the model does not read. A number is its exact text (never rounded through a double), a string is text (`"48.5"` is never the number 48.5), `null` is a missing cell, a key a line lacks is `ml.jsonl.missing-field` unless `--absent empty`, `true` and `false` are text in a `--cat` column and refused in a number column, and an object or an array is refused: nothing is guessed. The model file is the one fitted from the equivalent CSV except the identity of the training file in its provenance section (its SHA-256 and size), and `predict` and `eval` print the same answers (but for `on` and `ignored_columns`, which name a file and a CSV column). `fit -`, `eval -` and `predict -` read standard input up to `--max-bytes`, CSV or JSON lines, so a table of nested JSON flattens into `ml` with a pipe: `table --input-format jsonl --fields id,user.age,spend --select '#2,#3' --format csv events.jsonl | ml predict --model-file m.ml -` (cancho-table's `--fields` follows dotted and indexed paths; `ml` reads flat keys). The reader, its mapping of every JSON value to a cell and its refusals are in [docs/jsonl.md](docs/jsonl.md).
 
@@ -215,7 +290,7 @@ $ ml fit --input-format jsonl --fields id,rooms,area,price --target price --outp
 # exit status 8; the rule, hint, detail of the JSON line it prints
 ```
 <!-- /gen:jflow -->
-## Boosted trees: `--model boost`
+### Boosted trees: `--model boost`
 
 `--model boost` fits additive trees to the gradients and hessians of a loss, round by round: squared error for a regression (`--task regression`, the default) and logistic loss for a binary classification (`--task classification`). Each round grows one histogram tree on the quantile bins of the tree library, with a Newton step `-G / (H + l2)` in each leaf, multiplied by `--learning-rate`; a cell that is missing is accepted and each split learns the side it takes. `--rounds` (default 100), `--learning-rate` (0.1), `--max-depth` (4), `--min-leaf` (10), `--bins` (64), `--l2` (1.0), `--subsample` (the fraction of the rows each round fits on, seeded from `--seed` and the round, never from the thread count) and `--early-stopping N` are the flags. Early stopping is refused unless `--split train=F` declares a held-out part, and the stopping rule never reads it: it takes a random tenth of the training rows for its own validation loss and keeps the best round. A random tenth is not a group split or a time split of the training rows, so `--early-stopping` with `--split-group` or `--split-by` (in `fit --split` and in `ml cv`) is `ml.split.combination`, and its repair drops `--early-stopping`; with a plain or a `--stratify` split, or in `ml cv` with random folds, it runs. Every sum is a sequential sum in a fixed row order, so the file records the summation order 3, as the tree and the forest do, and the same data, plan and seed give the same bytes at every `--threads` (the threads only bin the columns: the rounds are sequential). The file is model kind 8; a boosted model holds all its trees, so `fit` refuses to write a file longer than `--max-bytes`. On the committed `docs/examples/data/breast_cancer_train.csv` and `breast_cancer_test.csv` (copy them next to where you run it):
 
@@ -243,7 +318,7 @@ $ ml describe --model-file cancer-boost.ml
 ```
 <!-- /gen:bflow -->
 
-## Worked examples
+### Worked examples
 
 Four classic datasets, as bundled with scikit-learn (breast cancer Wisconsin, diabetes progression, iris restricted to two species, wine), solved by the real `ml` binary and compared with scikit-learn on the **same two files** each. [docs/examples.md](docs/examples.md) fixes what is compared and the tolerances, and was written before any example was run; the commands and their output are on [the examples page](https://alpibrusl.github.io/cancho-ml/examples.html), with two failures shown (a penalty-free logistic fit on separable data; a column whose type differs between two files). The `ml` output is regenerated by `scripts/check_docs.sh`; the scikit-learn column is read from `docs/examples/reference.json`, written by `python3 scripts/examples_data.py` (needs scikit-learn), and **is not computed by the check**. Nothing here is a claim about speed.
 
@@ -292,63 +367,6 @@ The headline numbers of every example, `ml` against scikit-learn on the same tes
 
 * **Iris, fit.** Outside the tolerance of docs/examples.md section 3: largest coefficient or intercept difference (5 values). The cause is the reference solver and it is measured here: scikit-learn's own two solvers differ from each other by up to 2.3e-05 in a coefficient (L-BFGS stops short of the optimum), while ml differs from scikit-learn's Newton solver by at most 6.2e-10, inside the same tolerance. The tolerance was not moved.
 <!-- /gen:ex-summary -->
-
-## Why cancho-ml?
-
-Most ML tools optimise for how many models they offer. `ml` is built to be predictable first, and offers seven models and a pipeline.
-
-* **Explicit types.** A column is an integer, a decimal (an exact mantissa and a scale) or a float (the nearest double, ties to even, read by cancho-table's exact reader). `nan`, `inf`, an empty cell and a cell that is not a number are refused, with the line and the column; `--drop` ignores a column. [docs/reader.md](docs/reader.md), [docs/cli.md](docs/cli.md)
-* **Exact where a sum decides.** The mean of an integer or decimal target and the sum of squared errors are exact integers, kept in limbs, not floats; a float target is summed exactly and rounded once. A test compares every digit with Python's `fractions.Fraction`. The one step that is not exact, the `rmse` (three IEEE operations after the exact sum), is said so in the document. [docs/cli.md](docs/cli.md) section 3
-* **The same bytes.** A model file holds no timestamp, host or path. The same data, plan and seed give the same model bytes whatever the working directory, the spelling of the path or the repetition, and at every `--threads` from 1 to 16 (tested on one Mac, for linear, logistic, k-means, tree, forest and boost); across machines it holds for 28 fits on macOS arm64 and Linux x86-64 and is **not tested** on any other platform (see the limits below). [docs/cli.md](docs/cli.md) section 6, [docs/linalg.md](docs/linalg.md) section 5.4
-* **Bounded resource use.** Rows, columns, cells, line length, model file size, log size and the categorical dictionary each have a flag, a default and a ceiling, checked before anything sized by the input is allocated. Peak memory is measured for one case, the reader's refusal of a 200 MB file (1.5 MB, `docs/reader.md` section 6); no gate measures the memory of a fit. `ml introspect` lists the limits. [docs/cli.md](docs/cli.md) section 2.2
-* **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, no standard input, and no write by path. `scripts/manifest.py --check` fails if the binary differs from the committed [`manifests/ml.authority.json`](manifests/ml.authority.json). [docs/cli.md](docs/cli.md) section 6
-* **Machine-readable errors.** One JSON line against a schema (`ml.v1`); a refusal is `{code, rule, message, hint, repair, detail}` with a stable `<area>.<name>` rule tag. [docs/design.md](docs/design.md) section 8
-* **Repair hints.** A refusal says how to fix the request, as an argv to run, or why there is none. [docs/cli.md](docs/cli.md)
-* **A model file that checks itself.** `CML1`: sections, tensor records and a SHA-256 trailer. Every truncation and every flipped byte of a small model is refused, and no damaged file is accepted. [docs/cli.md](docs/cli.md) section 4
-* **Capability introspection.** `ml introspect` prints the flags, limits, rules and authority; `ml skill` prints a guide for an agent. Both come from the tables the parser runs on.
-
-## Two-minute quick start
-
-You need `git`, Rust, `clang` and `python3`, and the machine needs network access for the clones and for `cancho install`, which fetches the pinned modules into `build/deps`: the `cancho-tools` contract package and cancho-table's five numeric modules (`pow5`, `dec`, `flt`, `facc`, `reader`, the stores that [cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) committed), all `[dependencies.*]` of `cancho.toml`, each at one commit. The cancho-table rev is `202b214372a0`; nothing of cancho-table is cloned or copied, and `scripts/check_table_pin.sh` checks that the pin agrees with [docs/reader.md](docs/reader.md) section 1.3, which also says how to move it.
-
-```sh
-git clone https://github.com/alpibrusl/cancho                           # the compiler
-git clone https://github.com/alpibrusl/cancho-ml && cd cancho-ml
-REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
-(cd ../cancho && git fetch -q origin && git checkout "$REV" && cargo build --release -p cancho)
-sh scripts/check_table_pin.sh                                           # the pin agrees with docs/reader.md
-export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
-cancho install && cancho build --bin ml                                 # install fetches the pins (network); builds build/ml
-
-cat > houses.csv <<'EOF'
-id,rooms,area,price
-1,2,48.5,180000
-2,3,71.25,240000
-3,3,64,215000
-4,4,98.5,335000
-5,1,31,120000
-EOF
-printf 'id,rooms,area\n6,2,52.5\n7,3,80\n' > new.csv
-printf 'id,rooms,area,city\n6,2,52.5,Lyon\n7,3,80,Porto\n' > listings.csv
-```
-
-On a 16-core Mac at a load average of 3 to 5, with the compiler built, `cancho install` took 1.4 seconds (once, from GitHub) and `cancho build --bin ml` 5.0 seconds (once). The compiler build and the clones are extra.
-
-Fit, predict, score, and a refusal:
-
-<!-- gen:qs -->
-```console
-$ ml fit --target price --output houses.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"columns":4,"target":"price","path":"houses.ml","bytes":416,"sha256":"df669ebf009e182d179668967f9c248bc3bfed3383141089bb8759e5c569c62a","written":true,"summary":{"mean":"218000.000000"}},"meta":{"version":"0.1.0"}}
-$ ml predict --model-file houses.ml new.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","columns":["prediction"],"rows":[["218000.000000"],["218000.000000"]],"row_count":2,"total_rows":2,"truncated":false,"next":null},"meta":{"version":"0.1.0"}}
-$ ml eval --model-file houses.ml houses.csv
-{"ok":true,"command":"ml","schema":"ml.v1","data":{"model":"constant","task":"regression","rows":5,"on":"train","metrics":{"rmse":"71035.202541","sse":"25230000000.000000000000","prediction":"218000.000000"}},"meta":{"version":"0.1.0"}}
-$ ml predict --model-file houses.ml listings.csv
-{"rule": "ml.input.non-numeric", "hint": "drop the column with --drop, or fix the cell", "repair": {"kind": "retry", "argv": ["ml", "predict", "--model-file", "houses.ml", "listings.csv", "--drop", "city"]}}
-# exit status 8; the rule, hint, repair of the JSON line it prints
-```
-<!-- /gen:qs -->
 
 ## What you can do
 
@@ -803,6 +821,17 @@ ml-mcp      args, conc, dir_read, dir_write, err_write, file_read, file_write, f
 
 * **Where the output is the contract package's text, not a measurement for `ml`.** `introspect.guarantees` and parts of `skill` are written by the pinned `cancho-tools` package and are wrong or too narrow for `ml` in six places, for example "read-only: it never writes" although `fit` writes. They are listed in [docs/cli.md](docs/cli.md) section 8 so that nobody reads them as claims.
 * **`ml-mcp` serves one client over standard input and output, one call at a time.** A call in progress cannot be cancelled and has no deadline (the limits on rows, columns, bytes, trees and depth bound the work), a message over `--max-message-bytes` is refused, and the revision implemented is `2025-06-18` (`docs/mcp.md` section 11).
+
+## Compared with
+
+| | cancho-ml | scikit-learn (and numpy) | where cancho-ml is worse |
+|---|---|---|---|
+| answer | one JSON line, schema `ml.v1`; every refusal has a rule and, where one exists, a repair argv | Python objects and exceptions | no notebook, no plots, no pipelines in Python |
+| the same model | the same bytes at any `--threads` from 1 to 16 (tested on one Mac, for linear, logistic, k-means, tree, forest and boost) | not measured here | |
+| accuracy | linear and ridge agree with scikit-learn to `1e-9` relative, logistic coefficients to `1e-6` on four datasets, with the tolerances fixed first ([examples](docs/examples.md)) | the reference | that agreement is on four datasets only |
+| speed, 1,000,000 rows, 20 features, 1 thread, ms | logistic 236, linear 32.0, k-means 306 | logistic 126 (lbfgs), linear 182, k-means 330; the same algorithm in numpy: 170, 16.1, 1,148 | **dense float linear algebra: of 29 shapes, 8 match numpy and 21 do not, from 1.05 to 14.9 times slower** |
+
+The numbers are those of *How fast*, with their conditions (a loaded Mac, minimum of 7 interleaved samples); nothing else in the table is a claim about another library.
 
 ## What it cannot do
 
