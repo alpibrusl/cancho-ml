@@ -19,6 +19,7 @@ import ml.fsio;
 import ml.jsonlcli;
 import ml.logrec;
 import ml.mdesc;
+import ml.mfile;
 import ml.paths;
 import ml.runs;
 import ml.spec;
@@ -41,10 +42,75 @@ fn built() -> [] describe.Built {
 }
 
 // the end record, the log written, the answer
-fn finish[&h, &f, &i, &r, &pp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i Io, root: &r [byte], ps: &pp app.Paths, result: verbs.Out, log_ok: bool) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write] int {
+fn finish[&h, &f, &i, &r, &pp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i Io, root: &r [byte], ps: &pp app.Paths, verb: int, result: verbs.Out, log_ok: bool) -> [heap, fs_read(""), dir_read, dir_write, file_read, file_write, io_write, err_write] int {
     let table = spec.flag_table();
-    let (payload, plain, extra, errs0, log0, dry) = verbs.parts(result);
+    let (payload0, plain0, extra, errs0, log0, dry) = verbs.parts(result);
+    var payload = payload0;
+    var plain = plain0;
     var e = errs0;
+    // `predict --output FILE` (cancho-ml#101): the rows go to the file, one per line as `--format text` prints them, written atomically (an existing file is
+    // refused without --overwrite), and the answer is a summary of the file: its path, rows, bytes and SHA-256. The prediction is already made, so a refusal
+    // of the prediction leaves nothing written.
+    if verb == 2 && argv.has(src, "output") {
+        var clean = false;
+        borrow e as &er0 in {
+            clean = fail.count(er0) == 0;
+        }
+        if clean {
+            var rows = 0;
+            var size = 0;
+            var ws = 0;
+            var wa = 0;
+            var hex = buffer.empty(heap, 1);
+            borrow plain as &pt in {
+                let data = buffer.bytes(pt);
+                size = len(data);
+                var k = 0;
+                while k < len(data) {
+                    if int_of(data[k]) == 10 {
+                        rows = rows + 1;
+                    }
+                    k = k + 1;
+                }
+                let (ws2, wa2) = fsio.write_atomic(heap, fs, root, paths.shown(ps.out), paths.full(ps.out), data, argv.has(src, "overwrite"), false);
+                ws = ws2;
+                wa = wa2;
+                buffer.drop(heap, hex);
+                hex = mfile.sha256_hex(heap, data);
+            }
+            if ws != 0 {
+                e = verbs.write_failure(heap, e, ws, wa, paths.shown(ps.out));
+                // nothing was written: the refusal does not carry the rows either
+                buffer.drop(heap, payload);
+                buffer.drop(heap, plain);
+                payload = buffer.empty(heap, 1);
+                plain = buffer.empty(heap, 1);
+            } else {
+                buffer.drop(heap, payload);
+                buffer.drop(heap, plain);
+                var w = json.writer(heap, 256);
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "path");
+                w = json.put_string(heap, w, paths.shown(ps.out));
+                w = json.put_key(heap, w, "rows");
+                w = json.put_int(heap, w, rows);
+                w = json.put_key(heap, w, "bytes");
+                w = json.put_int(heap, w, size);
+                w = json.put_key(heap, w, "sha256");
+                borrow hex as &hr in {
+                    w = json.put_string(heap, w, buffer.bytes(hr));
+                }
+                w = json.put_key(heap, w, "written");
+                w = json.put_bool(heap, w, true);
+                w = json.end_object(heap, w);
+                payload = json.finish(w);
+                plain = buffer.append(heap, buffer.empty(heap, 64), "wrote ");
+                plain = buffer.append(heap, plain, paths.shown(ps.out));
+                plain = buffer.push(heap, plain, byte_of(10));
+            }
+            buffer.drop(heap, hex);
+        }
+    }
     var lg = log0;
     var rule = buffer.empty(heap, 1);
     var ok = true;
@@ -110,7 +176,7 @@ fn body[&h, &f, &i, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i
         let (ps, e2) = jsonlcli.input_into(heap, src, table, fs, buffer.bytes(rr), verb, ps1, e2b);
         borrow ps as &pr in {
             let (result, log_ok) = verbrun.execute(heap, src, fs, buffer.bytes(rr), verb, pr, e2);
-            status = finish(heap, src, fs, io, buffer.bytes(rr), pr, result, log_ok);
+            status = finish(heap, src, fs, io, buffer.bytes(rr), pr, verb, result, log_ok);
         }
         app.drop_paths(heap, ps);
     }

@@ -400,7 +400,7 @@ class FlagTable(unittest.TestCase):
 
     def test_the_verbs_the_binary_takes_are_the_flags_of_predict_and_describe(self):
         T = spec.tables()
-        want = (set(T["allowed"]["predict"]) | set(T["allowed"]["describe"])) - {"log", "log-max-bytes"}
+        want = (set(T["allowed"]["predict"]) | set(T["allowed"]["describe"])) - {"log", "log-max-bytes", "output", "overwrite"}
         i = json.loads(subprocess.run([PREDICT_BIN, "introspect"], capture_output=True, stdin=subprocess.DEVNULL).stdout)
         self.assertEqual({f["name"][2:] for f in i["flags"]}, want)
 
