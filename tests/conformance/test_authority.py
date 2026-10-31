@@ -19,7 +19,7 @@ EXPECTED = {"args", "conc", "dir_read", "dir_write", "err_write", "file_read", "
 # `ml-predict` (docs/serving.md section 3.3): the row of `ml` without the writes and the thread
 EXPECTED_PREDICT = {"args", "dir_read", "err_write", "file_read", 'fs_read("")', "heap", "io_read", "io_write"}
 # `ml-serve` (docs/serving-http.md section 6): a server of cancho-web. No write of any file, no thread, no exec, no foreign code, no net_out, no standard input
-EXPECTED_SERVE = {"args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", 'fs_read("")', "heap", "io_write", 'net_in("")', "poll"}
+EXPECTED_SERVE = {"args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", 'fs_read("")', "heap", "io_write", 'net_in("0.0.0.0:")', "poll"}
 # `ml-mcp` (docs/mcp.md section 7): the row of `ml`, nothing more: no network, no listener, no clock, no exec, no foreign code
 EXPECTED_MCP = EXPECTED
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock", "fs_write", "exec", "env"}

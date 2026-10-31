@@ -3,8 +3,8 @@ edition 9;
 // `ml-serve` -- serve one trained model file over HTTP with cancho-web (docs/serving-http.md). It is built from the sources of `ml` and `ml-predict` with this entry
 // point: it reads the model file once, builds the request schema and the OpenAPI document from what `describe` says, listens, and answers one request at a time. The
 // authority the compiler derives from `main` has the sockets, the clock and the reads of the model and token files, and no write of any kind, no `exec` and no foreign code.
-// It listens on 127.0.0.1 unless `--bind all` is given (`tcp_listen_on` with one of two literal hosts, docs/serving-http.md section 5.4); `main` keeps an unnarrowed `Net("")`, so the row says
-// `net_in("")` and the proof of the default is the socket test (tests/conformance/test_serve_bind.py), not the row.
+// It listens on 127.0.0.1 unless `--bind all` is given (`tcp_listen_on` with one of two literal hosts, docs/serving-http.md section 5.4); `main` narrows the network to the wildcard (`narrow(net, "0.0.0.0:")`), so the row says
+// `net_in("0.0.0.0:")` (the bound is bounded, but it covers loopback too: the proof of the default is the socket test, tests/conformance/test_serve_bind.py, not the row).
 
 import std.buffer;
 import std.bytes;
@@ -81,7 +81,7 @@ fn binds_everywhere[&cl](src: &cl [byte]) -> [] bool {
 }
 
 // the listening socket: one of two calls with a literal host, because the compiler reads the host from the source (docs/native-sockets.md section 12 of the compiler repository)
-fn open_listener[&n](net: &n Net(""), everywhere: bool, port: int) -> [net_in("")] Listening {
+fn open_listener[&n](net: &n Net("0.0.0.0:"), everywhere: bool, port: int) -> [net_in("0.0.0.0:")] Listening {
     if everywhere {
         return tcp_listen_on(net, "0.0.0.0", port, 1024, 0);
     }
@@ -416,7 +416,7 @@ fn run[&h, &sv, &f, &r, &k, &l, &i, &cl](heap: &!h Heap, served: &sv srv.Served,
 }
 
 // the server: the command line, `prepare`, then the socket
-fn serve[&h, &f, &i, &n, &k, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i Io, net: &n Net(""), clock: &k Clock, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read, io_write, err_write, net_in(""), conn_accept, conn_read, conn_write, poll, clock] int {
+fn serve[&h, &f, &i, &n, &k, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), io: &!i Io, net: &n Net("0.0.0.0:"), clock: &k Clock, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read, io_write, err_write, net_in("0.0.0.0:"), conn_accept, conn_read, conn_write, poll, clock] int {
     let table = sspec.flag_table();
     let e0 = check_cmdline(heap, src, errs);
     let (root, e1) = paths.root(heap, src, argv.text(src, "root"), argv.value_index(src, "root"), e0);
@@ -491,6 +491,8 @@ fn main(world: World) -> [] int {
     release(signals);
     release(exec);
     release(tty);
+    // the server can listen on 127.0.0.1 or, with --bind all, on every interface: the wildcard bound says so (docs/native-sockets.md section 12.3), and the row is bounded
+    let net = narrow(net, "0.0.0.0:");
     var status = 0;
     borrow mut heap as &!h in {
         borrow args as &g in {
