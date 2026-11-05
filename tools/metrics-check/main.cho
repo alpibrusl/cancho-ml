@@ -12,6 +12,11 @@
 //       stdout: `groups N`, `scored N`, `ndcg HEX|undefined`, `map`, `mrr`, `prec`, `recall`, or `refused TAG`
 //   metrics-check recommend NUSERS NITEMS SCORE HOFF HIST TOFF TEST K CAP   the recommendation metrics (docs/recommend.md section 3). SCORE: `H:` float bits, NUSERS * NITEMS of them; HOFF, HIST, TOFF, TEST: `L:` ints
 //       stdout: `users N`, `scored N`, `hit HEX|undefined`, `recall`, `ndcg`, `mrr`, or `refused TAG`
+//   metrics-check calibrate YTRUE PROB PARAMS BINS CAP     the calibration table and gate (docs/calibration.md section 1). PARAMS is `H:` six floats: min_expected z overall_lo overall_hi band_lo band_hi
+//   metrics-check level YTRUE PROB DAYS PARAMS BINS CAP    the same on the newer half of the days after the level correction of the older half (section 1.3)
+//       stdout: `info OVERALL OK BAD BINS ROWS POSITIVES`, `row I N MEAN OBSERVED RATIO EXPECTED SD Z JUDGED BAD` (floats as hex bits), for `level` also `level FACTOR NOLD NNEW MADE`, or `refused TAG`
+//   metrics-check isotonic X Y W DECREASING CAP           the isotonic fit (docs/calibration.md section 2). X, Y, W: `H:` float bits; DECREASING: 0 or 1
+//       stdout: `info POINTS BLOCKS ROWS`, `point I X FITTED WEIGHT BLOCK` (floats as hex bits), or `refused TAG`
 //   metrics-check testcount N NUM DEN
 //   metrics-check mc NAME YTRUE SECOND CLASSES CAP         the multiclass metrics (docs/multiclass.md section 4). CLASSES is `L:` ints, strictly ascending. NAME and SECOND:
 //       confusion accuracy precision recall f1 macro_precision macro_recall macro_f1 weighted_precision weighted_recall weighted_f1   SECOND = the predicted labels
@@ -35,6 +40,8 @@ import metrics.ranking;
 import metrics.recommend;
 import metrics.regress;
 import metrics.logloss;
+import metrics.calibrate;
+import metrics.isotonic;
 import metrics.multiclass;
 import metrics.gen;
 
@@ -624,6 +631,211 @@ fn run_terms[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_wr
     return 0;
 }
 
+// the table and the gate (docs/calibration.md section 1); `level` is the recalibration of the newer half by the older one (section 1.3)
+fn run_calibrate[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args, level: bool) -> [heap, io_write, args] int {
+    var shift = 0;
+    if level {
+        shift = 1;
+    }
+    let (ya, yn) = make_ints(heap, operand(g, 2));
+    let (pa, pn) = make_floats(heap, operand(g, 3));
+    // (without `level` operand 4 is the parameter vector, parsed here and not used)
+    let (da, dn) = make_floats(heap, operand(g, 4));
+    let (qa, qn) = make_floats(heap, operand(g, 4 + shift));
+    let bins = num(g, 5 + shift);
+    let cap = num(g, 6 + shift);
+    var yb = ya;
+    var pb = pa;
+    var db = da;
+    var qb = qa;
+    var status = 2;
+    var rows = bins;
+    if rows < 1 {
+        rows = 1;
+    }
+    if rows > 1000 {
+        rows = 1000;
+    }
+    if yn >= 0 && pn >= 0 && qn == 6 && bins >= 0 && cap >= 0 && (level == false || dn >= 0) {
+        let table = box_slice(heap, rows * calibrate.cols() + 1, 0.0);
+        let info = box_slice(heap, calibrate.info_size() + 5, 0.0);
+        var code = 0;
+        borrow yb as &yr in {
+            borrow pb as &pr in {
+                borrow db as &dr in {
+                    borrow qb as &qr in {
+                        borrow mut table as &!tw in {
+                            borrow mut info as &!iw in {
+                                let q = contents(qr);
+                                if level {
+                                    code = calibrate.level_correction(heap, contents(pr)[0..pn], contents(yr)[0..yn], contents(dr)[0..dn], bins, q[0], q[1], q[2], q[3], q[4], q[5], cap, contents(tw), contents(iw));
+                                } else {
+                                    code = calibrate.calibration(heap, contents(pr)[0..pn], contents(yr)[0..yn], bins, q[0], q[1], q[2], q[3], q[4], q[5], cap, contents(tw), contents(iw));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        status = 0;
+        if code != 0 {
+            status = refuse_line(io, code);
+        } else {
+            borrow table as &tr in {
+                borrow info as &ir in {
+                    let f = contents(ir);
+                    let t = contents(tr);
+                    var made = true;
+                    if level {
+                        made = f[calibrate.info_size() + 3] > 0.5;
+                    }
+                    if made {
+                        io.write_all(io, "info ");
+                        hex16(io, bits_of(f[0]));
+                        io.write_all(io, " ");
+                        io.print_int(io, truncate(f[1]));
+                        io.write_all(io, " ");
+                        io.print_int(io, truncate(f[3]));
+                        io.write_all(io, " ");
+                        io.print_int(io, truncate(f[2]));
+                        io.write_all(io, " ");
+                        io.print_int(io, truncate(f[4]));
+                        io.write_all(io, " ");
+                        io.print_int(io, truncate(f[5]));
+                        io.newline(io);
+                        var r = 0;
+                        while r < bins {
+                            io.write_all(io, "row ");
+                            io.print_int(io, r);
+                            var c = 0;
+                            while c < calibrate.cols() {
+                                io.write_all(io, " ");
+                                if c == 0 || c == 7 || c == 8 {
+                                    io.print_int(io, truncate(t[r * calibrate.cols() + c]));
+                                } else {
+                                    hex16(io, bits_of(t[r * calibrate.cols() + c]));
+                                }
+                                c = c + 1;
+                            }
+                            io.newline(io);
+                            r = r + 1;
+                        }
+                    }
+                    if level {
+                        io.write_all(io, "level ");
+                        hex16(io, bits_of(f[calibrate.info_size()]));
+                        io.write_all(io, " ");
+                        io.print_int(io, truncate(f[calibrate.info_size() + 1]));
+                        io.write_all(io, " ");
+                        io.print_int(io, truncate(f[calibrate.info_size() + 2]));
+                        io.write_all(io, " ");
+                        io.print_int(io, truncate(f[calibrate.info_size() + 3]));
+                        io.newline(io);
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, table);
+        unbox_slice(heap, info);
+    }
+    unbox_slice(heap, yb);
+    unbox_slice(heap, pb);
+    unbox_slice(heap, db);
+    unbox_slice(heap, qb);
+    return status;
+}
+
+// the isotonic fit (docs/calibration.md section 2)
+fn run_isotonic[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (xa, xn) = make_floats(heap, operand(g, 2));
+    let (ya, yn) = make_floats(heap, operand(g, 3));
+    let (wa, wn) = make_floats(heap, operand(g, 4));
+    let decreasing = num(g, 5) == 1;
+    let cap = num(g, 6);
+    var xb = xa;
+    var yb = ya;
+    var wb = wa;
+    var status = 2;
+    if xn >= 0 && yn >= 0 && wn >= 0 && cap >= 0 {
+        let rows = xn + 1;
+        let ox = box_slice(heap, rows, 0.0);
+        let of = box_slice(heap, rows, 0.0);
+        let ow = box_slice(heap, rows, 0.0);
+        let ob = box_slice(heap, rows, 0);
+        let info = box_slice(heap, isotonic.info_size() + 1, 0.0);
+        var code = 0;
+        var oxb = ox;
+        var ofb = of;
+        var owb = ow;
+        var obb = ob;
+        var inb = info;
+        borrow xb as &xr in {
+            borrow yb as &yr in {
+                borrow wb as &wr in {
+                    borrow mut oxb as &!oxw in {
+                        borrow mut ofb as &!ofw in {
+                            borrow mut owb as &!oww in {
+                                borrow mut obb as &!obw in {
+                                    borrow mut inb as &!inw in {
+                                        code = isotonic.isotonic(heap, contents(xr)[0..xn], contents(yr)[0..yn], contents(wr)[0..wn], decreasing, cap, contents(oxw), contents(ofw), contents(oww), contents(obw), contents(inw));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        status = 0;
+        if code != 0 {
+            status = refuse_line(io, code);
+        } else {
+            borrow oxb as &a1 in {
+                borrow ofb as &a2 in {
+                    borrow owb as &a3 in {
+                        borrow obb as &a4 in {
+                            borrow inb as &a5 in {
+                                io.write_all(io, "info ");
+                                io.print_int(io, truncate(contents(a5)[0]));
+                                io.write_all(io, " ");
+                                io.print_int(io, truncate(contents(a5)[1]));
+                                io.write_all(io, " ");
+                                io.print_int(io, truncate(contents(a5)[2]));
+                                io.newline(io);
+                                var k = 0;
+                                while k < truncate(contents(a5)[0]) {
+                                    io.write_all(io, "point ");
+                                    io.print_int(io, k);
+                                    io.write_all(io, " ");
+                                    hex16(io, bits_of(contents(a1)[k]));
+                                    io.write_all(io, " ");
+                                    hex16(io, bits_of(contents(a2)[k]));
+                                    io.write_all(io, " ");
+                                    hex16(io, bits_of(contents(a3)[k]));
+                                    io.write_all(io, " ");
+                                    io.print_int(io, contents(a4)[k]);
+                                    io.newline(io);
+                                    k = k + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, oxb);
+        unbox_slice(heap, ofb);
+        unbox_slice(heap, owb);
+        unbox_slice(heap, obb);
+        unbox_slice(heap, inb);
+    }
+    unbox_slice(heap, xb);
+    unbox_slice(heap, yb);
+    unbox_slice(heap, wb);
+    return status;
+}
+
 fn print_class[&i](io: &!i Io, c: int, r: rules.Scored) -> [io_write] int {
     io.write_all(io, "class ");
     io.print_int(io, c);
@@ -966,6 +1178,12 @@ fn main(world: World) -> [] int {
                         code = run_metric(hp, ip, g, kc);
                     } else if same(arg(g, 1), "terms") {
                         code = run_terms(hp, ip, g);
+                    } else if same(arg(g, 1), "calibrate") {
+                        code = run_calibrate(hp, ip, g, false);
+                    } else if same(arg(g, 1), "isotonic") {
+                        code = run_isotonic(hp, ip, g);
+                    } else if same(arg(g, 1), "level") {
+                        code = run_calibrate(hp, ip, g, true);
                     } else if same(arg(g, 1), "mc") {
                         code = run_mc(hp, ip, g);
                     } else if same(arg(g, 1), "rank") {

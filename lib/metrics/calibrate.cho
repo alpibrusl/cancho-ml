@@ -1,0 +1,348 @@
+module metrics.calibrate;
+
+import std.math;
+import metrics.rules;
+import metrics.sums;
+import metrics.ratio;
+import metrics.classify;
+import metrics.regress;
+import linalg.order;
+
+// The calibration table and its gate (docs/calibration.md section 1), LIBRARY ONLY: not wired into the command line (the stage of docs/metrics.md that wired `eval` is a later change). A binary classifier's probabilities
+// are cut into `bins` bins of consecutive ranks (a stable sort by probability, bin i holding the positions floor(i n / bins) .. floor((i + 1) n / bins) - 1: exact integers), and each bin says how many rows it holds, the mean
+// predicted probability, the observed rate, their ratio, the expected number of positives (the sum of the probabilities), the binomial standard deviation sqrt(max(sum p (1 - p), 1e-12)) and z = (observed positives - expected) / sd.
+// The gate: the overall ratio (positives over the sum of the probabilities) inside [overall_lo, overall_hi] and no JUDGED bin (expected positives >= min_expected) with a ratio outside [band_lo, band_hi] AND |z| > zmax.
+// The sums are the package's decisive sums (metrics.sums: blocks of 256, four lanes, the fixed tree), the observed rates are correctly rounded integer quotients (metrics.ratio).
+
+// the columns of a row of the table: n, mean predicted, observed, ratio (NaN where the mean predicted is 0), expected positives, sd, z, judged (1.0 or 0.0), bad (1.0 or 0.0)
+pub fn cols() -> [] int {
+    return 9;
+}
+
+// the entries of `info`: 0 overall ratio, 1 ok (1.0 or 0.0), 2 bins in the table, 3 bad bins, 4 rows, 5 positives
+pub fn info_size() -> [] int {
+    return 6;
+}
+
+pub fn max_bins() -> [] int {
+    return 1000;
+}
+
+// a stable bottom-up merge sort of the indices idx[0 .. n) by p[idx]: equal probabilities keep their order
+pub fn sort_index[&p, &i, &t](p: &p [float], idx: &!i [int], tmp: &!t [int], n: int) -> [] int {
+    var width = 1;
+    while width < n {
+        var lo = 0;
+        while lo < n {
+            var mid = lo + width;
+            if mid > n {
+                mid = n;
+            }
+            var hi = lo + 2 * width;
+            if hi > n {
+                hi = n;
+            }
+            var a = lo;
+            var b = mid;
+            var k = lo;
+            while k < hi {
+                if a < mid && (b >= hi || p[idx[a]] <= p[idx[b]]) {
+                    tmp[k] = idx[a];
+                    a = a + 1;
+                } else {
+                    tmp[k] = idx[b];
+                    b = b + 1;
+                }
+                k = k + 1;
+            }
+            k = lo;
+            while k < hi {
+                idx[k] = tmp[k];
+                k = k + 1;
+            }
+            lo = lo + 2 * width;
+        }
+        width = width * 2;
+    }
+    return 0;
+}
+
+// the table of the probabilities `prob` against the labels `label` (0 or 1). table gets bins * cols() floats, info info_size() floats. Answers 0 or the code of the refusal (metrics.rules): the sizes (cap, ceiling), non-finite or
+// out-of-range probabilities, labels other than 0 and 1, a number of bins below 1, above max_bins() or above the rows.
+pub fn calibration[&h, &p, &y, &t, &f](heap: &!h Heap, prob: &p [float], label: &y [int], bins: int, min_expected: float, zmax: float, overall_lo: float, overall_hi: float, band_lo: float, band_hi: float, cap: int, table: &!t [float], info: &!f [float]) -> [heap] int {
+    let n = len(prob);
+    let c = classify.check_size(n, len(label), cap, classify.ceiling_rows());
+    if c != 0 {
+        return c;
+    }
+    if bins < 1 || bins > max_bins() || bins > n {
+        return rules.out_of_range();
+    }
+    if regress.all_finite(prob) == false {
+        return rules.non_finite();
+    }
+    var i = 0;
+    while i < n {
+        if prob[i] < 0.0 || prob[i] > 1.0 {
+            return rules.bad_probability();
+        }
+        if label[i] != 0 && label[i] != 1 {
+            return rules.not_binary();
+        }
+        i = i + 1;
+    }
+    let idx = box_slice(heap, n + 1, 0);
+    let tmp = box_slice(heap, n + 1, 0);
+    let sp = box_slice(heap, n + 1, 0.0);
+    let sq = box_slice(heap, n + 1, 0.0);
+    let sy = box_slice(heap, n + 1, 0);
+    let buf = box_slice(heap, order.block() + 1, 0.0);
+    let st = box_slice(heap, order.slots() + 1, 0.0);
+    let lv = box_slice(heap, order.slots() + 1, 0);
+    var positives = 0;
+    var nbad = 0;
+    var total_p = 0.0;
+    borrow mut idx as &!iw in {
+        borrow mut tmp as &!tw in {
+            borrow mut sp as &!spw in {
+                borrow mut sq as &!sqw in {
+                    borrow mut sy as &!syw in {
+                        borrow mut buf as &!bw in {
+                            borrow mut st as &!stw in {
+                                borrow mut lv as &!lw in {
+                                    i = 0;
+                                    while i < n {
+                                        contents(iw)[i] = i;
+                                        i = i + 1;
+                                    }
+                                    sort_index(prob, contents(iw), contents(tw), n);
+                                    i = 0;
+                                    while i < n {
+                                        let r = contents(iw)[i];
+                                        contents(spw)[i] = prob[r];
+                                        contents(sqw)[i] = prob[r] * (1.0 - prob[r]);
+                                        contents(syw)[i] = label[r];
+                                        positives = positives + label[r];
+                                        i = i + 1;
+                                    }
+                                    total_p = sums.reduce(sums.kind_val(), contents(spw), contents(spw), 0.0, n, contents(bw), contents(stw), contents(lw));
+                                    var bi = 0;
+                                    while bi < bins {
+                                        let e0 = bi * n / bins;
+                                        let e1 = (bi + 1) * n / bins;
+                                        let m = e1 - e0;
+                                        let sum_p = sums.reduce(sums.kind_val(), contents(spw)[e0..e1], contents(spw)[e0..e1], 0.0, m, contents(bw), contents(stw), contents(lw));
+                                        let sum_v = sums.reduce(sums.kind_val(), contents(sqw)[e0..e1], contents(sqw)[e0..e1], 0.0, m, contents(bw), contents(stw), contents(lw));
+                                        var ys = 0;
+                                        var k = e0;
+                                        while k < e1 {
+                                            ys = ys + contents(syw)[k];
+                                            k = k + 1;
+                                        }
+                                        let mean_pred = sum_p / float_of(m);
+                                        let observed = ratio.ratio(ys, m);
+                                        var rat = 0.0 / 0.0;
+                                        if mean_pred > 0.0 {
+                                            rat = observed / mean_pred;
+                                        }
+                                        var v = sum_v;
+                                        if v < 1e-12 {
+                                            v = 1e-12;
+                                        }
+                                        let sd = sqrt(v);
+                                        let z = (float_of(ys) - sum_p) / sd;
+                                        var judged = 0.0;
+                                        if sum_p >= min_expected {
+                                            judged = 1.0;
+                                        }
+                                        var bad = 0.0;
+                                        if judged > 0.5 && !(rat >= band_lo && rat <= band_hi) {
+                                            var az = z;
+                                            if az < 0.0 {
+                                                az = 0.0 - az;
+                                            }
+                                            if az > zmax {
+                                                bad = 1.0;
+                                                nbad = nbad + 1;
+                                            }
+                                        }
+                                        let row = bi * cols();
+                                        table[row] = float_of(m);
+                                        table[row + 1] = mean_pred;
+                                        table[row + 2] = observed;
+                                        table[row + 3] = rat;
+                                        table[row + 4] = sum_p;
+                                        table[row + 5] = sd;
+                                        table[row + 6] = z;
+                                        table[row + 7] = judged;
+                                        table[row + 8] = bad;
+                                        bi = bi + 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, idx);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, sp);
+    unbox_slice(heap, sq);
+    unbox_slice(heap, sy);
+    unbox_slice(heap, buf);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    var denom = total_p;
+    if denom < 1e-12 {
+        denom = 1e-12;
+    }
+    let overall = float_of(positives) / denom;
+    var ok = 0.0;
+    if overall >= overall_lo && overall <= overall_hi && nbad == 0 {
+        ok = 1.0;
+    }
+    info[0] = overall;
+    info[1] = ok;
+    info[2] = float_of(bins);
+    info[3] = float_of(nbad);
+    info[4] = float_of(n);
+    info[5] = float_of(positives);
+    return 0;
+}
+
+// the median of days[0 .. n): the middle value, or the mean of the two middle values for an even n (numpy's); n >= 1
+fn median[&h, &d](heap: &!h Heap, days: &d [float], n: int) -> [heap] float {
+    let idx = box_slice(heap, n + 1, 0);
+    let tmp = box_slice(heap, n + 1, 0);
+    var out = 0.0;
+    borrow mut idx as &!iw in {
+        borrow mut tmp as &!tw in {
+            var i = 0;
+            while i < n {
+                contents(iw)[i] = i;
+                i = i + 1;
+            }
+            sort_index(days, contents(iw), contents(tw), n);
+            if n % 2 == 1 {
+                out = days[contents(iw)[n / 2]];
+            } else {
+                out = (days[contents(iw)[n / 2 - 1]] + days[contents(iw)[n / 2]]) / 2.0;
+            }
+        }
+    }
+    unbox_slice(heap, idx);
+    unbox_slice(heap, tmp);
+    return out;
+}
+
+// The recalibration to the recent level (docs/calibration.md section 1.3): the factor r = (positives) / (sum of probabilities) of the OLDER half of the days (days <= median), applied to the NEWER half (days > median) with the
+// probabilities clipped to [0, 1], and the table of the newer half. The gate is thus judged on days the factor was not fitted on. info gets info_size() + 4 floats: the entries of `calibration` for the newer half, then
+// info_size(): the factor, +1 rows in the older half, +2 rows in the newer half, +3 1.0 if a table was made (0.0 when a half is empty or the older half's probabilities sum to 0: the factor is then 1.0 and the table is not made).
+// table gets bins * cols() floats.
+pub fn level_correction[&h, &p, &y, &d, &t, &f](heap: &!h Heap, prob: &p [float], label: &y [int], days: &d [float], bins: int, min_expected: float, zmax: float, overall_lo: float, overall_hi: float, band_lo: float, band_hi: float, cap: int, table: &!t [float], info: &!f [float]) -> [heap] int {
+    let n = len(prob);
+    let c = classify.check_size(n, len(days), cap, classify.ceiling_rows());
+    if c != 0 {
+        return c;
+    }
+    if len(label) != n {
+        return rules.length_mismatch();
+    }
+    if regress.all_finite(days) == false {
+        return rules.non_finite();
+    }
+    if regress.all_finite(prob) == false {
+        return rules.non_finite();
+    }
+    let cut = median(heap, days, n);
+    var n_old = 0;
+    var n_new = 0;
+    var i = 0;
+    while i < n {
+        if days[i] <= cut {
+            n_old = n_old + 1;
+        } else {
+            n_new = n_new + 1;
+        }
+        i = i + 1;
+    }
+    let po = box_slice(heap, n_old + 1, 0.0);
+    let pn = box_slice(heap, n_new + 1, 0.0);
+    let yn = box_slice(heap, n_new + 1, 0);
+    let buf = box_slice(heap, order.block() + 1, 0.0);
+    let st = box_slice(heap, order.slots() + 1, 0.0);
+    let lv = box_slice(heap, order.slots() + 1, 0);
+    var yo_pos = 0;
+    var sum_old = 0.0;
+    borrow mut po as &!pow in {
+        borrow mut pn as &!pnw in {
+            borrow mut yn as &!ynw in {
+                borrow mut buf as &!bw in {
+                    borrow mut st as &!stw in {
+                        borrow mut lv as &!lw in {
+                            var a = 0;
+                            var b = 0;
+                            i = 0;
+                            while i < n {
+                                if days[i] <= cut {
+                                    contents(pow)[a] = prob[i];
+                                    a = a + 1;
+                                    yo_pos = yo_pos + label[i];
+                                } else {
+                                    contents(pnw)[b] = prob[i];
+                                    contents(ynw)[b] = label[i];
+                                    b = b + 1;
+                                }
+                                i = i + 1;
+                            }
+                            if n_old > 0 {
+                                sum_old = sums.reduce(sums.kind_val(), contents(pow), contents(pow), 0.0, n_old, contents(bw), contents(stw), contents(lw));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    var code = 0;
+    var factor = 1.0;
+    var made = 0.0;
+    if n_old > 0 && n_new > 0 && sum_old > 0.0 {
+        factor = float_of(yo_pos) / sum_old;
+        borrow mut pn as &!pnw2 in {
+            i = 0;
+            while i < n_new {
+                var v = contents(pnw2)[i] * factor;
+                if v < 0.0 {
+                    v = 0.0;
+                }
+                if v > 1.0 {
+                    v = 1.0;
+                }
+                contents(pnw2)[i] = v;
+                i = i + 1;
+            }
+        }
+        borrow pn as &pnr in {
+            borrow yn as &ynr in {
+                code = calibration(heap, contents(pnr)[0..n_new], contents(ynr)[0..n_new], bins, min_expected, zmax, overall_lo, overall_hi, band_lo, band_hi, cap, table, info);
+            }
+        }
+        if code == 0 {
+            made = 1.0;
+        }
+    }
+    unbox_slice(heap, po);
+    unbox_slice(heap, pn);
+    unbox_slice(heap, yn);
+    unbox_slice(heap, buf);
+    unbox_slice(heap, st);
+    unbox_slice(heap, lv);
+    info[info_size()] = factor;
+    info[info_size() + 1] = float_of(n_old);
+    info[info_size() + 2] = float_of(n_new);
+    info[info_size() + 3] = made;
+    return code;
+}

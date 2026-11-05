@@ -26,6 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 # (document, path, reason). The paths are files of the repository of the cancho compiler or of cancho-table (their docs/), not of this one.
 ALLOW = [
     ("docs/spikes.md", "docs/floating-point.md", "a document of the cancho compiler repository at a4572ea (the gate's source list)"),
+    ("docs/calibration.md", "docs/pure-cancho.md", "a document of the cancho-consulting repository (metasearch-bidding), the client whose Python this design replaces"),
     ("docs/spikes.md", "docs/float-math.md", "a document of the cancho compiler repository at a4572ea (the gate's source list)"),
     ("docs/spikes.md", "docs/compile-time.md", "a document of the cancho compiler repository at a4572ea (the gate's source list)"),
     ("docs/spikes.md", "docs/ROADMAP.md", "a document of the cancho compiler repository at a4572ea (the gate's source list)"),
