@@ -30,7 +30,9 @@ NEW_FLAGS = {"--plan", "--step", "--l2", "--iterations", "--positive", "--split"
              # the split strategies and cross-validation (docs/splits.md)
              "--stratify", "--split-by", "--split-group", "--folds", "--repeats", "--emit-folds",
              # boosted trees (docs/models-boost.md section 6)
-             "--rounds", "--learning-rate", "--subsample", "--early-stopping"}
+             "--rounds", "--learning-rate", "--subsample", "--early-stopping",
+             # calibrate and isotonic (docs/calibration.md section 11)
+             "--prob-col", "--prob-bins", "--min-expected", "--z-limit", "--overall", "--band", "--gate", "--recalibrate", "--x-col", "--y-col", "--decreasing", "--day"}
 # the refusal of an unknown model name lists the models: it changes with the list, by design
 LISTS_THE_MODELS = {"args-bad-value-model"}
 
@@ -38,6 +40,8 @@ LISTS_THE_MODELS = {"args-bad-value-model"}
 def uses_new(c):
     argv = [a for a in c["argv"] if isinstance(a, str)]
     if "runs" in argv or "--track" in argv or "--max-out-of-range" in argv:
+        return True
+    if "calibrate" in argv or "isotonic" in argv:
         return True
     if any(a in NEW_FLAGS for a in argv) or "--threads" in argv or "cv" in argv:
         return True
