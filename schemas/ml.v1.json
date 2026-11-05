@@ -234,7 +234,19 @@
         "--max-out-of-range",
         "--log",
         "--log-max-bytes",
-        "--format"
+        "--format",
+        "--prob-col",
+        "--day",
+        "--prob-bins",
+        "--min-expected",
+        "--z-limit",
+        "--overall",
+        "--band",
+        "--gate",
+        "--recalibrate",
+        "--x-col",
+        "--y-col",
+        "--decreasing"
       ]
     },
     "rule": {
@@ -367,7 +379,9 @@
         "ml.rank.group-missing",
         "ml.limit.group-size",
         "ml.limit.pairs",
-        "ml.split.group-required"
+        "ml.split.group-required",
+        "ml.metric.bad-probability",
+        "ml.calibrate.gate-failed"
       ]
     },
     "repair": {
@@ -6101,6 +6115,198 @@
             "kind",
             "importance",
             "permutation"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bins": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ok": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "overall_ratio": {
+              "type": "string",
+              "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+            },
+            "bad_bins": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "table": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "bin": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "n": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "mean_pred": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  },
+                  "observed": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  },
+                  "ratio": {
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "expected": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  },
+                  "sd": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  },
+                  "z": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  },
+                  "judged": {
+                    "type": "boolean"
+                  },
+                  "bad": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "bin",
+                  "n",
+                  "mean_pred",
+                  "observed",
+                  "ratio",
+                  "expected",
+                  "sd",
+                  "z",
+                  "judged",
+                  "bad"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "recalibration": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "const": "level"
+                },
+                "factor": {
+                  "type": "string",
+                  "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                },
+                "rows_older": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rows_newer": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "judged_on_newer": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "method",
+                "factor",
+                "rows_older",
+                "rows_newer",
+                "judged_on_newer"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "rows",
+            "bins",
+            "ok"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "points": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blocks": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "decreasing": {
+              "type": "boolean"
+            },
+            "fit": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  },
+                  "fitted": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  },
+                  "weight": {
+                    "type": "string",
+                    "pattern": "^-?[0-9]+(\\.[0-9]+)?(e[+-]?[0-9]+)?$"
+                  },
+                  "block": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "x",
+                  "fitted",
+                  "weight",
+                  "block"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "rows",
+            "points",
+            "blocks",
+            "decreasing",
+            "fit"
           ],
           "additionalProperties": false
         },

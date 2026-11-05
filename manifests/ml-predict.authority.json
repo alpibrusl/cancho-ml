@@ -538,6 +538,7 @@
     "not32",
     "nth_name",
     "number",
+    "number",
     "number_at",
     "numeric_kept",
     "ok",
@@ -558,6 +559,7 @@
     "out_of_range",
     "out_of_range",
     "padk",
+    "pair",
     "param",
     "param_out_of_range",
     "params",
@@ -799,7 +801,7 @@
     "word_is",
     "wpc"
   ],
-  "folded_operators": 162,
+  "folded_operators": 163,
   "folded_calls": 0,
-  "functions": 1208
+  "functions": 1211
 }

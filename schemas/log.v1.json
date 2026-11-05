@@ -257,7 +257,9 @@
         "ml.rank.group-missing",
         "ml.limit.group-size",
         "ml.limit.pairs",
-        "ml.split.group-required"
+        "ml.split.group-required",
+        "ml.metric.bad-probability",
+        "ml.calibrate.gate-failed"
       ]
     }
   }
