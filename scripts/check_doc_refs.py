@@ -39,6 +39,7 @@ ALLOW = [
     ("docs/reader.md", "docs/readers.md", "cancho-table's document on readers"),
     ("docs/serving-http.md", "docs/native-sockets.md", "a document of the cancho compiler repository at 0207556 (section 12: tcp_listen_on)"),
     ("docs/serving-http.md", "docs/http-server.md", "a document of the cancho compiler repository at 0207556 (the http.server package)"),
+    ("docs/serving-http.md", "docs/net-bounds.md", "a document of the cancho compiler repository at 5a5dd1f (section 2.4: net_in(\"\") is not narrowed)"),
 ]
 
 # The sibling clones in which the experiments were run are not places a reader can follow. Their names appear only in the two documents

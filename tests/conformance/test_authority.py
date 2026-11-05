@@ -105,7 +105,7 @@ class AuthorityPredict(unittest.TestCase):
         committed = json.loads((ROOT / "manifests" / "ml-predict.authority.json").read_text())
         self.assertEqual(predict_introspect()["authority"], committed)
 
-    def test_the_row_is_exactly_these_labels_and_bounded(self):
+    def test_the_row_is_exactly_these_labels_and_unbounded_only_by_the_listener(self):
         a = predict_introspect()["authority"]
         self.assertTrue(a["bounded"])
         self.assertEqual((a["unbounded_by"], a["foreign_symbols"]), ([], []))
@@ -149,10 +149,14 @@ class AuthorityServe(unittest.TestCase):
         committed = json.loads((ROOT / "manifests" / "ml-serve.authority.json").read_text())
         self.assertEqual(serve_introspect()["authority"], committed)
 
-    def test_the_row_is_exactly_these_labels_and_bounded(self):
+    def test_the_row_is_exactly_these_labels_and_unbounded_only_by_the_listener(self):
         a = serve_introspect()["authority"]
-        self.assertTrue(a["bounded"])
-        self.assertEqual((a["unbounded_by"], a["foreign_symbols"]), ([], []))
+        # since the compiler of 5a5dd1f the report says what it always was: `net_in("")` is not narrowed, so the row is not bounded, by that one label and no other (docs/serving-http.md section 5.4);
+        # tools.toml declares it, and the gate of scripts/manifest.py fails for any other unbounded label
+        self.assertFalse(a["bounded"])
+        self.assertEqual((a["unbounded_by"], a["foreign_symbols"]), (['net_in("")'], []))
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        self.assertEqual(ceilings["ml-serve"]["unbounded"], ['net_in("")'])
         labels = {label_text(l) for l in a["labels"]}
         self.assertEqual(labels, EXPECTED_SERVE)
         # no write of any file, no directory write, no thread, no exec, no foreign code, no outbound network, no standard input, no environment

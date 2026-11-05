@@ -3,7 +3,7 @@
 # cheapest first, stopping at the first failure. scripts/check.sh runs it; the mutants (scripts/mutants_recommend.py, mutants_recommend_log.py) run the same oracle commands.
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-0207556/target/release/cancho}
+CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-5a5dd1f/target/release/cancho}
 D=$(mktemp -d)
 trap 'rm -rf $D' EXIT
 LIB="lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/*.cho"

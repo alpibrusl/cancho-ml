@@ -17,7 +17,7 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CANCHO = os.environ.get("CANCHO", str(ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"))
+CANCHO = os.environ.get("CANCHO", str(ROOT.parent / "cancho-compiler-5a5dd1f" / "target" / "release" / "cancho"))
 PY = sys.executable
 RK = "lib/metrics/recommend.cho"
 SD = "lib/metrics/ranking.cho"

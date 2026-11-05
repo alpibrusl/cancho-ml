@@ -95,8 +95,8 @@ a table in a `<details>` beside it (no information is only in the picture).
 
 `scripts/site.py` writes the block `gen:sample` of `board.html`: the records of the runs below, one per line, exactly as the tool wrote them, from the built binary in a temporary directory on `docs/examples/data/iris_train.csv`:
 
-1. the first fit of `scripts/demo.sh` (the same command, `--l2 0.1`), run `d659c3217b4c...`;
-2. its second fit (`--l2 1.0`), run `519af537b8b7...` (the two ids of the landing page's replay);
+1. the first fit of `scripts/demo.sh` (the same command, `--l2 0.1`), run `bc31d659d5cb...`;
+2. its second fit (`--l2 1.0`), run `8dbed11e3b93...` (the two ids of the landing page's replay);
 3. a k-means fit on the same file with `--drop virginica` (so that a second task and its primary metric, `inertia`, show);
 4. the eval record that `ml eval --track` writes for run 1 on `iris_test.csv`.
 

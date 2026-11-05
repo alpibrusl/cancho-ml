@@ -889,8 +889,9 @@ def serve_authority(ctx):
     if status != 0 or manifest != json.loads(out)["authority"]:
         raise Drift("manifests/ml-serve.authority.json is not what `ml-serve introspect` says: run scripts/manifest.py")
     effects = {lab["name"] for lab in manifest["labels"]}
-    if not manifest["bounded"] or manifest["foreign_symbols"] or effects & {"ffi", "net_out", "conc", "exec", "env", "io_read", "file_write", "dir_write", "fs_write"}:
-        raise Drift("the authority of ml-serve has a write, a thread, an exec, a foreign symbol or an outbound connection, or is unbounded")
+    # unbounded only by `net_in("")`, the unnarrowed listening port that tools.toml declares with its reason
+    if manifest.get("unbounded_by", []) != ['net_in("")'] or manifest["foreign_symbols"] or effects & {"ffi", "net_out", "conc", "exec", "env", "io_read", "file_write", "dir_write", "fs_write"}:
+        raise Drift("the authority of ml-serve has a write, a thread, an exec, a foreign symbol or an outbound connection, or is unbounded by more than net_in(\"\")")
     return ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in manifest["labels"])
 
 
