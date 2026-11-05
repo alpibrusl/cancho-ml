@@ -39,8 +39,10 @@ io_read = "predict reads the CSV from standard input for the operand - or no ope
 [ml-serve]
 schema = "ml"
 allow = ["args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_write", "net_in(\"\")", "poll"]
+unbounded = ["net_in(\"\")"]
 
 [ml-serve.reasons]
+unbounded = "since the compiler of 5a5dd1f the report says what it always was: `net_in(\"\")` is the network unnarrowed, so `bounded` is false (cancho docs/net-bounds.md section 2.4). The row cannot say which address the server listens on, because one binary chooses between two literal calls, 127.0.0.1 by default and 0.0.0.0 with --bind all; the proof of the default is the socket test of gate S10 (docs/serving-http.md section 5.4). No other tool may be unbounded."
 net_in = "the server listens on one TCP port: tcp_listen(net, port) is net_in(\"\") (the port is a run-time value). The pinned compiler binds every address of the host, so there is no narrower label (docs/serving-http.md section 5.4)."
 conn_accept = "the loop of http.server accepts the connections of that port."
 conn_read = "the loop reads the requests of those connections."

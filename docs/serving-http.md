@@ -50,7 +50,7 @@ cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f4`
 
 cancho-schema rev: `59a70285ff23af63a226bc56ff978feccb4cf8ca` (the `SCHEMA_REV` `5f404a7`'s `ci.yml` names: `SCHEMA_REV` `59a70285ff23af63a226bc56ff978feccb4cf8ca`)
 
-cancho http-server rev: `0207556b4029a3ee73196cdfdb48e8efa7e9c519`
+cancho http-server rev: `5a5dd1f21250b96b3f735a45b781489374219466`
 
 Only `ml-serve` imports these modules; `cancho build --bin ml` and `--bin ml-predict` are not changed by them (gate W2 compares the bytes of the two binaries built before and after the three blocks
 are added; the other changes of this stage that reach their sources are listed in section 10).
@@ -270,7 +270,7 @@ The host cannot come from the command line: the compiler requires a literal, so 
 A server on every address is open to every host that can reach the port, so it requires a token (`serve.no-token`, with the repair in its hint: give `--token-file FILE`, or drop `--bind all`). `--token-file` together with `--no-token`
 is `args.conflict`. The start-up line on standard error names the address: `listening on 127.0.0.1:PORT` or `listening on 0.0.0.0:PORT`.
 
-**What the authority row proves, and what it does not [read, choice].** `main` keeps an unnarrowed `Net("")`, because one binary chooses between two literal calls, so the row stays `net_in("")` and `scripts/manifest.py`'s check passes.
+**What the authority row proves, and what it does not [read, choice].** `main` keeps an unnarrowed `Net("")`, because one binary chooses between two literal calls, so the row stays `net_in("")`. **Corrected on the move to compiler `5a5dd1f`:** the compiler used to report that row as `bounded: true`, which was the report's lie (cancho `docs/net-bounds.md` section 2.4); it now says `bounded: false`, `unbounded_by: [net_in("")]`, and `scripts/manifest.py` accepts that for this tool only, because `tools.toml` names `unbounded = [net_in("")]` for `ml-serve` with a reason. Every other tool must be bounded.
 `net_in("")` does not say which address the server listens on: the row alone cannot prove loopback. The proof of the default is the socket test of gate S10 (`tests/conformance/test_serve_bind.py`): the default server accepts on 127.0.0.1
 and is refused (`ConnectionRefusedError`) on the machine's non-loopback address.
 
@@ -382,7 +382,7 @@ Machines: the Mac (arm64, Apple M4 Max, 16 cores, macOS 26.2, Python 3.14.5), `g
 | S4 | 3,001 cases (random bytes, flips, truncations, edits, hostile paths, headers, versions, chunked and JSON bodies) on 48 threads: no trap, no hang, every case answered or closed; 252 of 400 simultaneous connections served at the default body limit; the resident set does not grow (the figures are in the log of the run) | `tests/conformance/test_serve_fuzz.py` |
 | O1 | seven documents checked in (`docs/serving/*.openapi.json`), each served by a process, equal to its file and valid for `openapi-spec-validator` (7 of 7, `ok` for each). The seven files name the SHA-256 of a model file, which moves with the pin (10.1) | `scripts/gate_serve_openapi.py` |
 | O2 | Schemathesis 4.31.1, seed 20261015, six fixtures, run on gram (not skipped): the default of the script (100 examples for each operation) gives 321 to 355 cases for each fixture, 0 failures; 1,000 examples for each operation gives 2,121 to 2,155 cases for each, 0 failures. `positive_data_acceptance` is not run for the models with a `dec` column or a category with no `enum`, for the reason in 3.4 and 11 | `scripts/gate_serve_schemathesis.py` |
-| A1 | the derived row is `args, clock, conn_accept, conn_read, conn_write, dir_read, err_write, file_read, fs_read(""), heap, io_write, net_in(""), poll` (the same for either `--bind`: 5.4), bounded, no foreign symbol, within the exact ceiling; a row with `file_write`, `dir_write`, `conc`, `net_out`, `ffi`, `exec`, `env`, `io_read` or `fs_write` added fails, and so does `net_in` or `clock` for `ml` and `ml-predict` | `tests/conformance/test_authority.py`, `scripts/manifest.py --check` |
+| A1 | the derived row is `args, clock, conn_accept, conn_read, conn_write, dir_read, err_write, file_read, fs_read(""), heap, io_write, net_in(""), poll` (the same for either `--bind`: 5.4), bounded except for `net_in("")`, which `tools.toml` declares unbounded with its reason (5.4), no foreign symbol, within the exact ceiling; a row with `file_write`, `dir_write`, `conc`, `net_out`, `ffi`, `exec`, `env`, `io_read` or `fs_write` added fails, and so does `net_in` or `clock` for `ml` and `ml-predict` | `tests/conformance/test_authority.py`, `scripts/manifest.py --check` |
 | A2 | the list of `ml-serve` is the list of `ml-predict` with its own directories; 11 mutants of the lists refused | `scripts/check_bins.py` |
 | G | the fixtures and the records of the other binaries: the conformance suite and the four records (`golden_describe.json`, `golden_constant.json`, `golden_planned.json`, `golden_numeric.json`) pass with the digests of this pin (10.1) | the existing suite |
 
