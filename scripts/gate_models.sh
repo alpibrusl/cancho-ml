@@ -4,10 +4,10 @@
 # non-zero on any failing test or any bit that differs. `scripts/mutants_models.py` runs this script on every mutant of the sources.
 set -e
 cd "$(dirname "$0")/.."
-CANCHO=${CANCHO:-../cancho-compiler-0207556/target/release/cancho}
+CANCHO=${CANCHO:-../cancho-compiler-5a5dd1f/target/release/cancho}
 D=build/gate-models
 mkdir -p $D
-FILES="lib/core/*.cho lib/linalg/*.cho lib/models/*.cho lib/models/*/*.cho"
+FILES="lib/core/*.cho lib/linalg/*.cho lib/metrics/*.cho lib/models/*.cho lib/models/*/*.cho"
 # a source that does not compile is not a failing gate: say so (scripts/mutlib.py does not count it as a kill)
 $CANCHO build --std $FILES tools/models-check/main.cho -o $D/models-check || { echo BUILD_ERROR; exit 3; }
 $CANCHO build --std $FILES tests/p_models.cho -o $D/p_models || { echo BUILD_ERROR; exit 3; }

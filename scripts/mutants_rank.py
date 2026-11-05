@@ -17,7 +17,7 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CANCHO = os.environ.get("CANCHO", str(ROOT.parent / "cancho-compiler-0207556" / "target" / "release" / "cancho"))
+CANCHO = os.environ.get("CANCHO", str(ROOT.parent / "cancho-compiler-5a5dd1f" / "target" / "release" / "cancho"))
 PY = sys.executable
 RK = "lib/metrics/ranking.cho"
 
@@ -34,7 +34,7 @@ MUTANTS = [
     ("recall-divides-by-k", "recall divides by the cut-off", "sum_rec + float_of(hits) / float_of(nrel)", "sum_rec + float_of(hits) / float_of(kk)", 1, None),
     ("mrr-of-the-last-relevant", "the reciprocal rank is that of the last relevant row", "                                                if first == 0 {", "                                                if true {", 1, None),
     ("map-averages-over-ranks", "AP sums the precision at every rank, not at the relevant ones", "                                            if rl > 0 {\n                                                hits = hits + 1;", "                                            if true {\n                                                hits = hits + 1;", 1, None),
-    ("non-finite-score-accepted", "a non-finite score is not refused", "if regress.all_finite(score) == false {", "if false {", 1, None),
+    ("non-finite-score-accepted", "a non-finite score is not refused", "if regress.all_finite(score) == false {\n        return rules.non_finite();", "if false {\n        return rules.non_finite();", 1, None),
     ("relevance-above-30-accepted", "a relevance above 30 is not refused", " || rel[i] > max_relevance() {", " {", 1, None),
     ("negative-relevance-accepted", "a negative relevance is not refused", "|| rel[i] < 0 || rel[i] > max_relevance()", "|| rel[i] > max_relevance()", 1, None),
     ("group-over-the-cap-accepted", "a group of more than 4,096 rows is not refused", "if st[gi + 1] > max_group() {", "if st[gi + 1] > 100000 {", 1, None),
