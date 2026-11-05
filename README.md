@@ -59,7 +59,7 @@ Most ML tools optimise for how many models they offer. `ml` is built to be predi
 
 | for humans | for agents |
 |---|---|
-| the [project page](https://alpibrusl.github.io/cancho-ml/), the [stories](docs/stories.html), the [gallery](https://alpibrusl.github.io/cancho-ml/gallery.html) of every model | `ml skill`, `ml introspect`, `ml-mcp` (12 tools), [docs/agents.md](docs/agents.md), [docs/llms.txt](docs/llms.txt) |
+| the [project page](https://alpibrusl.github.io/cancho-ml/), the [stories](docs/stories.html), the [gallery](https://alpibrusl.github.io/cancho-ml/gallery.html) of every model | `ml skill`, `ml introspect`, `ml-mcp` (14 tools), [docs/agents.md](docs/agents.md), [docs/llms.txt](docs/llms.txt) |
 
 ## Two-minute quick start
 
@@ -705,7 +705,7 @@ The model is read at start and changed by restarting. There is no TLS, no reload
 
 ### An MCP server
 
-`ml-mcp` is the fourth binary, built from the same sources ([docs/mcp.md](docs/mcp.md)). It speaks the [Model Context Protocol](https://modelcontextprotocol.io) (revision `2025-06-18`) over standard input and output, one JSON-RPC message per line, and exposes twelve tools: `fit`, `predict`, `eval`, `cv`, `describe`, `importance`, `dump`, `introspect`, `runs_list`, `runs_show`, `runs_compare` and `runs_verify`. The tools are derived from the flag table that drives the parser, `introspect` and the schemas: `scripts/mcp_tools.py` writes `docs/mcp/tools.json` (the name, description, `inputSchema` and `outputSchema` of each tool) and `tools/ml-mcp/tools.cho`, and `scripts/check_mcp_tools.py` regenerates both and fails when a flag, a model or a rule is added to the table and the files are not. A tool call runs the code of `ml` in the same process, with no subprocess and no `exec`: `structuredContent` is the line `ml` prints for the same command (the bytes are compared, over 303 fixtures of the command line), `content[0].text` is its text form, a refusal is a tool result with `isError: true` that carries the rule, the exit code and the repair as `ml` prints them, and a malformed message is a JSON-RPC error.
+`ml-mcp` is the fourth binary, built from the same sources ([docs/mcp.md](docs/mcp.md)). It speaks the [Model Context Protocol](https://modelcontextprotocol.io) (revision `2025-06-18`) over standard input and output, one JSON-RPC message per line, and exposes fourteen tools: `fit`, `predict`, `eval`, `cv`, `describe`, `importance`, `dump`, `calibrate`, `isotonic`, `introspect`, `runs_list`, `runs_show`, `runs_compare` and `runs_verify`. The tools are derived from the flag table that drives the parser, `introspect` and the schemas: `scripts/mcp_tools.py` writes `docs/mcp/tools.json` (the name, description, `inputSchema` and `outputSchema` of each tool) and `tools/ml-mcp/tools.cho`, and `scripts/check_mcp_tools.py` regenerates both and fails when a flag, a model or a rule is added to the table and the files are not. A tool call runs the code of `ml` in the same process, with no subprocess and no `exec`: `structuredContent` is the line `ml` prints for the same command (the bytes are compared, over 303 fixtures of the command line), `content[0].text` is its text form, a refusal is a tool result with `isError: true` that carries the rule, the exit code and the repair as `ml` prints them, and a malformed message is a JSON-RPC error.
 
 A client registers the server with a command and arguments. For a client that reads an `mcpServers` object:
 
