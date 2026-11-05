@@ -1,0 +1,145 @@
+module metrics.isotonic;
+
+import metrics.rules;
+import metrics.classify;
+import metrics.regress;
+import metrics.calibrate;
+
+// The weighted isotonic regression (docs/calibration.md section 2), LIBRARY ONLY: the non-decreasing (or non-increasing) sequence nearest to the values in the weighted sum of squares, by pool-adjacent-violators. The rows are
+// sorted by x (stable); rows with equal x are first pooled into one point of weight sum w and value (sum w y) / (sum w); a BLOCK keeps the two running sums (sum of w y, sum of w) added in the order the stack merges them, its value is
+// their quotient, and the stack merges while the value below it is strictly greater than the value of the block on top (strictly smaller for the non-increasing fit), so equal neighbours stay apart and no fitted value changes by it.
+// The arithmetic is the plain double arithmetic of the rule above, in that order: the same bytes on every platform and thread count, and the same operations as the textbook algorithm.
+
+// the entries of `info`: 0 distinct points, 1 blocks, 2 rows
+pub fn info_size() -> [] int {
+    return 3;
+}
+
+// A point's weight and value must be finite, a weight above 0; the sizes as for every metric. For each distinct x in increasing order: out_x its x, out_fit the value of its block, out_w its weight, out_block the index of its block
+// (0 for the first). The four outputs and `info` must have room for the rows (the number of distinct x is at most the rows). Answers 0 or the code of the refusal.
+pub fn isotonic[&h, &x, &y, &w, &ox, &of, &ow, &ob, &f](heap: &!h Heap, xs: &x [float], ys: &y [float], ws: &w [float], decreasing: bool, cap: int, out_x: &!ox [float], out_fit: &!of [float], out_w: &!ow [float], out_block: &!ob [int], info: &!f [float]) -> [heap] int {
+    let n = len(xs);
+    let c = classify.check_size(n, len(ys), cap, classify.ceiling_rows());
+    if c != 0 {
+        return c;
+    }
+    if len(ws) != n {
+        return rules.length_mismatch();
+    }
+    if regress.all_finite(xs) == false || regress.all_finite(ys) == false || regress.all_finite(ws) == false {
+        return rules.non_finite();
+    }
+    var i = 0;
+    while i < n {
+        if ws[i] <= 0.0 {
+            return rules.out_of_range();
+        }
+        i = i + 1;
+    }
+    let idx = box_slice(heap, n + 1, 0);
+    let tmp = box_slice(heap, n + 1, 0);
+    // the points after pooling ties, and the stack of blocks over them
+    let px = box_slice(heap, n + 1, 0.0);
+    let pw = box_slice(heap, n + 1, 0.0);
+    let pv = box_slice(heap, n + 1, 0.0);
+    let bsum = box_slice(heap, n + 1, 0.0);
+    let bweight = box_slice(heap, n + 1, 0.0);
+    let bcount = box_slice(heap, n + 1, 0);
+    var points = 0;
+    var blocks = 0;
+    borrow mut idx as &!iw in {
+        borrow mut tmp as &!tw in {
+            borrow mut px as &!pxw in {
+                borrow mut pw as &!pww in {
+                    borrow mut pv as &!pvw in {
+                        borrow mut bsum as &!bsw in {
+                            borrow mut bweight as &!bww in {
+                                borrow mut bcount as &!bcw in {
+                                    i = 0;
+                                    while i < n {
+                                        contents(iw)[i] = i;
+                                        i = i + 1;
+                                    }
+                                    calibrate.sort_index(xs, contents(iw), contents(tw), n);
+                                    // pool the ties of x, in the order of the stable sort
+                                    i = 0;
+                                    while i < n {
+                                        let r = contents(iw)[i];
+                                        var swy = ws[r] * ys[r];
+                                        var sw = ws[r];
+                                        var j = i + 1;
+                                        while j < n && xs[contents(iw)[j]] == xs[r] {
+                                            let q = contents(iw)[j];
+                                            swy = swy + ws[q] * ys[q];
+                                            sw = sw + ws[q];
+                                            j = j + 1;
+                                        }
+                                        contents(pxw)[points] = xs[r];
+                                        contents(pww)[points] = sw;
+                                        contents(pvw)[points] = swy;
+                                        points = points + 1;
+                                        i = j;
+                                    }
+                                    // pool adjacent violators over the points
+                                    i = 0;
+                                    while i < points {
+                                        contents(bsw)[blocks] = contents(pvw)[i];
+                                        contents(bww)[blocks] = contents(pww)[i];
+                                        contents(bcw)[blocks] = 1;
+                                        blocks = blocks + 1;
+                                        var going = true;
+                                        while going && blocks > 1 {
+                                            let below = contents(bsw)[blocks - 2] / contents(bww)[blocks - 2];
+                                            let top = contents(bsw)[blocks - 1] / contents(bww)[blocks - 1];
+                                            var violation = below > top;
+                                            if decreasing {
+                                                violation = below < top;
+                                            }
+                                            if violation {
+                                                contents(bsw)[blocks - 2] = contents(bsw)[blocks - 2] + contents(bsw)[blocks - 1];
+                                                contents(bww)[blocks - 2] = contents(bww)[blocks - 2] + contents(bww)[blocks - 1];
+                                                contents(bcw)[blocks - 2] = contents(bcw)[blocks - 2] + contents(bcw)[blocks - 1];
+                                                blocks = blocks - 1;
+                                            } else {
+                                                going = false;
+                                            }
+                                        }
+                                        i = i + 1;
+                                    }
+                                    // the output: each block's value for each of its points
+                                    var at = 0;
+                                    var b = 0;
+                                    while b < blocks {
+                                        let value = contents(bsw)[b] / contents(bww)[b];
+                                        var k = 0;
+                                        while k < contents(bcw)[b] {
+                                            out_x[at] = contents(pxw)[at];
+                                            out_fit[at] = value;
+                                            out_w[at] = contents(pww)[at];
+                                            out_block[at] = b;
+                                            at = at + 1;
+                                            k = k + 1;
+                                        }
+                                        b = b + 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, idx);
+    unbox_slice(heap, tmp);
+    unbox_slice(heap, px);
+    unbox_slice(heap, pw);
+    unbox_slice(heap, pv);
+    unbox_slice(heap, bsum);
+    unbox_slice(heap, bweight);
+    unbox_slice(heap, bcount);
+    info[0] = float_of(points);
+    info[1] = float_of(blocks);
+    info[2] = float_of(n);
+    return 0;
+}

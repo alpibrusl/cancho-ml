@@ -1,0 +1,151 @@
+import std.test;
+import std.math;
+import metrics.rules;
+import metrics.calibrate;
+import mt;
+
+// The calibration table against the fixture worked by hand in docs/calibration.md section 8 (C1), and the codes of its refusals. Every probability is a multiple of 1/16, so every sum is exact.
+// (`cancho test --std lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/*.cho tests/mt.cho tests/t_calibrate.cho`, scripts/gate_metrics.sh). A test answers 0 to pass.
+
+fn fixture_p[&h](heap: &!h Heap) -> [heap] Box[[float]] {
+    let b = box_slice(heap, 9, 0.0);
+    var o = b;
+    borrow mut o as &!w in {
+        let a = contents(w);
+        a[0] = 0.5;
+        a[1] = 0.125;
+        a[2] = 0.25;
+        a[3] = 0.75;
+        a[4] = 0.375;
+        a[5] = 0.625;
+        a[6] = 0.875;
+        a[7] = 0.0625;
+    }
+    return o;
+}
+
+fn fixture_y[&h](heap: &!h Heap) -> [heap] Box[[int]] {
+    let b = box_slice(heap, 9, 0);
+    var o = b;
+    borrow mut o as &!w in {
+        let a = contents(w);
+        a[0] = 1;
+        a[3] = 1;
+        a[5] = 1;
+        a[6] = 1;
+    }
+    return o;
+}
+
+fn close(x: float, y: float) -> [] int {
+    var d = x - y;
+    if d < 0.0 {
+        d = 0.0 - d;
+    }
+    if d <= 1e-14 {
+        return 0;
+    }
+    return 1;
+}
+
+// rows 0.0625 and 0.125 | 0.25 and 0.375 | 0.5 and 0.625 | 0.75 and 0.875: sum p 3/16, 5/8, 9/8, 13/8; positives 0, 0, 2, 2
+fn test_by_hand[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let p = fixture_p(heap);
+    let y = fixture_y(heap);
+    let table = box_slice(heap, 4 * calibrate.cols() + 1, 0.0);
+    let info = box_slice(heap, calibrate.info_size() + 1, 0.0);
+    var po = p;
+    var yo = y;
+    var to = table;
+    var io = info;
+    var code = 99;
+    borrow po as &pr in {
+        borrow yo as &yr in {
+            borrow mut to as &!tw in {
+                borrow mut io as &!iw in {
+                    code = calibrate.calibration(heap, contents(pr)[0..8], contents(yr)[0..8], 4, 1.0, 1.0, 0.95, 1.05, 0.8, 1.25, 100, contents(tw), contents(iw));
+                    let t = contents(tw);
+                    let c = calibrate.cols();
+                    // n
+                    bad = bad + mt.bits_is(t[0], 0x40000000, 0) + mt.bits_is(t[c], 0x40000000, 0) + mt.bits_is(t[2 * c], 0x40000000, 0) + mt.bits_is(t[3 * c], 0x40000000, 0);
+                    // mean predicted: 3/32, 5/16, 9/16, 13/16
+                    bad = bad + mt.bits_is(t[1], 0x3fb80000, 0) + mt.bits_is(t[c + 1], 0x3fd40000, 0) + mt.bits_is(t[2 * c + 1], 0x3fe20000, 0) + mt.bits_is(t[3 * c + 1], 0x3fea0000, 0);
+                    // observed: 0, 0, 1, 1 (the rate is the positives over 2: 0 and 1)
+                    bad = bad + mt.bits_is(t[2], 0, 0) + mt.bits_is(t[c + 2], 0, 0) + mt.bits_is(t[2 * c + 2], 0x3ff00000, 0) + mt.bits_is(t[3 * c + 2], 0x3ff00000, 0);
+                    // expected positives: 3/16, 5/8, 9/8, 13/8
+                    bad = bad + mt.bits_is(t[4], 0x3fc80000, 0) + mt.bits_is(t[c + 4], 0x3fe40000, 0) + mt.bits_is(t[2 * c + 4], 0x3ff20000, 0) + mt.bits_is(t[3 * c + 4], 0x3ffa0000, 0);
+                    // ratio 0, 0, 16/9, 16/13; sd = sqrt(43/256), sqrt(27/64), sqrt(31/64), sqrt(19/64); z = -3/16 over sd, -5/8 over sd, +7/8 over sd, +3/8 over sd
+                    bad = bad + close(t[3], 0.0) + close(t[c + 3], 0.0) + close(t[2 * c + 3], 16.0 / 9.0) + close(t[3 * c + 3], 16.0 / 13.0);
+                    bad = bad + close(t[5], sqrt(43.0 / 256.0)) + close(t[c + 5], sqrt(27.0 / 64.0)) + close(t[2 * c + 5], sqrt(31.0 / 64.0)) + close(t[3 * c + 5], sqrt(19.0 / 64.0));
+                    bad = bad + close(t[6], -0.1875 / sqrt(43.0 / 256.0)) + close(t[c + 6], -0.625 / sqrt(27.0 / 64.0)) + close(t[2 * c + 6], 0.875 / sqrt(31.0 / 64.0)) + close(t[3 * c + 6], 0.375 / sqrt(19.0 / 64.0));
+                    // judged (expected >= 1): bins 2 and 3; bad (ratio outside 0.8 .. 1.25 and |z| > 1): bin 2 only (ratio 16/9, z 1.57); bin 3 has ratio 16/13 = 1.23, inside
+                    if t[7] != 0.0 || t[c + 7] != 0.0 || t[2 * c + 7] != 1.0 || t[3 * c + 7] != 1.0 {
+                        bad = bad + 1;
+                    }
+                    if t[8] != 0.0 || t[c + 8] != 0.0 || t[2 * c + 8] != 1.0 || t[3 * c + 8] != 0.0 {
+                        bad = bad + 1;
+                    }
+                    let f = contents(iw);
+                    // overall = 4 positives over 57/16 = 64/57; above 1.05: the gate fails, with one bad bin
+                    bad = bad + close(f[0], 64.0 / 57.0);
+                    if f[1] != 0.0 || f[2] != 4.0 || f[3] != 1.0 || f[4] != 8.0 || f[5] != 4.0 {
+                        bad = bad + 1;
+                    }
+                }
+            }
+        }
+    }
+    if code != 0 {
+        bad = bad + 1;
+    }
+    unbox_slice(heap, po);
+    unbox_slice(heap, yo);
+    unbox_slice(heap, to);
+    unbox_slice(heap, io);
+    return bad;
+}
+
+fn test_refusals[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    let p = fixture_p(heap);
+    let y = fixture_y(heap);
+    let table = box_slice(heap, 1001 * calibrate.cols() + 1, 0.0);
+    let info = box_slice(heap, calibrate.info_size() + 1, 0.0);
+    var po = p;
+    var yo = y;
+    var to = table;
+    var io = info;
+    borrow po as &pr in {
+        borrow yo as &yr in {
+            borrow mut to as &!tw in {
+                borrow mut io as &!iw in {
+                    // bins 0, more bins than rows, a cap of 0, a short label vector, no rows
+                    if calibrate.calibration(heap, contents(pr)[0..8], contents(yr)[0..8], 0, 1.0, 1.0, 0.95, 1.05, 0.8, 1.25, 100, contents(tw), contents(iw)) != rules.out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if calibrate.calibration(heap, contents(pr)[0..8], contents(yr)[0..8], 9, 1.0, 1.0, 0.95, 1.05, 0.8, 1.25, 100, contents(tw), contents(iw)) != rules.out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if calibrate.calibration(heap, contents(pr)[0..8], contents(yr)[0..8], 4, 1.0, 1.0, 0.95, 1.05, 0.8, 1.25, 0, contents(tw), contents(iw)) != rules.out_of_range() {
+                        bad = bad + 1;
+                    }
+                    if calibrate.calibration(heap, contents(pr)[0..8], contents(yr)[0..7], 4, 1.0, 1.0, 0.95, 1.05, 0.8, 1.25, 100, contents(tw), contents(iw)) != rules.length_mismatch() {
+                        bad = bad + 1;
+                    }
+                    if calibrate.calibration(heap, contents(pr)[0..0], contents(yr)[0..0], 1, 1.0, 1.0, 0.95, 1.05, 0.8, 1.25, 100, contents(tw), contents(iw)) != rules.undefined() {
+                        bad = bad + 1;
+                    }
+                    if calibrate.calibration(heap, contents(pr)[0..8], contents(yr)[0..8], 4, 1.0, 1.0, 0.95, 1.05, 0.8, 1.25, 7, contents(tw), contents(iw)) != rules.too_many_rows() {
+                        bad = bad + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, po);
+    unbox_slice(heap, yo);
+    unbox_slice(heap, to);
+    unbox_slice(heap, io);
+    return bad;
+}

@@ -1,6 +1,6 @@
 # `ml calibrate`, `ml isotonic` and the `target` step: a calibration gate with an exit status, a monotone fit, and a target encoder
 
-**Status: designed before any code. Nothing here is built.** Tags as in `design.md`: **[measured]** printed by a script, with its conditions; **[choice]** a decision the maintainer can overturn; **[read]** read from a file (named); **[open]** not decided and not measured.
+**Status: designed before any code. The calibration table and gate (section 1) and the isotonic fit (section 2) are built as LIBRARIES, not wired into the command line (section 10 says what was built, what was measured, and where the build differs from this design); the `target` step (section 3) is not built.** Tags as in `design.md`: **[measured]** printed by a script, with its conditions; **[choice]** a decision the maintainer can overturn; **[read]** read from a file (named); **[open]** not decided and not measured.
 
 ## 0. Where this comes from
 
@@ -45,7 +45,7 @@ With `n` rows (rows with a missing or non-finite probability or label are counte
 
 ### 1.2 Arithmetic
 
-Sums are exact (`acc.psum`-style accumulation rounded once, as `eval`'s metrics are **[read]** `docs/metrics.md`), so `mean_pred`, `observed`, `expected_bookings`, `sum p (1 - p)`, and `overall_ratio` are correctly rounded values of exact quantities; `sd` and `z` are the square root and quotient of rounded values and are documented as two roundings. Order of rows within a bin does not matter to any figure. **The sort is the only order-dependent step**, and it is stable on the file order.
+*(Corrected by the build, section 10: the sums are not exact.)* The sums of the probabilities and of `p (1 - p)` are the package's decisive sums (`metrics.sums`: blocks of 256 terms, four lanes, the fixed tree **[read]** `docs/metrics.md` section 2.4, `lib/linalg/order.cho`), the observed rate is the correctly rounded quotient of two exact integers (`metrics.ratio`), and `sd` and `z` are the square root and the quotient of rounded values; the gate compares them with the exact values to a relative 1e-12 (and `z`, a difference of nearly equal sums, to 1e-12 of the size of its operands). Order of rows within a bin does not matter to any figure. **The sort is the only order-dependent step**, and it is stable on the file order.
 
 ### 1.3 `--recalibrate level --days D`
 
@@ -64,7 +64,7 @@ A caller that puts `calibrate --gate` in a plan reads the exit status; a caller 
 
 ### 1.5 Refusals **[choice]**
 
-`ml.calibrate.labels-not-binary` (a value other than 0 and 1), `ml.calibrate.proba-out-of-range` (outside `[0, 1]`), `ml.calibrate.too-few-rows` (fewer than `bins`), `ml.calibrate.bins-range` (1 to 1000), `ml.calibrate.model-not-binary`, `ml.calibrate.days-not-numeric`, `ml.calibrate.band-order` (low above high), and the reader's and limits' existing tags. A probability exactly 0 or 1 is allowed.
+*(Corrected by the build: the library reuses the codes of `lib/metrics/rules.cho`, so no tag, registry entry or spec table changes; the `ml.calibrate.*` tags below are what the wiring stage may add.)* As built: `ml.metric.undefined` (no rows), `ml.metric.length-mismatch`, `ml.label.not-binary` (a label other than 0 and 1), `ml.metric.bad-probability` (outside `[0, 1]`), `ml.input.non-finite`, `ml.param.out-of-range` (bins below 1, above 1000 or above the rows; a cap outside its range), `ml.input.too-many-rows`. Designed for the wiring stage: `ml.calibrate.model-not-binary`, `ml.calibrate.days-not-numeric`, `ml.calibrate.band-order`. A probability exactly 0 or 1 is allowed.
 
 ## 2. `ml isotonic`
 
@@ -76,9 +76,9 @@ The weighted least-squares monotone fit, by pool-adjacent-violators. Output: one
 
 ### 2.1 Definition
 
-Rows are sorted by `x` (stable); rows with equal `x` are **first pooled into one point** with weight `sum w` and value `sum(w y) / sum w`, then PAV runs on the distinct points. (The Python is given points already distinct and in order; pooling ties is the standard definition and does not change its input.) A block's value is `sum(w y) / sum(w)` over its members, **correctly rounded once from exact sums**; two adjacent blocks are merged when the first's value is **strictly greater** than the second's, so equal blocks stay separate, which changes no fitted value **[read]** `pav_increasing`. `--decreasing` is the same with the comparison reversed.
+Rows are sorted by `x` (stable); rows with equal `x` are **first pooled into one point** with weight `sum w` and value `sum(w y) / sum w`, then PAV runs on the distinct points. (The Python is given points already distinct and in order; pooling ties is the standard definition and does not change its input.) A block's value is `sum(w y) / sum(w)` over its members *(corrected by the build, section 10: the two sums are plain double sums added in the order the stack merges the blocks, which is the arithmetic of the client's `pav_increasing` and gives its bits; they are not exact sums)*; two adjacent blocks are merged when the first's value is **strictly greater** than the second's, so equal blocks stay separate, which changes no fitted value **[read]** `pav_increasing`. `--decreasing` is the same with the comparison reversed.
 
-**Weights must be positive.** The Python guards a block weight with `max(w, 1e-12)` and its caller passes `1e-6` for a value borrowed from a neighbour **[read]** `fit_response`; a weight of 0 is ambiguous (no information, or a division by zero), so the verb refuses it (`ml.isotonic.weight-not-positive`) and the caller states the pseudo-weight it means. Missing or non-finite cells are refused by default (`ml.isotonic.missing`); **[open]** `--skip-missing`.
+**Weights must be positive.** The Python guards a block weight with `max(w, 1e-12)` and its caller passes `1e-6` for a value borrowed from a neighbour **[read]** `fit_response`; a weight of 0 is ambiguous (no information, or a division by zero), so the fit refuses it (as built: `ml.param.out-of-range`) and the caller states the pseudo-weight it means. A non-finite `x`, `y` or weight is `ml.input.non-finite`; **[open]** `--skip-missing` for the wiring stage.
 
 ### 2.2 What it is not **[choice]**
 
@@ -162,7 +162,11 @@ C. The out-of-fold encoding is made by a fold rule the client names (`click_id m
 
 ## 8. Hand-worked fixtures
 
-*Written with the code of each gate, before it: C1 (20 rows, 4 bins), I1, T1.* **[open]**
+**C1** (`tests/t_calibrate.cho`): eight rows, probabilities 0.5, 0.125, 0.25, 0.75, 0.375, 0.625, 0.875, 0.0625 (all multiples of 1/16, so every sum is exact), labels 1, 0, 0, 1, 0, 1, 1, 0, four bins. Sorted: bins `{1/16, 1/8}`, `{1/4, 3/8}`, `{1/2, 5/8}`, `{3/4, 7/8}`. Per bin: `n = 2`; mean predicted 3/32, 5/16, 9/16, 13/16; positives 0, 0, 2, 2 so observed 0, 0, 1, 1; expected positives 3/16, 5/8, 9/8, 13/8; ratio 0, 0, 16/9, 16/13; `sum p (1 - p)` = 43/256, 27/64, 31/64, 19/64; `z` = (positives - expected) / sqrt of that = -0.457, -0.962, +1.571, +0.516. With `min_expected` 1, `z` limit 1, overall band 0.95 to 1.05, bin band 0.8 to 1.25: bins 2 and 3 are judged (expected at least 1); bin 2 is bad (ratio 16/9 outside the band, `|z|` 1.57 above 1), bin 3 is not (16/13 = 1.23 is inside); overall = 4 / (57/16) = 64/57 = 1.123, above 1.05, so `ok` is false with one bad bin.
+
+**I1** (`tests/t_isotonic.cho`): `x = 1..5`, `y = 1, 3, 2, 4, 3.5`, unit weights: the pairs (3, 2) and (4, 3.5) pool to 2.5 and 3.75; fit 1, 2.5, 2.5, 3.75, 3.75 in blocks 0, 1, 1, 2, 2. `x = 1, 2, 3`, `y = 3, 1, 2`, weights 1, 1, 2: the first pair pools to 2, the third point's value is 2, equal to it, so the blocks stay apart: fit 2, 2, 2 in blocks 0, 0, 1. Ties: `x = 1, 1, 2`, `y = 2, 4, 1`, weights 1, 3, 2: the point `x = 1` has weight 4 and value 14/4, it violates `x = 2` (value 1, weight 2) and both pool to 16/6.
+
+*T1 is written with the code of the `target` step.* **[open]**
 
 ## 9. Open questions for the maintainer
 
@@ -171,3 +175,17 @@ C. The out-of-fold encoding is made by a fold rule the client names (`click_id m
 3. **A model kind `isotonic`** now, or later (section 2.2)?
 4. **`--skip-missing`** on `isotonic` and `target`, or refusal only?
 5. **The eighth plan verb** changes the canonical form of every plan's text? (It must not: plans that do not use `target` keep their bytes. Gate T4 includes the check.)
+
+## 10. What the build measured, and where it differs from sections 1 to 9
+
+Machine: Apple M4 Max, macOS, Python 3.14, numpy 2.4.6, scikit-learn present, the compiler `0207556` of `cancho.toml`; one run each.
+
+**Staging.** The repository's own pattern for a new group of numbers is a library first, a driver, an independent oracle and mutants, and the wiring into the command line at a later stage (`docs/metrics.md` did it for the metrics, `docs/linalg.md` for the kernels). `lib/metrics/calibrate.cho` and `lib/metrics/isotonic.cho` follow it: the verbs `ml calibrate` and `ml isotonic`, their flags, spec rows, schemas, fixtures, MCP tools and pages are **not built**, and so the client cannot call them yet. The driver `tools/metrics-check` has the subcommands `calibrate`, `level` and `isotonic`.
+
+**Differences from the design** (each corrected in place above): the sums are the package's, not exact; the refusals reuse the existing codes; empty input is `ml.metric.undefined`; the isotonic arithmetic is plain doubles in the merge order of the client's `pav_increasing`.
+
+**C2** (`scripts/gate_calibrate.py`, 300 random tables from 1 to 20,000 rows, 1 to 20 bins, ties, probabilities at 0 and 1, all-zero labels, a bin with positives at probability 0, a total probability below 1e-3): the integers, the observed rate and the flags equal an independent implementation in exact fractions, the floats within a relative 1e-12 (the `z` bound is relative to the size of its operands: the first run showed `z` values near 1e-3 that were differences of sums near 100, and a bound relative to `z` itself was the wrong bound). 125 per-bin comparisons of a flag were left out because the value sat within 1e-9 of its threshold. **C4**: 40 level-correction cases and one with an older half whose probabilities sum to 0. **C3**: the exact bin edges equal `linspace` truncated for 5 and 10 bins at every `n` to 30,000 and differ for 20 bins at `n = 164` (the gate has that case). **C5** is not built: it is the exit status of the verb. Controls changed the answer on 26 of the 65 cases with ties (an unstable order), 51 of 299 (the bad-bin rule without the `z` condition), 1 of 299 (edges from `linspace`, which is why the fixed case `n = 164` with 20 bins exists), and 17 of 47 level cases (fitting and judging on one half). Mutants (`scripts/mutants_calibrate.py`): **35 of 35 killed**; the first run killed 31, and the four survivors were gaps in the gate's cases (no bin with mean 0 and positives; no total below 1e-3; no table balanced overall but bad in a bin; no older half summing to 0), now covered.
+
+**I2 to I4** (`scripts/gate_isotonic.py`, 400 cases of 1 to 300 points with ties, weights from 1e-6 to 1000, the increasing and the decreasing fit): the fit has the BITS of the same algorithm in doubles written separately in the gate, is within a relative 1e-12 of the exact fraction PAV, has the same blocks, is monotone, and for 274 cases of up to 8 points its weighted sum of squares equals the minimum over all 2^(n-1) partitions into consecutive blocks; 226 cases agree with `sklearn.isotonic.IsotonicRegression` within 1e-9. The driver gives the bits of the client's `pav_increasing` on 300 random inputs of distinct `x`. Unit tests: `tests/t_calibrate.cho` (section 8, C1) and `tests/t_isotonic.cho` (I1). Mutants (`scripts/mutants_isotonic.py`): **24 of 25 killed, 1 survived and explained** (`tie-test`: equivalent, the rows are sorted). The first run found that a mutant which never pops the stack makes the unit test loop forever, which the harness took for a crash rather than a kill; the gates now cut a hung unit test at 120 s and a hung driver at 30 s and count both as failures. The mutants of the calibration table were re-run on the final gate: 35 of 35 killed.
+
+**Not built, not measured:** the `ml calibrate --gate` exit status and its refusal-with-evidence question (question 1); `ml isotonic` as a verb; the `target` step (T1 to T5); the fuzz of the driver for the two new subcommands (`scripts/gate_metrics.py --fuzz` covers the older ones); the cost of either function.
