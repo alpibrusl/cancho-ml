@@ -1,0 +1,115 @@
+module metrics.targetenc;
+
+import std.math;
+import metrics.rules;
+import metrics.classify;
+
+// The out-of-fold target encoding of a categorical column (docs/calibration.md section 3), LIBRARY ONLY: the model-file step, the plan verb `target` and the command line are a later stage. A row's category is a code 0 .. ncat - 1
+// (-1: not in the vocabulary), its label is 0 or 1, `fit` says whether the label counts (1) or is unknown yet (0), and `fold` is any integer: the row's fold is fold mod folds (never negative).
+//
+//   n_c = the fit rows of category c, b_c = their positives, p0 = (all positives) / max(all fit rows, 1)
+//   te(c) = (b_c + k p0) / (n_c + k)      logn(c) = log1p(n_c)                               the full-data encoding, for scoring
+//   a row in fold f with category c is encoded from the fit rows OUT OF FOLD f:  te = (b_c - b_cf + k p0) / (n_c - n_cf + k),  logn = log1p(n_c - n_cf)
+//   a row with category -1 is encoded te = p0, logn = 0
+// so the encoding of a row never sees its own fold, and so never its own label. Every row is encoded (a row whose label is unknown is encoded from the fit rows too).
+
+pub fn max_categories() -> [] int {
+    return 1048576;
+}
+
+pub fn max_folds() -> [] int {
+    return 1000;
+}
+
+// The checks, then the encoding. cat, label, fit, fold: one entry per row. Outputs: te, logn (one per row); cat_n, cat_b, cat_te, cat_logn (one per category); info: 0 = p0, 1 = fit rows, 2 = positives.
+// Answers 0 or the code of the refusal: the sizes (cap), a code outside -1 .. ncat - 1 or ncat outside 1 .. max_categories(), folds outside 2 .. max_folds(), k not above 0 (or not finite) are ml.param.out-of-range, a label (of a
+// fit row) other than 0 and 1 or a fit flag other than 0 and 1 is ml.label.not-binary, and no row at all is ml.metric.undefined.
+pub fn encode[&h, &c, &y, &f, &o, &t, &l, &cn, &cb, &ct, &cl, &i](heap: &!h Heap, cat: &c [int], label: &y [int], fit: &f [int], fold: &o [int], ncat: int, folds: int, k: float, cap: int, te: &!t [float], logn: &!l [float], cat_n: &!cn [int], cat_b: &!cb [int], cat_te: &!ct [float], cat_logn: &!cl [float], info: &!i [float]) -> [heap] int {
+    let n = len(cat);
+    let s = classify.check_size(n, len(label), cap, classify.ceiling_rows());
+    if s != 0 {
+        return s;
+    }
+    if len(fit) != n || len(fold) != n {
+        return rules.length_mismatch();
+    }
+    if ncat < 1 || ncat > max_categories() || folds < 2 || folds > max_folds() || !(k > 0.0) || k > 1e300 {
+        return rules.out_of_range();
+    }
+    var i = 0;
+    while i < n {
+        if cat[i] < 0 - 1 || cat[i] >= ncat {
+            return rules.out_of_range();
+        }
+        if fit[i] != 0 && fit[i] != 1 {
+            return rules.not_binary();
+        }
+        if fit[i] == 1 && label[i] != 0 && label[i] != 1 {
+            return rules.not_binary();
+        }
+        i = i + 1;
+    }
+    let nf = box_slice(heap, folds * ncat + 1, 0);
+    let bf = box_slice(heap, folds * ncat + 1, 0);
+    var total_n = 0;
+    var total_b = 0;
+    var p0 = 0.0;
+    borrow mut nf as &!nw in {
+        borrow mut bf as &!bw in {
+            i = 0;
+            while i < n {
+                if fit[i] == 1 {
+                    total_n = total_n + 1;
+                    total_b = total_b + label[i];
+                    if cat[i] >= 0 {
+                        let f = (fold[i] % folds + folds) % folds;
+                        contents(nw)[f * ncat + cat[i]] = contents(nw)[f * ncat + cat[i]] + 1;
+                        contents(bw)[f * ncat + cat[i]] = contents(bw)[f * ncat + cat[i]] + label[i];
+                    }
+                }
+                i = i + 1;
+            }
+            var den = total_n;
+            if den < 1 {
+                den = 1;
+            }
+            p0 = float_of(total_b) / float_of(den);
+            var cc = 0;
+            while cc < ncat {
+                var sn = 0;
+                var sb = 0;
+                var f = 0;
+                while f < folds {
+                    sn = sn + contents(nw)[f * ncat + cc];
+                    sb = sb + contents(bw)[f * ncat + cc];
+                    f = f + 1;
+                }
+                cat_n[cc] = sn;
+                cat_b[cc] = sb;
+                cat_te[cc] = (float_of(sb) + k * p0) / (float_of(sn) + k);
+                cat_logn[cc] = math.log1p(float_of(sn));
+                cc = cc + 1;
+            }
+            i = 0;
+            while i < n {
+                if cat[i] < 0 {
+                    te[i] = p0;
+                    logn[i] = 0.0;
+                } else {
+                    let f = (fold[i] % folds + folds) % folds;
+                    let nn = cat_n[cat[i]] - contents(nw)[f * ncat + cat[i]];
+                    let bb = cat_b[cat[i]] - contents(bw)[f * ncat + cat[i]];
+                    te[i] = (float_of(bb) + k * p0) / (float_of(nn) + k);
+                    logn[i] = math.log1p(float_of(nn));
+                }
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, nf);
+    unbox_slice(heap, bf);
+    info[0] = p0;
+    info[1] = float_of(total_n);
+    info[2] = float_of(total_b);
+    return 0;
+}

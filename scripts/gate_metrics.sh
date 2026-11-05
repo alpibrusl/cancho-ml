@@ -8,7 +8,7 @@ CANCHO=${CANCHO:-$(cd .. && pwd)/cancho-compiler-0207556/target/release/cancho}
 D=$(mktemp -d)
 trap 'rm -rf $D' EXIT
 LIB="lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho lib/metrics/*.cho"
-for T in t_metrics t_metrics_mc t_metrics_split t_metrics_fuzz t_calibrate t_isotonic; do
+for T in t_metrics t_metrics_mc t_metrics_split t_metrics_fuzz t_calibrate t_isotonic t_targetenc; do
   $CANCHO test --std $LIB tests/mt.cho tests/$T.cho > $D/$T.out 2>&1 || { cat $D/$T.out; exit 1; }
   grep -q FAILED $D/$T.out && { cat $D/$T.out; exit 1; }
 done
@@ -21,4 +21,5 @@ python3 scripts/oracle_rank.py --controls --driver --metrics 300
 python3 scripts/oracle_metrics.py --sklearn --multiclass-sklearn
 python3 scripts/gate_calibrate.py --cases 300
 python3 scripts/gate_isotonic.py --cases 300
+python3 scripts/gate_target.py --cases 300
 python3 scripts/gate_metrics.py --fuzz
