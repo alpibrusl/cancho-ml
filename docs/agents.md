@@ -8,7 +8,7 @@ cancho-ml fits, applies, scores and serves classical models on a CSV. Every refu
 
 ```console
 $ ml skill          # this guide, from the binary, in Markdown
-$ ml introspect     # one JSON document: 70 flags, 27 limits, 128 refusal rules, the authority
+$ ml introspect     # one JSON document: 82 flags, 28 limits, 130 refusal rules, the authority
 $ ml-mcp            # 14 tools over MCP, generated from the same table
 ```
 
