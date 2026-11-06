@@ -1,0 +1,525 @@
+edition 5;
+
+module ml.calcli;
+
+// `ml calibrate` and `ml isotonic` (docs/calibration.md sections 1 and 2): the command line over lib/metrics/calibrate.cho and lib/metrics/isotonic.cho. Both read named columns of the CSV file with the reader of the
+// weight and split columns (ml.splitcol, ml.csvcell), call the library, and answer one JSON object (the `data` of the envelope) and the text of --format text.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import metrics.calibrate;
+import metrics.isotonic;
+import metrics.rules;
+import ml.argv;
+import ml.csvcell;
+import ml.fsio;
+import ml.paths;
+import ml.spec;
+import ml.splitcol;
+import ml.verbs;
+import ml.wiredata;
+import toolbox.fail;
+
+// an error about a column: the rule, a message, the flag that named the column, the row (0 for none) and the column's name
+fn col_problem[&h, &n](heap: &!h Heap, errs: fail.Errors, rule: &static [byte], message: &static [byte], hint: &static [byte], flag: &static [byte], row: int, name: &n [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    if row > 0 {
+        w = fail.detail_int(heap, w, "row", row);
+    }
+    w = fail.detail_text(heap, w, "name", name);
+    return fail.add(heap, errs, w);
+}
+
+// the refusal of a library code, with the library's tag
+fn code_problem[&h](heap: &!h Heap, errs: fail.Errors, code: int, message: &static [byte], hint: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, spec.extra(), rules.tag(code), message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    return fail.add(heap, errs, w);
+}
+
+// A number given on the command line (a decimal, as a cell of the file): (ok, value)
+fn number[&t](text: &t [byte]) -> [] (bool, float) {
+    let (st, kind, m, frac, intd, key) = csvcell.read(text);
+    if st != 0 {
+        return (false, 0.0);
+    }
+    return (true, csvcell.double(kind, m, frac, key));
+}
+
+// "LO:HI", both numbers, LO not above HI: (ok, lo, hi)
+fn pair[&t](text: &t [byte]) -> [] (bool, float, float) {
+    var at = 0 - 1;
+    var i = 0;
+    while i < len(text) {
+        if int_of(text[i]) == ':' && at < 0 {
+            at = i;
+        }
+        i = i + 1;
+    }
+    if at < 1 || at >= len(text) - 1 {
+        return (false, 0.0, 0.0);
+    }
+    let (ok1, lo) = number(text[0..at]);
+    let (ok2, hi) = number(text[at + 1..len(text)]);
+    if !ok1 || !ok2 || lo > hi {
+        return (false, 0.0, 0.0);
+    }
+    return (true, lo, hi);
+}
+
+// The checks of the flags of `calibrate` and `isotonic` that need no file.
+pub fn check_flags[&h, &cl](heap: &!h Heap, src: &cl [byte], errs: fail.Errors, verb: int) -> [heap] fail.Errors {
+    var e = errs;
+    if verb == 9 {
+        if !argv.has(src, "prob-col") || !argv.has(src, "target") {
+            e = verbs.problem(heap, e, "args.required-flag", "calibrate needs --prob-col, the column of probabilities, and --target, the column of labels (0 or 1)", "ml calibrate --prob-col P --target Y FILE", "flag", "--prob-col");
+        }
+        let (ok1, lo1, hi1) = pair(argv.text(src, "overall"));
+        if !ok1 {
+            e = verbs.problem(heap, e, "args.bad-value", "--overall is LOW:HIGH, two numbers with LOW not above HIGH", "--overall 0.95:1.05", "flag", "--overall");
+        }
+        let (ok2, lo2, hi2) = pair(argv.text(src, "band"));
+        if !ok2 {
+            e = verbs.problem(heap, e, "args.bad-value", "--band is LOW:HIGH, two numbers with LOW not above HIGH", "--band 0.8:1.25", "flag", "--band");
+        }
+        let (ok3, v3) = number(argv.text(src, "min-expected"));
+        if !ok3 || v3 < 0.0 {
+            e = verbs.problem(heap, e, "args.bad-value", "--min-expected is a number from 0", "--min-expected 100", "flag", "--min-expected");
+        }
+        let (ok4, v4) = number(argv.text(src, "z-limit"));
+        if !ok4 || v4 < 0.0 {
+            e = verbs.problem(heap, e, "args.bad-value", "--z-limit is a number from 0", "--z-limit 3", "flag", "--z-limit");
+        }
+        if bytes.equal(argv.text(src, "recalibrate"), "level") && !argv.has(src, "day") {
+            e = verbs.problem(heap, e, "args.required-flag", "--recalibrate level needs --day, the column of day numbers", "ml calibrate --prob-col P --target Y --recalibrate level --day D FILE", "flag", "--day");
+        }
+        if !bytes.equal(argv.text(src, "recalibrate"), "level") && argv.has(src, "day") {
+            e = verbs.problem(heap, e, "args.conflict", "--day is for --recalibrate level", "drop --day, or add --recalibrate level", "flag", "--day");
+        }
+    }
+    if verb == 10 {
+        if !argv.has(src, "x-col") || !argv.has(src, "y-col") {
+            e = verbs.problem(heap, e, "args.required-flag", "isotonic needs --x-col and --y-col, the columns of the abscissa and of the value", "ml isotonic --x-col X --y-col Y FILE", "flag", "--x-col");
+        }
+    }
+    return e;
+}
+
+// The cells of the column `name` of the file as numbers: (values, rows, ok, errors). A missing, non-numeric or non-finite cell is the first error of the file.
+fn read_column[&h, &d, &m](heap: &!h Heap, data: &d [byte], name: &m [byte], flag: &static [byte], cap: int, errs: fail.Errors) -> [heap] (Box[[float]], int, bool, fail.Errors) {
+    var e = errs;
+    var go = true;
+    var rows = 0;
+    var out = box_slice(heap, 1, 0.0);
+    let (text, off, n, st) = splitcol.extract(heap, data, name, cap);
+    if st == 1 {
+        e = col_problem(heap, e, "ml.input.unknown-column", "this flag names a column that is not in the header", "names are compared exactly, byte for byte", flag, 0, name);
+        go = false;
+    } else if st == 2 {
+        var w = fail.open_in(heap, spec.extra(), "ml.input.too-many-rows", "the file has more rows than --max-rows", "raise --max-rows, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "max", cap);
+        e = fail.add(heap, e, w);
+        go = false;
+    } else if st != 0 {
+        e = verbs.problem(heap, e, "parse.csv-ragged-row", "a data row ends before the column", "fix the row", "", "");
+        go = false;
+    }
+    if go {
+        if n == 0 {
+            e = verbs.problem(heap, e, "ml.input.empty", "the file has a header and no rows", "give at least one row", "", "");
+            go = false;
+        }
+    }
+    if go {
+        unbox_slice(heap, out);
+        out = box_slice(heap, n + 1, 0.0);
+        borrow text as &tr in {
+            borrow off as &ofr in {
+                borrow mut out as &!ow in {
+                    let t = buffer.bytes(tr);
+                    var i = 0;
+                    while i < n && go {
+                        let (st2, kind, mm, frac, intd, key) = csvcell.read(t[contents(ofr)[i]..contents(ofr)[i + 1]]);
+                        if st2 == 1 {
+                            e = col_problem(heap, e, "ml.input.missing-value", "a cell of this column is empty", "every row needs a value in this column", flag, i + 1, name);
+                            go = false;
+                        } else if st2 == 2 || st2 == 5 || st2 == 6 {
+                            e = col_problem(heap, e, "ml.input.non-numeric", "a cell of this column is not a number", "name numeric columns only", flag, i + 1, name);
+                            go = false;
+                        } else if st2 == 3 || st2 == 4 {
+                            e = col_problem(heap, e, "ml.input.non-finite", "a cell of this column is not finite", "values are finite numbers", flag, i + 1, name);
+                            go = false;
+                        } else {
+                            contents(ow)[i] = csvcell.double(kind, mm, frac, key);
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+        }
+        rows = n;
+    }
+    buffer.drop(heap, text);
+    unbox_slice(heap, off);
+    return (out, rows, go, e);
+}
+
+// The whole file, read once: (data, ok, errors)
+fn read_file[&h, &f, &r, &pf](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, errs: fail.Errors) -> [heap, fs_read(""), dir_read, file_read] (buffer.Buffer, bool, fail.Errors) {
+    var e = errs;
+    let (data, st, aux) = fsio.read_input(heap, fs, root, file, o.max_bytes);
+    if st == 1 || st == 2 {
+        e = fail.io_error(heap, e, aux, false, paths.shown(file));
+        return (data, false, e);
+    }
+    if st == 3 {
+        var w = fail.open_in(heap, spec.extra(), "limit.input-too-large", "the file is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "size", aux);
+        w = fail.detail_int(heap, w, "max", o.max_bytes);
+        e = fail.add(heap, e, w);
+        return (data, false, e);
+    }
+    return (data, true, e);
+}
+
+fn float_field[&h](heap: &!h Heap, w: json.Writer, key: &static [byte], v: float) -> [heap] json.Writer {
+    let k = json.put_key(heap, w, key);
+    return verbs.put_double(heap, k, bits_of(v));
+}
+
+// ---------------------------------------------------------------- calibrate
+
+pub fn calibrate_run[&h, &f, &r, &pf, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = errs;
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    let level = bytes.equal(argv.text(src, "recalibrate"), "level");
+    let (data, ok0, e0) = read_file(heap, fs, root, file, o, e);
+    e = e0;
+    if ok0 {
+        borrow data as &dr in {
+            let (pa, n, okp, e1) = read_column(heap, buffer.bytes(dr), argv.text(src, "prob-col"), "--prob-col", o.max_rows, e);
+            e = e1;
+            var pb = pa;
+            if okp {
+                let (la, ln, okl, e2) = read_column(heap, buffer.bytes(dr), argv.text(src, "target"), "--target", o.max_rows, e);
+                e = e2;
+                var lb = la;
+                var go = okl;
+                var labels = box_slice(heap, n + 1, 0);
+                if go && ln != n {
+                    e = verbs.problem(heap, e, "parse.csv-ragged-row", "the columns have different numbers of rows", "fix the file", "", "");
+                    go = false;
+                }
+                if go {
+                    borrow lb as &lr in {
+                        borrow mut labels as &!lw in {
+                            var i = 0;
+                            while i < n && go {
+                                if contents(lr)[i] == 0.0 {
+                                    contents(lw)[i] = 0;
+                                } else if contents(lr)[i] == 1.0 {
+                                    contents(lw)[i] = 1;
+                                } else {
+                                    e = col_problem(heap, e, "ml.label.not-binary", "a label is not 0 or 1", "calibrate takes labels 0 and 1", "--target", i + 1, argv.text(src, "target"));
+                                    go = false;
+                                }
+                                i = i + 1;
+                            }
+                        }
+                    }
+                }
+                var da = box_slice(heap, 1, 0.0);
+                if go && level {
+                    unbox_slice(heap, da);
+                    let (dd, dn, okd, e3) = read_column(heap, buffer.bytes(dr), argv.text(src, "day"), "--day", o.max_rows, e);
+                    e = e3;
+                    da = dd;
+                    if !okd {
+                        go = false;
+                    } else if dn != n {
+                        e = verbs.problem(heap, e, "parse.csv-ragged-row", "the columns have different numbers of rows", "fix the file", "", "");
+                        go = false;
+                    }
+                }
+                if go {
+                    let (ok1, lo1, hi1) = pair(argv.text(src, "overall"));
+                    let (ok2, lo2, hi2) = pair(argv.text(src, "band"));
+                    let (ok3, minexp) = number(argv.text(src, "min-expected"));
+                    let (ok4, zmax) = number(argv.text(src, "z-limit"));
+                    let bins = argv.nat(src, "prob-bins");
+                    var rows = bins;
+                    if rows < 1 {
+                        rows = 1;
+                    }
+                    if rows > calibrate.max_bins() {
+                        rows = calibrate.max_bins();
+                    }
+                    let table = box_slice(heap, rows * calibrate.cols() + 1, 0.0);
+                    let info = box_slice(heap, calibrate.info_size() + 5, 0.0);
+                    var tb = table;
+                    var ib = info;
+                    var code = 0;
+                    borrow pb as &pr in {
+                        borrow labels as &lbr in {
+                            borrow da as &dar in {
+                                borrow mut tb as &!tw in {
+                                    borrow mut ib as &!iw in {
+                                        if level {
+                                            code = calibrate.level_correction(heap, contents(pr)[0..n], contents(lbr)[0..n], contents(dar)[0..n], bins, minexp, zmax, lo1, hi1, lo2, hi2, o.max_rows, contents(tw), contents(iw));
+                                        } else {
+                                            code = calibrate.calibration(heap, contents(pr)[0..n], contents(lbr)[0..n], bins, minexp, zmax, lo1, hi1, lo2, hi2, o.max_rows, contents(tw), contents(iw));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if code != 0 {
+                        e = code_problem(heap, e, code, "the probabilities and labels cannot be tabulated", "see the rule's summary in introspect");
+                    } else {
+                        borrow tb as &tr2 in {
+                            borrow ib as &ir2 in {
+                                let t = contents(tr2);
+                                let f = contents(ir2);
+                                var made = true;
+                                var factor = 1.0;
+                                if level {
+                                    made = f[calibrate.info_size() + 3] > 0.5;
+                                    factor = f[calibrate.info_size()];
+                                }
+                                var w = json.writer(heap, 1024);
+                                w = json.begin_object(heap, w);
+                                w = json.put_key(heap, w, "rows");
+                                w = json.put_int(heap, w, n);
+                                w = json.put_key(heap, w, "bins");
+                                w = json.put_int(heap, w, bins);
+                                var p = buffer.empty(heap, 256);
+                                p = verbs.line_int(heap, p, "rows = ", n);
+                                if made {
+                                    w = json.put_key(heap, w, "ok");
+                                    w = json.put_bool(heap, w, f[1] > 0.5);
+                                    w = float_field(heap, w, "overall_ratio", f[0]);
+                                    w = json.put_key(heap, w, "bad_bins");
+                                    w = json.begin_array(heap, w);
+                                    var b = 0;
+                                    while b < bins {
+                                        if t[b * calibrate.cols() + 8] > 0.5 {
+                                            w = json.put_int(heap, w, b);
+                                        }
+                                        b = b + 1;
+                                    }
+                                    w = json.end_array(heap, w);
+                                    w = json.put_key(heap, w, "table");
+                                    w = json.begin_array(heap, w);
+                                    b = 0;
+                                    while b < bins {
+                                        let c = b * calibrate.cols();
+                                        w = json.begin_object(heap, w);
+                                        w = json.put_key(heap, w, "bin");
+                                        w = json.put_int(heap, w, b);
+                                        w = json.put_key(heap, w, "n");
+                                        w = json.put_int(heap, w, truncate(t[c]));
+                                        w = float_field(heap, w, "mean_pred", t[c + 1]);
+                                        w = float_field(heap, w, "observed", t[c + 2]);
+                                        w = float_field(heap, w, "ratio", t[c + 3]);
+                                        w = float_field(heap, w, "expected", t[c + 4]);
+                                        w = float_field(heap, w, "sd", t[c + 5]);
+                                        w = float_field(heap, w, "z", t[c + 6]);
+                                        w = json.put_key(heap, w, "judged");
+                                        w = json.put_bool(heap, w, t[c + 7] > 0.5);
+                                        w = json.put_key(heap, w, "bad");
+                                        w = json.put_bool(heap, w, t[c + 8] > 0.5);
+                                        w = json.end_object(heap, w);
+                                        b = b + 1;
+                                    }
+                                    w = json.end_array(heap, w);
+                                    p = verbs.line_int(heap, p, "ok = ", truncate(f[1]));
+                                    p = verbs.line_double(heap, p, "overall_ratio = ", bits_of(f[0]));
+                                    p = verbs.line_int(heap, p, "bad_bins = ", truncate(f[3]));
+                                } else {
+                                    w = json.put_key(heap, w, "ok");
+                                    w = json.put_null(heap, w);
+                                }
+                                if level {
+                                    w = json.put_key(heap, w, "recalibration");
+                                    w = json.begin_object(heap, w);
+                                    w = json.put_key(heap, w, "method");
+                                    w = json.put_string(heap, w, "level");
+                                    w = float_field(heap, w, "factor", factor);
+                                    w = json.put_key(heap, w, "rows_older");
+                                    w = json.put_int(heap, w, truncate(f[calibrate.info_size() + 1]));
+                                    w = json.put_key(heap, w, "rows_newer");
+                                    w = json.put_int(heap, w, truncate(f[calibrate.info_size() + 2]));
+                                    w = json.put_key(heap, w, "judged_on_newer");
+                                    w = json.put_bool(heap, w, made);
+                                    w = json.end_object(heap, w);
+                                    p = verbs.line_double(heap, p, "level_factor = ", bits_of(factor));
+                                }
+                                w = json.end_object(heap, w);
+                                buffer.drop(heap, payload);
+                                payload = json.finish(w);
+                                buffer.drop(heap, plain);
+                                plain = p;
+                                // --gate: a gate that says no is a refusal; the table is the answer without --gate
+                                if argv.has(src, "gate") {
+                                    if !made {
+                                        e = code_problem(heap, e, rules.undefined(), "the newer half of the days cannot be judged: a half is empty or the older half's probabilities sum to 0", "give more days, or drop --gate");
+                                    } else if f[1] < 0.5 {
+                                        var gw = fail.open_in(heap, spec.extra(), "ml.calibrate.gate-failed", "the calibration gate says no: the overall ratio or a judged bin is outside its band", "run again without --gate for the table");
+                                        gw = fail.no_repair(heap, gw);
+                                        gw = fail.detail_open(heap, gw);
+                                        gw = fail.detail_int(heap, gw, "bad_bins", truncate(f[3]));
+                                        gw = fail.detail_int(heap, gw, "rows", n);
+                                        e = fail.add(heap, e, gw);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    unbox_slice(heap, tb);
+                    unbox_slice(heap, ib);
+                }
+                unbox_slice(heap, lb);
+                unbox_slice(heap, labels);
+                unbox_slice(heap, da);
+            }
+            unbox_slice(heap, pb);
+        }
+    }
+    buffer.drop(heap, data);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+}
+
+// ---------------------------------------------------------------- isotonic
+
+pub fn isotonic_run[&h, &f, &r, &pf, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(""), root: &r [byte], file: &pf paths.Rp, o: verbs.Opts, errs: fail.Errors, log: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] verbs.Out {
+    var e = errs;
+    var payload = buffer.empty(heap, 1);
+    var plain = buffer.empty(heap, 1);
+    let (data, ok0, e0) = read_file(heap, fs, root, file, o, e);
+    e = e0;
+    if ok0 {
+        borrow data as &dr in {
+            let (xa, n, okx, e1) = read_column(heap, buffer.bytes(dr), argv.text(src, "x-col"), "--x-col", o.max_rows, e);
+            e = e1;
+            var xb = xa;
+            if okx {
+                let (ya, yn, oky, e2) = read_column(heap, buffer.bytes(dr), argv.text(src, "y-col"), "--y-col", o.max_rows, e);
+                e = e2;
+                var yb = ya;
+                var go = oky;
+                var wb = box_slice(heap, n + 1, 1.0);
+                if go && yn != n {
+                    e = verbs.problem(heap, e, "parse.csv-ragged-row", "the columns have different numbers of rows", "fix the file", "", "");
+                    go = false;
+                }
+                if go && argv.has(src, "weight") {
+                    unbox_slice(heap, wb);
+                    let (wa, wn, okw, e3) = read_column(heap, buffer.bytes(dr), argv.text(src, "weight"), "--weight", o.max_rows, e);
+                    e = e3;
+                    wb = wa;
+                    if !okw {
+                        go = false;
+                    } else if wn != n {
+                        e = verbs.problem(heap, e, "parse.csv-ragged-row", "the columns have different numbers of rows", "fix the file", "", "");
+                        go = false;
+                    }
+                }
+                if go {
+                    let rows = n + 1;
+                    var ox = box_slice(heap, rows, 0.0);
+                    var of = box_slice(heap, rows, 0.0);
+                    var ow = box_slice(heap, rows, 0.0);
+                    var ob = box_slice(heap, rows, 0);
+                    var ib = box_slice(heap, isotonic.info_size() + 1, 0.0);
+                    var code = 0;
+                    let decreasing = argv.has(src, "decreasing");
+                    borrow xb as &xr in {
+                        borrow yb as &yr in {
+                            borrow wb as &wr in {
+                                borrow mut ox as &!oxw in {
+                                    borrow mut of as &!ofw in {
+                                        borrow mut ow as &!oww in {
+                                            borrow mut ob as &!obw in {
+                                                borrow mut ib as &!iw in {
+                                                    code = isotonic.isotonic(heap, contents(xr)[0..n], contents(yr)[0..n], contents(wr)[0..n], decreasing, o.max_rows, contents(oxw), contents(ofw), contents(oww), contents(obw), contents(iw));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if code != 0 {
+                        e = code_problem(heap, e, code, "the values cannot be fitted", "see the rule's summary in introspect");
+                    } else {
+                        borrow ox as &a1 in {
+                            borrow of as &a2 in {
+                                borrow ow as &a3 in {
+                                    borrow ob as &a4 in {
+                                        borrow ib as &a5 in {
+                                            let points = truncate(contents(a5)[0]);
+                                            var w = json.writer(heap, 1024);
+                                            w = json.begin_object(heap, w);
+                                            w = json.put_key(heap, w, "rows");
+                                            w = json.put_int(heap, w, n);
+                                            w = json.put_key(heap, w, "points");
+                                            w = json.put_int(heap, w, points);
+                                            w = json.put_key(heap, w, "blocks");
+                                            w = json.put_int(heap, w, truncate(contents(a5)[1]));
+                                            w = json.put_key(heap, w, "decreasing");
+                                            w = json.put_bool(heap, w, decreasing);
+                                            w = json.put_key(heap, w, "fit");
+                                            w = json.begin_array(heap, w);
+                                            var p = buffer.empty(heap, 256);
+                                            p = verbs.line_int(heap, p, "points = ", points);
+                                            p = verbs.line_int(heap, p, "blocks = ", truncate(contents(a5)[1]));
+                                            var k = 0;
+                                            while k < points {
+                                                w = json.begin_object(heap, w);
+                                                w = float_field(heap, w, "x", contents(a1)[k]);
+                                                w = float_field(heap, w, "fitted", contents(a2)[k]);
+                                                w = float_field(heap, w, "weight", contents(a3)[k]);
+                                                w = json.put_key(heap, w, "block");
+                                                w = json.put_int(heap, w, contents(a4)[k]);
+                                                w = json.end_object(heap, w);
+                                                k = k + 1;
+                                            }
+                                            w = json.end_array(heap, w);
+                                            w = json.end_object(heap, w);
+                                            buffer.drop(heap, payload);
+                                            payload = json.finish(w);
+                                            buffer.drop(heap, plain);
+                                            plain = p;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    unbox_slice(heap, ox);
+                    unbox_slice(heap, of);
+                    unbox_slice(heap, ow);
+                    unbox_slice(heap, ob);
+                    unbox_slice(heap, ib);
+                }
+                unbox_slice(heap, yb);
+                unbox_slice(heap, wb);
+            }
+            unbox_slice(heap, xb);
+        }
+    }
+    buffer.drop(heap, data);
+    return wiredata.out_of(payload, plain, buffer.empty(heap, 1), e, log, false);
+}

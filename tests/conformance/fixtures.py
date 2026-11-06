@@ -1109,3 +1109,42 @@ def _interp_cases():
 
 
 CASES += _interp_cases()
+
+# ------------------------------------------------------------------ calibration and the monotone fit (docs/calibration.md): ml calibrate, ml isotonic; the gates are scripts/gate_calibrate.py, gate_isotonic.py (through the driver) and these cases (through the command line)
+CAL = "p,y,day,x,w\n0.5,1,0,1,1\n0.125,0,1,2,1\n0.25,0,2,3,1\n0.75,1,3,4,1\n0.375,0,4,5,1\n0.625,1,5,6,2\n0.875,1,6,7,1\n0.0625,0,7,8,1\n"
+CAL_OK = "p,y,day\n0.5,1,0\n0.5,0,1\n0.5,1,2\n0.5,0,3\n"
+ISO = "x,y,w\n1,1,1\n2,3,1\n3,2,1\n4,4,1\n5,3.5,1\n"
+ISO_W = "x,y,w\n1,3,1\n2,1,1\n3,2,2\n"
+CALBASE = [("write", "cal.csv", CAL), ("write", "calok.csv", CAL_OK), ("write", "iso.csv", ISO), ("write", "isow.csv", ISO_W),
+           ("write", "badp.csv", "p,y\n0.1,0\n1.5,1\n"), ("write", "badl.csv", "p,y\n0.1,0\n0.5,2\n"), ("write", "empty.csv", "p,y\n"), ("write", "isozero.csv", "x,y,w\n1,1,0\n2,2,1\n")]
+CALHEAD = ["calibrate", "--prob-col", "p", "--target", "y"]
+
+
+def _calibration_cases():
+    return [
+        case("calibrate-table", CALHEAD + ["--prob-bins", "4", "--min-expected", "1", "--z-limit", "1", "--overall", "0.95:1.05", "--band", "0.8:1.25", "cal.csv"],
+             ok({"rows": 8, "bins": 4, "ok": False, "bad_bins": [2]}), setup=CALBASE),
+        case("calibrate-text", ["--format", "text"] + CALHEAD + ["--prob-bins", "4", "cal.csv"], ok(None, stdout_starts="rows = 8"), setup=CALBASE),
+        case("calibrate-gate-fails", CALHEAD + ["--prob-bins", "4", "--min-expected", "1", "--z-limit", "1", "--gate", "cal.csv"], bad("ml.calibrate.gate-failed", exit=8), setup=CALBASE),
+        case("calibrate-gate-passes", CALHEAD + ["--prob-bins", "1", "--gate", "calok.csv"], ok({"rows": 4, "bins": 1, "ok": True, "bad_bins": []}), setup=CALBASE),
+        case("calibrate-level", CALHEAD + ["--prob-bins", "2", "--recalibrate", "level", "--day", "day", "cal.csv"],
+             ok({"rows": 8, "bins": 2, "recalibration": {"method": "level", "rows_older": 4, "rows_newer": 4, "judged_on_newer": True}}), setup=CALBASE),
+        case("calibrate-bad-probability", CALHEAD + ["--prob-bins", "1", "badp.csv"], bad("ml.metric.bad-probability", exit=8), setup=CALBASE),
+        case("calibrate-bins-above-rows", CALHEAD + ["--prob-bins", "9", "cal.csv"], bad("ml.param.out-of-range", exit=2), setup=CALBASE),
+        case("calibrate-label-not-binary", CALHEAD + ["--prob-bins", "1", "badl.csv"], bad("ml.label.not-binary", exit=8), setup=CALBASE),
+        case("calibrate-unknown-column", ["calibrate", "--prob-col", "nope", "--target", "y", "cal.csv"], bad("ml.input.unknown-column", exit=3), setup=CALBASE),
+        case("calibrate-no-rows", CALHEAD + ["empty.csv"], bad("ml.input.empty", exit=8), setup=CALBASE),
+        case("calibrate-needs-columns", ["calibrate", "cal.csv"], bad("args.required-flag", exit=2), setup=CALBASE),
+        case("calibrate-level-needs-day", CALHEAD + ["--recalibrate", "level", "cal.csv"], bad("args.required-flag", exit=2), setup=CALBASE),
+        case("calibrate-day-without-level", CALHEAD + ["--day", "day", "cal.csv"], bad("args.conflict", exit=2), setup=CALBASE),
+        case("calibrate-bad-band", CALHEAD + ["--band", "1.25:0.8", "cal.csv"], bad("args.bad-value", exit=2), setup=CALBASE),
+        case("isotonic-fit", ["isotonic", "--x-col", "x", "--y-col", "y", "iso.csv"], ok({"rows": 5, "points": 5, "blocks": 3, "decreasing": False}), setup=CALBASE),
+        case("isotonic-weights-equal-neighbours", ["isotonic", "--x-col", "x", "--y-col", "y", "--weight", "w", "isow.csv"], ok({"rows": 3, "points": 3, "blocks": 2}), setup=CALBASE),
+        case("isotonic-decreasing", ["isotonic", "--x-col", "x", "--y-col", "y", "--decreasing", "iso.csv"], ok({"decreasing": True}), setup=CALBASE),
+        case("isotonic-text", ["--format", "text", "isotonic", "--x-col", "x", "--y-col", "y", "iso.csv"], ok(None, stdout_starts="points = 5"), setup=CALBASE),
+        case("isotonic-needs-columns", ["isotonic", "iso.csv"], bad("args.required-flag", exit=2), setup=CALBASE),
+        case("isotonic-weight-zero", ["isotonic", "--x-col", "x", "--y-col", "y", "--weight", "w", "isozero.csv"], bad("ml.param.out-of-range", exit=2), setup=CALBASE),
+    ]
+
+
+CASES += _calibration_cases()

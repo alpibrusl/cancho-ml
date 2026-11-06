@@ -223,10 +223,24 @@ def data_defs():
                 "summary": obj({"count": NAT, "std": {"const": "sample"}, "metrics": {"type": "object", "additionalProperties": agg}}),
                 "assignment": obj({"repeats": NAT, "rows": NAT, "folds": {"type": "array", "items": {"type": "array", "items": {"type": "integer", "minimum": -1}}}})},
                ["model", "task", "target", "rows", "columns", "plan", "split", "strategy", "folds", "repeats", "results", "summary"])
-    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_mc_p, eval_rank_p, eval_clu_p, cv_p, describe_data(), importance_data()] + dump_data() + runs_data()}
+    return {"oneOf": [fit, predict, eval_reg, eval_cls, fit_p, predict_p, eval_reg_p, eval_cls_p, eval_mc_p, eval_rank_p, eval_clu_p, cv_p, describe_data(), importance_data(), calibrate_data(), isotonic_data()] + dump_data() + runs_data()}
 
 
 RANK = {"type": "integer", "minimum": 1}
+
+
+def calibrate_data():
+    """The answer of `ml calibrate` (docs/calibration.md section 1): the table of the bins and the gate; `ok` is null when the recalibration to the level cannot judge the newer half"""
+    row = obj({"bin": NAT, "n": NAT, "mean_pred": FLT, "observed": FLT, "ratio": {"oneOf": [FLT, {"type": "null"}]}, "expected": FLT, "sd": FLT, "z": FLT, "judged": {"type": "boolean"}, "bad": {"type": "boolean"}})
+    recal = obj({"method": {"const": "level"}, "factor": FLT, "rows_older": NAT, "rows_newer": NAT, "judged_on_newer": {"type": "boolean"}})
+    return obj({"rows": NAT, "bins": NAT, "ok": {"type": ["boolean", "null"]}, "overall_ratio": FLT, "bad_bins": {"type": "array", "items": NAT},
+                "table": {"type": "array", "items": row}, "recalibration": recal}, ["rows", "bins", "ok"])
+
+
+def isotonic_data():
+    """The answer of `ml isotonic` (docs/calibration.md section 2): one entry for each distinct x, in increasing order"""
+    point = obj({"x": FLT, "fitted": FLT, "weight": FLT, "block": NAT})
+    return obj({"rows": NAT, "points": NAT, "blocks": NAT, "decreasing": {"type": "boolean"}, "fit": {"type": "array", "items": point}})
 
 
 def importance_object():

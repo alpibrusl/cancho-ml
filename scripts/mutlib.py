@@ -63,7 +63,12 @@ def run(mutants, command, label, timeout=1800, allowed=None):
             f = pathlib.Path(tmp) / file
             f.write_text(f.read_text().replace(old, new, 1))
             argv = [a.replace("{cancho}", cancho()) for a in command]
-            r = subprocess.run(argv, cwd=tmp, capture_output=True, text=True, env=env, timeout=timeout)
+            try:
+                r = subprocess.run(argv, cwd=tmp, capture_output=True, text=True, env=env, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # a mutant that makes the gate hang (a loop that no longer ends) is caught by the clock: a kill
+                killed += 1; print("%-40s killed (the gate timed out after %d s)" % (name, timeout), flush=True)
+                continue
         if "BUILD_ERROR" in r.stdout:
             # a mutant that does not compile is not a kill: the edit is wrong, not the gate right
             survivors.append(name); print("%-40s INVALID (does not compile)\n%s" % (name, r.stdout[-600:]), flush=True)

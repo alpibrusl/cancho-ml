@@ -8,6 +8,7 @@ import std.buffer;
 import std.bytes;
 import ml.app;
 import ml.argv;
+import ml.calcli;
 import ml.catcli;
 import ml.cfit;
 import ml.cv;
@@ -105,6 +106,12 @@ pub fn execute[&h, &f, &r, &pp, &cl](heap: &!h Heap, src: &cl [byte], fs: &f Fs(
     if verb == 8 {
         let rq = perm.request(src);
         return (idump.run(heap, fs, root, ps.model, rq, o, e3, lg), log_ok);
+    }
+    if verb == 9 {
+        return (calcli.calibrate_run(heap, src, fs, root, ps.file, o, e3, lg), log_ok);
+    }
+    if verb == 10 {
+        return (calcli.isotonic_run(heap, src, fs, root, ps.file, o, e3, lg), log_ok);
     }
     return (wireio.eval(heap, src, fs, root, ps.file, ps.model, ps.trackp, o, sp, e3, lg), log_ok);
 }

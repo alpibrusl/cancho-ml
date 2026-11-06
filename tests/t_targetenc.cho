@@ -1,0 +1,165 @@
+import std.test;
+import std.math;
+import metrics.rules;
+import metrics.targetenc;
+import mt;
+
+// The out-of-fold target encoding against the fixture worked by hand in docs/calibration.md section 8 (T1), and the codes of its refusals. (`cancho test --std lib/core/*.cho lib/linalg/tensor.cho lib/linalg/order.cho
+// lib/metrics/*.cho tests/mt.cho tests/t_targetenc.cho`, scripts/gate_metrics.sh). A test answers 0 to pass.
+
+fn ints[&h](heap: &!h Heap, a0: int, a1: int, a2: int, a3: int, a4: int, a5: int) -> [heap] Box[[int]] {
+    let b = box_slice(heap, 7, 0);
+    var o = b;
+    borrow mut o as &!w in {
+        let a = contents(w);
+        a[0] = a0;
+        a[1] = a1;
+        a[2] = a2;
+        a[3] = a3;
+        a[4] = a4;
+        a[5] = a5;
+    }
+    return o;
+}
+
+fn close(x: float, y: float) -> [] int {
+    var d = x - y;
+    if d < 0.0 {
+        d = 0.0 - d;
+    }
+    if d <= 1e-14 {
+        return 0;
+    }
+    return 1;
+}
+
+// six rows, categories 0 0 0 1 1 1, labels 1 0 1 0 0 1, all fit, folds 0 1 0 1 0 1, k = 2: category 0 has 3 rows and 2 positives, category 1 has 3 rows and 1; p0 = 3/6 = 1/2, k p0 = 1
+fn test_by_hand[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var co = ints(heap, 0, 0, 0, 1, 1, 1);
+    var lo = ints(heap, 1, 0, 1, 0, 0, 1);
+    var fo = ints(heap, 1, 1, 1, 1, 1, 1);
+    var oo = ints(heap, 0, 1, 0, 1, 0, 1);
+    var te = box_slice(heap, 7, 0.0);
+    var lg = box_slice(heap, 7, 0.0);
+    var cn = box_slice(heap, 3, 0);
+    var cb = box_slice(heap, 3, 0);
+    var ct = box_slice(heap, 3, 0.0);
+    var cl = box_slice(heap, 3, 0.0);
+    var inf = box_slice(heap, 4, 0.0);
+    var code = 99;
+    borrow co as &cr in {
+        borrow lo as &lr in {
+            borrow fo as &fr in {
+                borrow oo as &or in {
+                    borrow mut te as &!tew in {
+                        borrow mut lg as &!lgw in {
+                            borrow mut cn as &!cnw in {
+                                borrow mut cb as &!cbw in {
+                                    borrow mut ct as &!ctw in {
+                                        borrow mut cl as &!clw in {
+                                            borrow mut inf as &!inw in {
+                                                code = targetenc.encode(heap, contents(cr)[0..6], contents(lr)[0..6], contents(fr)[0..6], contents(or)[0..6], 2, 2, 2.0, 100, contents(tew), contents(lgw), contents(cnw), contents(cbw), contents(ctw), contents(clw), contents(inw));
+                                                let t = contents(tew);
+                                                let g = contents(lgw);
+                                                // row 0 (category 0, fold 0): out of fold 0 the category has 1 row and 0 positives: te = (0 + 1) / (1 + 2) = 1/3, logn = log1p(1)
+                                                // row 1 (category 0, fold 1): 2 rows, 2 positives: (2 + 1) / (2 + 2) = 3/4, log1p(2); row 2 as row 0
+                                                // row 3 (category 1, fold 1): 1 row, 0 positives: 1/3; row 4 (category 1, fold 0): 2 rows, 1 positive: (1 + 1) / (2 + 2) = 1/2, log1p(2); row 5 as row 3
+                                                bad = bad + close(t[0], 1.0 / 3.0) + close(t[1], 0.75) + close(t[2], 1.0 / 3.0) + close(t[3], 1.0 / 3.0) + close(t[4], 0.5) + close(t[5], 1.0 / 3.0);
+                                                bad = bad + close(g[0], math.log(2.0)) + close(g[1], math.log(3.0)) + close(g[2], math.log(2.0)) + close(g[3], math.log(2.0)) + close(g[4], math.log(3.0)) + close(g[5], math.log(2.0));
+                                                // the full-data encodings: category 0: (2 + 1) / (3 + 2) = 3/5, log1p(3); category 1: (1 + 1) / 5 = 2/5
+                                                if contents(cnw)[0] != 3 || contents(cnw)[1] != 3 || contents(cbw)[0] != 2 || contents(cbw)[1] != 1 {
+                                                    bad = bad + 1;
+                                                }
+                                                bad = bad + close(contents(ctw)[0], 0.6) + close(contents(ctw)[1], 0.4) + close(contents(clw)[0], math.log(4.0)) + close(contents(clw)[1], math.log(4.0));
+                                                bad = bad + close(contents(inw)[0], 0.5);
+                                                if contents(inw)[1] != 6.0 || contents(inw)[2] != 3.0 {
+                                                    bad = bad + 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if code != 0 {
+        bad = bad + 1;
+    }
+    unbox_slice(heap, co);
+    unbox_slice(heap, lo);
+    unbox_slice(heap, fo);
+    unbox_slice(heap, oo);
+    unbox_slice(heap, te);
+    unbox_slice(heap, lg);
+    unbox_slice(heap, cn);
+    unbox_slice(heap, cb);
+    unbox_slice(heap, ct);
+    unbox_slice(heap, cl);
+    unbox_slice(heap, inf);
+    return bad;
+}
+
+// a row outside the vocabulary (-1) is encoded p0 and 0; a label of a row that is not fit is not read; a negative fold is a fold
+fn test_edges[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var co = ints(heap, 0, 0, 0 - 1, 0, 0, 0);
+    var lo = ints(heap, 1, 0, 9, 1, 0, 0);
+    var fo = ints(heap, 1, 1, 0, 1, 1, 1);
+    var oo = ints(heap, 0, 0 - 1, 0, 1, 0, 1);
+    var te = box_slice(heap, 7, 0.0);
+    var lg = box_slice(heap, 7, 0.0);
+    var cn = box_slice(heap, 2, 0);
+    var cb = box_slice(heap, 2, 0);
+    var ct = box_slice(heap, 2, 0.0);
+    var cl = box_slice(heap, 2, 0.0);
+    var inf = box_slice(heap, 4, 0.0);
+    var code = 99;
+    borrow co as &cr in {
+        borrow lo as &lr in {
+            borrow fo as &fr in {
+                borrow oo as &or in {
+                    borrow mut te as &!tew in {
+                        borrow mut lg as &!lgw in {
+                            borrow mut cn as &!cnw in {
+                                borrow mut cb as &!cbw in {
+                                    borrow mut ct as &!ctw in {
+                                        borrow mut cl as &!clw in {
+                                            borrow mut inf as &!inw in {
+                                                code = targetenc.encode(heap, contents(cr)[0..6], contents(lr)[0..6], contents(fr)[0..6], contents(or)[0..6], 1, 2, 1.0, 100, contents(tew), contents(lgw), contents(cnw), contents(cbw), contents(ctw), contents(clw), contents(inw));
+                                                // fit rows 0, 1, 3, 4, 5 with labels 1, 0, 1, 0, 0: p0 = 2/5; row 2 is outside the vocabulary and is not fit, so its label 9 is not read
+                                                bad = bad + close(contents(tew)[2], contents(inw)[0]);
+                                                if contents(lgw)[2] != 0.0 {
+                                                    bad = bad + 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if code != 0 {
+        bad = bad + 1;
+    }
+    unbox_slice(heap, co);
+    unbox_slice(heap, lo);
+    unbox_slice(heap, fo);
+    unbox_slice(heap, oo);
+    unbox_slice(heap, te);
+    unbox_slice(heap, lg);
+    unbox_slice(heap, cn);
+    unbox_slice(heap, cb);
+    unbox_slice(heap, ct);
+    unbox_slice(heap, cl);
+    unbox_slice(heap, inf);
+    return bad;
+}

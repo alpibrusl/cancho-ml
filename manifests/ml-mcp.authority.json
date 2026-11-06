@@ -204,6 +204,7 @@
     "cols",
     "cols",
     "cols",
+    "cols",
     "column",
     "column_kind",
     "column_of",
@@ -458,6 +459,8 @@
     "index_of_short",
     "inexact",
     "inexact",
+    "info_size",
+    "info_size",
     "init_word",
     "input_cols",
     "input_column",
@@ -651,6 +654,7 @@
     "mat",
     "matrix",
     "max_bins",
+    "max_bins",
     "max_buckets",
     "max_bytes",
     "max_bytes",
@@ -813,6 +817,7 @@
     "nth_name",
     "number",
     "number",
+    "number",
     "number_at",
     "numeric_index",
     "numeric_kept",
@@ -845,6 +850,7 @@
     "output",
     "pad",
     "padk",
+    "pair",
     "pair",
     "param",
     "param_out_of_range",
@@ -1025,6 +1031,7 @@
     "skip",
     "skip_blank",
     "slash",
+    "slots",
     "slow_decimal",
     "source_word",
     "spec_of",
@@ -1198,7 +1205,7 @@
     "writes_of",
     "y_max"
   ],
-  "folded_operators": 285,
+  "folded_operators": 287,
   "folded_calls": 2,
-  "functions": 2073
+  "functions": 2093
 }

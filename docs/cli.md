@@ -327,7 +327,7 @@ issue for cancho-tools, not worked around by copying the module.
 
 ## 9. The MCP server
 
-`ml-mcp` is built ([mcp.md](mcp.md)). It derives its twelve tools from the flag table as this section proposed (the verbs and their flags from `allowed(verb)` and the usage lines, `nat` as an integer with the ceiling of `introspect.limits`, `choice` as an enum, `bool` as a boolean, `text` and `path` as strings, the output schema from `schemas/ml.v1.json`), and it differs from the proposal in three places. A call runs the code of `ml` in the server's process on a **packed command line** (`tools/ml/argv.cho`) instead of through a child process, so the argv a path flag needs in two arguments is the argv the server builds; the library reads the command line through that module and not through `Args`; and the result is the document `ml` prints, as `structuredContent`, with `isError` true for a refusal and the exit code in `_meta`. The gates are in [mcp.md](mcp.md) section 8: the schema of every tool equal to a projection of the flag table (`scripts/check_mcp_tools.py`), the answer of every fixture of the command line a call can say equal to the command line's answer byte for byte, and mutants of the server.
+`ml-mcp` is built ([mcp.md](mcp.md)). It derives its tools from the flag table as this section proposed (the verbs and their flags from `allowed(verb)` and the usage lines, `nat` as an integer with the ceiling of `introspect.limits`, `choice` as an enum, `bool` as a boolean, `text` and `path` as strings, the output schema from `schemas/ml.v1.json`), and it differs from the proposal in three places. A call runs the code of `ml` in the server's process on a **packed command line** (`tools/ml/argv.cho`) instead of through a child process, so the argv a path flag needs in two arguments is the argv the server builds; the library reads the command line through that module and not through `Args`; and the result is the document `ml` prints, as `structuredContent`, with `isError` true for a refusal and the exit code in `_meta`. The gates are in [mcp.md](mcp.md) section 8: the schema of every tool equal to a projection of the flag table (`scripts/check_mcp_tools.py`), the answer of every fixture of the command line a call can say equal to the command line's answer byte for byte, and mutants of the server.
 
 ## 10. Open questions
 
@@ -365,3 +365,29 @@ ml [FLAGS] dump       --model-file M [--tree I] [--max-nodes N]
 A flag that only means something with `--data` (`--metric`, `--repeats`, `--seed`, `--drop`, `--max-work`) is `args.conflict` without it. `--threads` is accepted, checked and unused: nothing in `importance` is threaded, and the
 bytes are the same at every value. New rule tags, all exit 8: `ml.importance.unsupported-model`, `ml.importance.no-scale`, `ml.importance.bad-metric`, `ml.importance.undefined-metric`, `ml.importance.too-few-rows`,
 `ml.limit.work`, `ml.dump.unsupported-model` (`design.md` section 8). `--format text` prints the tables as lines, best rank first, and a tree as one indented line per node.
+
+## 12. Judging probabilities and fitting a monotone curve: `calibrate` and `isotonic`
+
+Two verbs of `ml` (not of `ml-predict` or `ml-serve`) read a CSV and no model file. They put the libraries `lib/metrics/calibrate.cho` and `lib/metrics/isotonic.cho` on the command line. The design, the definitions, the gates and what they measured are `docs/calibration.md`.
+
+```
+ml [FLAGS] calibrate --prob-col P --target Y [--prob-bins N] [--min-expected X] [--z-limit Z] [--overall LOW:HIGH] [--band LOW:HIGH] [--recalibrate level --day D] [--gate] FILE
+ml [FLAGS] isotonic --x-col X --y-col Y [--weight W] [--decreasing] FILE
+```
+
+| flag | verb | meaning |
+|---|---|---|
+| `--prob-col P` | calibrate | the column of probabilities (numbers from 0 to 1; `ml.metric.bad-probability`, exit 8, outside) |
+| `--target Y` | calibrate | the column of labels, 0 or 1 (`ml.label.not-binary` otherwise) |
+| `--prob-bins N` | calibrate | the number of bins of consecutive ranks, default 10, 1 to 1000 and not above the rows (`ml.param.out-of-range`). (`--bins` is the histogram bins of the boosted trees.) |
+| `--min-expected X` | calibrate | a bin is judged only if its expected positives (the sum of its probabilities) reach X, default 100 |
+| `--z-limit Z` | calibrate | a judged bin is bad only if its ratio is outside `--band` AND its z, `(positives - expected) / sd`, is above Z in absolute value, default 3 |
+| `--overall LOW:HIGH` | calibrate | the overall ratio, positives over the sum of the probabilities, must lie in this range, default 0.95:1.05 |
+| `--band LOW:HIGH` | calibrate | the ratio of a judged bin must lie in this range (or its z must be within `--z-limit`), default 0.8:1.25 |
+| `--recalibrate level`, `--day D` | calibrate | the older half of the days (day at most the median) fits the factor `positives / sum of probabilities`, applied to the newer half, and the gate is judged on the newer half only; `--day` is the column of day numbers and is refused (`args.conflict`) without `--recalibrate level` |
+| `--gate` | calibrate | refuse with `ml.calibrate.gate-failed` (exit 8, the class of a verdict about the data, `docs/agent-toolbox.md` D4) when the gate says no; without it the table is the answer and `ok` says what the gate said |
+| `--x-col X`, `--y-col Y` | isotonic | the columns of the abscissa and of the value |
+| `--weight W` | isotonic | the column of weights, above 0 (a weight of 0 or less is `ml.param.out-of-range`); default 1 |
+| `--decreasing` | isotonic | fit a non-increasing sequence |
+
+`calibrate` answers `rows`, `bins`, `ok`, `overall_ratio`, `bad_bins` and `table`, one object for each bin (`bin`, `n`, `mean_pred`, `observed`, `ratio` or null where the mean predicted is 0, `expected`, `sd`, `z`, `judged`, `bad`), and with `--recalibrate level` a `recalibration` object (`factor`, `rows_older`, `rows_newer`, `judged_on_newer`; when a half is empty or the older half's probabilities sum to 0 the factor is 1, no table is made, `ok` is null and `--gate` is `ml.metric.undefined`). Numbers are strings, as every number of `ml`. `isotonic` answers `rows`, `points` (the distinct values of x), `blocks` and `fit`, one object for each distinct x in increasing order (`x`, `fitted`, `weight` (the sum of the weights at that x), `block`); rows with equal x are pooled first. `--format text` prints the headline numbers as lines. New rule tag: `ml.calibrate.gate-failed` (exit 8, `data` holds `bad_bins` and `rows`; the table is the answer of the same call without `--gate`); `ml.metric.bad-probability` moved from the library's pending rules to the rules `ml` can emit.

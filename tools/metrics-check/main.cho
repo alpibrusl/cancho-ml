@@ -17,6 +17,8 @@
 //       stdout: `info OVERALL OK BAD BINS ROWS POSITIVES`, `row I N MEAN OBSERVED RATIO EXPECTED SD Z JUDGED BAD` (floats as hex bits), for `level` also `level FACTOR NOLD NNEW MADE`, or `refused TAG`
 //   metrics-check isotonic X Y W DECREASING CAP           the isotonic fit (docs/calibration.md section 2). X, Y, W: `H:` float bits; DECREASING: 0 or 1
 //       stdout: `info POINTS BLOCKS ROWS`, `point I X FITTED WEIGHT BLOCK` (floats as hex bits), or `refused TAG`
+//   metrics-check target CAT LABEL FIT FOLD NCAT FOLDS K CAP   the out-of-fold target encoding (docs/calibration.md section 3). CAT, LABEL, FIT, FOLD: `L:` ints (CAT -1 = not in the vocabulary); K: `H:` one float
+//       stdout: `info P0 FITROWS POSITIVES`, `row I TE LOGN`, `cat C N B TE LOGN` (floats as hex bits), or `refused TAG`
 //   metrics-check testcount N NUM DEN
 //   metrics-check mc NAME YTRUE SECOND CLASSES CAP         the multiclass metrics (docs/multiclass.md section 4). CLASSES is `L:` ints, strictly ascending. NAME and SECOND:
 //       confusion accuracy precision recall f1 macro_precision macro_recall macro_f1 weighted_precision weighted_recall weighted_f1   SECOND = the predicted labels
@@ -42,6 +44,7 @@ import metrics.regress;
 import metrics.logloss;
 import metrics.calibrate;
 import metrics.isotonic;
+import metrics.targetenc;
 import metrics.multiclass;
 import metrics.gen;
 
@@ -836,6 +839,132 @@ fn run_isotonic[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io
     return status;
 }
 
+// the out-of-fold target encoding (docs/calibration.md section 3)
+fn run_target[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (ca, cn) = make_ints(heap, operand(g, 2));
+    let (la, ln) = make_ints(heap, operand(g, 3));
+    let (fa, fn_) = make_ints(heap, operand(g, 4));
+    let (oa, on) = make_ints(heap, operand(g, 5));
+    let ncat = num(g, 6);
+    let folds = num(g, 7);
+    let (ka, kn) = make_floats(heap, operand(g, 8));
+    let cap = num(g, 9);
+    var cb = ca;
+    var lb = la;
+    var fb = fa;
+    var ob = oa;
+    var kb = ka;
+    var status = 2;
+    if cn >= 0 && ln >= 0 && fn_ >= 0 && on >= 0 && kn == 1 && ncat >= 0 && ncat <= 1048576 && cap >= 0 && folds >= 0 {
+        let rows = cn + 1;
+        let te = box_slice(heap, rows, 0.0);
+        let lg = box_slice(heap, rows, 0.0);
+        let cnn = box_slice(heap, ncat + 1, 0);
+        let cbb = box_slice(heap, ncat + 1, 0);
+        let cte = box_slice(heap, ncat + 1, 0.0);
+        let clg = box_slice(heap, ncat + 1, 0.0);
+        let info = box_slice(heap, 4, 0.0);
+        var teb = te;
+        var lgb = lg;
+        var cnb = cnn;
+        var cbb2 = cbb;
+        var cteb = cte;
+        var clgb = clg;
+        var inb = info;
+        var code = 0;
+        borrow cb as &cr in {
+            borrow lb as &lr in {
+                borrow fb as &fr in {
+                    borrow ob as &or in {
+                        borrow kb as &kr in {
+                            borrow mut teb as &!tew in {
+                                borrow mut lgb as &!lgw in {
+                                    borrow mut cnb as &!cnw in {
+                                        borrow mut cbb2 as &!cbw in {
+                                            borrow mut cteb as &!ctw in {
+                                                borrow mut clgb as &!clw in {
+                                                    borrow mut inb as &!inw in {
+                                                        code = targetenc.encode(heap, contents(cr)[0..cn], contents(lr)[0..ln], contents(fr)[0..fn_], contents(or)[0..on], ncat, folds, contents(kr)[0], cap, contents(tew), contents(lgw), contents(cnw), contents(cbw), contents(ctw), contents(clw), contents(inw));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        status = 0;
+        if code != 0 {
+            status = refuse_line(io, code);
+        } else {
+            borrow teb as &a1 in {
+                borrow lgb as &a2 in {
+                    borrow cnb as &a3 in {
+                        borrow cbb2 as &a4 in {
+                            borrow cteb as &a5 in {
+                                borrow clgb as &a6 in {
+                                    borrow inb as &a7 in {
+                                        io.write_all(io, "info ");
+                                        hex16(io, bits_of(contents(a7)[0]));
+                                        io.write_all(io, " ");
+                                        io.print_int(io, truncate(contents(a7)[1]));
+                                        io.write_all(io, " ");
+                                        io.print_int(io, truncate(contents(a7)[2]));
+                                        io.newline(io);
+                                        var r = 0;
+                                        while r < cn {
+                                            io.write_all(io, "row ");
+                                            io.print_int(io, r);
+                                            io.write_all(io, " ");
+                                            hex16(io, bits_of(contents(a1)[r]));
+                                            io.write_all(io, " ");
+                                            hex16(io, bits_of(contents(a2)[r]));
+                                            io.newline(io);
+                                            r = r + 1;
+                                        }
+                                        var c = 0;
+                                        while c < ncat {
+                                            io.write_all(io, "cat ");
+                                            io.print_int(io, c);
+                                            io.write_all(io, " ");
+                                            io.print_int(io, contents(a3)[c]);
+                                            io.write_all(io, " ");
+                                            io.print_int(io, contents(a4)[c]);
+                                            io.write_all(io, " ");
+                                            hex16(io, bits_of(contents(a5)[c]));
+                                            io.write_all(io, " ");
+                                            hex16(io, bits_of(contents(a6)[c]));
+                                            io.newline(io);
+                                            c = c + 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, teb);
+        unbox_slice(heap, lgb);
+        unbox_slice(heap, cnb);
+        unbox_slice(heap, cbb2);
+        unbox_slice(heap, cteb);
+        unbox_slice(heap, clgb);
+        unbox_slice(heap, inb);
+    }
+    unbox_slice(heap, cb);
+    unbox_slice(heap, lb);
+    unbox_slice(heap, fb);
+    unbox_slice(heap, ob);
+    unbox_slice(heap, kb);
+    return status;
+}
+
 fn print_class[&i](io: &!i Io, c: int, r: rules.Scored) -> [io_write] int {
     io.write_all(io, "class ");
     io.print_int(io, c);
@@ -1180,6 +1309,8 @@ fn main(world: World) -> [] int {
                         code = run_terms(hp, ip, g);
                     } else if same(arg(g, 1), "calibrate") {
                         code = run_calibrate(hp, ip, g, false);
+                    } else if same(arg(g, 1), "target") {
+                        code = run_target(hp, ip, g);
                     } else if same(arg(g, 1), "isotonic") {
                         code = run_isotonic(hp, ip, g);
                     } else if same(arg(g, 1), "level") {
