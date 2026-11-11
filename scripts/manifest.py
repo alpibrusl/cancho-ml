@@ -192,7 +192,7 @@ def main():
         check = True
     against = None
     if "--against" in argv:
-        against = pathlib.Path(argv[argv.index("--against") + 1])
+        against = pathlib.Path(argv[argv.index("--against") + 1]).resolve()  # absolute: the compiler at 51524d2 cannot read a ../ path
     proj = project()
     pin = proj["package"]["cancho"]
     with open(ROOT / "tools.toml", "rb") as f:
