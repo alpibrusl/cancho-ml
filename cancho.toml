@@ -117,7 +117,7 @@ out = "build/models-check"
 # the driver of the pure parts of the recommender (scripts/gate_recommend.sh builds it from an explicit file list; `cancho build --bin recommend-check` builds it in package mode too)
 [[bin]]
 name = "recommend-check"
-sources = ["lib/core", "lib/linalg/tensor.cho", "lib/linalg/order.cho", "lib/metrics", "lib/models/recommend", "tools/recommend-check"]
+sources = ["lib/core", "lib/linalg", "lib/metrics", "lib/models/common.cho", "lib/models/recommend", "tools/recommend-check"]
 std = true
 out = "build/recommend-check"
 

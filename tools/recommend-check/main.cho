@@ -3,6 +3,8 @@
 //
 //   recommend-check log NUSERS NITEMS IMPLICIT UID IID VAL CAP     the compressed forms of an interaction log (lib/models/recommend/log.cho). IMPLICIT: 0 or 1; UID, IID: `L:` ints; VAL: `H:` float bits
 //       stdout: `nnz N`, `uoff L`, `uitem L`, `uval H`, `ioff L`, `iuser L`, `ival H` (L: comma separated ints, H: comma separated float bits), or `refused TAG why N row R row2 R2`
+//   recommend-check als NUSERS NITEMS IMPLICIT UID IID VAL CAP F LAMBDA ALPHA ITERS SEED TRACE   the ALS factors of a log (lib/models/recommend/als.cho). LAMBDA, ALPHA: `H:` one float; TRACE: 0 or 1
+//       stdout: `p H`, `q H`, `nloss N`, `loss H` (the factors and the losses as float bits), or `refused TAG`
 //   recommend-check split UID TKEY NUSERS LAST                      the rows held out by --split-user-last: `mask L` (1 = test), or `refused TAG`
 //
 // stdout, one `key value` per line; the exit code is the toolbox exit code of the tag.
@@ -12,6 +14,7 @@ import std.io;
 import ml.fbits;
 import ml.refuse;
 import recommend.log;
+import recommend.als;
 
 fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
     if len(x) != len(y) {
@@ -332,6 +335,67 @@ fn run_log[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_writ
     return status;
 }
 
+fn run_als[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
+    let (ua, un) = make_ints(heap, operand(g, 5));
+    let (ia, inn) = make_ints(heap, operand(g, 6));
+    let (va, vn) = make_floats(heap, operand(g, 7));
+    let (la, ln) = make_floats(heap, operand(g, 10));
+    let (aa, an) = make_floats(heap, operand(g, 11));
+    var ub = ua;
+    var ib = ia;
+    var vb = va;
+    var lb = la;
+    var ab = aa;
+    var status = 2;
+    if un >= 0 && inn >= 0 && vn >= 0 && ln == 1 && an == 1 {
+        borrow ub as &ur in {
+            borrow ib as &ir in {
+                borrow vb as &vr in {
+                    borrow lb as &lr2 in {
+                        borrow ab as &ar in {
+                            let l = log.build(heap, contents(ur)[0..un], contents(ir)[0..inn], contents(vr)[0..vn], num(g, 2), num(g, 3), num(g, 4) == 1, num(g, 8));
+                            borrow l as &lr in {
+                                if lr.code != 0 {
+                                    status = refuse_line(io, lr.code, lr.why, lr.row, lr.row2);
+                                } else {
+                                    let r = als.fit(heap, lr, num(g, 9), contents(lr2)[0], contents(ar)[0], num(g, 4) == 1, num(g, 12), num(g, 13), num(g, 14) == 1);
+                                    borrow r as &rr in {
+                                        if rr.code != 0 {
+                                            io.write_all(io, "refused ");
+                                            io.write_all(io, refuse.tag(rr.code));
+                                            io.newline(io);
+                                            status = refuse.exit_code(rr.code);
+                                        } else {
+                                            print_floats(io, "p", contents(rr.p), lr.nusers * num(g, 9));
+                                            print_floats(io, "q", contents(rr.q), lr.nitems * num(g, 9));
+                                            io.write_all(io, "nloss ");
+                                            io.print_int(io, rr.nloss);
+                                            io.newline(io);
+                                            print_floats(io, "loss", contents(rr.losses), rr.nloss);
+                                            status = 0;
+                                        }
+                                    }
+                                    als.drop(heap, r);
+                                }
+                            }
+                            log.drop(heap, l);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        io.write_all(io, "bad spec");
+        io.newline(io);
+    }
+    unbox_slice(heap, ub);
+    unbox_slice(heap, ib);
+    unbox_slice(heap, vb);
+    unbox_slice(heap, lb);
+    unbox_slice(heap, ab);
+    return status;
+}
+
 fn run_split[&h, &i, &g](heap: &!h Heap, io: &!i Io, g: &g Args) -> [heap, io_write, args] int {
     let (ua, un) = make_ints(heap, operand(g, 2));
     let (ta, tn) = make_ints(heap, operand(g, 3));
@@ -376,6 +440,8 @@ fn main(world: World) -> [] int {
                     code = 2;
                 } else if same(arg(g, 1), "log") {
                     code = run_log(hp, ip, g);
+                } else if same(arg(g, 1), "als") {
+                    code = run_als(hp, ip, g);
                 } else if same(arg(g, 1), "split") {
                     code = run_split(hp, ip, g);
                 } else {

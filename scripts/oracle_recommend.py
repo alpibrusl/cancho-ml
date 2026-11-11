@@ -8,6 +8,9 @@ code). `log` is the port of std/math.cho that oracle_models.py holds; every sum 
     python3 scripts/oracle_recommend.py --log [N]       N seeded logs (default 300) against build/recommend-check ("log" and "split" modes): the two compressed forms, the sums of duplicates,
                                                         the refusals with their reasons and rows, the rows held out per user; compared exactly (floats as bits)
     python3 scripts/oracle_recommend.py --log-controls  hand-made logs and the refusals through the compiled driver
+    python3 scripts/oracle_recommend.py --als [N]       N seeded fits (default 120) against build/recommend-check ("als" mode): P, Q and the loss after every half-pass equal the oracle's bits; the loss
+                                                        does not rise from one half-pass to the next; with one pass the factors equal the dense closed form (gates RC3 to RC5)
+    python3 scripts/oracle_recommend.py --als-controls  a one-user one-item fit worked by hand, and the refusals of the parameters
 Exit 1 on any mismatch. METRICS_CHECK names the metrics driver, RECOMMEND_CHECK the log driver."""
 
 import math
@@ -19,6 +22,7 @@ import subprocess
 import sys
 
 import numpy as np
+import oracle_linalg as ol
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -526,9 +530,277 @@ def log_controls():
     return bad
 
 
+# ---------------------------------------------------------------- ALS (docs/recommend.md section 4, gates RC3 to RC5)
+MASK64 = (1 << 64) - 1
+
+
+def mix64(z):
+    z &= MASK64
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & MASK64
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & MASK64
+    return z ^ (z >> 31)
+
+
+def derive64(h, c):
+    return mix64(((h ^ c) & MASK64) + 0x9E3779B97F4A7C15)
+
+
+def init_q(ni, f, seed):
+    """draw c of item i: the c-th output of the stream derive(derive(seed, 12), i), unit(z) / sqrt(f)"""
+    q = []
+    for i in range(ni):
+        st = derive64(derive64(seed & MASK64, 12), i)
+        row = []
+        for _ in range(f):
+            st = (st + 0x9E3779B97F4A7C15) & MASK64
+            z = mix64(st)
+            row.append((float((z >> 11) & ((1 << 53) - 1)) / 4503599627370496.0 - 1.0) / math.sqrt(float(f)))
+        q.append(row)
+    return q
+
+
+def gram_o(fac, f):
+    g = [[0.0] * f for _ in range(f)]
+    for y in fac:
+        for a in range(f):
+            ya = y[a]
+            for b in range(a + 1):
+                g[a][b] = g[a][b] + ya * y[b]
+    return g
+
+
+def half_pass_o(off, idx, vals, other, gm, n, f, lam, alpha, implicit):
+    out = []
+    for r in range(n):
+        a_ = [[(gm[p][q] if implicit else 0.0) if q <= p else 0.0 for q in range(f)] for p in range(f)]
+        bv = [0.0] * f
+        for k in range(off[r], off[r + 1]):
+            y = other[idx[k]]
+            if implicit:
+                coef = alpha * vals[k]
+                w = 1.0 + coef
+            else:
+                coef = 1.0
+                w = vals[k]
+            for p in range(f):
+                yp = y[p]
+                for q in range(p + 1):
+                    a_[p][q] = a_[p][q] + (coef * (yp * y[q]) if implicit else yp * y[q])
+                bv[p] = bv[p] + w * yp
+        for s_ in range(f):
+            a_[s_][s_] = a_[s_][s_] + lam
+        lmat = ol.chol_o(np.array(a_, dtype=np.float64))
+        if lmat is None:
+            return None
+        z = ol.fwd_o(lmat, np.array(bv, dtype=np.float64))
+        x = ol.bwd_o(lmat, z)
+        out.append([float(v) for v in x])
+    return out
+
+
+def loss_o(w, pf, qf, gm, nu, ni, f, lam, alpha, implicit):
+    data = 0.0
+    for u in range(nu):
+        if implicit:
+            quad = 0.0
+            for a in range(f):
+                t = 0.0
+                for b in range(f):
+                    gab = gm[a][b] if b <= a else gm[b][a]
+                    t = t + gab * pf[u][b]
+                quad = quad + pf[u][a] * t
+            data = data + quad
+        for k in range(w["uoff"][u], w["uoff"][u + 1]):
+            s = 0.0
+            for c in range(f):
+                s = s + pf[u][c] * qf[w["uitem"][k]][c]
+            if implicit:
+                cc = 1.0 + alpha * w["uval"][k]
+                data = data + (cc * ((1.0 - s) * (1.0 - s)) - s * s)
+            else:
+                data = data + (w["uval"][k] - s) * (w["uval"][k] - s)
+    sp = 0.0
+    for row in pf:
+        for v in row:
+            sp = sp + v * v
+    sq = 0.0
+    for row in qf:
+        for v in row:
+            sq = sq + v * v
+    return data + lam * (sp + sq)
+
+
+def als_oracle(w, nu, ni, f, lam, alpha, implicit, iterations, seed, trace):
+    """-> ("ok", P, Q, losses) or ("refused", tag); w is the output of log_oracle"""
+    qf = init_q(ni, f, seed)
+    pf = None
+    losses = []
+    for it in range(iterations):
+        g = gram_o(qf, f) if implicit else None
+        pf = half_pass_o(w["uoff"], w["uitem"], w["uval"], qf, g, nu, f, lam, alpha, implicit)
+        if pf is None:
+            return ("refused", "ml.linalg.not-positive-definite")
+        if trace:
+            g = gram_o(qf, f) if implicit else None
+            losses.append(loss_o(w, pf, qf, g, nu, ni, f, lam, alpha, implicit))
+        g = gram_o(pf, f) if implicit else None
+        qf = half_pass_o(w["ioff"], w["iuser"], w["ival"], pf, g, ni, f, lam, alpha, implicit)
+        if qf is None:
+            return ("refused", "ml.linalg.not-positive-definite")
+        if trace or it == iterations - 1:
+            g = gram_o(qf, f) if implicit else None
+            ls = loss_o(w, pf, qf, g, nu, ni, f, lam, alpha, implicit)
+            losses.append(ls)
+    return ("ok", pf, qf, losses)
+
+
+def run_als_driver(uid, iid, vals, nu, ni, implicit, f, lam, alpha, iters, seed, trace):
+    return run_log_driver(["als", nu, ni, 1 if implicit else 0, spec_ints(uid), spec_ints(iid), spec_floats(vals), 10 ** 9, f, spec_floats([lam]), spec_floats([alpha]), iters, seed, 1 if trace else 0])
+
+
+def gen_als(seed):
+    """an accepted log (explicit or implicit) and parameters; None when the log of this seed is refused"""
+    uid, iid, vals, nu, ni, implicit = gen_log(seed)
+    want = log_oracle(uid, iid, vals, nu, ni, implicit, 10 ** 9)
+    if want[0] != "ok":
+        return None
+    rng = random.Random(seed * 101 + 5)
+    f = rng.choice([1, 2, 3, 4, 6])
+    lam = rng.choice([0.01, 0.1, 1.0])
+    alpha = rng.choice([1.0, 5.0, 40.0])
+    iters = rng.randint(1, 4)
+    rseed = rng.randrange(-(1 << 62), 1 << 62)
+    trace = rng.random() < 0.6
+    return uid, iid, vals, nu, ni, implicit, want[1], f, lam, alpha, iters, rseed, trace
+
+
+def dense_user_step(w, other, nu, f, lam, alpha, implicit):
+    """the closed form of the implicit user step over ALL items (docs/recommend.md 4.2), solved densely with numpy: x_u = (Y^T C_u Y + lam I)^-1 Y^T C_u p_u"""
+    y = np.array(other, dtype=np.float64)
+    ni = y.shape[0]
+    out = []
+    for u in range(nu):
+        if not implicit:
+            ks = list(range(w["uoff"][u], w["uoff"][u + 1]))
+            yo = y[[w["uitem"][k] for k in ks]]
+            r = np.array([w["uval"][k] for k in ks])
+            out.append(np.linalg.solve(yo.T @ yo + lam * np.eye(f), yo.T @ r))
+            continue
+        c = np.ones(ni)
+        pref = np.zeros(ni)
+        for k in range(w["uoff"][u], w["uoff"][u + 1]):
+            c[w["uitem"][k]] = 1.0 + alpha * w["uval"][k]
+            pref[w["uitem"][k]] = 1.0
+        a_ = y.T @ (y * c[:, None]) + lam * np.eye(f)
+        b = y.T @ (c * pref)
+        out.append(np.linalg.solve(a_, b))
+    return np.array(out)
+
+
+def check_als(seed):
+    g = gen_als(seed)
+    if g is None:
+        return None
+    uid, iid, vals, nu, ni, implicit, w, f, lam, alpha, iters, rseed, trace = g
+    want = als_oracle(w, nu, ni, f, lam, alpha, implicit, iters, rseed, trace)
+    rc, got, text = run_als_driver(uid, iid, vals, nu, ni, implicit, f, lam, alpha, iters, rseed, trace)
+    tag = "seed %d (users=%d items=%d f=%d lam=%g alpha=%g iters=%d implicit=%s trace=%s)" % (seed, nu, ni, f, lam, alpha, iters, implicit, trace)
+    if want[0] == "refused":
+        if ("refused " + want[1]) not in text:
+            return "%s: expected %s, got %r" % (tag, want[1], text[:120])
+        return None
+    if rc != 0:
+        return "%s: driver exit %d: %s" % (tag, rc, text[:160])
+    _, pf, qf, losses = want
+    if parse_bits(got.get("p", "")) != [bits(x) for row in pf for x in row]:
+        return "%s: P differs" % tag
+    if parse_bits(got.get("q", "")) != [bits(x) for row in qf for x in row]:
+        return "%s: Q differs" % tag
+    if parse_bits(got.get("loss", "")) != [bits(x) for x in losses]:
+        return "%s: losses differ" % tag
+    # RC5: the loss does not rise from one half-pass to the next (a half-pass minimises over its block)
+    for a, b in zip(losses, losses[1:]):
+        if b > a + 1e-9 * max(1.0, abs(a)):
+            return "%s: the loss rose from %r to %r" % (tag, a, b)
+    return None
+
+
+def check_dense(seed):
+    """RC4: with one pass, the factors of the item step equal the closed form solved densely (explicit: the observed items only; implicit: all items with the confidences) from the P the fit
+    returned, and P equals the dense step from the initial Q"""
+    g = gen_als(seed)
+    if g is None:
+        return None
+    uid, iid, vals, nu, ni, implicit, w, f, lam, alpha, iters, rseed, trace = g
+    rc, got, text = run_als_driver(uid, iid, vals, nu, ni, implicit, f, lam, alpha, 1, rseed, False)
+    if rc != 0:
+        return None
+    from struct import unpack, pack
+    def floats(t):
+        return [unpack("<d", pack("<Q", int(h, 16)))[0] for h in parse_bits(t)]
+    p_out = np.array(floats(got["p"])).reshape(nu, f)
+    q_out = np.array(floats(got["q"])).reshape(ni, f)
+    q0 = init_q(ni, f, rseed)
+    p_dense = dense_user_step(w, q0, nu, f, lam, alpha, implicit)
+    # the item step: the transposed log
+    wt = {"uoff": w["ioff"], "uitem": w["iuser"], "uval": w["ival"]}
+    q_dense = dense_user_step(wt, p_out.tolist(), ni, f, lam, alpha, implicit)
+    tol = 1e-7
+    if np.max(np.abs(p_dense - p_out)) > tol * max(1.0, np.max(np.abs(p_dense))):
+        return "dense user step, seed %d: worst difference %g" % (seed, np.max(np.abs(p_dense - p_out)))
+    if np.max(np.abs(q_dense - q_out)) > tol * max(1.0, np.max(np.abs(q_dense))):
+        return "dense item step, seed %d: worst difference %g" % (seed, np.max(np.abs(q_dense - q_out)))
+    return None
+
+
+def als_controls():
+    bad = []
+    # one user, one item, explicit r = 2, f = 1, lambda = 1, one pass: p = 2 q0 / (q0^2 + 1), then q = 2 p / (p^2 + 1)
+    uid, iid, vals = [0], [0], [2.0]
+    q0 = init_q(1, 1, 7)[0][0]
+    p1 = 2.0 * q0 / (q0 * q0 + 1.0)
+    q1 = 2.0 * p1 / (p1 * p1 + 1.0)
+    rc, got, text = run_als_driver(uid, iid, vals, 1, 1, False, 1, 1.0, 1.0, 1, 7, False)
+    from struct import unpack, pack
+    def fl(t):
+        return [unpack("<d", pack("<Q", int(h, 16)))[0] for h in parse_bits(t)]
+    if rc != 0 or abs(fl(got.get("p", ""))[0] - p1) > 1e-12 or abs(fl(got.get("q", ""))[0] - q1) > 1e-12:
+        bad.append("hand-worked 1 x 1 fit: %r" % text[:160])
+    # the initial factor is in [-1, 1) / sqrt(f): f = 4 divides by 2
+    if not all(-0.5 <= v < 0.5 for row in init_q(5, 4, 3) for v in row):
+        bad.append("initial factors out of range")
+    f = bits(1.0)
+    base = ["als", 1, 1, 0, "L:0", "L:0", "H:" + bits(2.0), 100]
+
+    def refuse(name, tail, tag, code):
+        r = subprocess.run([LOG_BIN] + [str(a) for a in base + tail], capture_output=True, text=True, timeout=60)
+        if ("refused " + tag) not in r.stdout or r.returncode != code:
+            bad.append("%s: expected %s exit %d, got %r exit %d" % (name, tag, code, r.stdout.strip()[:80], r.returncode))
+
+    one = "H:" + f
+    refuse("f = 0", [0, one, one, 1, 1, 0], "ml.param.out-of-range", 2)
+    refuse("f above the limit", [257, one, one, 1, 1, 0], "ml.param.out-of-range", 2)
+    refuse("iterations 0", [1, one, one, 0, 1, 0], "ml.param.out-of-range", 2)
+    refuse("iterations above the limit", [1, one, one, 1001, 1, 0], "ml.param.out-of-range", 2)
+    refuse("lambda 0", [1, "H:" + bits(0.0), one, 1, 1, 0], "ml.param.out-of-range", 2)
+    refuse("lambda negative", [1, "H:" + bits(-1.0), one, 1, 1, 0], "ml.param.out-of-range", 2)
+    refuse("lambda NaN", [1, "H:7ff8000000000000", one, 1, 1, 0], "ml.param.out-of-range", 2)
+    refuse("lambda infinite", [1, "H:7ff0000000000000", one, 1, 1, 0], "ml.param.out-of-range", 2)
+    # a tiny lambda on a single interaction leaves the system singular to working precision: the Cholesky refuses it, and the fit says so
+    refuse("a singular system", [2, "H:" + bits(1e-300), one, 1, 1, 0], "ml.linalg.not-positive-definite", 8)
+    # alpha is read only by the implicit form
+    r = subprocess.run([LOG_BIN] + [str(a) for a in base + [1, one, "H:" + bits(0.0), 1, 1, 0]], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        bad.append("alpha 0 refused by the explicit form: %r" % r.stdout[:80])
+    r = subprocess.run([LOG_BIN] + [str(a) for a in ["als", 1, 1, 1, "L:0", "L:0", "H:" + bits(2.0), 100, 1, one, "H:" + bits(0.0), 1, 1, 0]], capture_output=True, text=True, timeout=60)
+    if "refused ml.param.out-of-range" not in r.stdout:
+        bad.append("alpha 0 accepted by the implicit form: %r" % r.stdout[:80])
+    return bad
+
+
 def main():
     argv = sys.argv[1:]
-    if not any(a in argv for a in ("--controls", "--driver", "--metrics", "--log", "--log-controls")):
+    if not any(a in argv for a in ("--controls", "--driver", "--metrics", "--log", "--log-controls", "--als", "--als-controls")):
         print(__doc__)
         return 2
     rc = 0
@@ -575,6 +847,27 @@ def main():
             if bad > 10:
                 break
         print("oracle_recommend log: %d logs and %d splits, %s" % (n, n, "all agree" if not bad else "%d mismatches" % bad))
+        rc |= 1 if bad else 0
+    if "--als-controls" in argv:
+        bad = als_controls()
+        for b in bad:
+            print("FAIL als control:", b)
+        print("oracle_recommend als controls: %s" % ("all as defined" if not bad else "%d failed" % len(bad)))
+        rc |= 1 if bad else 0
+    if "--als" in argv:
+        at = argv.index("--als") + 1
+        n = int(argv[at]) if len(argv) > at and argv[at].isdigit() else 120
+        bad = 0
+        ran = 0
+        for seed in range(1, n + 1):
+            for msg in (check_als(seed), check_dense(seed)):
+                if msg:
+                    bad += 1
+                    print("MISMATCH", msg)
+            ran += 1
+            if bad > 10:
+                break
+        print("oracle_recommend als: %d fits, %s" % (ran, "all agree bit for bit; the loss never rises; each step equals the dense closed form" if not bad else "%d mismatches" % bad))
         rc |= 1 if bad else 0
     return rc
 
