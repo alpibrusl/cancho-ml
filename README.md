@@ -63,13 +63,13 @@ Most ML tools optimise for how many models they offer. `ml` is built to be predi
 
 ## Two-minute quick start
 
-You need `git`, Rust, `clang` and `python3`, and the machine needs network access for the clones and for `cancho install`, which fetches the pinned modules into `build/deps`: the `cancho-tools` contract package and cancho-table's five numeric modules (`pow5`, `dec`, `flt`, `facc`, `reader`, the stores that [cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) committed), all `[dependencies.*]` of `cancho.toml`, each at one commit. The cancho-table rev is `202b214372a0`; nothing of cancho-table is cloned or copied, and `scripts/check_table_pin.sh` checks that the pin agrees with [docs/reader.md](docs/reader.md) section 1.3, which also says how to move it.
+You need `git`, `clang` and `python3` (no Rust: the compiler is the one written in cancho, built from the committed seed), and the machine needs network access for the clones and for `cancho install`, which fetches the pinned modules into `build/deps`: the `cancho-tools` contract package and cancho-table's five numeric modules (`pow5`, `dec`, `flt`, `facc`, `reader`, the stores that [cancho-table#44](https://github.com/alpibrusl/cancho-table/pull/44) committed), all `[dependencies.*]` of `cancho.toml`, each at one commit. The cancho-table rev is `202b214372a0`; nothing of cancho-table is cloned or copied, and `scripts/check_table_pin.sh` checks that the pin agrees with [docs/reader.md](docs/reader.md) section 1.3, which also says how to move it.
 
 ```sh
 git clone https://github.com/alpibrusl/cancho                           # the compiler
 git clone https://github.com/alpibrusl/cancho-ml && cd cancho-ml
 REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
-(cd ../cancho && git fetch -q origin && git checkout "$REV" && cargo build --release -p cancho)
+(cd ../cancho && git fetch -q origin && git checkout "$REV" && sh scripts/build-standalone.sh --out target/release --rev "$REV")   # the compiler written in cancho, from the committed seed: clang, no Rust
 sh scripts/check_table_pin.sh                                           # the pin agrees with docs/reader.md
 export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
 cancho install && cancho build --bin ml                                 # install fetches the pins (network); builds build/ml
@@ -762,7 +762,7 @@ The `pub` functions of the 23 modules are the interface (`docs/stores_api.txt`);
 ```console
 $ ml introspect          # one JSON document; excerpts, long lines cut
 
-tool        ml 0.1.0   (compiler 0207556b)
+tool        ml 0.1.0   (compiler 51524d20)
 flags       82, for example
   --root        path             resolve FILE, --model-file, --output and --log bene…
   --target      text             fit: the name of the column to predict, as the head…
