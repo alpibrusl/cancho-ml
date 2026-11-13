@@ -48,13 +48,16 @@ disagrees is found by this gate or not at all. A hash of a printed answer includ
 
 ## 3. The golden and how it changes
 
-`docs/bench/xplat_fp.txt` is written by `python3 scripts/xplat_check.py --update` on the Mac (macOS arm64) and reproduced byte for byte on Linux x86-64 and Linux aarch64. It has been re-recorded twice, each time
+`docs/bench/xplat_fp.txt` is written by `python3 scripts/xplat_check.py --update` on the Mac (macOS arm64) and reproduced byte for byte on Linux x86-64 and Linux aarch64. It has been re-recorded three times, each time
 in one commit that says why. The first, for the provenance section of the model file (section 7 of the format, `docs/tracking.md` section 8), changed 64 of the 88 lines (the 22 `model-file` lines, 20 `predict` lines
 and 22 `eval` lines) and left 24 (the 22 `fit-exit` lines and the `predict` lines of the two constant models); `scripts/golden_track.py --xplat OLD_BUILD_DIR` shows that each model file is the old file with the
 section added and each answer the old one without the new members. The second, for the compiler pin (`a4572ea` to `0207556`, commit `d91be6b`), changed the 22 `model-file` lines and nothing else: the model file holds the pin text
 (`docs/cli.md` section 4), so its digest moves with the pin, and the 66 other lines (the exit statuses, the `predict` and `eval` answers) and the list of cases are the golden's. The proof that the compiler change itself moves no
 model byte is the run with the compiler at `0207556` and the pin text `a4572ea` in `generated/ml/built.cho`: it prints the 88 lines of the golden before the second re-record (`docs/serving-http.md` section 10.1). The golden at the compiler `0207556` was reproduced
-by the Mac, by the Linux x86-64 workstation and by the Raspberry Pi 5 (`ml-predict` equal to `ml`), and has not run on the GitHub runners. `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
+by the Mac, by the Linux x86-64 workstation and by the Raspberry Pi 5 (`ml-predict` equal to `ml`), and has not run on the GitHub runners. The third, for the compiler pin (`0207556` to `51524d2`, the compiler written in cancho and built from its seed, not the Rust one), changed 34 `model-file` lines and nothing else (104 of the 138 lines are the golden's). The proof that the
+compiler change moves no model byte is the same as the second's [measured 2026-11-13, Linux x86-64]: `ml` and `ml-predict` built with the compiler at `51524d2` and the pin text `0207556` in `generated/ml/built.cho` and
+`generated/ml-predict/built.cho` print the 138 lines of the golden before the re-record, `xplat_check.py --require-predict` exit 0. The golden at `51524d2` has been reproduced on that one machine only: not on the Mac,
+not on Linux aarch64, not on the GitHub runners. `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
 golden is only written from a clean run; it prints the lines that changed.
 
 The golden changes only when model bytes or printed answers change **on purpose**: in a commit that says why, as `tests/conformance/golden_numeric.json` does. A
