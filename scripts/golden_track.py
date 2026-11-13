@@ -290,6 +290,18 @@ def write():
         print("wrote", name)
     subprocess.run([sys.executable, str(HERE / "golden_describe.py")], check=True)
     print("wrote golden_describe.json")
+    # golden_describe_before_importance.json is golden_describe.json with the member `importance` (the one after `limits`) taken out of each answer, but for the models of kind softmax, which came after the member
+    # (tests/conformance/test_interp_golden.py says it in the same words). It holds the pin text and the digests of the model files, so it moves with the compiler pin, and is written here from the record above.
+    cur = json.loads((ROOT / "tests" / "conformance" / "golden_describe.json").read_text())
+    key, out = ',"importance":', {}
+    for model, text in cur.items():
+        if "softmax" in model:
+            continue
+        cut = text.index(key, text.index(',"limits":'))
+        _, end = json.JSONDecoder().raw_decode(text[cut + len(key):])
+        out[model] = text[:cut] + text[cut + len(key) + end:]
+    (ROOT / "tests" / "conformance" / "golden_describe_before_importance.json").write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
+    print("wrote golden_describe_before_importance.json")
     return 0
 
 

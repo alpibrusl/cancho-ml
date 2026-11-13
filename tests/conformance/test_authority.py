@@ -149,10 +149,16 @@ class AuthorityServe(unittest.TestCase):
         committed = json.loads((ROOT / "manifests" / "ml-serve.authority.json").read_text())
         self.assertEqual(serve_introspect()["authority"], committed)
 
-    def test_the_row_is_exactly_these_labels_and_bounded(self):
+    def test_the_row_is_exactly_these_labels_and_unbounded_in_net_in_alone(self):
         a = serve_introspect()["authority"]
-        self.assertTrue(a["bounded"])
-        self.assertEqual((a["unbounded_by"], a["foreign_symbols"]), ([], []))
+        # Since cancho 51524d2 an unnarrowed net_in("") makes the report unbounded (cancho docs/net-bounds.md section 2.4): the port is named when the server starts, and `narrow` takes a literal bound. Before, the
+        # row read `bounded: true`. What is allowed to stay unbounded is listed, with its reason, in tools.toml [ml-serve], and in no other tool's ceiling.
+        self.assertFalse(a["bounded"])
+        self.assertEqual((a["unbounded_by"], a["foreign_symbols"]), (['net_in("")'], []))
+        ceilings = tomllib.loads((ROOT / "tools.toml").read_text())
+        self.assertEqual(ceilings["ml-serve"]["unbounded"], ['net_in("")'])
+        self.assertTrue(ceilings["ml-serve"]["unbounded_reasons"]["net_in"])
+        self.assertEqual([t for t, c in ceilings.items() if isinstance(c, dict) and "unbounded" in c], ["ml-serve"])
         labels = {label_text(l) for l in a["labels"]}
         self.assertEqual(labels, EXPECTED_SERVE)
         # no write of any file, no directory write, no thread, no exec, no foreign code, no outbound network, no standard input, no environment

@@ -4,7 +4,7 @@
     "title": "ml-serve",
     "version": "0.1.0",
     "summary": "Serve one trained model",
-    "description": "Serves the model file with SHA-256 4e4c510c6fbf62d75da045cdf7423d9bcd7a8d36a0870919964a0489fe7827bd. The record schema is built from the columns of the file."
+    "description": "Serves the model file with SHA-256 9774706f7650f4e5b80e54f4e1b23f862c189ef3049aef8a0366690ffdec37ef. The record schema is built from the columns of the file."
   },
   "paths": {
     "/health": {

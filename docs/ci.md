@@ -60,6 +60,13 @@ compiler change moves no model byte is the same as the second's [measured 2026-1
 not on Linux aarch64, not on the GitHub runners. `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
 golden is only written from a clean run; it prints the lines that changed.
 
+The conformance goldens moved with the same pin, for the same reason (a model file holds the pin text), in the same commit: `golden_constant.json`, `golden_numeric.json`, `golden_planned.json`, `golden_describe.json` and
+`golden_describe_before_importance.json`, by `scripts/golden_track.py --write` (which now also writes the last, the describe record with the member `importance` taken out, as `test_interp_golden.py` says), and the seven
+`docs/serving/*.openapi.json`, by `scripts/gate_serve_openapi.py --update`. The cases are the same (97, 274, 60, 24 and 22); only values moved. **The proof that the compiler moves no model byte [measured 2026-11-13, Linux x86-64]:**
+the four binaries built with the compiler at `51524d2` and the pin text `0207556`, against the goldens as they were, pass `test_model_file`, `test_cat_baseline`, `test_honesty`, `test_interp_golden`, `test_jsonl_cv`,
+`test_planned_baseline` and `test_wire_baseline` (55 tests), and the golden test of `test_describe`. Two of the OpenAPI documents (`classification-boost`, `categorical-boost`) also gained `"importance": {}`: drift
+between the generator and the committed documents that the pin move did not cause. Not reproduced on any other machine.
+
 The golden changes only when model bytes or printed answers change **on purpose**: in a commit that says why, as `tests/conformance/golden_numeric.json` does. A
 red determinism job is not repaired by `--update`; it is first explained (a real platform difference is a bug of the library or the compiler, not of the golden).
 
