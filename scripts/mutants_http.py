@@ -143,6 +143,8 @@ MUTANTS = [
         e(MAIN, "-> [heap, fs_read(\"\"), dir_read, file_read, io_write, err_write, net_in(\"\"), conn_accept, conn_read, conn_write, poll, clock] int {", "-> [heap, fs_read(\"\"), dir_read, file_read, io_write, err_write, net_in(\"\"), net_out(\"\"), conn_accept, conn_read, conn_write, poll, clock] int {")],
       kind="authority"),
     M("x-the-ceiling-lacks-a-reason", "A1", "tools.toml gives no reason for the clock", [e("tools.toml", 'clock = "http.server closes', 'clockX = "http.server closes')], kind="authority"),
+    M("x-unbounded-without-a-reason", "A1", "tools.toml lets ml-serve stay unbounded in net_in and gives no reason", [e("tools.toml", 'net_in = "the operator names the port', 'net_inX = "the operator names the port')], kind="authority"),
+    M("x-unbounded-is-not-allowed", "A1", "tools.toml does not list net_in as a label ml-serve may leave unbounded, while the compiler reports it unbounded", [e("tools.toml", 'unbounded = ["net_in(\\"\\")"]', 'unbounded = []')], kind="authority"),
     M("x-the-ceiling-allows-a-write", "A1", "the ceiling of ml-serve allows file_write while the row has none (the ceiling must be exact)", [e("tools.toml", 'allow = ["args", "clock", "conn_accept"', 'allow = ["args", "clock", "file_write", "conn_accept"')], ["test_authority.AuthorityServe"]),
     M("x-the-manifest-is-stale", "A1", "the committed row has lost poll", [e("manifests/ml-serve.authority.json", '    {\n      "name": "poll",\n      "argument": null,\n      "bounded": true\n    }', '    {\n      "name": "pollx",\n      "argument": null,\n      "bounded": true\n    }')], kind="check"),
     # ------------------------------------------------------------------ W1: the pins

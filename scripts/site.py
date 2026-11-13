@@ -889,8 +889,9 @@ def serve_authority(ctx):
     if status != 0 or manifest != json.loads(out)["authority"]:
         raise Drift("manifests/ml-serve.authority.json is not what `ml-serve introspect` says: run scripts/manifest.py")
     effects = {lab["name"] for lab in manifest["labels"]}
-    if not manifest["bounded"] or manifest["foreign_symbols"] or effects & {"ffi", "net_out", "conc", "exec", "env", "io_read", "file_write", "dir_write", "fs_write"}:
-        raise Drift("the authority of ml-serve has a write, a thread, an exec, a foreign symbol or an outbound connection, or is unbounded")
+    # ml-serve is unbounded in net_in("") alone: the port is named at run time (tools.toml [ml-serve.unbounded_reasons]); any other reason to be unbounded is a drift
+    if manifest["unbounded_by"] not in ([], ['net_in("")']) or manifest["foreign_symbols"] or effects & {"ffi", "net_out", "conc", "exec", "env", "io_read", "file_write", "dir_write", "fs_write"}:
+        raise Drift("the authority of ml-serve has a write, a thread, an exec, a foreign symbol or an outbound connection, or is unbounded in more than net_in")
     return ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in manifest["labels"])
 
 
@@ -911,14 +912,14 @@ def authority_md(ctx):
     m = authority_row(ctx)
     names = ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in m["labels"])
     return ("```console\n# manifests/ml.authority.json, manifests/ml-predict.authority.json, manifests/ml-serve.authority.json and manifests/ml-mcp.authority.json\nml          %s\nml-predict  %s\nml-serve    %s\nml-mcp      %s\n"
-            "# bounded: %s; foreign symbols: none; ffi, net_out: absent from all four; net_in, clock: ml-serve only\n```" % (names, predict_authority(ctx), serve_authority(ctx), mcp_authority(ctx), str(m["bounded"]).lower()))
+            "# bounded: %s for ml, ml-predict and ml-mcp; ml-serve is unbounded in net_in alone (its port is named when it starts); foreign symbols: none; ffi, net_out: absent from all four; net_in, clock: ml-serve only\n```" % (names, predict_authority(ctx), serve_authority(ctx), mcp_authority(ctx), str(m["bounded"]).lower()))
 
 
 def authority(ctx):
     m = authority_row(ctx)
     names = ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in m["labels"])
     return ('<pre class="code" tabindex="0"><span class="c"># manifests/ml.authority.json, manifests/ml-predict.authority.json, manifests/ml-serve.authority.json and manifests/ml-mcp.authority.json</span>\n'
-            'ml          %s\nml-predict  %s\nml-serve    %s\nml-mcp      %s\n<span class="c"># bounded: %s; foreign symbols: none; ffi, net_out: absent from all four; net_in, clock: ml-serve only</span></pre>'
+            'ml          %s\nml-predict  %s\nml-serve    %s\nml-mcp      %s\n<span class="c"># bounded: %s for ml, ml-predict and ml-mcp; ml-serve is unbounded in net_in alone (its port is named when it starts); foreign symbols: none; ffi, net_out: absent from all four; net_in, clock: ml-serve only</span></pre>'
             % (e(names), e(predict_authority(ctx)), e(serve_authority(ctx)), e(mcp_authority(ctx)), str(m["bounded"]).lower()))
 
 

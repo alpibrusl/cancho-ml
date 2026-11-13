@@ -159,7 +159,16 @@ def gate(tool, authority, ceilings):
             if not reasons.get(text.split("(")[0]):
                 problems.append("%s: %s is allowed beyond the base row and has no reason in [%s.reasons] of tools.toml" % (tool, text, tool))
     if not authority.get("bounded", False):
-        problems.append("%s: bounded is false" % tool)
+        # unbounded is allowed only by a label that the ceiling lists as allowed to be unbounded, with a reason (the compiler reports an unnarrowed net_in("") so, cancho docs/net-bounds.md 2.4)
+        listed, why = set(ceiling.get("unbounded", [])), ceiling.get("unbounded_reasons", {})
+        by = authority.get("unbounded_by", [])
+        if not by:
+            problems.append("%s: bounded is false and unbounded_by names nothing" % tool)
+        for u in by:
+            if u not in listed:
+                problems.append("%s: unbounded by %s, which tools.toml does not allow to be left unbounded" % (tool, u))
+            elif not why.get(u.split("(")[0]):
+                problems.append("%s: %s may be left unbounded and has no reason in [%s.unbounded_reasons] of tools.toml" % (tool, u, tool))
     if authority.get("foreign_symbols"):
         problems.append("%s: foreign symbols %s" % (tool, authority["foreign_symbols"]))
     # a server names `net_in` and `clock` in its ceiling, each with a reason (checked above); every other tool still may not hold them

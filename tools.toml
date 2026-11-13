@@ -39,6 +39,12 @@ io_read = "predict reads the CSV from standard input for the operand - or no ope
 [ml-serve]
 schema = "ml"
 allow = ["args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_write", "net_in(\"\")", "poll"]
+# The one label this tool may leave unnarrowed, so that the compiler reports `bounded: false` (a person reviews this line: scripts/manifest.py accepts `bounded: false` only for a label listed here, with its
+# reason below, and for no other tool). Since cancho 51524d2 an unnarrowed `net_in("")` makes the report unbounded (cancho docs/net-bounds.md section 2.4); before, it read `bounded: true`.
+unbounded = ["net_in(\"\")"]
+
+[ml-serve.unbounded_reasons]
+net_in = "the operator names the port when the server starts (`--port`), and `narrow` takes a literal bound, so a port that is a run-time value cannot be a bound. The compiler's own examples that hold the network on purpose (http_fetch_nb, tls_echo, https_hello) pin `bounded: false` for the same reason. What stands in for the bound: the host the server binds is one of two literals in the source (127.0.0.1, or every address with --bind all, which wants a token or --no-token), and the default is proved by the socket test tests/conformance/test_serve_bind.py, not by the row (docs/serving-http.md section 5.4)."
 
 [ml-serve.reasons]
 net_in = "the server listens on one TCP port: tcp_listen(net, port) is net_in(\"\") (the port is a run-time value). The pinned compiler binds every address of the host, so there is no narrower label (docs/serving-http.md section 5.4)."
