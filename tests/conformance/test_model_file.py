@@ -8,9 +8,10 @@ import hashlib
 import os
 import random
 import struct
+import tomllib
 import unittest
 
-from harness import TRAPS, Sandbox, fix_checksum, sections, set_bytes, validate
+from harness import ROOT, TRAPS, Sandbox, fix_checksum, sections, set_bytes, validate
 
 MODEL_RULES = {"ml.model.bad-magic", "ml.model.version", "ml.model.truncated", "ml.model.checksum", "ml.model.malformed"}
 REG = "id,x,y\n1,2.5,10\n2,3.5,20\n3,1.0,30\n4,0.25,41\n"
@@ -152,7 +153,8 @@ class ModelFile(unittest.TestCase):
         self.assertEqual((n, scale), (4, 0))
         self.assertEqual(sq * 10**9 + sr, 101)
         self.assertEqual((m["rows"], m["cols"], m["seed"]), (4, 3, 0))
-        self.assertTrue(m["compiler"].startswith("0207556"))
+        # the file holds the compiler pin of cancho.toml (read from there, so that a move of the pin does not need an edit here)
+        self.assertTrue(m["compiler"].startswith(tomllib.loads((ROOT / "cancho.toml").read_text())["package"]["cancho"][:7]))
 
     def test_layout_classification(self):
         m = parse(self.cls)

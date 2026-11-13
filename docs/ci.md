@@ -66,6 +66,9 @@ The conformance goldens moved with the same pin, for the same reason (a model fi
 the four binaries built with the compiler at `51524d2` and the pin text `0207556`, against the goldens as they were, pass `test_model_file`, `test_cat_baseline`, `test_honesty`, `test_interp_golden`, `test_jsonl_cv`,
 `test_planned_baseline` and `test_wire_baseline` (55 tests), and the golden test of `test_describe`. Two of the OpenAPI documents (`classification-boost`, `categorical-boost`) also gained `"importance": {}`: drift
 between the generator and the committed documents that the pin move did not cause. Not reproduced on any other machine.
+Three tests hold the effect of the pin as a constant in their source, and were edited in the same commit, each with the value the binary prints and each also among the modules of the proof above: `test_honesty` (the digest of the model file
+without its provenance section, which holds the pin text: `984932d1...` to `da70adf1...`), `test_jsonl_cv` (the id of the run record, which is a hash of its inputs including the pin: `519a70c0...` to `03779f1e...`, the value CI
+printed too), and `test_model_file` (it asserted the literal `0207556`; it now reads the pin from `cancho.toml`).
 
 The golden changes only when model bytes or printed answers change **on purpose**: in a commit that says why, as `tests/conformance/golden_numeric.json` does. A
 red determinism job is not repaired by `--update`; it is first explained (a real platform difference is a bug of the library or the compiler, not of the golden).
