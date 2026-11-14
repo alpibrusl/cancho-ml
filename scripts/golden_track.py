@@ -285,7 +285,10 @@ def write():
         # a record is re-recorded, never extended: the cases the generator now finds beyond the ids already in the file belong to later stages and stay out
         old = json.loads(path.read_text())
         new = json.loads(out)
-        out = json.dumps({k: v for k, v in new.items() if k in old}, indent=1, sort_keys=True) + "\n"
+        # a case that does not run on this platform (darwin_only, on Linux) keeps the record that was made where it runs: this generator would otherwise write the answer of the wrong platform
+        from fixtures import CASES
+        foreign = {c["id"] for c in CASES if not harness.runs_here(c)}
+        out = json.dumps({k: (old[k] if k in foreign else v) for k, v in new.items() if k in old}, indent=1, sort_keys=True) + "\n"
         path.write_text(out)
         print("wrote", name)
     subprocess.run([sys.executable, str(HERE / "golden_describe.py")], check=True)

@@ -291,8 +291,8 @@
    "cls.csv": "7974233dcba0a59ae517b789aaf7b78400d2e94fbb76bae4c06dc0614f62b3c1",
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
-  "status": 3,
-  "stdout": "22adca18d1c36b82fcf08662ba4d9bb6ff559d90daa0428c704888594cc0c3c3"
+  "status": 1,
+  "stdout": "a05ea8c7055ddcd51b8426073540cc9cc6bcd50e737134e80342753e83748a7a"
  },
  "io-write-failed-fit": {
   "files": {
@@ -725,7 +725,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 4,
-  "stdout": "765ff18335bc445aa679e9c4458577c64a07d0c043fb46c8681fdfe36314556e"
+  "stdout": "32d0e5c240ee922374c12781583c52767b0bdfd75138f7159e791e7cce065de9"
  },
  "path-symlink-dir": {
   "files": {
@@ -733,7 +733,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 4,
-  "stdout": "dd1c86721e291b3cfa080a530f3e569c46ec4ea4eee2b7d0f3d528196cd8e664"
+  "stdout": "f6469adf67e183c65747c2e1471c0267a5e16ada489f1ac0812589622191a9cc"
  },
  "path-too-long": {
   "files": {
