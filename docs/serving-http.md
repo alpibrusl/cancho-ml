@@ -16,8 +16,8 @@ here, **[open]** not decided.
 * **cancho-web publishes `web` as a store [read, measured].** `alpibrusl/cancho-web` at `5f404a7` has `.cancho-vcs` (the store of `src/web.cho`, published by `scripts/publish.sh`, whose `--check` CI runs);
   `web` imports `schema`, so its `requires/` records `cancho-schema` at `59a70285ff23af63a226bc56ff978feccb4cf8ca` (the `SCHEMA_REV` of its `ci.yml`).
 * **cancho-schema publishes `schema` as a store [read, measured].** `alpibrusl/cancho-schema` has `.cancho-vcs` at `59a7028` (the commit its store was last republished at; later commits do not change it).
-* **`http.server` is a store of the compiler's repository [read, measured].** `alpibrusl/cancho` at `0207556b4029a3ee73196cdfdb48e8efa7e9c519`, the compiler these sources are written for, has
-  `packages/http-server/.cancho-vcs`. Its content differs from the store at `a4572ea` (the module gained streaming request bodies, `Expect: 100-continue` and a byte-fed mode, `docs/http-server.md` sections 11 and 12 of the compiler repository); the functions `ml-serve` calls (`open`, `close`, `wait`, `next`, `head`, `parsed`, `body`, `respond`, `reply_with`, `reply_as`) keep their signatures.
+* **`http.server` is a store of the compiler's repository [read, measured].** `alpibrusl/cancho` at `51524d206283a5fec6e15e26a1b8d2825971e08a`, the compiler these sources are written for, has
+  `packages/http-server/.cancho-vcs`. Its content differs from the store at `a4572ea` (the module gained streaming request bodies, `Expect: 100-continue` and a byte-fed mode, `docs/http-server.md` sections 11 and 12 of the compiler repository); the functions `ml-serve` calls (`open`, `close`, `wait`, `next`, `head`, `parsed`, `body`, `respond`, `reply_with`, `reply_as`) keep their signatures (read at `0207556`; at `51524d2`, the pin since the move to the compiler written in cancho, `cancho build --bin ml-serve` builds with the store, which is all that was checked there).
 * **A project pins the three the way it pins `cancho-table` and `cancho-tools` [measured].** A scratch project outside this repository with the three `[dependencies.*]` blocks below ran `cancho install`
   (`installed schema (59a70285ff23): 1 file(s)`, `installed server (0207556b4029): 1 file(s)`, `installed web (5f404a777018): 2 file(s)`), imported `http.server`, `schema` and `web` and
   built with compiler `0207556` (`cancho build --bin ml`, `--bin ml-predict` and `--bin ml-serve` all build; `web` and `schema` need no change). **No upstream change is needed and nothing is copied**; there is no LOCAL-DEV arrangement.
@@ -37,7 +37,7 @@ path = ".cancho-vcs"
 
 [dependencies.server]
 git = "https://github.com/alpibrusl/cancho"
-rev = "0207556b4029a3ee73196cdfdb48e8efa7e9c519"
+rev = "51524d206283a5fec6e15e26a1b8d2825971e08a"
 path = "packages/http-server/.cancho-vcs"
 ```
 
@@ -50,10 +50,10 @@ cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f4`
 
 cancho-schema rev: `59a70285ff23af63a226bc56ff978feccb4cf8ca` (the `SCHEMA_REV` `5f404a7`'s `ci.yml` names: `SCHEMA_REV` `59a70285ff23af63a226bc56ff978feccb4cf8ca`)
 
-cancho http-server rev: `0207556b4029a3ee73196cdfdb48e8efa7e9c519`
+cancho http-server rev: `51524d206283a5fec6e15e26a1b8d2825971e08a`
 
-Only `ml-serve` imports these modules; `cancho build --bin ml` and `--bin ml-predict` are not changed by them (gate W2 compares the bytes of the two binaries built before and after the three blocks
-are added; the other changes of this stage that reach their sources are listed in section 10).
+Only `ml-serve` imports these modules; `cancho build --bin ml` and `--bin ml-predict` are not changed by them (gate W2 compares the programs of the two binaries built before and after the three blocks
+are added: every section but the symbol and string tables, and the program headers; **[corrected 2026-11-13]** it compared the whole file, which no longer holds with the compiler at `51524d2`, see `docs/ci.md` section 10; the other changes of this stage that reach their sources are listed in section 10).
 
 ### 1.3 What the pinned libraries do, read before the design
 
@@ -348,7 +348,7 @@ The model file is read once at start (`fsio.read_whole`, below `--root`, bounded
 | id | gate | test or script | mutants that must be killed |
 |---|---|---|---|
 | W1 | the three dependencies are pinned, consistent and not copied | `scripts/check_web_pin.py` | a rev edited in one block; a block removed; a copy of `web` under `lib/`; a sixth store of cancho-web |
-| W2 | the three blocks do not change the bytes of `ml` and `ml-predict` | `scripts/check_web_pin.py --bins` | a changed byte |
+| W2 | the three blocks do not change the program of `ml` and `ml-predict` (every section but the symbol and string tables, and the program headers; **[corrected 2026-11-13]** the whole file before) | `scripts/check_web_pin.py --bins` | a changed byte of the program |
 | S1 | the byte-equality of 4.1 over the 19-model corpus | `tests/conformance/test_serve_bytes.py` | number formatting, column order, null rendering, `dec` padding, category quoting |
 | S2 | end-to-end over real sockets: readiness, every endpoint, every refusal with its status and `problem+json` body, keep-alive, pipelining (5 requests in one write, answers in order), a request split across 1-byte writes, a body larger than the limit (413), wrong content type (415), invalid JSON (400), JSON with duplicate keys, NaN, Infinity, 1e999, nesting of 100,000, a BOM, invalid UTF-8; unknown, missing and extra columns; unseen categories (`enum` and no `enum`); null; one record, a batch at the limit and over | `tests/conformance/test_serve.py` | a status mapped to another; a refusal as 200; the `rule` field dropped; the row limit off by one |
 | S3 | the JSON number differential: the cell the server renders for a number equals Python's `Decimal`/`float` of the same text (int exact or refused, dec exact or refused, float correctly rounded or refused) over generated and adversarial numbers: 17-digit mantissas, subnormals, halfway cases, exponents, `-0`, `1e999` | `tests/conformance/test_serve_json.py` | the rounding of a float taken for an int; an exponent ignored; a dec scale off by one |
@@ -373,8 +373,8 @@ Machines: the Mac (arm64, Apple M4 Max, 16 cores, macOS 26.2, Python 3.14.5), `g
 
 | gate | result | script |
 |---|---|---|
-| W1 | three dependencies pinned (`web` 5f404a7, `schema` 59a7028, `server` 0207556), none copied; the `server` store is the compiler repository at the compiler pin | `scripts/check_web_pin.py` |
-| W2 | `ml` and `ml-predict` built from a copy without the three blocks and without the `ml-serve` bin are the bytes of the ones built with them; a flipped byte is refused | `scripts/check_web_pin.py --bins` |
+| W1 | three dependencies pinned (`web` 5f404a7, `schema` 59a7028, `server` 51524d2), none copied; the `server` store is the compiler repository at the compiler pin | `scripts/check_web_pin.py` |
+| W2 | `ml` and `ml-predict` built from a copy without the three blocks and without the `ml-serve` bin are the same program as the ones built with them (every section but the symbol and string tables, the program headers; **[corrected 2026-11-13]**: with the compiler at `51524d2` the files themselves differ, in symbol names only, measured in `docs/ci.md` section 10); a flipped byte of the program is refused, and so is a synthetic file with one byte of code, a section size, a flag, an extra section or a program header changed | `scripts/check_web_pin.py --bins` |
 | S1 | 19 models x their inputs: 118 model/input pairs, 4,962 rows and 7,668 values compared as text, one request each and the whole input as a batch; 29 rows refused for a category the model lists in full, and the command line agrees on each (it accepts, or refuses with `ml.input.unknown-category` under `unknown=refuse`); 20 rows not sendable (an empty cell for a model that takes none) | `tests/conformance/test_serve_bytes.py` |
 | S2 | 46 tests: the end-to-end tests over real sockets (every endpoint, every refusal, keep-alive, pipelined requests, a request in one-byte writes, a chunked body, the token, the refusals at start, the log) and the status table (S9); the authority tests are 18 in their own module | `tests/conformance/test_serve.py` |
 | S10 | 10 tests over real sockets, none skipped, on the Mac (non-loopback address 192.168.1.165) and on gram (192.168.1.82): the default and `--bind loopback` accept on 127.0.0.1 and are refused (`ConnectionRefusedError`) on the non-loopback address; the token is enforced on loopback when given; `--bind all` without a token is `serve.no-token`, with `--no-token` `args.conflict`, a bad value `args.bad-value`; `--bind all --token-file` answers on both addresses and enforces the token on both; `--bind` is in `introspect` with the default `loopback` | `tests/conformance/test_serve_bind.py` |

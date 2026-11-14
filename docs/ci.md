@@ -48,14 +48,27 @@ disagrees is found by this gate or not at all. A hash of a printed answer includ
 
 ## 3. The golden and how it changes
 
-`docs/bench/xplat_fp.txt` is written by `python3 scripts/xplat_check.py --update` on the Mac (macOS arm64) and reproduced byte for byte on Linux x86-64 and Linux aarch64. It has been re-recorded twice, each time
+`docs/bench/xplat_fp.txt` is written by `python3 scripts/xplat_check.py --update` on the Mac (macOS arm64) and reproduced byte for byte on Linux x86-64 and Linux aarch64. It has been re-recorded three times, each time
 in one commit that says why. The first, for the provenance section of the model file (section 7 of the format, `docs/tracking.md` section 8), changed 64 of the 88 lines (the 22 `model-file` lines, 20 `predict` lines
 and 22 `eval` lines) and left 24 (the 22 `fit-exit` lines and the `predict` lines of the two constant models); `scripts/golden_track.py --xplat OLD_BUILD_DIR` shows that each model file is the old file with the
 section added and each answer the old one without the new members. The second, for the compiler pin (`a4572ea` to `0207556`, commit `d91be6b`), changed the 22 `model-file` lines and nothing else: the model file holds the pin text
 (`docs/cli.md` section 4), so its digest moves with the pin, and the 66 other lines (the exit statuses, the `predict` and `eval` answers) and the list of cases are the golden's. The proof that the compiler change itself moves no
 model byte is the run with the compiler at `0207556` and the pin text `a4572ea` in `generated/ml/built.cho`: it prints the 88 lines of the golden before the second re-record (`docs/serving-http.md` section 10.1). The golden at the compiler `0207556` was reproduced
-by the Mac, by the Linux x86-64 workstation and by the Raspberry Pi 5 (`ml-predict` equal to `ml`), and has not run on the GitHub runners. `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
+by the Mac, by the Linux x86-64 workstation and by the Raspberry Pi 5 (`ml-predict` equal to `ml`), and has not run on the GitHub runners. The third, for the compiler pin (`0207556` to `51524d2`, the compiler written in cancho and built from its seed, not the Rust one), changed 34 `model-file` lines and nothing else (104 of the 138 lines are the golden's). The proof that the
+compiler change moves no model byte is the same as the second's [measured 2026-11-13, Linux x86-64]: `ml` and `ml-predict` built with the compiler at `51524d2` and the pin text `0207556` in `generated/ml/built.cho` and
+`generated/ml-predict/built.cho` print the 138 lines of the golden before the re-record, `xplat_check.py --require-predict` exit 0. The golden at `51524d2` has been reproduced on that one machine only: not on the Mac,
+not on Linux aarch64, not on the GitHub runners. `--update` refuses to write when the run has any fault (a failed fit, a thread difference), so a
 golden is only written from a clean run; it prints the lines that changed.
+
+The conformance goldens moved with the same pin, for the same reason (a model file holds the pin text), in the same commit: `golden_constant.json`, `golden_numeric.json`, `golden_planned.json`, `golden_describe.json` and
+`golden_describe_before_importance.json`, by `scripts/golden_track.py --write` (which now also writes the last, the describe record with the member `importance` taken out, as `test_interp_golden.py` says), and the seven
+`docs/serving/*.openapi.json`, by `scripts/gate_serve_openapi.py --update`. The cases are the same (97, 274, 60, 24 and 22); only values moved. **The proof that the compiler moves no model byte [measured 2026-11-13, Linux x86-64]:**
+the four binaries built with the compiler at `51524d2` and the pin text `0207556`, against the goldens as they were, pass `test_model_file`, `test_cat_baseline`, `test_honesty`, `test_interp_golden`, `test_jsonl_cv`,
+`test_planned_baseline` and `test_wire_baseline` (55 tests), and the golden test of `test_describe`. Two of the OpenAPI documents (`classification-boost`, `categorical-boost`) also gained `"importance": {}`: drift
+between the generator and the committed documents that the pin move did not cause. Not reproduced on any other machine.
+Three tests hold the effect of the pin as a constant in their source, and were edited in the same commit, each with the value the binary prints and each also among the modules of the proof above: `test_honesty` (the digest of the model file
+without its provenance section, which holds the pin text: `984932d1...` to `da70adf1...`), `test_jsonl_cv` (the id of the run record, which is a hash of its inputs including the pin: `519a70c0...` to `03779f1e...`, the value CI
+printed too), and `test_model_file` (it asserted the literal `0207556`; it now reads the pin from `cancho.toml`).
 
 The golden changes only when model bytes or printed answers change **on purpose**: in a commit that says why, as `tests/conformance/golden_numeric.json` does. A
 red determinism job is not repaired by `--update`; it is first explained (a real platform difference is a bug of the library or the compiler, not of the golden).
@@ -215,6 +228,7 @@ Findings of the Linux run (each fixed or marked in this branch):
 1. Three conformance cases have a platform-specific answer (section 5.1).
 2. `check_web_pin.py --bins` compared two binaries byte for byte; on Linux they differ by the compiler's process id in the symbol table (section 10), and by one byte of table shift when the id has another width.
    The check zeroes the digits, builds again until the widths agree, and shows by a self-test that nothing else is hidden.
+   **[corrected 2026-11-13]** With the compiler at cancho `51524d2` that is no longer enough, and the check compares the program instead of the file: see section 10.
 3. The data of the tree gates, regenerated by `scripts/spikes/gen.py` with the same numpy (2.4.6) on Linux x86-64, has the same `x.bin` for 1,000 rows and another `x.bin` for 100,000 and 1,000,000 rows than the data
    on the Mac (`y.bin` equal), most likely numpy's normal generator calling the platform's `libm`. The gates compare `ml` with an oracle on the same file, and `scripts/check.sh` passed on both; but a SHA-256 of
    those `x.bin` files in `docs/spikes.md` is the Mac's.
@@ -235,6 +249,12 @@ the SHA-256 files are for a download check, not provenance. The tag is not check
 * The runners' images change without a commit here; a red run after no commit is the first thing to read in the platform lines of the log.
 * A compiler cache hit skips the compiler build: the cache key is the revision, the operating system and the architecture, so a compiler built by another Rust than the one
   recorded in the log could be restored only if the key were reused; the Rust channel is not part of the key because it is a function of the revision.
+* **[corrected 2026-11-13] A build with three more modules in its package set is not the same file, and is the same program.** The compiler at cancho `51524d2` numbers the symbols `lexs_<n>` over every
+  module of a build, so adding the `web`, `schema` and `server` stores renames (and so re-orders) the same functions. Measured on Linux x86-64, `ml` built with the three blocks against `ml` built
+  without them and without the `ml-serve` bin: 2,252,128 bytes each; 12,086 bytes of `.symtab` and 25,106 of `.strtab` differ, in 2,017 `lexs_<n>` names; **`.text` (1,777,376 bytes), `.rodata`, `.eh_frame`,
+  the dynamic sections, the data and the program headers are byte for byte the same.** Gate W2 therefore compares the program: every section but `.symtab` and `.strtab`, and the program headers (ELF), or
+  every section outside `__LINKEDIT` (Mach-O). Its self-test builds synthetic ELF and Mach-O files and shows that other symbol names pass and a byte of code, a section size or flag, an extra section, a
+  program header or a Mach-O section fail. **Not measured:** a real Mach-O binary (the Mach-O reading was written from the format and exercised only on a synthetic file), and the aarch64 Linux build.
 * A built binary is not bit-reproducible on Linux: three builds of `ml-predict` from one tree with one compiler gave three SHA-256 values [measured, Linux x86-64, 3 builds], and the bytes
   that differ are the file name `cancho-llvm-<pid>-0.ll` in the symbol table, which holds the compiler's process id. Two builds on the Mac gave one value [measured, 2 builds]. The checksums of a release name the
   files of one run and are not a build-reproducibility claim; the model bytes and the answers, which the gate fingerprints, do not depend on it.
