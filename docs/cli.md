@@ -312,7 +312,7 @@ How the gates were checked to be able to fail, and what they found:
 
 ## 8. What the pinned contract package says that is wrong or too narrow for `ml`
 
-`ml` uses `toolbox.describe` as pinned (rev `8dab9176`), so `introspect` and `skill` repeat some generic sentences. They are the
+`ml` uses `toolbox.describe` as pinned (rev `6085e63a`), so `introspect` and `skill` repeat some generic sentences. They are the
 package's, not this repository's claims, and are listed here so that nobody reads them as measured for `ml`. Each is an upstream
 issue for cancho-tools, not worked around by copying the module.
 
