@@ -11,9 +11,9 @@ text of `ml.plan.unknown-step` lists the verbs ("not impute, scale, encode, buck
 make `introspect` and the refusal say something false. The standard output of that one case is therefore compared with the hash of the new text, and everything
 else about it (status, files) with the record.
 
-FIVE MORE, when the cancho-tools pin moved from 8dab917 to 6085e63: `toolbox.cli` and `toolbox.fail` now give `args.missing-value`, `args.bad-value` and
+SIX MORE, when the cancho-tools pin moved from 8dab917 to 6085e63: `toolbox.cli` and `toolbox.fail` now give `args.missing-value`, `args.bad-value` and
 `io.not-a-directory` a hint where they gave `"hint":null` (`args-missing-value`, `args-bad-value`, `args-bad-value-cat-empty`, `args-bad-value-init`,
-`io-not-a-directory`). The hint is the only change in each text; the exit status and the files are the record's.
+`io-not-a-directory`, and on macOS `io-read-failed`, which takes the default hint of `toolbox.fail.io_error`). The hint is the only change in each text; the exit status and the files are the record's.
 """
 
 import hashlib
@@ -49,6 +49,8 @@ CHANGED = {
     "io-not-a-directory": "82578073947d68679d5fe53f6b6c6a1bc40a5b178aa951716fc018a0130410a5",
     "args-bad-value-cat-empty": "e2755d744dd8b486394d6496b700e6e0dcb48d457b4900772b99eeb2b9cf9b3c",
     "args-bad-value-init": "383164819cef1752d14f3d73db8db67c12a221f831906486f47561cbb442be25",
+    # macOS only (darwin_only): io.read-failed takes the default hint of toolbox.fail.io_error, which was empty at 8dab917; the hash is the one the macOS job printed
+    "io-read-failed": "339cc1aba2044b39985e17d66af5152460f946c1b3aadfe1e02162be7a0553a4",
 }
 # the file of that case that changed with it: the plan the fixture writes
 CHANGED_FILES = {"ml-plan-model-not-built": {"p.txt": hashlib.sha256(b"model kind=constant task=regression\n").hexdigest()}}
@@ -79,7 +81,7 @@ class NumericBaseline(unittest.TestCase):
         """the record of the deliberate re-record of M22 (docs/tracking.md section 8) holds the hash of the text these cases print now: the exceptions equal it"""
         for k, new in CHANGED.items():
             self.assertEqual(GOLDEN[k]["stdout"], new)
-        self.assertEqual(sorted(CHANGED), ["args-bad-value", "args-bad-value-cat-empty", "args-bad-value-init", "args-conflict-step-needs-a-model", "args-missing-value", "io-not-a-directory", "ml-limit-depth", "ml-limit-nodes-a-tree-that-needs-more", "ml-limit-nodes-of-a-forest", "ml-limit-nodes-over-the-ceiling", "ml-plan-model-not-built", "ml-plan-unknown-step"])
+        self.assertEqual(sorted(CHANGED), ["args-bad-value", "args-bad-value-cat-empty", "args-bad-value-init", "args-conflict-step-needs-a-model", "args-missing-value", "io-not-a-directory", "io-read-failed", "ml-limit-depth", "ml-limit-nodes-a-tree-that-needs-more", "ml-limit-nodes-of-a-forest", "ml-limit-nodes-over-the-ceiling", "ml-plan-model-not-built", "ml-plan-unknown-step"])
 
     def test_the_record_holds_the_wired_models(self):
         wired = [k for k in GOLDEN if "linear" in k or "logistic" in k or "pipeline" in k or "plan" in k or "step" in k]

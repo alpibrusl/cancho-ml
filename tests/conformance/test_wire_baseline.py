@@ -24,6 +24,8 @@ CHANGED = {
     "args-missing-value": "a9ca77ca9309b30fc309b2d41f38193c6710753bc7a116ec7917e5b0adac8dac",
     "args-bad-value": "4cc8724b6346a1aabdf52c08c9830131bc25dd10ec7249cac97859f360ccffa5",
     "io-not-a-directory": "82578073947d68679d5fe53f6b6c6a1bc40a5b178aa951716fc018a0130410a5",
+    # macOS only (darwin_only): the default hint of toolbox.fail.io_error, empty at 8dab917; the hash is the one the macOS job printed
+    "io-read-failed": "339cc1aba2044b39985e17d66af5152460f946c1b3aadfe1e02162be7a0553a4",
 }
 
 
