@@ -5,7 +5,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 2,
-  "stdout": "dce2e4e688cca392003d5ac814d634fac81f1e5d3041491040168071b17eb1a7"
+  "stdout": "4cc8724b6346a1aabdf52c08c9830131bc25dd10ec7249cac97859f360ccffa5"
  },
  "args-bad-value-cat-empty": {
   "files": {
@@ -14,7 +14,7 @@
    "txt.csv": "778634514cb47b066a1fb1c41914461d1e46594da7deaec75b5119a612403f93"
   },
   "status": 2,
-  "stdout": "39a352c1662ebd3f2bfbc0da81d681561ee672998b4cd21bed8f23fd4615ed39"
+  "stdout": "e2755d744dd8b486394d6496b700e6e0dcb48d457b4900772b99eeb2b9cf9b3c"
  },
  "args-bad-value-init": {
   "files": {
@@ -25,7 +25,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 2,
-  "stdout": "243e24e548f0f9e930a914eedc97ecc90c7c0f9fe0b883b1a0450cd88368cfe4"
+  "stdout": "383164819cef1752d14f3d73db8db67c12a221f831906486f47561cbb442be25"
  },
  "args-bad-value-l2": {
   "files": {
@@ -480,7 +480,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 2,
-  "stdout": "a877b701e80ece6cc9ffa4e51f035677d320e74c377f70a06bd13633ec2ec1a2"
+  "stdout": "a9ca77ca9309b30fc309b2d41f38193c6710753bc7a116ec7917e5b0adac8dac"
  },
  "args-missing-verb": {
   "files": {
@@ -1244,7 +1244,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 3,
-  "stdout": "ecf68d93e840b91561800eaee6637f935b8213e3ffb384da4a2bf2a08a529332"
+  "stdout": "82578073947d68679d5fe53f6b6c6a1bc40a5b178aa951716fc018a0130410a5"
  },
  "io-not-found": {
   "files": {
@@ -1268,7 +1268,7 @@
    "reg.csv": "477a5c944e3924a1827d1607fa70c9fd9ce9d04ff7caa137dc32c3cdcb8284cd"
   },
   "status": 1,
-  "stdout": "a05ea8c7055ddcd51b8426073540cc9cc6bcd50e737134e80342753e83748a7a"
+  "stdout": "339cc1aba2044b39985e17d66af5152460f946c1b3aadfe1e02162be7a0553a4"
  },
  "io-write-failed-fit": {
   "files": {

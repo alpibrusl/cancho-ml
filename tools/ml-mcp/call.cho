@@ -248,7 +248,7 @@ fn expected_of(kind: &static [byte]) -> [] &static [byte] {
 fn bad_value[&h, &v](heap: &!h Heap, errs: fail.Errors, flag: &static [byte], value: &v [byte], kind: &static [byte]) -> [heap] fail.Errors {
     var shown = buffer.append(heap, buffer.empty(heap, 16), "--");
     shown = buffer.append(heap, shown, flag);
-    var w = fail.open(heap, "args.bad-value", "this flag's value is not of the kind it takes", "");
+    var w = fail.open(heap, "args.bad-value", "this flag's value is not of the kind it takes", "give the flag a value of the kind detail.expected names");
     w = fail.no_repair(heap, w);
     w = fail.detail_open(heap, w);
     w = json.put_key(heap, w, "flag");
