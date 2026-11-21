@@ -17,6 +17,15 @@ import golden_constant  # noqa: E402
 
 GOLDEN = json.loads((pathlib.Path(__file__).parent / "golden_constant.json").read_text())
 
+# the cases whose standard output changed on purpose, with the SHA-256 of the new text; the golden file is never rewritten (see the docstring).
+# The cancho-tools pin moved from 8dab917 to 6085e63: a refusal of toolbox.cli or toolbox.fail that had `"hint":null` now carries the hint the contract
+# gives it. The exit status and the written files are the baseline's.
+CHANGED = {
+    "args-missing-value": "a9ca77ca9309b30fc309b2d41f38193c6710753bc7a116ec7917e5b0adac8dac",
+    "args-bad-value": "4cc8724b6346a1aabdf52c08c9830131bc25dd10ec7249cac97859f360ccffa5",
+    "io-not-a-directory": "82578073947d68679d5fe53f6b6c6a1bc40a5b178aa951716fc018a0130410a5",
+}
+
 
 class Baseline(unittest.TestCase):
     def test_the_golden_record_covers_the_constant_fixtures(self):
@@ -30,7 +39,9 @@ class Baseline(unittest.TestCase):
             if not runs_here(c):
                 continue
             got = golden_constant.record(c)
-            want = GOLDEN[c["id"]]
+            want = dict(GOLDEN[c["id"]])
+            if c["id"] in CHANGED:
+                want["stdout"] = CHANGED[c["id"]]
             if got != want:
                 failures.append((c["id"], {k: (want[k], got[k]) for k in want if want[k] != got[k]}))
         self.assertEqual(failures, [], "the constant model changed")

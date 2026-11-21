@@ -316,6 +316,8 @@ How the gates were checked to be able to fail, and what they found:
 package's, not this repository's claims, and are listed here so that nobody reads them as measured for `ml`. Each is an upstream
 issue for cancho-tools, not worked around by copying the module.
 
+Measured when the pin moved from `8dab917` to `6085e63a`: five refusal texts of the numeric record gained a hint where they had `"hint":null` (`args.missing-value`, `args.bad-value`, `io.not-a-directory`); `tests/conformance/test_cat_baseline.py` and `test_wire_baseline.py` pin the new hashes, the exit status and the written files are the baseline's.
+
 | where | the package prints | for `ml` |
 |---|---|---|
 | `introspect.guarantees.concurrency`, `skill` | "read-only: it never writes, so any number may run at once", or, with `atomic`, "locked: of writers racing ... exactly one wins" | `fit` writes. Its write is built to be atomic for a reader (temporary, sync, rename) but there is no lock and the temporary has a fixed name, so two writers racing on one output can fail one of them; **neither the atomicity nor the race was tested**, so `atomic` is not claimed |
