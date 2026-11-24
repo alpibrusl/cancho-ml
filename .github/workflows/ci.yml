@@ -1,5 +1,5 @@
 # What this workflow runs, on which machines and what it does not show: docs/ci.md. Third-party actions are pinned by full commit SHA
-# (scripts/check_workflow.py fails on any other form), the compiler revision is read from cancho.toml and written nowhere else, and
+# (scripts/check_workflow.py fails on any other form), the compiler release is read from cancho.toml and written nowhere else, and
 # the only write permission is the `release` job's.
 name: ci
 
@@ -22,7 +22,7 @@ concurrency:
 defaults:
   run:
     shell: bash
-    working-directory: ml # the checkout of this repository; the compiler is built next to it, in ../cancho
+    working-directory: ml # the checkout of this repository; the compiler is installed prebuilt into ~/.local/bin
 
 jobs:
   # The fast gates on Linux x86-64 (Ubuntu 24.04 and 26.04), Linux aarch64 (Ubuntu 24.04) and macOS arm64: build, the determinism gate (each
@@ -54,49 +54,16 @@ jobs:
           uname -a
           if command -v sw_vers >/dev/null; then sw_vers; fi
           cc --version | head -1 || true
-          rustc --version || true
           python3 --version
 
-      - name: The compiler revision, read from cancho.toml
-        id: pins
+      - name: The compiler release, read from cancho.toml, installed prebuilt
         run: |
-          rev=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
-          test "${#rev}" -eq 40 || { echo "cancho.toml has no 40-digit compiler revision" >&2; exit 1; }
-          echo "rev=$rev" >> "$GITHUB_OUTPUT"
-          echo "compiler revision $rev"
-
-      - name: Cache the compiler
-        id: compiler
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: cancho/target/release/cancho
-          key: cancho-compiler-${{ steps.pins.outputs.rev }}-${{ matrix.label }}
-
-      - name: Check out the compiler
-        if: steps.compiler.outputs.cache-hit != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: alpibrusl/cancho
-          ref: ${{ steps.pins.outputs.rev }}
-          path: cancho
-          persist-credentials: false
-
-      - name: Build the compiler
-        if: steps.compiler.outputs.cache-hit != 'true'
-        working-directory: cancho
-        run: |
-          channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
-          test -n "$channel"
-          rustup toolchain install "$channel" --profile minimal
-          export RUSTUP_TOOLCHAIN="$channel"
-          cargo --version
-          time cargo build --release -p cancho
-
-      - name: The compiler runs
-        run: |
-          echo "CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho" >> "$GITHUB_ENV"
-          echo "$GITHUB_WORKSPACE/cancho/target/release" >> "$GITHUB_PATH"
-          "$GITHUB_WORKSPACE/cancho/target/release/cancho" --version
+          pin=$(sed -n 's/^cancho *= *"\([0-9a-f.]*\)".*/\1/p' cancho.toml)
+          test -n "$pin" || { echo "cancho.toml has no compiler pin" >&2; exit 1; }
+          curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh -s "$pin"
+          echo "CANCHO=$HOME/.local/bin/cancho" >> "$GITHUB_ENV"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/cancho" --version
 
       - name: Python and the packages of the fast gates
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -232,44 +199,14 @@ jobs:
           cc --version | head -1 || true
           python3 --version
 
-      - name: The compiler revision, read from cancho.toml
-        id: pins
+      - name: The compiler release, read from cancho.toml, installed prebuilt
         run: |
-          rev=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
-          test "${#rev}" -eq 40 || { echo "cancho.toml has no 40-digit compiler revision" >&2; exit 1; }
-          echo "rev=$rev" >> "$GITHUB_OUTPUT"
-
-      - name: Cache the compiler
-        id: compiler
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: cancho/target/release/cancho
-          key: cancho-compiler-${{ steps.pins.outputs.rev }}-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Check out the compiler
-        if: steps.compiler.outputs.cache-hit != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: alpibrusl/cancho
-          ref: ${{ steps.pins.outputs.rev }}
-          path: cancho
-          persist-credentials: false
-
-      - name: Build the compiler
-        if: steps.compiler.outputs.cache-hit != 'true'
-        working-directory: cancho
-        run: |
-          channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
-          test -n "$channel"
-          rustup toolchain install "$channel" --profile minimal
-          export RUSTUP_TOOLCHAIN="$channel"
-          cargo build --release -p cancho
-
-      - name: The compiler runs
-        run: |
-          echo "CANCHO=$GITHUB_WORKSPACE/cancho/target/release/cancho" >> "$GITHUB_ENV"
-          echo "$GITHUB_WORKSPACE/cancho/target/release" >> "$GITHUB_PATH"
-          "$GITHUB_WORKSPACE/cancho/target/release/cancho" --version
+          pin=$(sed -n 's/^cancho *= *"\([0-9a-f.]*\)".*/\1/p' cancho.toml)
+          test -n "$pin" || { echo "cancho.toml has no compiler pin" >&2; exit 1; }
+          curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh -s "$pin"
+          echo "CANCHO=$HOME/.local/bin/cancho" >> "$GITHUB_ENV"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/cancho" --version
 
       - name: Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

@@ -77,12 +77,11 @@ and its Xcode, clang and CPU generation may too. That the golden holds on both i
 
 Pins, none duplicated:
 
-* **the compiler revision** is read from `cancho.toml` (`cancho = "..."` under `[package]`) by a step with `sed`, as the README does. The workflow holds no copy. The
-  compiler is built from that revision with `cargo build --release -p cancho`, with the Rust channel read from the compiler's own `rust-toolchain.toml`; the binary is
-  cached under a key made of the revision, the operating system and the architecture.
+* **the compiler release** is read from `cancho.toml` (`cancho = "..."` under `[package]`) by a step with `sed`, as the README does. The workflow holds no copy. The
+  compiler is installed prebuilt with `scripts/install.sh` of the compiler repository, which downloads that release.
 * **the packages** (`cancho-tools`, `cancho-table`, `cancho-web`, `cancho-schema`, the compiler's `http.server`) are the `[dependencies.*]` of `cancho.toml`, fetched by
   `cancho install` at their pinned commits.
-* **third-party actions** are pinned by full commit SHA with the release tag in a comment: `actions/checkout` v7.0.1, `actions/cache` v6.1.0,
+* **third-party actions** are pinned by full commit SHA with the release tag in a comment: `actions/checkout` v7.0.1,
   `actions/setup-python` v7.0.0, `actions/upload-artifact` v7.0.2, `actions/download-artifact` v8.0.2. `scripts/check_workflow.py` fails on any `uses:` that is not a 40-hex SHA.
 * **Python** is 3.14 (the Mac has 3.14.5, the Linux machine of the measurements 3.14.4) and its packages are `ci/requirements-fast.txt` and `ci/requirements-full.txt`: exact
   versions, as on the maintainer's machine.
@@ -100,8 +99,8 @@ no `pull_request_target`.
 
 The fast gates (`build-test`, in this order; each can fail, and the first failure ends the job):
 
-1. platform and tool versions printed; the compiler revision derived from `cancho.toml`;
-2. the compiler: cache restore, and on a miss clone at the revision and `cargo build --release -p cancho`. The key holds the revision, so a pin that has not run yet has no cache entry: its first run builds the compiler uncached on each of the four runners, and the later runs restore it;
+1. platform and tool versions printed; the compiler release derived from `cancho.toml`;
+2. the compiler: the release `cancho.toml` names, installed prebuilt by `scripts/install.sh` of the compiler repository (no build, no cache);
 3. `scripts/check_table_pin.sh`, `scripts/check_web_pin.py` (the pins agree with the documents);
 4. `cancho install`, `cancho fmt --check lib tests tools`;
 5. `cancho build --bin ml`, `--bin ml-predict`, `--bin ml-serve`, `--bin ml-mcp`, then `scripts/check_bins.py` and `scripts/check_web_pin.py --bins` (the four are built from the same sources);
