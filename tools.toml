@@ -2,7 +2,7 @@
 # file; the authority is whatever `cancho authority` derives from the source (manifests/<tool>.authority.json, embedded in the
 # binary and printed by `ml introspect`), and scripts/manifest.py --check fails when a derived label is not allowed here.
 # The derived set may be smaller than the ceiling, never larger. No tool may hold ffi, net_out, net_in or clock; `bounded`
-# must be true.
+# must be true, except for the labels a ceiling names in `unbounded_by` (cancho 0.1.1 reports a network label held unnarrowed as unbounded).
 #
 # `ml` reads the files named on its command line (file_read, fs_read(""): a path from the command line is checked at run time,
 # so the row cannot name a directory), writes the model and the log it is told to beneath a directory it opened (dir_write and
@@ -39,6 +39,9 @@ io_read = "predict reads the CSV from standard input for the operand - or no ope
 [ml-serve]
 schema = "ml"
 allow = ["args", "clock", "conn_accept", "conn_read", "conn_write", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_write", "net_in(\"\")", "poll"]
+# cancho 0.1.1 reports `bounded: false` for a program that holds the network unnarrowed; this is the truthful report, not a defect of the manifest.
+# manifest.py requires exactly these labels in `unbounded_by`. Narrowing it is tracked in a GitHub issue ("Narrow the network authority").
+unbounded_by = ["net_in(\"\")"]
 
 [ml-serve.reasons]
 net_in = "the server listens on one TCP port: tcp_listen(net, port) is net_in(\"\") (the port is a run-time value). The pinned compiler binds every address of the host, so there is no narrower label (docs/serving-http.md section 5.4)."
