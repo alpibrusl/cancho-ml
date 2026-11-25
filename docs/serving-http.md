@@ -43,7 +43,7 @@ path = "packages/http-server/.cancho-vcs"
 
 `web` records its requirement on `schema` at `59a7028`, and a consumer must also name `schema` in its own `cancho.toml` (cancho-web's `scripts/publish.sh` says so); the two revs are the same. The module of the
 `server` store is `http.server`. `scripts/check_web_pin.py` (gate W1) checks that the three blocks have the git URLs above, a 40-digit rev and the path, that the `schema` rev is the `SCHEMA_REV` this document
-names, that the `server` rev is the compiler pin of `[package] cancho`, that no other store of these three repositories is listed, that no `.cho` file under `lib/`, `tools/` or `tests/` declares the modules `web`,
+names, that the `server` rev is the compiler pin of `[package] cancho` (a commit pin) or, for a release pin such as `0.1.1`, the store of that release (its commit, or an earlier one from which `packages/http-server` is unchanged; measured on GitHub, offline it says so), that no other store of these three repositories is listed, that no `.cho` file under `lib/`, `tools/` or `tests/` declares the modules `web`,
 `schema` or `http.server`, and (`CHECK_REMOTE=1`) that GitHub has the three stores at those revs. Moving a pin is the act of editing the revs in `cancho.toml` and the lines of this section together.
 
 cancho-web rev: `5f404a777018cf42b5c713daa4972c938c9229f4`

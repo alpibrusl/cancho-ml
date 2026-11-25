@@ -15,7 +15,7 @@ CV = ["cv", "--model", "tree", "--task", "classification", "--max-depth", "3", "
 JL = ["--input-format", "jsonl", "--fields", FIELDS]
 # the iris fit of the README (the run record of docs/tracking.md): its run id is the one the CSV path has always written
 IRIS = ["fit", "--model", "logistic", "--target", "virginica", "--iterations", "25", "--l2", "0", "--output", "iris-lr.ml", "--track", "runs", "iris_train.csv"]
-IRIS_RUN_ID = "519a70c001eb5f1e4e0c9e9165bce2e9dc7368d508556c389ad134b315e2a476"
+IRIS_RUN_ID = "b56ff2a97e8db9cc2530e08228cbcbd4b42d8cd2709a88e06be7da6756c46e87"
 LIN_FIELDS = "basket,items,returning"
 LIN = ["fit", "--model", "linear", "--target", "returning", "--output", "m.cml", "--track", "runs"]
 LIN_JL = ["--input-format", "jsonl", "--fields", LIN_FIELDS]

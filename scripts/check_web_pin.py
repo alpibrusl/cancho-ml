@@ -9,7 +9,8 @@
 W1 fails when
 * cancho.toml lacks [dependencies.web], [dependencies.schema] or [dependencies.server], or one of them has another git URL, another path, or a rev that is not 40 hex digits;
 * the revs are not the ones docs/serving-http.md names (the lines "cancho-web rev: `...`", "cancho-schema rev: `...`", "cancho http-server rev: `...`"), or the server rev is not
-  the compiler pin of [package] cancho;
+  the compiler pin of [package] cancho (a commit pin), or is not the store of the release that [package] cancho names (a release pin: the release's commit, or an earlier one
+  from which packages/http-server is unchanged; needs the network, see release_server);
 * another [dependencies.X] points at one of the three repositories (a store that ml-serve does not import is not pinned);
 * a .cho file under lib/, tools/ or tests/ declares module web, schema or http.server (a copy), or a file outside tools/ml-serve imports one of them;
 * build/deps exists and lacks an installed module of the three.
@@ -24,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import urllib.request
 
 ROOT = pathlib.Path(os.environ.get("ROOT") or pathlib.Path(__file__).resolve().parent.parent)
 TOML = pathlib.Path(os.environ.get("TOML") or ROOT / "cancho.toml")
@@ -35,6 +37,38 @@ DEPS = {
     "server": ("https://github.com/alpibrusl/cancho", "packages/http-server/.cancho-vcs", "cancho http-server rev", "http.server"),
 }
 MODULES = [v[3] for v in DEPS.values()]
+
+
+def release_server(pin, rev):
+    """The compiler pin is a release (`0.1.1`). The http-server package of the compiler repository is a store compiled with that compiler, so it must be the
+    store the release has: the rev of [dependencies.server] is the commit of the release, or an earlier commit from which `packages/http-server` has not changed
+    up to that commit. The commit of a release is the file `commit` of its assets (https://github.com/alpibrusl/cancho/releases/download/v<pin>/commit). Needs
+    the network and `gh`; offline it says so and does not fail, unless CHECK_REMOTE is set (a moved pin must not pass unchecked)."""
+    skipped = lambda why: ([] if not os.environ.get("CHECK_REMOTE") else ["[dependencies.server]: cannot check rev %s against release %s (%s)" % (rev, pin, why)])
+    if shutil.which("gh") is None:
+        print("check_web_pin: server rev against release %s skipped (no gh)" % pin)
+        return skipped("no gh")
+    try:
+        with urllib.request.urlopen("https://github.com/alpibrusl/cancho/releases/download/v%s/commit" % pin, timeout=20) as r:
+            commit = r.read().decode().strip()
+    except OSError as exc:
+        print("check_web_pin: server rev against release %s skipped (%s)" % (pin, exc))
+        return skipped("release commit unreachable")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return ["release %s of alpibrusl/cancho has no commit file with a commit hash" % pin]
+    if rev == commit:
+        return []
+    r = subprocess.run(["gh", "api", "repos/alpibrusl/cancho/compare/%s...%s" % (rev, commit), "--jq", "[.status, ([.files[].filename | select(startswith(\"packages/http-server\"))] | length)] | @tsv"], capture_output=True, text=True)
+    if r.returncode != 0 and "Not Found" in r.stderr:
+        return ["[dependencies.server]: rev %s is not a commit of alpibrusl/cancho (or release %s's commit %s is not)" % (rev, pin, commit)]
+    if r.returncode != 0:
+        print("check_web_pin: server rev against release %s skipped (%s)" % (pin, r.stderr.strip()[:80]))
+        return skipped("gh api failed")
+    status, changed = r.stdout.split()
+    if status != "ahead" or changed != "0":
+        return ["[dependencies.server]: rev %s is not release %s (commit %s), and is %s of it with %s changed file(s) under packages/http-server: move the rev and the line of docs/serving-http.md" % (rev, pin, commit, status, changed)]
+    print("check_web_pin: server rev %s: packages/http-server is unchanged up to release %s (%s)" % (rev[:7], pin, commit[:7]))
+    return []
 
 
 def check():
@@ -61,8 +95,14 @@ def check():
         elif m.group(1) != rev:
             problems.append("[dependencies.%s]: rev %s is not the documented %s" % (name, rev, m.group(1)))
     pin = proj.get("package", {}).get("cancho", "")
-    if "server" in deps and deps["server"].get("rev") != pin:
-        problems.append("[dependencies.server]: rev %s is not the compiler pin %s of [package] cancho" % (deps["server"].get("rev"), pin))
+    if "server" in deps and re.fullmatch(r"[0-9a-f]{40}", pin):
+        # a pin that is a commit: the http-server store is the compiler's own store at that commit
+        if deps["server"].get("rev") != pin:
+            problems.append("[dependencies.server]: rev %s is not the compiler pin %s of [package] cancho" % (deps["server"].get("rev"), pin))
+    elif "server" in deps:
+        # a pin that is a release: it names no commit, so the rev cannot be equal to it. What stays true is that the store the server rev
+        # names is the store of the release (see release_server)
+        problems.extend(release_server(pin, deps["server"].get("rev", "")))
     if "schema" in deps and "web" in deps:
         # `web` records its requirement on schema at SCHEMA_REV of cancho-web's ci.yml, and docs/serving-http.md names that rev with the schema pin
         m = re.search(r"SCHEMA_REV[^`\n]*`([0-9a-f]{40})`", text)
