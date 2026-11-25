@@ -375,7 +375,7 @@ class ModelFile(unittest.TestCase):
             ("columns disagree with the schema", edit(self.reg, reg_secs, 5, 8, 4, 8)),
             ("hyperparameters", edit(self.reg, reg_secs, 5, 24, 1)),
             ("compiler length past the section", edit(self.reg, reg_secs, 5, 28, 300)),
-            ("compiler length off by one", edit(self.reg, reg_secs, 5, 28, 5)),
+            ("compiler length off by one", edit(self.reg, reg_secs, 5, 28, 6)),
         ]
         for label, data in cases:
             got = self.check_refused(data, label)
