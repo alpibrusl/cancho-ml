@@ -17,7 +17,7 @@ For every [[bin]] in cancho.toml:
 3. pass 2: derive again with the new generated file and require the same
    report -- the fixed point;
 4. require every derived label to be within the tool's ceiling in tools.toml,
-   `bounded` to be true and no foreign symbol.
+   `bounded` to be true (or false for exactly the labels a ceiling names in `unbounded_by`) and no foreign symbol.
 
     python3 scripts/manifest.py            # regenerate, then check
     python3 scripts/manifest.py --check    # change nothing; exit 1 on drift
@@ -158,8 +158,14 @@ def gate(tool, authority, ceilings):
         for text in sorted(allowed - base_row()):
             if not reasons.get(text.split("(")[0]):
                 problems.append("%s: %s is allowed beyond the base row and has no reason in [%s.reasons] of tools.toml" % (tool, text, tool))
-    if not authority.get("bounded", False):
-        problems.append("%s: bounded is false" % tool)
+    # `bounded` is true unless the ceiling names, in `unbounded_by`, exactly the labels the compiler reports as unbounded (cancho 0.1.1:
+    # a network label held unnarrowed); any other difference, in either direction, is a failure
+    expected = sorted(ceiling.get("unbounded_by", []))
+    reported = sorted(authority.get("unbounded_by", []))
+    if reported != expected:
+        problems.append("%s: unbounded_by is %s, tools.toml expects %s" % (tool, reported, expected))
+    if authority.get("bounded", False) != (not expected):
+        problems.append("%s: bounded is %s, tools.toml expects %s" % (tool, authority.get("bounded"), not expected))
     if authority.get("foreign_symbols"):
         problems.append("%s: foreign symbols %s" % (tool, authority["foreign_symbols"]))
     # a server names `net_in` and `clock` in its ceiling, each with a reason (checked above); every other tool still may not hold them

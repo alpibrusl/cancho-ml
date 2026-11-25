@@ -152,7 +152,7 @@ class ModelFile(unittest.TestCase):
         self.assertEqual((n, scale), (4, 0))
         self.assertEqual(sq * 10**9 + sr, 101)
         self.assertEqual((m["rows"], m["cols"], m["seed"]), (4, 3, 0))
-        self.assertTrue(m["compiler"].startswith("0207556"))
+        self.assertTrue(m["compiler"].startswith("0.1.1"))
 
     def test_layout_classification(self):
         m = parse(self.cls)
@@ -375,7 +375,7 @@ class ModelFile(unittest.TestCase):
             ("columns disagree with the schema", edit(self.reg, reg_secs, 5, 8, 4, 8)),
             ("hyperparameters", edit(self.reg, reg_secs, 5, 24, 1)),
             ("compiler length past the section", edit(self.reg, reg_secs, 5, 28, 300)),
-            ("compiler length off by one", edit(self.reg, reg_secs, 5, 28, 5)),
+            ("compiler length off by one", edit(self.reg, reg_secs, 5, 28, 6)),
         ]
         for label, data in cases:
             got = self.check_refused(data, label)

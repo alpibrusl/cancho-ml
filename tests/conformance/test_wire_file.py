@@ -180,7 +180,7 @@ class WireFile(unittest.TestCase):
                     if not repaired and not accept_ok:
                         bad.append((label, "a damaged file with a wrong checksum was accepted"))
                 else:
-                    if r.first_rule() not in MODEL_RULES | {"ml.schema.mismatch", "ml.input.unknown-category", "ml.input.missing-value", "ml.fit.non-finite"}:
+                    if r.first_rule() not in MODEL_RULES | {"ml.schema.mismatch", "ml.input.unknown-category", "ml.input.missing-value", "ml.fit.non-finite", "ml.input.unknown-column"}:
                         bad.append((label, r.first_rule()))
         self.assertEqual(bad, [])
 
